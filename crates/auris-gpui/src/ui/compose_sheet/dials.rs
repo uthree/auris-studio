@@ -690,7 +690,12 @@ fn part_source_group(dials: &SongDials, index: usize) -> Vec<usize> {
                 }
                 _ => false,
             };
-            (part.role.is_drum() && same_source).then_some(index)
+            (part.role.is_drum()
+                && same_source
+                && part.params == selected.params
+                && part.effects.as_deref().unwrap_or_default()
+                    == selected.effects.as_deref().unwrap_or_default())
+            .then_some(index)
         })
         .collect()
 }
@@ -1206,6 +1211,11 @@ mod tests {
             note: Some(42),
             gain_db: -4.5,
             pan: -0.6,
+            params: std::collections::BTreeMap::from([("pickup_position".into(), 0.12)]),
+            effects: Some(vec![auris_session::prelude::EffectSpec {
+                id: "auris.fx.guitar_amp".into(),
+                params: std::collections::BTreeMap::from([("drive_db".into(), 24.0)]),
+            }]),
             ..PartSpec::of_role("my lead", Role::Melody)
         }
     }
@@ -1220,6 +1230,30 @@ mod tests {
         assert_eq!(dials, before);
         assert!(!set_part_role(&mut dials, usize::MAX, Role::Bass));
         assert_eq!(dials, before);
+    }
+
+    #[test]
+    fn drum_source_changes_preserve_other_strips_with_different_processing() {
+        for differing_controls in [false, true] {
+            let mut kick = PartSpec::of_role("kick", Role::Kick);
+            if differing_controls {
+                kick.params.insert("level".into(), -12.0);
+            } else {
+                kick.effects = Some(vec![auris_session::prelude::EffectSpec {
+                    id: "auris.fx.gain".into(),
+                    params: std::collections::BTreeMap::from([("gain_db".into(), -3.0)]),
+                }]);
+            }
+            let snare = PartSpec::of_role("snare", Role::Snare);
+            let mut dials = SongDials {
+                parts: vec![kick.clone(), snare.clone()],
+                ..SongDials::default()
+            };
+            set_part_instrument(&mut dials, 0, "custom.kit");
+            assert_eq!(dials.parts[1], snare);
+            assert_eq!(dials.parts[0].params, kick.params);
+            assert_eq!(dials.parts[0].effects, kick.effects);
+        }
     }
 
     #[test]

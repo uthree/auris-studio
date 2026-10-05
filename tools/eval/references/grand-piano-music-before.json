@@ -1,0 +1,1005 @@
+{
+  "schema_version": 2,
+  "interpretation": "TuneJury uncalibrated preference reward (empty prompt); MuQ-MuLan identity cosines, not probability.",
+  "prompts_sha256": "3d4380cdc6a81187f093085bb2099196a9c0c94b6271e437d651791dd97d5398",
+  "prompts": {
+    "version": 1,
+    "purpose": "Fixed descriptions of preset identity. Similarity is not musical quality or probability. Freeze this file before comparing renders.",
+    "presets": {
+      "chiptune": {
+        "positive": [
+          {
+            "id": "style",
+            "text": "This audio is upbeat chiptune video game music."
+          },
+          {
+            "id": "instruments",
+            "text": "An instrumental electronic melody with square wave synthesizers, synthesized bass and a steady drum beat."
+          }
+        ],
+        "contrast": [
+          {
+            "id": "acoustic",
+            "text": "This audio is an acoustic jazz piano trio with upright bass and brushed drums."
+          },
+          {
+            "id": "orchestral",
+            "text": "This audio is slow orchestral music with strings, horns and a flute."
+          }
+        ]
+      },
+      "game-loop": {
+        "positive": [
+          {
+            "id": "style",
+            "text": "This audio is looping retro video game background music."
+          },
+          {
+            "id": "instruments",
+            "text": "An instrumental chiptune with a repeating electronic melody, synthesized bass and rhythmic drums."
+          }
+        ],
+        "contrast": [
+          {
+            "id": "acoustic",
+            "text": "This audio is an acoustic jazz piano trio with upright bass and brushed drums."
+          },
+          {
+            "id": "orchestral",
+            "text": "This audio is slow orchestral music with strings, horns and a flute."
+          }
+        ]
+      },
+      "pop-band": {
+        "positive": [
+          {
+            "id": "style",
+            "text": "This audio is upbeat instrumental pop band music."
+          },
+          {
+            "id": "instruments",
+            "text": "A pop melody accompanied by piano chords, strings, bass guitar and a steady drum kit."
+          }
+        ],
+        "contrast": [
+          {
+            "id": "ambient",
+            "text": "This audio is slow ambient music with sustained synthesizer pads and no drums."
+          },
+          {
+            "id": "jazz",
+            "text": "This audio is an acoustic jazz piano trio with upright bass and brushed drums."
+          }
+        ]
+      },
+      "city-pop": {
+        "positive": [
+          {
+            "id": "style",
+            "text": "This audio is instrumental city pop with a relaxed funky groove."
+          },
+          {
+            "id": "instruments",
+            "text": "A melodic pop instrumental with electric piano chords, syncopated bass and a rhythmic drum kit."
+          }
+        ],
+        "contrast": [
+          {
+            "id": "orchestral",
+            "text": "This audio is slow orchestral music with strings, horns and a flute."
+          },
+          {
+            "id": "ambient",
+            "text": "This audio is slow ambient music with sustained synthesizer pads and no drums."
+          }
+        ]
+      },
+      "rock": {
+        "positive": [
+          {
+            "id": "style",
+            "text": "This audio is energetic instrumental rock music."
+          },
+          {
+            "id": "instruments",
+            "text": "An electric guitar melody with rhythm guitar chords, bass guitar and a driving rock drum beat."
+          }
+        ],
+        "contrast": [
+          {
+            "id": "ambient",
+            "text": "This audio is slow ambient music with sustained synthesizer pads and no drums."
+          },
+          {
+            "id": "jazz",
+            "text": "This audio is an acoustic jazz piano trio with upright bass and brushed drums."
+          }
+        ]
+      },
+      "jazz-trio": {
+        "positive": [
+          {
+            "id": "style",
+            "text": "This audio is instrumental jazz trio music with a swinging rhythm."
+          },
+          {
+            "id": "instruments",
+            "text": "An acoustic piano melody and jazz chords with upright bass and brushed drums."
+          }
+        ],
+        "contrast": [
+          {
+            "id": "rock",
+            "text": "This audio is heavy rock music with distorted electric guitars and loud drums."
+          },
+          {
+            "id": "chiptune",
+            "text": "This audio is chiptune video game music with square wave synthesizers."
+          }
+        ]
+      },
+      "orchestral": {
+        "positive": [
+          {
+            "id": "style",
+            "text": "This audio is orchestral instrumental music."
+          },
+          {
+            "id": "instruments",
+            "text": "A flute melody with strings, French horns, harp, cello and occasional timpani."
+          }
+        ],
+        "contrast": [
+          {
+            "id": "rock",
+            "text": "This audio is heavy rock music with distorted electric guitars and loud drums."
+          },
+          {
+            "id": "chiptune",
+            "text": "This audio is chiptune video game music with square wave synthesizers."
+          }
+        ]
+      },
+      "synthwave": {
+        "positive": [
+          {
+            "id": "style",
+            "text": "This audio is retro synthwave electronic instrumental music."
+          },
+          {
+            "id": "instruments",
+            "text": "A synthesizer lead with sustained synth pads, pulsing synth bass, arpeggios and a drum machine beat."
+          }
+        ],
+        "contrast": [
+          {
+            "id": "acoustic",
+            "text": "This audio is an acoustic jazz piano trio with upright bass and brushed drums."
+          },
+          {
+            "id": "orchestral",
+            "text": "This audio is slow orchestral music with strings, horns and a flute."
+          }
+        ]
+      },
+      "ambient": {
+        "positive": [
+          {
+            "id": "style",
+            "text": "This audio is calm ambient instrumental music."
+          },
+          {
+            "id": "instruments",
+            "text": "Slow sustained synthesizer pads and soft bell tones with spacious textures and no drum beat."
+          }
+        ],
+        "contrast": [
+          {
+            "id": "rock",
+            "text": "This audio is energetic rock music with electric guitars and a driving drum beat."
+          },
+          {
+            "id": "dance",
+            "text": "This audio is fast electronic dance music with a strong kick drum and rapid percussion."
+          }
+        ]
+      }
+    }
+  },
+  "model": {
+    "tunejury_source_revision": "9dd8ea3e4a72f358ce311a6a856194ca6932c89e",
+    "artifacts": {
+      "TuneJury/tunejury": {
+        "revision": "a36a6adaad4a9786a12c3e5fd82501f2f2dc54ff",
+        "files": {
+          "tunejury.pt": "e95c058491ab61616989ecf19eece0734da6425636c3e76e1c352e9f237f5d44"
+        }
+      },
+      "lukewys/laion_clap": {
+        "revision": "b3708341862f581175dba5c356a4ebf74a9b6651",
+        "files": {
+          "music_audioset_epoch_15_esc_90.14.pt": "fae3e9c087f2909c28a09dc31c8dfcdacbc42ba44c70e972b58c1bd1caf6dedd"
+        }
+      },
+      "FacebookAI/roberta-base": {
+        "revision": "e2da8e2f811d1448a5b465c236feacd80ffbac7b",
+        "files": {
+          "config.json": "ef0185e2aae6e06c5f105a285006952c340e20c7dbf43c86ec82601b13fc45e9",
+          "dict.txt": "2c31c5b236661067fe8626775eb995ef5fe808ac87d2ad4a6ddbef68550f5cc6",
+          "merges.txt": "1ce1664773c50f3e0cc8842619a93edc4624525b728b188a9e0be33b7726adc5",
+          "model.safetensors": "5bde1d28afb363d0103324efeb5afc8b2b397fe5e04beabb9b1ef355255ade81",
+          "pytorch_model.bin": "278b7a95739c4392fae9b818bb5343dde20be1b89318f37a6d939e1e1b9e461b",
+          "tokenizer.json": "847bbeab6174d66a88898f729d52fa8d355fafe1bea101cf960dd404581df70e",
+          "tokenizer_config.json": "994f46754c5bf4014f1aa92d34b1374319c3a6b3f702105cd5b742beaecd18ce",
+          "vocab.json": "9e7f63c2d15d666b52e21d250d2e513b87c9b713cfa6987a82ed89e5e6e50655"
+        }
+      },
+      "m-a-p/MERT-v1-330M": {
+        "revision": "5240c2708a5acaee1007f43fb9735c7dcd0b78c9",
+        "files": {
+          "config.json": "a5b40f9db03c84f29e3114abe813a9226178d5437b517d45cd4c2924ac3d0ce0",
+          "configuration_MERT.py": "ae0ec2bab8f59c724ba9878a7c20b67210189536ea62d34a56775968e9decb03",
+          "modeling_MERT.py": "6c3ee73cef6f0c30ef494f88d96f891fa6925ffe663fa391b512f4b57abecc6c",
+          "preprocessor_config.json": "c623b903eb1967474b27522975cfb81638e265df99aa640d2c0bd87a987ab538",
+          "pytorch_model.bin": "0c03774d821a6ad972cb48220b128a10ebea2c790116bd0fd35e5a013f8017f6"
+        }
+      },
+      "OpenMuQ/MuQ-MuLan-large": {
+        "revision": "2e01c796b71dca71b45251384c04cd7b237c9020",
+        "files": {
+          "config.json": "8fefc545ef87ecd9bcde7417dd03464370c48c321f36dcff20266a752079e468",
+          "pytorch_model.bin": "d42ae3f7cb9b66759ee0089ddc70e2f28b130c2d8ba621457358272d32dd0444"
+        }
+      },
+      "OpenMuQ/MuQ-large-msd-iter": {
+        "revision": "0562a57814f6f8bbd9fdea0a25921a2fce1a841a",
+        "files": {
+          "config.json": "237335ee27d8fb951ce778701a12a79e06c51ae636dd786f97e45f51ce532543",
+          "model.safetensors": "273febab2be02872c37d2c37e48a9d6c52c1c9392f3eeeabd498efa281ccb7a6",
+          "pytorch_model.bin": "334df3de2832ec1acfd8b6ce54e7de4073401fe821f7ec0ad0d954832be2d26a"
+        }
+      },
+      "FacebookAI/xlm-roberta-base": {
+        "revision": "e73636d4f797dec63c3081bb6ed5c7b0bb3f2089",
+        "files": {
+          "config.json": "d66ed8cd4f2a93b358c245e50736fa389ed4f35c0bae7aad0b32abb20c62b579",
+          "model.safetensors": "6fd4797bc397c3b8b55d6bb5740366b57e6a3ce91c04c77f22aafc0c128e6feb",
+          "pytorch_model.bin": "9d83baaafea92d36de26002c8135a427d55ee6fdc4faaa6e400be4c47724a07e",
+          "sentencepiece.bpe.model": "cfc8146abe2a0488e9e2a0c56de7952f7c11ab059eca145a0a727afce0db2865",
+          "tokenizer.json": "a898ea75433890f6610f4e470b8ebeb0c21dce5c8dd61f892eb09eb5919d2e2c",
+          "tokenizer_config.json": "994f46754c5bf4014f1aa92d34b1374319c3a6b3f702105cd5b742beaecd18ce"
+        }
+      }
+    },
+    "device": "cpu",
+    "threads": 4,
+    "packages": {
+      "torch": "2.7.1",
+      "torchaudio": "2.7.1",
+      "transformers": "4.57.6",
+      "muq": "0.1.0",
+      "laion-clap": "1.1.7",
+      "soundfile": "0.13.1",
+      "numpy": "1.23.5",
+      "scipy": "1.13.1",
+      "huggingface-hub": "0.36.2"
+    }
+  },
+  "preprocessing": {
+    "sample_rate": 24000,
+    "channels": "arithmetic mean before resampling",
+    "resampler": "scipy.signal.resample_poly default Kaiser window",
+    "normalization": "none; TuneJury internal CLAP clips/quantizes; MuQ-MuLan uses float32",
+    "tunejury_prompt": "empty text branch (512 zeros), official waveform API",
+    "window_samples": 240000,
+    "window_selection": "equally spaced first-to-last complete window; one segment uses center",
+    "requested_segments": 3,
+    "short_audio": "repeat complete copies, zero-pad remainder",
+    "silent_rms_threshold": 1e-07,
+    "aggregation": "unweighted mean of valid excerpt rewards and cosines"
+  },
+  "files": {
+    "ambient": {
+      "path": "C:\\Users\\uthree\\.codex\\worktrees\\1b55\\auris-studio\\target\\piano-grand\\music-before\\ambient.wav",
+      "sha256": "d2489d16238b9c27f3659da306ff839829dce6f6d2f8b95ab4287a33d3261acf",
+      "preset": "ambient",
+      "original_sample_rate": 48000,
+      "original_channels": 2,
+      "duration_seconds": 153.75,
+      "resampled_frames": 3690000,
+      "status": "ok",
+      "valid_segments": 3,
+      "segments": [
+        {
+          "start_seconds": 0.0,
+          "source_duration_seconds": 10.0,
+          "rms": 0.09084477995852533,
+          "peak": 0.3629004955291748,
+          "samples_outside_unit_range": 0,
+          "quantized_to_silence": false,
+          "status": "ok",
+          "tunejury_reward": -0.7234602570533752,
+          "positive_cosine": 0.31847620010375977,
+          "contrast_cosine": 0.05164049565792084,
+          "contrast_margin": 0.26683570444583893,
+          "prompt_cosines": [
+            0.28658729791641235,
+            0.3503651022911072,
+            -0.002799760550260544,
+            0.10608074814081192
+          ]
+        },
+        {
+          "start_seconds": 71.875,
+          "source_duration_seconds": 10.0,
+          "rms": 0.22080833685549434,
+          "peak": 0.8977051973342896,
+          "samples_outside_unit_range": 0,
+          "quantized_to_silence": false,
+          "status": "ok",
+          "tunejury_reward": -1.9964029788970947,
+          "positive_cosine": 0.23560236394405365,
+          "contrast_cosine": -0.02698974311351776,
+          "contrast_margin": 0.2625921070575714,
+          "prompt_cosines": [
+            0.16065853834152222,
+            0.3105461895465851,
+            -0.09678613394498825,
+            0.04280664771795273
+          ]
+        },
+        {
+          "start_seconds": 143.75,
+          "source_duration_seconds": 10.0,
+          "rms": 0.08387105096041494,
+          "peak": 0.3410760462284088,
+          "samples_outside_unit_range": 0,
+          "quantized_to_silence": false,
+          "status": "ok",
+          "tunejury_reward": -0.34463363885879517,
+          "positive_cosine": 0.2576659321784973,
+          "contrast_cosine": -0.061180587857961655,
+          "contrast_margin": 0.31884652003645897,
+          "prompt_cosines": [
+            0.20467917621135712,
+            0.3106527030467987,
+            -0.105345718562603,
+            -0.017015455290675163
+          ]
+        }
+      ],
+      "aggregate": {
+        "tunejury_reward": -1.0214989582697551,
+        "positive_cosine": 0.2705814987421036,
+        "contrast_cosine": -0.012176611771186193,
+        "contrast_margin": 0.28275811051328975,
+        "positive_cosine_stddev": 0.035044039671064,
+        "contrast_margin_stddev": 0.02557709921176109
+      }
+    },
+    "chiptune": {
+      "path": "C:\\Users\\uthree\\.codex\\worktrees\\1b55\\auris-studio\\target\\piano-grand\\music-before\\chiptune.wav",
+      "sha256": "268c4a67ea8a5c187a8a0b07b2a17026d5b454d39c4b72edf3b1c9f06a0e5e52",
+      "preset": "chiptune",
+      "original_sample_rate": 48000,
+      "original_channels": 2,
+      "duration_seconds": 77.14285416666667,
+      "resampled_frames": 1851429,
+      "status": "ok",
+      "valid_segments": 3,
+      "segments": [
+        {
+          "start_seconds": 0.0,
+          "source_duration_seconds": 10.0,
+          "rms": 0.11618788679871002,
+          "peak": 0.9745482206344604,
+          "samples_outside_unit_range": 0,
+          "quantized_to_silence": false,
+          "status": "ok",
+          "tunejury_reward": 0.2863474488258362,
+          "positive_cosine": 0.44292593002319336,
+          "contrast_cosine": -0.10834848880767822,
+          "contrast_margin": 0.5512744188308716,
+          "prompt_cosines": [
+            0.7291857600212097,
+            0.1566661149263382,
+            -0.1625252068042755,
+            -0.054171763360500336
+          ]
+        },
+        {
+          "start_seconds": 33.571416666666664,
+          "source_duration_seconds": 10.0,
+          "rms": 0.12412374473579531,
+          "peak": 0.9688414335250854,
+          "samples_outside_unit_range": 0,
+          "quantized_to_silence": false,
+          "status": "ok",
+          "tunejury_reward": 1.0003873109817505,
+          "positive_cosine": 0.44750866293907166,
+          "contrast_cosine": -0.12164071202278137,
+          "contrast_margin": 0.569149374961853,
+          "prompt_cosines": [
+            0.7273098230361938,
+            0.16770751774311066,
+            -0.16721145808696747,
+            -0.07606995850801468
+          ]
+        },
+        {
+          "start_seconds": 67.142875,
+          "source_duration_seconds": 10.0,
+          "rms": 0.10769156137174414,
+          "peak": 0.9669396281242371,
+          "samples_outside_unit_range": 0,
+          "quantized_to_silence": false,
+          "status": "ok",
+          "tunejury_reward": 0.753722608089447,
+          "positive_cosine": 0.3905094563961029,
+          "contrast_cosine": -0.06899838149547577,
+          "contrast_margin": 0.4595078378915787,
+          "prompt_cosines": [
+            0.6392885446548462,
+            0.14173036813735962,
+            -0.13374285399913788,
+            -0.004253902472555637
+          ]
+        }
+      ],
+      "aggregate": {
+        "tunejury_reward": 0.6801524559656779,
+        "positive_cosine": 0.4269813497861226,
+        "contrast_cosine": -0.09966252744197845,
+        "contrast_margin": 0.5266438772281011,
+        "positive_cosine_stddev": 0.025857295757474877,
+        "contrast_margin_stddev": 0.048029951401998054
+      }
+    },
+    "city-pop": {
+      "path": "C:\\Users\\uthree\\.codex\\worktrees\\1b55\\auris-studio\\target\\piano-grand\\music-before\\city-pop.wav",
+      "sha256": "3287e5e01760686cac98ccfcc4614b7077d50d9f93af27a9362245ab17f2fcc7",
+      "preset": "city-pop",
+      "original_sample_rate": 48000,
+      "original_channels": 2,
+      "duration_seconds": 101.88679166666667,
+      "resampled_frames": 2445283,
+      "status": "ok",
+      "valid_segments": 3,
+      "segments": [
+        {
+          "start_seconds": 0.0,
+          "source_duration_seconds": 10.0,
+          "rms": 0.11979794776426424,
+          "peak": 0.9499710202217102,
+          "samples_outside_unit_range": 0,
+          "quantized_to_silence": false,
+          "status": "ok",
+          "tunejury_reward": 1.100517749786377,
+          "positive_cosine": 0.21478140354156494,
+          "contrast_cosine": -0.08168178051710129,
+          "contrast_margin": 0.29646318405866623,
+          "prompt_cosines": [
+            0.17952385544776917,
+            0.2500389516353607,
+            -0.15756221115589142,
+            -0.005801348946988583
+          ]
+        },
+        {
+          "start_seconds": 45.943375,
+          "source_duration_seconds": 10.0,
+          "rms": 0.12635898441290946,
+          "peak": 0.9539635181427002,
+          "samples_outside_unit_range": 0,
+          "quantized_to_silence": false,
+          "status": "ok",
+          "tunejury_reward": 0.9678760170936584,
+          "positive_cosine": 0.1762028932571411,
+          "contrast_cosine": -0.07219164073467255,
+          "contrast_margin": 0.24839453399181366,
+          "prompt_cosines": [
+            0.1399145871400833,
+            0.2124911993741989,
+            -0.1465994268655777,
+            0.0022161465603858232
+          ]
+        },
+        {
+          "start_seconds": 91.88679166666667,
+          "source_duration_seconds": 10.0,
+          "rms": 0.10897156377414804,
+          "peak": 0.9048940539360046,
+          "samples_outside_unit_range": 0,
+          "quantized_to_silence": false,
+          "status": "ok",
+          "tunejury_reward": 0.21288302540779114,
+          "positive_cosine": 0.15329937636852264,
+          "contrast_cosine": -0.07290507853031158,
+          "contrast_margin": 0.22620445489883423,
+          "prompt_cosines": [
+            0.13142651319503784,
+            0.17517223954200745,
+            -0.12971985340118408,
+            -0.016090307384729385
+          ]
+        }
+      ],
+      "aggregate": {
+        "tunejury_reward": 0.7604255974292755,
+        "positive_cosine": 0.1814278910557429,
+        "contrast_cosine": -0.07559283326069514,
+        "contrast_margin": 0.257020724316438,
+        "positive_cosine_stddev": 0.02537039439744973,
+        "contrast_margin_stddev": 0.029324399686110534
+      }
+    },
+    "game-loop": {
+      "path": "C:\\Users\\uthree\\.codex\\worktrees\\1b55\\auris-studio\\target\\piano-grand\\music-before\\game-loop.wav",
+      "sha256": "b99f9887c8483c4c60006948fbc5ab084c6c55b5ce8dc6123219266ab11dea3b",
+      "preset": "game-loop",
+      "original_sample_rate": 48000,
+      "original_channels": 2,
+      "duration_seconds": 32.0,
+      "resampled_frames": 768000,
+      "status": "ok",
+      "valid_segments": 3,
+      "segments": [
+        {
+          "start_seconds": 0.0,
+          "source_duration_seconds": 10.0,
+          "rms": 0.13180731282232439,
+          "peak": 0.9774683713912964,
+          "samples_outside_unit_range": 0,
+          "quantized_to_silence": false,
+          "status": "ok",
+          "tunejury_reward": 1.0857129096984863,
+          "positive_cosine": 0.6607650518417358,
+          "contrast_cosine": -0.06279049068689346,
+          "contrast_margin": 0.7235555425286293,
+          "prompt_cosines": [
+            0.6954479813575745,
+            0.6260820627212524,
+            -0.13667622208595276,
+            0.011095237918198109
+          ]
+        },
+        {
+          "start_seconds": 11.0,
+          "source_duration_seconds": 10.0,
+          "rms": 0.13400803325327804,
+          "peak": 0.9595915675163269,
+          "samples_outside_unit_range": 0,
+          "quantized_to_silence": false,
+          "status": "ok",
+          "tunejury_reward": 1.0548150539398193,
+          "positive_cosine": 0.6319304704666138,
+          "contrast_cosine": -0.07207933813333511,
+          "contrast_margin": 0.7040098085999489,
+          "prompt_cosines": [
+            0.6306255459785461,
+            0.6332353353500366,
+            -0.14080095291137695,
+            -0.003357725916430354
+          ]
+        },
+        {
+          "start_seconds": 22.0,
+          "source_duration_seconds": 10.0,
+          "rms": 0.1337099412574338,
+          "peak": 0.9692829251289368,
+          "samples_outside_unit_range": 0,
+          "quantized_to_silence": false,
+          "status": "ok",
+          "tunejury_reward": 0.9253997802734375,
+          "positive_cosine": 0.6404004096984863,
+          "contrast_cosine": -0.1015671044588089,
+          "contrast_margin": 0.7419675141572952,
+          "prompt_cosines": [
+            0.6345708966255188,
+            0.6462299823760986,
+            -0.17062152922153473,
+            -0.03251267224550247
+          ]
+        }
+      ],
+      "aggregate": {
+        "tunejury_reward": 1.0219759146372478,
+        "positive_cosine": 0.6443653106689453,
+        "contrast_cosine": -0.0788123110930125,
+        "contrast_margin": 0.7231776217619578,
+        "positive_cosine_stddev": 0.012100925599550751,
+        "contrast_margin_stddev": 0.015498472416638607
+      }
+    },
+    "jazz-trio": {
+      "path": "C:\\Users\\uthree\\.codex\\worktrees\\1b55\\auris-studio\\target\\piano-grand\\music-before\\jazz-trio.wav",
+      "sha256": "55c9613dade042d45596fe2200123bc3da833c3bc13258693d96ac9d408d01c1",
+      "preset": "jazz-trio",
+      "original_sample_rate": 48000,
+      "original_channels": 2,
+      "duration_seconds": 81.8181875,
+      "resampled_frames": 1963637,
+      "status": "ok",
+      "valid_segments": 3,
+      "segments": [
+        {
+          "start_seconds": 0.0,
+          "source_duration_seconds": 10.0,
+          "rms": 0.12030013121492523,
+          "peak": 0.6749427914619446,
+          "samples_outside_unit_range": 0,
+          "quantized_to_silence": false,
+          "status": "ok",
+          "tunejury_reward": 0.11295969039201736,
+          "positive_cosine": 0.27455848455429077,
+          "contrast_cosine": -0.02553250640630722,
+          "contrast_margin": 0.300090990960598,
+          "prompt_cosines": [
+            0.3700333535671234,
+            0.17908364534378052,
+            -0.23313051462173462,
+            0.18206550180912018
+          ]
+        },
+        {
+          "start_seconds": 35.909083333333335,
+          "source_duration_seconds": 10.0,
+          "rms": 0.13544708796920907,
+          "peak": 0.8221361637115479,
+          "samples_outside_unit_range": 0,
+          "quantized_to_silence": false,
+          "status": "ok",
+          "tunejury_reward": 0.575240433216095,
+          "positive_cosine": 0.12617360055446625,
+          "contrast_cosine": -0.061127178370952606,
+          "contrast_margin": 0.18730077892541885,
+          "prompt_cosines": [
+            0.21231147646903992,
+            0.04003572091460228,
+            -0.24962177872657776,
+            0.12736742198467255
+          ]
+        },
+        {
+          "start_seconds": 71.81820833333333,
+          "source_duration_seconds": 10.0,
+          "rms": 0.10672167417850573,
+          "peak": 0.6863759160041809,
+          "samples_outside_unit_range": 0,
+          "quantized_to_silence": false,
+          "status": "ok",
+          "tunejury_reward": -0.23137041926383972,
+          "positive_cosine": 0.10926695913076401,
+          "contrast_cosine": -0.021474212408065796,
+          "contrast_margin": 0.1307411715388298,
+          "prompt_cosines": [
+            0.176574245095253,
+            0.041959673166275024,
+            -0.18564477562904358,
+            0.142696350812912
+          ]
+        }
+      ],
+      "aggregate": {
+        "tunejury_reward": 0.15227656811475754,
+        "positive_cosine": 0.16999968141317368,
+        "contrast_cosine": -0.03604463239510854,
+        "contrast_margin": 0.20604431380828223,
+        "positive_cosine_stddev": 0.07425571186463063,
+        "contrast_margin_stddev": 0.07039569309493875
+      }
+    },
+    "orchestral": {
+      "path": "C:\\Users\\uthree\\.codex\\worktrees\\1b55\\auris-studio\\target\\piano-grand\\music-before\\orchestral.wav",
+      "sha256": "97f505abd4a55eaa78c6b18ae47dc4abbf7f1fb26d8c10c802e0d4af04652295",
+      "preset": "orchestral",
+      "original_sample_rate": 48000,
+      "original_channels": 2,
+      "duration_seconds": 116.052625,
+      "resampled_frames": 2785263,
+      "status": "ok",
+      "valid_segments": 3,
+      "segments": [
+        {
+          "start_seconds": 0.0,
+          "source_duration_seconds": 10.0,
+          "rms": 0.062333863614026694,
+          "peak": 0.2860904633998871,
+          "samples_outside_unit_range": 0,
+          "quantized_to_silence": false,
+          "status": "ok",
+          "tunejury_reward": -1.9571993350982666,
+          "positive_cosine": 0.23960480093955994,
+          "contrast_cosine": 0.1751692295074463,
+          "contrast_margin": 0.06443557143211365,
+          "prompt_cosines": [
+            0.2765333950519562,
+            0.2026762068271637,
+            -0.04565555229783058,
+            0.39599400758743286
+          ]
+        },
+        {
+          "start_seconds": 53.026291666666665,
+          "source_duration_seconds": 10.0,
+          "rms": 0.13607773439986648,
+          "peak": 0.6604019999504089,
+          "samples_outside_unit_range": 0,
+          "quantized_to_silence": false,
+          "status": "ok",
+          "tunejury_reward": -1.0702136754989624,
+          "positive_cosine": 0.17050524055957794,
+          "contrast_cosine": 0.14197351038455963,
+          "contrast_margin": 0.02853173017501831,
+          "prompt_cosines": [
+            0.09549091011285782,
+            0.24551956355571747,
+            -0.09296851605176926,
+            0.3769155442714691
+          ]
+        },
+        {
+          "start_seconds": 106.052625,
+          "source_duration_seconds": 10.0,
+          "rms": 0.128677346971885,
+          "peak": 0.5608246326446533,
+          "samples_outside_unit_range": 0,
+          "quantized_to_silence": false,
+          "status": "ok",
+          "tunejury_reward": -1.504069447517395,
+          "positive_cosine": 0.14476975798606873,
+          "contrast_cosine": 0.12030428647994995,
+          "contrast_margin": 0.024465471506118774,
+          "prompt_cosines": [
+            0.050707899034023285,
+            0.23883162438869476,
+            -0.020386431366205215,
+            0.2609950006008148
+          ]
+        }
+      ],
+      "aggregate": {
+        "tunejury_reward": -1.5104941527048747,
+        "positive_cosine": 0.18495993316173553,
+        "contrast_cosine": 0.14581567545731863,
+        "contrast_margin": 0.03914425770441691,
+        "positive_cosine_stddev": 0.040042685113636615,
+        "contrast_margin_stddev": 0.017960540590327197
+      }
+    },
+    "pop-band": {
+      "path": "C:\\Users\\uthree\\.codex\\worktrees\\1b55\\auris-studio\\target\\piano-grand\\music-before\\pop-band.wav",
+      "sha256": "a4aed73780ddb88a3a8ea7fcd2068b83379d2e3f5a64e77c5a23aefe8318bfbf",
+      "preset": "pop-band",
+      "original_sample_rate": 48000,
+      "original_channels": 2,
+      "duration_seconds": 133.54839583333333,
+      "resampled_frames": 3205162,
+      "status": "ok",
+      "valid_segments": 3,
+      "segments": [
+        {
+          "start_seconds": 0.0,
+          "source_duration_seconds": 10.0,
+          "rms": 0.10091991436382342,
+          "peak": 0.915614664554596,
+          "samples_outside_unit_range": 0,
+          "quantized_to_silence": false,
+          "status": "ok",
+          "tunejury_reward": 0.7894635200500488,
+          "positive_cosine": 0.07881011068820953,
+          "contrast_cosine": -0.037298545241355896,
+          "contrast_margin": 0.11610865592956543,
+          "prompt_cosines": [
+            -0.006365664303302765,
+            0.16398587822914124,
+            -0.03345632180571556,
+            -0.04114076867699623
+          ]
+        },
+        {
+          "start_seconds": 61.774208333333334,
+          "source_duration_seconds": 10.0,
+          "rms": 0.09523109412918836,
+          "peak": 0.9779680967330933,
+          "samples_outside_unit_range": 0,
+          "quantized_to_silence": false,
+          "status": "ok",
+          "tunejury_reward": 0.7154598832130432,
+          "positive_cosine": 0.1455570012331009,
+          "contrast_cosine": -0.15263891220092773,
+          "contrast_margin": 0.2981959134340286,
+          "prompt_cosines": [
+            0.08432305604219437,
+            0.206790953874588,
+            -0.04504971206188202,
+            -0.26022809743881226
+          ]
+        },
+        {
+          "start_seconds": 123.54841666666667,
+          "source_duration_seconds": 10.0,
+          "rms": 0.07545646698196219,
+          "peak": 0.38216570019721985,
+          "samples_outside_unit_range": 0,
+          "quantized_to_silence": false,
+          "status": "ok",
+          "tunejury_reward": 0.8352702856063843,
+          "positive_cosine": 0.17877554893493652,
+          "contrast_cosine": -0.028074484318494797,
+          "contrast_margin": 0.20685003325343132,
+          "prompt_cosines": [
+            0.1264892965555191,
+            0.23106180131435394,
+            0.013979710638523102,
+            -0.0701286792755127
+          ]
+        }
+      ],
+      "aggregate": {
+        "tunejury_reward": 0.7800645629564921,
+        "positive_cosine": 0.1343808869520823,
+        "contrast_cosine": -0.0726706472535928,
+        "contrast_margin": 0.20705153420567513,
+        "positive_cosine_stddev": 0.04156882933787317,
+        "contrast_margin_stddev": 0.0743369481408785
+      }
+    },
+    "rock": {
+      "path": "C:\\Users\\uthree\\.codex\\worktrees\\1b55\\auris-studio\\target\\piano-grand\\music-before\\rock.wav",
+      "sha256": "28562b16d6e456626cd8e98e3a7eefaf7237e1712d3ca70c8ab02b01604c3e0d",
+      "preset": "rock",
+      "original_sample_rate": 48000,
+      "original_channels": 2,
+      "duration_seconds": 72.97297916666666,
+      "resampled_frames": 1751352,
+      "status": "ok",
+      "valid_segments": 3,
+      "segments": [
+        {
+          "start_seconds": 0.0,
+          "source_duration_seconds": 10.0,
+          "rms": 0.11629478416771027,
+          "peak": 0.8786299228668213,
+          "samples_outside_unit_range": 0,
+          "quantized_to_silence": false,
+          "status": "ok",
+          "tunejury_reward": 0.9042540192604065,
+          "positive_cosine": 0.011746218428015709,
+          "contrast_cosine": -0.12139268219470978,
+          "contrast_margin": 0.1331389006227255,
+          "prompt_cosines": [
+            -0.021530169993638992,
+            0.04502260684967041,
+            -0.06222299858927727,
+            -0.180562362074852
+          ]
+        },
+        {
+          "start_seconds": 31.4865,
+          "source_duration_seconds": 10.0,
+          "rms": 0.12976508178646906,
+          "peak": 0.9440505504608154,
+          "samples_outside_unit_range": 0,
+          "quantized_to_silence": false,
+          "status": "ok",
+          "tunejury_reward": 0.9558733105659485,
+          "positive_cosine": 0.024109065532684326,
+          "contrast_cosine": -0.07992072403430939,
+          "contrast_margin": 0.10402978956699371,
+          "prompt_cosines": [
+            -0.023318206891417503,
+            0.0715363398194313,
+            -0.01680915802717209,
+            -0.1430322825908661
+          ]
+        },
+        {
+          "start_seconds": 62.973,
+          "source_duration_seconds": 10.0,
+          "rms": 0.102049851980747,
+          "peak": 0.9235727787017822,
+          "samples_outside_unit_range": 0,
+          "quantized_to_silence": false,
+          "status": "ok",
+          "tunejury_reward": 0.81467205286026,
+          "positive_cosine": 0.07148568332195282,
+          "contrast_cosine": -0.04632866010069847,
+          "contrast_margin": 0.11781434342265129,
+          "prompt_cosines": [
+            0.05288217216730118,
+            0.09008920192718506,
+            0.025578521192073822,
+            -0.11823584139347076
+          ]
+        }
+      ],
+      "aggregate": {
+        "tunejury_reward": 0.8915997942288717,
+        "positive_cosine": 0.03578032242755095,
+        "contrast_cosine": -0.08254735544323921,
+        "contrast_margin": 0.11832767787079017,
+        "positive_cosine_stddev": 0.025747033415948653,
+        "contrast_margin_stddev": 0.011889287077181877
+      }
+    },
+    "synthwave": {
+      "path": "C:\\Users\\uthree\\.codex\\worktrees\\1b55\\auris-studio\\target\\piano-grand\\music-before\\synthwave.wav",
+      "sha256": "b42de9add8a1c1b1e6c19e398bfc058b5d1b57e942496655ab8a86fac1df4ce1",
+      "preset": "synthwave",
+      "original_sample_rate": 48000,
+      "original_channels": 2,
+      "duration_seconds": 105.0,
+      "resampled_frames": 2520000,
+      "status": "ok",
+      "valid_segments": 3,
+      "segments": [
+        {
+          "start_seconds": 0.0,
+          "source_duration_seconds": 10.0,
+          "rms": 0.09672189750232688,
+          "peak": 0.8367458581924438,
+          "samples_outside_unit_range": 0,
+          "quantized_to_silence": false,
+          "status": "ok",
+          "tunejury_reward": -0.3511217534542084,
+          "positive_cosine": 0.21157771348953247,
+          "contrast_cosine": -0.02871604822576046,
+          "contrast_margin": 0.24029376171529293,
+          "prompt_cosines": [
+            -0.003571225330233574,
+            0.42672663927078247,
+            -0.07168751955032349,
+            0.014255423098802567
+          ]
+        },
+        {
+          "start_seconds": 47.5,
+          "source_duration_seconds": 10.0,
+          "rms": 0.1234591690881152,
+          "peak": 0.9766356945037842,
+          "samples_outside_unit_range": 0,
+          "quantized_to_silence": false,
+          "status": "ok",
+          "tunejury_reward": -0.48866596817970276,
+          "positive_cosine": 0.0385030061006546,
+          "contrast_cosine": -0.17057783901691437,
+          "contrast_margin": 0.20908084511756897,
+          "prompt_cosines": [
+            -0.062289152294397354,
+            0.13929516077041626,
+            -0.2342003732919693,
+            -0.10695529729127884
+          ]
+        },
+        {
+          "start_seconds": 95.0,
+          "source_duration_seconds": 10.0,
+          "rms": 0.10059129229956855,
+          "peak": 0.9674190282821655,
+          "samples_outside_unit_range": 0,
+          "quantized_to_silence": false,
+          "status": "ok",
+          "tunejury_reward": -0.9479119777679443,
+          "positive_cosine": 0.13419002294540405,
+          "contrast_cosine": -0.0692247599363327,
+          "contrast_margin": 0.20341478288173676,
+          "prompt_cosines": [
+            0.01820141263306141,
+            0.25017863512039185,
+            -0.2134724259376526,
+            0.07502290606498718
+          ]
+        }
+      ],
+      "aggregate": {
+        "tunejury_reward": -0.5958998998006185,
+        "positive_cosine": 0.1280902475118637,
+        "contrast_cosine": -0.08950621572633584,
+        "contrast_margin": 0.21759646323819956,
+        "positive_cosine_stddev": 0.0707889776245386,
+        "contrast_margin_stddev": 0.016215251749176967
+      }
+    }
+  }
+}

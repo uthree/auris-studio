@@ -1,0 +1,35 @@
+{
+  "symbolic_sha256": {
+    "before": "df569dfc5f7f0e3aa649bc382ce4d6ab2d5b90acbd54a526af984bb70c8cf93d",
+    "after": "df569dfc5f7f0e3aa649bc382ce4d6ab2d5b90acbd54a526af984bb70c8cf93d"
+  },
+  "cli_sha256": {
+    "before": "6a0f3f00837e71ca39f78bef597d0ff540e20422c91c6db3d60a5c71cbd56717",
+    "after": "5f15b43ea48727b604e40c56a4c322817f000dcbf3646dc7218274f38fd2075f"
+  },
+  "mean": {
+    "tunejury_reward": {
+      "before": 0.12873354250634156,
+      "after": 0.15926215935636448
+    },
+    "positive_cosine": {
+      "before": 0.24184079130214672,
+      "after": 0.24171119359218413
+    },
+    "contrast_margin": {
+      "before": 0.2864182867385723,
+      "after": 0.28584329235470957
+    }
+  },
+  "audio_changed": {
+    "ambient": false,
+    "chiptune": false,
+    "city-pop": true,
+    "game-loop": false,
+    "jazz-trio": true,
+    "orchestral": false,
+    "pop-band": true,
+    "rock": true,
+    "synthwave": true
+  }
+}

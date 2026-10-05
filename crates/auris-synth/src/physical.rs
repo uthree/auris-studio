@@ -143,7 +143,7 @@ impl Model {
         // Keep the median factory-note RMS after real-recording mel calibration. The
         // public level dial keeps its existing meaning for saved projects and automation.
         match self {
-            Self::Piano => 0.164_845,
+            Self::Piano => 0.186_700,
             Self::Guitar => 0.178_368,
             Self::ElectricGuitar => 0.8,
             Self::Violin => 1.787_516,
@@ -243,7 +243,7 @@ impl Physical {
     /// Builds an unprepared physical instrument. All voice storage is allocated in `prepare`.
     pub fn new(model: Model) -> Self {
         let (mut decay, release, mut position, mut hardness) = match model {
-            Model::Piano => (11.296, 0.20, 0.228_641, 0.701_331),
+            Model::Piano => (11.498_04, 0.20, 0.232_063, 0.606_004),
             Model::Guitar => (5.638_205, 0.12, 0.298_280, 0.249_201),
             Model::ElectricGuitar => (7.493_398, 0.12, 0.069_559, 0.186_606),
             Model::Bass => (3.5, 0.15, 0.30, 0.40),
@@ -285,7 +285,7 @@ impl Physical {
                 "damping",
                 "Damping",
                 match model {
-                    Model::Piano => 0.000_108,
+                    Model::Piano => 0.009_015,
                     Model::Guitar => 0.0,
                     Model::ElectricGuitar => 0.021_633,
                     Model::Violin => 0.359_287,
@@ -350,7 +350,7 @@ impl Physical {
                 "String Stiffness",
                 0.0,
                 0.008,
-                0.000_769_281,
+                0.000_749_371,
             ));
         }
         if model == Model::Violin {

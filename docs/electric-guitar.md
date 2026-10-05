@@ -6,6 +6,54 @@ samples, and save through ordinary instrument/effect state. GM hints 26–31 sel
 the amp is an explicit effect. The composer's existing guitar performance stages also
 recognize the new instrument ID.
 
+Song presets now author their amplifier settings in each part's `effects` chain. Rock uses
+bridge pickup DI with driven lead/rhythm amps and separate clean parts; pop, city-pop and
+synthwave also amplify their DI guitars. These choices save with the song specification
+and become editable instrument and mixer controls after composition.
+
+## Preset processing check, 2026-10-05
+
+The baseline is `7e1bf88`, after presets adopted the native DI but before they supplied
+amplifiers. Frozen before/after CLI binaries rendered all nine declared preset seeds with
+ordinary automatic balance, 48 kHz stereo float32 exports and no render tail. A separate
+seed 501 checks the four affected presets. The eight-seed symbolic ruler is identical;
+all thirteen saved scores retain their notes, performance transforms, harmony, sections
+and tempo. All samples are finite and below full scale. The five unaffected presets have
+identical WAV hashes and learned scores.
+
+Whole-song RMS changes by less than 0.10 dB in every affected render. Rock's mono spectral
+power fraction at or above 2 kHz increases by 0.0271 at the declared seed and 0.0214 at
+seed 501. This is a signal measurement of changed coloration, not a listening judgment.
+Ten-second excerpts from the first chorus are retained in
+`target/preset-effects/audition`, with a common before/after RMS target of -20 dBFS,
+reduced if necessary to keep both peaks below 0.8.
+
+The fixed candidate was also measured with the pinned TuneJury/MuQ-MuLan evaluator and
+unchanged prompts, using three ten-second windows without gain normalization. These
+declared-seed deltas are `after - before`:
+
+| Preset | TuneJury reward | MuQ positive cosine | MuQ contrast margin |
+| --- | ---: | ---: | ---: |
+| pop-band | -0.005291 | -0.005002 | -0.002724 |
+| city-pop | -0.000226 | -0.000302 | -0.000478 |
+| rock | -0.527206 | -0.002160 | +0.004092 |
+| synthwave | -0.018346 | +0.001063 | +0.002663 |
+
+Rock's preference reward falls materially, while its contrast margin rises slightly.
+The driven amplifiers address the requested guitar tone; these measurements do not
+establish improved listener preference. No learned-score search or listener study was
+performed. Seed 501 checks audio safety and score invariance, not learned-score
+generalization. Full per-window scores, checkpoint/package provenance, source and audio
+hashes, signal measurements and excerpt positions are in
+[`preset-effects-2026-10-05.json`](../tools/eval/references/preset-effects-2026-10-05.json).
+
+To repeat the comparison, freeze baseline and candidate CLI binaries, then run the
+[symbolic ruler and learned evaluator](evaluation.md) on each build, passing
+`--preset all --seeds 1 --cli <frozen-cli>` to the latter. For seed 501, compose each
+affected preset with `--seed 501`, then render its saved project with
+`--bit-depth 32 --no-tail`. Existing projects retain their saved effects; compose a
+new piece from the updated preset to receive these initial chains.
+
 ## The signal path
 
 Electric Guitar shares the acoustic guitar's finite-width pluck, passive loss and

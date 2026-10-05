@@ -62,6 +62,8 @@ mod source;
 
 use std::collections::BTreeMap;
 
+use serde::{Deserialize, Serialize};
+
 use auris_core::Subdivision;
 use auris_core::time::TimeSignature;
 
@@ -76,6 +78,17 @@ pub use self::doc::{SpecError, parse_motif};
 pub use self::mood::Mood;
 pub use self::role::Role;
 pub use self::source::PartSource;
+
+/// One authored insert in a part's ordered signal chain.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EffectSpec {
+    /// Stable effect plugin identifier.
+    pub id: String,
+    /// Initial controls by parameter key; omitted controls retain plugin defaults.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub params: BTreeMap<String, f32>,
+}
 
 /// One part of the arrangement.
 #[derive(Clone, Debug, PartialEq)]
@@ -102,6 +115,10 @@ pub struct PartSpec {
     /// cannot set both this and [`Self::program`]; a source picker clears the program when used.
     /// Unlike a General MIDI request, this names the exact asset to resolve at playback.
     pub source: Option<PartSource>,
+    /// Initial controls for the named instrument, applied only when that instrument is retained.
+    pub params: BTreeMap<String, f32>,
+    /// Ordered inserts; `None` uses automatic rules and an empty list explicitly disables them.
+    pub effects: Option<Vec<EffectSpec>>,
     /// Which octave it sits in, as an **absolute** MIDI octave rather than an offset.
     ///
     /// A melody's default is 5, so 6 moves it up one and 1 moves it down four. Worth saying
@@ -144,6 +161,8 @@ impl PartSpec {
             instrument: role.default_instrument().to_string(),
             program: None,
             source: None,
+            params: BTreeMap::new(),
+            effects: None,
             octave: role.default_octave(),
             density: None,
             subdivision: Subdivision::default(),
