@@ -24,7 +24,7 @@ const NAME: &str = "DiffSinger";
 const DEFAULT_STEPS: i64 = 20;
 
 fn open_session(path: &Path, acceleration: Acceleration) -> Result<(Session, bool), SingError> {
-    // ORT 1.20's extended optimizer crashes on the diffusion graphs' control flow.
+    // Extended optimization has crashed on the diffusion graphs' control flow.
     // Basic optimization loads the original trained acoustic and variance exports safely.
     open_session_with_optimization(path, acceleration, true)
 }
@@ -114,13 +114,13 @@ impl DsConfig {
 
 fn control_shape(session: &Session, name: &str) -> Result<Vec<usize>, SingError> {
     match session
-        .inputs
+        .inputs()
         .iter()
-        .find(|input| input.name == name)
-        .map(|input| &input.input_type)
+        .find(|input| input.name() == name)
+        .map(|input| input.dtype())
     {
-        Some(ValueType::Tensor { dimensions, .. }) if dimensions.is_empty() => Ok(vec![]),
-        Some(ValueType::Tensor { dimensions, .. }) if dimensions == &[1] => Ok(vec![1]),
+        Some(ValueType::Tensor { shape, .. }) if shape.is_empty() => Ok(vec![]),
+        Some(ValueType::Tensor { shape, .. }) if **shape == [1] => Ok(vec![1]),
         _ => Err(SingError::Metadata(format!(
             "DiffSinger {name} input must be scalar or [1]"
         ))),
@@ -349,11 +349,10 @@ impl DiffSingerBackend {
         let frame_count = score.f0.len();
         let refused = |error: ort::Error| SingError::Inference(error.to_string());
         let mut inputs = ort::inputs![
-            "tokens" => Tensor::from_array(([1, token_count], score.tokens.clone()))?,
-            "durations" => Tensor::from_array(([1, token_count], score.durations.clone()))?,
-            "f0" => Tensor::from_array(([1, frame_count], score.f0.clone()))?,
-        ]
-        .map_err(refused)?;
+            "tokens" => Tensor::from_array(([1, token_count], score.tokens.clone())).map_err(refused)?,
+            "durations" => Tensor::from_array(([1, token_count], score.durations.clone())).map_err(refused)?,
+            "f0" => Tensor::from_array(([1, frame_count], score.f0.clone())).map_err(refused)?,
+        ];
         if let Some(variance) = &mut self.variance {
             let speaker_name = self
                 .resources
@@ -436,9 +435,7 @@ impl DiffSingerBackend {
             ));
         }
         let acoustic = self.acoustic.run(inputs).map_err(refused)?;
-        let (mel_shape, raw_mel) = acoustic[0]
-            .try_extract_raw_tensor::<f32>()
-            .map_err(refused)?;
+        let (mel_shape, raw_mel) = acoustic[0].try_extract_tensor::<f32>().map_err(refused)?;
         let mel_shape: Vec<usize> = mel_shape
             .iter()
             .map(|dimension| {
@@ -475,12 +472,11 @@ impl DiffSingerBackend {
             })?;
         mel.extend(raw_mel.iter().map(|value| value * self.mel_factor));
         let vocoder_inputs = ort::inputs![
-            "mel" => Tensor::from_array((mel_shape, mel))?,
-            "f0" => Tensor::from_array(([1, frame_count], score.f0))?,
-        ]
-        .map_err(refused)?;
+            "mel" => Tensor::from_array((mel_shape, mel)).map_err(refused)?,
+            "f0" => Tensor::from_array(([1, frame_count], score.f0)).map_err(refused)?,
+        ];
         let output = self.vocoder.run(vocoder_inputs).map_err(refused)?;
-        let (_, samples) = output[0].try_extract_raw_tensor::<f32>().map_err(refused)?;
+        let (_, samples) = output[0].try_extract_tensor::<f32>().map_err(refused)?;
         let expected = checked_sample_count(
             frame_count,
             self.config.hop_size as usize,

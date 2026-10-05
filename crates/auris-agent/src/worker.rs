@@ -201,9 +201,9 @@ impl Bridge {
         let presentation = toolbox::audio_inspection::present(report)?;
         let mut text = presentation.text;
         if self.0.vision.load(Ordering::Relaxed) {
-            let image = rig::message::UserContent::image_base64(
+            let image = rig_core::message::UserContent::image_base64(
                 presentation.png,
-                Some(rig::message::ImageMediaType::PNG),
+                Some(rig_core::message::ImageMediaType::PNG),
                 None,
             );
             let mut stored = self.0.visual.lock().unwrap();
@@ -214,7 +214,7 @@ impl Bridge {
             if content.len() >= 4 {
                 content.drain(..content.len() - 2);
             }
-            content.push(rig::message::UserContent::text(format!("Historical inspection snapshot, revision {}: start_bar={}, bars={}, duration={} seconds. This may predate edits; inspect again to evaluate changed sound. Image 512x384: top 128 rows show mel power (high frequency at top, black=-90 dB, white=0 dB); bottom 256 rows show authored notes (MIDI 127 at top, 0 at bottom). Time runs left to right across the selected range. Refer to the matching inspect_audio tool result for measurements and score data.", report.revision, report.measurements["start_bar"], report.measurements["bars"], report.measurements["seconds"])));
+            content.push(rig_core::message::UserContent::text(format!("Historical inspection snapshot, revision {}: start_bar={}, bars={}, duration={} seconds. This may predate edits; inspect again to evaluate changed sound. Image 512x384: top 128 rows show mel power (high frequency at top, black=-90 dB, white=0 dB); bottom 256 rows show authored notes (MIDI 127 at top, 0 at bottom). Time runs left to right across the selected range. Refer to the matching inspect_audio tool result for measurements and score data.", report.revision, report.measurements["start_bar"], report.measurements["bars"], report.measurements["seconds"])));
             content.push(image);
             *stored = Some(Message::User { content });
             text.push_str("\nThe host provides the image in this request's visual context.");

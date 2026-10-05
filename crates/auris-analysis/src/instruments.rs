@@ -6,7 +6,7 @@
 
 use crate::{AnalysisControl, AnalysisError};
 use auris_core::AudioBuffer;
-use ort::{execution_providers::CPUExecutionProvider, session::Session, value::Tensor};
+use ort::{ep::CPU, session::Session, value::Tensor};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::{io::Read, path::Path, sync::LazyLock};
@@ -131,35 +131,28 @@ pub fn analyze_instruments(
     if bytes.len() as u64 > MAX_MODEL {
         return Err(AnalysisError::Invalid("YAMNet model exceeds 32 MiB"));
     }
-    let hash = format!("{:x}", Sha256::digest(&bytes));
-    let session = Session::builder()
+    let hash = hex::encode(Sha256::digest(&bytes));
+    let mut session = Session::builder()
         .map_err(model_error)?
         .with_intra_threads(2)
         .map_err(model_error)?
-        .with_execution_providers([CPUExecutionProvider::default().build().error_on_failure()])
+        .with_execution_providers([CPU::default().build().error_on_failure()])
         .map_err(model_error)?
         .commit_from_memory(&bytes)
         .map_err(model_error)?;
     let metadata = session.metadata().map_err(model_error)?;
-    if metadata
-        .custom("auris.yamnet")
-        .map_err(model_error)?
-        .as_deref()
-        != Some("waveform-15600-v1")
-        || metadata
-            .custom("weights_sha256")
-            .map_err(model_error)?
-            .as_deref()
-            != Some(WEIGHTS)
-        || session.inputs.len() != 1
-        || session.inputs[0].name != "waveform"
-        || session.outputs.len() != 1
-        || session.outputs[0].name != "scores"
+    if metadata.custom("auris.yamnet").as_deref() != Some("waveform-15600-v1")
+        || metadata.custom("weights_sha256").as_deref() != Some(WEIGHTS)
+        || session.inputs().len() != 1
+        || session.inputs()[0].name() != "waveform"
+        || session.outputs().len() != 1
+        || session.outputs()[0].name() != "scores"
     {
         return Err(AnalysisError::Invalid(
             "use the YAMNet export from tools/music-models/export_yamnet.py",
         ));
     }
+    drop(metadata);
     let count = window_count(audio.frame_count());
     let mut windows = Vec::with_capacity(count);
     let mut mean = vec![0.0_f64; CLASSES];
@@ -174,12 +167,12 @@ pub fn analyze_instruments(
             }
         }
         let tensor = Tensor::from_array(([WINDOW], waveform)).map_err(model_error)?;
-        let inputs = ort::inputs!["waveform" => tensor].map_err(model_error)?;
+        let inputs = ort::inputs!["waveform" => tensor];
         let outputs = session.run(inputs).map_err(model_error)?;
         let (shape, scores) = outputs["scores"]
-            .try_extract_raw_tensor::<f32>()
+            .try_extract_tensor::<f32>()
             .map_err(model_error)?;
-        if shape != [1, CLASSES as i64]
+        if **shape != [1, CLASSES as i64]
             || scores.len() != CLASSES
             || scores
                 .iter()

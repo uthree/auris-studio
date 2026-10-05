@@ -6,7 +6,7 @@
 //! the selection fields open are in `menus`; the words' own rules and elements are in `lyrics`.
 
 use gpui::{AnyElement, Context, IntoElement, MouseDownEvent, Window, canvas, div, prelude::*, px};
-use gpui_component::scroll::{Scrollbar, ScrollbarShow};
+use gpui_component::scroll::{Scrollbar, ScrollbarMode};
 
 use auris_i18n::Key;
 use auris_session::prelude::*;
@@ -387,7 +387,7 @@ impl AurisApp {
                                         .absolute()
                                         .inset_0()
                                         .child(Scrollbar::vertical(&scroll)
-                                            .scrollbar_show(ScrollbarShow::Always)),
+                                            .mode(ScrollbarMode::Always)),
                                 ),
                         )
                         .child(divider(&theme))

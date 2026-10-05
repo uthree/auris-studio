@@ -129,10 +129,11 @@ fn fetch_voicevox_portrait(
     decode_style: u32,
 ) -> Result<Option<VoicePortrait>, SingerPortraitError> {
     let root = root.trim().trim_end_matches('/');
-    let agent = ureq::AgentBuilder::new()
-        .timeout(Duration::from_secs(3))
-        .redirects(0)
-        .build();
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .timeout_global(Some(Duration::from_secs(3)))
+        .max_redirects(0)
+        .build()
+        .into();
     let singers: Vec<EngineSinger> = read_json(agent.get(&format!("{root}/singers")))?;
     validate_engine_singers(&singers)?;
     let Some(singer) = singers
@@ -231,15 +232,12 @@ fn read_engine_image(
     if resource.starts_with("iVBOR") {
         return Ok(VoicePortrait::from_base64("image/png", resource).filter(is_png));
     }
-    let engine = agent
-        .get(&format!("{root}/"))
-        .request_url()
+    let engine = url::Url::parse(&format!("{root}/"))
         .map_err(|error| SingerPortraitError::Invalid(error.to_string()))?;
     let image = engine
-        .as_url()
         .join(resource)
         .map_err(|error| SingerPortraitError::Invalid(error.to_string()))?;
-    if image.origin() != engine.as_url().origin()
+    if image.origin() != engine.origin()
         || !matches!(image.scheme(), "http" | "https")
         || !image.username().is_empty()
         || image.password().is_some()
@@ -257,26 +255,31 @@ fn is_png(portrait: &VoicePortrait) -> bool {
 }
 
 fn read_json<T: serde::de::DeserializeOwned>(
-    request: ureq::Request,
+    request: ureq::RequestBuilder<ureq::typestate::WithoutBody>,
 ) -> Result<T, SingerPortraitError> {
     let bytes = read_response(request, MAX_JSON_BYTES)?;
     serde_json::from_slice(&bytes)
         .map_err(|error| SingerPortraitError::Invalid(format!("VOICEVOX artwork: {error}")))
 }
 
-fn read_response(request: ureq::Request, limit: usize) -> Result<Vec<u8>, SingerPortraitError> {
+fn read_response(
+    request: ureq::RequestBuilder<ureq::typestate::WithoutBody>,
+    limit: usize,
+) -> Result<Vec<u8>, SingerPortraitError> {
     let response = request
         .call()
         .map_err(|error| SingerPortraitError::Request(format!("VOICEVOX artwork: {error}")))?;
     // ureq returns redirects as responses when following them is disabled.
-    if !(200..300).contains(&response.status()) {
+    if !response.status().is_success() {
         return Err(SingerPortraitError::Request(format!(
             "VOICEVOX artwork returned status {}",
             response.status()
         )));
     }
     let length = response
-        .header("Content-Length")
+        .headers()
+        .get("Content-Length")
+        .and_then(|length| length.to_str().ok())
         .and_then(|length| length.parse::<usize>().ok());
     if length.is_some_and(|length| length > limit) {
         return Err(SingerPortraitError::Invalid(
@@ -290,6 +293,7 @@ fn read_response(request: ureq::Request, limit: usize) -> Result<Vec<u8>, Singer
             SingerPortraitError::Invalid("not enough memory to read VOICEVOX artwork".into())
         })?;
     response
+        .into_body()
         .into_reader()
         .take(limit as u64 + 1)
         .read_to_end(&mut bytes)
@@ -436,7 +440,10 @@ mod tests {
 
     #[test]
     fn artwork_urls_cannot_leave_the_configured_engine() {
-        let agent = ureq::AgentBuilder::new().redirects(0).build();
+        let agent: ureq::Agent = ureq::Agent::config_builder()
+            .max_redirects(0)
+            .build()
+            .into();
         for resource in [
             "http://example.com/portrait.png",
             "//example.com/portrait.png",
@@ -483,7 +490,10 @@ mod tests {
 
     #[test]
     fn redirects_and_bodies_over_the_limit_are_refused() {
-        let agent = ureq::AgentBuilder::new().redirects(0).build();
+        let agent: ureq::Agent = ureq::Agent::config_builder()
+            .max_redirects(0)
+            .build()
+            .into();
         let (root, server) = serve(vec![(
             "302 Found\r\nLocation: http://example.com/portrait.png\r\nContent-Length: 0".into(),
             vec![],

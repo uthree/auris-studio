@@ -915,8 +915,7 @@ impl AgentChat {
 
     /// Whether the transcript is at, or close enough to resume following, its tail.
     fn is_near_tail(&self) -> bool {
-        let remaining =
-            f32::from(self.scroll.max_offset().height) + f32::from(self.scroll.offset().y);
+        let remaining = f32::from(self.scroll.max_offset().y) + f32::from(self.scroll.offset().y);
         remaining <= f32::from(Metrics::CONTROL_HEIGHT) * 2.0
     }
 
@@ -1672,7 +1671,7 @@ impl AurisApp {
         }
         self.focus_agent_field(AgentField::Chat);
         if let Some(focus) = self.agent_chat.input_focus.as_ref() {
-            window.focus(focus);
+            window.focus(focus, cx);
         }
         cx.notify();
     }
@@ -2377,9 +2376,9 @@ impl AurisApp {
             }
             self.agent_chat.focused = None;
             if event.keystroke.modifiers.shift {
-                window.focus_prev();
+                window.focus_prev(cx);
             } else {
-                window.focus_next();
+                window.focus_next(cx);
             }
             return true;
         }
@@ -2390,7 +2389,7 @@ impl AurisApp {
                         field.unmark();
                     }
                     self.agent_chat.focused = None;
-                    window.focus(self.panes.handle(Pane::Agent));
+                    window.focus(self.panes.handle(Pane::Agent), cx);
                     return true;
                 }
                 ("enter", AgentField::Chat) => {
@@ -2424,7 +2423,7 @@ impl AurisApp {
     }
 
     /// The send button and Enter share validation before editing the live session.
-    fn agent_submit(&mut self, window: &mut Window, _cx: &mut gpui::Context<Self>) {
+    fn agent_submit(&mut self, window: &mut Window, cx: &mut gpui::Context<Self>) {
         if self.agent_chat.input.marked().is_some() {
             return;
         }
@@ -2432,7 +2431,7 @@ impl AurisApp {
         if self.agent_chat.pending_send.is_some() {
             self.agent_chat.focused = None;
             if let Some(focus) = self.agent_chat.stop_focus.as_ref() {
-                window.focus(focus);
+                window.focus(focus, cx);
             }
         }
     }
@@ -2482,7 +2481,7 @@ impl AurisApp {
         {
             // Several controls express "return to the composer" without receiving a Window.
             // Move that logical request onto the real input target on the following frame.
-            window.focus(&input_focus);
+            window.focus(&input_focus, cx);
         }
         // Arrival while hidden cannot keep the input handle focused: `reconcile_focus` correctly
         // releases every hidden field. Showing the panel is the explicit return, so restore its
@@ -2491,7 +2490,7 @@ impl AurisApp {
         if self.agent_chat.restore_pending_focus && self.agent_chat.controls.pending.is_some() {
             self.agent_chat.restore_pending_focus = false;
             self.focus_agent_field(AgentField::Chat);
-            window.focus(&input_focus);
+            window.focus(&input_focus, cx);
         }
         // The persistent model picker uses the saved provider even before settings opens.
         self.agent_chat
@@ -2548,7 +2547,7 @@ impl AurisApp {
             true => self.settings.agent.model.clone(),
             false => self.agent_chat.model_label.clone(),
         };
-        let controls_max_offset = self.agent_chat.controls_scroll.max_offset().height;
+        let controls_max_offset = self.agent_chat.controls_scroll.max_offset().y;
         let controls_offset = self.agent_chat.controls_scroll.offset().y;
         let controls_overflow = controls_max_offset > px(0.0);
         let controls_cue = if controls_offset >= px(-1.0) {
@@ -2587,7 +2586,7 @@ impl AurisApp {
                     .flex()
                     .flex_col()
                     .relative()
-                    .flex_shrink()
+                    .flex_shrink(1.0)
                     .min_h_0()
                     .max_h(px(180.0))
                     .overflow_y_scroll()
@@ -3408,7 +3407,7 @@ impl AurisApp {
                 this.on_mouse_down(
                     MouseButton::Left,
                     cx.listener(move |this, _: &MouseDownEvent, window, cx| {
-                        window.focus(&pointer_focus);
+                        window.focus(&pointer_focus, cx);
                         if this.agent_chat.model_menu {
                             this.agent_chat.model_menu = false;
                         } else {
@@ -3904,7 +3903,7 @@ impl AurisApp {
                             }
                         }
                         this.focus_agent_field(field);
-                        window.focus(&pointer_focus);
+                        window.focus(&pointer_focus, cx);
                         cx.notify();
                     }),
                 )
@@ -3920,6 +3919,7 @@ mod tests {
     use auris_session::prelude::{Note, Ticks};
 
     fn release_key(key: &str, cx: &mut gpui::VisualTestContext) {
+        cx.simulate_keystrokes(key);
         cx.simulate_event(gpui::KeyUpEvent {
             keystroke: gpui::Keystroke::parse(key).unwrap(),
         });
@@ -5431,7 +5431,7 @@ mod tests {
         crate::harness::click("agent-model", cx);
         app.read_with(cx, |this, _| assert!(!this.agent_chat.model_menu));
         cx.update(|window, cx| {
-            app.update(cx, |this, _| this.focus_pane(Pane::Agent, window));
+            app.update(cx, |this, cx| this.focus_pane(Pane::Agent, window, cx));
         });
         cx.simulate_keystrokes("tab");
         crate::harness::paint(&app, cx);
@@ -5626,7 +5626,7 @@ mod tests {
         let (offset, max_offset) = app.read_with(cx, |this, _| {
             (
                 this.agent_chat.controls_scroll.offset().y,
-                this.agent_chat.controls_scroll.max_offset().height,
+                this.agent_chat.controls_scroll.max_offset().y,
             )
         });
         if max_offset > px(0.0) {

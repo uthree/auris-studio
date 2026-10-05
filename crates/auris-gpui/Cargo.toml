@@ -24,13 +24,21 @@ auris-session.workspace = true
 env_logger.workspace = true
 log.workspace = true
 
-# `runtime_shaders` makes gpui compile its Metal shaders through the Metal framework at startup.
-# The build-time path shells out to `xcrun metal`, which lives inside Xcode and is unreachable
-# while `xcode-select -p` points at the Command Line Tools.
-gpui = { version = "0.2.2", features = ["runtime_shaders"] }
+# GPUI Kit 0.6+ uses the matching `gpui-pre` snapshot. Keep the dependency name as `gpui`
+# so the application source remains independent of the package's distribution name. The 0.3.x
+# snapshot exposes `runtime_shaders` on the separate platform crate below.
+gpui = { package = "gpui-pre", version = "=0.3.8" }
+# The platform selector is split from GPUI in the 0.3.x snapshots. It owns the native renderer
+# and keeps Metal shader compilation at runtime, so Command Line Tools remain sufficient on macOS.
+gpui_platform = { package = "gpui-pre-platform", version = "=0.3.8", features = [
+    "font-kit",
+    "runtime_shaders",
+    "wayland",
+    "x11",
+] }
 # The agent transcript uses the same Markdown view as picocode, including fenced code-block
 # highlighting. It shares gpui's version and stays wholly inside this presentation crate.
-gpui-component = { version = "0.5", features = ["tree-sitter-languages"] }
+gpui-component = { version = "=0.7.1", features = ["tree-sitter-languages"] }
 # Share the renderer's GFM parser; the transcript owns block and list layout.
 markdown = "1"
 # Decode voice artwork on a worker, with bounded dimensions before GPUI sees the pixels.
@@ -47,5 +55,5 @@ embed-resource = "3.0"
 # not linked into the binary — and `test-support` is also what turns `debug_selector` from a
 # no-op into the hook `VisualTestContext::debug_bounds` reads.
 [dev-dependencies]
-gpui = { version = "0.2.2", features = ["runtime_shaders", "test-support"] }
+gpui = { package = "gpui-pre", version = "=0.3.8", features = ["test-support"] }
 tempfile.workspace = true

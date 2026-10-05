@@ -16,7 +16,7 @@ use clack_extensions::state::PluginState;
 use clack_extensions::timer::PluginTimer;
 use clack_host::prelude::*;
 use clack_host::utils::ClapId;
-use raw_window_handle::RawWindowHandle;
+use raw_window_handle::{RawWindowHandle, WindowHandle};
 
 use crate::bridge::Bridge;
 use crate::effect::ClapEffect;
@@ -126,7 +126,7 @@ impl ClapPlugin {
             .as_deref()
             .map_or(Location::Plugin, |path| Location::File { path });
         extension
-            .load_from_location(&mut self.instance.plugin_handle(), location, key.as_deref())
+            .load_from_location(&self.instance.plugin_handle(), location, key.as_deref())
             .map_err(|e| e.to_string())?;
         self.refresh_parameters();
         Ok(())
@@ -199,7 +199,7 @@ impl ClapPlugin {
             .plugin_shared_handle()
             .get_extension::<PluginParams>()?;
         params
-            .get_value(&mut self.instance.plugin_handle(), clap_id)
+            .get_value(&self.instance.plugin_handle(), clap_id)
             .map(|value| value as f32)
     }
 
@@ -248,7 +248,7 @@ impl ClapPlugin {
     pub fn tick_timers(&mut self) {
         let due = self
             .instance
-            .access_handler_mut(|main| main.due_timers(Instant::now()));
+            .access_handler(|main| main.due_timers(Instant::now()));
         if due.is_empty() {
             return;
         }
@@ -260,7 +260,7 @@ impl ClapPlugin {
             return;
         };
         for id in due {
-            timer.on_timer(&mut self.instance.plugin_handle(), id);
+            timer.on_timer(&self.instance.plugin_handle(), id);
         }
     }
 
@@ -281,7 +281,7 @@ impl ClapPlugin {
         let api_type = GuiApiType::default_for_current_platform()?;
         let offers = |floating: bool, plugin: &mut PluginInstance<AurisHost>| {
             gui.is_api_supported(
-                &mut plugin.plugin_handle(),
+                &plugin.plugin_handle(),
                 GuiConfiguration {
                     api_type,
                     is_floating: floating,
@@ -322,14 +322,14 @@ impl ClapPlugin {
                 api_type: api,
                 is_floating: floating,
             };
-            if gui.is_api_supported(&mut self.instance.plugin_handle(), plan) {
+            if gui.is_api_supported(&self.instance.plugin_handle(), plan) {
                 found.push(match floating {
                     true => "floating".to_string(),
                     false => "embedded".to_string(),
                 });
             }
         }
-        if let Some(preferred) = gui.get_preferred_api(&mut self.instance.plugin_handle()) {
+        if let Some(preferred) = gui.get_preferred_api(&self.instance.plugin_handle()) {
             found.push(format!(
                 "prefers {:?}/{}",
                 preferred.api_type,
@@ -396,8 +396,8 @@ impl ClapPlugin {
         // makes is titled by the platform, which does not.
         let plain_title = crate::gui::window_title(&self.info.name);
         let title = crate::gui::suggested_title(&self.info.name);
-        let mut handle = self.instance.plugin_handle();
-        gui.create(&mut handle, plan).map_err(failed)?;
+        let handle = self.instance.plugin_handle();
+        gui.create(&handle, plan).map_err(failed)?;
         // From here every exit owes the plugin a `destroy`. Failures pay it below rather than
         // recording `gui_open` early: an early flag over no window would satisfy the opening
         // early-return, and every later `open_gui` would answer `Ok` while doing nothing —
@@ -409,16 +409,21 @@ impl ClapPlugin {
         let mut pending_container = None;
         let outcome = (|| {
             if plan.is_floating {
-                if let Some(parent) = parent.and_then(Window::from_window_handle) {
-                    // SAFETY: the handle came from a live window — see this function's own note
-                    // on what keeps it live. A plugin that will not take a transient parent
-                    // still gets a window, one that can fall behind the application.
-                    if let Err(error) = unsafe { gui.set_transient(&mut handle, parent) } {
-                        log::debug!("`{id}` refused a parent window: {error}");
+                if let Some(raw_parent) = parent {
+                    // The host contract keeps the parent window alive for this call. The
+                    // borrowed handle must not outlive that call into the plugin.
+                    let parent = unsafe { WindowHandle::borrow_raw(raw_parent) };
+                    if let Some(parent) = Window::from_window_handle(parent) {
+                        // SAFETY: the handle came from a live window — see this function's own note
+                        // on what keeps it live. A plugin that will not take a transient parent
+                        // still gets a window, one that can fall behind the application.
+                        if let Err(error) = unsafe { gui.set_transient(&handle, parent) } {
+                            log::debug!("`{id}` refused a parent window: {error}");
+                        }
                     }
                 }
-                gui.suggest_title(&mut handle, &title);
-                gui.show(&mut handle).map_err(failed)?;
+                gui.suggest_title(&handle, &title);
+                gui.show(&handle).map_err(failed)?;
                 return Ok(None);
             }
 
@@ -435,12 +440,15 @@ impl ClapPlugin {
                 .as_ref()
                 .expect("the container was assigned above");
             if container.scale() != 1.0 {
-                let _ = gui.set_scale(&mut handle, container.scale());
+                let _ = gui.set_scale(&handle, container.scale());
             }
-            if let Some(size) = gui.get_size(&mut handle) {
+            if let Some(size) = gui.get_size(&handle) {
                 container.resize(size);
             }
-            let Some(window) = Window::from_window_handle(container.handle()) else {
+            let raw_window = container.handle();
+            // `container` owns the native window for the duration of this call.
+            let window_handle = unsafe { WindowHandle::borrow_raw(raw_window) };
+            let Some(window) = Window::from_window_handle(window_handle) else {
                 return Err(no_gui(
                     "this platform's window is not one CLAP can be given",
                 ));
@@ -448,8 +456,8 @@ impl ClapPlugin {
 
             // SAFETY: the window was made a few lines up and is owned by this value, which
             // destroys the plugin's GUI before letting go of it.
-            unsafe { gui.set_parent(&mut handle, window) }.map_err(failed)?;
-            gui.show(&mut handle).map_err(failed)?;
+            unsafe { gui.set_parent(&handle, window) }.map_err(failed)?;
+            gui.show(&handle).map_err(failed)?;
             // Last: an empty window that fills a moment later reads as a flicker, and this way
             // the plugin has already drawn into it by the time anybody sees it.
             container.show();
@@ -465,7 +473,7 @@ impl ClapPlugin {
             Err(error) => {
                 // For an embedded GUI, `pending_container` still owns the parent window here.
                 // CLAP requires that window to remain valid until `destroy` returns.
-                gui.destroy(&mut handle);
+                gui.destroy(&handle);
                 // The supported platform implementations release a native window in `Drop`.
                 // On unsupported platforms the uninhabited placeholder has no `Drop` impl,
                 // which makes this intentionally ordered destruction look redundant to Clippy.
@@ -500,11 +508,11 @@ impl ClapPlugin {
             .instance
             .access_shared_handler(|shared| HostFlags::take(&shared.flags.gui_destroyed));
 
-        let mut handle = self.instance.plugin_handle();
+        let handle = self.instance.plugin_handle();
         if !destroyed {
-            let _ = gui.hide(&mut handle);
+            let _ = gui.hide(&handle);
         }
-        gui.destroy(&mut handle);
+        gui.destroy(&handle);
         // Only now: the plugin's own window is a child of this one, and taking the ground away
         // before `destroy` has been answered is the crash the container's close box goes out of
         // its way not to cause either.
@@ -534,7 +542,7 @@ impl ClapPlugin {
     #[cfg(any(test, feature = "testkit"))]
     pub fn pretend_the_state_changed(&mut self) {
         use clack_extensions::state::HostStateImpl;
-        self.instance.access_handler_mut(|main| main.mark_dirty());
+        self.instance.access_handler(|main| main.mark_dirty());
     }
 
     /// The GUI extension, but only when it can give a window on this platform.
@@ -594,7 +602,7 @@ impl ClapPlugin {
             .instance
             .plugin_shared_handle()
             .get_extension::<PluginLatency>()
-            .map(|latency| latency.get(&mut self.instance.plugin_handle()) as usize)
+            .map(|latency| latency.get(&self.instance.plugin_handle()) as usize)
             .unwrap_or(0);
 
         Ok(Bridge::new(
@@ -618,16 +626,16 @@ impl ClapPlugin {
             .instance
             .plugin_shared_handle()
             .get_extension::<PluginNotePorts>()?;
-        let mut handle = self.instance.plugin_handle();
+        let handle = self.instance.plugin_handle();
         // Count before get, the rule `ports` and `read_params` already keep: the index means
         // "into the array count() declared", and a plugin with note *outputs* only — count of
         // zero inputs — handed an index 0 anyway is the exact off-the-end read that `ports`'s
         // module doc watched take an application down.
-        if ports.count(&mut handle, true) == 0 {
+        if ports.count(&handle, true) == 0 {
             return None;
         }
         let mut buffer = NotePortInfoBuffer::new();
-        let info = ports.get(&mut handle, 0, true, &mut buffer)?;
+        let info = ports.get(&handle, 0, true, &mut buffer)?;
         language_for(info.supported_dialects)
     }
 
@@ -651,19 +659,19 @@ impl ClapPlugin {
             .plugin_shared_handle()
             .get_extension::<PluginNotePorts>()
             .and_then(|ports| {
-                let mut handle = self.instance.plugin_handle();
+                let handle = self.instance.plugin_handle();
                 let mut buffer = NotePortInfoBuffer::new();
                 ports
-                    .get(&mut handle, 0, true, &mut buffer)
+                    .get(&handle, 0, true, &mut buffer)
                     .and_then(|info| u16::try_from(info.id.get()).ok())
             });
 
-        let mut handle = self.instance.plugin_handle();
-        let count = names.count(&mut handle);
+        let handle = self.instance.plugin_handle();
+        let count = names.count(&handle);
         let mut found = std::collections::BTreeMap::new();
         let mut buffer = NoteNameBuffer::new();
         for index in 0..count {
-            let Some(name) = names.get(&mut handle, index as u32, &mut buffer) else {
+            let Some(name) = names.get(&handle, index as u32, &mut buffer) else {
                 continue;
             };
             let Some(key) = name
@@ -773,7 +781,7 @@ impl ClapPlugin {
 
         let mut bytes = Vec::new();
         state
-            .save(&mut self.instance.plugin_handle(), &mut bytes)
+            .save(&self.instance.plugin_handle(), &mut bytes)
             .map_err(|error| ClapError::State {
                 id: self.info.clap_id.clone(),
                 saving: true,
@@ -795,7 +803,7 @@ impl ClapPlugin {
             })?;
 
         state
-            .load(&mut self.instance.plugin_handle(), &mut &bytes[..])
+            .load(&self.instance.plugin_handle(), &mut &bytes[..])
             .map_err(|error| ClapError::State {
                 id: self.info.clap_id.clone(),
                 saving: false,
@@ -854,14 +862,14 @@ fn read_params(instance: &mut PluginInstance<AurisHost>) -> ParamList {
         };
     };
 
-    let count = bounded_param_count(params.count(&mut instance.plugin_handle()));
+    let count = bounded_param_count(params.count(&instance.plugin_handle()));
     let mut clap_ids = Vec::with_capacity(count as usize);
     let mut descriptors = Vec::with_capacity(count as usize);
     let mut buffer = ParamInfoBuffer::new();
 
     for index in 0..count {
-        let mut handle = instance.plugin_handle();
-        let Some(info) = params.get_info(&mut handle, index, &mut buffer) else {
+        let handle = instance.plugin_handle();
+        let Some(info) = params.get_info(&handle, index, &mut buffer) else {
             continue;
         };
         // The position in *our* slice, not the plugin's index: a parameter the plugin refused

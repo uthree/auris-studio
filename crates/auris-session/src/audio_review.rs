@@ -52,9 +52,7 @@ impl AudioReviewOptions {
         let mut options = Self::default();
         if let Some(url) = env("AURIS_AUDIO_URL") {
             options.url = url.trim().trim_end_matches('/').to_string();
-            let request = ureq::get(&options.url);
-            let parsed = request.request_url().map_err(|error| error.to_string())?;
-            let parsed = parsed.as_url();
+            let parsed = url::Url::parse(&options.url).map_err(|error| error.to_string())?;
             options.ollama_url = (parsed.port() == Some(11434)
                 && parsed.path().trim_end_matches('/') == "/v1")
                 .then(|| parsed.origin().ascii_serialization());
@@ -80,9 +78,7 @@ impl AudioReviewOptions {
             return Err("AURIS_AUDIO_MODEL must name an audio-capable model".into());
         }
         for url in std::iter::once(&self.url).chain(self.ollama_url.iter()) {
-            let request = ureq::get(url);
-            let parsed = request.request_url().map_err(|error| error.to_string())?;
-            let parsed = parsed.as_url();
+            let parsed = url::Url::parse(url).map_err(|error| error.to_string())?;
             if !matches!(parsed.scheme(), "http" | "https")
                 || !parsed.username().is_empty()
                 || parsed.password().is_some()
@@ -123,11 +119,12 @@ pub fn review_audio(
 ) -> Result<AudioReview, String> {
     options.validate()?;
     let content = audio_content(audio, prompt)?;
-    let agent = ureq::AgentBuilder::new()
-        .timeout_connect(Duration::from_secs(10))
-        .timeout(Duration::from_secs(300))
-        .redirects(0)
-        .build();
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .timeout_connect(Some(Duration::from_secs(10)))
+        .timeout_global(Some(Duration::from_secs(300)))
+        .max_redirects(0)
+        .build()
+        .into();
     if let Some(root) = &options.ollama_url {
         let shown = post_json(
             &agent,
@@ -232,15 +229,19 @@ fn post_json(
 ) -> Result<Value, String> {
     let mut request = agent.post(url);
     if let Some(key) = key {
-        request = request.set("Authorization", &format!("Bearer {key}"));
+        request = request.header("Authorization", &format!("Bearer {key}"));
     }
-    let response = match request.send_json(body) {
-        Ok(response) | Err(ureq::Error::Status(_, response)) => response,
-        Err(error) => return Err(format!("audio reviewer request failed: {error}")),
-    };
-    let status = response.status();
+    let response = request
+        .config()
+        .http_status_as_error(false)
+        .build()
+        .send_json(body)
+        .map_err(|error| format!("audio reviewer request failed: {error}"))?;
+    let status = response.status().as_u16();
     if response
-        .header("Content-Length")
+        .headers()
+        .get("Content-Length")
+        .and_then(|value| value.to_str().ok())
         .and_then(|value| value.parse::<u64>().ok())
         .is_some_and(|length| length > MAX_RESPONSE_BYTES)
     {
@@ -248,6 +249,7 @@ fn post_json(
     }
     let mut bytes = Vec::new();
     response
+        .into_body()
         .into_reader()
         .take(MAX_RESPONSE_BYTES + 1)
         .read_to_end(&mut bytes)
@@ -488,9 +490,10 @@ mod tests {
             503,
             json!({"error":{"message":"model audio-9b unavailable for secret-token at https://user:password@example.com"}}),
         )]);
-        let agent = ureq::AgentBuilder::new()
-            .timeout(Duration::from_secs(3))
-            .build();
+        let agent: ureq::Agent = ureq::Agent::config_builder()
+            .timeout_global(Some(Duration::from_secs(3)))
+            .build()
+            .into();
         let error = post_json(&agent, &url, &json!({}), Some("secret-token")).unwrap_err();
         assert!(error.contains("503") && error.contains("model audio-9b unavailable"));
         assert!(!error.contains("secret-token") && !error.contains("password"));

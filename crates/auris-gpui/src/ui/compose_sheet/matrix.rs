@@ -2,7 +2,7 @@
 
 use auris_i18n::Key;
 use gpui::{Context, IntoElement, Pixels, Window, div, prelude::*, px};
-use gpui_component::scroll::{Scrollbar, ScrollbarShow};
+use gpui_component::scroll::{Scrollbar, ScrollbarMode};
 
 use crate::app::AurisApp;
 use crate::theme::{Metrics, Theme};
@@ -260,12 +260,9 @@ impl AurisApp {
                                     .track_scroll(&horizontal)
                                     .child(columns),
                             )
-                            .child(
-                                div().absolute().inset_0().child(
-                                    Scrollbar::horizontal(&horizontal)
-                                        .scrollbar_show(ScrollbarShow::Always),
-                                ),
-                            ),
+                            .child(div().absolute().inset_0().child(
+                                Scrollbar::horizontal(&horizontal).mode(ScrollbarMode::Always),
+                            )),
                     ),
             )
             .when(repeated, |view| {

@@ -197,7 +197,7 @@ impl Render for AurisApp {
         if Panel::ALL.into_iter().any(|panel| {
             self.panels.is_detached(panel) && self.pane_focused(panel.pane(), window, cx)
         }) {
-            self.focus_pane(Pane::Arrangement, window);
+            self.focus_pane(Pane::Arrangement, window, cx);
         }
 
         // What the docks may actually have of this window. The stored widths are the ones their
@@ -672,7 +672,7 @@ impl AurisApp {
             // phase would ever reach here.
             .capture_any_mouse_down(cx.listener(
                 move |this, _: &gpui::MouseDownEvent, window, cx| {
-                    this.focus_pane(pane, window);
+                    this.focus_pane(pane, window, cx);
                     cx.notify();
                 },
             ))
@@ -804,7 +804,7 @@ impl AurisApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        window.focus_next();
+        window.focus_next(cx);
         cx.notify();
     }
 
@@ -814,7 +814,7 @@ impl AurisApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        window.focus_prev();
+        window.focus_prev(cx);
         cx.notify();
     }
 
@@ -1974,7 +1974,7 @@ impl AurisApp {
                 {
                     self.export = None;
                 }
-                "tab" => window.focus(self.modal_focus.export_cancel()),
+                "tab" => window.focus(self.modal_focus.export_cancel(), cx),
                 "enter" | "space" | " " => {
                     if self
                         .export
@@ -2039,25 +2039,25 @@ impl AurisApp {
         last: &gpui::FocusHandle,
         backwards: bool,
         window: &mut Window,
-        cx: &gpui::App,
+        cx: &mut gpui::App,
     ) {
         if backwards {
             if group.is_focused(window) || !group.contains_focused(window, cx) {
-                window.focus(last);
+                window.focus(last, cx);
                 return;
             }
-            window.focus_prev();
+            window.focus_prev(cx);
             if !group.contains_focused(window, cx) {
-                window.focus(last);
+                window.focus(last, cx);
             }
         } else {
             if !group.contains_focused(window, cx) {
-                window.focus(group);
+                window.focus(group, cx);
             }
-            window.focus_next();
+            window.focus_next(cx);
             if !group.contains_focused(window, cx) {
-                window.focus(group);
-                window.focus_next();
+                window.focus(group, cx);
+                window.focus_next(cx);
             }
         }
     }
@@ -2092,7 +2092,7 @@ impl AurisApp {
                 } else {
                     (current + 1) % handles.len()
                 };
-                window.focus(handles[next]);
+                window.focus(handles[next], cx);
             }
             "enter" | "space" | " " => self.activate_focused_export_dialog_control(window, cx),
             _ => {}

@@ -734,6 +734,7 @@ mod tests {
     use super::*;
 
     fn release_key(key: &str, cx: &mut gpui::VisualTestContext) {
+        cx.simulate_keystrokes(key);
         cx.simulate_event(gpui::KeyUpEvent {
             keystroke: gpui::Keystroke::parse(key).unwrap(),
         });
@@ -904,8 +905,8 @@ mod tests {
         });
 
         cx.update(|window, cx| {
-            app.update(cx, |this, _| {
-                this.focus_pane(crate::app::Pane::Arrangement, window)
+            app.update(cx, |this, cx| {
+                this.focus_pane(crate::app::Pane::Arrangement, window, cx)
             });
         });
         crate::harness::paint(&app, cx);

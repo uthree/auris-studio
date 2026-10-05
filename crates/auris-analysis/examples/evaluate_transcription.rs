@@ -19,8 +19,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let estimate_bytes = std::fs::read(estimate)?;
             let reference: support::Notes = serde_json::from_slice(&reference_bytes)?;
             let estimate: support::Notes = serde_json::from_slice(&estimate_bytes)?;
-            serde_json::json!({"schema": 1, "reference_sha256": format!("{:x}", Sha256::digest(reference_bytes)),
-                "estimate_sha256": format!("{:x}", Sha256::digest(estimate_bytes)),
+            serde_json::json!({"schema": 1, "reference_sha256": hex::encode(Sha256::digest(reference_bytes)),
+                "estimate_sha256": hex::encode(Sha256::digest(estimate_bytes)),
                 "metrics": scores(&reference.notes, &estimate.notes)?})
         }
         _ => return Err("usage: evaluate_transcription [reference.json estimate.json]".into()),
@@ -137,7 +137,7 @@ fn synthetic() -> Result<serde_json::Value, Box<dyn std::error::Error>> {
             })
             .collect();
         cases.push(
-            serde_json::json!({"id":kind, "pcm_sha256":format!("{:x}", hash.finalize()),
+            serde_json::json!({"id":kind, "pcm_sha256":hex::encode(hash.finalize()),
             "seconds":4.5, "elapsed_seconds":elapsed, "reference":reference, "estimate":estimate,
             "metrics":scores(&reference, &estimate)?}),
         );

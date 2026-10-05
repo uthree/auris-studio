@@ -9,7 +9,7 @@ use gpui::{
     Bounds, Context, FocusHandle, Render, ScrollHandle, Subscription, WeakEntity, Window,
     WindowBounds, WindowOptions, px, size,
 };
-use gpui_component::scroll::{Scrollbar, ScrollbarShow};
+use gpui_component::scroll::{Scrollbar, ScrollbarMode};
 
 /// A resizable editor for one generated clip, sharing the main window's session.
 pub(crate) struct RhythmWindow {
@@ -55,7 +55,7 @@ impl Render for RhythmWindow {
         });
         window.set_window_title(&title);
         if !self.focus.contains_focused(window, cx) {
-            window.focus(&self.focus);
+            window.focus(&self.focus, cx);
         }
         let bar = crate::titlebar::titlebar(window, &theme)
             .child(
@@ -365,9 +365,11 @@ impl AurisApp {
                                 .track_scroll(horizontal)
                                 .child(matrix),
                         )
-                        .child(div().absolute().inset_0().child(
-                            Scrollbar::horizontal(horizontal).scrollbar_show(ScrollbarShow::Always),
-                        )),
+                        .child(
+                            div().absolute().inset_0().child(
+                                Scrollbar::horizontal(horizontal).mode(ScrollbarMode::Always),
+                            ),
+                        ),
                 ),
             )
             .child(

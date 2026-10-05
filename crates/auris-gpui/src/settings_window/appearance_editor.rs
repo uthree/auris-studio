@@ -423,7 +423,7 @@ impl SettingsWindow {
             .entry("theme-name")
             .or_insert_with(|| cx.focus_handle().tab_stop(true))
             .clone();
-        window.focus(&focus);
+        window.focus(&focus, cx);
         cx.notify();
     }
 
@@ -752,7 +752,7 @@ impl SettingsWindow {
         row.focus[0] = Some(focus.clone());
         editor.active = ThemeField::Stop(editor.stops.len(), 0);
         editor.stops.push(row);
-        window.focus(&focus);
+        window.focus(&focus, cx);
         cx.notify();
     }
 
@@ -799,7 +799,7 @@ impl SettingsWindow {
                             editor.active = ThemeField::Name;
                         }
                         if let Some(focus) = this.dropdown_focus.get("theme-name") {
-                            window.focus(focus);
+                            window.focus(focus, cx);
                         }
                         cx.notify();
                     }),
@@ -887,7 +887,7 @@ impl SettingsWindow {
                     if let Some(editor) = &mut this.appearance_editor {
                         editor.active = field;
                     }
-                    window.focus(&focus);
+                    window.focus(&focus, cx);
                     cx.notify();
                 }),
             )

@@ -735,7 +735,7 @@ impl AurisApp {
                     .min_w_0()
                     .child(
                         div()
-                            .flex_shrink()
+                            .flex_shrink(1.0)
                             .min_w_0()
                             .truncate()
                             .child(messages::piano_roll_title(self.language(), &clip_name)),
@@ -772,7 +772,7 @@ impl AurisApp {
                     // it has lost nothing it needs.
                     .child(
                         div()
-                            .flex_shrink()
+                            .flex_shrink(1.0)
                             .min_w_0()
                             .truncate()
                             .child(if !editable {

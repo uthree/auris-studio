@@ -282,7 +282,7 @@ impl AurisApp {
                                     .frame
                                     .is_none_or(|frame| frame.active == 0)
                                 {
-                                    window.focus(&this.focus);
+                                    window.focus(&this.focus, cx);
                                 }
                                 cx.notify();
                             }),
@@ -795,7 +795,10 @@ mod tests {
         harness::paint(&app, cx);
         let handle = app.read_with(cx, |app, _| app.auxiliary_windows[&Surface::Plugin]);
         let mut utility = VisualTestContext::from_window(handle.into(), cx);
-        utility.update(|window, cx| window.focus(&app.read(cx).focus));
+        utility.update(|window, cx| {
+            let focus = app.read(cx).focus.clone();
+            window.focus(&focus, cx);
+        });
         assert!(utility.debug_bounds("physical-motion-canvas").is_some());
         app.read_with(&utility, |app, _| assert_eq!(app.physical_view.pitch, 36));
         harness::click("physical-play", &mut utility);
@@ -979,7 +982,10 @@ mod tests {
         app.read_with(&utility, |app, _| assert_eq!(app.physical_view.gain, 96.));
         // Mouse activation need not leave keyboard focus on the button. Walk the real
         // tab order from the window root: Close, then display gain.
-        utility.update(|window, cx| window.focus(&app.read(cx).focus));
+        utility.update(|window, cx| {
+            let focus = app.read(cx).focus.clone();
+            window.focus(&focus, cx);
+        });
         utility.simulate_keystrokes("tab");
         utility.simulate_keystrokes("tab");
         utility.simulate_keystrokes("enter");

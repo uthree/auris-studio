@@ -1,9 +1,7 @@
 //! Content-sized Markdown blocks for a transcript, with vertical list continuations.
 //!
-//! TextView 0.5 puts successive paragraphs of a list item in the same horizontal
-//! flex row, can collapse its clipped text body, and drops non-paragraph children.
-//! Own the block structure here while
-//! retaining its selectable rich text, links, tables and syntax highlighting.
+//! The transcript lays out list continuations and quoted blocks vertically while retaining
+//! TextView's selectable rich text, links, tables and syntax highlighting.
 
 use std::sync::Arc;
 
@@ -44,7 +42,7 @@ pub(super) fn render(
         }
         state.blocks.clone()
     });
-    render_blocks(&blocks, &id, theme, window, cx)
+    render_blocks(&blocks, &id, theme, window)
 }
 
 fn parse(source: &str) -> Vec<Block> {
@@ -132,13 +130,7 @@ fn fragment(node: &Node, source: &str) -> String {
         .join("\n")
 }
 
-fn render_blocks(
-    blocks: &[Block],
-    id: &str,
-    theme: &Theme,
-    window: &mut Window,
-    cx: &mut App,
-) -> AnyElement {
+fn render_blocks(blocks: &[Block], id: &str, theme: &Theme, window: &mut Window) -> AnyElement {
     let mut column = div()
         .flex()
         .flex_col()
@@ -150,27 +142,25 @@ fn render_blocks(
     for (index, block) in blocks.iter().enumerate() {
         let child_id = format!("{id}-{index}");
         let child = match block {
-            Block::Text(text) => {
-                TextView::markdown(SharedString::from(child_id), text.clone(), window, cx)
-                    .style(
-                        TextViewStyle {
-                            heading_base_font_size: window.rem_size(),
-                            ..Default::default()
+            Block::Text(text) => TextView::markdown(SharedString::from(child_id), text.clone())
+                .style(
+                    TextViewStyle {
+                        heading_base_font_size: window.rem_size(),
+                        ..Default::default()
+                    }
+                    .heading_font_size(|level, base| {
+                        base * match level {
+                            1 => 1.25,
+                            2 => 1.125,
+                            _ => 1.0,
                         }
-                        .heading_font_size(|level, base| {
-                            base * match level {
-                                1 => 1.25,
-                                2 => 1.125,
-                                _ => 1.0,
-                            }
-                        }),
-                    )
-                    .w_full()
-                    .min_w_0()
-                    .h_auto()
-                    .selectable(true)
-                    .into_any_element()
-            }
+                    }),
+                )
+                .w_full()
+                .min_w_0()
+                .h_auto()
+                .selectable(true)
+                .into_any_element(),
             Block::Quote(children) => div()
                 .w_full()
                 .min_w_0()
@@ -178,7 +168,7 @@ fn render_blocks(
                 .border_color(theme.border)
                 .pl_2()
                 .text_color(theme.text_muted)
-                .child(render_blocks(children, &child_id, theme, window, cx))
+                .child(render_blocks(children, &child_id, theme, window))
                 .into_any_element(),
             Block::List(items) => {
                 let mut list = div().flex().flex_col().w_full().min_w_0().gap_1();
@@ -203,7 +193,6 @@ fn render_blocks(
                                 &format!("{child_id}-{index}"),
                                 theme,
                                 window,
-                                cx,
                             ))),
                     );
                 }

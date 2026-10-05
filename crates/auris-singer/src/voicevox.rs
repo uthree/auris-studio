@@ -391,25 +391,24 @@ pub(crate) fn loopback_url(url: &str) -> bool {
 }
 
 /// Keep the Engine's explanation: a bare HTTP 400 hides which lyric it refused.
+fn response_error(endpoint: &str, status: u16, reader: impl Read) -> SingError {
+    let mut body = String::new();
+    let _ = reader.take(8192).read_to_string(&mut body);
+    let detail = serde_json::from_str::<Value>(&body)
+        .ok()
+        .and_then(|body| body.get("detail").cloned())
+        .map(|detail| {
+            detail
+                .as_str()
+                .map(str::to_string)
+                .unwrap_or_else(|| detail.to_string())
+        })
+        .unwrap_or_else(|| body.trim().to_string());
+    SingError::Inference(format!("VOICEVOX {endpoint}: HTTP {status}: {detail}"))
+}
+
 fn request_error(endpoint: &str, error: ureq::Error) -> SingError {
-    let reason = match error {
-        ureq::Error::Status(status, response) => {
-            let mut body = String::new();
-            let _ = response.into_reader().take(8192).read_to_string(&mut body);
-            let detail = serde_json::from_str::<Value>(&body)
-                .ok()
-                .and_then(|body| body.get("detail").cloned())
-                .map(|detail| {
-                    detail
-                        .as_str()
-                        .map(str::to_string)
-                        .unwrap_or_else(|| detail.to_string())
-                })
-                .unwrap_or_else(|| body.trim().to_string());
-            format!("HTTP {status}: {detail}")
-        }
-        error => error.to_string(),
-    };
+    let reason = error.to_string();
     SingError::Inference(format!("VOICEVOX {endpoint}: {reason}"))
 }
 
@@ -474,9 +473,16 @@ impl VoicevoxBackend {
         // request elsewhere. Explicitly loaded remote connections retain ureq's compatibility
         // behaviour, but are marked unsafe for cache reuse by automatic work.
         let agent = if automatic_access_safe {
-            ureq::AgentBuilder::new().redirects(0).build()
+            ureq::Agent::config_builder()
+                .max_redirects(0)
+                .http_status_as_error(false)
+                .build()
+                .into()
         } else {
-            ureq::Agent::new()
+            ureq::Agent::config_builder()
+                .http_status_as_error(false)
+                .build()
+                .into()
         };
         let speaker_to_id: BTreeMap<String, u32> = config
             .styles
@@ -518,14 +524,15 @@ impl VoicevoxBackend {
             .post(&url)
             .send_json(body)
             .map_err(|error| request_error(endpoint, error))?;
-        if !(200..300).contains(&response.status()) {
-            return Err(SingError::Inference(format!(
-                "VOICEVOX {endpoint}: HTTP {} redirect refused",
-                response.status()
-            )));
+        if !response.status().is_success() {
+            return Err(response_error(
+                endpoint,
+                response.status().as_u16(),
+                response.into_body().into_reader(),
+            ));
         }
         let bytes = bounded_bytes(
-            response.into_reader(),
+            response.into_body().into_reader(),
             MAX_TEXT_BYTES,
             "VOICEVOX JSON response",
         )?;
@@ -545,11 +552,12 @@ impl VoicevoxBackend {
             .post(&url)
             .send_json(query)
             .map_err(|error| request_error("/frame_synthesis", error))?;
-        if !(200..300).contains(&response.status()) {
-            return Err(SingError::Inference(format!(
-                "VOICEVOX /frame_synthesis: HTTP {} redirect refused",
-                response.status()
-            )));
+        if !response.status().is_success() {
+            return Err(response_error(
+                "/frame_synthesis",
+                response.status().as_u16(),
+                response.into_body().into_reader(),
+            ));
         }
         let limit = expected_samples
             .checked_mul(std::mem::size_of::<f32>())
@@ -560,7 +568,11 @@ impl VoicevoxBackend {
                 limit: crate::limits::MAX_OUTPUT_SAMPLES * std::mem::size_of::<f32>()
                     + WAV_HEADER_ALLOWANCE,
             })?;
-        bounded_bytes(response.into_reader(), limit, "VOICEVOX WAV response")
+        bounded_bytes(
+            response.into_body().into_reader(),
+            limit,
+            "VOICEVOX WAV response",
+        )
     }
 
     fn decode_wav(&self, bytes: Vec<u8>, expected_samples: usize) -> Result<Vec<f32>, SingError> {
@@ -1509,12 +1521,8 @@ mod tests {
     #[test]
     fn rejected_queries_report_the_engines_lyric_detail() {
         let body = serde_json::to_string(&json!({"detail": "lyricが不正です: ー"})).unwrap();
-        let response = ureq::Response::new(400, "Bad Request", &body).unwrap();
-        let error = request_error(
-            "/sing_frame_audio_query",
-            ureq::Error::Status(400, response),
-        )
-        .to_string();
+        let error =
+            response_error("/sing_frame_audio_query", 400, std::io::Cursor::new(body)).to_string();
         assert!(error.contains("HTTP 400"));
         assert!(error.contains("lyricが不正です: ー"));
     }

@@ -27,7 +27,7 @@ auris-synth.workspace = true
 auris-vocal.workspace = true
 auris-vst3.workspace = true
 base64.workspace = true
-dirs = "6"
+dirs = "7"
 hound.workspace = true
 log.workspace = true
 midir.workspace = true
@@ -36,10 +36,12 @@ serde_json.workspace = true
 schemars = "1"
 serde_yaml_ng.workspace = true
 sha2.workspace = true
+hex.workspace = true
 same-file = "1"
 tempfile.workspace = true
 thiserror.workspace = true
 ureq.workspace = true
+url.workspace = true
 
 [dev-dependencies]
 # The hosting tests need a CLAP plugin, and must not need one installed on the machine.

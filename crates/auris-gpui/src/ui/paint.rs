@@ -9,7 +9,8 @@
 use auris_session::prelude::*;
 
 use gpui::{
-    App, Bounds, ContentMask, Corners, Edges, Hsla, Pixels, Point, Window, fill, point, px, size,
+    App, Bounds, ContentMask, Corners, Edges, Hsla, Pixels, Point, TextAlign, Window, fill, point,
+    px, size,
 };
 
 use crate::theme::Theme;
@@ -201,7 +202,14 @@ pub fn label(
         .shape_line(text, font_size, &[run], None);
     let width = line.width;
     // Ignore paint failures: a missing glyph must not take down the frame.
-    let _ = line.paint(origin, font_size * LINE_HEIGHT, window, cx);
+    let _ = line.paint(
+        origin,
+        font_size * LINE_HEIGHT,
+        TextAlign::Left,
+        None,
+        window,
+        cx,
+    );
     width
 }
 
@@ -251,7 +259,14 @@ pub fn label_right(
         .shape_line(text, font_size, &[run], None);
     let width = line.width;
     let origin = point(right.x - width, right.y);
-    let _ = line.paint(origin, font_size * LINE_HEIGHT, window, cx);
+    let _ = line.paint(
+        origin,
+        font_size * LINE_HEIGHT,
+        TextAlign::Left,
+        None,
+        window,
+        cx,
+    );
     width
 }
 

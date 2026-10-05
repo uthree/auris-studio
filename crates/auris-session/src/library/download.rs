@@ -94,7 +94,7 @@ pub enum FontDownloadError {
 
 /// Downloads and verifies a font, reporting the cumulative number of font bytes received.
 ///
-/// Call from a worker thread. Both requests have finite connection, read and overall timeouts.
+/// Call from a worker thread. Both requests have finite connection, header and overall timeouts.
 /// The license notice is installed before fetching the font. The font is streamed into a
 /// temporary file in the destination directory and published only after its length and SHA-256
 /// agree with the manifest. Failures remove the temporary file. An existing font is returned
@@ -109,12 +109,14 @@ pub fn download_font(
         return Ok(target);
     }
     fs::create_dir_all(directory)?;
-    let agent = ureq::AgentBuilder::new()
-        .timeout_connect(Duration::from_secs(15))
-        .timeout_read(Duration::from_secs(30))
-        .timeout_write(Duration::from_secs(30))
-        .timeout(Duration::from_secs(600))
-        .build();
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .timeout_connect(Some(Duration::from_secs(15)))
+        .timeout_recv_response(Some(Duration::from_secs(30)))
+        .timeout_send_request(Some(Duration::from_secs(30)))
+        .timeout_send_body(Some(Duration::from_secs(30)))
+        .timeout_global(Some(Duration::from_secs(600)))
+        .build()
+        .into();
 
     let stem = Path::new(font.file)
         .file_stem()
@@ -163,7 +165,7 @@ pub fn download_font(
             actual: received,
         });
     }
-    let actual = format!("{:x}", digest.finalize());
+    let actual = hex::encode(digest.finalize());
     if actual != font.sha256 {
         return Err(FontDownloadError::Digest {
             expected: font.sha256.to_owned(),
@@ -182,13 +184,13 @@ fn response(
         .get(url)
         .call()
         .map_err(|error| FontDownloadError::Request(error.to_string()))?;
-    if !(200..300).contains(&response.status()) {
+    if !response.status().is_success() {
         return Err(FontDownloadError::Request(format!(
             "HTTP status {}",
             response.status()
         )));
     }
-    Ok(response.into_reader())
+    Ok(Box::new(response.into_body().into_reader()))
 }
 
 fn publish(mut file: NamedTempFile, target: &Path) -> Result<(), FontDownloadError> {
@@ -271,7 +273,7 @@ mod tests {
                 license_url: Box::leak(format!("{}/license", self.root).into_boxed_str()),
                 url: Box::leak(format!("{}/font", self.root).into_boxed_str()),
                 bytes: DATA.len() as u64,
-                sha256: Box::leak(format!("{:x}", Sha256::digest(DATA)).into_boxed_str()),
+                sha256: Box::leak(hex::encode(Sha256::digest(DATA)).into_boxed_str()),
             }
         }
     }

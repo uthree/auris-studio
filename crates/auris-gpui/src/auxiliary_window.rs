@@ -324,8 +324,8 @@ impl Render for AuxiliaryWindow {
             app.reconcile_focus(window, cx);
             if window.focused(cx).is_none() {
                 match surface {
-                    Surface::Panel(panel) => app.focus_pane(panel.pane(), window),
-                    _ => window.focus(&app.focus),
+                    Surface::Panel(panel) => app.focus_pane(panel.pane(), window, cx),
+                    _ => window.focus(&app.focus, cx),
                 }
             }
             let theme = app.theme.clone();
@@ -523,6 +523,7 @@ mod tests {
         utility.simulate_event(gpui::KeyDownEvent {
             keystroke: gpui::Keystroke::parse("a").unwrap(),
             is_held: false,
+            prefer_character_input: false,
         });
         app.read_with(&utility, |app, _| {
             assert_eq!(app.session.typing_keyboard().sounding().count(), 1)

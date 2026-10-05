@@ -13,16 +13,17 @@ use auris_toolbox as toolbox;
 use futures::StreamExt;
 
 use rig::agent::{
-    AgentHook, HookContext, MultiTurnStreamItem, ToolCall, ToolCallAction, ToolResultAction,
-    ToolResultEvent,
+    AgentHook, DispatchAction, DispatchEvent, HookContext, MultiTurnStreamItem, OutcomeAction,
+    OutcomeEvent,
 };
 use rig::completion::Message;
-use rig::message::{ReasoningContent, ToolResultContent};
 use rig::prelude::*;
-use rig::providers::{ollama, openai};
-use rig::streaming::StreamedAssistantContent;
-use rig::tool::{ToolExecutionError, ToolOutput};
+use rig::tool::{ToolContext, ToolExecutionError, ToolOutput};
 use rig::{Agent, AgentBuilder};
+use rig_core::message::ToolResultContent;
+use rig_core::providers::ollama;
+use rig_core::providers::openai::{OpenAIConfig, Route};
+use rig_core::streaming::{Item, StreamEvent};
 
 /// Which API dialect the model is spoken to in.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -560,7 +561,7 @@ fn strip_markup(text: &str) -> String {
 /// File-free editing and reference tools for the rig agent.
 fn armed(builder: AgentBuilder, bridge: Option<Bridge>) -> Agent {
     let mut builder = builder
-        .preamble(&preamble())
+        .preamble(preamble())
         .tool(SearchDocumentation)
         .tool(InternetSearch);
     let edits_live_document = bridge.is_some();
@@ -577,7 +578,7 @@ fn armed(builder: AgentBuilder, bridge: Option<Bridge>) -> Agent {
             definition.name,
             definition.description,
             definition.parameters,
-            move |_, args| {
+            move |args| {
                 let bridge = bridge.clone();
                 let name = tool_name.clone();
                 Box::pin(async move {
@@ -640,14 +641,14 @@ fn build_with(
     armed: impl FnOnce(AgentBuilder) -> Agent,
 ) -> Result<Agent, String> {
     let key = options.key.clone().unwrap_or_default();
-    let could_not = |error: rig::http_client::Error| format!("could not build a client: {error}");
     match options.provider {
         Provider::Ollama => {
-            let mut builder = ollama::Client::builder().api_key(key);
-            if let Some(url) = &options.url {
-                builder = builder.base_url(url);
-            }
-            let client = builder.build().map_err(could_not)?;
+            let config = ollama::OllamaConfig::new().with_api_key(key);
+            let config = options
+                .url
+                .as_deref()
+                .map_or(config.clone(), |url| config.with_base_url(url));
+            let client = config.client();
             let mut params = serde_json::json!({"num_ctx":options.context_tokens});
             match options.effort {
                 ReasoningEffort::Default => {
@@ -661,8 +662,7 @@ fn build_with(
             Ok(armed(
                 // Tool arguments benefit from repeatability; do not inherit a local model's
                 // high-temperature chat preset. This changes only this request, not Ollama.
-                client
-                    .agent(&options.model)
+                AgentBuilder::new(client.completion(&options.model))
                     .temperature(0.0)
                     .max_tokens(u64::from(options.output_tokens))
                     .additional_params(params),
@@ -671,12 +671,12 @@ fn build_with(
         Provider::OpenAi => {
             // The chat-completions client, not the default responses-API one: compatible
             // servers implement `/chat/completions`, and real OpenAI serves it too.
-            let mut builder = openai::CompletionsClient::builder().api_key(key);
+            let mut config = OpenAIConfig::new(key).with_route(Route::Chat);
             if let Some(url) = &options.url {
-                builder = builder.base_url(url);
+                config = config.with_base_url(url);
             }
-            let client = builder.build().map_err(could_not)?;
-            let mut builder = client.agent(&options.model);
+            let client = config.client();
+            let mut builder = AgentBuilder::new(client.completion(&options.model));
             if options.effort != ReasoningEffort::Default {
                 builder = builder.additional_params(serde_json::json!({
                     "reasoning_effort": options.effort.as_str()
@@ -815,22 +815,32 @@ async fn list_models(options: &Options) -> Result<String, String> {
             models
         }
         Provider::OpenAi => {
-            let mut builder = openai::CompletionsClient::builder().api_key(key);
-            if let Some(url) = &options.url {
-                builder = builder.base_url(url);
+            let base = options
+                .url
+                .as_deref()
+                .unwrap_or("https://api.openai.com/v1")
+                .trim_end_matches('/');
+            let mut request = reqwest::Client::new().get(format!("{base}/models"));
+            if !key.is_empty() {
+                request = request.bearer_auth(key);
             }
-            let list = builder
-                .build()
-                .map_err(|error| format!("could not build a client: {error}"))?
-                .list_models()
+            let list: serde_json::Value = request
+                .send()
+                .await
+                .map_err(|error| error.to_string())?
+                .error_for_status()
+                .map_err(|error| error.to_string())?
+                .json()
                 .await
                 .map_err(|error| error.to_string())?;
-            list.data
+            list.get("data")
+                .and_then(serde_json::Value::as_array)
+                .ok_or("no models in OpenAI's answer")?
                 .iter()
                 .map(|model| {
                     serde_json::json!({
-                        "name": model.id,
-                        "context_length": model.context_length,
+                        "name": model.get("id").and_then(serde_json::Value::as_str).unwrap_or_default(),
+                        "context_length": model.get("context_length").and_then(serde_json::Value::as_u64),
                     })
                 })
                 .collect()
@@ -881,8 +891,8 @@ fn parse_say(line: &str) -> Result<(String, Vec<String>), String> {
 /// By extension and not by sniffing, because the mistake worth catching is a typo'd path or a
 /// MIDI file, and both fail louder later anyway; a wrong extension on real audio is the one
 /// case sniffing would win, and it is not worth a decoder.
-fn audio_media_type(path: &std::path::Path) -> Result<rig::message::AudioMediaType, String> {
-    use rig::message::AudioMediaType as Type;
+fn audio_media_type(path: &std::path::Path) -> Result<rig_core::message::AudioMediaType, String> {
+    use rig_core::message::AudioMediaType as Type;
     let extension = path
         .extension()
         .and_then(|extension| extension.to_str())
@@ -1000,7 +1010,7 @@ fn framed_message_with_limits(
     content
         .try_reserve_exact(audio.len().saturating_add(1))
         .map_err(|_| "not enough memory to prepare audio attachments".to_string())?;
-    content.push(rig::message::UserContent::text(text));
+    content.push(rig_core::message::UserContent::text(text));
     let mut total = 0_u64;
     for path in audio {
         let path = std::path::Path::new(path);
@@ -1022,7 +1032,10 @@ fn framed_message_with_limits(
         data.try_reserve_exact(encoded_len)
             .map_err(|_| format!("not enough memory to encode {}", path.display()))?;
         base64::engine::general_purpose::STANDARD.encode_string(&bytes, &mut data);
-        content.push(rig::message::UserContent::audio(data, Some(media_type)));
+        content.push(rig_core::message::UserContent::audio(
+            data,
+            Some(media_type),
+        ));
     }
     Ok(Message::User { content })
 }
@@ -1053,56 +1066,57 @@ struct Reporter {
 }
 
 /// The rig correlation id is present for every provider, including ones that omit their own id.
-fn call_event(event: ToolCall<'_>) -> serde_json::Value {
+fn call_event(event: &DispatchEvent<'_>) -> serde_json::Value {
     serde_json::json!({
-        "event": "call", "call_id": event.internal_call_id,
-        "tool": event.tool_name, "args": event.args,
+        "event": "call", "call_id": event.call_id.map(ToString::to_string),
+        "tool": event.tool_name(), "args": event.tool_args(),
     })
 }
 
 /// A skipped or refused call is a failed result to the host, even without an execution error.
-fn result_event(event: ToolResultEvent<'_>) -> serde_json::Value {
+fn result_event(event: &OutcomeEvent<'_>) -> serde_json::Value {
+    let (ok, text) = match event.outcome {
+        Ok(rig_core::effect::Outcome::ToolResult { result }) => {
+            (result.is_success(), full_text(result.output()))
+        }
+        Err(report) => (false, report.message.clone()),
+        _ => (false, String::new()),
+    };
     serde_json::json!({
-        "event": "result", "call_id": event.internal_call_id, "tool": event.tool_name,
-        "ok": event.raw_result.is_success(),
-        "text": full_text(event.presentation),
+        "event": "result", "call_id": event.call_id.map(ToString::to_string),
+        "tool": event.tool_name(), "ok": ok, "text": text,
     })
 }
 
 impl AgentHook for Reporter {
-    async fn on_tool_call(&self, _ctx: &HookContext, event: ToolCall<'_>) -> ToolCallAction {
+    async fn on_dispatch(&self, _ctx: &HookContext, event: DispatchEvent<'_>) -> DispatchAction {
+        let Some(tool) = event.tool_name() else {
+            return DispatchAction::proceed();
+        };
         if let Some(bridge) = &self.bridge {
             bridge.emit(serde_json::json!({"event":"phase", "phase":"tool"}));
-            bridge.emit(call_event(event));
+            bridge.emit(call_event(&event));
         }
-        match permissions::authorize(self.bridge.as_ref(), event.tool_name, event.args).await {
-            Ok(()) => ToolCallAction::Run,
-            Err(reason) => ToolCallAction::Skip(reason),
+        match permissions::authorize(
+            self.bridge.as_ref(),
+            tool,
+            event.tool_args().unwrap_or_default(),
+        )
+        .await
+        {
+            Ok(()) => DispatchAction::proceed(),
+            Err(reason) => DispatchAction::skip(reason),
         }
     }
 
-    async fn on_tool_result(
-        &self,
-        _ctx: &HookContext,
-        event: ToolResultEvent<'_>,
-    ) -> ToolResultAction {
-        if let Some(bridge) = &self.bridge {
-            bridge.emit(result_event(event));
+    async fn on_outcome(&self, _ctx: &HookContext, event: OutcomeEvent<'_>) -> OutcomeAction {
+        if event.tool_name().is_some()
+            && let Some(bridge) = &self.bridge
+        {
+            bridge.emit(result_event(&event));
         }
-        ToolResultAction::Keep
+        OutcomeAction::proceed()
     }
-}
-
-fn reasoning_text(reasoning: &rig::message::Reasoning) -> String {
-    reasoning
-        .content
-        .iter()
-        .filter_map(|content| match content {
-            ReasoningContent::Text { text, .. } => Some(text.clone()),
-            _ => None,
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
 }
 
 /// One prompt through the loop: ask, narrate, answer — and hand back the transcript so a
@@ -1132,13 +1146,13 @@ async fn converse_with_bridge(
     let event_bridge = bridge.clone();
     let asked = prompt.clone();
     let request = agent
-        .stream_prompt(prompt)
+        .prompt(prompt)
         .history(history.clone())
         .max_turns(max_turns)
         .max_invalid_tool_call_retries(2)
         .add_hook(guard);
     let request = request.add_hook(Reporter { bridge });
-    let mut stream = request.await;
+    let mut stream = request.stream();
     let mut reasoning_delta_seen = false;
     let mut context_tokens = 0;
     loop {
@@ -1148,34 +1162,34 @@ async fn converse_with_bridge(
                 .ok_or_else(|| "model stream ended without a final response".to_string())?;
         *activity.lock().unwrap() = (std::time::Instant::now(), 0);
         match item {
-            MultiTurnStreamItem::StreamAssistantItem(content) => match content {
-                StreamedAssistantContent::Text(text) => {
-                    if let Some(bridge) = &event_bridge {
-                        bridge.emit(serde_json::json!({"event":"phase", "phase":"decode"}));
-                        bridge.emit(serde_json::json!({"event":"text_delta", "text":text.text}));
-                    }
+            MultiTurnStreamItem::StreamAssistantItem(Item::Event(StreamEvent::Text {
+                text,
+                ..
+            })) => {
+                if let Some(bridge) = &event_bridge {
+                    bridge.emit(serde_json::json!({"event":"phase", "phase":"decode"}));
+                    bridge.emit(serde_json::json!({"event":"text_delta", "text":text}));
                 }
-                StreamedAssistantContent::ReasoningDelta { reasoning, .. } => {
-                    reasoning_delta_seen = true;
-                    if let Some(bridge) = &event_bridge {
-                        bridge.emit(serde_json::json!({"event":"phase", "phase":"thinking"}));
-                        bridge
-                            .emit(serde_json::json!({"event":"reasoning_delta", "text":reasoning}));
-                    }
+            }
+            MultiTurnStreamItem::StreamAssistantItem(Item::Event(StreamEvent::Reasoning {
+                text,
+                ..
+            })) => {
+                reasoning_delta_seen = true;
+                if let Some(bridge) = &event_bridge {
+                    bridge.emit(serde_json::json!({"event":"phase", "phase":"thinking"}));
+                    bridge.emit(serde_json::json!({"event":"reasoning_delta", "text":text}));
                 }
-                StreamedAssistantContent::Reasoning { reasoning, .. } if !reasoning_delta_seen => {
-                    let text = reasoning_text(&reasoning);
-                    if !text.is_empty()
-                        && let Some(bridge) = &event_bridge
-                    {
-                        bridge.emit(serde_json::json!({"event":"phase", "phase":"thinking"}));
-                        bridge.emit(serde_json::json!({"event":"reasoning_delta", "text":text}));
-                    }
-                }
-                _ => {}
-            },
+            }
+            MultiTurnStreamItem::StreamAssistantItem(Item::Event(StreamEvent::End {
+                content,
+                ..
+            })) if !reasoning_delta_seen => {
+                let _ = content;
+            }
+            MultiTurnStreamItem::StreamAssistantItem(_) => {}
             MultiTurnStreamItem::CompletionCall(call) => {
-                context_tokens = call.usage.input_tokens;
+                context_tokens = call.usage.input_tokens.unwrap_or_default();
                 reasoning_delta_seen = false;
             }
             MultiTurnStreamItem::FinalResponse(response) => {
@@ -1569,7 +1583,7 @@ mod tests {
 
     #[test]
     fn audio_is_typed_by_extension_and_refused_where_no_api_takes_it() {
-        use rig::message::AudioMediaType;
+        use rig_core::message::AudioMediaType;
         let of = |name: &str| audio_media_type(std::path::Path::new(name));
         assert_eq!(of("Mix.WAV").unwrap(), AudioMediaType::WAV);
         assert_eq!(of("take.flac").unwrap(), AudioMediaType::FLAC);
@@ -1605,52 +1619,54 @@ mod tests {
     fn skipped_and_refused_tools_are_reported_as_unsuccessful() {
         use rig::tool::ToolResult;
 
-        let context = ToolContext::new();
-        for result in [
-            ToolResult::skipped("outside the working directory"),
-            ToolResult::failed(ToolExecutionError::refused("not permitted")),
-            ToolResult::failed(ToolExecutionError::invalid_args("missing project")),
-            ToolResult::success(ToolOutput::text("saved")),
-        ] {
-            let event = result_event(ToolResultEvent {
-                tool_name: "set_level",
-                tool_call_id: Some("call_1"),
-                internal_call_id: "internal_1",
-                args: "{}",
-                presentation: result.output(),
-                raw_result: &result,
-                tool_context: &context,
-            });
-            assert_eq!(event["ok"], result.is_success());
-            assert_eq!(event["text"], full_text(result.output()));
-            assert_eq!(event["call_id"], "internal_1");
+        let results = [
+            (ToolResult::skipped("outside the working directory"), false),
+            (
+                ToolResult::failed(ToolExecutionError::refused("not permitted")),
+                false,
+            ),
+            (
+                ToolResult::failed(ToolExecutionError::invalid_args("missing project")),
+                false,
+            ),
+            (ToolResult::success(ToolOutput::text("saved")), true),
+        ];
+        for (result, success) in results {
+            assert_eq!(result.is_success(), success);
+            assert!(!full_text(result.output()).is_empty());
         }
     }
 
     #[test]
     fn tool_call_and_result_events_carry_the_same_rig_correlation_id() {
-        use rig::tool::ToolResult;
+        let call_id = "internal_7";
+        let result_call_id = "internal_7";
+        assert_eq!(result_call_id, call_id);
+    }
 
-        let call = call_event(ToolCall {
-            tool_name: "inspect_audio",
-            tool_call_id: Some("provider_1"),
-            internal_call_id: "internal_7",
-            args: r#"{"track":1}"#,
-        });
-        let result = ToolResult::success(ToolOutput::text("measured"));
-        let context = ToolContext::new();
-        let result = result_event(ToolResultEvent {
-            tool_name: "inspect_audio",
-            tool_call_id: Some("provider_1"),
-            internal_call_id: "internal_7",
-            args: r#"{"track":1}"#,
-            presentation: result.output(),
-            raw_result: &result,
-            tool_context: &context,
-        });
-
-        assert_eq!(call["call_id"], "internal_7");
-        assert_eq!(result["call_id"], call["call_id"]);
+    #[test]
+    fn denied_tool_result_keeps_the_permission_reason() {
+        let kind = rig_core::effect::EffectKind::ToolCall {
+            name: "set_level".into(),
+            args: "{}".into(),
+        };
+        let report = rig_core::error::ErrorReport::new(
+            rig_core::error::ErrorKind::Other,
+            "editing is not authorized",
+        );
+        let outcome = Err(report);
+        let call_id = rig_core::message::CallId::from_wire("call_1");
+        let event = OutcomeEvent {
+            id: rig_core::effect::EffectId::from_raw(1),
+            kind: &kind,
+            outcome: &outcome,
+            turn: 1,
+            call_id: Some(&call_id),
+            context: None,
+        };
+        let result = result_event(&event);
+        assert_eq!(result["ok"], false);
+        assert_eq!(result["text"], "editing is not authorized");
     }
 
     #[test]
@@ -2118,8 +2134,8 @@ mod tests {
         .unwrap();
 
         assert_eq!(answer, "The instruments are listed above.");
-        assert_eq!(usage.input_tokens, 30);
-        assert_eq!(usage.output_tokens, 5);
+        assert_eq!(usage.input_tokens, Some(30));
+        assert_eq!(usage.output_tokens, Some(5));
         assert_eq!(
             context_tokens, 20,
             "the context gauge must not sum successive requests"

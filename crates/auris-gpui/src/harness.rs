@@ -80,7 +80,9 @@ pub(crate) fn open(cx: &mut TestAppContext) -> (Entity<AurisApp>, &mut VisualTes
     // the keyboard: without this, every binding scoped to a pane would be off the dispatch path
     // and the test would be checking a window nobody had clicked into yet.
     cx.update(|window, cx| {
-        app.update(cx, |this, _| this.focus_pane(Pane::Arrangement, window));
+        app.update(cx, |this, cx| {
+            this.focus_pane(Pane::Arrangement, window, cx)
+        });
     });
     cx.run_until_parked();
     (app, cx)

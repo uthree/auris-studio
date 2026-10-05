@@ -115,7 +115,10 @@ struct Sound {
 impl Sound {
     fn new(name: String, library: String, tags: String, source: Source) -> Self {
         Self {
-            id: format!("sound:{:x}", Sha256::digest(format!("{source:?}"))),
+            id: format!(
+                "sound:{}",
+                hex::encode(Sha256::digest(format!("{source:?}")))
+            ),
             name,
             library,
             tags,
@@ -335,7 +338,7 @@ impl AcousticWorkerPermit {
         Self::acquire_from(&ACOUSTIC_WORKERS)
     }
 
-    // `try_update` is newer than the workspace's Rust 1.90 minimum.
+    // Keep the atomic API supported by the workspace's minimum Rust version.
     #[allow(deprecated)]
     fn acquire_from(counter: &'static AtomicUsize) -> Option<Self> {
         counter
@@ -913,7 +916,7 @@ impl Session {
         for path in paths {
             hash_scope_part(&mut digest, &path);
         }
-        format!("{:x}", digest.finalize())
+        hex::encode(digest.finalize())
     }
 
     /// Snapshots loaded libraries and plugin search roots without loading or walking plugins.
@@ -1487,13 +1490,10 @@ impl SoundLibraryJob {
             }
         }
         budget.report_sound_limit(&mut errors);
-        let fingerprint = format!(
-            "{:x}",
-            Sha256::digest(format!(
-                "{}{:?}{:?}{}",
-                self.key, stamps, self.sounds, self.sample_rate
-            ))
-        );
+        let fingerprint = hex::encode(Sha256::digest(format!(
+            "{}{:?}{:?}{}",
+            self.key, stamps, self.sounds, self.sample_rate
+        )));
         sounds.sort_by(|a, b| {
             a.name
                 .to_lowercase()

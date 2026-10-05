@@ -32,7 +32,7 @@ use crate::ui::inspector::{audio_name, panel_header};
 use crate::ui::scrollbars::ScrollPanel;
 use crate::ui::text_field::TextField;
 use crate::ui::widgets::{ButtonStyle, button, divider};
-use gpui_component::scroll::{Scrollbar, ScrollbarShow};
+use gpui_component::scroll::{Scrollbar, ScrollbarMode};
 
 /// How far one level of the tree is indented.
 const INDENT: Pixels = px(11.0);
@@ -671,9 +671,10 @@ impl AurisApp {
                             .children(rows),
                     )
                     .child(
-                        div().absolute().inset_0().child(
-                            Scrollbar::vertical(&scroll).scrollbar_show(ScrollbarShow::Always),
-                        ),
+                        div()
+                            .absolute()
+                            .inset_0()
+                            .child(Scrollbar::vertical(&scroll).mode(ScrollbarMode::Always)),
                     ),
             )
             .into_any_element()

@@ -6,7 +6,7 @@ members = ["crates/*"]
 # workspace on purpose: `--workspace` runs this project's tests, lints and doc build, and holding
 # a third party's code to house rules it was never written against would fail the build over
 # nothing. Its own tests are run from its own directory.
-exclude = ["vendor/midir", "vendor/rustysynth", "vendor/vst3-host"]
+exclude = ["vendor/rustysynth", "vendor/vst3-host"]
 default-members = ["crates/auris-gpui"]
 resolver = "3"
 
@@ -15,7 +15,7 @@ version = "0.8.0"
 edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/uthree/auris-studio"
-rust-version = "1.90"
+rust-version = "1.95"
 
 [workspace.dependencies]
 auris-agent = { path = "crates/auris-agent", version = "0.8.0" }
@@ -39,14 +39,14 @@ auris-toolbox = { path = "crates/auris-toolbox", version = "0.8.0" }
 
 # A hosted plugin's state is an opaque byte stream, and the project file is JSON. Already in the
 # lock file by way of other dependencies, so naming it here adds nothing to the build.
-base64 = "0.22"
+base64 = "0.23"
 # Hosting third-party plugins. CLAP's Rust bindings are MIT OR Apache-2.0. Since SDK 3.8, the
 # Steinberg VST 3 SDK and its Rust host wrapper are MIT too, so both are compatible with this
 # Apache-2.0 workspace. `clack-host` and `clack-plugin` are two halves of one project and must be
 # resolved together — the tests link a plugin into the host binary.
-clack-extensions = "0.1.1"
-clack-host = "0.1.1"
-clack-plugin = "0.1.1"
+clack-extensions = "0.2"
+clack-host = "0.2"
+clack-plugin = "0.2"
 bytemuck = { version = "1.16", features = ["derive"] }
 cpal = "0.18"
 crossbeam-channel = "0.5"
@@ -54,25 +54,27 @@ crossbeam-queue = "0.3"
 futures = "0.3"
 flac-codec = "1.3"
 hound = "3.5"
-ureq = { version = "2.12", features = ["json"] }
+hex = "0.4"
+ureq = { version = "3.4", features = ["json"] }
+url = "2.5"
 unicode-normalization = "0.1"
 log = "0.4"
 env_logger = "0.11"
 # Standard MIDI Files, read and written. `parallel` is off: it pulls in rayon to decode tracks
 # on a thread pool, and a MIDI file is kilobytes — the pool costs more to start than the parse.
 midly = { version = "0.5", default-features = false, features = ["std", "alloc"] }
-# Forked temporarily: gpui 0.2.2 pins core-foundation 0.10.0, while midir 0.11's
-# CoreMIDI dependency requires core-foundation 0.10.1 or newer. See vendor/midir/README-AURIS.md.
-midir = { path = "vendor/midir" }
+midir = "0.11"
 # Array views make the remaining direct WSOLA correlations explicit. The same version already
 # arrives through `ort`, so this declaration makes it usable without adding another copy.
-ndarray = "0.16.1"
+ndarray = "0.17.2"
 # A plugin that will only draw inside a window of the host's needs the host to have made one, and
 # neither platform's window API is reachable from anything portable. Both versions are the ones
 # gpui already resolved, so hosting a plugin adds no second copy of either.
 objc2 = "0.6"
 objc2-app-kit = "0.3"
 objc2-foundation = "0.3"
+# Keep every inference backend on the same ONNX Runtime release candidate.
+ort = "=2.0.0-rc.13"
 pollster = "1.0"
 # The platform's own window handle and nothing else. A hosted plugin's floating window has to be
 # told which window to stay above, and this is the one vocabulary gpui and CLAP already share — so
@@ -81,9 +83,9 @@ raw-window-handle = "0.6"
 # Planned real and complex FFTs for the spectrum and WSOLA search. Both versions are already in
 # the graph through `rubato`; naming them lets `auris-dsp` use their SIMD implementations directly.
 realfft = "3.5"
-rubato = "4.0"
+rubato = "5.0"
 rustfft = "6.4"
-rusty_mp3 = "0.6.1"
+rusty_mp3 = "1.0"
 # Reads SoundFont files *and* plays them. Named once here because two crates share the type:
 # `auris-io` hands out an `Arc<SoundFont>` and `auris-sampler` renders it, and two resolved
 # copies of the library would be two unrelated types with the same name.
@@ -94,7 +96,7 @@ rustysynth = { path = "vendor/rustysynth" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_yaml_ng = "0.10"
-sha2 = "0.10"
+sha2 = "0.11"
 symphonia = { version = "0.6", features = ["all"] }
 tempfile = "3"
 thiserror = "2.0"
@@ -107,12 +109,8 @@ vst3-host = { path = "vendor/vst3-host", default-features = false }
 # tooling, so naming it here adds nothing to the build.
 toml = "1"
 
-# Every backend except Direct3D 12, which does not compile at these versions: `gpu-allocator`
-# asks for `windows = ">=0.53, <=0.62"`, gpui pins `windows ^0.61`, so the range resolves to
-# 0.61 while `wgpu-hal` itself uses 0.62 — two incompatible copies of `ID3D12Device`. Windows
-# runs on Vulkan until that is fixed upstream, and `auris-gpu` is optional analysis that already
-# steps aside when no backend is present, so nothing breaks if a machine has neither.
-windows = "0.61"
+# Share the Win32 bindings used by GPUI's platform layer and the plugin hosts.
+windows = "0.62"
 
 wgpu = { version = "30.0", default-features = false, features = [
     "std",

@@ -460,12 +460,14 @@ fn read_voice_config_after_metadata(
 
 /// Reads a bounded HTTP body even when Content-Length is absent, false, or bypassed by chunking.
 fn read_voicevox_response(
-    response: ureq::Response,
+    response: ureq::http::Response<ureq::Body>,
     endpoint: &str,
     limit: usize,
 ) -> Result<Vec<u8>, VoiceSetupError> {
     let length = response
-        .header("Content-Length")
+        .headers()
+        .get("Content-Length")
+        .and_then(|length| length.to_str().ok())
         .and_then(|length| length.parse::<usize>().ok());
     if length.is_some_and(|length| length > limit) {
         return Err(VoiceSetupError::Connection(format!(
@@ -474,7 +476,7 @@ fn read_voicevox_response(
         )));
     }
     read_voicevox_body_with_capacity(
-        response.into_reader(),
+        response.into_body().into_reader(),
         endpoint,
         limit,
         length.unwrap_or_default(),
@@ -835,9 +837,10 @@ pub fn check_voicevox_connection(setup: &VoicevoxSetup) -> Result<String, VoiceS
 pub fn fetch_voicevox_catalog(url: &str) -> Result<VoicevoxCatalog, VoiceSetupError> {
     let root = url.trim().trim_end_matches('/');
     validate_voicevox_url(root)?;
-    let agent = ureq::AgentBuilder::new()
-        .timeout(Duration::from_secs(3))
-        .build();
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .timeout_global(Some(Duration::from_secs(3)))
+        .build()
+        .into();
     let version_response = agent
         .get(&format!("{root}/version"))
         .call()
@@ -1051,12 +1054,11 @@ fn validate_voicevox_url(url: &str) -> Result<(), VoiceSetupError> {
                 .into(),
         ));
     }
-    let parsed = ureq::get(url).request_url().map_err(|_| {
+    let parsed = url::Url::parse(url).map_err(|_| {
         VoiceSetupError::Invalid(
             "VOICEVOX URL must be a complete http:// or https:// Engine base URL".into(),
         )
     })?;
-    let parsed = parsed.as_url();
     if !matches!(parsed.scheme(), "http" | "https")
         || parsed.host_str().is_none()
         || !parsed.username().is_empty()

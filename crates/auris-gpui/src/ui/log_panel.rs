@@ -138,7 +138,7 @@ fn log_row(index: usize, entry: &Entry, theme: &Theme) -> AnyElement {
                 .id(("log-target", index))
                 .w(px(180.0))
                 .min_w(px(56.0))
-                .flex_shrink()
+                .flex_shrink(1.0)
                 .truncate()
                 .text_color(theme.text_faint)
                 .debug_selector(move || format!("log-target-{index}"))

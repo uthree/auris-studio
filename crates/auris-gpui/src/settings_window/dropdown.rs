@@ -133,7 +133,7 @@ impl SettingsWindow {
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, _: &MouseDownEvent, window, cx| {
-                    window.focus(&focus);
+                    window.focus(&focus, cx);
                     this.dropdown_menu = Some(DropdownMenu {
                         id,
                         options: options.clone(),
@@ -159,7 +159,7 @@ impl SettingsWindow {
                         "enter" | "space" | "up" | "down"
                     )
                 {
-                    window.focus(&key_focus);
+                    window.focus(&key_focus, cx);
                     this.dropdown_menu = Some(DropdownMenu {
                         id,
                         options: key_options.clone(),

@@ -317,7 +317,7 @@ impl ModalScrollFocus {
         if dy != px(0.0) {
             self.scroll.set_offset(point(
                 offset.x,
-                (offset.y + dy).clamp(-self.scroll.max_offset().height, px(0.0)),
+                (offset.y + dy).clamp(-self.scroll.max_offset().y, px(0.0)),
             ));
         }
     }
@@ -2287,9 +2287,9 @@ impl AurisApp {
     }
 
     /// Puts the keyboard in `pane`, which is what clicking one does.
-    pub(crate) fn focus_pane(&mut self, pane: Pane, window: &mut Window) {
+    pub(crate) fn focus_pane(&mut self, pane: Pane, window: &mut Window, cx: &mut App) {
         let Some(pane) = self.local_pane(pane, window) else {
-            window.focus(&self.focus);
+            window.focus(&self.focus, cx);
             return;
         };
         self.last_pane = pane;
@@ -2311,11 +2311,11 @@ impl AurisApp {
         if self.agent_chat.typing()
             && let Some(focus) = self.agent_chat.input_focus()
         {
-            window.focus(focus);
+            window.focus(focus, cx);
         } else if self.taking_text_input() {
-            window.focus(&self.focus);
+            window.focus(&self.focus, cx);
         } else {
-            window.focus(self.panes.handle(pane));
+            window.focus(self.panes.handle(pane), cx);
         }
     }
 
@@ -2329,12 +2329,12 @@ impl AurisApp {
     ///
     /// Reconciled here rather than at each of the dozen places a sheet opens, most of which have
     /// no window to hand — and this way it is right again after any path that misses.
-    pub(crate) fn reconcile_focus(&mut self, window: &mut Window, cx: &App) {
+    pub(crate) fn reconcile_focus(&mut self, window: &mut Window, cx: &mut App) {
         // A busy modal owns the root even when there was no editable sheet underneath it.
         // Keeping focus here also removes pane action handlers from native menu dispatch.
         if self.compose_progress.is_some() {
             if !self.focus.is_focused(window) {
-                window.focus(&self.focus);
+                window.focus(&self.focus, cx);
             }
             return;
         }
@@ -2342,13 +2342,13 @@ impl AurisApp {
             // The progress/result sheet has exactly one action. Move focus off the export
             // dialog's former Confirm button so Cancel/Close is reachable immediately.
             if !self.modal_focus.export_cancel().is_focused(window) {
-                window.focus(self.modal_focus.export_cancel());
+                window.focus(self.modal_focus.export_cancel(), cx);
             }
             return;
         }
         if self.export_dialog.is_some() {
             if !self.modal_focus.export_contains_focused(window) {
-                window.focus(self.modal_focus.export_confirm());
+                window.focus(self.modal_focus.export_confirm(), cx);
             }
             return;
         }
@@ -2358,7 +2358,7 @@ impl AurisApp {
             .is_some_and(|prompt| prompt.field().is_none())
         {
             if !self.modal_focus.prompt_contains_focused(window) {
-                window.focus(self.modal_focus.prompt_confirm());
+                window.focus(self.modal_focus.prompt_confirm(), cx);
             }
             return;
         }
@@ -2369,7 +2369,7 @@ impl AurisApp {
             && self.song_library.is_none()
         {
             if !self.modal_focus.song_sheet_contains_focused(window, cx) {
-                window.focus(self.modal_focus.song_sheet());
+                window.focus(self.modal_focus.song_sheet(), cx);
             }
             return;
         }
@@ -2402,7 +2402,7 @@ impl AurisApp {
                 self.last_pane = Pane::Arrangement;
             }
             if input_had_focus {
-                window.focus(self.panes.handle(Pane::Arrangement));
+                window.focus(self.panes.handle(Pane::Arrangement), cx);
             }
         }
         // [`Self::taking_text_input`] rather than a list written out again here. The library's
@@ -2413,17 +2413,17 @@ impl AurisApp {
             && let Some(focus) = self.agent_chat.input_focus()
         {
             if !focus.is_focused(window) {
-                window.focus(focus);
+                window.focus(focus, cx);
             }
         } else if self.taking_text_input() {
             if !self.focus.is_focused(window) {
-                window.focus(&self.focus);
+                window.focus(&self.focus, cx);
             }
         } else if self.focus.is_focused(window) || self.modal_focus.contains_focused(window, cx) {
             // Back where it came from, so the panel bindings work again the moment the sheet is
             // gone rather than after the next click.
             if let Some(pane) = self.local_pane(self.last_pane, window) {
-                window.focus(self.panes.handle(pane));
+                window.focus(self.panes.handle(pane), cx);
             }
         }
     }
@@ -3659,8 +3659,8 @@ mod panel_input_tests {
         });
         paint(&app, cx);
         cx.update(|window, cx| {
-            app.update(cx, |this, _| {
-                this.focus_pane(Pane::Arrangement, window);
+            app.update(cx, |this, cx| {
+                this.focus_pane(Pane::Arrangement, window, cx);
                 assert!(this.prompt.is_some());
                 assert!(this.focus.is_focused(window));
             });
