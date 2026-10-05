@@ -1,0 +1,1825 @@
+{
+  "metric": {
+    "rate": 24000,
+    "windows": [
+      512,
+      2048
+    ],
+    "hop": 240,
+    "bands": 64,
+    "fmin": 30,
+    "fmax": 10000,
+    "mel_scale": "HTK, area normalized",
+    "normalization": "whole-note RMS 0.1, no frame normalization or time warp",
+    "compression": 10000.0,
+    "loss": "0.5 attack L1 + 0.5 sustain L1, mean of resolutions",
+    "attack_frames": 15
+  },
+  "versions": {
+    "python": "3.14.6 (main, Jul 18 2026, 17:08:46) [MSC v.1944 64 bit (AMD64)]",
+    "numpy": "2.5.3",
+    "scipy": "1.18.1",
+    "soundfile": "0.14.0"
+  },
+  "before_sha256": "8822a3a5d0ae79766a55ee98554598b2ac765db5f96b420e851a4812e32dd862",
+  "after_sha256": "a3334acae6ce3f9f9a847db75b857acae224bcdc779b435ba3bb41254e6291a6",
+  "reference_sha256": "f48ee22b0dcd74888b94e10bdcdba71832cfecf126d9dd0ac34c83d2f56e7bdb",
+  "before_defaults": {
+    "body": 0.6499999761581421,
+    "damping": 0.00010800000018207356,
+    "decay": 11.295999526977539,
+    "hardness": 0.7013310194015503,
+    "level": -12.0,
+    "position": 0.22864100337028503,
+    "release": 0.20000000298023224,
+    "stiffness": 0.0007692810031585395
+  },
+  "after_defaults": {
+    "body": 0.6499999761581421,
+    "damping": 0.00901500042527914,
+    "decay": 11.498040199279785,
+    "hardness": 0.606003999710083,
+    "level": -12.0,
+    "position": 0.23206299543380737,
+    "release": 0.20000000298023224,
+    "stiffness": 0.0007493710145354271
+  },
+  "measurements": [
+    {
+      "rate": 24000,
+      "seconds": 1,
+      "split": "train",
+      "notes": [
+        {
+          "model": "piano",
+          "pitch": 48,
+          "velocity": 0.65,
+          "split": "train",
+          "tuning_cents": 1.0226674553570594,
+          "path": "notes/piano-48-65.wav",
+          "source": "Piano.mf.C3.aiff",
+          "offset_seconds": 0.305,
+          "stable_end_seconds": 41.19,
+          "sha256": "9e5031587cef77f390ddf8f013e9c0f849db8fb6df0e08f2cbe1e4f7af019007"
+        },
+        {
+          "model": "piano",
+          "pitch": 55,
+          "velocity": 0.65,
+          "split": "train",
+          "tuning_cents": 5.07481488973953,
+          "path": "notes/piano-55-65.wav",
+          "source": "Piano.mf.G3.aiff",
+          "offset_seconds": 0.535,
+          "stable_end_seconds": 34.22,
+          "sha256": "45ae6699464665afb19e11e82784298d08ce29289e8f8647c4cfe49cc9b6b897"
+        },
+        {
+          "model": "piano",
+          "pitch": 64,
+          "velocity": 0.65,
+          "split": "train",
+          "tuning_cents": 5.043396878078364,
+          "path": "notes/piano-64-65.wav",
+          "source": "Piano.mf.E4.aiff",
+          "offset_seconds": 0.15,
+          "stable_end_seconds": 29.01,
+          "sha256": "9686c2c5d99a9bcf4536e8706e3217dc3ca0dad5458bf30560b168196d32c067"
+        },
+        {
+          "model": "piano",
+          "pitch": 48,
+          "velocity": 0.95,
+          "split": "train",
+          "tuning_cents": 2.0442783039111725,
+          "path": "notes/piano-48-95.wav",
+          "source": "Piano.ff.C3.aiff",
+          "offset_seconds": 0.57,
+          "stable_end_seconds": 44.79,
+          "sha256": "25376dfdb9af3dc731424108e801e1b06042ef339f4cf7e280d8504f2909bf57"
+        },
+        {
+          "model": "piano",
+          "pitch": 55,
+          "velocity": 0.95,
+          "split": "train",
+          "tuning_cents": 6.0110870151857565,
+          "path": "notes/piano-55-95.wav",
+          "source": "Piano.ff.G3.aiff",
+          "offset_seconds": 0.49,
+          "stable_end_seconds": 37.48,
+          "sha256": "bed9daba4bc8532da860d867f86f4ea71b5740d3a07d2518bf7b633846954764"
+        },
+        {
+          "model": "piano",
+          "pitch": 64,
+          "velocity": 0.95,
+          "split": "train",
+          "tuning_cents": 5.537749818178127,
+          "path": "notes/piano-64-95.wav",
+          "source": "Piano.ff.E4.aiff",
+          "offset_seconds": 0.69,
+          "stable_end_seconds": 47.099999999999994,
+          "sha256": "c55c524c891e25813d3c5d5b0501937cc24dca0885e3b6621b5c4f7b5567bb7f"
+        }
+      ],
+      "before": {
+        "mean": 0.16120369957933134,
+        "median": 0.1550534605110518,
+        "per_note": [
+          0.24412554009269796,
+          0.09924868793373441,
+          0.18994968494260478,
+          0.15262822534511866,
+          0.12379136348484732,
+          0.15747869567698494
+        ]
+      },
+      "after": {
+        "mean": 0.15896888614765395,
+        "median": 0.15675372780100566,
+        "per_note": [
+          0.23044072839819285,
+          0.1045638627173548,
+          0.18097654001866278,
+          0.15374035594679886,
+          0.124324730149702,
+          0.15976709965521246
+        ]
+      },
+      "relative_reduction": 0.013863288730402878,
+      "improved_notes": 2,
+      "median_rms_ratio": 1.0010766974171044
+    },
+    {
+      "rate": 24000,
+      "seconds": 1,
+      "split": "validation",
+      "notes": [
+        {
+          "model": "piano",
+          "pitch": 48,
+          "velocity": 0.35,
+          "split": "validation",
+          "tuning_cents": 1.1066100562643633,
+          "path": "notes/piano-48-35.wav",
+          "source": "Piano.pp.C3.aiff",
+          "offset_seconds": 0.06,
+          "stable_end_seconds": 38.519999999999996,
+          "sha256": "0aa5a6c9051828785eafcac9b15d986ccfd9237a0c95bb0558ab1667edc5a445"
+        },
+        {
+          "model": "piano",
+          "pitch": 52,
+          "velocity": 0.35,
+          "split": "validation",
+          "tuning_cents": 4.049655522842548,
+          "path": "notes/piano-52-35.wav",
+          "source": "Piano.pp.E3.aiff",
+          "offset_seconds": 0.03,
+          "stable_end_seconds": 36.68,
+          "sha256": "a7d370bc9149a33fab44ab378f2652f44ef629e8ffde823f3d3a461907ebc92c"
+        },
+        {
+          "model": "piano",
+          "pitch": 55,
+          "velocity": 0.35,
+          "split": "validation",
+          "tuning_cents": 4.530090273771923,
+          "path": "notes/piano-55-35.wav",
+          "source": "Piano.pp.G3.aiff",
+          "offset_seconds": 0.04,
+          "stable_end_seconds": 35.86,
+          "sha256": "74a332a355f8898b1af4e61459c974ecd9208153a97b5445b4724f8eecbc9606"
+        },
+        {
+          "model": "piano",
+          "pitch": 60,
+          "velocity": 0.35,
+          "split": "validation",
+          "tuning_cents": 3.091349900240925,
+          "path": "notes/piano-60-35.wav",
+          "source": "Piano.pp.C4.aiff",
+          "offset_seconds": 0.05,
+          "stable_end_seconds": 29.46,
+          "sha256": "247508bd80dafdcd1af571205ef48607a1c5f78413f8a3c235dfe66772ded270"
+        },
+        {
+          "model": "piano",
+          "pitch": 64,
+          "velocity": 0.35,
+          "split": "validation",
+          "tuning_cents": 6.025253196686304,
+          "path": "notes/piano-64-35.wav",
+          "source": "Piano.pp.E4.aiff",
+          "offset_seconds": 0.01,
+          "stable_end_seconds": 29.43,
+          "sha256": "2f3c3108fb7e1d846262820882b58d392e01e086ed1c78ea4e8fabb730078fc1"
+        },
+        {
+          "model": "piano",
+          "pitch": 67,
+          "velocity": 0.35,
+          "split": "validation",
+          "tuning_cents": 4.448461737595524,
+          "path": "notes/piano-67-35.wav",
+          "source": "Piano.pp.G4.aiff",
+          "offset_seconds": 0.05,
+          "stable_end_seconds": 25.55,
+          "sha256": "e8558f1436420bf4c9ab550ae6fd0f0c825d3d64341b14bce24ae216e08bfa3b"
+        },
+        {
+          "model": "piano",
+          "pitch": 52,
+          "velocity": 0.65,
+          "split": "validation",
+          "tuning_cents": 4.026383485323525,
+          "path": "notes/piano-52-65.wav",
+          "source": "Piano.mf.E3.aiff",
+          "offset_seconds": 0.16,
+          "stable_end_seconds": 33.62,
+          "sha256": "dfbb6085c1916c2f95ad9945e34e8dd9dfff2e280e787b074640066801095849"
+        },
+        {
+          "model": "piano",
+          "pitch": 60,
+          "velocity": 0.65,
+          "split": "validation",
+          "tuning_cents": 2.5122381495066666,
+          "path": "notes/piano-60-65.wav",
+          "source": "Piano.mf.C4.aiff",
+          "offset_seconds": 0.335,
+          "stable_end_seconds": 30.75,
+          "sha256": "c311b4797a2ecf14e3d44484edf39423623b77c1367bfbb907edda6cf209bd5d"
+        },
+        {
+          "model": "piano",
+          "pitch": 67,
+          "velocity": 0.65,
+          "split": "validation",
+          "tuning_cents": 4.359481433307541,
+          "path": "notes/piano-67-65.wav",
+          "source": "Piano.mf.G4.aiff",
+          "offset_seconds": 0.355,
+          "stable_end_seconds": 31.11,
+          "sha256": "ed00bc1f612dce2ed2e5fbf9f4fe23acdf12f9b6ce2d45b63e148e03426bf874"
+        },
+        {
+          "model": "piano",
+          "pitch": 52,
+          "velocity": 0.95,
+          "split": "validation",
+          "tuning_cents": 4.853181469448008,
+          "path": "notes/piano-52-95.wav",
+          "source": "Piano.ff.E3.aiff",
+          "offset_seconds": 0.755,
+          "stable_end_seconds": 47.16,
+          "sha256": "4cbee7e3a6b3be71106305d9688b08dd60f25daba837848080da2b91852fa0b1"
+        },
+        {
+          "model": "piano",
+          "pitch": 60,
+          "velocity": 0.95,
+          "split": "validation",
+          "tuning_cents": 3.3591895548743684,
+          "path": "notes/piano-60-95.wav",
+          "source": "Piano.ff.C4.aiff",
+          "offset_seconds": 0.54,
+          "stable_end_seconds": 35.76,
+          "sha256": "2209f99c67ba4b693a6834b8102911a05a3e257074b27a3560f70c545713232f"
+        },
+        {
+          "model": "piano",
+          "pitch": 67,
+          "velocity": 0.95,
+          "split": "validation",
+          "tuning_cents": 4.521178345408054,
+          "path": "notes/piano-67-95.wav",
+          "source": "Piano.ff.G4.aiff",
+          "offset_seconds": 0.685,
+          "stable_end_seconds": 37.46,
+          "sha256": "537eb20e43d571c8ca2c95f7d5a1b04523b25bf571913f45578e2011b357d8e4"
+        }
+      ],
+      "before": {
+        "mean": 0.16951310696233338,
+        "median": 0.17685238546602378,
+        "per_note": [
+          0.23358391624590003,
+          0.22589713149096552,
+          0.27449995238620806,
+          0.19894742216714756,
+          0.21811248122692256,
+          0.19281419346227976,
+          0.1517520185263419,
+          0.09732656571349482,
+          0.08918335369126552,
+          0.16089057746976781,
+          0.09830127382717918,
+          0.09284839734052767
+        ]
+      },
+      "after": {
+        "mean": 0.16150689630461526,
+        "median": 0.1704356697780642,
+        "per_note": [
+          0.22408145462597437,
+          0.2166976253700313,
+          0.26238626049706576,
+          0.1915823856612135,
+          0.21098627692904745,
+          0.1856864141192508,
+          0.1510563697759185,
+          0.08387635845377327,
+          0.08181492673045389,
+          0.15518492543687762,
+          0.09244832530676843,
+          0.08228143274900819
+        ]
+      },
+      "relative_reduction": 0.0472306289536486,
+      "improved_notes": 12,
+      "median_rms_ratio": 0.9966318177278245
+    },
+    {
+      "rate": 24000,
+      "seconds": 3,
+      "split": "train",
+      "notes": [
+        {
+          "model": "piano",
+          "pitch": 48,
+          "velocity": 0.65,
+          "split": "train",
+          "tuning_cents": 1.0226674553570594,
+          "path": "notes/piano-48-65.wav",
+          "source": "Piano.mf.C3.aiff",
+          "offset_seconds": 0.305,
+          "stable_end_seconds": 41.19,
+          "sha256": "9e5031587cef77f390ddf8f013e9c0f849db8fb6df0e08f2cbe1e4f7af019007"
+        },
+        {
+          "model": "piano",
+          "pitch": 55,
+          "velocity": 0.65,
+          "split": "train",
+          "tuning_cents": 5.07481488973953,
+          "path": "notes/piano-55-65.wav",
+          "source": "Piano.mf.G3.aiff",
+          "offset_seconds": 0.535,
+          "stable_end_seconds": 34.22,
+          "sha256": "45ae6699464665afb19e11e82784298d08ce29289e8f8647c4cfe49cc9b6b897"
+        },
+        {
+          "model": "piano",
+          "pitch": 64,
+          "velocity": 0.65,
+          "split": "train",
+          "tuning_cents": 5.043396878078364,
+          "path": "notes/piano-64-65.wav",
+          "source": "Piano.mf.E4.aiff",
+          "offset_seconds": 0.15,
+          "stable_end_seconds": 29.01,
+          "sha256": "9686c2c5d99a9bcf4536e8706e3217dc3ca0dad5458bf30560b168196d32c067"
+        },
+        {
+          "model": "piano",
+          "pitch": 48,
+          "velocity": 0.95,
+          "split": "train",
+          "tuning_cents": 2.0442783039111725,
+          "path": "notes/piano-48-95.wav",
+          "source": "Piano.ff.C3.aiff",
+          "offset_seconds": 0.57,
+          "stable_end_seconds": 44.79,
+          "sha256": "25376dfdb9af3dc731424108e801e1b06042ef339f4cf7e280d8504f2909bf57"
+        },
+        {
+          "model": "piano",
+          "pitch": 55,
+          "velocity": 0.95,
+          "split": "train",
+          "tuning_cents": 6.0110870151857565,
+          "path": "notes/piano-55-95.wav",
+          "source": "Piano.ff.G3.aiff",
+          "offset_seconds": 0.49,
+          "stable_end_seconds": 37.48,
+          "sha256": "bed9daba4bc8532da860d867f86f4ea71b5740d3a07d2518bf7b633846954764"
+        },
+        {
+          "model": "piano",
+          "pitch": 64,
+          "velocity": 0.95,
+          "split": "train",
+          "tuning_cents": 5.537749818178127,
+          "path": "notes/piano-64-95.wav",
+          "source": "Piano.ff.E4.aiff",
+          "offset_seconds": 0.69,
+          "stable_end_seconds": 47.099999999999994,
+          "sha256": "c55c524c891e25813d3c5d5b0501937cc24dca0885e3b6621b5c4f7b5567bb7f"
+        }
+      ],
+      "before": {
+        "mean": 0.21202384777362326,
+        "median": 0.19566014467141873,
+        "per_note": [
+          0.332539951136969,
+          0.13520718642573443,
+          0.2491843886552523,
+          0.19574337142010018,
+          0.1638912710809463,
+          0.19557691792273726
+        ]
+      },
+      "after": {
+        "mean": 0.20568404722316627,
+        "median": 0.19632720925040537,
+        "per_note": [
+          0.30571377948060136,
+          0.1388401069994084,
+          0.2353013593529209,
+          0.1928236107956639,
+          0.16159461900525612,
+          0.19983080770514686
+        ]
+      },
+      "relative_reduction": 0.029901355989095935,
+      "improved_notes": 4,
+      "median_rms_ratio": 1.00008279704001
+    },
+    {
+      "rate": 24000,
+      "seconds": 3,
+      "split": "validation",
+      "notes": [
+        {
+          "model": "piano",
+          "pitch": 48,
+          "velocity": 0.35,
+          "split": "validation",
+          "tuning_cents": 1.1066100562643633,
+          "path": "notes/piano-48-35.wav",
+          "source": "Piano.pp.C3.aiff",
+          "offset_seconds": 0.06,
+          "stable_end_seconds": 38.519999999999996,
+          "sha256": "0aa5a6c9051828785eafcac9b15d986ccfd9237a0c95bb0558ab1667edc5a445"
+        },
+        {
+          "model": "piano",
+          "pitch": 52,
+          "velocity": 0.35,
+          "split": "validation",
+          "tuning_cents": 4.049655522842548,
+          "path": "notes/piano-52-35.wav",
+          "source": "Piano.pp.E3.aiff",
+          "offset_seconds": 0.03,
+          "stable_end_seconds": 36.68,
+          "sha256": "a7d370bc9149a33fab44ab378f2652f44ef629e8ffde823f3d3a461907ebc92c"
+        },
+        {
+          "model": "piano",
+          "pitch": 55,
+          "velocity": 0.35,
+          "split": "validation",
+          "tuning_cents": 4.530090273771923,
+          "path": "notes/piano-55-35.wav",
+          "source": "Piano.pp.G3.aiff",
+          "offset_seconds": 0.04,
+          "stable_end_seconds": 35.86,
+          "sha256": "74a332a355f8898b1af4e61459c974ecd9208153a97b5445b4724f8eecbc9606"
+        },
+        {
+          "model": "piano",
+          "pitch": 60,
+          "velocity": 0.35,
+          "split": "validation",
+          "tuning_cents": 3.091349900240925,
+          "path": "notes/piano-60-35.wav",
+          "source": "Piano.pp.C4.aiff",
+          "offset_seconds": 0.05,
+          "stable_end_seconds": 29.46,
+          "sha256": "247508bd80dafdcd1af571205ef48607a1c5f78413f8a3c235dfe66772ded270"
+        },
+        {
+          "model": "piano",
+          "pitch": 64,
+          "velocity": 0.35,
+          "split": "validation",
+          "tuning_cents": 6.025253196686304,
+          "path": "notes/piano-64-35.wav",
+          "source": "Piano.pp.E4.aiff",
+          "offset_seconds": 0.01,
+          "stable_end_seconds": 29.43,
+          "sha256": "2f3c3108fb7e1d846262820882b58d392e01e086ed1c78ea4e8fabb730078fc1"
+        },
+        {
+          "model": "piano",
+          "pitch": 67,
+          "velocity": 0.35,
+          "split": "validation",
+          "tuning_cents": 4.448461737595524,
+          "path": "notes/piano-67-35.wav",
+          "source": "Piano.pp.G4.aiff",
+          "offset_seconds": 0.05,
+          "stable_end_seconds": 25.55,
+          "sha256": "e8558f1436420bf4c9ab550ae6fd0f0c825d3d64341b14bce24ae216e08bfa3b"
+        },
+        {
+          "model": "piano",
+          "pitch": 52,
+          "velocity": 0.65,
+          "split": "validation",
+          "tuning_cents": 4.026383485323525,
+          "path": "notes/piano-52-65.wav",
+          "source": "Piano.mf.E3.aiff",
+          "offset_seconds": 0.16,
+          "stable_end_seconds": 33.62,
+          "sha256": "dfbb6085c1916c2f95ad9945e34e8dd9dfff2e280e787b074640066801095849"
+        },
+        {
+          "model": "piano",
+          "pitch": 60,
+          "velocity": 0.65,
+          "split": "validation",
+          "tuning_cents": 2.5122381495066666,
+          "path": "notes/piano-60-65.wav",
+          "source": "Piano.mf.C4.aiff",
+          "offset_seconds": 0.335,
+          "stable_end_seconds": 30.75,
+          "sha256": "c311b4797a2ecf14e3d44484edf39423623b77c1367bfbb907edda6cf209bd5d"
+        },
+        {
+          "model": "piano",
+          "pitch": 67,
+          "velocity": 0.65,
+          "split": "validation",
+          "tuning_cents": 4.359481433307541,
+          "path": "notes/piano-67-65.wav",
+          "source": "Piano.mf.G4.aiff",
+          "offset_seconds": 0.355,
+          "stable_end_seconds": 31.11,
+          "sha256": "ed00bc1f612dce2ed2e5fbf9f4fe23acdf12f9b6ce2d45b63e148e03426bf874"
+        },
+        {
+          "model": "piano",
+          "pitch": 52,
+          "velocity": 0.95,
+          "split": "validation",
+          "tuning_cents": 4.853181469448008,
+          "path": "notes/piano-52-95.wav",
+          "source": "Piano.ff.E3.aiff",
+          "offset_seconds": 0.755,
+          "stable_end_seconds": 47.16,
+          "sha256": "4cbee7e3a6b3be71106305d9688b08dd60f25daba837848080da2b91852fa0b1"
+        },
+        {
+          "model": "piano",
+          "pitch": 60,
+          "velocity": 0.95,
+          "split": "validation",
+          "tuning_cents": 3.3591895548743684,
+          "path": "notes/piano-60-95.wav",
+          "source": "Piano.ff.C4.aiff",
+          "offset_seconds": 0.54,
+          "stable_end_seconds": 35.76,
+          "sha256": "2209f99c67ba4b693a6834b8102911a05a3e257074b27a3560f70c545713232f"
+        },
+        {
+          "model": "piano",
+          "pitch": 67,
+          "velocity": 0.95,
+          "split": "validation",
+          "tuning_cents": 4.521178345408054,
+          "path": "notes/piano-67-95.wav",
+          "source": "Piano.ff.G4.aiff",
+          "offset_seconds": 0.685,
+          "stable_end_seconds": 37.46,
+          "sha256": "537eb20e43d571c8ca2c95f7d5a1b04523b25bf571913f45578e2011b357d8e4"
+        }
+      ],
+      "before": {
+        "mean": 0.21542851062797333,
+        "median": 0.22740228530125894,
+        "per_note": [
+          0.299045427313704,
+          0.2884798816750802,
+          0.3414957063982939,
+          0.25680467381219774,
+          0.2546872066598691,
+          0.25830644065136965,
+          0.18157989954192988,
+          0.12014269479429901,
+          0.12508324753395253,
+          0.20011736394264876,
+          0.12841454663568858,
+          0.13098503857664723
+        ]
+      },
+      "after": {
+        "mean": 0.20361749681466781,
+        "median": 0.21953578821446942,
+        "per_note": [
+          0.2799549175720473,
+          0.2698713143754474,
+          0.31937385116584655,
+          0.2463811578436137,
+          0.2452832437917729,
+          0.250190397576327,
+          0.18003700996831543,
+          0.10167636227011398,
+          0.1170007271529629,
+          0.19378833263716594,
+          0.12196706889487746,
+          0.11788557852752343
+        ]
+      },
+      "relative_reduction": 0.054825676410594215,
+      "improved_notes": 12,
+      "median_rms_ratio": 0.9956051055474162
+    },
+    {
+      "rate": 24000,
+      "seconds": 6,
+      "split": "train",
+      "notes": [
+        {
+          "model": "piano",
+          "pitch": 48,
+          "velocity": 0.65,
+          "split": "train",
+          "tuning_cents": 1.0226674553570594,
+          "path": "notes/piano-48-65.wav",
+          "source": "Piano.mf.C3.aiff",
+          "offset_seconds": 0.305,
+          "stable_end_seconds": 41.19,
+          "sha256": "9e5031587cef77f390ddf8f013e9c0f849db8fb6df0e08f2cbe1e4f7af019007"
+        },
+        {
+          "model": "piano",
+          "pitch": 55,
+          "velocity": 0.65,
+          "split": "train",
+          "tuning_cents": 5.07481488973953,
+          "path": "notes/piano-55-65.wav",
+          "source": "Piano.mf.G3.aiff",
+          "offset_seconds": 0.535,
+          "stable_end_seconds": 34.22,
+          "sha256": "45ae6699464665afb19e11e82784298d08ce29289e8f8647c4cfe49cc9b6b897"
+        },
+        {
+          "model": "piano",
+          "pitch": 64,
+          "velocity": 0.65,
+          "split": "train",
+          "tuning_cents": 5.043396878078364,
+          "path": "notes/piano-64-65.wav",
+          "source": "Piano.mf.E4.aiff",
+          "offset_seconds": 0.15,
+          "stable_end_seconds": 29.01,
+          "sha256": "9686c2c5d99a9bcf4536e8706e3217dc3ca0dad5458bf30560b168196d32c067"
+        },
+        {
+          "model": "piano",
+          "pitch": 48,
+          "velocity": 0.95,
+          "split": "train",
+          "tuning_cents": 2.0442783039111725,
+          "path": "notes/piano-48-95.wav",
+          "source": "Piano.ff.C3.aiff",
+          "offset_seconds": 0.57,
+          "stable_end_seconds": 44.79,
+          "sha256": "25376dfdb9af3dc731424108e801e1b06042ef339f4cf7e280d8504f2909bf57"
+        },
+        {
+          "model": "piano",
+          "pitch": 55,
+          "velocity": 0.95,
+          "split": "train",
+          "tuning_cents": 6.0110870151857565,
+          "path": "notes/piano-55-95.wav",
+          "source": "Piano.ff.G3.aiff",
+          "offset_seconds": 0.49,
+          "stable_end_seconds": 37.48,
+          "sha256": "bed9daba4bc8532da860d867f86f4ea71b5740d3a07d2518bf7b633846954764"
+        },
+        {
+          "model": "piano",
+          "pitch": 64,
+          "velocity": 0.95,
+          "split": "train",
+          "tuning_cents": 5.537749818178127,
+          "path": "notes/piano-64-95.wav",
+          "source": "Piano.ff.E4.aiff",
+          "offset_seconds": 0.69,
+          "stable_end_seconds": 47.099999999999994,
+          "sha256": "c55c524c891e25813d3c5d5b0501937cc24dca0885e3b6621b5c4f7b5567bb7f"
+        }
+      ],
+      "before": {
+        "mean": 0.2540008989975251,
+        "median": 0.22949633649069706,
+        "per_note": [
+          0.4177687250796823,
+          0.1544939705370994,
+          0.30112601558403457,
+          0.23166563104707927,
+          0.1916240098029401,
+          0.22732704193431486
+        ]
+      },
+      "after": {
+        "mean": 0.24448386623828966,
+        "median": 0.2295549473632702,
+        "per_note": [
+          0.37966944405040354,
+          0.1567546662998412,
+          0.2832447700200128,
+          0.22496414434716255,
+          0.1881244223329402,
+          0.23414575037937785
+        ]
+      },
+      "relative_reduction": 0.037468500295851914,
+      "improved_notes": 4,
+      "median_rms_ratio": 1.0000312249875312
+    },
+    {
+      "rate": 24000,
+      "seconds": 6,
+      "split": "validation",
+      "notes": [
+        {
+          "model": "piano",
+          "pitch": 48,
+          "velocity": 0.35,
+          "split": "validation",
+          "tuning_cents": 1.1066100562643633,
+          "path": "notes/piano-48-35.wav",
+          "source": "Piano.pp.C3.aiff",
+          "offset_seconds": 0.06,
+          "stable_end_seconds": 38.519999999999996,
+          "sha256": "0aa5a6c9051828785eafcac9b15d986ccfd9237a0c95bb0558ab1667edc5a445"
+        },
+        {
+          "model": "piano",
+          "pitch": 52,
+          "velocity": 0.35,
+          "split": "validation",
+          "tuning_cents": 4.049655522842548,
+          "path": "notes/piano-52-35.wav",
+          "source": "Piano.pp.E3.aiff",
+          "offset_seconds": 0.03,
+          "stable_end_seconds": 36.68,
+          "sha256": "a7d370bc9149a33fab44ab378f2652f44ef629e8ffde823f3d3a461907ebc92c"
+        },
+        {
+          "model": "piano",
+          "pitch": 55,
+          "velocity": 0.35,
+          "split": "validation",
+          "tuning_cents": 4.530090273771923,
+          "path": "notes/piano-55-35.wav",
+          "source": "Piano.pp.G3.aiff",
+          "offset_seconds": 0.04,
+          "stable_end_seconds": 35.86,
+          "sha256": "74a332a355f8898b1af4e61459c974ecd9208153a97b5445b4724f8eecbc9606"
+        },
+        {
+          "model": "piano",
+          "pitch": 60,
+          "velocity": 0.35,
+          "split": "validation",
+          "tuning_cents": 3.091349900240925,
+          "path": "notes/piano-60-35.wav",
+          "source": "Piano.pp.C4.aiff",
+          "offset_seconds": 0.05,
+          "stable_end_seconds": 29.46,
+          "sha256": "247508bd80dafdcd1af571205ef48607a1c5f78413f8a3c235dfe66772ded270"
+        },
+        {
+          "model": "piano",
+          "pitch": 64,
+          "velocity": 0.35,
+          "split": "validation",
+          "tuning_cents": 6.025253196686304,
+          "path": "notes/piano-64-35.wav",
+          "source": "Piano.pp.E4.aiff",
+          "offset_seconds": 0.01,
+          "stable_end_seconds": 29.43,
+          "sha256": "2f3c3108fb7e1d846262820882b58d392e01e086ed1c78ea4e8fabb730078fc1"
+        },
+        {
+          "model": "piano",
+          "pitch": 67,
+          "velocity": 0.35,
+          "split": "validation",
+          "tuning_cents": 4.448461737595524,
+          "path": "notes/piano-67-35.wav",
+          "source": "Piano.pp.G4.aiff",
+          "offset_seconds": 0.05,
+          "stable_end_seconds": 25.55,
+          "sha256": "e8558f1436420bf4c9ab550ae6fd0f0c825d3d64341b14bce24ae216e08bfa3b"
+        },
+        {
+          "model": "piano",
+          "pitch": 52,
+          "velocity": 0.65,
+          "split": "validation",
+          "tuning_cents": 4.026383485323525,
+          "path": "notes/piano-52-65.wav",
+          "source": "Piano.mf.E3.aiff",
+          "offset_seconds": 0.16,
+          "stable_end_seconds": 33.62,
+          "sha256": "dfbb6085c1916c2f95ad9945e34e8dd9dfff2e280e787b074640066801095849"
+        },
+        {
+          "model": "piano",
+          "pitch": 60,
+          "velocity": 0.65,
+          "split": "validation",
+          "tuning_cents": 2.5122381495066666,
+          "path": "notes/piano-60-65.wav",
+          "source": "Piano.mf.C4.aiff",
+          "offset_seconds": 0.335,
+          "stable_end_seconds": 30.75,
+          "sha256": "c311b4797a2ecf14e3d44484edf39423623b77c1367bfbb907edda6cf209bd5d"
+        },
+        {
+          "model": "piano",
+          "pitch": 67,
+          "velocity": 0.65,
+          "split": "validation",
+          "tuning_cents": 4.359481433307541,
+          "path": "notes/piano-67-65.wav",
+          "source": "Piano.mf.G4.aiff",
+          "offset_seconds": 0.355,
+          "stable_end_seconds": 31.11,
+          "sha256": "ed00bc1f612dce2ed2e5fbf9f4fe23acdf12f9b6ce2d45b63e148e03426bf874"
+        },
+        {
+          "model": "piano",
+          "pitch": 52,
+          "velocity": 0.95,
+          "split": "validation",
+          "tuning_cents": 4.853181469448008,
+          "path": "notes/piano-52-95.wav",
+          "source": "Piano.ff.E3.aiff",
+          "offset_seconds": 0.755,
+          "stable_end_seconds": 47.16,
+          "sha256": "4cbee7e3a6b3be71106305d9688b08dd60f25daba837848080da2b91852fa0b1"
+        },
+        {
+          "model": "piano",
+          "pitch": 60,
+          "velocity": 0.95,
+          "split": "validation",
+          "tuning_cents": 3.3591895548743684,
+          "path": "notes/piano-60-95.wav",
+          "source": "Piano.ff.C4.aiff",
+          "offset_seconds": 0.54,
+          "stable_end_seconds": 35.76,
+          "sha256": "2209f99c67ba4b693a6834b8102911a05a3e257074b27a3560f70c545713232f"
+        },
+        {
+          "model": "piano",
+          "pitch": 67,
+          "velocity": 0.95,
+          "split": "validation",
+          "tuning_cents": 4.521178345408054,
+          "path": "notes/piano-67-95.wav",
+          "source": "Piano.ff.G4.aiff",
+          "offset_seconds": 0.685,
+          "stable_end_seconds": 37.46,
+          "sha256": "537eb20e43d571c8ca2c95f7d5a1b04523b25bf571913f45578e2011b357d8e4"
+        }
+      ],
+      "before": {
+        "mean": 0.25620605691499837,
+        "median": 0.2628172836388007,
+        "per_note": [
+          0.36375192750840474,
+          0.3537921257709704,
+          0.4020434271408149,
+          0.30901928410331636,
+          0.29569647299423457,
+          0.3144897559829567,
+          0.20629477828861023,
+          0.1395760802636019,
+          0.14953890374635936,
+          0.22993809428336684,
+          0.15232807226911904,
+          0.1580037606282257
+        ]
+      },
+      "after": {
+        "mean": 0.24151777819138112,
+        "median": 0.2540812269464219,
+        "per_note": [
+          0.3351800118266043,
+          0.32703872896821884,
+          0.3709764487961229,
+          0.2959201864162161,
+          0.2841350251064155,
+          0.30578427638243316,
+          0.2042176119476799,
+          0.11839336287309295,
+          0.1417627368373819,
+          0.22402742878642828,
+          0.14702220397049165,
+          0.14375531638548805
+        ]
+      },
+      "relative_reduction": 0.05732994332952246,
+      "improved_notes": 12,
+      "median_rms_ratio": 0.9954844389124893
+    },
+    {
+      "rate": 48000,
+      "seconds": 1,
+      "split": "train",
+      "notes": [
+        {
+          "model": "piano",
+          "pitch": 48,
+          "velocity": 0.65,
+          "split": "train",
+          "tuning_cents": 1.0226674553570594,
+          "path": "notes/piano-48-65.wav",
+          "source": "Piano.mf.C3.aiff",
+          "offset_seconds": 0.305,
+          "stable_end_seconds": 41.19,
+          "sha256": "9e5031587cef77f390ddf8f013e9c0f849db8fb6df0e08f2cbe1e4f7af019007"
+        },
+        {
+          "model": "piano",
+          "pitch": 55,
+          "velocity": 0.65,
+          "split": "train",
+          "tuning_cents": 5.07481488973953,
+          "path": "notes/piano-55-65.wav",
+          "source": "Piano.mf.G3.aiff",
+          "offset_seconds": 0.535,
+          "stable_end_seconds": 34.22,
+          "sha256": "45ae6699464665afb19e11e82784298d08ce29289e8f8647c4cfe49cc9b6b897"
+        },
+        {
+          "model": "piano",
+          "pitch": 64,
+          "velocity": 0.65,
+          "split": "train",
+          "tuning_cents": 5.043396878078364,
+          "path": "notes/piano-64-65.wav",
+          "source": "Piano.mf.E4.aiff",
+          "offset_seconds": 0.15,
+          "stable_end_seconds": 29.01,
+          "sha256": "9686c2c5d99a9bcf4536e8706e3217dc3ca0dad5458bf30560b168196d32c067"
+        },
+        {
+          "model": "piano",
+          "pitch": 48,
+          "velocity": 0.95,
+          "split": "train",
+          "tuning_cents": 2.0442783039111725,
+          "path": "notes/piano-48-95.wav",
+          "source": "Piano.ff.C3.aiff",
+          "offset_seconds": 0.57,
+          "stable_end_seconds": 44.79,
+          "sha256": "25376dfdb9af3dc731424108e801e1b06042ef339f4cf7e280d8504f2909bf57"
+        },
+        {
+          "model": "piano",
+          "pitch": 55,
+          "velocity": 0.95,
+          "split": "train",
+          "tuning_cents": 6.0110870151857565,
+          "path": "notes/piano-55-95.wav",
+          "source": "Piano.ff.G3.aiff",
+          "offset_seconds": 0.49,
+          "stable_end_seconds": 37.48,
+          "sha256": "bed9daba4bc8532da860d867f86f4ea71b5740d3a07d2518bf7b633846954764"
+        },
+        {
+          "model": "piano",
+          "pitch": 64,
+          "velocity": 0.95,
+          "split": "train",
+          "tuning_cents": 5.537749818178127,
+          "path": "notes/piano-64-95.wav",
+          "source": "Piano.ff.E4.aiff",
+          "offset_seconds": 0.69,
+          "stable_end_seconds": 47.099999999999994,
+          "sha256": "c55c524c891e25813d3c5d5b0501937cc24dca0885e3b6621b5c4f7b5567bb7f"
+        }
+      ],
+      "before": {
+        "mean": 0.161503867498358,
+        "median": 0.15578465904454347,
+        "per_note": [
+          0.24422414910100965,
+          0.0990121484019073,
+          0.1899985934007863,
+          0.15369344449806374,
+          0.12421899599735767,
+          0.15787587359102323
+        ]
+      },
+      "after": {
+        "mean": 0.15864798231902297,
+        "median": 0.15566001460679088,
+        "per_note": [
+          0.230401390820926,
+          0.10432874014523313,
+          0.18237579090699074,
+          0.15295806801157735,
+          0.12346194282740619,
+          0.1583619612020044
+        ]
+      },
+      "relative_reduction": 0.017683076099487605,
+      "improved_notes": 4,
+      "median_rms_ratio": 0.9991080196096029
+    },
+    {
+      "rate": 48000,
+      "seconds": 1,
+      "split": "validation",
+      "notes": [
+        {
+          "model": "piano",
+          "pitch": 48,
+          "velocity": 0.35,
+          "split": "validation",
+          "tuning_cents": 1.1066100562643633,
+          "path": "notes/piano-48-35.wav",
+          "source": "Piano.pp.C3.aiff",
+          "offset_seconds": 0.06,
+          "stable_end_seconds": 38.519999999999996,
+          "sha256": "0aa5a6c9051828785eafcac9b15d986ccfd9237a0c95bb0558ab1667edc5a445"
+        },
+        {
+          "model": "piano",
+          "pitch": 52,
+          "velocity": 0.35,
+          "split": "validation",
+          "tuning_cents": 4.049655522842548,
+          "path": "notes/piano-52-35.wav",
+          "source": "Piano.pp.E3.aiff",
+          "offset_seconds": 0.03,
+          "stable_end_seconds": 36.68,
+          "sha256": "a7d370bc9149a33fab44ab378f2652f44ef629e8ffde823f3d3a461907ebc92c"
+        },
+        {
+          "model": "piano",
+          "pitch": 55,
+          "velocity": 0.35,
+          "split": "validation",
+          "tuning_cents": 4.530090273771923,
+          "path": "notes/piano-55-35.wav",
+          "source": "Piano.pp.G3.aiff",
+          "offset_seconds": 0.04,
+          "stable_end_seconds": 35.86,
+          "sha256": "74a332a355f8898b1af4e61459c974ecd9208153a97b5445b4724f8eecbc9606"
+        },
+        {
+          "model": "piano",
+          "pitch": 60,
+          "velocity": 0.35,
+          "split": "validation",
+          "tuning_cents": 3.091349900240925,
+          "path": "notes/piano-60-35.wav",
+          "source": "Piano.pp.C4.aiff",
+          "offset_seconds": 0.05,
+          "stable_end_seconds": 29.46,
+          "sha256": "247508bd80dafdcd1af571205ef48607a1c5f78413f8a3c235dfe66772ded270"
+        },
+        {
+          "model": "piano",
+          "pitch": 64,
+          "velocity": 0.35,
+          "split": "validation",
+          "tuning_cents": 6.025253196686304,
+          "path": "notes/piano-64-35.wav",
+          "source": "Piano.pp.E4.aiff",
+          "offset_seconds": 0.01,
+          "stable_end_seconds": 29.43,
+          "sha256": "2f3c3108fb7e1d846262820882b58d392e01e086ed1c78ea4e8fabb730078fc1"
+        },
+        {
+          "model": "piano",
+          "pitch": 67,
+          "velocity": 0.35,
+          "split": "validation",
+          "tuning_cents": 4.448461737595524,
+          "path": "notes/piano-67-35.wav",
+          "source": "Piano.pp.G4.aiff",
+          "offset_seconds": 0.05,
+          "stable_end_seconds": 25.55,
+          "sha256": "e8558f1436420bf4c9ab550ae6fd0f0c825d3d64341b14bce24ae216e08bfa3b"
+        },
+        {
+          "model": "piano",
+          "pitch": 52,
+          "velocity": 0.65,
+          "split": "validation",
+          "tuning_cents": 4.026383485323525,
+          "path": "notes/piano-52-65.wav",
+          "source": "Piano.mf.E3.aiff",
+          "offset_seconds": 0.16,
+          "stable_end_seconds": 33.62,
+          "sha256": "dfbb6085c1916c2f95ad9945e34e8dd9dfff2e280e787b074640066801095849"
+        },
+        {
+          "model": "piano",
+          "pitch": 60,
+          "velocity": 0.65,
+          "split": "validation",
+          "tuning_cents": 2.5122381495066666,
+          "path": "notes/piano-60-65.wav",
+          "source": "Piano.mf.C4.aiff",
+          "offset_seconds": 0.335,
+          "stable_end_seconds": 30.75,
+          "sha256": "c311b4797a2ecf14e3d44484edf39423623b77c1367bfbb907edda6cf209bd5d"
+        },
+        {
+          "model": "piano",
+          "pitch": 67,
+          "velocity": 0.65,
+          "split": "validation",
+          "tuning_cents": 4.359481433307541,
+          "path": "notes/piano-67-65.wav",
+          "source": "Piano.mf.G4.aiff",
+          "offset_seconds": 0.355,
+          "stable_end_seconds": 31.11,
+          "sha256": "ed00bc1f612dce2ed2e5fbf9f4fe23acdf12f9b6ce2d45b63e148e03426bf874"
+        },
+        {
+          "model": "piano",
+          "pitch": 52,
+          "velocity": 0.95,
+          "split": "validation",
+          "tuning_cents": 4.853181469448008,
+          "path": "notes/piano-52-95.wav",
+          "source": "Piano.ff.E3.aiff",
+          "offset_seconds": 0.755,
+          "stable_end_seconds": 47.16,
+          "sha256": "4cbee7e3a6b3be71106305d9688b08dd60f25daba837848080da2b91852fa0b1"
+        },
+        {
+          "model": "piano",
+          "pitch": 60,
+          "velocity": 0.95,
+          "split": "validation",
+          "tuning_cents": 3.3591895548743684,
+          "path": "notes/piano-60-95.wav",
+          "source": "Piano.ff.C4.aiff",
+          "offset_seconds": 0.54,
+          "stable_end_seconds": 35.76,
+          "sha256": "2209f99c67ba4b693a6834b8102911a05a3e257074b27a3560f70c545713232f"
+        },
+        {
+          "model": "piano",
+          "pitch": 67,
+          "velocity": 0.95,
+          "split": "validation",
+          "tuning_cents": 4.521178345408054,
+          "path": "notes/piano-67-95.wav",
+          "source": "Piano.ff.G4.aiff",
+          "offset_seconds": 0.685,
+          "stable_end_seconds": 37.46,
+          "sha256": "537eb20e43d571c8ca2c95f7d5a1b04523b25bf571913f45578e2011b357d8e4"
+        }
+      ],
+      "before": {
+        "mean": 0.17154123063857588,
+        "median": 0.17953609281554128,
+        "per_note": [
+          0.23552194555598802,
+          0.2279426528481825,
+          0.2770720136450937,
+          0.2010334877461032,
+          0.21929090159982176,
+          0.19448804675143563,
+          0.15198009442385027,
+          0.09762875109303071,
+          0.09134202353323423,
+          0.16458413887964693,
+          0.10122353021696043,
+          0.09638718136956322
+        ]
+      },
+      "after": {
+        "mean": 0.16272340207036745,
+        "median": 0.1723179883835867,
+        "per_note": [
+          0.22525107708163356,
+          0.21805544807426008,
+          0.2641746370225793,
+          0.19156803909210898,
+          0.21219718770555068,
+          0.18757579076762226,
+          0.1511828613889867,
+          0.08418291177200016,
+          0.08318848192502906,
+          0.1570601859995511,
+          0.09406245596845211,
+          0.08418174804663545
+        ]
+      },
+      "relative_reduction": 0.0514035519937881,
+      "improved_notes": 12,
+      "median_rms_ratio": 0.996025376112488
+    },
+    {
+      "rate": 48000,
+      "seconds": 3,
+      "split": "train",
+      "notes": [
+        {
+          "model": "piano",
+          "pitch": 48,
+          "velocity": 0.65,
+          "split": "train",
+          "tuning_cents": 1.0226674553570594,
+          "path": "notes/piano-48-65.wav",
+          "source": "Piano.mf.C3.aiff",
+          "offset_seconds": 0.305,
+          "stable_end_seconds": 41.19,
+          "sha256": "9e5031587cef77f390ddf8f013e9c0f849db8fb6df0e08f2cbe1e4f7af019007"
+        },
+        {
+          "model": "piano",
+          "pitch": 55,
+          "velocity": 0.65,
+          "split": "train",
+          "tuning_cents": 5.07481488973953,
+          "path": "notes/piano-55-65.wav",
+          "source": "Piano.mf.G3.aiff",
+          "offset_seconds": 0.535,
+          "stable_end_seconds": 34.22,
+          "sha256": "45ae6699464665afb19e11e82784298d08ce29289e8f8647c4cfe49cc9b6b897"
+        },
+        {
+          "model": "piano",
+          "pitch": 64,
+          "velocity": 0.65,
+          "split": "train",
+          "tuning_cents": 5.043396878078364,
+          "path": "notes/piano-64-65.wav",
+          "source": "Piano.mf.E4.aiff",
+          "offset_seconds": 0.15,
+          "stable_end_seconds": 29.01,
+          "sha256": "9686c2c5d99a9bcf4536e8706e3217dc3ca0dad5458bf30560b168196d32c067"
+        },
+        {
+          "model": "piano",
+          "pitch": 48,
+          "velocity": 0.95,
+          "split": "train",
+          "tuning_cents": 2.0442783039111725,
+          "path": "notes/piano-48-95.wav",
+          "source": "Piano.ff.C3.aiff",
+          "offset_seconds": 0.57,
+          "stable_end_seconds": 44.79,
+          "sha256": "25376dfdb9af3dc731424108e801e1b06042ef339f4cf7e280d8504f2909bf57"
+        },
+        {
+          "model": "piano",
+          "pitch": 55,
+          "velocity": 0.95,
+          "split": "train",
+          "tuning_cents": 6.0110870151857565,
+          "path": "notes/piano-55-95.wav",
+          "source": "Piano.ff.G3.aiff",
+          "offset_seconds": 0.49,
+          "stable_end_seconds": 37.48,
+          "sha256": "bed9daba4bc8532da860d867f86f4ea71b5740d3a07d2518bf7b633846954764"
+        },
+        {
+          "model": "piano",
+          "pitch": 64,
+          "velocity": 0.95,
+          "split": "train",
+          "tuning_cents": 5.537749818178127,
+          "path": "notes/piano-64-95.wav",
+          "source": "Piano.ff.E4.aiff",
+          "offset_seconds": 0.69,
+          "stable_end_seconds": 47.099999999999994,
+          "sha256": "c55c524c891e25813d3c5d5b0501937cc24dca0885e3b6621b5c4f7b5567bb7f"
+        }
+      ],
+      "before": {
+        "mean": 0.2127391683955848,
+        "median": 0.19720159944146948,
+        "per_note": [
+          0.3326575619026817,
+          0.13489748061557216,
+          0.24901467059828378,
+          0.19845146424500584,
+          0.1654620983740321,
+          0.19595173463793314
+        ]
+      },
+      "after": {
+        "mean": 0.20551458898499866,
+        "median": 0.194816895755959,
+        "per_note": [
+          0.3056770058138749,
+          0.13859439858310627,
+          0.23776369757808347,
+          0.19231889079711192,
+          0.1614186404230094,
+          0.19731490071480606
+        ]
+      },
+      "relative_reduction": 0.03395979905849844,
+      "improved_notes": 4,
+      "median_rms_ratio": 0.9987478717578276
+    },
+    {
+      "rate": 48000,
+      "seconds": 3,
+      "split": "validation",
+      "notes": [
+        {
+          "model": "piano",
+          "pitch": 48,
+          "velocity": 0.35,
+          "split": "validation",
+          "tuning_cents": 1.1066100562643633,
+          "path": "notes/piano-48-35.wav",
+          "source": "Piano.pp.C3.aiff",
+          "offset_seconds": 0.06,
+          "stable_end_seconds": 38.519999999999996,
+          "sha256": "0aa5a6c9051828785eafcac9b15d986ccfd9237a0c95bb0558ab1667edc5a445"
+        },
+        {
+          "model": "piano",
+          "pitch": 52,
+          "velocity": 0.35,
+          "split": "validation",
+          "tuning_cents": 4.049655522842548,
+          "path": "notes/piano-52-35.wav",
+          "source": "Piano.pp.E3.aiff",
+          "offset_seconds": 0.03,
+          "stable_end_seconds": 36.68,
+          "sha256": "a7d370bc9149a33fab44ab378f2652f44ef629e8ffde823f3d3a461907ebc92c"
+        },
+        {
+          "model": "piano",
+          "pitch": 55,
+          "velocity": 0.35,
+          "split": "validation",
+          "tuning_cents": 4.530090273771923,
+          "path": "notes/piano-55-35.wav",
+          "source": "Piano.pp.G3.aiff",
+          "offset_seconds": 0.04,
+          "stable_end_seconds": 35.86,
+          "sha256": "74a332a355f8898b1af4e61459c974ecd9208153a97b5445b4724f8eecbc9606"
+        },
+        {
+          "model": "piano",
+          "pitch": 60,
+          "velocity": 0.35,
+          "split": "validation",
+          "tuning_cents": 3.091349900240925,
+          "path": "notes/piano-60-35.wav",
+          "source": "Piano.pp.C4.aiff",
+          "offset_seconds": 0.05,
+          "stable_end_seconds": 29.46,
+          "sha256": "247508bd80dafdcd1af571205ef48607a1c5f78413f8a3c235dfe66772ded270"
+        },
+        {
+          "model": "piano",
+          "pitch": 64,
+          "velocity": 0.35,
+          "split": "validation",
+          "tuning_cents": 6.025253196686304,
+          "path": "notes/piano-64-35.wav",
+          "source": "Piano.pp.E4.aiff",
+          "offset_seconds": 0.01,
+          "stable_end_seconds": 29.43,
+          "sha256": "2f3c3108fb7e1d846262820882b58d392e01e086ed1c78ea4e8fabb730078fc1"
+        },
+        {
+          "model": "piano",
+          "pitch": 67,
+          "velocity": 0.35,
+          "split": "validation",
+          "tuning_cents": 4.448461737595524,
+          "path": "notes/piano-67-35.wav",
+          "source": "Piano.pp.G4.aiff",
+          "offset_seconds": 0.05,
+          "stable_end_seconds": 25.55,
+          "sha256": "e8558f1436420bf4c9ab550ae6fd0f0c825d3d64341b14bce24ae216e08bfa3b"
+        },
+        {
+          "model": "piano",
+          "pitch": 52,
+          "velocity": 0.65,
+          "split": "validation",
+          "tuning_cents": 4.026383485323525,
+          "path": "notes/piano-52-65.wav",
+          "source": "Piano.mf.E3.aiff",
+          "offset_seconds": 0.16,
+          "stable_end_seconds": 33.62,
+          "sha256": "dfbb6085c1916c2f95ad9945e34e8dd9dfff2e280e787b074640066801095849"
+        },
+        {
+          "model": "piano",
+          "pitch": 60,
+          "velocity": 0.65,
+          "split": "validation",
+          "tuning_cents": 2.5122381495066666,
+          "path": "notes/piano-60-65.wav",
+          "source": "Piano.mf.C4.aiff",
+          "offset_seconds": 0.335,
+          "stable_end_seconds": 30.75,
+          "sha256": "c311b4797a2ecf14e3d44484edf39423623b77c1367bfbb907edda6cf209bd5d"
+        },
+        {
+          "model": "piano",
+          "pitch": 67,
+          "velocity": 0.65,
+          "split": "validation",
+          "tuning_cents": 4.359481433307541,
+          "path": "notes/piano-67-65.wav",
+          "source": "Piano.mf.G4.aiff",
+          "offset_seconds": 0.355,
+          "stable_end_seconds": 31.11,
+          "sha256": "ed00bc1f612dce2ed2e5fbf9f4fe23acdf12f9b6ce2d45b63e148e03426bf874"
+        },
+        {
+          "model": "piano",
+          "pitch": 52,
+          "velocity": 0.95,
+          "split": "validation",
+          "tuning_cents": 4.853181469448008,
+          "path": "notes/piano-52-95.wav",
+          "source": "Piano.ff.E3.aiff",
+          "offset_seconds": 0.755,
+          "stable_end_seconds": 47.16,
+          "sha256": "4cbee7e3a6b3be71106305d9688b08dd60f25daba837848080da2b91852fa0b1"
+        },
+        {
+          "model": "piano",
+          "pitch": 60,
+          "velocity": 0.95,
+          "split": "validation",
+          "tuning_cents": 3.3591895548743684,
+          "path": "notes/piano-60-95.wav",
+          "source": "Piano.ff.C4.aiff",
+          "offset_seconds": 0.54,
+          "stable_end_seconds": 35.76,
+          "sha256": "2209f99c67ba4b693a6834b8102911a05a3e257074b27a3560f70c545713232f"
+        },
+        {
+          "model": "piano",
+          "pitch": 67,
+          "velocity": 0.95,
+          "split": "validation",
+          "tuning_cents": 4.521178345408054,
+          "path": "notes/piano-67-95.wav",
+          "source": "Piano.ff.G4.aiff",
+          "offset_seconds": 0.685,
+          "stable_end_seconds": 37.46,
+          "sha256": "537eb20e43d571c8ca2c95f7d5a1b04523b25bf571913f45578e2011b357d8e4"
+        }
+      ],
+      "before": {
+        "mean": 0.21833993318917244,
+        "median": 0.23065181239948956,
+        "per_note": [
+          0.30271111296847014,
+          0.29211332853647753,
+          0.3460744034110592,
+          0.2603609351436754,
+          0.256545093687053,
+          0.2604856614481561,
+          0.18169943008276312,
+          0.12045503143858778,
+          0.12711154553533682,
+          0.20475853111192607,
+          0.13244620102621524,
+          0.13531792388034936
+        ]
+      },
+      "after": {
+        "mean": 0.20534468984385845,
+        "median": 0.2209272262184886,
+        "per_note": [
+          0.28241567555677327,
+          0.27254607300090933,
+          0.32287807713558314,
+          0.24614937033442583,
+          0.247288170350188,
+          0.2527710671359078,
+          0.18000633724900622,
+          0.10212788080660276,
+          0.11831544927774221,
+          0.19570508210255133,
+          0.1238925208613046,
+          0.12004057431530725
+        ]
+      },
+      "relative_reduction": 0.05951839938530501,
+      "improved_notes": 12,
+      "median_rms_ratio": 0.9945157895619711
+    },
+    {
+      "rate": 48000,
+      "seconds": 6,
+      "split": "train",
+      "notes": [
+        {
+          "model": "piano",
+          "pitch": 48,
+          "velocity": 0.65,
+          "split": "train",
+          "tuning_cents": 1.0226674553570594,
+          "path": "notes/piano-48-65.wav",
+          "source": "Piano.mf.C3.aiff",
+          "offset_seconds": 0.305,
+          "stable_end_seconds": 41.19,
+          "sha256": "9e5031587cef77f390ddf8f013e9c0f849db8fb6df0e08f2cbe1e4f7af019007"
+        },
+        {
+          "model": "piano",
+          "pitch": 55,
+          "velocity": 0.65,
+          "split": "train",
+          "tuning_cents": 5.07481488973953,
+          "path": "notes/piano-55-65.wav",
+          "source": "Piano.mf.G3.aiff",
+          "offset_seconds": 0.535,
+          "stable_end_seconds": 34.22,
+          "sha256": "45ae6699464665afb19e11e82784298d08ce29289e8f8647c4cfe49cc9b6b897"
+        },
+        {
+          "model": "piano",
+          "pitch": 64,
+          "velocity": 0.65,
+          "split": "train",
+          "tuning_cents": 5.043396878078364,
+          "path": "notes/piano-64-65.wav",
+          "source": "Piano.mf.E4.aiff",
+          "offset_seconds": 0.15,
+          "stable_end_seconds": 29.01,
+          "sha256": "9686c2c5d99a9bcf4536e8706e3217dc3ca0dad5458bf30560b168196d32c067"
+        },
+        {
+          "model": "piano",
+          "pitch": 48,
+          "velocity": 0.95,
+          "split": "train",
+          "tuning_cents": 2.0442783039111725,
+          "path": "notes/piano-48-95.wav",
+          "source": "Piano.ff.C3.aiff",
+          "offset_seconds": 0.57,
+          "stable_end_seconds": 44.79,
+          "sha256": "25376dfdb9af3dc731424108e801e1b06042ef339f4cf7e280d8504f2909bf57"
+        },
+        {
+          "model": "piano",
+          "pitch": 55,
+          "velocity": 0.95,
+          "split": "train",
+          "tuning_cents": 6.0110870151857565,
+          "path": "notes/piano-55-95.wav",
+          "source": "Piano.ff.G3.aiff",
+          "offset_seconds": 0.49,
+          "stable_end_seconds": 37.48,
+          "sha256": "bed9daba4bc8532da860d867f86f4ea71b5740d3a07d2518bf7b633846954764"
+        },
+        {
+          "model": "piano",
+          "pitch": 64,
+          "velocity": 0.95,
+          "split": "train",
+          "tuning_cents": 5.537749818178127,
+          "path": "notes/piano-64-95.wav",
+          "source": "Piano.ff.E4.aiff",
+          "offset_seconds": 0.69,
+          "stable_end_seconds": 47.099999999999994,
+          "sha256": "c55c524c891e25813d3c5d5b0501937cc24dca0885e3b6621b5c4f7b5567bb7f"
+        }
+      ],
+      "before": {
+        "mean": 0.2549067622861089,
+        "median": 0.23151783123294578,
+        "per_note": [
+          0.4178430318543811,
+          0.15403319519708653,
+          0.30071703714664566,
+          0.23561078344094427,
+          0.19381164705264875,
+          0.2274248790249473
+        ]
+      },
+      "after": {
+        "mean": 0.24435513264776484,
+        "median": 0.22764265722562332,
+        "per_note": [
+          0.3795901025450928,
+          0.15642302705204147,
+          0.28663632987500237,
+          0.22462815142478534,
+          0.18819602196320573,
+          0.23065716302646133
+        ]
+      },
+      "relative_reduction": 0.041394075008888365,
+      "improved_notes": 4,
+      "median_rms_ratio": 0.9986981217295383
+    },
+    {
+      "rate": 48000,
+      "seconds": 6,
+      "split": "validation",
+      "notes": [
+        {
+          "model": "piano",
+          "pitch": 48,
+          "velocity": 0.35,
+          "split": "validation",
+          "tuning_cents": 1.1066100562643633,
+          "path": "notes/piano-48-35.wav",
+          "source": "Piano.pp.C3.aiff",
+          "offset_seconds": 0.06,
+          "stable_end_seconds": 38.519999999999996,
+          "sha256": "0aa5a6c9051828785eafcac9b15d986ccfd9237a0c95bb0558ab1667edc5a445"
+        },
+        {
+          "model": "piano",
+          "pitch": 52,
+          "velocity": 0.35,
+          "split": "validation",
+          "tuning_cents": 4.049655522842548,
+          "path": "notes/piano-52-35.wav",
+          "source": "Piano.pp.E3.aiff",
+          "offset_seconds": 0.03,
+          "stable_end_seconds": 36.68,
+          "sha256": "a7d370bc9149a33fab44ab378f2652f44ef629e8ffde823f3d3a461907ebc92c"
+        },
+        {
+          "model": "piano",
+          "pitch": 55,
+          "velocity": 0.35,
+          "split": "validation",
+          "tuning_cents": 4.530090273771923,
+          "path": "notes/piano-55-35.wav",
+          "source": "Piano.pp.G3.aiff",
+          "offset_seconds": 0.04,
+          "stable_end_seconds": 35.86,
+          "sha256": "74a332a355f8898b1af4e61459c974ecd9208153a97b5445b4724f8eecbc9606"
+        },
+        {
+          "model": "piano",
+          "pitch": 60,
+          "velocity": 0.35,
+          "split": "validation",
+          "tuning_cents": 3.091349900240925,
+          "path": "notes/piano-60-35.wav",
+          "source": "Piano.pp.C4.aiff",
+          "offset_seconds": 0.05,
+          "stable_end_seconds": 29.46,
+          "sha256": "247508bd80dafdcd1af571205ef48607a1c5f78413f8a3c235dfe66772ded270"
+        },
+        {
+          "model": "piano",
+          "pitch": 64,
+          "velocity": 0.35,
+          "split": "validation",
+          "tuning_cents": 6.025253196686304,
+          "path": "notes/piano-64-35.wav",
+          "source": "Piano.pp.E4.aiff",
+          "offset_seconds": 0.01,
+          "stable_end_seconds": 29.43,
+          "sha256": "2f3c3108fb7e1d846262820882b58d392e01e086ed1c78ea4e8fabb730078fc1"
+        },
+        {
+          "model": "piano",
+          "pitch": 67,
+          "velocity": 0.35,
+          "split": "validation",
+          "tuning_cents": 4.448461737595524,
+          "path": "notes/piano-67-35.wav",
+          "source": "Piano.pp.G4.aiff",
+          "offset_seconds": 0.05,
+          "stable_end_seconds": 25.55,
+          "sha256": "e8558f1436420bf4c9ab550ae6fd0f0c825d3d64341b14bce24ae216e08bfa3b"
+        },
+        {
+          "model": "piano",
+          "pitch": 52,
+          "velocity": 0.65,
+          "split": "validation",
+          "tuning_cents": 4.026383485323525,
+          "path": "notes/piano-52-65.wav",
+          "source": "Piano.mf.E3.aiff",
+          "offset_seconds": 0.16,
+          "stable_end_seconds": 33.62,
+          "sha256": "dfbb6085c1916c2f95ad9945e34e8dd9dfff2e280e787b074640066801095849"
+        },
+        {
+          "model": "piano",
+          "pitch": 60,
+          "velocity": 0.65,
+          "split": "validation",
+          "tuning_cents": 2.5122381495066666,
+          "path": "notes/piano-60-65.wav",
+          "source": "Piano.mf.C4.aiff",
+          "offset_seconds": 0.335,
+          "stable_end_seconds": 30.75,
+          "sha256": "c311b4797a2ecf14e3d44484edf39423623b77c1367bfbb907edda6cf209bd5d"
+        },
+        {
+          "model": "piano",
+          "pitch": 67,
+          "velocity": 0.65,
+          "split": "validation",
+          "tuning_cents": 4.359481433307541,
+          "path": "notes/piano-67-65.wav",
+          "source": "Piano.mf.G4.aiff",
+          "offset_seconds": 0.355,
+          "stable_end_seconds": 31.11,
+          "sha256": "ed00bc1f612dce2ed2e5fbf9f4fe23acdf12f9b6ce2d45b63e148e03426bf874"
+        },
+        {
+          "model": "piano",
+          "pitch": 52,
+          "velocity": 0.95,
+          "split": "validation",
+          "tuning_cents": 4.853181469448008,
+          "path": "notes/piano-52-95.wav",
+          "source": "Piano.ff.E3.aiff",
+          "offset_seconds": 0.755,
+          "stable_end_seconds": 47.16,
+          "sha256": "4cbee7e3a6b3be71106305d9688b08dd60f25daba837848080da2b91852fa0b1"
+        },
+        {
+          "model": "piano",
+          "pitch": 60,
+          "velocity": 0.95,
+          "split": "validation",
+          "tuning_cents": 3.3591895548743684,
+          "path": "notes/piano-60-95.wav",
+          "source": "Piano.ff.C4.aiff",
+          "offset_seconds": 0.54,
+          "stable_end_seconds": 35.76,
+          "sha256": "2209f99c67ba4b693a6834b8102911a05a3e257074b27a3560f70c545713232f"
+        },
+        {
+          "model": "piano",
+          "pitch": 67,
+          "velocity": 0.95,
+          "split": "validation",
+          "tuning_cents": 4.521178345408054,
+          "path": "notes/piano-67-95.wav",
+          "source": "Piano.ff.G4.aiff",
+          "offset_seconds": 0.685,
+          "stable_end_seconds": 37.46,
+          "sha256": "537eb20e43d571c8ca2c95f7d5a1b04523b25bf571913f45578e2011b357d8e4"
+        }
+      ],
+      "before": {
+        "mean": 0.2598611056900762,
+        "median": 0.26675167559754787,
+        "per_note": [
+          0.36912361002767113,
+          0.35877383448797456,
+          0.40821761486959124,
+          0.3140159476120015,
+          0.29819075769737563,
+          0.3172047787145646,
+          0.20639897910684393,
+          0.13983967642041045,
+          0.15140492919300605,
+          0.2353125934977201,
+          0.1568988561135345,
+          0.1629516905402212
+        ]
+      },
+      "after": {
+        "mean": 0.24366022654141076,
+        "median": 0.2562752930670258,
+        "per_note": [
+          0.33903364407605663,
+          0.33087535648012584,
+          0.3760527551954376,
+          0.29545215898498123,
+          0.28686708097373875,
+          0.30904932634751014,
+          0.2041614260871386,
+          0.1189658878794228,
+          0.14296632462698286,
+          0.22568350516031288,
+          0.14871576631945327,
+          0.14609948636576833
+        ]
+      },
+      "relative_reduction": 0.06234437856963271,
+      "improved_notes": 12,
+      "median_rms_ratio": 0.9943956062726809
+    }
+  ]
+}
