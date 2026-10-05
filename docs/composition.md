@@ -126,6 +126,31 @@ The `chiptune` and `game-loop` styles use oscillator voices. Percussion keeps it
 and reverse-cymbal choices. Instrument IDs are stored directly in the specification,
 so opening it in the song sheet shows the selected physical instrument.
 
+Presets also retain their instrument controls and ordered insert effects. Rock's lead and
+rhythm guitars use bridge pickups and driven closed-cabinet Guitar Amps; its clean guitar
+and arpeggio use clean amplification. Pop and city-pop guitar parts use lighter amplification
+and chorus, while synthwave's guitar arpeggio adds chorus and an eighth-note stereo delay.
+The existing shared room reverb remains part of the mix. Loudness balancing measures these
+complete signal chains before setting the faders.
+
+In a `.asong` file, a part's `params` overrides its named native instrument's controls, and
+`effects` lists inserts in processing order. Effect entries use a registry `id` and optional
+`params` keyed by the effect's controls. For example:
+
+```toml
+[[part]]
+name = "lead"
+instrument = "auris.physical.electric_guitar"
+params = { pickup_position = 0.064146 }
+effects = [
+    { id = "auris.fx.guitar_amp", params = { drive_db = 34.0, cabinet = 2.0, output_db = -12.0 } },
+]
+```
+
+Omitting `effects` retains the automatic role/GM insert rules; `effects = []` requests an
+empty chain. The specification preserves these choices through saving and regeneration,
+and the generated project's ordinary mixer and instrument controls remain editable.
+
 A part's instrument name opens the library inside the song sheet. Its search and category tree
 are shared with the main Library panel: choose a built-in instrument, an exact SoundFont preset,
 or an installed CLAP/VST3 instrument. **Import SoundFont…** adds another font to this browser;

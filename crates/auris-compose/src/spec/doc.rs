@@ -23,7 +23,9 @@ use crate::theory::chart::{Chart, ChartOrigin};
 use crate::theory::key::Key;
 use crate::theory::scale::ScaleId;
 
-use super::{Ending, LeadIn, Mood, PartSource, PartSpec, PartTweak, Role, SectionSpec, SongSpec};
+use super::{
+    EffectSpec, Ending, LeadIn, Mood, PartSource, PartSpec, PartTweak, Role, SectionSpec, SongSpec,
+};
 
 /// Something wrong with a document.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -450,6 +452,10 @@ struct PartDoc {
     program: Option<ProgramField>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     source: Option<PartSource>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    params: BTreeMap<String, f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    effects: Option<Vec<EffectSpec>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     octave: Option<i32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -892,6 +898,20 @@ impl PartDoc {
             validate_source(&source, &name, errors);
             part.source = Some(source);
         }
+        validate_params(&self.params, &format!("part `{name}`"), errors);
+        if let Some(effects) = &self.effects {
+            for (index, effect) in effects.iter().enumerate() {
+                let context = format!("part `{name}` effect {}", index + 1);
+                if effect.id.trim().is_empty() {
+                    errors.push(SpecError::about(format!(
+                        "{context}: an effect id cannot be empty"
+                    )));
+                }
+                validate_params(&effect.params, &context, errors);
+            }
+        }
+        part.params = self.params;
+        part.effects = self.effects;
         if let Some(octave) = self.octave {
             if (-1..=9).contains(&octave) {
                 part.octave = octave;
@@ -982,6 +1002,17 @@ impl PartDoc {
             }
         }
         part
+    }
+}
+
+/// Checks parameter syntax without loading plugins or their descriptors.
+fn validate_params(params: &BTreeMap<String, f32>, context: &str, errors: &mut Vec<SpecError>) {
+    for (key, value) in params {
+        if key.trim().is_empty() || !value.is_finite() {
+            errors.push(SpecError::about(format!(
+                "{context}: parameter `{key}` needs a nonempty key and a finite value"
+            )));
+        }
     }
 }
 
@@ -1233,6 +1264,8 @@ impl PartDoc {
                 drums: part.role.is_drum(),
             }),
             source: part.source.clone(),
+            params: part.params.clone(),
+            effects: part.effects.clone(),
             octave: (part.octave != plain.octave).then_some(part.octave),
             density: part.density,
             subdivision: (part.subdivision != plain.subdivision)
@@ -1248,6 +1281,71 @@ impl PartDoc {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn nonfinite_authored_controls_and_empty_effect_ids_are_rejected() {
+        for setting in [
+            "params = { pickup_position = nan }",
+            "params = { '' = 1.0 }",
+            "effects = [{ id = 'auris.fx.guitar_amp', params = { drive_db = inf } }]",
+            "effects = [{ id = ' ' }]",
+        ] {
+            let text = format!("[[part]]\nname = 'lead'\n{setting}");
+            assert!(SongSpec::parse(&text).is_err(), "{setting}");
+        }
+    }
+
+    #[test]
+    fn instrument_and_ordered_effect_parameters_round_trip() {
+        let text = r#"
+            [[part]]
+            name = "lead"
+            instrument = "auris.physical.electric_guitar"
+            params = { pickup_position = 0.064146 }
+            effects = [
+                { id = "auris.fx.guitar_amp", params = { drive_db = 34.0, cabinet = 2.0 } },
+                { id = "auris.fx.delay", params = { mix = 0.12, sync = 7.0 } },
+            ]
+        "#;
+        let spec = SongSpec::parse(text).expect("authored signal chain parses");
+        assert_eq!(SongSpec::parse(&spec.to_toml()).unwrap(), spec);
+        let piece = crate::compose(&spec);
+        let track = piece
+            .tracks
+            .iter()
+            .find(|track| track.name == "lead")
+            .unwrap();
+        assert_eq!(track.state.params["pickup_position"], 0.064146);
+        assert_eq!(track.effects[0].id, "auris.fx.guitar_amp");
+        assert_eq!(track.effects[0].state.params["drive_db"], 34.0);
+        assert_eq!(track.effects[1].id, "auris.fx.delay");
+    }
+
+    #[test]
+    fn an_explicit_empty_effect_chain_disables_automatic_inserts() {
+        let spec = SongSpec::parse(
+            r#"
+            [[part]]
+            name = "keys"
+            role = "chords"
+            program = "Electric Piano 1"
+            effects = []
+        "#,
+        )
+        .unwrap();
+        let reopened = SongSpec::parse(&spec.to_toml()).unwrap();
+        assert_eq!(reopened, spec);
+        let piece = crate::compose(&reopened);
+        assert!(
+            piece
+                .tracks
+                .iter()
+                .find(|track| track.name == "keys")
+                .unwrap()
+                .effects
+                .is_empty()
+        );
+    }
+
     #[test]
     fn explicit_instrument_sources_round_trip_without_becoming_general_midi() {
         for source in [

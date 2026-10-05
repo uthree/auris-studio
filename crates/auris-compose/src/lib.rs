@@ -52,7 +52,9 @@ pub use phrase::{
 };
 pub use preset::{PRESETS, SongPreset, preset};
 pub use render::{ClipDraft, Composition, DrumPartDraft, EffectDraft, TrackDraft, compose};
-pub use spec::{Ending, Mood, PartSource, PartSpec, Role, SectionSpec, SongSpec, SpecError};
+pub use spec::{
+    EffectSpec, Ending, Mood, PartSource, PartSpec, Role, SectionSpec, SongSpec, SpecError,
+};
 pub use vocal::{VocalRange, VocalRhythm, ornament_vocal, vocal_rhythm, write_vocal};
 
 /// File extension of a song specification, for a file-picker filter.

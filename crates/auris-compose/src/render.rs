@@ -108,10 +108,8 @@ pub struct TrackDraft {
     pub sends: Vec<SendDraft>,
     /// Insert effects on the track's own strip, in chain order.
     ///
-    /// Almost always empty, for the same reason [`Self::state`] almost always is: a part picks a
-    /// sound and is then left sounding how it sounds. What earns an insert is a *pairing* — a
-    /// role and a sound that idiomatically arrive through a pedal — and `inserts_for` is where
-    /// each pairing is argued.
+    /// An authored [`PartSpec::effects`] chain takes precedence over the legacy role/GM
+    /// pairings supplied by `inserts_for`.
     pub effects: Vec<EffectDraft>,
     /// The clips, in time order.
     pub clips: Vec<ClipDraft>,
@@ -434,8 +432,25 @@ fn render(spec: &SongSpec, frame: &Frame) -> Composition {
         let (output, sends) = role
             .map(|role| routing_for(role, &buses))
             .unwrap_or_default();
-        let state = PluginState::empty();
-        let effects = role.map_or_else(Vec::new, |role| inserts_for(role, draft.sound));
+        let part = part_of(&draft.name);
+        let mut state = PluginState::empty();
+        if let Some(part) = part {
+            state.params = part.params.clone();
+        }
+        let effects = match part.and_then(|part| part.effects.as_ref()) {
+            Some(chain) => chain
+                .iter()
+                .map(|effect| {
+                    let mut state = PluginState::empty();
+                    state.params = effect.params.clone();
+                    EffectDraft {
+                        id: effect.id.clone(),
+                        state,
+                    }
+                })
+                .collect(),
+            None => role.map_or_else(Vec::new, |role| inserts_for(role, draft.sound)),
+        };
         tracks.push(TrackDraft {
             drum_parts: part_of(&draft.name)
                 .and_then(|part| {
@@ -543,6 +558,8 @@ fn shared_drum_kits(tracks: Vec<TrackDraft>, seed: u64) -> Vec<TrackDraft> {
         }
         let compatible = result.iter_mut().find(|other| {
             !other.drum_parts.is_empty()
+                && other.state == track.state
+                && other.effects == track.effects
                 && match (&other.source, &track.source) {
                     (Some(left), Some(right)) => left == right,
                     (None, None) => {
@@ -589,12 +606,10 @@ fn shared_drum_kits(tracks: Vec<TrackDraft>, seed: u64) -> Vec<TrackDraft> {
                 format!("Drums {ordinal}")
             };
             track.color = Role::Snare.color();
-            track.state = PluginState::empty();
             track.gain_db = 0.0;
             track.pan = 0.0;
             track.output = None;
             track.sends.clear();
-            track.effects.clear();
             result.push(track);
         }
     }
@@ -843,6 +858,56 @@ fn sections_of(frame: &Frame) -> SectionMap {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn drum_writers_with_matching_controls_and_effects_share_their_complete_signal_chain() {
+        let spec = SongSpec::parse(
+            r#"
+            form = ['verse']
+            [section.verse]
+            bars = 1
+            [[part]]
+            name = 'kick'
+            params = { level = -12.0 }
+            effects = [{ id = 'auris.fx.gain', params = { gain_db = -3.0 } }]
+            [[part]]
+            name = 'snare'
+            params = { level = -12.0 }
+            effects = [{ id = 'auris.fx.gain', params = { gain_db = -3.0 } }]
+        "#,
+        )
+        .unwrap();
+        let piece = compose(&spec);
+        let kits: Vec<_> = piece
+            .tracks
+            .iter()
+            .filter(|track| !track.drum_parts.is_empty())
+            .collect();
+        assert_eq!(kits.len(), 1);
+        assert_eq!(kits[0].drum_parts.len(), 2);
+        assert_eq!(kits[0].state.params["level"], -12.0);
+        assert_eq!(kits[0].effects[0].state.params["gain_db"], -3.0);
+    }
+
+    #[test]
+    fn drum_writers_with_different_signal_chains_keep_separate_strips() {
+        for setting in [
+            "params = { level = -12.0 }",
+            "effects = [{ id = 'auris.fx.gain', params = { gain_db = -3.0 } }]",
+        ] {
+            let spec = SongSpec::parse(&format!("form = ['verse']\n[section.verse]\nbars = 1\n[[part]]\nname = 'kick'\n{setting}\n[[part]]\nname = 'snare'\n")).unwrap();
+            let piece = compose(&spec);
+            assert_eq!(
+                piece
+                    .tracks
+                    .iter()
+                    .filter(|track| !track.drum_parts.is_empty())
+                    .count(),
+                2,
+                "{setting}"
+            );
+        }
+    }
 
     fn compose_text(text: &str) -> Composition {
         compose(&SongSpec::parse(text).expect("the fixture parses"))

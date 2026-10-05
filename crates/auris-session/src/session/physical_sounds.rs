@@ -157,6 +157,96 @@ mod tests {
     use crate::SessionOptions;
 
     #[test]
+    fn preset_signal_chains_use_registered_controls_within_their_ranges() {
+        let mut session = Session::new(SessionOptions::headless().with_balance(false)).unwrap();
+        for preset in auris_compose::PRESETS {
+            let piece = auris_compose::compose(&preset.spec());
+            for track in &piece.tracks {
+                let descriptors = session.param_descriptors(&track.instrument);
+                for (key, value) in &track.state.params {
+                    let control = descriptors
+                        .iter()
+                        .find(|control| control.key == *key)
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "{} / {}: unknown instrument control {key}",
+                                preset.name, track.name
+                            )
+                        });
+                    assert!(value.is_finite() && (control.min..=control.max).contains(value));
+                }
+                for effect in &track.effects {
+                    assert!(
+                        session.registry.has_effect(&effect.id),
+                        "{}: {}",
+                        preset.name,
+                        effect.id
+                    );
+                    let descriptors = session.param_descriptors(&effect.id);
+                    for (key, value) in &effect.state.params {
+                        let control = descriptors
+                            .iter()
+                            .find(|control| control.key == *key)
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "{} / {}: unknown effect control {key}",
+                                    preset.name, effect.id
+                                )
+                            });
+                        assert!(value.is_finite() && (control.min..=control.max).contains(value));
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn composed_rock_amplifiers_and_pickups_survive_save_open_with_identical_audio() {
+        let mut spec = auris_compose::preset("rock").unwrap().spec();
+        spec.form = vec!["verse".into()];
+        spec.sections.retain(|name, _| name == "verse");
+        spec.sections.get_mut("verse").unwrap().bars = 1;
+        let piece = auris_compose::compose(&spec);
+        let mut session = Session::new(SessionOptions::headless().with_balance(false)).unwrap();
+        let report = session.compose_without_balance(&piece).unwrap();
+        assert!(report.substituted.is_empty());
+        for (name, drive) in [("lead", 34.0), ("rhythm", 28.0)] {
+            let track = session
+                .project()
+                .tracks
+                .iter()
+                .find(|track| track.name == name)
+                .unwrap();
+            assert_eq!(
+                track.kind.as_instrument().unwrap().instrument_state.params["pickup_position"],
+                0.064146
+            );
+            assert_eq!(track.mixer.effects[0].effect_id, auris_dsp::GuitarAmp::ID);
+            assert_eq!(track.mixer.effects[0].state.params["drive_db"], drive);
+            assert_eq!(track.mixer.effects[0].state.params["cabinet"], 2.0);
+        }
+        let before = session
+            .render_job()
+            .render(&Default::default(), &mut Default::default())
+            .unwrap();
+        assert!(before.peak() > 0.001);
+        let folder = tempfile::tempdir().unwrap();
+        let saved = session.save_as(&folder.path().join("Rock.auris")).unwrap();
+        let mut reopened = Session::new(SessionOptions::headless().with_balance(false)).unwrap();
+        assert!(reopened.open(&saved.document).unwrap().is_empty());
+        assert_eq!(
+            auris_compose::SongSpec::parse(reopened.project().song_spec.as_deref().unwrap())
+                .unwrap(),
+            spec
+        );
+        let after = reopened
+            .render_job()
+            .render(&Default::default(), &mut Default::default())
+            .unwrap();
+        assert_eq!(before.channels(), after.channels());
+    }
+
+    #[test]
     fn distinct_gm_timbres_are_not_replaced_by_unrelated_physical_models() {
         for patch in [
             4, 5, 29, 30, 36, 37, 38, 39, 46, 47, 50, 51, 56, 61, 65, 73, 81, 84, 88, 94, 98,

@@ -261,6 +261,10 @@ instrument = "auris.physical.violin"
 name    = "lead_alt"
 role    = "melody"
 instrument = "auris.physical.electric_guitar"
+params = { pickup_position = 0.12 }
+effects = [
+    { id = "auris.fx.guitar_amp", params = { drive_db = 12.0, bass_db = -2.0, treble_db = 1.5, cabinet = 1.0, output_db = -6.0 } },
+]
 
 [[part]]
 name    = "keys"
@@ -278,6 +282,11 @@ role    = "chords"
 instrument = "auris.physical.electric_guitar"
 gate    = 0.45
 pan     = 0.35
+params = { pickup_position = 0.12 }
+effects = [
+    { id = "auris.fx.guitar_amp", params = { drive_db = 3.0, bass_db = -2.0, treble_db = 2.0, cabinet = 1.0, output_db = -3.0 } },
+    { id = "auris.fx.chorus", params = { mix = 0.18, rate_hz = 0.6, depth_ms = 2.0 } },
+]
 
 [[part]]
 name    = "pluck"
@@ -421,6 +430,11 @@ role    = "stab"
 instrument = "auris.physical.electric_guitar"
 gain    = -18
 pan     = 0.35
+params = { pickup_position = 0.12 }
+effects = [
+    { id = "auris.fx.guitar_amp", params = { drive_db = 3.0, bass_db = -2.0, treble_db = 2.0, cabinet = 1.0, output_db = -3.0 } },
+    { id = "auris.fx.chorus", params = { mix = 0.22, rate_hz = 0.6, depth_ms = 2.0 } },
+]
 
 [[part]]
 name    = "arp"
@@ -521,11 +535,19 @@ parts = "lead rhythm organ bass kick snare hat crash"
 name    = "lead"
 role    = "melody"
 instrument = "auris.physical.electric_guitar"
+params = { pickup_position = 0.064146 }
+effects = [
+    { id = "auris.fx.guitar_amp", params = { drive_db = 34.0, bass_db = -3.0, mid_db = 1.5, treble_db = 2.0, cabinet = 2.0, output_db = -12.0 } },
+]
 
 [[part]]
 name    = "lead_alt"
 role    = "melody"
 instrument = "auris.physical.electric_guitar"
+params = { pickup_position = 0.064146 }
+effects = [
+    { id = "auris.fx.guitar_amp", params = { drive_db = 24.0, bass_db = -3.0, mid_db = 2.0, treble_db = 1.5, cabinet = 2.0, output_db = -10.0 } },
+]
 
 [[part]]
 name    = "clean_guitar"
@@ -533,6 +555,11 @@ role    = "chords"
 instrument = "auris.physical.electric_guitar"
 gate    = 0.5
 pan     = 0.35
+params = { pickup_position = 0.12 }
+effects = [
+    { id = "auris.fx.guitar_amp", params = { drive_db = 3.0, bass_db = -2.0, treble_db = 2.0, cabinet = 1.0, output_db = -3.0 } },
+    { id = "auris.fx.chorus", params = { mix = 0.18, rate_hz = 0.6, depth_ms = 2.0 } },
+]
 
 [[part]]
 name    = "piano"
@@ -547,6 +574,10 @@ instrument = "auris.physical.electric_guitar"
 density = 0.25
 gain    = -18
 pan     = 0.3
+params = { pickup_position = 0.12 }
+effects = [
+    { id = "auris.fx.guitar_amp", params = { drive_db = 3.0, bass_db = -2.0, treble_db = 2.0, cabinet = 1.0, output_db = -3.0 } },
+]
 
 [[part]]
 name    = "rhythm"
@@ -554,6 +585,10 @@ role    = "chords"
 instrument = "auris.physical.electric_guitar"
 octave  = 3
 gate    = 0.65
+params = { pickup_position = 0.064146 }
+effects = [
+    { id = "auris.fx.guitar_amp", params = { drive_db = 28.0, bass_db = -4.0, mid_db = 1.0, treble_db = 1.0, cabinet = 2.0, output_db = -12.0 } },
+]
 
 [[part]]
 name    = "organ"
@@ -873,6 +908,12 @@ name    = "arp"
 role    = "arp"
 instrument = "auris.physical.electric_guitar"
 gain    = -15
+params = { pickup_position = 0.12 }
+effects = [
+    { id = "auris.fx.guitar_amp", params = { drive_db = 6.0, bass_db = -2.0, treble_db = 2.0, cabinet = 1.0, output_db = -3.0 } },
+    { id = "auris.fx.chorus", params = { mix = 0.25, rate_hz = 0.45, depth_ms = 2.5 } },
+    { id = "auris.fx.delay", params = { mix = 0.12, feedback = 0.22, damping_hz = 4500.0, sync = 7.0, ping_pong = 1.0 } },
+]
 
 [[part]]
 name    = "bass"
@@ -1002,6 +1043,52 @@ parts = "pad glass cello"
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
+
+    #[test]
+    fn every_shipped_electric_guitar_has_an_authored_amplifier() {
+        for preset in PRESETS {
+            let piece = crate::compose(&preset.spec());
+            for track in piece
+                .tracks
+                .iter()
+                .filter(|track| track.instrument == "auris.physical.electric_guitar")
+            {
+                assert_eq!(
+                    track.effects.first().map(|effect| effect.id.as_str()),
+                    Some("auris.fx.guitar_amp"),
+                    "{} / {}",
+                    preset.name,
+                    track.name
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn rock_guitars_arrive_through_amplifiers_with_distinct_clean_and_driven_parts() {
+        let piece = crate::compose(&crate::preset("rock").unwrap().spec());
+        for (name, minimum_drive) in [("lead", 28.0), ("lead_alt", 18.0), ("rhythm", 24.0)] {
+            let track = piece
+                .tracks
+                .iter()
+                .find(|track| track.name == name)
+                .unwrap();
+            let amp = track.effects.first().expect("rock guitar needs an amp");
+            assert_eq!(amp.id, "auris.fx.guitar_amp", "{name}");
+            assert!(amp.state.params["drive_db"] >= minimum_drive, "{name}");
+            assert_eq!(amp.state.params["cabinet"], 2.0, "{name}");
+        }
+        for name in ["clean_guitar", "arp"] {
+            let track = piece
+                .tracks
+                .iter()
+                .find(|track| track.name == name)
+                .unwrap();
+            let amp = track.effects.first().expect("clean DI also needs an amp");
+            assert_eq!(amp.id, "auris.fx.guitar_amp", "{name}");
+            assert!(amp.state.params["drive_db"] <= 6.0, "{name}");
+        }
+    }
 
     #[test]
     fn shipped_presets_use_self_contained_instruments() {

@@ -1117,6 +1117,17 @@ pub mod composition {
     //! All preset parts, including risers, play without external sound assets, and their
     //! instrument selections survive specification edits, saving and regeneration.
     //!
+    //! A part's `params` supplies initial controls for its named native instrument; `effects`
+    //! supplies an ordered insert chain of plugin `id` and `params` tables. An omitted chain
+    //! retains the legacy role/GM insert rules, while `effects = []` explicitly keeps it dry.
+    //! These settings belong to the specification and become ordinary editable plugin state
+    //! in the project before loudness balancing. Native instrument controls are not applied
+    //! to a substituted SoundFont or hosted source. Drum writers share a kit only when their
+    //! source, initial controls and insert chains agree.
+    //! Electric guitars are DI sources: Rock presets supply driven closed-cabinet amplifiers
+    //! for lead/rhythm and clean amplification for contrasting parts. Pop and city-pop use
+    //! lighter amplification and restrained chorus; synthwave's guitar arpeggio adds synced delay.
+    //!
     //! Section lengths belong to the preset or song specification. Vocal rhythms distribute
     //! the lyrics across those fixed bars, weighting phrases by mora count and leaving time
     //! for held endings and breaths. Dense phrases use shorter notes, down to sixteenths;
