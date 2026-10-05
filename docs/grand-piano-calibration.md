@@ -53,6 +53,26 @@ The deterministic audition uses the preselected mf C4 validation note, in the or
 **recorded / before / after**, with whole-note RMS matching, common peak headroom and
 5 ms boundary fades. Scoring uses the unfaded PCM.
 
+## System checks
+
+Workspace tests, the 197 instrument tests, workspace clippy, 21 Python evaluation tests
+and ruff pass. The symbolic ruler's output is byte-identical before and after.
+
+Nine default-seed composition presets were rendered with separately frozen baseline and
+updated CLI executables. The learned evaluator uses the same three ten-second windows,
+pinned models and prompts, with no level normalization. Mean TuneJury reward changes
+0.128734 → 0.159262; MuQ-MuLan positive cosine changes 0.241841 → 0.241711 and contrast
+margin 0.286418 → 0.285843. All excerpt positions match. Four presets have identical WAV
+hashes and identical scores. City-pop, jazz-trio and pop-band reward improve by
+0.0769/0.1197/0.0788; rock improves by 0.0028 and synthwave decreases by 0.0034.
+These single-seed song diagnostics are secondary evidence, not a universal quality claim.
+
+The complete [before](../tools/eval/references/grand-piano-music-before.json) and
+[after](../tools/eval/references/grand-piano-music-after.json) reports retain window scores,
+audio hashes, package versions and model artifact hashes. The
+[system summary](../tools/eval/references/grand-piano-system.json) also records CLI hashes
+and the matching symbolic hashes. Evaluation ran on CPU with four inference threads.
+
 ## Reproduction
 
 Build and preserve `physical_fit_render` at the baseline commit first. The commands below
