@@ -36,8 +36,7 @@ mod ui;
 use std::path::PathBuf;
 
 use auris_session::{Settings, WindowPlacement};
-use gpui::{App, AppContext, Bounds, Pixels, WindowBounds, WindowOptions, px, size};
-use gpui_platform::application;
+use gpui::{App, AppContext, Application, Bounds, Pixels, WindowBounds, WindowOptions, px, size};
 
 use app::AurisApp;
 use dock::PanelLayout;
@@ -59,7 +58,7 @@ fn main() {
     // Before anything reads a preference: the configuration moved to `~/.config/auris-studio`,
     // and an installation that predates the move keeps its settings, keymap and colour scheme.
 
-    application().run(|cx: &mut App| {
+    Application::new().run(|cx: &mut App| {
         // Installs the Markdown renderer's theme and language registry. The agent transcript uses
         // gpui-component's TextView, as picocode does, while the rest of the window keeps Auris's
         // own deliberately small widget set and palette.
@@ -144,7 +143,7 @@ fn main() {
         // work starts. Everything bound at the window level is on the path from there too.
         window
             .update(cx, |view, window, cx| {
-                view.focus_pane(app::Pane::Arrangement, window, cx);
+                view.focus_pane(app::Pane::Arrangement, window);
 
                 // The close button is the last thing standing between an afternoon's work and
                 // nothing. Returning `false` keeps the window open and leaves the sheet asking.
@@ -171,7 +170,7 @@ fn main() {
         // of its own, with no document to lose; leaving it up after the project window closed
         // meant an app that had not quit and a panel whose controls silently did nothing.
         let main = gpui::AnyWindowHandle::from(window).window_id();
-        cx.on_window_closed(move |cx, _window| {
+        cx.on_window_closed(move |cx| {
             if !cx.windows().iter().any(|open| open.window_id() == main) {
                 cx.quit();
             }

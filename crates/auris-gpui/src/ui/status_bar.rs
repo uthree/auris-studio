@@ -98,7 +98,7 @@ impl AurisApp {
                     &theme,
                     cx.listener(|this, _, window, cx| {
                         this.cancel_background_command();
-                        window.focus(&this.focus, cx);
+                        window.focus(&this.focus);
                         cx.notify();
                     }),
                 ))
@@ -117,7 +117,7 @@ impl AurisApp {
                         if let Some(path) = this.external_change.take() {
                             this.set_status(String::new());
                             this.accept_agent_changes(path, cx);
-                            window.focus(&this.focus, cx);
+                            window.focus(&this.focus);
                         }
                         cx.notify();
                     }),

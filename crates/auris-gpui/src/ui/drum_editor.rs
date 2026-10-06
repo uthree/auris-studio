@@ -812,7 +812,7 @@ impl AurisApp {
                     .min_w_0()
                     .child(
                         div()
-                            .flex_shrink(1.0)
+                            .flex_shrink()
                             .min_w_0()
                             .truncate()
                             .child(format!("{} — {name}", self.t(Key::DrumEditor))),

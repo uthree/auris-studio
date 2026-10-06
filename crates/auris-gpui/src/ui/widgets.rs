@@ -6,7 +6,7 @@
 
 use gpui::{
     App, Axis, ClickEvent, ElementId, Hsla, IntoElement, Modifiers, MouseDownEvent, Pixels,
-    SharedString, TextAlign, TruncateFrom, Window, canvas, div, point, prelude::*, px, relative,
+    SharedString, Window, canvas, div, point, prelude::*, px, relative,
 };
 
 use crate::theme::{Metrics, Theme};
@@ -204,7 +204,6 @@ where
         .id(id)
         .debug_selector(move || selector.to_string())
         .tab_index(0)
-        .key_context("AurisButton")
         .focus(|this| this.border_1().border_color(theme.selection))
         .flex()
         .items_center()
@@ -320,7 +319,6 @@ where
         })
         .when(enabled, |this| {
             this.tab_index(0)
-                .key_context("AurisButton")
                 .focus(|this| this.border_color(theme.selection))
                 .hover(|this| this.bg(hover))
                 .active(|this| this.opacity(0.75))
@@ -371,7 +369,6 @@ where
         .id(id)
         .debug_selector(move || handle.to_string())
         .tab_index(0)
-        .key_context("AurisButton")
         .focus(|this| this.border_color(theme.selection))
         .flex()
         .items_center()
@@ -406,7 +403,6 @@ where
         .id(id)
         .debug_selector(move || selector.to_string())
         .tab_index(0)
-        .key_context("AurisButton")
         .focus(|this| this.border_color(theme.selection))
         .flex()
         .items_center()
@@ -446,7 +442,6 @@ where
         .id(id)
         .debug_selector(move || selector.to_string())
         .tab_index(0)
-        .key_context("AurisButton")
         .focus(|this| this.border_color(theme.selection))
         .flex()
         .items_center()
@@ -563,7 +558,7 @@ pub fn bounded_picker_label(value: impl Into<SharedString>) -> gpui::Div {
                         bounds.left(),
                         bounds.top() + (bounds.size.height - line_height) / 2.0,
                     );
-                    let _ = line.paint(origin, line_height, TextAlign::Left, None, window, cx);
+                    let _ = line.paint(origin, line_height, window, cx);
                 },
             )
             .absolute()
@@ -584,11 +579,11 @@ fn shape_picker_label(
     // GPUI's measured text reuses runs after truncating them. Measuring a Japanese value
     // first narrowly and then widely can leave a run ending inside a UTF-8 character. Each
     // canvas layout starts from the complete value and fresh runs instead.
-    let runs = vec![style.to_run(value.len())];
-    let (shown, _) = window
+    let mut runs = vec![style.to_run(value.len())];
+    let shown = window
         .text_system()
         .line_wrapper(style.font(), font_size)
-        .truncate_line(value, width.max(px(0.0)), "…", &runs, TruncateFrom::End);
+        .truncate_line(value, width.max(px(0.0)), "…", &mut runs);
     let run = style.to_run(shown.len());
     let line = window
         .text_system()
@@ -681,7 +676,6 @@ where
         .id(id)
         .debug_selector(move || selector.to_string())
         .tab_index(0)
-        .key_context("AurisButton")
         .focus(|this| this.border_color(theme.selection))
         .flex()
         .items_center()
@@ -949,10 +943,9 @@ pub(crate) struct AdjustSlider {
 
 /// Bindings installed independently of the editable application keymap.
 ///
-/// Control contexts take precedence over pane and window shortcuts. Slider keys adjust the
-/// focused slider, while Enter and Space reach GPUI's native button activation instead of
-/// triggering transport commands.
-pub(crate) fn key_bindings() -> [gpui::KeyBinding; 10] {
+/// The dedicated context is below the pane and window contexts in the focus path, so these win
+/// before actions such as Right-to-move-the-playhead while a slider itself owns focus.
+pub(crate) fn key_bindings() -> [gpui::KeyBinding; 8] {
     [
         gpui::KeyBinding::new("left", AdjustSlider { key: "left" }, Some("AurisSlider")),
         gpui::KeyBinding::new("down", AdjustSlider { key: "down" }, Some("AurisSlider")),
@@ -970,8 +963,6 @@ pub(crate) fn key_bindings() -> [gpui::KeyBinding; 10] {
         ),
         gpui::KeyBinding::new("home", AdjustSlider { key: "home" }, Some("AurisSlider")),
         gpui::KeyBinding::new("end", AdjustSlider { key: "end" }, Some("AurisSlider")),
-        gpui::KeyBinding::new("enter", gpui::NoAction {}, Some("AurisButton")),
-        gpui::KeyBinding::new("space", gpui::NoAction {}, Some("AurisButton")),
     ]
 }
 
@@ -1360,9 +1351,9 @@ mod tests {
                 .on_key_down(cx.listener(|_, event: &gpui::KeyDownEvent, window, cx| {
                     if event.keystroke.key == "tab" {
                         if event.keystroke.modifiers.shift {
-                            window.focus_prev(cx);
+                            window.focus_prev();
                         } else {
-                            window.focus_next(cx);
+                            window.focus_next();
                         }
                         cx.stop_propagation();
                     }
@@ -1393,9 +1384,9 @@ mod tests {
                 .on_key_down(cx.listener(|_, event: &gpui::KeyDownEvent, window, cx| {
                     if event.keystroke.key == "tab" {
                         if event.keystroke.modifiers.shift {
-                            window.focus_prev(cx);
+                            window.focus_prev();
                         } else {
-                            window.focus_next(cx);
+                            window.focus_next();
                         }
                         cx.stop_propagation();
                     }
@@ -1431,7 +1422,6 @@ mod tests {
     }
 
     fn release(key: &str, cx: &mut gpui::VisualTestContext) {
-        cx.simulate_keystrokes(key);
         cx.simulate_event(gpui::KeyUpEvent {
             keystroke: gpui::Keystroke::parse(key).unwrap(),
         });
@@ -1446,7 +1436,7 @@ mod tests {
             disabled: 0,
         });
         cx.update(|window, cx| {
-            view.update(cx, |view, cx| window.focus(&view.focus, cx));
+            view.update(cx, |view, _| window.focus(&view.focus));
         });
         cx.run_until_parked();
 
@@ -1477,7 +1467,7 @@ mod tests {
             fraction: 0.5,
         });
         cx.update(|window, cx| {
-            view.update(cx, |view, cx| window.focus(&view.focus, cx));
+            view.update(cx, |view, _| window.focus(&view.focus));
         });
         cx.run_until_parked();
 

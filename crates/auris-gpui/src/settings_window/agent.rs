@@ -110,7 +110,7 @@ impl SettingsWindow {
                 cx.listener(move |this, _, window, cx| {
                     this.agent.active = Some(index);
                     this.editing_search = false;
-                    window.focus(&focus, cx);
+                    window.focus(&focus);
                     cx.notify();
                 }),
             )

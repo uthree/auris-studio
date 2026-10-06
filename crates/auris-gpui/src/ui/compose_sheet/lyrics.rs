@@ -416,8 +416,10 @@ impl AurisApp {
                                             {
                                                 scroll.set_offset(gpui::point(
                                                     offset.x,
-                                                    (offset.y + dy)
-                                                        .clamp(-scroll.max_offset().y, px(0.0)),
+                                                    (offset.y + dy).clamp(
+                                                        -scroll.max_offset().height,
+                                                        px(0.0),
+                                                    ),
                                                 ));
                                                 cx.notify();
                                             }

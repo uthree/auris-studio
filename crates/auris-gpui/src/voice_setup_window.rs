@@ -397,7 +397,7 @@ impl VoiceSetupWindow {
                             }
                             this.active = field;
                             this.field_for_mut(field).select_all();
-                            window.focus(&this.focus, cx);
+                            window.focus(&this.focus);
                             cx.stop_propagation();
                             cx.notify();
                         }),
@@ -1026,11 +1026,12 @@ impl VoiceSetupWindow {
                     }
                 })
                 .await;
-            let _ = this.update(cx, |this, _cx| {
+            let _ = this.update(cx, |this, cx| {
                 if this.saving || generation != this.request_generation {
                     return;
                 }
                 this.finish_leapsinger_open(result);
+                cx.notify();
             });
         })
         .detach();
@@ -1407,16 +1408,16 @@ impl VoiceSetupWindow {
             if self.focus.is_focused(window) {
                 if !self.move_active_field(backwards) {
                     if backwards {
-                        window.focus_prev(cx);
+                        window.focus_prev();
                     } else {
-                        window.focus_next(cx);
+                        window.focus_next();
                     }
                 }
             } else {
                 if backwards {
-                    window.focus_prev(cx);
+                    window.focus_prev();
                 } else {
-                    window.focus_next(cx);
+                    window.focus_next();
                 }
                 if self.focus.is_focused(window) {
                     self.select_edge_field(backwards);
@@ -1476,7 +1477,7 @@ crate::entity_input_handler!(VoiceSetupWindow);
 impl Render for VoiceSetupWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if !self.focus.contains_focused(window, cx) {
-            window.focus(&self.focus, cx);
+            window.focus(&self.focus);
         }
         let theme = self.theme.clone();
         let titlebar = titlebar::titlebar(window, &theme)
@@ -1726,10 +1727,10 @@ mod tests {
         crate::harness::click("leap-variant-0", cx);
         crate::harness::click("leap-hop-512", cx);
         handle
-            .update(cx, |this, window, app_cx| {
+            .update(cx, |this, window, _| {
                 assert_eq!(this.leapsinger_setup().manifest.hop_size, 256);
                 this.active = Field::LeapEntry;
-                window.focus(&this.focus, app_cx);
+                window.focus(&this.focus);
             })
             .unwrap();
         cx.simulate_keystrokes("tab");
@@ -2045,9 +2046,9 @@ mod tests {
         cx.run_until_parked();
         crate::harness::click("voicevox-advanced", cx);
         handle
-            .update(cx, |this, window, app_cx| {
+            .update(cx, |this, window, _| {
                 this.active = Field::VoicevoxName;
-                window.focus(&this.focus, app_cx);
+                window.focus(&this.focus);
             })
             .unwrap();
         cx.simulate_keystrokes("tab");
@@ -2062,7 +2063,7 @@ mod tests {
             .unwrap();
         cx.simulate_keystrokes("tab");
         handle
-            .update(cx, |this, window, _app_cx| {
+            .update(cx, |this, window, _| {
                 assert!(
                     !this.focus.is_focused(window),
                     "the last visible field enters the child-control tab order"
@@ -2082,11 +2083,12 @@ mod tests {
         let cx = &mut gpui::VisualTestContext::from_window(handle.into(), cx);
         cx.run_until_parked();
         handle
-            .update(cx, |this, window, app_cx| {
-                window.focus(&this.focus, app_cx);
-                window.focus_next(app_cx);
-                assert!(this.focus.contains_focused(window, app_cx));
+            .update(cx, |this, window, cx| {
+                window.focus(&this.focus);
+                window.focus_next();
+                assert!(this.focus.contains_focused(window, cx));
                 assert!(!this.focus.is_focused(window));
+                cx.notify();
             })
             .unwrap();
         cx.run_until_parked();
@@ -2112,9 +2114,9 @@ mod tests {
         let cx = &mut gpui::VisualTestContext::from_window(handle.into(), cx);
         cx.run_until_parked();
         handle
-            .update(cx, |this, window, app_cx| {
+            .update(cx, |this, window, _| {
                 this.active = Field::VoicevoxUrl;
-                window.focus(&this.focus, app_cx);
+                window.focus(&this.focus);
             })
             .unwrap();
 

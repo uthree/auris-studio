@@ -91,11 +91,7 @@ impl AurisApp {
                                             // Hand focus back to its pane so routed commands such
                                             // as Undo remain available after pointer or keyboard
                                             // activation.
-                                            this.focus_pane(
-                                                crate::app::Pane::Inspector,
-                                                window,
-                                                cx,
-                                            );
+                                            this.focus_pane(crate::app::Pane::Inspector, window);
                                         }
                                         Err(error) => this.set_failed_status(
                                             this.failure(Key::EditSetDrumAssignment, &error),

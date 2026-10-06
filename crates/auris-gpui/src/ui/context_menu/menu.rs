@@ -13,7 +13,7 @@ use gpui::{
     AnyElement, Context, IntoElement, MouseButton, MouseDownEvent, Pixels, Point, ScrollHandle,
     SharedString, Size, Window, div, point, prelude::*, px, size,
 };
-use gpui_component::scroll::{Scrollbar, ScrollbarMode};
+use gpui_component::scroll::{Scrollbar, ScrollbarShow};
 
 use crate::app::AurisApp;
 use crate::theme::Metrics;
@@ -622,7 +622,8 @@ impl AurisApp {
                                         .children(rows),
                                 )
                                 .child(
-                                    Scrollbar::vertical(&menu.scroll).mode(ScrollbarMode::Always),
+                                    Scrollbar::vertical(&menu.scroll)
+                                        .scrollbar_show(ScrollbarShow::Always),
                                 ),
                         ),
                 )

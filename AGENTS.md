@@ -4,7 +4,7 @@ A digital audio workstation written in Rust, with a [gpui](https://crates.io/cra
 
 ## Build environment
 
-GPUI's platform crate (`gpui-pre-platform`) enables **`runtime_shaders`**, which compiles the Metal shaders
+GPUI enables **`runtime_shaders`**, which compiles the Metal shaders
 through the Metal framework at start-up instead of at build time. The build-time path shells
 out to `xcrun metal`, which lives inside Xcode
 (`Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/metal`) and is
@@ -32,7 +32,7 @@ keep them alive:
 * **Windows sets no locale variables.** `Language::from_system_locale` is what makes a Japanese
   Windows install come up in Japanese.
 
-GPUI and the plugin hosts share Windows 0.62 bindings. Windows runs `auris-gpu` on Vulkan.
+The plugin hosts use Windows 0.62 bindings. Windows runs `auris-gpu` on Vulkan.
 
 ## The vendored synthesiser
 

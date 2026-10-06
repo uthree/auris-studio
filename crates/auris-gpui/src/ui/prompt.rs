@@ -1516,7 +1516,7 @@ impl AurisApp {
                     } else {
                         (current + 1) % handles.len()
                     };
-                    window.focus(handles[next], cx);
+                    window.focus(handles[next]);
                 }
                 "enter" | "space" | " " => self.activate_focused_prompt_button(window, cx),
                 "delete" if recovery_question => self.deny_prompt(window, cx),

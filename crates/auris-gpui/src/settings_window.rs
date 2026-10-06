@@ -415,7 +415,7 @@ impl SettingsWindow {
         self.editing_search = true;
         self.search = TextField::new(String::new());
         self.text_changed();
-        window.focus(&self.search_focus, cx);
+        window.focus(&self.search_focus);
         cx.notify();
     }
 
@@ -1526,7 +1526,7 @@ impl SettingsWindow {
                     this.capturing = None;
                     this.dropdown_menu = None;
                     this.editing_search = true;
-                    window.focus(&this.search_focus, cx);
+                    window.focus(&this.search_focus);
                     cx.notify();
                 }),
             )
@@ -1752,7 +1752,7 @@ impl SettingsWindow {
     ) {
         self.capturing = Some(Capture { command, slot });
         // The capture reads key events, so the window must hold focus.
-        window.focus(&self.focus, cx);
+        window.focus(&self.focus);
         cx.notify();
     }
 
@@ -1786,9 +1786,9 @@ impl SettingsWindow {
         }
         if event.keystroke.key == "tab" {
             if event.keystroke.modifiers.shift {
-                window.focus_prev(cx);
+                window.focus_prev();
             } else {
-                window.focus_next(cx);
+                window.focus_next();
             }
             cx.notify();
             return true;
@@ -1936,7 +1936,7 @@ impl Render for SettingsWindow {
         // and text input available when the window first opens.
         if !editor_focused && !self.focus.contains_focused(window, cx) {
             self.editing_search = true;
-            window.focus(&self.search_focus, cx);
+            window.focus(&self.search_focus);
         }
 
         let theme = self.theme.clone();

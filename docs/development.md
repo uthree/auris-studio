@@ -31,6 +31,7 @@ FRONTEND
 
 NOT THE WORKSPACE
   vendor/rustysynth     somebody else's crate, forked — see its own README
+  vendor/midir          MIDI library fork — see README-AURIS.md
 ```
 
 Dependencies run strictly downhill, and the boundary is enforced by what each crate is *allowed
@@ -130,14 +131,15 @@ including the ⌘-click that places a note; the settings window shows whichever 
 front of it has. And the menu bar is drawn inside the window rather than by the system, because
 Windows has no system menu bar to draw it.
 
-`auris-gpu` runs on Vulkan on Windows. GPUI and the plugin hosts share Windows 0.62
-bindings. GPU analysis is optional and falls back to the CPU when no adapter is available.
+`auris-gpu` runs on Vulkan on Windows. The plugin hosts use Windows 0.62 bindings;
+released GPUI uses Windows 0.61. GPU analysis is optional and falls back to the CPU
+when no adapter is available.
 
 ### macOS without a full Xcode install
 
 gpui normally compiles its Metal shaders at build time by shelling out to `xcrun metal`, which
 lives inside Xcode and is unreachable while `xcode-select -p` points at the Command Line
-Tools. This project enables `gpui-pre-platform/runtime_shaders` instead, which compiles them
+Tools. This project enables `gpui/runtime_shaders` instead, which compiles them
 through the Metal framework at start-up — so the Command Line Tools are enough.
 
 Nothing to configure; it is already set in `Cargo.toml`, and it is worth keeping even with

@@ -139,12 +139,12 @@ impl AurisApp {
         match panel.axis() {
             Axis::Horizontal => ScrollView {
                 offset: f32::from(handle.offset().x),
-                max_offset: f32::from(handle.max_offset().x),
+                max_offset: f32::from(handle.max_offset().width),
                 viewport: f32::from(handle.bounds().size.width),
             },
             Axis::Vertical => ScrollView {
                 offset: f32::from(handle.offset().y),
-                max_offset: f32::from(handle.max_offset().y),
+                max_offset: f32::from(handle.max_offset().height),
                 viewport: f32::from(handle.bounds().size.height),
             },
         }

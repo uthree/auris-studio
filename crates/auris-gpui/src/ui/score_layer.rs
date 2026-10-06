@@ -185,7 +185,7 @@ impl AurisApp {
                                 this.menu = None;
                                 this.score_layer = layer;
                             }
-                            this.focus_pane(Pane::PianoRoll, window, cx);
+                            this.focus_pane(Pane::PianoRoll, window);
                             cx.notify();
                         }),
                     )

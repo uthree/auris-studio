@@ -726,14 +726,14 @@ pub fn model(language: Language, panels: &PanelLayout, state: MenuState) -> Vec<
 /// Rebuilt when its state changes rather than re-rendered: the menu bar belongs to the operating
 /// system, so nothing about a window redraw would touch it.
 ///
-/// Checked and disabled state is carried by gpui's native menu model so platform menu bars can
-/// render and validate commands consistently.
+/// gpui's [`MenuItem`] has no checked field, so a checked command receives the conventional
+/// leading tick in its label. A disabled command carries an action with no handler; gpui's native
+/// menu validation therefore dims it and refuses to dispatch it.
 pub fn menus(language: Language, panels: &PanelLayout, state: MenuState) -> Vec<Menu> {
     model(language, panels, state)
         .into_iter()
         .map(|section| Menu {
             name: section.name,
-            disabled: false,
             items: section
                 .rows
                 .into_iter()
@@ -748,21 +748,27 @@ pub fn menus(language: Language, panels: &PanelLayout, state: MenuState) -> Vec<
                         checked,
                         ..
                     } => MenuItem::Action {
-                        name: label,
+                        name: native_label(label, checked),
                         action: if enabled {
                             action
                         } else {
                             Box::new(Unavailable)
                         },
                         os_action: None,
-                        checked,
-                        disabled: !enabled,
                     },
                     MenuRow::System { label, menu } => MenuItem::os_submenu(label, menu),
                 })
                 .collect(),
         })
         .collect()
+}
+
+fn native_label(label: SharedString, checked: bool) -> SharedString {
+    if checked {
+        format!("✓ {label}").into()
+    } else {
+        label
+    }
 }
 
 #[cfg(test)]
@@ -775,6 +781,12 @@ mod tests {
     /// none of that depends on the state and passing one in would only be noise on every line.
     fn plain(language: Language) -> Vec<MenuSection> {
         model(language, &PanelLayout::default(), MenuState::default())
+    }
+
+    #[test]
+    fn native_labels_show_the_state_gpui_cannot_carry() {
+        assert_eq!(native_label("Mixer".into(), false), "Mixer");
+        assert_eq!(native_label("Mixer".into(), true), "✓ Mixer");
     }
 
     /// Whether the row labelled `label` carries a tick, or `None` when there is no such row.
@@ -1035,42 +1047,6 @@ mod tests {
         .map(|menu| menu.items.len())
         .sum();
         assert_eq!(model_rows, menu_items);
-    }
-
-    #[test]
-    fn native_commands_carry_their_checkmarks_and_disabled_state() {
-        let native = menus(
-            Language::English,
-            &PanelLayout::default(),
-            MenuState {
-                metronome: true,
-                can_undo: true,
-                ..MenuState::default()
-            },
-        );
-        for (key, expected_checked, expected_disabled) in [
-            (Key::CmdToggleMetronome, true, false),
-            (Key::CmdTogglePunch, false, false),
-            (Key::CmdUndo, false, false),
-            (Key::CmdRedo, false, true),
-        ] {
-            let label = key.get(Language::English);
-            let (checked, disabled) = native
-                .iter()
-                .flat_map(|menu| &menu.items)
-                .find_map(|item| match item {
-                    MenuItem::Action {
-                        name,
-                        checked,
-                        disabled,
-                        ..
-                    } if name == label => Some((*checked, *disabled)),
-                    _ => None,
-                })
-                .unwrap_or_else(|| panic!("the native menu keeps the plain label `{label}`"));
-            assert_eq!(checked, expected_checked, "{label}");
-            assert_eq!(disabled, expected_disabled, "{label}");
-        }
     }
 }
 

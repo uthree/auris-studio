@@ -535,7 +535,6 @@ pub(crate) fn paint_spectrogram(
         return;
     };
     if let Err(error) = window.paint_image(
-        bounds,
         image_bounds,
         Corners::default(),
         Arc::clone(&spectrum.image),
