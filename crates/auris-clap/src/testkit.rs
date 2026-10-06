@@ -186,7 +186,7 @@ pub struct MainThread<'a> {
 impl<'a> PluginMainThread<'a, Shared> for MainThread<'a> {}
 
 impl PluginTimerImpl for MainThread<'_> {
-    fn on_timer(&mut self, timer_id: TimerId) {
+    fn on_timer(&self, timer_id: TimerId) {
         if Some(timer_id) == self.timer {
             self.shared.ticks.fetch_add(1, Ordering::Relaxed);
         }
@@ -202,7 +202,7 @@ impl MainThread<'_> {
 
 /// A window the fixture never actually opens, recording what a host does to it.
 impl PluginGuiImpl for MainThread<'_> {
-    fn is_api_supported(&mut self, configuration: GuiConfiguration) -> bool {
+    fn is_api_supported(&self, configuration: GuiConfiguration) -> bool {
         // Floating only, which is the shape Auris asks for and also the shape a host on Wayland
         // has no choice about. A fixture that said yes to everything could not catch a host
         // asking to embed.
@@ -210,14 +210,14 @@ impl PluginGuiImpl for MainThread<'_> {
             && Some(configuration.api_type) == GuiApiType::default_for_current_platform()
     }
 
-    fn get_preferred_api(&mut self) -> Option<GuiConfiguration<'_>> {
+    fn get_preferred_api(&self) -> Option<GuiConfiguration<'_>> {
         Some(GuiConfiguration {
             api_type: GuiApiType::default_for_current_platform()?,
             is_floating: true,
         })
     }
 
-    fn create(&mut self, configuration: GuiConfiguration) -> Result<(), PluginError> {
+    fn create(&self, configuration: GuiConfiguration) -> Result<(), PluginError> {
         match configuration.is_floating {
             true => {
                 self.gui_did(gui_step::CREATED);
@@ -230,45 +230,45 @@ impl PluginGuiImpl for MainThread<'_> {
         }
     }
 
-    fn destroy(&mut self) {
+    fn destroy(&self) {
         FIXTURE_DESTROYS.fetch_add(1, Ordering::Relaxed);
         self.gui_did(gui_step::DESTROYED);
     }
 
-    fn set_scale(&mut self, _scale: f64) -> Result<(), PluginError> {
+    fn set_scale(&self, _scale: f64) -> Result<(), PluginError> {
         Ok(())
     }
 
-    fn get_size(&mut self) -> Option<GuiSize> {
+    fn get_size(&self) -> Option<GuiSize> {
         Some(GuiSize {
             width: 400,
             height: 300,
         })
     }
 
-    fn set_size(&mut self, _size: GuiSize) -> Result<(), PluginError> {
+    fn set_size(&self, _size: GuiSize) -> Result<(), PluginError> {
         Ok(())
     }
 
-    fn set_parent(&mut self, _window: Window) -> Result<(), PluginError> {
+    fn set_parent(&self, _window: Window) -> Result<(), PluginError> {
         Err(PluginError::Message("this fixture cannot be embedded"))
     }
 
-    fn set_transient(&mut self, _window: Window) -> Result<(), PluginError> {
+    fn set_transient(&self, _window: Window) -> Result<(), PluginError> {
         self.gui_did(gui_step::TRANSIENT);
         Ok(())
     }
 
-    fn suggest_title(&mut self, _title: &str) {
+    fn suggest_title(&self, _title: &str) {
         self.gui_did(gui_step::TITLED);
     }
 
-    fn show(&mut self) -> Result<(), PluginError> {
+    fn show(&self) -> Result<(), PluginError> {
         self.gui_did(gui_step::SHOWN);
         Ok(())
     }
 
-    fn hide(&mut self) -> Result<(), PluginError> {
+    fn hide(&self) -> Result<(), PluginError> {
         self.gui_did(gui_step::HIDDEN);
         Ok(())
     }
@@ -310,7 +310,7 @@ impl DefaultPluginFactory for Gain {
     }
 
     fn new_main_thread<'a>(
-        mut host: HostMainThreadHandle<'a>,
+        host: HostMainThreadHandle<'a>,
         shared: &'a Shared,
     ) -> Result<MainThread<'a>, PluginError> {
         // Asking for the fastest tick the host will give, which is what a plugin repainting a
@@ -319,7 +319,7 @@ impl DefaultPluginFactory for Gain {
         let timer = host
             .shared()
             .get_extension::<HostTimer>()
-            .and_then(|timer| timer.register_timer(&mut host, 0).ok());
+            .and_then(|timer| timer.register_timer(&host, 0).ok());
         Ok(MainThread { shared, timer })
     }
 }
@@ -332,7 +332,7 @@ pub struct Processor<'a> {
 impl<'a> PluginAudioProcessor<'a, Shared, MainThread<'a>> for Processor<'a> {
     fn activate(
         _host: HostAudioProcessorHandle<'a>,
-        _main_thread: &mut MainThread<'a>,
+        _main_thread: &MainThread<'a>,
         shared: &'a Shared,
         _config: PluginAudioConfiguration,
     ) -> Result<Self, PluginError> {
@@ -404,14 +404,14 @@ impl PluginAudioProcessorParams for Processor<'_> {
 }
 
 impl PluginAudioPortsImpl for MainThread<'_> {
-    fn count(&mut self, is_input: bool) -> u32 {
+    fn count(&self, is_input: bool) -> u32 {
         match is_input {
             true => INPUT_PORTS,
             false => 1,
         }
     }
 
-    fn get(&mut self, index: u32, is_input: bool, writer: &mut AudioPortInfoWriter) {
+    fn get(&self, index: u32, is_input: bool, writer: &mut AudioPortInfoWriter) {
         let inputs = match is_input {
             true => INPUT_PORTS,
             false => 1,
@@ -440,11 +440,11 @@ impl PluginAudioPortsImpl for MainThread<'_> {
 }
 
 impl PluginMainThreadParams for MainThread<'_> {
-    fn count(&mut self) -> u32 {
+    fn count(&self) -> u32 {
         5
     }
 
-    fn get_info(&mut self, param_index: u32, info: &mut ParamInfoWriter) {
+    fn get_info(&self, param_index: u32, info: &mut ParamInfoWriter) {
         let common = ParamInfo {
             id: ClapId::new(GAIN_ID),
             flags: ParamInfoFlags::IS_AUTOMATABLE,
@@ -497,7 +497,7 @@ impl PluginMainThreadParams for MainThread<'_> {
         }
     }
 
-    fn get_value(&mut self, param_id: ClapId) -> Option<f64> {
+    fn get_value(&self, param_id: ClapId) -> Option<f64> {
         match param_id.get() {
             GAIN_ID => Some(self.shared.get() as f64),
             PORTS_ID => match self.shared.ports_seen.load(Ordering::Relaxed) {
@@ -514,7 +514,7 @@ impl PluginMainThreadParams for MainThread<'_> {
     }
 
     fn value_to_text(
-        &mut self,
+        &self,
         _param_id: ClapId,
         value: f64,
         writer: &mut ParamDisplayWriter,
@@ -523,15 +523,15 @@ impl PluginMainThreadParams for MainThread<'_> {
         write!(writer, "{value:.2}")
     }
 
-    fn text_to_value(&mut self, _param_id: ClapId, text: &CStr) -> Option<f64> {
+    fn text_to_value(&self, _param_id: ClapId, text: &CStr) -> Option<f64> {
         text.to_str().ok()?.trim().parse().ok()
     }
 
-    fn flush(&mut self, _input: &InputEvents, _output: &mut OutputEvents) {}
+    fn flush(&self, _input: &InputEvents, _output: &mut OutputEvents) {}
 }
 
 impl PluginStateImpl for MainThread<'_> {
-    fn save(&mut self, output: &mut OutputStream) -> Result<(), PluginError> {
+    fn save(&self, output: &mut OutputStream) -> Result<(), PluginError> {
         if self.shared.gain.load(Ordering::Relaxed) == u32::from_le_bytes(REFUSE_STATE_SAVE) {
             return Err(PluginError::Message(
                 "the fixture refuses to save this state",
@@ -541,7 +541,7 @@ impl PluginStateImpl for MainThread<'_> {
         Ok(())
     }
 
-    fn load(&mut self, input: &mut InputStream) -> Result<(), PluginError> {
+    fn load(&self, input: &mut InputStream) -> Result<(), PluginError> {
         let mut bytes = [0u8; 4];
         input.read_exact(&mut bytes)?;
         self.shared.set(f32::from_le_bytes(bytes));
@@ -644,19 +644,19 @@ impl Plugin for Tone {
 ///
 /// Nothing is drawn and no window is made — the host's window is, and that is the half under test.
 impl PluginGuiImpl for ToneMainThread<'_> {
-    fn is_api_supported(&mut self, configuration: GuiConfiguration) -> bool {
+    fn is_api_supported(&self, configuration: GuiConfiguration) -> bool {
         !configuration.is_floating
             && Some(configuration.api_type) == GuiApiType::default_for_current_platform()
     }
 
-    fn get_preferred_api(&mut self) -> Option<GuiConfiguration<'_>> {
+    fn get_preferred_api(&self) -> Option<GuiConfiguration<'_>> {
         Some(GuiConfiguration {
             api_type: GuiApiType::default_for_current_platform()?,
             is_floating: false,
         })
     }
 
-    fn create(&mut self, configuration: GuiConfiguration) -> Result<(), PluginError> {
+    fn create(&self, configuration: GuiConfiguration) -> Result<(), PluginError> {
         match configuration.is_floating {
             false => {
                 self.gui_did(gui_step::CREATED);
@@ -666,7 +666,7 @@ impl PluginGuiImpl for ToneMainThread<'_> {
         }
     }
 
-    fn destroy(&mut self) {
+    fn destroy(&self) {
         #[cfg(target_os = "windows")]
         {
             let hwnd = HWND(self.shared.parent.load(Ordering::Relaxed) as *mut _);
@@ -679,22 +679,22 @@ impl PluginGuiImpl for ToneMainThread<'_> {
         self.gui_did(gui_step::DESTROYED);
     }
 
-    fn set_scale(&mut self, _scale: f64) -> Result<(), PluginError> {
+    fn set_scale(&self, _scale: f64) -> Result<(), PluginError> {
         Ok(())
     }
 
-    fn get_size(&mut self) -> Option<GuiSize> {
+    fn get_size(&self) -> Option<GuiSize> {
         Some(GuiSize {
             width: 640,
             height: 480,
         })
     }
 
-    fn set_size(&mut self, _size: GuiSize) -> Result<(), PluginError> {
+    fn set_size(&self, _size: GuiSize) -> Result<(), PluginError> {
         Ok(())
     }
 
-    fn set_parent(&mut self, window: Window) -> Result<(), PluginError> {
+    fn set_parent(&self, window: Window) -> Result<(), PluginError> {
         if let Some(hwnd) = window.as_win32_hwnd() {
             self.shared.parent.store(hwnd as isize, Ordering::Relaxed);
         }
@@ -702,11 +702,11 @@ impl PluginGuiImpl for ToneMainThread<'_> {
         Ok(())
     }
 
-    fn set_transient(&mut self, _window: Window) -> Result<(), PluginError> {
+    fn set_transient(&self, _window: Window) -> Result<(), PluginError> {
         Err(PluginError::Message("this fixture cannot float"))
     }
 
-    fn show(&mut self) -> Result<(), PluginError> {
+    fn show(&self) -> Result<(), PluginError> {
         self.gui_did(gui_step::SHOWN);
         match f32::from_bits(self.shared.level.load(Ordering::Relaxed)).is_sign_negative() {
             true => Err(PluginError::Message("the fixture was asked to fail show")),
@@ -714,7 +714,7 @@ impl PluginGuiImpl for ToneMainThread<'_> {
         }
     }
 
-    fn hide(&mut self) -> Result<(), PluginError> {
+    fn hide(&self) -> Result<(), PluginError> {
         self.gui_did(gui_step::HIDDEN);
         Ok(())
     }
@@ -764,7 +764,7 @@ pub struct ToneProcessor<'a> {
 impl<'a> PluginAudioProcessor<'a, ToneShared, ToneMainThread<'a>> for ToneProcessor<'a> {
     fn activate(
         _host: HostAudioProcessorHandle<'a>,
-        _main_thread: &mut ToneMainThread<'a>,
+        _main_thread: &ToneMainThread<'a>,
         shared: &'a ToneShared,
         config: PluginAudioConfiguration,
     ) -> Result<Self, PluginError> {
@@ -858,7 +858,7 @@ impl PluginAudioProcessorParams for ToneProcessor<'_> {
 }
 
 impl PluginAudioPortsImpl for ToneMainThread<'_> {
-    fn count(&mut self, is_input: bool) -> u32 {
+    fn count(&self, is_input: bool) -> u32 {
         // No audio input at all, which is the shape that would catch a host insisting on one.
         match is_input {
             true => 0,
@@ -866,7 +866,7 @@ impl PluginAudioPortsImpl for ToneMainThread<'_> {
         }
     }
 
-    fn get(&mut self, index: u32, is_input: bool, writer: &mut AudioPortInfoWriter) {
+    fn get(&self, index: u32, is_input: bool, writer: &mut AudioPortInfoWriter) {
         if is_input || index != 0 {
             return;
         }
@@ -882,14 +882,14 @@ impl PluginAudioPortsImpl for ToneMainThread<'_> {
 }
 
 impl PluginNotePortsImpl for ToneMainThread<'_> {
-    fn count(&mut self, is_input: bool) -> u32 {
+    fn count(&self, is_input: bool) -> u32 {
         match is_input {
             true => 1,
             false => 0,
         }
     }
 
-    fn get(&mut self, index: u32, is_input: bool, writer: &mut NotePortInfoWriter) {
+    fn get(&self, index: u32, is_input: bool, writer: &mut NotePortInfoWriter) {
         if !is_input || index != 0 {
             return;
         }
@@ -905,11 +905,11 @@ impl PluginNotePortsImpl for ToneMainThread<'_> {
 }
 
 impl PluginNoteNameImpl for ToneMainThread<'_> {
-    fn count(&mut self) -> u32 {
+    fn count(&self) -> u32 {
         2
     }
 
-    fn get(&mut self, index: u32, writer: &mut NoteNameWriter) {
+    fn get(&self, index: u32, writer: &mut NoteNameWriter) {
         let (key, name) = match index {
             0 => (36, b"Fixture Kick".as_slice()),
             1 => (38, b"Fixture Snare".as_slice()),
@@ -925,11 +925,11 @@ impl PluginNoteNameImpl for ToneMainThread<'_> {
 }
 
 impl PluginMainThreadParams for ToneMainThread<'_> {
-    fn count(&mut self) -> u32 {
+    fn count(&self) -> u32 {
         4
     }
 
-    fn get_info(&mut self, param_index: u32, info: &mut ParamInfoWriter) {
+    fn get_info(&self, param_index: u32, info: &mut ParamInfoWriter) {
         let common = ParamInfo {
             id: ClapId::new(LEVEL_ID),
             flags: ParamInfoFlags::IS_AUTOMATABLE,
@@ -971,7 +971,7 @@ impl PluginMainThreadParams for ToneMainThread<'_> {
         }
     }
 
-    fn get_value(&mut self, param_id: ClapId) -> Option<f64> {
+    fn get_value(&self, param_id: ClapId) -> Option<f64> {
         let read = |cell: &AtomicU32| f32::from_bits(cell.load(Ordering::Relaxed)) as f64;
         match param_id.get() {
             LEVEL_ID => Some(read(&self.shared.level)),
@@ -983,7 +983,7 @@ impl PluginMainThreadParams for ToneMainThread<'_> {
     }
 
     fn value_to_text(
-        &mut self,
+        &self,
         _param_id: ClapId,
         value: f64,
         writer: &mut ParamDisplayWriter,
@@ -992,11 +992,11 @@ impl PluginMainThreadParams for ToneMainThread<'_> {
         write!(writer, "{value:.2}")
     }
 
-    fn text_to_value(&mut self, _param_id: ClapId, text: &CStr) -> Option<f64> {
+    fn text_to_value(&self, _param_id: ClapId, text: &CStr) -> Option<f64> {
         text.to_str().ok()?.trim().parse().ok()
     }
 
-    fn flush(&mut self, input: &InputEvents, _output: &mut OutputEvents) {
+    fn flush(&self, input: &InputEvents, _output: &mut OutputEvents) {
         for event in input {
             if let Some(event) = event.as_event::<ParamValueEvent>()
                 && event.param_id().map(|id| id.get()) == Some(LEVEL_ID)
@@ -1010,7 +1010,7 @@ impl PluginMainThreadParams for ToneMainThread<'_> {
 }
 
 impl PluginStateImpl for ToneMainThread<'_> {
-    fn save(&mut self, output: &mut OutputStream) -> Result<(), PluginError> {
+    fn save(&self, output: &mut OutputStream) -> Result<(), PluginError> {
         let level = self.shared.level.load(Ordering::Relaxed);
         if level == u32::from_le_bytes(REFUSE_STATE_SAVE) {
             return Err(PluginError::Message(
@@ -1021,7 +1021,7 @@ impl PluginStateImpl for ToneMainThread<'_> {
         Ok(())
     }
 
-    fn load(&mut self, input: &mut InputStream) -> Result<(), PluginError> {
+    fn load(&self, input: &mut InputStream) -> Result<(), PluginError> {
         let mut bytes = [0u8; 4];
         input.read_exact(&mut bytes)?;
         self.shared
@@ -1033,7 +1033,7 @@ impl PluginStateImpl for ToneMainThread<'_> {
 
 impl clack_extensions::preset_discovery::PluginPresetLoadImpl for ToneMainThread<'_> {
     fn load_from_location(
-        &mut self,
+        &self,
         location: clack_extensions::preset_discovery::preset_data::Location,
         key: Option<&CStr>,
     ) -> Result<(), PluginError> {

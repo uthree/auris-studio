@@ -5,8 +5,11 @@
 //! including the audio thread, so none of them may do real work. Every one of them here sets an
 //! atomic flag and returns; the session reads the flags when it next comes round.
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
+use std::{
+    cell::{Cell, RefCell},
+    sync::atomic::{AtomicBool, Ordering},
+};
 
 use clack_extensions::gui::{GuiSize, HostGui, HostGuiImpl};
 use clack_extensions::params::{HostParams, HostParamsImplMainThread, HostParamsImplShared};
@@ -129,10 +132,10 @@ impl HostParamsImplShared for AurisShared {
 pub struct AurisMainThread<'a> {
     shared: &'a AurisShared,
     /// The timers this plugin has registered, in the order it registered them.
-    timers: Vec<Timer>,
+    timers: RefCell<Vec<Timer>>,
     /// The next unused timer id. Never reused, so a callback for a timer the plugin has just
     /// unregistered cannot be mistaken for one it registered afterwards.
-    next_timer: u32,
+    next_timer: Cell<u32>,
 }
 
 impl<'a> AurisMainThread<'a> {
@@ -140,31 +143,34 @@ impl<'a> AurisMainThread<'a> {
     pub fn new(shared: &'a AurisShared) -> Self {
         Self {
             shared,
-            timers: Vec::new(),
-            next_timer: 0,
+            timers: RefCell::new(Vec::new()),
+            next_timer: Cell::new(0),
         }
     }
 
     /// Every timer owed a tick at `now`, each moved on to its next one.
-    pub(crate) fn due_timers(&mut self, now: Instant) -> Vec<TimerId> {
-        take_due(&mut self.timers, now)
+    pub(crate) fn due_timers(&self, now: Instant) -> Vec<TimerId> {
+        take_due(&mut self.timers.borrow_mut(), now)
     }
 }
 
 impl<'a> MainThreadHandler<'a> for AurisMainThread<'a> {}
 
 impl HostTimerImpl for AurisMainThread<'_> {
-    fn register_timer(&mut self, period_ms: u32) -> Result<TimerId, HostError> {
-        let id = TimerId(self.next_timer);
-        self.next_timer += 1;
-        self.timers.push(Timer::new(id, period_ms, Instant::now()));
+    fn register_timer(&self, period_ms: u32) -> Result<TimerId, HostError> {
+        let id = TimerId(self.next_timer.get());
+        self.next_timer.set(self.next_timer.get().wrapping_add(1));
+        self.timers
+            .borrow_mut()
+            .push(Timer::new(id, period_ms, Instant::now()));
         Ok(id)
     }
 
-    fn unregister_timer(&mut self, timer_id: TimerId) -> Result<(), HostError> {
-        let before = self.timers.len();
-        self.timers.retain(|timer| timer.id != timer_id);
-        match self.timers.len() < before {
+    fn unregister_timer(&self, timer_id: TimerId) -> Result<(), HostError> {
+        let mut timers = self.timers.borrow_mut();
+        let before = timers.len();
+        timers.retain(|timer| timer.id != timer_id);
+        match timers.len() < before {
             true => Ok(()),
             // Saying so rather than shrugging: a plugin cancelling a timer twice, or cancelling
             // one it never had, is a plugin whose bookkeeping disagrees with the host's, and the
@@ -175,7 +181,7 @@ impl HostTimerImpl for AurisMainThread<'_> {
 }
 
 impl HostParamsImplMainThread for AurisMainThread<'_> {
-    fn rescan(&mut self, flags: ParamRescanFlags) {
+    fn rescan(&self, flags: ParamRescanFlags) {
         if flags.intersects(ParamRescanFlags::VALUES) {
             self.shared
                 .flags
@@ -190,7 +196,7 @@ impl HostParamsImplMainThread for AurisMainThread<'_> {
         }
     }
 
-    fn clear(&mut self, _param_id: ClapId, _flags: ParamClearFlags) {
+    fn clear(&self, _param_id: ClapId, _flags: ParamClearFlags) {
         // Automation for one parameter should be dropped. Auris stores automation against a
         // slot and a `ParamId`, which the session owns, so this becomes a session command — and
         // until it is one, forgetting the request is better than clearing the wrong lane.
@@ -198,7 +204,7 @@ impl HostParamsImplMainThread for AurisMainThread<'_> {
 }
 
 impl HostStateImpl for AurisMainThread<'_> {
-    fn mark_dirty(&mut self) {
+    fn mark_dirty(&self) {
         self.shared.flags.dirty.store(true, Ordering::Release);
     }
 }
@@ -239,7 +245,7 @@ mod parameter_rescan_tests {
     #[test]
     fn presentation_rescan_is_distinct_from_contract_invalidation() {
         let shared = AurisShared::default();
-        let mut main = AurisMainThread::new(&shared);
+        let main = AurisMainThread::new(&shared);
         main.rescan(ParamRescanFlags::INFO);
         assert!(HostFlags::take(&shared.flags.rescan_info));
         assert!(!HostFlags::take(&shared.flags.rescan_all));

@@ -5,7 +5,7 @@ mod tokens;
 
 use crate::{AnalysisControl, AnalysisError};
 use auris_core::AudioBuffer;
-use ort::{execution_providers::CPUExecutionProvider, session::Session, value::Tensor};
+use ort::{ep::CPU, session::Session, value::Tensor};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -103,7 +103,8 @@ impl Manifest {
 
 fn load(root: &Path, name: &str, manifest: &Manifest) -> Result<Session, AnalysisError> {
     let bytes = read(&root.join(format!("{name}.onnx")), 512 * 1024 * 1024)?;
-    if format!("{:x}", Sha256::digest(&bytes)) != manifest.files[&format!("{name}.onnx")] {
+    let hash = hex::encode(Sha256::digest(&bytes));
+    if hash != manifest.files[&format!("{name}.onnx")] {
         return Err(error(
             "MuScriptor ONNX checksum mismatch; run the converter again",
         ));
@@ -112,14 +113,14 @@ fn load(root: &Path, name: &str, manifest: &Manifest) -> Result<Session, Analysi
         .map_err(error)?
         .with_intra_threads(2)
         .map_err(error)?
-        .with_execution_providers([CPUExecutionProvider::default().build()])
+        .with_execution_providers([CPU::default().build()])
         .map_err(error)?
         .commit_from_memory(&bytes)
         .map_err(error)?;
     let meta = session.metadata().map_err(error)?;
-    if meta.custom("auris.muscriptor").map_err(error)?.as_deref() != Some("small-v1")
-        || meta.custom("role").map_err(error)?.as_deref() != Some(name)
-        || meta.custom("license").map_err(error)?.as_deref() != Some("CC-BY-NC-4.0")
+    if meta.custom("auris.muscriptor").as_deref() != Some("small-v1")
+        || meta.custom("role").as_deref() != Some(name)
+        || meta.custom("license").as_deref() != Some("CC-BY-NC-4.0")
     {
         return Err(error("incompatible MuScriptor ONNX metadata"));
     }
@@ -129,14 +130,14 @@ fn load(root: &Path, name: &str, manifest: &Manifest) -> Result<Session, Analysi
         (&["tokens", "prefix", "past"], &["logits", "present"])
     };
     if session
-        .inputs
+        .inputs()
         .iter()
-        .map(|v| v.name.as_str())
+        .map(|v| v.name())
         .ne(inputs.iter().copied())
         || session
-            .outputs
+            .outputs()
             .iter()
-            .map(|v| v.name.as_str())
+            .map(|v| v.name())
             .ne(outputs.iter().copied())
     {
         return Err(error("incompatible MuScriptor ONNX inputs/outputs"));
@@ -214,13 +215,15 @@ pub fn transcribe(
     let manifest: Manifest =
         serde_json::from_slice(&read(&root.join("muscriptor.json"), 256 * 1024)?).map_err(error)?;
     manifest.validate()?;
-    let audio_model = load(root, "audio", &manifest)?;
+    let mut audio_model = load(root, "audio", &manifest)?;
     control.check(0.0)?;
-    let decoder = load(root, "decoder", &manifest)?;
+    let mut decoder = load(root, "decoder", &manifest)?;
     let started = Instant::now();
     let count = audio.frame_count().div_ceil(80000);
     let mut tracker = tokens::Tracker::new(&manifest.programs);
-    // ort 2.0-rc.9 rejects zero dimensions in raw tuples; ndarray supports empty caches.
+    // Keep the empty prefix as an ndarray tensor: ort 2.0-rc.13 accepts its zero-length
+    // dimension through the ndarray integration, while raw tuple construction remains
+    // needlessly restrictive for this cache shape.
     let empty_prefix =
         Tensor::from_array(ndarray::Array3::<f32>::zeros((1, 0, 768))).map_err(error)?;
     for chunk in 0..count {
@@ -251,13 +254,13 @@ pub fn transcribe(
         }
         let wav = Tensor::from_array(([1, 80000], waveform)).map_err(error)?;
         let mut prefix_output = audio_model
-            .run(ort::inputs!["waveform" => wav].map_err(error)?)
+            .run(ort::inputs!["waveform" => wav])
             .map_err(error)?;
         let prefix = prefix_output
             .remove("prefix")
             .ok_or_else(|| error("missing audio prefix"))?;
-        let (shape, data) = prefix.try_extract_raw_tensor::<f32>().map_err(error)?;
-        if shape != [1, 503, 768] || data.iter().any(|v| !v.is_finite()) {
+        let (shape, data) = prefix.try_extract_tensor::<f32>().map_err(error)?;
+        if **shape != [1, 503, 768] || data.iter().any(|v| !v.is_finite()) {
             return Err(error("invalid audio prefix"));
         }
         let mut past = Tensor::from_array(ndarray::ArrayD::<f32>::zeros(ndarray::IxDyn(&[
@@ -289,9 +292,9 @@ pub fn transcribe(
                 ])
                 .map_err(error)?;
             let (shape, logits) = outputs["logits"]
-                .try_extract_raw_tensor::<f32>()
+                .try_extract_tensor::<f32>()
                 .map_err(error)?;
-            if shape != [1, 1393] || logits.iter().any(|v| !v.is_finite()) {
+            if **shape != [1, 1393] || logits.iter().any(|v| !v.is_finite()) {
                 return Err(error("invalid decoder logits"));
             }
             let token = logits
@@ -303,8 +306,8 @@ pub fn transcribe(
             past = outputs
                 .remove("present")
                 .ok_or_else(|| error("missing decoder cache"))?;
-            let (shape, _) = past.try_extract_raw_tensor::<f32>().map_err(error)?;
-            if shape != [14, 2, 1, 12, cache_length as i64, 64] {
+            let (shape, _) = past.try_extract_tensor::<f32>().map_err(error)?;
+            if **shape != [14, 2, 1, 12, cache_length as i64, 64] {
                 return Err(error("invalid decoder cache shape"));
             }
             if token == 1 {

@@ -24,7 +24,7 @@ const MAX_ACTIVE_PLUGIN_PROBES: usize = 4;
 struct ProbePermit<'a>(&'a AtomicUsize);
 
 impl<'a> ProbePermit<'a> {
-    // `try_update` is newer than the workspace's Rust 1.90 minimum.
+    // Keep the atomic API supported by the workspace's minimum Rust version.
     #[allow(deprecated)]
     fn acquire(
         active: &'a AtomicUsize,

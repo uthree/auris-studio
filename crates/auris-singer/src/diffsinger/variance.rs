@@ -309,15 +309,15 @@ impl VarianceBackend {
         let (predictor, predictor_gpu) = open_session(&predictor_path, acceleration)?;
         let channels: Vec<_> = ["energy", "breathiness", "voicing", "tension"]
             .into_iter()
-            .filter(|name| predictor.inputs.iter().any(|input| input.name == *name))
+            .filter(|name| predictor.inputs().iter().any(|input| input.name() == *name))
             .map(str::to_owned)
             .collect();
         for name in acoustic.variance_names() {
             if !channels.iter().any(|channel| channel == name)
                 || !predictor
-                    .outputs
+                    .outputs()
                     .iter()
-                    .any(|output| output.name == format!("{name}_pred"))
+                    .any(|output| output.name() == format!("{name}_pred"))
             {
                 return Err(SingError::Metadata(format!(
                     "DiffSinger variance model cannot predict required {name}"
@@ -353,14 +353,12 @@ impl VarianceBackend {
         let score = arrange(frames, range, &self.symbols)?;
         let n = score.tokens.len();
         let count = score.f0.len();
-        let mut inputs =
-            ort::inputs!["tokens" => Tensor::from_array(([1, n], score.tokens.clone()))?]
-                .map_err(inference)?;
+        let mut inputs = ort::inputs!["tokens" => Tensor::from_array(([1, n], score.tokens.clone())).map_err(inference)?];
         if self
             .linguistic
-            .inputs
+            .inputs()
             .iter()
-            .any(|input| input.name == "word_div")
+            .any(|input| input.name() == "word_div")
         {
             let (div, dur) = word_groups(&score, &self.symbols, self.vowels.as_ref());
             inputs.push((
@@ -389,7 +387,7 @@ impl VarianceBackend {
         let encoder = encoded.get("encoder_out").ok_or_else(|| {
             SingError::Inference("DiffSinger linguistic model has no encoder_out".into())
         })?;
-        let (shape, values) = encoder.try_extract_raw_tensor::<f32>().map_err(inference)?;
+        let (shape, values) = encoder.try_extract_tensor::<f32>().map_err(inference)?;
         if shape.len() != 3
             || shape[0] != 1
             || shape[1] != n as i64
@@ -406,11 +404,11 @@ impl VarianceBackend {
             .map(|f0| 69.0 + 12.0 * (f0 / 440.0).log2())
             .collect();
         let mut inputs = ort::inputs![
-            "encoder_out" => Tensor::from_array((shape.to_vec(), values.to_vec()))?,
-            "ph_dur" => Tensor::from_array(([1, n], score.durations.clone()))?,
-            "pitch" => Tensor::from_array(([1, count], pitch))?,
-            "retake" => Tensor::from_array(([1, count, self.channels.len()], vec![true; count * self.channels.len()]))?,
-        ].map_err(inference)?;
+            "encoder_out" => Tensor::from_array((shape.to_vec(), values.to_vec())).map_err(inference)?,
+            "ph_dur" => Tensor::from_array(([1, n], score.durations.clone())).map_err(inference)?,
+            "pitch" => Tensor::from_array(([1, count], pitch)).map_err(inference)?,
+            "retake" => Tensor::from_array(([1, count, self.channels.len()], vec![true; count * self.channels.len()])).map_err(inference)?,
+        ];
         for name in &self.channels {
             inputs.push((
                 name.clone().into(),
@@ -442,8 +440,8 @@ impl VarianceBackend {
             let output = outputs.get(&output_name).ok_or_else(|| {
                 SingError::Inference(format!("DiffSinger variance model has no {output_name}"))
             })?;
-            let (shape, values) = output.try_extract_raw_tensor::<f32>().map_err(inference)?;
-            if shape != [1, count as i64]
+            let (shape, values) = output.try_extract_tensor::<f32>().map_err(inference)?;
+            if **shape != [1, count as i64]
                 || values.len() != count
                 || values.iter().any(|value| !value.is_finite())
             {

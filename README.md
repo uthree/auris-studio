@@ -16,7 +16,7 @@ if macOS blocks the downloaded app, remove its quarantine attribute with
 `xattr -dr com.apple.quarantine "Auris Studio.app"`. On Windows, SmartScreen may require
 **More info → Run anyway**.
 
-To build from source with Rust 1.90 or newer:
+To build from source with Rust 1.95 or newer:
 
 ```sh
 cargo run --release

@@ -104,7 +104,7 @@ pub fn inspect_export(path: &Path) -> Result<ExportInspection, SessionError> {
         true_peak_db: loudness.true_peak_db(),
         full_scale_samples,
         ending_rms_db,
-        sha256: format!("{:x}", hasher.finalize()),
+        sha256: hex::encode(hasher.finalize()),
     })
 }
 

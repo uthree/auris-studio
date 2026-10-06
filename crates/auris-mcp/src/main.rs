@@ -28,7 +28,7 @@ use auris_toolbox as toolbox;
 
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{
-    CallToolResult, ContentBlock, ErrorData, Implementation, ServerCapabilities, ServerInfo,
+    CallToolResult, ContentBlock, ErrorData, Implementation, ServerCapabilities, ServerConfig,
 };
 use rmcp::{ServerHandler, ServiceExt, tool, tool_handler, tool_router};
 
@@ -694,11 +694,11 @@ impl ServerHandler for AurisMcp {
         cancellation_watcher.abort();
         recover_argument_error(result, &name, known, Some(&arguments))
     }
-    fn get_info(&self) -> ServerInfo {
+    fn get_info(&self) -> ServerConfig {
         // Field by field because the type is `non_exhaustive`, which rules the literal out.
         // Named explicitly rather than via `Implementation::from_build_env`, whose `env!` was
         // expanded when *rmcp* was compiled — a server introducing itself as "rmcp 3.1.4".
-        let mut info = ServerInfo::default();
+        let mut info = ServerConfig::default();
         info.capabilities = ServerCapabilities::builder().enable_tools().build();
         info.server_info = Implementation::new(env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
         info.instructions = Some(self.groups.instructions());

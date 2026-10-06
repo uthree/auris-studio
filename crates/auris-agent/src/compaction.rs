@@ -1,23 +1,21 @@
 //! Tool-less summary compaction, preserving the latest two completed exchanges.
 use super::*;
-use rig::agent::{CompletionResponseEvent, ObservationAction};
+use rig::agent::{ModelTurnAction, ModelTurnFinished};
 
 struct CompleteSummary;
 
 impl AgentHook for CompleteSummary {
-    async fn on_completion_response(
+    async fn on_model_turn_finished(
         &self,
         _: &HookContext,
-        event: CompletionResponseEvent<'_>,
-    ) -> ObservationAction {
+        event: ModelTurnFinished<'_>,
+    ) -> ModelTurnAction {
         if event.raw["done_reason"] == "length"
             || event.raw["choices"][0]["finish_reason"] == "length"
         {
-            ObservationAction::Stop(
-                "The summary reached the output limit. Conversation unchanged.".into(),
-            )
+            ModelTurnAction::stop("The summary reached the output limit. Conversation unchanged.")
         } else {
-            ObservationAction::Continue
+            ModelTurnAction::continue_run()
         }
     }
 }
@@ -97,7 +95,7 @@ pub(super) async fn compact(
     .await
     .map_err(|_| "Compaction timed out. Conversation unchanged.")?
     .map_err(|e| format!("Compaction failed: {e}. Conversation unchanged."))?;
-    apply(memory, count, &summary, &text)?;
+    apply(memory, count, summary.output(), &text)?;
     Ok(format!(
         "Summarized {count} earlier exchanges; the latest {KEEP} exchanges are unchanged."
     ))

@@ -2272,10 +2272,9 @@ pub mod platforms {
     //! The menu is one table rendered two ways, so a command added to it reaches both platforms
     //! without being written twice and drifting.
     //!
-    //! wgpu's Direct3D 12 backend is switched off because it does not compile at these versions:
-    //! `gpu-allocator` resolves `windows` to 0.61 while `wgpu-hal` uses 0.62. [`auris_gpu`] is
-    //! optional analysis that steps aside when no backend is present, so a machine with neither
-    //! still works — everything simply runs on the CPU.
+    //! [`auris_gpu`] uses wgpu's Metal and Vulkan backends. It is optional analysis that steps
+    //! aside when no backend is present, so a machine without Vulkan still works — everything
+    //! simply runs on the CPU.
     //!
     //! # One configuration directory, and it is not the platform's
     //!

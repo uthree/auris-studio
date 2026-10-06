@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use auris_vocal::{SILENCE, SingerFrames, SingerScore, is_voiceless};
 use ort::session::Session;
-use ort::tensor::TensorElementType;
+use ort::value::TensorElementType;
 use ort::value::{Tensor, ValueType};
 use serde::{Deserialize, Serialize};
 
@@ -249,11 +249,10 @@ impl LeapSingerBackend {
         let bins = self.config.num_mel_bins;
         let hop = self.config.hop_size as usize;
         let mut inputs = ort::inputs![
-            "tokens" => Tensor::from_array(([1, score.tokens.len()], score.tokens))?,
-            "durations" => Tensor::from_array(([1, score.durations.len()], score.durations))?,
-            "f0" => Tensor::from_array(([1, count], score.f0.clone()))?,
-        ]
-        .map_err(inference)?;
+            "tokens" => Tensor::from_array(([1, score.tokens.len()], score.tokens)).map_err(inference)?,
+            "durations" => Tensor::from_array(([1, score.durations.len()], score.durations)).map_err(inference)?,
+            "f0" => Tensor::from_array(([1, count], score.f0.clone())).map_err(inference)?,
+        ];
         if self.config.variant == Variant::Full {
             inputs.push((
                 "uv".into(),
@@ -272,7 +271,7 @@ impl LeapSingerBackend {
         }
         let acoustic = self.acoustic.run(inputs).map_err(inference)?;
         let (shape, values) = acoustic["mel"]
-            .try_extract_raw_tensor::<f32>()
+            .try_extract_tensor::<f32>()
             .map_err(inference)?;
         let mut mel = vocoder_mel(shape, values, self.config.variant, count, bins)?;
         let mut unvoiced: Vec<f32> = score.voiced.iter().map(|value| 1.0 - value).collect();
@@ -304,19 +303,18 @@ impl LeapSingerBackend {
             count
         };
         let inputs = ort::inputs![
-            "mel" => Tensor::from_array(([1, vocoder_count, bins], mel))?,
-            "f0" => Tensor::from_array(([1, 1, vocoder_count], score.f0))?,
-            "uv" => Tensor::from_array(([1, 1, vocoder_count], unvoiced))?,
-        ]
-        .map_err(inference)?;
+            "mel" => Tensor::from_array(([1, vocoder_count, bins], mel)).map_err(inference)?,
+            "f0" => Tensor::from_array(([1, 1, vocoder_count], score.f0)).map_err(inference)?,
+            "uv" => Tensor::from_array(([1, 1, vocoder_count], unvoiced)).map_err(inference)?,
+        ];
         let output = self.vocoder.run(inputs).map_err(inference)?;
         let (shape, samples) = output["waveform"]
-            .try_extract_raw_tensor::<f32>()
+            .try_extract_tensor::<f32>()
             .map_err(inference)?;
         let expected = checked_sample_count(vocoder_count, hop, "LeapSinger vocoder audio")?
             .checked_sub(if hop == 512 { 256 } else { 0 })
             .ok_or_else(|| SingError::Inference("LeapSinger vocoder output underflow".into()))?;
-        if shape != [1, 1, expected as i64] || samples.len() != expected {
+        if **shape != [1, 1, expected as i64] || samples.len() != expected {
             return Err(SingError::Inference(format!(
                 "LeapSinger vocoder returned shape {shape:?}; expected [1, 1, {expected}] (check hop_size)"
             )));
@@ -544,16 +542,14 @@ fn validate_models(
     // after every inference, rather than trusting those symbolic dimension labels.
     for (session, name, rank) in [(acoustic, "mel", 3), (vocoder, "waveform", 3)] {
         let output = session
-            .outputs
+            .outputs()
             .iter()
-            .find(|output| output.name == name)
+            .find(|output| output.name() == name)
             .ok_or_else(|| metadata(format!("model has no `{name}` output")))?;
-        match &output.output_type {
+        match output.dtype() {
             ValueType::Tensor {
-                ty: Float32,
-                dimensions,
-                ..
-            } if dimensions.len() == rank => {}
+                ty: Float32, shape, ..
+            } if shape.len() == rank => {}
             _ => {
                 return Err(metadata(format!(
                     "`{name}` output must be a rank-{rank} float32 tensor"
@@ -569,32 +565,28 @@ fn check_inputs(
     stage: &str,
     expected: &[(&str, TensorElementType, Vec<i64>)],
 ) -> Result<(), SingError> {
-    if session.inputs.len() != expected.len() {
-        let names: Vec<_> = session
-            .inputs
-            .iter()
-            .map(|input| input.name.as_str())
-            .collect();
+    if session.inputs().len() != expected.len() {
+        let names: Vec<_> = session.inputs().iter().map(|input| input.name()).collect();
         return Err(metadata(format!(
             "{stage} inputs {names:?} do not match the variant and speakers in the manifest"
         )));
     }
-    for (name, expected_type, shape) in expected {
+    for (name, expected_type, expected_shape) in expected {
         let input = session
-            .inputs
+            .inputs()
             .iter()
-            .find(|input| input.name == *name)
+            .find(|input| input.name() == *name)
             .ok_or_else(|| metadata(format!("{stage} has no `{name}` input")))?;
-        match &input.input_type {
-            ValueType::Tensor { ty, dimensions, .. }
-                if ty == expected_type
-                    && dimensions.len() == shape.len()
-                    && dimensions.iter().zip(shape).all(|(actual, expected)| {
+        match input.dtype() {
+            ValueType::Tensor { ty, shape, .. }
+                if *ty == *expected_type
+                    && shape.len() == expected_shape.len()
+                    && shape.iter().zip(expected_shape).all(|(actual, expected)| {
                         *actual == -1 || (*expected != -1 && actual == expected)
                     }) => {}
             _ => {
                 return Err(metadata(format!(
-                    "{stage} `{name}` must be {expected_type:?} {shape:?} with dynamic timeline axes"
+                    "{stage} `{name}` must be {expected_type:?} {expected_shape:?} with dynamic timeline axes"
                 )));
             }
         }

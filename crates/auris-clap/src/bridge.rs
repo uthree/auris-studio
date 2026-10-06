@@ -19,7 +19,6 @@ use clack_host::events::event_types::{
 use clack_host::events::io::{OutputEventBuffer, TryPushError};
 use clack_host::events::{Match, Pckn, UnknownEvent};
 use clack_host::prelude::*;
-use clack_host::utils::Cookie;
 
 use crate::host::AurisHost;
 use crate::notes::{NoteLanguage, Translated, translate};
@@ -369,7 +368,6 @@ impl Bridge {
                             params.clap_ids[index],
                             Pckn::match_all(),
                             values[index] as f64,
-                            Cookie::empty(),
                         ),
                         *event_room,
                     ) {

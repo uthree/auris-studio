@@ -37,8 +37,8 @@ Auris supplies the written pitch and phoneme timings. Pitch is extended through 
 log-frequency space, and the frame dynamics scale the synthesized waveform. Optional key-shift
 and speed embeddings receive neutral values. Modern scalar `steps`/`depth` and legacy one-element
 `speedup`/`depth` inputs are accepted; depth respects the voicebank's `max_depth`. DiffSinger graphs
-use ONNX Runtime's basic optimization because the linked 1.20 runtime's extended optimizer can
-crash while loading trained diffusion graphs. Automatic acceleration retries on CPU if GPU
+use ONNX Runtime's basic optimization because extended optimization has crashed while loading
+trained diffusion graphs. Automatic acceleration retries on CPU if GPU
 inference refuses a graph.
 
 DiffSinger's exported graphs generate random noise internally and do not accept Auris' render

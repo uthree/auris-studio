@@ -362,7 +362,7 @@ impl Session {
 
     fn recognition_fingerprint(&self) -> Result<String, SessionError> {
         let bytes = serde_json::to_vec(&self.project).map_err(failure)?;
-        Ok(format!("{:x}", Sha256::digest(bytes)))
+        Ok(hex::encode(Sha256::digest(bytes)))
     }
 
     /// Prepares written notes from selected tracks (empty means all pitched note tracks).

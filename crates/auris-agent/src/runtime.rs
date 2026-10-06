@@ -1,11 +1,13 @@
 //! Provider preflight, context budgeting and failed-call loop detection.
 use super::*;
 use rig::agent::{
-    CompletionCallAction, CompletionCallEvent, CompletionResponseEvent, InvalidToolCallAction,
-    InvalidToolCallContext, ModelTurnAction, ModelTurnFinished, ObservationAction,
+    CompletionCallAction, CompletionCallEvent, DispatchAction, DispatchEvent,
+    InvalidToolCallAction, InvalidToolCallContext, ModelTurnAction, ModelTurnFinished,
+    OutcomeAction, OutcomeEvent,
 };
-use rig::message::{AssistantContent, ReasoningContent, UserContent};
 use rig::tool::ToolErrorKind;
+use rig_core::effect::EffectKind;
+use rig_core::message::{AssistantContent, UserContent};
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -96,6 +98,15 @@ impl State {
     }
 }
 
+fn record_tool_outcome(state: &mut State, key: (String, String), failed: bool) {
+    if failed {
+        *state.failures.entry(key).or_default() += 1;
+    } else {
+        state.failures.remove(&key);
+    }
+    state.active_tools = state.active_tools.saturating_sub(1);
+}
+
 /// Per-user-turn guard; the caller creates a new guard for each model/tool configuration.
 /// Successful calls reset that signature's failure count.
 pub(super) struct Guard {
@@ -142,7 +153,7 @@ fn opaque_tokens(value: &impl serde::Serialize) -> usize {
     serialized_tokens(value).max(OUTPUT_RESERVE)
 }
 
-fn text_tokens(text: &rig::message::Text) -> usize {
+fn text_tokens(text: &rig_core::message::Text) -> usize {
     estimated_tokens(&text.text) + text.additional_params.as_ref().map_or(0, opaque_tokens)
 }
 
@@ -184,7 +195,7 @@ fn message_tokens(message: &Message) -> usize {
                     UserContent::ToolResult(result) => {
                         MESSAGE_FRAMING
                             + estimated_tokens(&result.name)
-                            + estimated_tokens(result.wire_call_id())
+                            + estimated_tokens(&result.call.to_string())
                             + result.content.iter().map(result_tokens).sum::<usize>()
                     }
                     UserContent::Image(image) => opaque_tokens(image),
@@ -200,25 +211,15 @@ fn message_tokens(message: &Message) -> usize {
                     AssistantContent::ToolCall(call) => {
                         MESSAGE_FRAMING
                             + estimated_tokens(&call.function.name)
-                            + estimated_tokens(call.wire_call_id())
+                            + estimated_tokens(&call.id.to_string())
                             + serialized_tokens(&call.function.arguments)
                             + call.signature.as_deref().map_or(0, estimated_tokens)
                             + call.additional_params.as_ref().map_or(0, serialized_tokens)
                     }
-                    AssistantContent::Reasoning(reasoning) => reasoning
-                        .content
-                        .iter()
-                        .map(|part| match part {
-                            ReasoningContent::Text { text, signature } => {
-                                estimated_tokens(text)
-                                    + signature.as_deref().map_or(0, estimated_tokens)
-                            }
-                            ReasoningContent::Summary(text) => estimated_tokens(text),
-                            ReasoningContent::Encrypted(_) | ReasoningContent::Redacted { .. } => {
-                                opaque_tokens(part)
-                            }
-                        })
-                        .sum(),
+                    // Reasoning is sealed to its issuing provider. Without that issuer we
+                    // cannot inspect its signed/encrypted payload safely; count the opaque
+                    // serialized block conservatively.
+                    AssistantContent::Reasoning(reasoning) => opaque_tokens(reasoning),
                     AssistantContent::Image(image) => opaque_tokens(image),
                 })
                 .sum::<usize>(),
@@ -246,15 +247,7 @@ fn has_only_known_text(message: &Message) -> bool {
             AssistantContent::ToolCall(call) => {
                 call.signature.is_none() && call.additional_params.is_none()
             }
-            AssistantContent::Reasoning(reasoning) => reasoning.content.iter().all(|part| {
-                matches!(
-                    part,
-                    ReasoningContent::Text {
-                        signature: None,
-                        ..
-                    } | ReasoningContent::Summary(_)
-                )
-            }),
+            AssistantContent::Reasoning(_) => false,
             AssistantContent::Image(_) => false,
         }),
     }
@@ -391,33 +384,53 @@ impl AgentHook for Guard {
         }
         CompletionCallAction::Continue
     }
-    async fn on_completion_response(
-        &self,
-        _: &HookContext,
-        event: CompletionResponseEvent<'_>,
-    ) -> ObservationAction {
+    async fn on_outcome(&self, _: &HookContext, event: OutcomeEvent<'_>) -> OutcomeAction {
         self.mark(0);
-        // Rig accepts a length-truncated response when it contains text or tool calls.
-        // Ollama's cap must instead report incomplete work before those calls execute.
-        if self.context.is_some()
-            && event
-                .raw
-                .get("done_reason")
-                .and_then(serde_json::Value::as_str)
-                == Some("length")
-        {
-            let limit = self.output_tokens;
-            return ObservationAction::Stop(format!(
-                "Ollama reached the {limit}-token output limit; the response is incomplete. Increase the Agent Panel output token limit or retry with a smaller task. Earlier edits remain in the project."
-            ));
+        if let Some(response) = event.completion() {
+            if self.context.is_some()
+                && response
+                    .raw
+                    .get("done_reason")
+                    .and_then(serde_json::Value::as_str)
+                    == Some("length")
+            {
+                let limit = self.output_tokens;
+                return OutcomeAction::stop(format!(
+                    "Ollama reached the {limit}-token output limit; the response is incomplete. Increase the Agent Panel output token limit or retry with a smaller task. Earlier edits remain in the project."
+                ));
+            }
+            if let Some(input_tokens) = response.usage.input_tokens {
+                self.state.lock().unwrap().observe_context(input_tokens);
+            }
         }
-        // Ollama reports prompt_eval_count here, including tools and preamble. The measured
-        // prefix belongs to this guard's fixed agent; a changed/compacted prefix cannot use it.
-        self.state
-            .lock()
-            .unwrap()
-            .observe_context(event.usage.input_tokens);
-        ObservationAction::Continue
+        if matches!(event.kind, EffectKind::ToolCall { .. }) {
+            let key = match event.kind {
+                EffectKind::ToolCall { name, args } => signature(name, args),
+                _ => unreachable!(),
+            };
+            let mut state = self.state.lock().unwrap();
+            let failed = match (event.outcome, event.tool_result()) {
+                (Err(_), _) => true,
+                (Ok(_), Some(result)) => !result.is_success(),
+                // A successful tool effect always has a tool result; keep a defensive failure
+                // count if a future Rig version violates that invariant.
+                (Ok(_), None) => true,
+            };
+            record_tool_outcome(&mut state, key, failed);
+            self.mark(state.active_tools);
+            if let Some(result) = event.tool_result()
+                && result.is_error_kind(ToolErrorKind::InvalidArgs)
+            {
+                return OutcomeAction::rewrite_tool_result(
+                    &event,
+                    format!(
+                        "{}\nCheck the tool schema and correct its argument fields before trying again. Do not repeat unchanged arguments.",
+                        full_text(result.output())
+                    ),
+                );
+            }
+        }
+        OutcomeAction::proceed()
     }
     async fn on_model_turn_finished(
         &self,
@@ -465,46 +478,25 @@ impl AgentHook for Guard {
             event.allowed_tools.join(", ")
         )))
     }
-    async fn on_tool_call(&self, _: &HookContext, event: ToolCall<'_>) -> ToolCallAction {
+    async fn on_dispatch(&self, _: &HookContext, event: DispatchEvent<'_>) -> DispatchAction {
+        let EffectKind::ToolCall { name, args } = event.kind else {
+            return DispatchAction::proceed();
+        };
         let mut state = self.state.lock().unwrap();
         if state
             .failures
-            .get(&signature(event.tool_name, event.args))
+            .get(&signature(name, args))
             .copied()
             .unwrap_or(0)
             >= 2
         {
-            return ToolCallAction::Stop(format!(
-                "{} failed twice with identical arguments; stopping the repeated call. Correct the arguments or choose another approach. Earlier edits remain in the open document and may be unsaved.",
-                event.tool_name
+            return DispatchAction::stop(format!(
+                "{name} failed twice with identical arguments; stopping the repeated call. Correct the arguments or choose another approach. Earlier edits remain in the open document and may be unsaved."
             ));
         }
         state.active_tools += 1;
         self.mark(state.active_tools);
-        ToolCallAction::Run
-    }
-    async fn on_tool_result(
-        &self,
-        _: &HookContext,
-        event: ToolResultEvent<'_>,
-    ) -> ToolResultAction {
-        let mut state = self.state.lock().unwrap();
-        let key = signature(event.tool_name, event.args);
-        if !event.raw_result.is_success() {
-            *state.failures.entry(key).or_default() += 1;
-        } else {
-            state.failures.remove(&key);
-        }
-        state.active_tools = state.active_tools.saturating_sub(1);
-        self.mark(state.active_tools);
-        if event.raw_result.is_error_kind(ToolErrorKind::InvalidArgs) {
-            return ToolResultAction::rewrite(format!(
-                "{}\nCheck the tool schema for {} and correct its argument fields before trying again. Do not repeat unchanged arguments.",
-                full_text(event.presentation),
-                event.tool_name
-            ));
-        }
-        ToolResultAction::Keep
+        DispatchAction::proceed()
     }
 }
 
@@ -531,6 +523,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rig_core::message::{CallId, ToolName};
 
     #[test]
     fn tool_reply_accounting_matches_unwrapped_provider_text() {
@@ -540,9 +533,14 @@ mod tests {
         })
         .to_string()
         .repeat(100);
-        let message = Message::tool_result("call_1", "tool_help", &payload);
-        let provider: Vec<rig::providers::ollama::Message> = message.clone().try_into().unwrap();
-        let rig::providers::ollama::Message::ToolResult { content, .. } = &provider[0] else {
+        let message = Message::tool_result(
+            CallId::from_wire("call_1"),
+            ToolName::new("tool_help").unwrap(),
+            &payload,
+        );
+        let provider: Vec<rig_core::providers::ollama::Message> =
+            message.clone().try_into().unwrap();
+        let rig_core::providers::ollama::Message::ToolResult { content, .. } = &provider[0] else {
             panic!("a tool reply must remain a provider tool message");
         };
         assert_eq!(content, &payload);
@@ -569,11 +567,15 @@ mod tests {
             id: None,
             content: vec![AssistantContent::tool_call(
                 "call_1",
-                "tool_help",
+                ToolName::new("tool_help").unwrap(),
                 serde_json::json!({"name":"effects"}),
             )],
         };
-        let result = Message::tool_result("call_1", "tool_help", "Sidechain needs slot and source");
+        let result = Message::tool_result(
+            CallId::from_wire("call_1"),
+            ToolName::new("tool_help").unwrap(),
+            "Sidechain needs slot and source",
+        );
         let history = vec![first_prompt.clone(), call.clone()];
         let mut state = State {
             pending_request: Some(vec![first_prompt]),
@@ -601,7 +603,11 @@ mod tests {
         );
         assert!(guard.schema_tokens + history_tokens(&result, &history) > 32768);
 
-        let oversized = Message::tool_result("call_1", "tool_help", "説明".repeat(10_000));
+        let oversized = Message::tool_result(
+            CallId::from_wire("call_1"),
+            ToolName::new("tool_help").unwrap(),
+            "説明".repeat(10_000),
+        );
         assert!(guard.context_estimate(&oversized, &history) > 32768);
         let mut preserved = history.clone();
         assert_eq!(guard.fit_history(&oversized, &mut preserved), 0);
@@ -640,8 +646,8 @@ mod tests {
         );
 
         let image = Message::User {
-            content: vec![UserContent::Image(rig::message::Image {
-                data: rig::message::DocumentSourceKind::Url(
+            content: vec![UserContent::Image(rig_core::message::Image {
+                data: rig_core::message::DocumentSourceKind::Url(
                     "https://example.test/large.png".into(),
                 ),
                 ..Default::default()
@@ -684,6 +690,18 @@ mod tests {
             signature("edit", r#"{"b":2,"a":1}"#),
             signature("edit", r#"{ "a": 1, "b": 2 }"#)
         );
+    }
+
+    #[test]
+    fn denied_tool_outcomes_release_activity_and_count_as_failures() {
+        let key = signature("write_file", r#"{"path":"Song.auris"}"#);
+        let mut state = State {
+            active_tools: 1,
+            ..Default::default()
+        };
+        record_tool_outcome(&mut state, key.clone(), true);
+        assert_eq!(state.active_tools, 0);
+        assert_eq!(state.failures.get(&key), Some(&1));
     }
 
     #[test]
@@ -732,13 +750,17 @@ mod tests {
             Message::user("Inspect the project"),
             Message::Assistant {
                 id: None,
-                content: vec![rig::message::AssistantContent::tool_call(
+                content: vec![rig_core::message::AssistantContent::tool_call(
                     "call_1",
-                    "describe",
+                    ToolName::new("describe").unwrap(),
                     serde_json::json!({"project":"Song.auris"}),
                 )],
             },
-            Message::tool_result("call_1", "describe", "The project has three tracks"),
+            Message::tool_result(
+                CallId::from_wire("call_1"),
+                ToolName::new("describe").unwrap(),
+                "The project has three tracks",
+            ),
             Message::assistant("The project has three tracks"),
         ];
         let original = history.clone();

@@ -7,7 +7,7 @@ use std::fs::File;
 use std::io::Read;
 use std::path::Path;
 
-use rig::message::Message;
+use rig_core::message::Message;
 
 const TEXT_BUDGET: usize = 1_000_000;
 const TURN_LIMIT: usize = 256;

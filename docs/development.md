@@ -131,18 +131,15 @@ including the ⌘-click that places a note; the settings window shows whichever 
 front of it has. And the menu bar is drawn inside the window rather than by the system, because
 Windows has no system menu bar to draw it.
 
-wgpu's Direct3D 12 backend is switched off, so `auris-gpu` runs on Vulkan. It is optional
-offline analysis and steps aside when no backend is present, so a machine with neither still
-works — everything simply runs on the CPU. The backend does not compile at these versions:
-`gpu-allocator` asks for `windows = ">=0.53, <=0.62"`, gpui pins `^0.61`, so the range resolves
-to 0.61 while `wgpu-hal` itself uses 0.62 and the two disagree about what an `ID3D12Device` is.
-Worth revisiting when either crate moves.
+`auris-gpu` runs on Vulkan on Windows. The plugin hosts use Windows 0.62 bindings;
+released GPUI uses Windows 0.61. GPU analysis is optional and falls back to the CPU
+when no adapter is available.
 
 ### macOS without a full Xcode install
 
 gpui normally compiles its Metal shaders at build time by shelling out to `xcrun metal`, which
 lives inside Xcode and is unreachable while `xcode-select -p` points at the Command Line
-Tools. This project enables gpui's `runtime_shaders` feature instead, which compiles them
+Tools. This project enables `gpui/runtime_shaders` instead, which compiles them
 through the Metal framework at start-up — so the Command Line Tools are enough.
 
 Nothing to configure; it is already set in `Cargo.toml`, and it is worth keeping even with

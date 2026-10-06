@@ -2,10 +2,13 @@
 
 use std::path::Path;
 
-use ort::execution_providers::{
-    CoreMLExecutionProvider, DirectMLExecutionProvider, ExecutionProvider,
-    ExecutionProviderDispatch,
-};
+#[cfg(target_os = "macos")]
+use ort::execution_providers::CoreML;
+#[cfg(target_os = "windows")]
+use ort::execution_providers::DirectML;
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+use ort::execution_providers::ExecutionProvider;
+use ort::execution_providers::ExecutionProviderDispatch;
 use ort::session::Session;
 use ort::session::builder::GraphOptimizationLevel;
 
@@ -34,19 +37,23 @@ pub enum Acceleration {
 
 /// The GPU provider this platform reaches, with whether the linked runtime carries it.
 ///
-/// `cfg!` rather than `#[cfg]` on purpose: the provider types exist on every platform (only
-/// their *registration* is feature-gated), so both arms compile and their tests run
-/// everywhere — the rule that keeps the Windows path checkable from a Mac.
+/// The provider types are feature-gated for their target runtimes, so this selection is
+/// target-gated as well. Other targets use the CPU provider.
 fn gpu_provider() -> Option<(ExecutionProviderDispatch, bool)> {
-    if cfg!(target_os = "windows") {
-        let provider = DirectMLExecutionProvider::default();
+    #[cfg(target_os = "windows")]
+    {
+        let provider = DirectML::default();
         let carried = provider.is_available().unwrap_or(false);
         Some((provider.build(), carried))
-    } else if cfg!(target_os = "macos") {
-        let provider = CoreMLExecutionProvider::default();
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let provider = CoreML::default();
         let carried = provider.is_available().unwrap_or(false);
         Some((provider.build(), carried))
-    } else {
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
         None
     }
 }
@@ -71,13 +78,13 @@ pub(crate) fn open_session_with_optimization(
         reason: error.to_string(),
     };
     let mut builder = Session::builder()
-        .and_then(|builder| builder.with_intra_threads(threads))
+        .and_then(|builder| Ok(builder.with_intra_threads(threads)?))
         .and_then(|builder| {
-            builder.with_optimization_level(if basic_optimization {
+            Ok(builder.with_optimization_level(if basic_optimization {
                 GraphOptimizationLevel::Level1
             } else {
                 GraphOptimizationLevel::Level3
-            })
+            })?)
         })
         .map_err(refused)?;
     let gpu = match acceleration {
@@ -93,11 +100,17 @@ pub(crate) fn open_session_with_optimization(
         };
         builder = builder
             .with_execution_providers([provider])
-            // DirectML cannot plan buffer reuse ahead of a run; the runtime wants memory
-            // patterns off whenever it is in the session, and the other providers do not
-            // miss them.
-            .and_then(|builder| builder.with_memory_pattern(false))
-            .map_err(refused)?;
+            .map_err(|error| SingError::Load {
+                reason: error.to_string(),
+            })?;
+        // DirectML cannot plan buffer reuse ahead of a run; the runtime wants memory
+        // patterns off whenever it is in the session, and the other providers do not
+        // miss them.
+        builder = builder
+            .with_memory_pattern(false)
+            .map_err(|error| SingError::Load {
+                reason: error.to_string(),
+            })?;
     }
     match builder.commit_from_file(path) {
         Ok(session) => Ok((session, engaged)),
