@@ -4,8 +4,8 @@ use super::*;
 pub(super) struct AgentSettings {
     prefs: AgentPreferences,
     selected_connection: auris_agent::ModelConnection,
-    pub(super) fields: [TextField; 4],
-    pub(super) focus: [FocusHandle; 4],
+    pub(super) fields: [TextField; 5],
+    pub(super) focus: [FocusHandle; 5],
     pub(super) active: Option<usize>,
 }
 
@@ -25,8 +25,10 @@ impl AgentSettings {
                 TextField::new(prefs.api_key_env.clone()),
                 TextField::new(prefs.codex_path.clone()),
                 TextField::new(prefs.claude_path.clone()),
+                TextField::new(prefs.antigravity_path.clone()),
             ],
             focus: [
+                cx.focus_handle().tab_stop(true),
                 cx.focus_handle().tab_stop(true),
                 cx.focus_handle().tab_stop(true),
                 cx.focus_handle().tab_stop(true),
@@ -54,6 +56,7 @@ impl SettingsWindow {
         self.agent.prefs.api_key_env = self.agent.fields[1].content().trim().to_owned();
         self.agent.prefs.codex_path = self.agent.fields[2].content().trim().to_owned();
         self.agent.prefs.claude_path = self.agent.fields[3].content().trim().to_owned();
+        self.agent.prefs.antigravity_path = self.agent.fields[4].content().trim().to_owned();
         let draft = self.agent.prefs.clone();
         let selected_connection = self.agent.selected_connection.clone();
         let result = self.app.update(cx, move |app, cx| {
@@ -68,7 +71,10 @@ impl SettingsWindow {
             });
             prefs.codex_path = draft.codex_path;
             prefs.claude_path = draft.claude_path;
-            if owns_connection && !matches!(prefs.backend.as_str(), "codex" | "claude") {
+            prefs.antigravity_path = draft.antigravity_path;
+            if owns_connection
+                && !matches!(prefs.backend.as_str(), "codex" | "claude" | "antigravity")
+            {
                 prefs.provider = draft.provider;
                 prefs.url = draft.url;
                 prefs.api_key_env = draft.api_key_env;
@@ -118,6 +124,7 @@ impl SettingsWindow {
             "agent-key-env",
             "agent-codex-path",
             "agent-claude-path",
+            "agent-antigravity-path",
         ][index];
         let focus = self.agent.focus[index].clone();
         let field = &self.agent.fields[index];
@@ -200,6 +207,9 @@ impl SettingsWindow {
         );
         let mut rows = vec![
             note(self.t(Key::AgentDiscoveryHelp), &theme),
+            section_title(self.t(Key::AgentAntigravityPathLabel), &theme),
+            self.agent_field(4, cx),
+            note(self.t(Key::AgentAntigravityHelp), &theme),
             section_title(self.t(Key::AgentCodexPathLabel), &theme),
             self.agent_field(2, cx),
             note(self.t(Key::AgentCodexHelp), &theme),
@@ -287,6 +297,46 @@ impl SettingsWindow {
 mod tests {
     use super::*;
     use gpui::{TestAppContext, VisualTestContext};
+
+    #[gpui::test]
+    fn antigravity_path_settings_keep_the_selected_model_and_api_connection(
+        cx: &mut TestAppContext,
+    ) {
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, cx| {
+            this.settings.agent = AgentPreferences {
+                backend: "antigravity".into(),
+                model: "agy-fixture".into(),
+                provider: "openai".into(),
+                url: "https://example.invalid/v1".into(),
+                ..Default::default()
+            };
+            this.agent_chat
+                .load_preferences(&this.settings.agent.clone());
+            this.open_settings(cx);
+        });
+        let handle = app.read_with(cx, |this, _| this.settings_window.unwrap());
+        let cx = &mut VisualTestContext::from_window(handle.into(), cx);
+        cx.simulate_resize(gpui::size(px(760.0), px(1200.0)));
+        cx.run_until_parked();
+        crate::harness::click("tab-agent", cx);
+        crate::harness::click("agent-antigravity-path", cx);
+        cx.simulate_input("C:/Tools/agy.exe");
+        handle
+            .update(cx, |this, _, cx| {
+                this.apply_agent_with(cx, |_| Ok::<(), String>(()))
+            })
+            .unwrap();
+        app.read_with(cx, |this, _| {
+            assert_eq!(this.settings.agent.backend, "antigravity");
+            assert_eq!(this.settings.agent.model, "agy-fixture");
+            assert_eq!(
+                this.agent_chat.preferences().antigravity_path,
+                "C:/Tools/agy.exe"
+            );
+            assert_eq!(this.settings.agent.url, "https://example.invalid/v1");
+        });
+    }
 
     #[gpui::test]
     fn connection_settings_preserve_the_selected_runtime(cx: &mut TestAppContext) {

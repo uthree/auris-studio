@@ -113,6 +113,15 @@ impl Session {
         self.publish_loop();
     }
 
+    /// Set a validated positive loop and its enabled state as one undoable agent edit.
+    /// Human transport toggles still use `set_loop_enabled` outside document history.
+    pub(crate) fn set_agent_loop_region(&mut self, start: Ticks, end: Ticks) {
+        self.record(Edit::SetLoopRegion);
+        self.project.loop_region = Some((start, end));
+        self.project.loop_enabled = true;
+        self.publish_loop();
+    }
+
     /// Sends the loop region to the audio thread.
     ///
     /// The region is stored in ticks and the transport holds frames, so this has to run again

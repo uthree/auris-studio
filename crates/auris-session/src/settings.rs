@@ -346,12 +346,14 @@ impl ReasoningEffort {
 pub struct AgentPreferences {
     /// API configuration to rediscover after choosing a model on another backend.
     pub discovery_endpoint: Option<AgentEndpoint>,
-    /// Conversation runtime: empty or "rig", "codex", or "claude" for Claude Code CLI.
+    /// Conversation runtime: empty or "rig", "codex", "claude", or "antigravity".
     pub backend: String,
     /// Optional native Codex executable path. Empty searches the installed CLI.
     pub codex_path: String,
     /// Optional native Claude Code executable path. Empty searches PATH and the native install.
     pub claude_path: String,
+    /// Optional Antigravity CLI executable path. Empty searches PATH and `.local/bin`.
+    pub antigravity_path: String,
     /// Live agent mode and operation allow/deny rules, including the embedded live MCP.
     pub policy: crate::agent_policy::Policy,
     /// Auto-compaction threshold in percent; absent means 85, zero disables it.
@@ -817,6 +819,7 @@ mod tests {
         )
         .unwrap();
         assert!(old.claude_path.is_empty());
+        assert!(old.antigravity_path.is_empty());
         assert_eq!(old.codex_path, "C:/Tools/codex.exe");
         let claude = AgentPreferences {
             backend: "claude".into(),
@@ -828,6 +831,16 @@ mod tests {
             serde_json::from_str::<AgentPreferences>(&serde_json::to_string(&claude).unwrap())
                 .unwrap(),
             claude
+        );
+        let antigravity = AgentPreferences {
+            backend: "antigravity".into(),
+            antigravity_path: "C:/Tools/agy.exe".into(),
+            ..claude
+        };
+        assert_eq!(
+            serde_json::from_str::<AgentPreferences>(&serde_json::to_string(&antigravity).unwrap())
+                .unwrap(),
+            antigravity
         );
     }
 

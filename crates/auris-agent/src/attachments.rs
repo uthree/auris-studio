@@ -107,8 +107,11 @@ pub fn validate_attachments(
     for path in paths {
         let kind = attachment_kind(path)
             .ok_or_else(|| format!("Unsupported attachment: {}", path.display()))?;
+        if kind == AttachmentKind::Image && prefs.backend == "antigravity" {
+            return Err("Antigravity CLI stream input supports text and local audio measurements; remove the image or choose another backend".into());
+        }
         if kind == AttachmentKind::Audio
-            && !matches!(prefs.backend.as_str(), "codex" | "claude")
+            && !matches!(prefs.backend.as_str(), "codex" | "claude" | "antigravity")
             && prefs.provider != "openai"
         {
             return Err("Audio attachments require an audio-capable OpenAI-compatible model. Choose that model or remove the audio file before sending.".into());
@@ -749,7 +752,7 @@ pub(crate) mod tests {
 
     #[test]
     fn cli_routes_accept_audio_independently_of_the_rig_provider() {
-        for backend in ["codex", "claude"] {
+        for backend in ["codex", "claude", "antigravity"] {
             let prefs = auris_session::AgentPreferences {
                 backend: backend.into(),
                 provider: "ollama".into(),
@@ -770,6 +773,20 @@ pub(crate) mod tests {
         for name in ["reference.png", "lyrics.txt", "mix.wav"] {
             validate_attachments(&prefs, &[PathBuf::from(name)]).unwrap();
         }
+    }
+
+    #[test]
+    fn antigravity_accepts_text_and_local_audio_but_refuses_images_before_submission() {
+        let prefs = auris_session::AgentPreferences {
+            backend: "antigravity".into(),
+            ..Default::default()
+        };
+        validate_attachments(&prefs, &["lyrics.md".into(), "reference.wav".into()]).unwrap();
+        assert!(
+            validate_attachments(&prefs, &["reference.png".into()])
+                .unwrap_err()
+                .contains("remove the image")
+        );
     }
 
     #[test]

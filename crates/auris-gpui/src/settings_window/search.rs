@@ -63,6 +63,8 @@ impl Section {
                 Key::AgentBackendLabel,
                 Key::AgentCodexPathLabel,
                 Key::AgentCodexHelp,
+                Key::AgentAntigravityPathLabel,
+                Key::AgentAntigravityHelp,
                 Key::AgentUrlLabel,
                 Key::AgentKeyEnvLabel,
                 Key::AgentContextTokens,

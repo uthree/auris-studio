@@ -475,7 +475,7 @@ pub enum Command {
         seed: u64,
     },
 
-    /// Set and enable a playback loop using a 1-based start bar and duration.
+    /// Set and enable a playback loop using a 1-based start bar and duration. Undo restores both the region and its enabled state.
     SetLoop {
         /// First bar, starting at 1.
         #[schemars(range(min = 1))]
@@ -1001,8 +1001,7 @@ impl Session {
                 let end_bar = start_bar.checked_add(bars).ok_or("Bar range overflow")?;
                 let start = self.project().signatures.bar_start(start_bar);
                 let end = self.project().signatures.bar_start(end_bar);
-                self.set_loop_region(start, end);
-                self.set_loop_enabled(true);
+                self.set_agent_loop_region(start, end);
                 Ok("Set playback loop".into())
             }
         }
@@ -1281,6 +1280,37 @@ mod tests {
             session.project().loop_region,
             Some((Ticks::from_beats(8.0), Ticks::from_beats(24.0)))
         );
+    }
+
+    #[test]
+    fn agent_loop_undo_restores_the_switch_without_changing_earlier_history() {
+        let mut session = session();
+        let empty = session.project().clone();
+        let track = session.add_default_instrument_track("Lead").unwrap();
+        let before = session.project().clone();
+        session.begin_agent_request();
+        session
+            .agent_command(Command::RenameTrack {
+                track: track.0,
+                name: "Renamed".into(),
+            })
+            .unwrap();
+        session
+            .agent_command(Command::SetLoop {
+                start_bar: 3,
+                bars: 4,
+            })
+            .unwrap();
+        session.end_agent_request();
+        let after = session.project().clone();
+        assert!(after.loop_enabled);
+        assert!(session.undo().is_some());
+        assert_eq!(session.project(), &before);
+        assert!(session.redo().is_some());
+        assert_eq!(session.project(), &after);
+        session.undo();
+        session.undo();
+        assert_eq!(session.project(), &empty);
     }
 
     #[test]

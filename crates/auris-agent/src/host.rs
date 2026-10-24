@@ -3,7 +3,7 @@
 use crate::{Bridge, permissions, toolbox};
 use serde_json::{Value, json};
 
-/// One window's tool endpoint, shared by rig and the embedded MCP server.
+/// One window's tool endpoint, shared by rig, Antigravity and the embedded MCP server.
 #[derive(Clone)]
 pub(crate) struct ToolHost {
     bridge: Bridge,

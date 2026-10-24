@@ -1934,11 +1934,13 @@ new のオプション
     AgentApply { en: "Apply", ja: "適用" }
     AgentProviderLabel { en: "Provider", ja: "プロバイダ" }
     AgentBackendLabel { en: "Backend", ja: "バックエンド" }
+    AgentAntigravityPathLabel { en: "Antigravity CLI executable path (optional)", ja: "Antigravity CLI実行ファイルのパス（任意）" }
+    AgentAntigravityHelp { en: "Sign in by running agy. Leave the path empty to find the installed CLI. Choose an Antigravity CLI model in the Agent panel. Song tools use Auris permissions; native shell tools and image attachments are unavailable.", ja: "agyを起動してログインしてください。パスが空欄ならインストール済みCLIを探します。エージェントパネルでAntigravity CLIのモデルを選択してください。作曲ツールにはAurisの権限が適用されます。CLIのシェル操作と画像添付は未対応です。" }
     AgentClaudePathLabel { en: "Claude Code executable path (optional)", ja: "Claude Code実行ファイルのパス（任意）" }
     AgentClaudeHelp { en: "Install Claude Code and sign in by running claude. Leave the path empty to find the installed CLI. Choose a model in the Agent Panel after applying.", ja: "Claude Codeをインストールし、claudeを起動してログインしてください。パスが空欄ならインストール済みのCLIを探します。適用後、エージェントパネルでモデルを選択してください。" }
     AgentCodexPathLabel { en: "Codex executable path (optional)", ja: "Codex実行ファイルのパス（任意）" }
     AgentCodexHelp { en: "Sign in with codex login. Leave the path empty to detect the installed CLI.", ja: "codex loginでログインしてください。パスが空欄ならインストール済みのCLIを探します。" }
-    AgentDiscoveryHelp { en: "Available Codex, Claude Code, Ollama and configured API models appear together in the Agent panel.", ja: "利用可能なCodex・Claude Code・Ollama・設定済みAPIのモデルを、エージェントパネルにまとめて表示します。" }
+    AgentDiscoveryHelp { en: "Available Codex, Claude Code, Antigravity CLI, Ollama and configured API models appear together in the Agent panel.", ja: "利用可能なCodex・Claude Code・Antigravity CLI・Ollama・設定済みAPIのモデルを、エージェントパネルにまとめて表示します。" }
     AgentReadOnly { en: "Read-only", ja: "読み取り専用" }
     AgentEditMode { en: "Edit", ja: "編集" }
     AgentPlanMode { en: "Plan", ja: "プラン" }
@@ -2095,6 +2097,7 @@ new のオプション
     AgentEffortMaxShort { en: "Max", ja: "最大" }
     AgentAttachmentUnsupported { en: "Unsupported attachment: {name}", ja: "対応していないファイル形式です: {name}" }
     AgentAttachmentLimit { en: "Attach up to 8 files per message", ja: "添付できるファイルは1回につき8個までです" }
+    AgentAttachmentImageUnsupported { en: "Antigravity CLI does not accept image attachments. Choose another model or remove the image.", ja: "Antigravity CLIは画像の添付に対応していません。別のモデルを選ぶか、画像の添付を外してください。" }
     AgentAttachmentAudioUnsupported { en: "Choose an audio-capable OpenAI-compatible model, or remove the audio attachment", ja: "音声に対応したOpenAI互換モデルを選ぶか、音声の添付を外してください" }
     AgentAttachmentAudioAnalysisHint { en: "Ask for a piano cover to transcribe this audio locally into an editable piano track. Raw audio stays on this computer.", ja: "ピアノカバーを依頼すると、音声をローカルで採譜して編集可能なピアノトラックを作ります。音声そのものは外部に送信しません。" }
     AgentOpenResult { en: "Open created project", ja: "生成した曲を開く" }
