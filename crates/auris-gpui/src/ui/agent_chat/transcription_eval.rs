@@ -24,6 +24,9 @@ struct Evaluation {
     natural_workflow: bool,
     #[serde(default)]
     listening_required: bool,
+    /// Explicit fixture grants; production defaults and reviewer decisions stay unchanged.
+    #[serde(default)]
+    allow_operations: Vec<String>,
 }
 
 fn transcript(entries: &[ChatEntry]) -> Vec<Value> {
@@ -74,7 +77,7 @@ fn run(cx: &mut gpui::TestAppContext, cover: bool) {
         std::env::var_os("AURIS_CODEX_TRANSCRIPTION_EVAL").expect("explicit evaluation config");
     let config: Evaluation = serde_json::from_slice(&fs::read(config).unwrap()).unwrap();
     let backend = config.backend.as_deref().unwrap_or("codex");
-    assert!(matches!(backend, "codex" | "claude"));
+    assert!(matches!(backend, "codex" | "claude" | "opencode"));
     assert!(
         config.workspace.is_absolute()
             && config.output.is_absolute()
@@ -97,6 +100,7 @@ fn run(cx: &mut gpui::TestAppContext, cover: bool) {
             effort: config.effort,
             policy: Policy {
                 mode: Mode::AutoReview,
+                allow: config.allow_operations.clone(),
                 ..Default::default()
             },
             ..Default::default()
@@ -207,7 +211,8 @@ fn run(cx: &mut gpui::TestAppContext, cover: bool) {
         let redo_restored=this.session.project()==&after;
         if cover_added || !cover && failure.is_none() {this.session.save_in_place().unwrap();}
         json!({"elapsed_seconds":started.elapsed().as_secs_f64(),"backend":backend,"model":config.model,"effort":config.effort,
-            "policy":"isolated in-memory AutoReview; actual app reviewer handles native commands",
+            "policy":"isolated AutoReview with explicit fixture allow rules; other operations use the actual app reviewer",
+            "allow_operations":config.allow_operations,
             "failure":failure,"exported":exported,"imported":imported,"used_basic_pitch":used_basic_pitch,"cover_added":cover_added,"readback_after_import":readback,"inspected_after_import":inspected,
             "dirty_before_host_save":dirty,"one_undo_restored":undo_restored,"redo_restored":redo_restored,
             "sections":after.sections,"tracks":after.tracks.len(),"project":this.session.path(),"entries":entries})
@@ -290,15 +295,17 @@ fn run(cx: &mut gpui::TestAppContext, cover: bool) {
                     > baseline.1["revision"].as_u64().unwrap(),
                 "a real edit must separate auditions"
             );
-            assert!(
-                entries[baseline.0 + 1..comparison.0]
-                    .iter()
-                    .any(|entry| entry["ok"] == true
-                        && matches!(
-                            entry["name"].as_str(),
-                            Some("read_notes" | "read_mixer_graph" | "inspect_project")
-                        ))
-            );
+            assert!(entries[baseline.0 + 1..comparison.0].iter().any(|entry| {
+                entry["ok"] == true
+                    && match entry["name"].as_str() {
+                        Some("read_notes" | "read_mixer_graph" | "inspect_project") => true,
+                        Some("mixer_graph") => entry["args"]
+                            .as_str()
+                            .and_then(|args| serde_json::from_str::<Value>(args).ok())
+                            .is_some_and(|args| args["operation"]["action"] == "read"),
+                        _ => false,
+                    }
+            }));
             assert_eq!(
                 comparison.1["audio"]["attenuation_db"],
                 comparison.1["before"]["audio"]["attenuation_db"]

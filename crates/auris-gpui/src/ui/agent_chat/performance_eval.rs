@@ -97,7 +97,10 @@ fn render(session: &mut Session) -> AudioBuffer {
 fn installed_cli_edits_performance_in_the_window(cx: &mut gpui::TestAppContext) {
     let config = std::env::var_os("AURIS_PERFORMANCE_EVAL").expect("explicit evaluation config");
     let config: Evaluation = serde_json::from_slice(&fs::read(config).unwrap()).unwrap();
-    assert!(matches!(config.backend.as_str(), "codex" | "claude"));
+    assert!(matches!(
+        config.backend.as_str(),
+        "codex" | "claude" | "opencode"
+    ));
     assert!(config.output.is_absolute());
     fs::create_dir(&config.output).expect("a fresh evaluation output directory");
     let (app, cx) = crate::harness::open(cx);

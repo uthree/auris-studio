@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 /// Routing information for a discovered model; API key values never leave the environment.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModelConnection {
-    /// Worker runtime: `codex`, `claude`, or `rig`.
+    /// Worker runtime: `codex`, `claude`, `opencode`, or `rig`.
     pub backend: String,
     /// API dialect for rig: `ollama` or `openai`.
     pub provider: String,
@@ -24,6 +24,7 @@ impl ModelConnection {
             backend: match prefs.backend.as_str() {
                 "codex" => "codex",
                 "claude" => "claude",
+                "opencode" => "opencode",
                 _ => "rig",
             }
             .into(),
@@ -42,7 +43,7 @@ impl ModelConnection {
     pub fn apply_to(&self, prefs: &mut AgentPreferences) {
         prefs.backend.clone_from(&self.backend);
         // CLI backends keep the API configuration available for the next discovery.
-        if !matches!(self.backend.as_str(), "codex" | "claude") {
+        if !matches!(self.backend.as_str(), "codex" | "claude" | "opencode") {
             prefs.provider.clone_from(&self.provider);
             prefs.url.clone_from(&self.url);
             prefs.api_key_env.clone_from(&self.api_key_env);
@@ -54,10 +55,11 @@ impl ModelConnection {
         let provider = match (self.backend.as_str(), self.provider.as_str()) {
             ("codex", _) => "Codex",
             ("claude", _) => "Claude Code",
+            ("opencode", _) => "OpenCode",
             (_, "openai") => "OpenAI compatible",
             _ => "Ollama",
         };
-        if !matches!(self.backend.as_str(), "codex" | "claude")
+        if !matches!(self.backend.as_str(), "codex" | "claude" | "opencode")
             && !self.url.is_empty()
             && let Ok(url) = reqwest::Url::parse(&self.url)
             && let Some(host) = url.host_str()
@@ -74,7 +76,7 @@ impl ModelConnection {
     /// Whether this route is selected, ignoring API settings for CLI backends.
     pub fn matches(&self, prefs: &AgentPreferences) -> bool {
         let current = Self::from_preferences(prefs);
-        if matches!(self.backend.as_str(), "codex" | "claude") {
+        if matches!(self.backend.as_str(), "codex" | "claude" | "opencode") {
             current.backend == self.backend
         } else {
             *self == current
@@ -99,7 +101,9 @@ fn candidates(prefs: &AgentPreferences, openai_key: bool) -> Vec<AgentPreference
     ollama.api_key_env.clear();
     let mut claude = prefs.clone();
     claude.backend = "claude".into();
-    let mut result = vec![codex, ollama, claude];
+    let mut opencode = prefs.clone();
+    opencode.backend = "opencode".into();
+    let mut result = vec![codex, ollama, claude, opencode];
     if prefs.provider == "openai" || !prefs.url.is_empty() || !prefs.api_key_env.is_empty() {
         let mut api = prefs.clone();
         api.backend = "rig".into();
@@ -139,6 +143,7 @@ async fn discover_candidates(candidates: Vec<AgentPreferences>) -> Result<String
                 match candidate.backend.as_str() {
                     "codex" => backends::codex::list_models(&candidate).await,
                     "claude" => backends::claude::list_models(&candidate).await,
+                    "opencode" => backends::opencode::list_models(&candidate).await,
                     _ => {
                         let Command::Models(options) = parse_command(
                             &["models".into()],
@@ -200,7 +205,7 @@ async fn discover_candidates(candidates: Vec<AgentPreferences>) -> Result<String
     Ok(serde_json::json!({"models":models}).to_string())
 }
 
-/// Probe Codex, Claude Code, local Ollama and the configured API on a background thread.
+/// Probe Codex, Claude Code, OpenCode, local Ollama and the configured API on a background thread.
 /// A failed provider does not hide models returned by another provider.
 pub fn discover_models_background(
     prefs: AgentPreferences,
@@ -256,6 +261,34 @@ mod tests {
         );
     }
 
+    #[test]
+    fn opencode_route_preserves_the_api_connection_and_executable() {
+        let prefs = AgentPreferences {
+            backend: "opencode".into(),
+            opencode_path: "C:/Tools/opencode.exe".into(),
+            provider: "openai".into(),
+            url: "https://example.invalid/v1".into(),
+            api_key_env: "PRIVATE_KEY".into(),
+            ..Default::default()
+        };
+        let route = ModelConnection::from_preferences(&prefs);
+        assert_eq!(route.backend, "opencode");
+        assert_eq!(route.label(), "OpenCode");
+        let mut selected = prefs.clone();
+        selected.backend = "rig".into();
+        selected.url = "https://other.invalid/v1".into();
+        route.apply_to(&mut selected);
+        assert!(route.matches(&selected));
+        assert_eq!(selected.url, "https://other.invalid/v1");
+        assert_eq!(selected.opencode_path, prefs.opencode_path);
+        assert!(
+            candidates(&prefs, false)
+                .iter()
+                .any(|candidate| candidate.backend == "opencode"
+                    && candidate.opencode_path == prefs.opencode_path)
+        );
+    }
+
     #[tokio::test]
     async fn an_unavailable_backend_does_not_hide_a_working_provider() {
         let (url, _seen) = crate::tests::mock_server(vec![
@@ -276,9 +309,19 @@ mod tests {
             claude_path: "/does-not-exist/claude.exe".into(),
             ..Default::default()
         };
-        let listed = discover_candidates(vec![unavailable, unavailable_claude, prefs])
-            .await
-            .unwrap();
+        let unavailable_opencode = AgentPreferences {
+            backend: "opencode".into(),
+            opencode_path: "/does-not-exist/opencode.exe".into(),
+            ..Default::default()
+        };
+        let listed = discover_candidates(vec![
+            unavailable,
+            unavailable_claude,
+            unavailable_opencode,
+            prefs,
+        ])
+        .await
+        .unwrap();
         let listed: serde_json::Value = serde_json::from_str(&listed).unwrap();
         assert_eq!(listed["models"][0]["name"], "fixture");
         assert_eq!(listed["models"][0]["connection"]["url"], url);
@@ -294,9 +337,9 @@ mod tests {
             ..Default::default()
         };
         let routes = candidates(&prefs, false);
-        assert_eq!(routes.len(), 4);
+        assert_eq!(routes.len(), 5);
         assert!(routes[1].url.is_empty() && routes[1].api_key_env.is_empty());
-        assert_eq!(routes[3].url, prefs.url);
+        assert_eq!(routes[4].url, prefs.url);
         let mut selected = prefs.clone();
         ModelConnection::from_preferences(&routes[0]).apply_to(&mut selected);
         assert_eq!(selected, prefs);

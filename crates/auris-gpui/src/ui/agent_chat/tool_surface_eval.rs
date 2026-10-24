@@ -193,7 +193,7 @@ fn installed_agent_arranges_sections_with_performance_automation_and_sfx(
     let config: Evaluation = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
     assert!(matches!(
         config.backend.as_str(),
-        "codex" | "claude" | "rig"
+        "codex" | "claude" | "opencode" | "rig"
     ));
     assert!(config.output.is_absolute() && !config.output.exists());
     fs::create_dir_all(&config.output).unwrap();
@@ -399,7 +399,7 @@ fn installed_agent_edits_and_exports_the_unsaved_document(cx: &mut gpui::TestApp
     let config: Evaluation = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
     assert!(matches!(
         config.backend.as_str(),
-        "claude" | "codex" | "rig"
+        "claude" | "codex" | "opencode" | "rig"
     ));
     assert!(config.output.is_absolute());
     fs::create_dir(&config.output).expect("a fresh evidence folder");

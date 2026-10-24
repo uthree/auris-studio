@@ -293,7 +293,8 @@ pub mod architecture {
     //! Dropping a worker cancels its network/approval waits without joining on the UI thread.
     //! Rig runs in-process. The optional Codex backend launches the official `codex app-server`
     //! over stdio. The Claude Code backend uses the CLI's bidirectional stream-json protocol.
-    //! Both CLI backends connect to a per-conversation, authenticated loopback MCP endpoint.
+    //! The OpenCode backend uses `opencode acp` over stdio (ACP v1).
+    //! All CLI backends connect to a per-conversation, authenticated loopback MCP endpoint.
     //! All backends use one live tool host and the same desktop permission/edit path; this
     //! embedded MCP never opens saved projects independently. Each CLI owns its authentication;
     //! the application never reads or copies its credential files. The model catalogue probes
@@ -306,12 +307,21 @@ pub mod architecture {
     //! read-only sandbox and untrusted-command approval policy: trusted sandboxed reads can run
     //! directly, while file writes and command escalations require a decision. Claude routes
     //! its explicit native tool catalog through ask rules and the stdio approval callback.
-    //! Native tools operate on external files; the open song is still edited through live MCP.
+    //! OpenCode uses an isolated configuration directory, keeping its provider authentication in
+    //! the CLI, and routes native permission requests through the same gate. It selects the
+    //! configuration schema for CLI major version 1 or 2 before launching ACP; V2 exposes
+    //! direct live tools with Code Mode disabled so each operation retains its own permission.
+    //! Inference waits for the authenticated live tool catalogue to be requested; a saved
+    //! project is also the CLI process directory, keeping its initial and ACP locations aligned.
+    //! Custom provider
+    //! configuration and user plugins are not inherited. Its model variants are selected as
+    //! advertised model IDs. Native tools operate on external files; the open song is still
+    //! edited through live MCP.
     //! Reference attachments are prepared in the transport worker, never on the UI or audio
     //! thread. Original audio snapshots have separate disk budgets (512 MiB per file, 1 GiB per
     //! turn/cache) from model payloads. Copying is streamed and cancellable. Text files are
     //! marked as reference data rather than user requests.
-    //! Codex and Claude Code receive audio references as local CPU tempo/chord measurements,
+    //! CLI backends receive audio references as local CPU tempo/chord measurements,
     //! using the session's existing file analysis service on a temporary snapshot of the
     //! original attachment. This is explicitly not listening or note transcription.
     //! Long reports sample timestamped beats and chord windows with their strides disclosed.

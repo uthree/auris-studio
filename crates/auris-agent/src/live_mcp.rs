@@ -80,6 +80,7 @@ struct LiveTools {
     host: ToolHost,
     active: Arc<AtomicBool>,
     failure: CancellationToken,
+    catalog_ready: CancellationToken,
 }
 
 impl ServerHandler for LiveTools {
@@ -106,6 +107,7 @@ impl ServerHandler for LiveTools {
                 )
             })
             .collect();
+        self.catalog_ready.cancel();
         Ok(ListToolsResult {
             tools,
             ..Default::default()
@@ -165,6 +167,7 @@ pub(crate) struct LiveMcp {
     pub(crate) token: String,
     active: Arc<AtomicBool>,
     failure: CancellationToken,
+    catalog_ready: CancellationToken,
     cancellation: CancellationToken,
     task: tokio::task::JoinHandle<()>,
 }
@@ -182,10 +185,12 @@ impl LiveMcp {
         let authorization = format!("Bearer {token}");
         let active = Arc::new(AtomicBool::new(false));
         let failure = CancellationToken::new();
+        let catalog_ready = CancellationToken::new();
         let handler = LiveTools {
             host,
             active: active.clone(),
             failure: failure.clone(),
+            catalog_ready: catalog_ready.clone(),
         };
         let cancellation = CancellationToken::new();
         let service: StreamableHttpService<LiveTools, LocalSessionManager> =
@@ -227,9 +232,15 @@ impl LiveMcp {
             token,
             active,
             failure,
+            catalog_ready,
             cancellation,
             task,
         })
+    }
+
+    /// Wait until the authenticated client has requested the live tool catalogue.
+    pub(crate) async fn wait_for_catalog(&self) {
+        self.catalog_ready.cancelled().await;
     }
 
     pub(crate) fn set_active(&self, active: bool) {
@@ -287,6 +298,7 @@ mod tests {
                 let response = request(json!({"jsonrpc":"2.0","id":2,"method":"tools/list"})).header("mcp-session-id", &session_id).send().await.unwrap();
                 assert!(response.status().is_success());
                 let body = response.text().await.unwrap();
+                tokio::time::timeout(Duration::from_secs(1), mcp.wait_for_catalog()).await.unwrap();
                 let tools = rpc_response(&body);
                 let tool = tools["result"]["tools"].as_array().unwrap().iter().find(|tool| tool["name"] == "generate_phrase").unwrap();
                 assert_eq!(tool["inputSchema"]["properties"]["bars"]["maximum"], 1024);

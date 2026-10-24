@@ -1,6 +1,6 @@
 # Agent backends
 
-The Agent panel discovers the signed-in Codex and Claude Code CLIs, local Ollama,
+The Agent panel discovers the signed-in Codex, Claude Code and OpenCode CLIs, local Ollama,
 and the API connection configured in Settings > Agent. An `OPENAI_API_KEY` also enables
 discovery at OpenAI's default endpoint. Providers are queried concurrently;
 an unavailable provider does not hide models returned by another.
@@ -31,11 +31,11 @@ sending. A message accepts at most eight files. Audio sources may be up to 512 M
 and 1 GiB combined; they are copied to private local snapshots with bounded memory and
 cancellation. Images remain limited to 25 MiB each.
 
-Rig, Codex and Claude Code accept reference attachments. PNG, JPEG, GIF and WebP are sent as
+Rig, Codex, Claude Code and OpenCode accept reference attachments. PNG, JPEG, GIF and WebP are sent as
 image parts. UTF-8 text, Markdown, lyrics, CSV, JSON and source files are sent as
 delimited reference data, up to 256 KiB
 per text file. Instructions inside an attachment remain reference content.
-The selected model must support the supplied media. With Codex or Claude Code,
+The selected model must support the supplied media. With a CLI backend,
 audio files are analyzed locally and sent as text measurements: duration,
 constant-tempo alternatives, estimated beats and major/minor chord candidates.
 Long reports sample up to 256 beats and 256 chord windows across the recording,
@@ -132,11 +132,69 @@ installed_claude_edits_an_unsaved_song -- --ignored` asks Haiku to add one track
 to an in-memory song and verifies Undo. It uses the CLI's configured account and
 does not open or modify a saved song.
 
+## OpenCode setup
+
+Install [OpenCode](https://opencode.ai/docs/) and run `opencode auth login` to
+configure a provider. Leave the executable path empty in Settings > Agent to search
+PATH, `.opencode/bin` and `.local/bin` (plus standard Homebrew locations on macOS),
+or provide its native executable explicitly.
+On Windows, select `opencode.exe`; `.cmd` and `.ps1` launchers are not supported.
+Refresh the model menu in the Agent panel and choose a model labelled OpenCode.
+Model IDs retain the provider and any advertised variant, so similarly named
+models on different providers stay distinct. Select a model variant to control
+reasoning; the separate effort control stays at Default on this backend.
+
+Auris launches `opencode acp` and speaks [ACP v1 over stdio](https://opencode.ai/docs/acp/).
+The transport supports both the original `models.availableModels` catalogue and
+model `configOptions`, including grouped choices. Authentication and inference
+stay inside OpenCode; Auris does not read its authentication store. The integration
+checks the CLI version before launch and generates the matching configuration for
+OpenCode 1.x or 2.x. V2 uses `agents`, `system`, ordered `permissions` rules and
+the native `shell` tool; V1 uses its original configuration fields. Unknown major
+versions are rejected. See the [current ACP reference](https://opencode.ai/v2/docs/cli/acp/)
+and [V2 permissions](https://opencode.ai/v2/docs/permissions/).
+
+Each worker uses a private configuration home and disables project configuration,
+external skills, automatic sharing, snapshots, LSP and formatters. User plugins,
+custom tools, custom provider configuration and other configured MCP servers are
+not inherited. OpenCode's normal authentication data directory is retained, along
+with the default authentication plugins and provider environment variables. Use a
+provider supported by OpenCode's authentication flow or environment configuration;
+the rig API settings do not configure this route. User configuration files are
+not edited. Native shell and file tools request the same Auris permission gate;
+unknown requests and unsolicited client file/terminal requests are refused.
+V2 receives the live server through private configuration with `codemode: false`;
+its token is expanded from a child-only environment variable rather than stored
+in that file. This keeps each MCP operation on the direct tool list, subject to
+the existing Auris gate. V1 receives the authenticated server through ACP stdin.
+
+The authenticated live MCP server edits the open song, including unsaved changes,
+through the existing permission and Undo paths. Images and text use ACP content
+blocks; audio uses the same local analysis and transcription tools as the other
+CLI backends. Stop revokes live calls, sends `session/cancel` and terminates the
+child. Auris persists and restores its own text transcript; OpenCode may also keep
+sessions in its normal data directory. Manual compaction from Auris is not yet
+supported. Approval review uses a separate session with all tools denied.
+
+Real composition, audio feedback and feature trials are recorded in
+[OpenCode backend validation](opencode-backend-validation.md), including the free
+provider's restriction on tool-free automatic review. Startup waits for an actual
+authenticated MCP tool catalogue request before allowing inference.
+
+Default tests use a scripted ACP peer and the real HTTP MCP endpoint to verify
+live edits, Undo, streaming, permission decisions and cancellation without model
+credentials. If OpenCode is installed and configured, this checks startup and the
+model catalogue without inference:
+
+```sh
+cargo test -p auris-agent installed_opencode_lists_models_and_opens_a_live_mcp_session -- --ignored
+```
+
 ## Runtime boundary
 
 `auris-agent::Worker` owns the background runtime and cancellation. Its backend
 owns the conversation loop: rig runs it locally, while Codex drives an app-server
-child process and Claude Code uses stream-json. Provider protocol types stay
+child process, Claude Code uses stream-json, and OpenCode uses ACP. Provider protocol types stay
 inside the backend. `ToolHost` normalizes flat toolbox calls, serializes authorization and execution, and sends
 live commands to the window. The window owns the session and rechecks permissions
 immediately before an edit.
@@ -153,7 +211,7 @@ process is terminated, while the window immediately stops accepting old edits.
 CLI configuration uses a private directory, while native tools work in the saved
 project folder or disposable scratch space for an unsaved conversation. Auris
 disables inherited MCP servers, plugins, apps, hooks and subagents for this
-invocation, and checks the effective MCP catalog before sending a prompt. Native
+invocation, and, for Codex and Claude Code, checks the effective MCP catalog before sending a prompt. Native
 shell and file operations use the same approval policy; their external effects
 are not covered by Auris Undo. User configuration files are
 not edited. Unexpected server-side requests are refused. Process arguments never

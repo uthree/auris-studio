@@ -1020,6 +1020,7 @@ pub(crate) struct AgentChat {
     /// Optional native Codex executable path.
     pub(crate) codex_path: String,
     pub(crate) claude_path: String,
+    pub(crate) opencode_path: String,
     /// What the provider last answered the model question with.
     pub(crate) models: Vec<ModelOption>,
     /// Whether that question is in flight.
@@ -1141,6 +1142,7 @@ impl Default for AgentChat {
             backend: String::new(),
             codex_path: String::new(),
             claude_path: String::new(),
+            opencode_path: String::new(),
             models: Vec::new(),
             fetching_models: false,
             models_error: None,
@@ -1329,6 +1331,7 @@ impl AgentChat {
         self.backend = prefs.backend.clone();
         self.codex_path = prefs.codex_path.clone();
         self.claude_path = prefs.claude_path.clone();
+        self.opencode_path = prefs.opencode_path.clone();
         self.chosen_model = prefs.model.trim().to_string();
         self.url_field = TextField::new(prefs.url.clone());
         self.key_env_field = TextField::new(prefs.api_key_env.clone());
@@ -1359,6 +1362,7 @@ impl AgentChat {
             backend: self.backend.clone(),
             codex_path: self.codex_path.clone(),
             claude_path: self.claude_path.clone(),
+            opencode_path: self.opencode_path.clone(),
             policy: self.policy.clone(),
             auto_compact_percent: self.auto_compact_percent,
             context_tokens: Some(self.context_tokens),
@@ -1387,6 +1391,9 @@ impl AgentChat {
     }
 
     fn effort_choices(&self) -> Vec<ReasoningEffort> {
+        if self.backend == "opencode" {
+            return vec![ReasoningEffort::Default];
+        }
         let prefs = self.preferences();
         if let Some(efforts) = self
             .models
@@ -4648,11 +4655,12 @@ impl AurisApp {
                 )
             })
             .when(
-                matches!(self.settings.agent.backend.as_str(), "codex" | "claude")
-                    && attachments.iter().any(|path| {
-                        auris_agent::attachment_kind(path)
-                            == Some(auris_agent::AttachmentKind::Audio)
-                    }),
+                matches!(
+                    self.settings.agent.backend.as_str(),
+                    "codex" | "claude" | "opencode"
+                ) && attachments.iter().any(|path| {
+                    auris_agent::attachment_kind(path) == Some(auris_agent::AttachmentKind::Audio)
+                }),
                 |this| {
                     this.child(
                         div()
@@ -6812,6 +6820,33 @@ mod tests {
             assert_eq!(this.agent_chat.selected_model_label(), "claude-fixture (Claude Code)");
             assert!(this.agent_chat.models[0].matches(&this.settings.agent));
             assert_eq!(this.agent_chat.preferences().claude_path, "C:/Tools/claude.exe");
+            assert_eq!(this.settings.agent.discovery_endpoint.as_ref().unwrap().url, "https://example.invalid/v1");
+        });
+    }
+
+    #[gpui::test]
+    fn opencode_models_keep_their_route_and_executable_when_selected(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, _| {
+            this.settings.agent = AgentPreferences {
+                opencode_path: "C:/Tools/opencode.exe".into(),
+                provider: "openai".into(),
+                url: "https://example.invalid/v1".into(),
+                ..Default::default()
+            };
+            this.agent_chat.load_preferences(&this.settings.agent.clone());
+            this.agent_chat.accept_model_listing(Ok(r#"{"models":[{"name":"provider/model","display_name":"Model","efforts":[],"connection":{"backend":"opencode","provider":"ollama","url":"","api_key_env":""}}]}"#.into()));
+            this.choose_agent_model_with(0, |_| Ok::<(), ()>(())).unwrap();
+            assert_eq!(this.settings.agent.backend, "opencode");
+            assert_eq!(this.settings.agent.model, "provider/model");
+            assert_eq!(this.agent_chat.selected_model_label(), "Model (OpenCode)");
+            assert_eq!(this.agent_chat.preferences().opencode_path, "C:/Tools/opencode.exe");
+            assert_eq!(this.agent_chat.effort_choices(), [ReasoningEffort::Default]);
+            this.agent_effort(ReasoningEffort::High);
+            assert_eq!(this.agent_chat.effort, ReasoningEffort::Default);
+            assert_eq!(this.agent_chat.entries.last(), Some(&ChatEntry::Note(Key::AgentOpenCodeVariantHelp)));
             assert_eq!(this.settings.agent.discovery_endpoint.as_ref().unwrap().url, "https://example.invalid/v1");
         });
     }

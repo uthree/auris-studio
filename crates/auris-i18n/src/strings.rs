@@ -1938,7 +1938,10 @@ new のオプション
     AgentClaudeHelp { en: "Install Claude Code and sign in by running claude. Leave the path empty to find the installed CLI. Choose a model in the Agent Panel after applying.", ja: "Claude Codeをインストールし、claudeを起動してログインしてください。パスが空欄ならインストール済みのCLIを探します。適用後、エージェントパネルでモデルを選択してください。" }
     AgentCodexPathLabel { en: "Codex executable path (optional)", ja: "Codex実行ファイルのパス（任意）" }
     AgentCodexHelp { en: "Sign in with codex login. Leave the path empty to detect the installed CLI.", ja: "codex loginでログインしてください。パスが空欄ならインストール済みのCLIを探します。" }
-    AgentDiscoveryHelp { en: "Available Codex, Claude Code, Ollama and configured API models appear together in the Agent panel.", ja: "利用可能なCodex・Claude Code・Ollama・設定済みAPIのモデルを、エージェントパネルにまとめて表示します。" }
+    AgentOpenCodePathLabel { en: "OpenCode executable path (optional)", ja: "OpenCode実行ファイルのパス（任意）" }
+    AgentOpenCodeVariantHelp { en: "Choose an OpenCode model variant in the model menu to change reasoning effort.", ja: "推論の強度を変更するには、モデルメニューでOpenCodeのモデルバリアントを選択してください。" }
+    AgentOpenCodeHelp { en: "Install OpenCode and run opencode auth login. Leave the path empty to detect the CLI, then choose an OpenCode model in the Agent panel. Custom provider configuration and user plugins are not inherited.", ja: "OpenCodeをインストールし、opencode auth loginで認証してください。パスが空欄ならCLIを検出します。エージェントパネルでOpenCodeのモデルを選択してください。独自プロバイダー設定とユーザープラグインは引き継ぎません。" }
+    AgentDiscoveryHelp { en: "Available Codex, Claude Code, OpenCode, Ollama and configured API models appear together in the Agent panel.", ja: "利用可能なCodex・Claude Code・OpenCode・Ollama・設定済みAPIのモデルを、エージェントパネルにまとめて表示します。" }
     AgentReadOnly { en: "Read-only", ja: "読み取り専用" }
     AgentEditMode { en: "Edit", ja: "編集" }
     AgentPlanMode { en: "Plan", ja: "プラン" }

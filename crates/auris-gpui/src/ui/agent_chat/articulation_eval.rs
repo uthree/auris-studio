@@ -228,7 +228,10 @@ fn installed_cli_selects_slide_or_glide_and_reports_effective_performance(
     let config_path =
         std::env::var_os("AURIS_ARTICULATION_EVAL").expect("explicit evaluation config");
     let config: Evaluation = serde_json::from_slice(&fs::read(config_path).unwrap()).unwrap();
-    assert!(matches!(config.backend.as_str(), "codex" | "claude"));
+    assert!(matches!(
+        config.backend.as_str(),
+        "codex" | "claude" | "opencode"
+    ));
     assert!(config.output.is_absolute());
     fs::create_dir(&config.output).expect("a fresh evaluation output directory");
 

@@ -302,6 +302,12 @@ impl AurisApp {
     }
 
     pub(super) fn agent_effort(&mut self, effort: ReasoningEffort) {
+        if self.agent_chat.backend == "opencode" && effort != ReasoningEffort::Default {
+            self.agent_chat
+                .push_entry(ChatEntry::Note(Key::AgentOpenCodeVariantHelp));
+            self.focus_agent_field(AgentField::Chat);
+            return;
+        }
         let previous = (self.agent_chat.effort, self.agent_chat.thinking);
         self.agent_chat.effort = effort;
         self.agent_chat.thinking = None;

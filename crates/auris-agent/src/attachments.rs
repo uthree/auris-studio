@@ -108,7 +108,7 @@ pub fn validate_attachments(
         let kind = attachment_kind(path)
             .ok_or_else(|| format!("Unsupported attachment: {}", path.display()))?;
         if kind == AttachmentKind::Audio
-            && !matches!(prefs.backend.as_str(), "codex" | "claude")
+            && !matches!(prefs.backend.as_str(), "codex" | "claude" | "opencode")
             && prefs.provider != "openai"
         {
             return Err("Audio attachments require an audio-capable OpenAI-compatible model. Choose that model or remove the audio file before sending.".into());
@@ -749,7 +749,7 @@ pub(crate) mod tests {
 
     #[test]
     fn cli_routes_accept_audio_independently_of_the_rig_provider() {
-        for backend in ["codex", "claude"] {
+        for backend in ["codex", "claude", "opencode"] {
             let prefs = auris_session::AgentPreferences {
                 backend: backend.into(),
                 provider: "ollama".into(),
