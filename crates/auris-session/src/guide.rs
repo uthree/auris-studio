@@ -103,6 +103,12 @@
 //! plugin parameters receive realtime handles. This establishes numerical parity before live
 //! activation; see
 //! `docs/render-pipeline-conventional.md` for its preparation and verification contract.
+//! [`auris_engine::EngineHandle::adopted_native_generation`] reports the last native graph
+//! adopted by the audio callback. Its opaque identity can be compared with the prepared graph's
+//! generation. Queue acceptance does not update this observation, and deferred replacements
+//! retain the previous value. It describes graph adoption, not transport playback or hardware
+//! output latency. Session reader/editor handover must use this boundary when native plans are
+//! activated; the conventional session does not yet switch its readers through this mechanism.
 //!
 //! # Multiple project windows
 //!

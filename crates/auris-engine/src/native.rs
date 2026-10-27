@@ -119,6 +119,24 @@ pub struct NativeParameterHandle {
     pub(crate) max: f32,
 }
 
+/// Identity of one successfully prepared native graph within this process.
+///
+/// Compare the candidate's [`RenderGraph::native_generation`] with the engine handle's adopted
+/// generation before switching readers or controls. This is runtime evidence, not a saved
+/// document revision; each rebuild receives a new identity even for the same document.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct NativeGraphGeneration(u64);
+
+impl NativeGraphGeneration {
+    pub(crate) fn from_raw(value: u64) -> Option<Self> {
+        (value != 0).then_some(Self(value))
+    }
+
+    pub(crate) fn raw(self) -> u64 {
+        self.0
+    }
+}
+
 /// Caller-built effects keyed by native processor identity.
 pub type NodePlacedEffects = BTreeMap<NodeId, Box<dyn Effect>>;
 /// Caller-built instruments keyed by native processor identity.

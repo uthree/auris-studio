@@ -227,6 +227,7 @@ pub struct EngineHandle {
     pub(crate) running: Arc<AtomicBool>,
     pub(crate) playing: Arc<AtomicBool>,
     pub(crate) latency_stale: Arc<AtomicBool>,
+    pub(crate) adopted_native_generation: Arc<AtomicU64>,
     pub(crate) stream_notices: Arc<AtomicU32>,
     /// What the output says it is playing, and when, for a capture to line a take up against.
     pub(crate) clock: Arc<crate::clock::OutputClock>,
@@ -249,7 +250,10 @@ impl EngineHandle {
         }
     }
 
-    /// Installs a freshly built graph.
+    /// Queues a freshly built graph for the audio callback to adopt.
+    ///
+    /// Success means queue acceptance. For native graphs, compare the candidate generation
+    /// with [`Self::adopted_native_generation`] to observe when the callback selects it.
     pub fn set_graph(&self, graph: RenderGraph) -> Result<(), EngineError> {
         self.send(EngineCommand::SetGraph(Box::new(graph)))
     }
@@ -381,6 +385,17 @@ impl EngineHandle {
     /// that sees this go true should rebuild, or that track will play out of step with the rest.
     pub fn latency_is_stale(&self) -> bool {
         self.latency_stale.load(Ordering::Relaxed)
+    }
+
+    /// Returns the last native graph generation adopted by the audio callback, if any.
+    ///
+    /// Queuing, rejecting or deferring a replacement leaves this value unchanged. Adopting a
+    /// conventional graph clears it. This is independent of transport playback or hardware
+    /// output latency; a stopped device can still report its last adopted native graph.
+    pub fn adopted_native_generation(&self) -> Option<crate::native::NativeGraphGeneration> {
+        crate::native::NativeGraphGeneration::from_raw(
+            self.adopted_native_generation.load(Ordering::Acquire),
+        )
     }
 
     /// How many times the device has called the engine for audio since it opened.

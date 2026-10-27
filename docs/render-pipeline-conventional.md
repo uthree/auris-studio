@@ -63,6 +63,15 @@ publication. Its copyable handle includes a unique graph generation and accepted
 range; rebuilding invalidates old handles even when the node survives. Diagnostics
 may read runtime positions, but queued native commands never depend on those positions.
 
+`RenderGraph::native_generation` identifies a prepared native candidate, and
+`EngineHandle::adopted_native_generation` reads the last generation adopted by the
+audio callback. Queuing a graph does not change this observation. A full command
+queue or saturated retirement storage retains the previous generation until the
+callback can apply the replacement. Adopting a conventional graph clears the native
+generation. The observation describes the selected render plan, not transport state
+or when a sample becomes audible through the hardware. Native session integration
+must compare this identity before committing reader/editor handover.
+
 ## Verification
 
 Deterministic fixtures compare both channels through the existing offline renderer,
@@ -94,13 +103,21 @@ node parameter commands.
 A singer with a declared take but no source metadata must render silence instead of
 falling back to its guide instrument.
 
+Adoption tests queue native candidates through `EngineHandle` and drive the actual
+callback implementation. They distinguish accepted-but-pending candidates, rejected
+commands, saturated return queues and retirement storage, completed replacements,
+and replacement by a conventional graph. A silent engine never acknowledges its
+queued candidate. The callback adoption and deferred paths require zero heap
+allocations and deallocations.
+
 These tests establish numerical compatibility for their fixtures. They do not make
 a listening assessment or establish behavior of an external plugin or singer model.
 
 Validation on 2026-10-28: `cargo test --workspace -- --test-threads=1` passed
 5,007 tests with 51 ignored across 71 suites, including all 1,241 desktop tests.
-After preserving parameter policies across the prepared-input boundary, the complete
-engine suite (335 tests plus its doctest) and 21 conventional-bridge tests passed.
+After preserving parameter policies across the prepared-input boundary, 21
+conventional-bridge tests passed. The subsequent callback-adoption checkpoint passed
+the complete engine suite (342 tests plus its doctest).
 `cargo fmt --all -- --check`,
 `cargo clippy --workspace --all-targets -- -D warnings`, and
 `cargo doc --workspace --no-deps` with `RUSTDOCFLAGS=-D warnings` passed.

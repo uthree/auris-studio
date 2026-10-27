@@ -434,6 +434,7 @@ fn start_with_device(
     let running = Arc::new(AtomicBool::new(false));
     let playing = Arc::new(AtomicBool::new(false));
     let latency_stale = Arc::new(AtomicBool::new(false));
+    let adopted_native_generation = Arc::new(AtomicU64::new(0));
     let stream_notices = Arc::new(AtomicU32::new(0));
     let clock = Arc::new(crate::clock::OutputClock::default());
     let callbacks = Arc::new(AtomicU64::new(0));
@@ -453,6 +454,7 @@ fn start_with_device(
             Arc::clone(&meters),
             Arc::clone(&playing),
             Arc::clone(&latency_stale),
+            Arc::clone(&adopted_native_generation),
             sample_rate,
             channel_count,
             max_block,
@@ -501,6 +503,7 @@ fn start_with_device(
         running,
         playing,
         latency_stale,
+        adopted_native_generation,
         stream_notices,
         clock,
         callbacks,
@@ -554,6 +557,7 @@ pub fn start_silent(settings: &AudioSettings) -> (AudioDevice, EngineHandle) {
         // is ever installed for its compensation to go stale.
         playing: Arc::new(AtomicBool::new(false)),
         latency_stale: Arc::new(AtomicBool::new(false)),
+        adopted_native_generation: Arc::new(AtomicU64::new(0)),
         stream_notices: Arc::new(AtomicU32::new(0)),
         clock: Arc::default(),
         callbacks: Arc::default(),
@@ -874,6 +878,7 @@ pub(crate) struct AudioEngine {
     /// answer costs a virtual call per effect, and nothing but writing an effect parameter can
     /// move it — every other way of changing a chain arrives as a whole new graph.
     latency_stale: Arc<AtomicBool>,
+    adopted_native_generation: Arc<AtomicU64>,
     /// Where this engine says it is audible, for a capture to line a take up against.
     clock: Arc<crate::clock::OutputClock>,
     /// Counts device callbacks, so the other side can tell a stream that runs from one that
@@ -940,7 +945,7 @@ impl OutputPreview {
 }
 
 impl AudioEngine {
-    // Ten arguments, all of them shared state the callback needs; grouping them into a struct
+    // Shared state and device geometry the callback needs; grouping them into a struct
     // would only move the same list one level down.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
@@ -951,6 +956,7 @@ impl AudioEngine {
         meters: Arc<MeterBank>,
         playing: Arc<AtomicBool>,
         latency_stale: Arc<AtomicBool>,
+        adopted_native_generation: Arc<AtomicU64>,
         sample_rate: f64,
         channels: usize,
         max_block: usize,
@@ -974,6 +980,7 @@ impl AudioEngine {
             meters,
             playing,
             latency_stale,
+            adopted_native_generation,
             clock: Arc::default(),
             callbacks: Arc::default(),
             scratch,
@@ -1240,6 +1247,9 @@ impl AudioEngine {
             }
             EngineCommand::StopNotePreview => self.stop_note_preview(),
             EngineCommand::SetGraph(graph) => {
+                let generation = graph
+                    .native_generation()
+                    .map_or(0, |generation| generation.raw());
                 self.stop_note_preview();
                 self.stop_preview();
                 self.stop_output_preview();
@@ -1249,6 +1259,8 @@ impl AudioEngine {
                 if let Some(previous) = self.graph.replace(graph) {
                     self.retire(Retired::Graph(previous));
                 }
+                self.adopted_native_generation
+                    .store(generation, Ordering::Release);
                 // A freshly built graph is compensated for its own chains, so this clears any
                 // staleness the graph it replaced had reported.
                 self.publish_latency();
@@ -1560,6 +1572,10 @@ where
 }
 
 #[cfg(test)]
+#[path = "device/native_adoption_tests.rs"]
+mod native_adoption_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -1867,6 +1883,7 @@ mod tests {
             Arc::clone(&meters),
             Arc::new(AtomicBool::new(false)),
             Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicU64::new(0)),
             SAMPLE_RATE,
             2,
             256,
@@ -1897,6 +1914,7 @@ mod tests {
             Arc::new(MeterBank::new(8)),
             Arc::new(AtomicBool::new(false)),
             Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicU64::new(0)),
             SAMPLE_RATE,
             2,
             256,
@@ -2696,6 +2714,7 @@ mod tests {
             Arc::new(MeterBank::new(8)),
             Arc::new(AtomicBool::new(false)),
             Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicU64::new(0)),
             SAMPLE_RATE,
             channels,
             256,
@@ -2753,6 +2772,7 @@ mod tests {
             Arc::new(MeterBank::new(8)),
             Arc::new(AtomicBool::new(false)),
             Arc::clone(&latency_stale),
+            Arc::new(AtomicU64::new(0)),
             SAMPLE_RATE,
             2,
             256,
@@ -2817,6 +2837,7 @@ mod tests {
             Arc::new(MeterBank::new(8)),
             Arc::new(AtomicBool::new(false)),
             Arc::clone(&latency_stale),
+            Arc::new(AtomicU64::new(0)),
             SAMPLE_RATE,
             2,
             256,
@@ -2868,6 +2889,7 @@ mod tests {
             Arc::new(MeterBank::new(8)),
             Arc::new(AtomicBool::new(false)),
             Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicU64::new(0)),
             SAMPLE_RATE,
             2,
             128,
@@ -2907,6 +2929,7 @@ mod tests {
             Arc::new(MeterBank::new(0)),
             Arc::new(AtomicBool::new(false)),
             Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicU64::new(0)),
             SAMPLE_RATE,
             2,
             128,
@@ -2941,6 +2964,7 @@ mod tests {
             Arc::new(MeterBank::new(0)),
             Arc::new(AtomicBool::new(false)),
             Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicU64::new(0)),
             SAMPLE_RATE,
             2,
             128,
@@ -3017,11 +3041,13 @@ mod tests {
         assert_eq!(device.host(), None);
         assert_eq!(device.buffer_frames(), None);
         assert_eq!(handle.sample_rate(), 48_000.0);
+        assert_eq!(handle.adopted_native_generation(), None);
         handle.send(EngineCommand::Play).expect("queued");
         handle.set_graph(*graph()).expect("queued");
         assert_eq!(handle.collect_garbage(), 0);
         assert_eq!(handle.playhead_frames(), 0);
         assert_eq!(device.discard_pending(), 2);
+        assert_eq!(handle.adopted_native_generation(), None);
     }
 
     #[test]

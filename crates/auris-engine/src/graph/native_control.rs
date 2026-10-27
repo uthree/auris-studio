@@ -7,6 +7,14 @@ use super::RenderGraph;
 use crate::command::NativeNodeCommand;
 
 impl RenderGraph {
+    /// Identifies this prepared native graph, or returns `None` for a conventional graph.
+    ///
+    /// Preparing and queuing this graph do not mean the audio callback has adopted it. Compare
+    /// this identity with [`crate::EngineHandle::adopted_native_generation`] to observe adoption.
+    pub fn native_generation(&self) -> Option<crate::native::NativeGraphGeneration> {
+        crate::native::NativeGraphGeneration::from_raw(self.native_addresses.generation)
+    }
+
     /// Reads the generation-bound native address table prepared with this graph.
     pub fn native_addresses(&self) -> &crate::native::NativeRuntimeAddresses {
         &self.native_addresses

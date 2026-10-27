@@ -304,6 +304,11 @@ prevent reordered positions from changing an operation's target. Offline builds
 use the same preparation path. See the conventional render contract for failure
 ownership and verification limits.
 
+The engine exposes a separate callback adoption observation for native generations.
+Preparing or queuing a graph does not advance it. Session publication can compare
+the candidate identity with this observation before committing its reader handover;
+the host/session transaction consuming that evidence remains to be integrated.
+
 The remaining integration order is:
 
 1. Adapt `HostedPlugins` in `session/hosted.rs`, `Vst3Plugins` in `session/vst3.rs`
