@@ -12,6 +12,9 @@ use crate::{
     voice_setup_window::VoiceSetupTab,
 };
 
+mod adapters;
+use adapters::AdapterSetup;
+
 const STEPS: &[Key] = &[
     Key::SetupAudio,
     Key::SetupAgent,
@@ -35,10 +38,12 @@ pub(crate) struct SetupGuide {
     focus: FocusHandle,
     step: usize,
     error: Option<String>,
+    adapters: AdapterSetup,
 }
 
 impl SetupGuide {
     fn refresh(&mut self, cx: &mut Context<Self>) {
+        self.adapters.poll();
         if let Ok((theme, language, model)) = self.app.read_with(cx, |app, _| {
             (
                 app.theme.clone(),
@@ -82,7 +87,10 @@ impl SetupGuide {
             }
             Ok(())
         }) {
-            Ok(Ok(())) => true,
+            Ok(Ok(())) => {
+                self.adapters.cancel_all();
+                true
+            }
             Ok(Err(error)) => {
                 self.error = Some(error);
                 cx.notify();
@@ -147,11 +155,13 @@ impl Render for SetupGuide {
             .flex_col()
             .gap_4()
             .child(div().text_lg().child(self.t(STEPS[self.step])))
-            .child(
-                div()
-                    .text_color(theme.text_muted)
-                    .child(self.t(Key::SetupOptional)),
-            );
+            .when(self.step != 1, |this| {
+                this.child(
+                    div()
+                        .text_color(theme.text_muted)
+                        .child(self.t(Key::SetupOptional)),
+                )
+            });
         match self.step {
             0 => {
                 content = content
@@ -164,7 +174,9 @@ impl Render for SetupGuide {
                     ));
             }
             1 => {
-                content = content.child(self.t(Key::SetupAgentHelp));
+                content = content
+                    .child(self.t(Key::SetupAgentHelp))
+                    .child(self.adapter_controls(cx));
                 if let Some(model) = &self.selected_model {
                     content = content.child(div().text_color(theme.text_muted).child(format!(
                         "{}: {}",
@@ -393,7 +405,7 @@ impl AurisApp {
                     cx.spawn(async move |this, cx| {
                         loop {
                             cx.background_executor()
-                                .timer(std::time::Duration::from_secs(1))
+                                .timer(std::time::Duration::from_millis(250))
                                 .await;
                             if this.update(cx, |guide, cx| guide.refresh(cx)).is_err() {
                                 break;
@@ -409,6 +421,7 @@ impl AurisApp {
                         focus,
                         step: 0,
                         error: None,
+                        adapters: AdapterSetup::new(),
                     }
                 });
                 let weak = view.downgrade();
@@ -445,6 +458,7 @@ mod tests {
         let handle = app.read_with(cx, |app, _| app.setup_guide_window.unwrap());
         cx.run_until_parked();
         let guide_cx = &mut gpui::VisualTestContext::from_window(handle.into(), cx);
+        guide_cx.simulate_resize(gpui::size(gpui::px(900.), gpui::px(1400.)));
         guide_cx.run_until_parked();
         crate::harness::click("setup-next", guide_cx);
         guide_cx.run_until_parked();

@@ -55,8 +55,10 @@ impl ProcessScope {
         self.child.kill().await
     }
 
-    #[cfg(all(test, unix))]
     /// Wait for the direct child while retaining the process-tree scope.
+    ///
+    /// Keeping the scope alive until this completes ensures descendants remain owned even when
+    /// the caller only needs the direct exit status.
     pub(crate) async fn wait(&mut self) -> io::Result<std::process::ExitStatus> {
         self.child.wait().await
     }

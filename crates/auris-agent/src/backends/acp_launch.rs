@@ -88,6 +88,14 @@ fn adapter_entry(
         }
         return Ok((path, Vec::new()));
     }
+    let managed = match env_name {
+        "AURIS_CODEX_ACP" => Some(crate::AcpAdapter::Codex),
+        "AURIS_CLAUDE_ACP" => Some(crate::AcpAdapter::Claude),
+        _ => None,
+    };
+    if let Some(entry) = managed.and_then(crate::adapter_setup::managed_entry) {
+        return Ok(entry);
+    }
     if let Ok(path) = executable_from_env_or_path("AURIS_NODE", &["node"]) {
         let mut roots = Vec::new();
         if let Some(appdata) = std::env::var_os("APPDATA") {

@@ -6,7 +6,7 @@ pub(super) mod acp;
 #[cfg(test)]
 mod acp_evaluation;
 pub(super) mod acp_launch;
-mod acp_process;
+pub(crate) mod acp_process;
 pub(super) mod antigravity;
 pub(super) mod claude;
 pub(super) mod codex;

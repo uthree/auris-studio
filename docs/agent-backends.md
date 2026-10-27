@@ -51,6 +51,24 @@ result; user messages and assistant replies keep separate groups apart.
 The shared transport migration and its installed-agent verification are recorded in
 [Agent ACP verification](agent-acp-verification.md).
 
+## ACP adapter setup
+
+The Setup Guide's **AI Agent** step can install the ACP adapter for Codex or Claude
+Code when the user clicks **Install**. It requires [Node.js 22 or newer](https://nodejs.org/en/download/)
+and npm first. The managed packages are pinned to
+`@agentclientprotocol/codex-acp@2.3.0` and
+`@agentclientprotocol/claude-agent-acp@0.97.0` and are installed in Auris's private
+user configuration directory under `adapters`; no global npm install is performed.
+After installation, adapter discovery uses the managed entry automatically, without
+requiring an application restart. The guide reports checking, installing, verifying,
+completed, failed and cancelled states; **Retry** starts a failed install again and
+closing the guide cancels an in-progress install. This route installs only the ACP
+adapter: the native Codex/Claude CLI and its login remain separate prerequisites.
+
+The manual route remains available: install the pinned npm package in a user-managed
+location or set `AURIS_CODEX_ACP` / `AURIS_CLAUDE_ACP` to an adapter entry. OpenCode
+does not need an additional ACP adapter.
+
 ## Reference attachments
 
 Drop files onto the Agent panel to attach them to the next message. Dropping audio
@@ -103,9 +121,9 @@ API endpoint.
 
 Leave the executable path empty to search PATH. On Windows, Auris also recognizes
 the native executable inside an npm installation; a custom path must name
-`codex.exe`, not a PowerShell or batch launcher. The adapter is resolved from an
-installed npm package or `AURIS_CODEX_ACP`; Auris never invokes npm and never
-auto-installs or downloads an adapter. Startup checks `codex login status` and
+`codex.exe`, not a PowerShell or batch launcher. Adapter discovery checks an explicit
+`AURIS_CODEX_ACP` first, then the managed package and other installed npm packages.
+Launching an agent does not invoke npm or download adapters. Startup checks `codex login status` and
 requires a ChatGPT subscription before the ACP child is started. The private child
 configuration disables inherited MCP servers, hooks and plugins while preserving the
 configured native executable path.
@@ -115,7 +133,9 @@ The track appears immediately, the song remains unsaved, and Undo removes the
 track through the normal document history. The same permission modes and deny
 rules apply to all backends. Saving is still an explicit user action.
 
-Install its ACP adapter separately with `npm install -g @agentclientprotocol/codex-acp`.
+The Setup Guide can install the pinned adapter in the private user location described
+above. As a manual alternative, install the pinned adapter with
+`npm install -g @agentclientprotocol/codex-acp@2.3.0`.
 `AURIS_CODEX_ACP` may point to a native executable or a `.js`, `.mjs` or `.cjs` entry.
 JavaScript entries use Node from PATH or `AURIS_NODE`.
 
@@ -131,12 +151,14 @@ available.
 
 Leave the executable path empty to search PATH and the native `.local/bin`
 installation. On Windows, use the native `claude.exe`, not a `.cmd` or `.ps1`
-launcher. The adapter is resolved from an installed npm package or
-`AURIS_CLAUDE_ACP`; Auris never invokes npm and never auto-installs or downloads an
-adapter. Models and effort come from the ACP session configuration; Default keeps the
+launcher. Adapter discovery checks an explicit `AURIS_CLAUDE_ACP` first, then the
+managed package and other installed npm packages. Launching an agent does not invoke
+npm or download adapters. Models and effort come from the ACP session configuration; Default keeps the
 agent default, while the adapter advertises supported values.
 
-Install its ACP adapter separately with `npm install -g @agentclientprotocol/claude-agent-acp`.
+The Setup Guide can install the pinned adapter in the private user location described
+above. As a manual alternative, install the pinned adapter with
+`npm install -g @agentclientprotocol/claude-agent-acp@0.97.0`.
 `AURIS_CLAUDE_ACP` accepts the same executable/JavaScript paths as the Codex adapter.
 
 Claude Code connects to the same authenticated live MCP endpoint as Codex, so it

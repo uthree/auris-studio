@@ -134,8 +134,29 @@ strings! {
     SetupSinging { en: "Singing Voices", ja: "歌唱バックエンド" }
     SetupAppearance { en: "Appearance & Keys", ja: "表示・キー設定" }
     SetupAudioHelp { en: "Check the output device for your speakers or headphones. If you use a microphone or audio interface, choose its input device too. Start with the default sample rate and buffer size; adjust them if you hear dropouts or need lower latency.", ja: "スピーカーやヘッドホンの出力先を確認します。マイクやオーディオインターフェースを使う場合は入力先も選びましょう。サンプルレートやバッファサイズはまず既定値を使い、音切れや遅延が気になる場合に調整できます。" }
-    SetupAgentHelp { en: "Connect an AI agent to create three song candidates, discuss arrangements and edit a project through conversation. Choose a backend and model in Settings, then use its connection check. A configured model name alone does not confirm that the connection works.", ja: "AIエージェントを接続すると、曲の候補生成や編曲の相談、会話によるプロジェクト編集ができます。設定画面でバックエンドとモデルを選び、接続を確認してください。モデル名の設定だけでは接続成功を意味しません。" }
+    SetupAgentHelp { en: "Connect an AI agent to generate song candidates and edit your project through conversation.", ja: "AIエージェントを接続して、曲の候補生成や会話によるプロジェクト編集ができます。" }
     SetupSelectedModel { en: "Selected model", ja: "選択中のモデル" }
+    SetupAdapters { en: "ACP adapters", ja: "ACPアダプター" }
+    SetupAdaptersHelp { en: "Requires Node.js 22 or later with npm. Install your agent's adapter in Auris's own folder. OpenCode has ACP built in.", ja: "npmを含むNode.js 22以降が必要です。使いたいアダプターをAuris専用フォルダーに導入できます。OpenCodeはACPを内蔵しています。" }
+    SetupAdapterInstall { en: "Install", ja: "インストール" }
+    SetupAdapterRetry { en: "Retry", ja: "再試行" }
+    SetupAdapterCheck { en: "Check again", ja: "再確認" }
+    SetupAdapterGetNode { en: "Get Node.js", ja: "Node.jsを入手" }
+    SetupAdapterMissing { en: "Not installed in Auris", ja: "Auris専用フォルダーには未インストール" }
+    SetupAdapterPreparing { en: "Preparing installation", ja: "インストールを準備中" }
+    SetupAdapterInstalling { en: "Downloading and installing", ja: "ダウンロード・インストール中" }
+    SetupAdapterVerifying { en: "Verifying installation", ja: "インストール結果を検証中" }
+    SetupAdapterInstalled { en: "Installed in Auris", ja: "Auris専用フォルダーにインストール済み" }
+    SetupAdapterCancelling { en: "Cancelling installation", ja: "インストールを中止中" }
+    SetupAdapterCancelled { en: "Installation cancelled", ja: "インストールを中止しました" }
+    SetupAdapterFailed { en: "Installation failed. Try again after checking the details below.", ja: "インストールに失敗しました。下の詳細を確認して再試行してください。" }
+    SetupAdapterCheckFailed { en: "Could not check the installation. Check again to retry.", ja: "インストール状態を確認できませんでした。「再確認」でやり直せます。" }
+    SetupAdapterNodeMissing { en: "Install Node.js with npm, then check again.", ja: "npmを含むNode.jsをインストールしてから「再確認」を押してください。" }
+    SetupAdapterNodeOld { en: "Update Node.js to version 22 or later, then check again.", ja: "Node.jsを22以降に更新してから「再確認」を押してください。" }
+    SetupAdapterNpmMissing { en: "npm was not found. Reinstall Node.js with npm, then check again.", ja: "npmが見つかりません。npmを含むNode.jsを再インストールしてから「再確認」を押してください。" }
+    SetupAdaptersLogin { en: "Also install and sign in to the agent's CLI: run “codex login” for Codex or “claude” for Claude Code in a terminal. Then open agent settings below to choose a model and check the connection. Closing this guide cancels any installation still in progress.", ja: "エージェント本体のCLIも導入し、ターミナルでCodexは「codex login」、Claude Codeは「claude」を実行してログインしてください。その後、下の接続設定でモデルを選び、接続を確認できます。このガイドを閉じると、実行中のインストールは中止されます。" }
+    SetupCodexHelp { en: "Codex CLI instructions", ja: "Codex CLIの導入手順" }
+    SetupClaudeHelp { en: "Claude Code instructions", ja: "Claude Codeの導入手順" }
     SetupInputNotes { en: "Piano roll: create a MIDI clip on an instrument track, then draw and edit notes in the piano roll.", ja: "ピアノロール：音源トラックにMIDIクリップを作り、ピアノロールでノートを入力・編集できます。" }
     SetupInputTyping { en: "Computer keyboard: select an instrument track and enable Musical Typing from the Transport menu to play notes with your keyboard.", ja: "PCキーボード：音源トラックを選び、トランスポートメニューの「ミュージックタイピング」を有効にすると、キーボードで音を鳴らせます。" }
     SetupInputFiles { en: "MIDI files: choose File → Import MIDI File to bring an existing performance into your project. Keyboard shortcuts can be inspected and changed in Settings.", ja: "MIDIファイル：ファイルメニューの「MIDI ファイルを読み込む…」から既存の演奏を取り込めます。ショートカットは設定画面で確認・変更できます。" }

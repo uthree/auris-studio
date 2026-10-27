@@ -5,10 +5,15 @@
 
 #![warn(missing_docs)]
 
+mod adapter_setup;
 mod discovery;
 mod lyric_repair;
 mod provider_status;
 mod tool_failures;
+pub use adapter_setup::{
+    AcpAdapter, AdapterInstall, AdapterInstallEvent, AdapterSetupProblem, AdapterSetupStatus,
+    inspect_acp_adapters_background, install_acp_adapter_background,
+};
 pub use discovery::{ModelConnection, discover_models_background};
 pub use provider_status::{ProviderStatus, check_providers_background};
 mod attachments;
