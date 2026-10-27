@@ -89,6 +89,14 @@
 //! existing regular backup is accepted only when its bytes match. This candidate cannot publish
 //! a native project. Source-change checks and the activated writer remain part of the M2 gate.
 //! See `docs/render-pipeline-migration.md` for conversion and backup verification.
+//! [`crate::native_conventional::lower_native_conventional`] validates native ownership and
+//! capabilities, then reconstructs a transient input for the existing renderer from conventional
+//! source/group topology. It consumes every signal edge and audible processor or fails without
+//! changing the candidate. Active automation resolves stable keys to runtime positions; disabled
+//! bindings leave static values in effect. Unbound authored curves remain in the native document.
+//! The returned legacy-shaped snapshot is never document authority and must not enter save/history
+//! paths. This bridge establishes numerical parity before live compiler/command activation; see
+//! `docs/render-pipeline-conventional.md` for its preparation and verification contract.
 //!
 //! # Multiple project windows
 //!

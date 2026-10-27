@@ -78,6 +78,7 @@ pub mod guide;
 pub mod history;
 pub mod library;
 pub mod mixer_graph;
+pub mod native_conventional;
 pub mod param;
 pub mod pipeline_graph;
 pub mod pipeline_inspection;

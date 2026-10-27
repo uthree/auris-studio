@@ -7,8 +7,9 @@ the complete M1 acceptance gate is still pending. M2a includes pure typed topolo
 shared-source ownership, stable clip stages, conventional-command identity bindings,
 shared automation curves, processor-derived capability resolution and the standalone
 native document envelope. M2b's pre-activation conversion, captured-source report and
-exact-byte backup primitive are implemented. Compiler/command integration and native
-writer activation remain subsequent units.
+exact-byte backup primitive are implemented. M2c now has a conventional preparation
+and render-parity bridge. Live compiler/command integration and native writer
+activation remain subsequent units.
 The design baseline is `cd205c3c`; the saved format remains 32.
 
 Read [the design](render-pipeline-design.md) for document ownership, port semantics,
@@ -276,6 +277,14 @@ flag must not permit writing a file that the same installed build cannot reopen.
 
 ### M2c: Compile conventional projects
 
+The pre-activation conventional bridge validates native ownership and capabilities
+before constructing transient renderer input from sources, group chains and explicit
+signal edges. It retains track kinds, opaque plugin state, singer guide/take choice,
+clip stages, sends, sidechains and enabled automation. Unsupported native shapes fail
+without changing the input. This provides a numerical comparison path; it does not
+switch the live session, publish realtime graphs or authorize native saves. See the
+[conventional render contract](render-pipeline-conventional.md).
+
 Build preparation and realtime plans from native topology. Convert hosted instrument
 placement, editor ownership and audition addressing from track-only keys to stable
 instance keys. Preserve plugin main-thread ownership and core trait boundaries.
@@ -285,6 +294,23 @@ Validate the full document before allocating runtime structures. Pre-size buffer
 using existing event/loop budgets; derive new graph limits from M0 stress workloads.
 Keep previous valid audio while a replacement plan is pending or failed and expose
 the document/audible-plan revision difference. Test successful publication and failure.
+
+The remaining integration order is:
+
+1. Replace the bridge's transient `Project` boundary with native prepared input and an
+   explicit `NodeId`-to-runtime-address table around `auris-engine/src/graph`.
+   `PlacedInstruments` is currently keyed by `TrackId`, while `PlacedEffects` uses
+   `EffectSlotId`; both need stable instance addressing before a group can own layers.
+2. Adapt `HostedPlugins` in `session/hosted.rs`, `Vst3Plugins` in `session/vst3.rs`
+   and plugin-window selection together. Retain the live/spare instance handover,
+   opaque state transfer and retirement lifecycle across graph replacement.
+3. Integrate preparation with `Session::rebuild_graph` in `session/mod.rs`. Validate
+   the candidate and its revision before changing meter/scope readers or publishing
+   to the engine. A failed preparation/publication retains the audible plan and
+   reports the revision difference.
+4. Complete the M2d mutation/history audit before replacing the session's document
+   authority. Activate native persistence only with that integration; the render
+   bridge's legacy-shaped output is never a shortcut for save or command execution.
 
 ### M2d: Commands, history and transport compatibility
 
