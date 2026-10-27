@@ -167,6 +167,60 @@ fn connection_selection_keeps_pointer_sync_and_does_not_intercept_modified_arrow
 }
 
 #[gpui::test]
+fn connection_inspector_reveals_a_track_without_editing_the_graph(cx: &mut TestAppContext) {
+    let (app, cx) = mixer_fixture(cx);
+    click("mixer-focus-connections", cx);
+    paint(&app, cx);
+
+    // The fixture has output and parallel-send edges. Select a send so its destination is a
+    // real track (the master output deliberately has no revealable destination track).
+    for _ in 0..8 {
+        if app.read_with(cx, |this, cx| {
+            matches!(
+                this.selected_mixer_connection(cx).map(|edge| edge.kind),
+                Some(MixerEdgeKind::Send { .. })
+            )
+        }) {
+            break;
+        }
+        cx.simulate_keystrokes("right");
+        paint(&app, cx);
+    }
+    let destination = app.read_with(cx, |this, cx| {
+        let edge = this
+            .selected_mixer_connection(cx)
+            .expect("a connection remains selected");
+        let MixerEdgeKind::Send { .. } = edge.kind else {
+            panic!(
+                "connection focus did not reach a send edge: {:?}",
+                edge.kind
+            );
+        };
+        let MixerNode::Strip(Some(track)) = edge.target else {
+            panic!("send destination must be a track: {:?}", edge.target);
+        };
+        (
+            track,
+            this.project().mixer_graph_view.clone(),
+            this.session.mixer_graph(),
+        )
+    });
+    assert!(cx.debug_bounds("pipeline-reveal-target").is_some());
+
+    click("pipeline-reveal-target", cx);
+    paint(&app, cx);
+
+    app.read_with(cx, |this, _| {
+        assert_eq!(this.selected_track, Some(destination.0));
+        assert_eq!(this.selected_clip, None);
+        assert!(this.panels.is_open(Panel::Inspector));
+        assert_eq!(this.project().mixer_graph_view, destination.1);
+        assert_eq!(this.session.mixer_graph(), destination.2);
+        assert!(!this.session.can_undo());
+    });
+}
+
+#[gpui::test]
 fn keyboard_selection_preserves_zoom_limits(cx: &mut TestAppContext) {
     let (app, cx) = mixer_fixture(cx);
     app.update(cx, |this, cx| {

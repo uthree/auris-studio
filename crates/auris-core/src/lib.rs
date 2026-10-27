@@ -30,6 +30,7 @@ pub mod error;
 pub mod harmony;
 pub mod motion;
 pub mod param;
+pub mod pipeline;
 pub mod plugin;
 pub mod project;
 pub mod registry;

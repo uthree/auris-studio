@@ -1,6 +1,7 @@
 use super::*;
 use crate::dock::{Dock, Panel};
-use crate::harness::{click, drag, open, paint};
+use crate::harness::{click, drag, open, paint, resize};
+use crate::theme::Theme;
 use gpui::{Modifiers, ScrollDelta, ScrollWheelEvent, TestAppContext, point};
 
 #[test]
@@ -429,6 +430,121 @@ fn control_wheel_scales_nodes_handles_and_controls_and_pans_without_editing_audi
             .abs()
             < 1e-6
     );
+}
+
+#[gpui::test]
+fn toolbar_zoom_reaches_both_limits_in_small_localised_themed_windows(cx: &mut TestAppContext) {
+    let (app, cx) = open(cx);
+    app.update(cx, |this, _| {
+        this.panels.set_detached(Panel::Mixer, false);
+        this.panels.move_to(Panel::Mixer, Dock::Bottom);
+        this.panels.set_size(Dock::Bottom, px(180.));
+        this.panels.show(Panel::Mixer);
+        let source = this.session.add_bus_track("Zoom source");
+        let destination = this.session.add_bus_track("Zoom destination");
+        this.session.add_send(source, destination).unwrap();
+        this.session.forget_history();
+    });
+    paint(&app, cx);
+    let before = app.read_with(cx, |this, _| {
+        (musical_document(this.project()), this.session.mixer_graph())
+    });
+
+    // This is a reachability check for the real toolbar controls, rather than a direct state
+    // mutation. Japanese labels and the larger rem size are the tightest toolbar case.
+    for (scheme, language, rem_size) in [
+        ("daylight", auris_i18n::Language::English, 13.),
+        ("midnight", auris_i18n::Language::English, 16.),
+        ("daylight", auris_i18n::Language::Japanese, 16.),
+        ("midnight", auris_i18n::Language::Japanese, 16.),
+    ] {
+        app.update(cx, |this, _| {
+            this.theme = Theme::named(scheme);
+            this.language = language;
+        });
+        cx.update(|window, _| window.set_rem_size(px(rem_size)));
+        resize(&app, cx, gpui::size(px(640.), px(480.)));
+        for selector in ["mixer-zoom-out", "mixer-zoom-reset", "mixer-zoom-in"] {
+            assert!(
+                cx.debug_bounds(selector).is_some(),
+                "{selector} is unreachable"
+            );
+        }
+
+        for _ in 0..32 {
+            click("mixer-zoom-out", cx);
+            paint(&app, cx);
+        }
+        let min_zoom = app.read_with(cx, |this, cx| {
+            this.mixer_canvas.as_ref().unwrap().state.read(cx).min_zoom
+        });
+        assert_eq!(
+            app.read_with(cx, |this, cx| {
+                this.mixer_canvas
+                    .as_ref()
+                    .unwrap()
+                    .state
+                    .read(cx)
+                    .viewport
+                    .zoom
+            }),
+            min_zoom
+        );
+        click("mixer-focus-connections", cx);
+        paint(&app, cx);
+        let first = app.read_with(cx, |this, cx| {
+            this.selected_mixer_connection(cx)
+                .expect("connection focus selects an edge at minimum zoom")
+        });
+        cx.simulate_keystrokes("right");
+        paint(&app, cx);
+        assert_ne!(
+            app.read_with(cx, |this, cx| {
+                this.selected_mixer_connection(cx)
+                    .expect("arrow traversal selects an edge at minimum zoom")
+            }),
+            first
+        );
+        for _ in 0..64 {
+            click("mixer-zoom-in", cx);
+            paint(&app, cx);
+        }
+        let max_zoom = app.read_with(cx, |this, cx| {
+            this.mixer_canvas.as_ref().unwrap().state.read(cx).max_zoom
+        });
+        assert_eq!(
+            app.read_with(cx, |this, cx| {
+                this.mixer_canvas
+                    .as_ref()
+                    .unwrap()
+                    .state
+                    .read(cx)
+                    .viewport
+                    .zoom
+            }),
+            max_zoom
+        );
+        click("mixer-focus-connections", cx);
+        paint(&app, cx);
+        let first = app.read_with(cx, |this, cx| {
+            this.selected_mixer_connection(cx)
+                .expect("connection focus selects an edge at maximum zoom")
+        });
+        cx.simulate_keystrokes("right");
+        paint(&app, cx);
+        assert_ne!(
+            app.read_with(cx, |this, cx| {
+                this.selected_mixer_connection(cx)
+                    .expect("arrow traversal selects an edge at maximum zoom")
+            }),
+            first
+        );
+        app.read_with(cx, |this, _| {
+            assert_eq!(musical_document(this.project()), before.0);
+            assert_eq!(this.session.mixer_graph(), before.1);
+            assert!(!this.session.can_undo());
+        });
+    }
 }
 
 // Camera and layout are saved metadata; these checks protect the audible document.

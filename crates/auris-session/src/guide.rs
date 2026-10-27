@@ -50,6 +50,13 @@
 //! arrow keys select visible graph edges transiently; Enter opens the existing edge menu and
 //! Escape clears selection, while modified arrows remain canvas navigation.
 //!
+//! [`auris_core::pipeline`] supplies the pure typed topology contract for the next model:
+//! explicit event/audio/control ports, bounded validation and one dependency order across all
+//! edge domains. Its descriptors must be resolved from processor capabilities by their owner;
+//! validation does not load plugins or establish runtime availability. This foundation is not
+//! stored on [`auris_core::Project`] or used for playback yet. Native ownership, legacy conversion
+//! and compiler integration follow the activation gate in `docs/render-pipeline-plan.md`.
+//!
 //! # Multiple project windows
 //!
 //! Each desktop project window owns a separate session, undo history, recovery workspace,

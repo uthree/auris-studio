@@ -3,8 +3,9 @@
 Status: implementation in progress, 2026-10-27. M0 is complete. M1's typed
 projection, shared read/edit tools and focused Inspector support chain editing.
 Keyboard connection selection and bounded intermediate inspection are implemented;
-the complete M1 acceptance gate is still pending. M2 and later milestones have not
-started.
+the complete M1 acceptance gate is still pending. M2a has started with the pure
+typed topology and validation contract. Native ownership, migration and compiler
+activation remain subsequent units.
 The design baseline is `cd205c3c`; the saved format remains 32.
 
 Read [the design](render-pipeline-design.md) for document ownership, port semantics,
@@ -150,9 +151,16 @@ The tool keeps the fixed sample bound and does not add a per-request sampling kn
 
 ### Remaining M1 work
 
-Complete the UI matrix evidence for the implemented keyboard connection selection
-and detailed parameter/intermediate-state inspection, and complete graph zoom
-coverage before declaring the complete M1 acceptance gate passed.
+The gesture matrix now also covers actual toolbar zoom to both limits, followed by
+keyboard connection traversal, in 640×480 windows across English/Japanese and
+daylight/midnight themes. It checks that these actions preserve musical state,
+routing and history. Revealing a selected connection's destination in the Inspector
+also preserves graph layout and history. See the inspection document for the
+earlier native-window evidence.
+
+The complete manual acceptance gate, including visual focus/geometry and
+accessibility review, remains open; the display-free harness does not verify pixels
+or the accessibility tree. This does not block the independent M2a data contract.
 
 ### Units of work
 
@@ -189,6 +197,21 @@ storage needs more design iteration.
 ## M2 — Native model and one-way migration
 
 ### M2a: Pure data and validation
+
+The first slice is `auris_core::pipeline`: typed node/edge/port handles and a pure
+validation contract over resolved port descriptors. Event, audio and control
+dependencies share cycle detection and deterministic topological ordering. Explicit
+input cardinality, sidechain roles, control domains and parameter policies make
+connection errors inspectable before a compiler builds plugins or buffers.
+Caller-supplied limits bound validation work; they are not product capacity claims.
+See the [topology contract](render-pipeline-topology.md) for interfaces and diagnostics.
+
+This is a topology contract, not the canonical native project model. It is not
+stored on `Project`, used as a parallel routing store, or connected to playback.
+Node capabilities must eventually be resolved from their owning processors before
+validation; a structurally valid descriptor is not proof that a plugin implements
+it. Native source/stage ownership, group and legacy identity adapters are the next
+M2a slice. The M2 activation gate still applies to file writing and playback.
 
 Implement typed IDs, authored-source ownership, nodes/ports/edges, group references
 and automation targets in `auris-core`. Add version-independent pure validation for
