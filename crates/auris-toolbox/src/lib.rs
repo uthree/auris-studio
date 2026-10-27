@@ -19,6 +19,8 @@
 #![warn(missing_docs)]
 
 #[cfg(test)]
+mod pipeline_read_tests;
+#[cfg(test)]
 mod transcription_tests;
 
 use std::collections::BTreeMap;
@@ -142,6 +144,8 @@ Writes require the revision returned by the lane read. Controller values are 0..
 edit_timeline reads or edits tempo/meter points without moving existing notes.
 Arrangement bar ranges start at 1; note/curve ticks start at 0 relative to their clip.
 
+Use pipeline_read to inspect dependencies. Keep its revision and page nodes/edges independently;
+restart after edits. Edit owners through existing musical tools.
 mixer_graph has one operation object with an action tag. Read first and copy stable node IDs.
 set_strip changes only supplied gain_db/pan/mute/solo. set_outputs atomically replaces output destinations;
 connect adds a branch. add_send creates a send with level and tap; set_send edits it by send ID.

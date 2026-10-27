@@ -372,6 +372,25 @@ pub enum Command {
         /// The validated graph operation; persistence belongs to the frontend.
         operation: crate::mixer_graph::commands::GraphAction,
     },
+    /// Inspect source, performance, automation and audio dependencies. Read-only; continue both page streams with the returned revision. Edit owners through existing musical tools.
+    PipelineRead {
+        /// Omit for all. track:N/clip:N include owned nodes; any other returned node ID focuses its neighbors.
+        scope: Option<String>,
+        /// First node to return, default zero.
+        #[serde(default)]
+        offset: usize,
+        /// Page size, default 32, maximum 64.
+        #[schemars(range(min = 1, max = 64))]
+        limit: Option<usize>,
+        /// First edge, independent of the node cursor; default zero.
+        #[serde(default)]
+        edge_offset: usize,
+        /// Edge page size, default 64, maximum 128.
+        #[schemars(range(min = 1, max = 128))]
+        edge_limit: Option<usize>,
+        /// Exact revision from the first page; required when continuing a read.
+        expected_revision: Option<String>,
+    },
     /// Read the current arrangement and stable track/clip IDs. Use read_notes for note data.
     Inspect {},
     /// Read bounded scan/measurement failures after searching. Does not rescan.
@@ -546,6 +565,7 @@ impl Command {
             Self::EditClipCurve { operation, .. } => !operation.is_read_only(),
             Self::EditTimeline { operation } => !operation.is_read_only(),
             Self::Inspect {}
+            | Self::PipelineRead { .. }
             | Self::ExecutionTrace { .. }
             | Self::PhraseVariation { .. }
             | Self::SuggestHarmony { .. }
@@ -939,6 +959,34 @@ impl Session {
             Command::MixerGraph { operation } => self
                 .apply_mixer_graph(&operation)
                 .map(|report| report.to_string()),
+            Command::PipelineRead {
+                scope,
+                offset,
+                limit,
+                edge_offset,
+                edge_limit,
+                expected_revision,
+            } => {
+                let page = self
+                    .pipeline_graph(&crate::pipeline_graph::PipelineQuery {
+                        scope: crate::pipeline_graph::PipelineScope::from_address(scope.as_deref()),
+                        offset,
+                        limit,
+                        edge_offset,
+                        edge_limit,
+                        expected_revision,
+                    })
+                    .map_err(|error| {
+                        let message = error.to_string();
+                        let mut value = serde_json::to_value(&error)
+                            .unwrap_or_else(|_| serde_json::json!({"code":"pipeline_error"}));
+                        value["message"] = message.into();
+                        value.to_string()
+                    })?;
+                let mut report = serde_json::to_value(&page).map_err(|error| error.to_string())?;
+                report["scope"] = scope.unwrap_or_else(|| "all".into()).into();
+                Ok(report.to_string())
+            }
             Command::InstrumentDiagnostics { offset, limit } => self
                 .sound_library_job(plugin_paths)
                 .diagnostics(offset, limit),

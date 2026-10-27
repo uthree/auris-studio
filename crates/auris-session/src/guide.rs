@@ -27,6 +27,16 @@
 //! with migration gates and delivery milestones in `docs/render-pipeline-plan.md`.
 //! These are implementation proposals; the contracts documented below describe current behavior.
 //!
+//! [`crate::pipeline_graph`] now projects the existing document into typed event/audio/control
+//! dependencies. It is a read model: sources, clip stages, instruments, cached singer playback,
+//! inserts, explicit post-insert faders, sends and automation still belong to their original
+//! document owners. No parallel topology is saved. The `pipeline_read` command pages nodes and
+//! edges independently under the same content revision, shared by live and saved-file tools.
+//! Clip-stage ordinals and plugin parameter indexes are revision-scoped references. Stored stack
+//! order is distinct from evaluation: pitch/controller gestures read final performed notes.
+//! Reading constructs no plugins, resolves no files and does not verify cached-take freshness.
+//! Full parameter/freshness inspection remains in the corresponding existing domain commands.
+//!
 //! # Multiple project windows
 //!
 //! Each desktop project window owns a separate session, undo history, recovery workspace,

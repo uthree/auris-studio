@@ -208,6 +208,7 @@ pub const OPERATIONS: &[&str] = &[
     "read_report",
     "edit_project.import_transcription",
     "export_audio_attachment",
+    "edit_project.pipeline_read",
     "edit_project.mixer_graph.read",
     "edit_project.mixer_graph.set_outputs",
     "edit_project.mixer_graph.add_send",
@@ -736,6 +737,7 @@ mod tests {
         }
         for command in [
             serde_json::json!({"action":"list_voices"}),
+            serde_json::json!({"action":"pipeline_read"}),
             serde_json::json!({"action":"inspect_performance","clip":1}),
             serde_json::json!({"action":"inspect_singer","track":1}),
         ] {

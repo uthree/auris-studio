@@ -79,6 +79,7 @@ pub mod history;
 pub mod library;
 pub mod mixer_graph;
 pub mod param;
+pub mod pipeline_graph;
 pub mod progressions;
 pub mod registry;
 pub mod render;

@@ -360,6 +360,11 @@ pub mod tool_help {
                 {"project":project,"operation":{"kind":"validate","expected_revision":"copy-from-inspection","changes":[{"purpose":"Spread chorus guitar attacks","edit":{"kind":"performance","clip":2,"settings":{"strum":{"spread_ms":25}}}}]}},
                 {"project":project,"operation":{"kind":"apply","plan_id":"copy-from-validation","expected_revision":"same-original-revision"}}
             ]),
+            "pipeline_read" => serde_json::json!([
+                {"project":project,"limit":32,"edge_limit":64},
+                {"project":project,"scope":"track:1","limit":32,"edge_limit":64},
+                {"project":project,"offset":32,"edge_offset":64,"expected_revision":"copy-from-first-page"}
+            ]),
             "mixer_graph" => serde_json::json!([
                 {"project":project,"operation":{"action":"read"}},
                 {"project":project,"operation":{"action":"set_strip","node":"track:1","gain_db":-6.0,"pan":0.25}},

@@ -1,8 +1,9 @@
 # Typed rendering pipeline: implementation plan
 
-Status: implementation started, 2026-10-27. M0 compatibility, performance and
-workflow baselines are implemented. M1 and later milestones remain pending.
-The baseline is `cd205c3c`, format 32.
+Status: implementation in progress, 2026-10-27. M0 is complete. M1's typed
+projection and shared read tool are implemented; its focused UI and richer
+inspection remain pending. M2 and later milestones have not started.
+The design baseline is `cd205c3c`; the saved format remains 32.
 
 Read [the design](render-pipeline-design.md) for document ownership, port semantics,
 migration, UI and agent contracts. Update `auris_session::guide` as each contract
@@ -64,6 +65,52 @@ load and their semantics are independently asserted, with baseline results recor
 Do not modify composer writers or audio constants to make migration tests pass.
 
 ## M1 — Unified view over the existing model
+
+### Implemented foundation
+
+`auris_session::pipeline_graph` now derives typed sources, clip placements and
+performance stages, instruments, singer takes, inserts, faders, sends and
+automation from the current document. Event, audio and control edges distinguish
+offline synthesis dependencies from playback. Stored stage order is explicitly
+separate from deferred pitch/controller evaluation. No new routing store or
+runtime processor is created.
+
+The `pipeline_read` tool shares one live/saved session command. Track, clip and
+node scopes include immediate boundary neighbors; node and edge pages have
+independent cursors bound to one document revision. Reads leave file bytes,
+checkpoints and Undo unchanged. The [inspection contract](render-pipeline-inspection.md)
+documents addresses, limits, error recovery and unchecked runtime state.
+
+Keep the model-facing scope a compact address (`track:1`, `clip:2`, or a returned
+node ID), converted into the internal typed enum. An initial tagged-enum tool
+schema exceeded the default native-agent context budget; the compact input passes
+the existing budget guard without raising it. Detailed guidance remains available
+through `tool_help` and scoped reads.
+
+Verification includes numerical M0 references, seven focused projection tests,
+three toolbox live/saved/schema tests, the existing agent catalog budget guard,
+and the complete workspace tests, Clippy and warning-denied API documentation.
+Singer source metadata is not evidence of file availability or take freshness;
+plugin parameter owners are checked without loading plugins or resolving keys.
+
+### Next UI unit
+
+Extend `crates/auris-gpui/src/ui/mixer_graph.rs` with a collapsible pipeline detail
+list for the existing selection. Reuse `selected_clip`, then `selected_track`,
+and the existing selection commands; keep the mixer canvas as the routing editor.
+Show performance stages in stored order with evaluation labels, explicit
+pre/post-fader sends, automation targets, and singer take/guide roles.
+
+Cache bounded pages in transient presentation state keyed by `Session::revision()`
+and scope. Do not hash the whole document on each paint or persist this cache in
+`MixerGraphView`. Expose continuation and empty/error states; navigating or opening
+the disclosure must not rebuild audio or change history. Only existing track and
+clip owners become navigation targets in the first slice.
+
+Add harness coverage for selection changes, repeated-stage order, pre/post-fader
+labels, singer guide audition, and unchanged document/layout state. Follow with
+chain editing, keyboard paths, detailed parameter inspection, localization, zoom
+and small-window checks before declaring the complete M1 acceptance gate passed.
 
 ### Units of work
 
