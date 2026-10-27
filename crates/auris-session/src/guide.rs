@@ -62,6 +62,20 @@
 //! from capability/topology validation. Source copies allocate new clip/stage IDs, while branch
 //! copies retain source references and copy owned processor state. Command bindings resolve
 //! explicit source/strip/primary-instrument roles and require stable keys for plugin parameters.
+//! Native automation owns each curve once. Bindings reference an unowned automation source node
+//! and a stable processor parameter key; disabled bindings retain their data but use the stored
+//! static parameter value. Project ticks and the existing interpolation arithmetic are preserved.
+//! Unavailable legacy parameter domains remain unresolved until authoritative metadata validates
+//! their points. The capability provider resolves processor-owned ports and policies without
+//! serialization or plugin loading. Full resolution validates ownership, disabled bindings and
+//! the active dependency graph before exposing an immutable preparation snapshot. Mixer gain,
+//! pan and send descriptors are shared with existing session commands. See
+//! `docs/render-pipeline-automation.md` for the data and capability contracts.
+//! [`auris_core::pipeline::document::NativeDocument`] places timeline context, asset registries
+//! and ordered track presentation beside that ownership fragment. It contains no legacy score.
+//! Its ownership check includes registry identities and explicit source/primary-instrument roles;
+//! missing files remain a preparation concern. Singer nodes expose an explicit guide audio input
+//! and use a declared cached take even when stale; a missing take asset does not select the guide.
 //! This fragment supports in-memory preparation and round trips; the current project writer,
 //! runtime commands and Undo still use the existing document. Legacy conversion and compiler
 //! integration follow the activation gate in `docs/render-pipeline-plan.md`. See

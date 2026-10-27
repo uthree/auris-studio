@@ -20,6 +20,9 @@ fn limits() -> ContentLimits {
         tracks: 16,
         edges: 32,
         external_ids: 0,
+        automations: 0,
+        automation_points: 0,
+        bindings: 0,
     }
 }
 
@@ -158,7 +161,7 @@ fn conventional_parameters_use_builtin_keys_and_plugin_stable_keys() {
             .parameter(ParamTarget::TrackGain(TrackId(200)), None)
             .unwrap()
             .key,
-        "gain_db"
+        "gain"
     );
     assert_eq!(
         bindings
@@ -172,7 +175,7 @@ fn conventional_parameters_use_builtin_keys_and_plugin_stable_keys() {
             .parameter(ParamTarget::MasterGain, None)
             .unwrap()
             .key,
-        "gain_db"
+        "gain"
     );
     assert_eq!(
         bindings
@@ -192,7 +195,7 @@ fn conventional_parameters_use_builtin_keys_and_plugin_stable_keys() {
             )
             .unwrap()
             .key,
-        "level_db"
+        "send"
     );
     let target = ParamTarget::Instrument {
         track: TrackId(200),

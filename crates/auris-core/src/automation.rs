@@ -189,33 +189,46 @@ impl AutomationLane {
     /// written and makes no claim about the rest of the song, so the nearest thing it did say is
     /// the honest answer at either end.
     pub fn value_at(&self, tick: Ticks) -> f32 {
-        let index = match self.points.binary_search_by_key(&tick, |point| point.tick) {
-            Ok(exact) => return self.points[exact].value,
-            Err(index) => index,
-        };
-        if index == 0 {
-            return self.points[0].value;
-        }
-        let before = self.points[index - 1];
-        let Some(after) = self.points.get(index) else {
-            return before.value;
-        };
-        match self.curve {
-            AutomationCurve::Hold => before.value,
-            AutomationCurve::Linear => {
-                let span = (after.tick - before.tick).raw();
-                // Guarded even though the invariant forbids it: a zero span here would be a
-                // division that produces NaN and writes it into a plugin, which is far worse
-                // than the wrong value.
-                if span <= 0 {
-                    return before.value;
-                }
-                let travelled = (tick - before.tick).raw() as f32 / span as f32;
-                before.value + (after.value - before.value) * travelled
+        evaluate_points(self.curve, &self.points, tick)
+    }
+}
+
+/// Evaluates one validated curve with the same endpoint and interpolation rules used by legacy
+/// project automation. Native pipeline curves call this helper so migration cannot introduce a
+/// second evaluator with subtly different floating-point behavior.
+pub(crate) fn evaluate_points(
+    curve: AutomationCurve,
+    points: &[AutomationPoint],
+    tick: Ticks,
+) -> f32 {
+    let index = match points.binary_search_by_key(&tick, |point| point.tick) {
+        Ok(exact) => return points[exact].value,
+        Err(index) => index,
+    };
+    if index == 0 {
+        return points[0].value;
+    }
+    let before = points[index - 1];
+    let Some(after) = points.get(index) else {
+        return before.value;
+    };
+    match curve {
+        AutomationCurve::Hold => before.value,
+        AutomationCurve::Linear => {
+            let span = (after.tick - before.tick).raw();
+            // Guarded even though the invariant forbids it: a zero span here would be a
+            // division that produces NaN and writes it into a plugin, which is far worse
+            // than the wrong value.
+            if span <= 0 {
+                return before.value;
             }
+            let travelled = (tick - before.tick).raw() as f32 / span as f32;
+            before.value + (after.value - before.value) * travelled
         }
     }
+}
 
+impl AutomationLane {
     /// Writes a point, replacing whatever was at that tick.
     ///
     /// A non-finite value or a negative tick is refused rather than stored: the first would reach

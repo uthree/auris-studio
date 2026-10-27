@@ -307,6 +307,15 @@ impl Project {
     /// Version 29 adds ordered, named manual drum lanes beside generation-role assignments.
     pub const FORMAT_VERSION: u32 = 32;
 
+    /// Returns the persistent allocation high-water mark.
+    ///
+    /// This is the raw stored value, for audit and repair reporting. Use [`Self::allocation_start`]
+    /// when preparing a separate allocator, since a hand-edited counter may be stale. Deleting an
+    /// object never lowers the mark, and allocating still belongs to the project mutation API.
+    pub fn next_id(&self) -> u64 {
+        self.next_id
+    }
+
     /// An empty project.
     ///
     /// A `sample_rate` that is not a positive finite number becomes 48 kHz: every duration in
@@ -476,13 +485,23 @@ impl Project {
     /// past it. A loader must reject that document rather than wrap the counter and hand out an id
     /// which may already belong to another object.
     pub fn repair_id_counter(&mut self) -> bool {
-        let mut highest = 0u64;
-        self.for_each_object_id(|id| highest = highest.max(id));
-        let Some(after_highest) = highest.checked_add(1) else {
+        let Some(next) = self.allocation_start() else {
             return false;
         };
-        self.next_id = self.next_id.max(after_highest);
-        self.next_id < u64::MAX
+        self.next_id = next;
+        true
+    }
+
+    /// Returns a collision-free allocation start without changing this document.
+    ///
+    /// Preserves the high-water mark after deletion and repairs a stale counter in the returned
+    /// value. `None` means that the ID space is exhausted. Callers must still reject conflicting
+    /// object IDs and reserve enough IDs for their complete operation before allocating.
+    pub fn allocation_start(&self) -> Option<u64> {
+        let mut highest = 0u64;
+        self.for_each_object_id(|id| highest = highest.max(id));
+        let next = self.next_id.max(highest.checked_add(1)?);
+        (next < u64::MAX).then_some(next)
     }
 
     fn for_each_object_id(&self, mut visit: impl FnMut(u64)) {

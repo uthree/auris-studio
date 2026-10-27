@@ -14,6 +14,9 @@ mod validation;
 /// Native source and processor ownership, staged independently of project-file activation.
 pub mod content;
 
+/// A standalone native document envelope used by pre-activation conversion and snapshots.
+pub mod document;
+
 use crate::ParamUnit;
 use serde::{Deserialize, Serialize};
 
@@ -55,7 +58,7 @@ pub enum AudioLayout {
 }
 
 /// Control value representation. Direct connections require identical units and finite ranges.
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum ControlDomain {
     /// A normalized range contained within 0..=1, distinct from native units.
     Normalized {

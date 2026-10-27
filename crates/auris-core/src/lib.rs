@@ -45,7 +45,10 @@ pub use automation::{Automation, AutomationCurve, AutomationLane, AutomationPoin
 pub use buffer::AudioBuffer;
 pub use error::{CoreError, Result};
 pub use harmony::{ChordMap, ChordPoint, Harmony, KeyMap, KeyPoint};
-pub use param::{ParamDescriptor, ParamId, ParamTarget, ParamUnit, ParamValueCurve};
+pub use param::{
+    MixerControl, ParamDescriptor, ParamId, ParamTarget, ParamUnit, ParamValueCurve,
+    mixer_descriptor,
+};
 pub use plugin::{
     CC_EXPRESSION, CC_MODULATION, CONTROLLER_MAX, Effect, Instrument, NoteEvent, Parameterized,
     PluginCategory, PluginDescriptor, PluginKind, PluginState, PrepareContext, ProcessContext,

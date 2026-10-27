@@ -5,12 +5,20 @@
 //! one node, and routing in explicit edges. Topology/parameter capabilities are resolved and
 //! validated separately with [`crate::pipeline::Pipeline`]; this module validates ownership only.
 
+mod automation;
 mod bindings;
+mod capabilities;
 mod operations;
 mod ownership;
+mod resolution;
 
+pub use automation::{AutomationBinding, AutomationDocument, AutomationError, AutomationId};
 pub use bindings::{CommandBindings, ParameterAddress};
+pub use capabilities::{
+    CapabilityError, CapabilityProvider, PluginCapabilities, PluginParameter, resolve_node,
+};
 pub use operations::{BranchCopy, SourceCopy};
+pub use resolution::{ResolutionError, ResolvedContent};
 
 use serde::{Deserialize, Serialize};
 
@@ -60,7 +68,11 @@ pub struct PluginInstance {
     pub file: Option<AssetPath>,
 }
 
-/// Offline singer state. A guide instrument is a separate ordinary instrument node.
+/// Offline singer state. A guide instrument connects through the separate `guide_in` audio port.
+///
+/// Playback uses the cached take whenever one is declared, including a stale take. A missing
+/// take asset is silence, not guide fallback; `guide_in` is heard only when no take is declared.
+/// The event input supplies offline synthesis material without implicitly regenerating a take.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SingerInstance {
     /// Seconds per feature frame.
@@ -103,6 +115,8 @@ impl Default for StripState {
 pub enum ProcessorKind {
     /// Shared authored source, independent of processing-group lifetimes.
     Source(SourceDocumentId),
+    /// Shared project-time automation curve, independent of processing-group lifetimes.
+    Automation(AutomationId),
     /// An independent instrument instance, including a singer guide instrument.
     Instrument(PluginInstance),
     /// Offline singer and its existing take.
@@ -138,7 +152,7 @@ pub enum ProcessorKind {
 pub struct Processor {
     /// Stable processing identity.
     pub id: NodeId,
-    /// Owning group; source nodes alone have no group owner.
+    /// Owning group; musical and automation source nodes have no group owner.
     pub group: Option<GroupId>,
     /// Sole stored settings for the node.
     pub kind: ProcessorKind,
@@ -175,14 +189,18 @@ pub struct TrackBinding {
 pub struct PipelineContent {
     /// Authoritative shared clips.
     pub sources: Vec<SourceDocument>,
+    /// Curves stored once, shared through automation source nodes.
+    pub automation: Vec<AutomationDocument>,
     /// Authoritative processor settings.
     pub processors: Vec<Processor>,
     /// Group identities and exposed controls.
     pub groups: Vec<ProcessingGroup>,
     /// Conventional track command roles.
     pub tracks: Vec<TrackBinding>,
-    /// Sole connection list; group membership creates no routes.
+    /// Signal connections. Control connections live only in `automation_bindings`.
     pub edges: Vec<PipelineEdge>,
+    /// Canonical control connections, including retained disabled bindings.
+    pub automation_bindings: Vec<AutomationBinding>,
     /// Master group used by commands whose track argument is absent.
     pub master: GroupId,
     /// Monotonic shared ID high-water mark. Deletion does not reduce it.
@@ -208,6 +226,12 @@ pub struct ContentLimits {
     pub edges: usize,
     /// Maximum asset/other external owner IDs supplied by the caller.
     pub external_ids: usize,
+    /// Maximum independently owned automation curves.
+    pub automations: usize,
+    /// Maximum total automation points, checked before inspecting point values.
+    pub automation_points: usize,
+    /// Maximum control bindings, including disabled ones.
+    pub bindings: usize,
 }
 
 /// A typed object reference used in diagnostics and legacy command resolution.
@@ -215,6 +239,8 @@ pub struct ContentLimits {
 pub enum ContentRef {
     /// Authored source.
     Source(SourceDocumentId),
+    /// Shared automation curve.
+    Automation(AutomationId),
     /// Clip.
     Clip(ClipId),
     /// Clip-local stage.
@@ -257,12 +283,18 @@ pub enum ContentError {
     /// Stable clip-stage identity validation failed.
     #[error(transparent)]
     Stage(#[from] StageError),
+    /// Curve shape or value-domain validation failed.
+    #[error(transparent)]
+    Automation(#[from] AutomationError),
     /// A plugin parameter index cannot become a stable key without resolved metadata.
     #[error("a nonempty stable plugin parameter key is required")]
     ParameterKeyRequired,
     /// Source removal requires explicitly detaching all references first.
     #[error("source {0:?} still has consumers: {1:?}")]
     SourceInUse(SourceDocumentId, Vec<ContentRef>),
+    /// Curve removal requires detaching its source processors first.
+    #[error("automation {0:?} still has consumers: {1:?}")]
+    AutomationInUse(AutomationId, Vec<ContentRef>),
     /// Removing the master group would invalidate conventional command resolution.
     #[error("the master processing group cannot be removed")]
     MasterRemoval,
@@ -273,6 +305,7 @@ impl PipelineContent {
     pub fn new() -> Self {
         Self {
             sources: Vec::new(),
+            automation: Vec::new(),
             processors: vec![Processor {
                 id: NodeId(2),
                 group: Some(GroupId(1)),
@@ -285,6 +318,7 @@ impl PipelineContent {
             }],
             tracks: Vec::new(),
             edges: Vec::new(),
+            automation_bindings: Vec::new(),
             master: GroupId(1),
             next_id: 3,
         }

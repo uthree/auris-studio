@@ -38,6 +38,8 @@ pub struct BranchCopy {
     pub sends: BTreeMap<SendId, SendId>,
     /// Original-to-new connection identities.
     pub edges: BTreeMap<EdgeId, EdgeId>,
+    /// Original-to-new control binding identities; curves remain shared.
+    pub bindings: BTreeMap<EdgeId, EdgeId>,
 }
 
 impl PipelineContent {
@@ -138,6 +140,17 @@ impl PipelineContent {
             .filter(|edge| owned.contains(&edge.from.0) || owned.contains(&edge.to.0))
             .count();
         ensure_increment("edges", limits.edges, self.edges.len(), incident_edges)?;
+        let binding_count = self
+            .automation_bindings
+            .iter()
+            .filter(|binding| owned.contains(&binding.target.node))
+            .count();
+        ensure_increment(
+            "bindings",
+            limits.bindings,
+            self.automation_bindings.len(),
+            binding_count,
+        )?;
 
         let effect_count = self
             .processors
@@ -153,7 +166,8 @@ impl PipelineContent {
                 owned.contains(&node.id) && matches!(&node.kind, ProcessorKind::Send { .. })
             })
             .count();
-        let allocation_count = 1 + owned.len() + effect_count + send_count + incident_edges;
+        let allocation_count =
+            1 + owned.len() + effect_count + send_count + incident_edges + binding_count;
         Allocator::check_reserve(self.next_id, allocation_count)?;
         let mut candidate = self.clone();
         let mut allocator = Allocator::new(&candidate);
@@ -229,6 +243,20 @@ impl PipelineContent {
         });
         candidate.processors.extend(new_processors);
         candidate.edges.extend(new_edges);
+        let mut binding_map = BTreeMap::new();
+        for binding in self
+            .automation_bindings
+            .iter()
+            .filter(|binding| owned.contains(&binding.target.node))
+        {
+            let mut copied = binding.clone();
+            copied.id = EdgeId(allocator.next()?);
+            copied.target.node = *node_map
+                .get(&binding.target.node)
+                .ok_or(ContentError::Missing(ContentRef::Node(binding.target.node)))?;
+            binding_map.insert(binding.id, copied.id);
+            candidate.automation_bindings.push(copied);
+        }
         candidate.next_id = allocator.next_id;
         candidate.validate_ownership(external_ids, limits)?;
         *self = candidate;
@@ -238,6 +266,7 @@ impl PipelineContent {
             effects: effect_map,
             sends: send_map,
             edges: edge_map,
+            bindings: binding_map,
         })
     }
 
@@ -270,6 +299,9 @@ impl PipelineContent {
             .edges
             .retain(|edge| !owned.contains(&edge.from.0) && !owned.contains(&edge.to.0));
         candidate.tracks.retain(|track| track.group != group);
+        candidate
+            .automation_bindings
+            .retain(|binding| !owned.contains(&binding.target.node));
         candidate.validate_ownership(external_ids, limits)?;
         *self = candidate;
         Ok(true)
@@ -292,6 +324,65 @@ impl PipelineContent {
         candidate.validate_ownership(external_ids, limits)?;
         *self = candidate;
         Ok(true)
+    }
+
+    /// Copies a curve with a fresh identity; source nodes and bindings are not copied implicitly.
+    pub fn duplicate_automation(
+        &mut self,
+        id: super::AutomationId,
+        external_ids: &[u64],
+        limits: ContentLimits,
+    ) -> Result<super::AutomationId, ContentError> {
+        self.validate_ownership(external_ids, limits)?;
+        let original = self
+            .automation
+            .iter()
+            .find(|curve| curve.id == id)
+            .ok_or(ContentError::Missing(ContentRef::Automation(id)))?;
+        ensure_increment("automations", limits.automations, self.automation.len(), 1)?;
+        let points = self.automation.iter().fold(0usize, |sum, curve| {
+            sum.saturating_add(curve.points().len())
+        });
+        ensure_increment(
+            "automation_points",
+            limits.automation_points,
+            points,
+            original.points().len(),
+        )?;
+        Allocator::check_reserve(self.next_id, 1)?;
+        let mut candidate = self.clone();
+        let mut copied = original.clone();
+        copied.id = super::AutomationId(candidate.next_id);
+        candidate.next_id += 1;
+        let result = copied.id;
+        candidate.automation.push(copied);
+        candidate.validate_ownership(external_ids, limits)?;
+        *self = candidate;
+        Ok(result)
+    }
+
+    /// Removes a curve only after all of its source nodes have been detached.
+    pub fn remove_automation(
+        &mut self,
+        id: super::AutomationId,
+        external_ids: &[u64],
+        limits: ContentLimits,
+    ) -> Result<(), ContentError> {
+        self.validate_ownership(external_ids, limits)?;
+        if !self.automation.iter().any(|curve| curve.id == id) {
+            return Err(ContentError::Missing(ContentRef::Automation(id)));
+        }
+        let consumers: Vec<_> = self
+            .processors
+            .iter()
+            .filter(|node| matches!(node.kind, ProcessorKind::Automation(curve) if curve == id))
+            .map(|node| ContentRef::Node(node.id))
+            .collect();
+        if !consumers.is_empty() {
+            return Err(ContentError::AutomationInUse(id, consumers));
+        }
+        self.automation.retain(|curve| curve.id != id);
+        Ok(())
     }
 }
 

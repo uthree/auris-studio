@@ -95,7 +95,7 @@ prevents mutation while callers resolve conventional addresses.
 | Effect slot / send ID | Corresponding node, with owning-group verification |
 | Clip ID | Authoritative source containing the clip |
 | Clip + stage ID | Source and current stage position; the position is temporary |
-| Built-in parameter target | Strip/send node and `gain_db`, `pan` or `level_db` |
+| Built-in parameter target | Strip/send node and canonical descriptor key `gain`, `pan` or `send` |
 | Plugin parameter target | Resolved instance node plus caller-supplied stable metadata key |
 
 Numeric plugin parameter indexes are insufficient for a persistent address.
@@ -117,6 +117,6 @@ and the formatting checks passed. `cargo doc --workspace --no-deps` also passed
 with `RUSTDOCFLAGS=-D warnings`.
 
 The current project writer remains format 32. Native activation requires the
-remaining automation/capability model, versioned conversion, conventional-project
+versioned conversion, conventional-project
 compiler and the complete session command/history audit. Integrate these through
 the plan's activation gate rather than enabling only the writer.

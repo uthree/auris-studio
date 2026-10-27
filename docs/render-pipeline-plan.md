@@ -4,9 +4,10 @@ Status: implementation in progress, 2026-10-28. M0 is complete. M1's typed
 projection, shared read/edit tools and focused Inspector support chain editing.
 Keyboard connection selection and bounded intermediate inspection are implemented;
 the complete M1 acceptance gate is still pending. M2a includes pure typed topology,
-shared-source ownership, stable clip stages and conventional-command identity
-bindings. Automation ownership, capability integration, migration and compiler
-activation remain subsequent units.
+shared-source ownership, stable clip stages, conventional-command identity bindings,
+shared automation curves, processor-derived capability resolution and a standalone
+document envelope. Migration
+and compiler activation remain subsequent units.
 The design baseline is `cd205c3c`; the saved format remains 32.
 
 Read [the design](render-pipeline-design.md) for document ownership, port semantics,
@@ -217,9 +218,14 @@ command identity resolution. Source and branch copies have different ownership
 semantics; deletion and ID allocation are atomic candidate operations. See the
 [ownership contract](render-pipeline-ownership.md) for implemented APIs and tests.
 
-M2a remains in progress: independent automation-curve ownership and binding,
-processor-derived capability resolution, and validation of the complete native
-document are the next integration units. Existing session commands still operate
+Independent automation curves and bindings now preserve project-time interpolation,
+share compatible drivers and retain disabled connections. Processor-derived
+capabilities and full fragment resolution validate policies, domains, driver conflicts
+and cycles under cumulative budgets. Missing legacy domains remain unresolved rather
+than inferred; the [automation contract](render-pipeline-automation.md) describes this
+boundary. The standalone document envelope retains track presentation, timeline
+context and asset registries; legacy conversion is the next integration unit.
+Existing session commands still operate
 on the current project; the new resolver is their future identity boundary, not an
 activated command backend. The M2 activation gate still applies to file writing
 and playback.

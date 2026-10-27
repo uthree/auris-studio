@@ -18,7 +18,7 @@
 use std::{collections::BTreeMap, sync::Arc};
 
 use auris_core::automation::{Automation, AutomationCurve, AutomationPoint};
-use auris_core::param::{ParamDescriptor, ParamId, ParamUnit};
+use auris_core::param::{ParamDescriptor, ParamId, mixer_descriptor};
 use auris_core::plugin::PluginState;
 use auris_core::project::{MixerGraphView, MixerNodePosition};
 use auris_core::time::Ticks;
@@ -442,20 +442,7 @@ impl Session {
     /// Separate from [`Self::descriptor_for`] because these need no parameter cache, so a
     /// caller holding the session immutably — a render pass building a fader — can still get one.
     pub fn mixer_descriptor(target: ParamTarget) -> Option<ParamDescriptor> {
-        match target {
-            ParamTarget::TrackPan(_) | ParamTarget::MasterPan => Some(
-                ParamDescriptor::new(0u32, "pan", "Pan", -1.0, 1.0, 0.0).with_unit(ParamUnit::Pan),
-            ),
-            ParamTarget::TrackGain(_) | ParamTarget::MasterGain => Some(ParamDescriptor::decibels(
-                0u32, "gain", "Volume", -60.0, 12.0, 0.0,
-            )),
-            // A send has no headroom above unity: it is how much of a track goes somewhere, and
-            // more of it than there is would be a gain stage wearing a send's name.
-            ParamTarget::Send { .. } => Some(ParamDescriptor::decibels(
-                0u32, "send", "Send", -60.0, 0.0, 0.0,
-            )),
-            _ => None,
-        }
+        mixer_descriptor(target)
     }
 
     /// Current value of a parameter, falling back to its default.

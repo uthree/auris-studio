@@ -19,6 +19,9 @@ fn limits() -> ContentLimits {
         tracks: 128,
         edges: 256,
         external_ids: 128,
+        automations: 0,
+        automation_points: 0,
+        bindings: 0,
     }
 }
 

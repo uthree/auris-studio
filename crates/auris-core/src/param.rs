@@ -13,6 +13,11 @@ use std::borrow::Cow;
 
 use crate::project::{EffectSlotId, SendId, TrackId};
 
+#[path = "param/mixer.rs"]
+mod mixer;
+
+pub use mixer::{MixerControl, mixer_descriptor};
+
 /// Identifies a parameter within one plugin instance.
 #[derive(
     Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,

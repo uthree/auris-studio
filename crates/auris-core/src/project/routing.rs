@@ -329,7 +329,8 @@ impl Project {
     }
 
     /// Whether every routing reference is usable and the complete graph is acyclic.
-    fn routing_is_valid(&self) -> bool {
+    /// Checks output, send and sidechain references and cycles without repairing the document.
+    pub fn routing_is_valid(&self) -> bool {
         let indices: HashMap<TrackId, usize> = self
             .tracks
             .iter()

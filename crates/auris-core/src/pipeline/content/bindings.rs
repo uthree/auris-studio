@@ -168,23 +168,20 @@ impl<'a> CommandBindings<'a> {
         target: ParamTarget,
         stable_key: Option<&str>,
     ) -> Result<ParameterAddress, ContentError> {
-        let (node, key) = match target {
-            ParamTarget::TrackGain(track) => (self.strip(Some(track))?, "gain_db"),
-            ParamTarget::TrackPan(track) => (self.strip(Some(track))?, "pan"),
-            ParamTarget::MasterGain => (self.strip(None)?, "gain_db"),
-            ParamTarget::MasterPan => (self.strip(None)?, "pan"),
-            ParamTarget::Send { track, send } => (self.send(track, send)?, "level_db"),
-            ParamTarget::Instrument { track, .. } => {
-                (self.instrument(track)?, require_key(stable_key)?)
+        let node = match target {
+            ParamTarget::TrackGain(track) | ParamTarget::TrackPan(track) => {
+                self.strip(Some(track))?
             }
-            ParamTarget::Effect { track, slot, .. } => {
-                (self.effect(track, slot)?, require_key(stable_key)?)
-            }
+            ParamTarget::MasterGain | ParamTarget::MasterPan => self.strip(None)?,
+            ParamTarget::Send { track, send } => self.send(track, send)?,
+            ParamTarget::Instrument { track, .. } => self.instrument(track)?,
+            ParamTarget::Effect { track, slot, .. } => self.effect(track, slot)?,
         };
-        Ok(ParameterAddress {
-            node,
-            key: key.to_owned(),
-        })
+        let key = match crate::param::mixer_descriptor(target) {
+            Some(descriptor) => descriptor.key.into_owned(),
+            None => require_key(stable_key)?.to_owned(),
+        };
+        Ok(ParameterAddress { node, key })
     }
 
     fn track(&self, track: TrackId) -> Result<&super::TrackBinding, ContentError> {

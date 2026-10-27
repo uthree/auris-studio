@@ -46,6 +46,16 @@ fn preflight(
     bound("tracks", content.tracks.len(), limits.tracks)?;
     bound("edges", content.edges.len(), limits.edges)?;
     bound("external_ids", external_ids.len(), limits.external_ids)?;
+    bound("automations", content.automation.len(), limits.automations)?;
+    bound(
+        "bindings",
+        content.automation_bindings.len(),
+        limits.bindings,
+    )?;
+    let points = content.automation.iter().fold(0usize, |count, curve| {
+        count.saturating_add(curve.points().len())
+    });
+    bound("automation_points", points, limits.automation_points)?;
     let mut clips = 0usize;
     let mut stages = 0usize;
     for source in &content.sources {
@@ -85,6 +95,12 @@ fn inspect(
         register(&mut ids, id)?;
     }
     let mut sources = BTreeSet::new();
+    let mut automation = BTreeSet::new();
+    for curve in &content.automation {
+        register(&mut ids, curve.id.0)?;
+        curve.validate()?;
+        automation.insert(curve.id);
+    }
     for source in &content.sources {
         register(&mut ids, source.id.0)?;
         sources.insert(source.id);
@@ -118,6 +134,17 @@ fn inspect(
         register(&mut ids, node.id.0)?;
         processors.insert(node.id, node);
         match node.kind {
+            ProcessorKind::Automation(curve) => {
+                if node.group.is_some() {
+                    return Err(ContentError::Role(
+                        ContentRef::Node(node.id),
+                        "automation sources must be independent of group ownership",
+                    ));
+                }
+                if !automation.contains(&curve) {
+                    return Err(ContentError::Missing(ContentRef::Automation(curve)));
+                }
+            }
             ProcessorKind::Source(source) => {
                 if node.group.is_some() {
                     return Err(ContentError::Role(
@@ -186,10 +213,34 @@ fn inspect(
     }
     for edge in &content.edges {
         register(&mut ids, edge.id.0)?;
+        if edge.role == crate::pipeline::EdgeRole::Control {
+            return Err(ContentError::Role(
+                ContentRef::Edge(edge.id),
+                "control connections must use automation bindings",
+            ));
+        }
         for node in [edge.from.0, edge.to.0] {
             if !processors.contains_key(&node) {
                 return Err(ContentError::Missing(ContentRef::Node(node)));
             }
+        }
+    }
+    for binding in &content.automation_bindings {
+        register(&mut ids, binding.id.0)?;
+        let source = processors
+            .get(&binding.source)
+            .ok_or(ContentError::Missing(ContentRef::Node(binding.source)))?;
+        if !matches!(source.kind, ProcessorKind::Automation(_)) {
+            return Err(ContentError::Role(
+                ContentRef::Edge(binding.id),
+                "binding source must be an automation processor",
+            ));
+        }
+        if !processors.contains_key(&binding.target.node) {
+            return Err(ContentError::Missing(ContentRef::Node(binding.target.node)));
+        }
+        if binding.target.key.is_empty() {
+            return Err(ContentError::ParameterKeyRequired);
         }
     }
     Ok(ids.last().copied().unwrap_or(0))

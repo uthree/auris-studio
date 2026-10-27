@@ -16,6 +16,9 @@ fn limits() -> ContentLimits {
         tracks: 16,
         edges: 32,
         external_ids: 4,
+        automations: 0,
+        automation_points: 0,
+        bindings: 0,
     }
 }
 
@@ -183,6 +186,9 @@ fn every_identity_collection_is_count_bounded_before_reference_validation() {
         tracks: 1,
         edges: 1,
         external_ids: 1,
+        automations: 0,
+        automation_points: 0,
+        bindings: 0,
     };
     content.validate_ownership(&[90], exact).unwrap();
     // Reference faults must not bypass the inexpensive count preflight.
