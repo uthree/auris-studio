@@ -53,11 +53,17 @@ mod tests {
         assert_eq!(std::fs::read(&path).unwrap(), before);
         assert!(opened(&project).unwrap().checkpoints().unwrap().is_empty());
         let operation = json!({"action":"connect","source":format!("track:{}",a.0),"target":format!("track:{}",b.0),"kind":"send"});
+        let live_before = session.project().clone();
         let live = session
             .agent_command(auris_session::live_agent::Command::MixerGraph {
                 operation: serde_json::from_value(operation.clone()).unwrap(),
             })
             .unwrap();
+        let live_after = session.project().clone();
+        session.undo();
+        assert_eq!(session.project(), &live_before);
+        session.redo();
+        assert_eq!(session.project(), &live_after);
         let file = request(operation.clone()).unwrap();
         assert_eq!(
             file["graph"],
@@ -94,6 +100,166 @@ mod tests {
                 .unwrap()
                 .outputs
                 .is_empty()
+        );
+    }
+
+    #[test]
+    fn saved_workflow_replay_measures_graph_automation_and_performance_contracts() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("Workflow.auris");
+        let mut session = Session::new(SessionOptions::headless()).unwrap();
+        let source = session.add_bus_track("Source");
+        let destination = session.add_bus_track("Destination");
+        let performer = session.add_default_instrument_track("Performer").unwrap();
+        let clip = session
+            .add_midi_clip(
+                performer,
+                "Phrase",
+                auris_session::prelude::Ticks::ZERO,
+                auris_session::prelude::Ticks(3840),
+            )
+            .unwrap();
+        session
+            .replace_notes(
+                clip,
+                vec![
+                    Note::new(60, Ticks::ZERO, Ticks::QUARTER),
+                    Note::new(64, Ticks::QUARTER, Ticks::QUARTER),
+                ],
+            )
+            .unwrap();
+        session.save(&path).unwrap();
+        let project = path.to_string_lossy().into_owned();
+        let mut call_count = 0usize;
+        let mut request_bytes_total = 0usize;
+        let mut response_bytes_total = 0usize;
+        let mut error_count = 0usize;
+        let mut call = |name: &str, args: Value| -> Result<(Value, usize), String> {
+            let bytes = serde_json::to_vec(&args).unwrap().len();
+            call_count += 1;
+            request_bytes_total += bytes;
+            let reply = match crate::runtime::call_saved(&crate::ToolGroups::default(), name, args)
+            {
+                Ok(reply) => reply,
+                Err(error) => {
+                    error_count += 1;
+                    response_bytes_total += error.len();
+                    return Err(error);
+                }
+            };
+            response_bytes_total += reply.len();
+            Ok((
+                serde_json::from_str(&reply).unwrap_or_else(|_| Value::String(reply.clone())),
+                bytes,
+            ))
+        };
+
+        let before_read = std::fs::read(&path).unwrap();
+        let (read, read_bytes) = call(
+            "mixer_graph",
+            json!({"project":project,"operation":{"action":"read","offset":0,"limit":64}}),
+        )
+        .unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), before_read);
+        assert_eq!(opened(&project).unwrap().checkpoints().unwrap().len(), 0);
+        let nodes = read["result"]["nodes"]
+            .as_array()
+            .or_else(|| read["nodes"].as_array())
+            .unwrap();
+        assert!(
+            nodes
+                .iter()
+                .any(|node| node["id"] == format!("track:{}", source.0))
+        );
+        assert!(
+            nodes
+                .iter()
+                .all(|node| node["id"].as_str().unwrap().starts_with("track:")
+                    || node["id"].as_str().unwrap().starts_with("effect:"))
+        );
+
+        let send_request = json!({"project":project,"operation":{"action":"connect","source":format!("track:{}",source.0),"target":format!("track:{}",destination.0),"kind":"send"}});
+        let (connected, connect_bytes) = call("mixer_graph", send_request.clone()).unwrap();
+        assert_eq!(connected["changed"], true);
+        let saved_after_connect = std::fs::read(&path).unwrap();
+        let checkpoints_after_connect = opened(&project).unwrap().checkpoints().unwrap().len();
+        let (duplicate, _) = call("mixer_graph", send_request).unwrap();
+        assert_eq!(duplicate["changed"], false);
+        assert_eq!(std::fs::read(&path).unwrap(), saved_after_connect);
+        assert_eq!(
+            opened(&project).unwrap().checkpoints().unwrap().len(),
+            checkpoints_after_connect
+        );
+        let saved_before_cycle = std::fs::read(&path).unwrap();
+        let checkpoints_before_cycle = opened(&project).unwrap().checkpoints().unwrap().len();
+        assert!(call(
+            "mixer_graph",
+            json!({"project":project,"operation":{"action":"connect","source":format!("track:{}",destination.0),"target":format!("track:{}",source.0),"kind":"output"}}),
+        )
+        .is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), saved_before_cycle);
+        assert_eq!(
+            opened(&project).unwrap().checkpoints().unwrap().len(),
+            checkpoints_before_cycle
+        );
+        let (recovered, _) = call(
+            "mixer_graph",
+            json!({"project":project,"operation":{"action":"disconnect","source":format!("track:{}",source.0),"target":format!("track:{}",destination.0),"kind":"send"}}),
+        )
+        .unwrap();
+        assert_eq!(recovered["changed"], true);
+
+        let (automation_read, automation_read_bytes) = call(
+            "automation",
+            json!({"project":project,"target":{"kind":"track_gain","track":performer.0},"operation":{"kind":"read"}}),
+        )
+        .unwrap();
+        let revision = automation_read["revision"].as_str().unwrap().to_owned();
+        let (automation_set, automation_set_bytes) = call(
+            "automation",
+            json!({"project":project,"target":{"kind":"track_gain","track":performer.0},"expected_revision":revision,"operation":{"kind":"set","points":[{"at_tick":0,"value":-12.0}],"replace":false,"curve":"linear"}}),
+        )
+        .unwrap();
+        assert_eq!(automation_set["automated"], true);
+
+        let (performance, performance_bytes) = call(
+            "set_performance",
+            json!({"project":project,"clip":clip.0,"settings":{"gate":0.5}}),
+        )
+        .unwrap();
+        assert!(performance["clip"].is_number() || performance["settings"].is_object());
+        let (performance_read, performance_read_bytes) = call(
+            "inspect_performance",
+            json!({"project":project,"clip":clip.0}),
+        )
+        .unwrap();
+        assert_eq!(performance_read["settings"]["gate"], 0.5);
+        let (notes_after, _) = call(
+            "read_notes",
+            json!({"project":project,"clips":[{"clip":clip.0}]}),
+        )
+        .unwrap();
+        assert_eq!(
+            notes_after["clips"][0]["notes"].as_array().unwrap().len(),
+            2
+        );
+        assert_eq!(notes_after["clips"][0]["notes"][0]["pitch"], 60);
+        assert_eq!(notes_after["clips"][0]["notes"][1]["pitch"], 64);
+
+        println!(
+            "workflow-baseline bytes: read request={}, read response={}, connect request={}, connect response={}, automation read request={}, automation set request={}, performance request={}, performance read request={}",
+            read_bytes,
+            serde_json::to_vec(&read).unwrap().len(),
+            connect_bytes,
+            serde_json::to_vec(&connected).unwrap().len(),
+            automation_read_bytes,
+            automation_set_bytes,
+            performance_bytes,
+            performance_read_bytes,
+        );
+        println!(
+            "workflow-baseline calls: count={}, errors={}, request_bytes_total={}, response_bytes_total={}",
+            call_count, error_count, request_bytes_total, response_bytes_total
         );
     }
 }

@@ -1,8 +1,8 @@
 # Typed rendering pipeline: implementation plan
 
-Status: implementation started, 2026-10-27. M0 historical persistence baselines are
-implemented; the rest of M0 and later milestones remain pending. The baseline is
-`cd205c3c`, format 32.
+Status: implementation started, 2026-10-27. M0 compatibility, performance and
+workflow baselines are implemented. M1 and later milestones remain pending.
+The baseline is `cd205c3c`, format 32.
 
 Read [the design](render-pipeline-design.md) for document ownership, port semantics,
 migration, UI and agent contracts. Update `auris_session::guide` as each contract
@@ -31,8 +31,13 @@ Implementation progress: fixed fixtures produced by historical format 27–32 co
 serializers and 12 passing IO-level semantic/round-trip regression tests are in
 `crates/auris-io/tests/project_format_baselines.rs`. Their provenance and reproduction
 procedure are in `crates/auris-io/tests/fixtures/project_formats/provenance.md`.
-Engine render references, performance measurements and UI/tool baseline transcripts
-remain required before declaring the full M0 exit gate complete.
+Existing numerical scheduling/rendering tests, a release performance executable,
+and an executable saved-tool workflow now complete the M0 reference. See
+[baseline coverage](render-pipeline-baselines.md), the
+[performance record](render-pipeline-performance-baseline.md), and the
+[workflow record](render-pipeline-workflow-baseline.md). UI evidence uses the existing
+GPUI gesture harness; the tool replay is synthetic and makes no model-success or
+human-usability claim. Callback allocation windows cover built-in fixtures only.
 
 ### Units of work
 

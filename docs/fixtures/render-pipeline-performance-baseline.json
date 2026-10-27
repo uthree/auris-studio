@@ -1,0 +1,93 @@
+{
+  "block_frames": 256,
+  "effect_id": "auris.fx.limiter",
+  "instrument_id": "auris.synth.chiptune",
+  "sample_rate": 48000,
+  "schema": "auris.render_pipeline_baseline.v1",
+  "workloads": [
+    {
+      "determinism": {
+        "finite": true,
+        "frames": 32768,
+        "nonzero": true,
+        "peak": 0.9549925327301025,
+        "sum": 46.04220990802543
+      },
+      "first_callback": {
+        "allocations": 0,
+        "bytes": 0,
+        "deallocations": 0,
+        "microseconds": 61.9
+      },
+      "graph_build": {
+        "median_microseconds": 548.3000000000001,
+        "repetitions": 3
+      },
+      "notes_per_track": 256,
+      "seek_loop_callback": {
+        "allocations": 0,
+        "blocks": 128,
+        "bytes": 0,
+        "deallocations": 0,
+        "microseconds": 33505.5,
+        "wrap_end": 2048,
+        "wrap_start": 1900,
+        "wrapped_position": 1132
+      },
+      "snapshot_clone": {
+        "median_microseconds": 95.69999999999999,
+        "repetitions": 3
+      },
+      "steady_callback": {
+        "allocations": 0,
+        "blocks": 127,
+        "bytes": 0,
+        "deallocations": 0,
+        "microseconds": 8610.8
+      },
+      "tracks": 8
+    },
+    {
+      "determinism": {
+        "finite": true,
+        "frames": 32768,
+        "nonzero": true,
+        "peak": 0.9549925327301025,
+        "sum": 127.99504416051442
+      },
+      "first_callback": {
+        "allocations": 0,
+        "bytes": 0,
+        "deallocations": 0,
+        "microseconds": 204.0
+      },
+      "graph_build": {
+        "median_microseconds": 2792.0,
+        "repetitions": 3
+      },
+      "notes_per_track": 256,
+      "seek_loop_callback": {
+        "allocations": 0,
+        "blocks": 128,
+        "bytes": 0,
+        "deallocations": 0,
+        "microseconds": 163731.19999999998,
+        "wrap_end": 2048,
+        "wrap_start": 1900,
+        "wrapped_position": 1132
+      },
+      "snapshot_clone": {
+        "median_microseconds": 878.8,
+        "repetitions": 3
+      },
+      "steady_callback": {
+        "allocations": 0,
+        "blocks": 127,
+        "bytes": 0,
+        "deallocations": 0,
+        "microseconds": 65215.49999999999
+      },
+      "tracks": 64
+    }
+  ]
+}
