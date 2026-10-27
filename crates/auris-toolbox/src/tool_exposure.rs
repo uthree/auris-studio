@@ -58,7 +58,7 @@ impl ToolGroups {
             });
         }
         if self.allows("pipeline_read") {
-            text.push_str("Use pipeline_read for a scoped view of sources, performance, automation and routing. Page nodes and edges independently with the same revision; use existing musical commands for edits. ");
+            text.push_str("Use pipeline_read for scoped sources, performance, automation and routing. Keep its revision; pipeline_edit only moves/removes exact clip stages. Reread after edits. ");
         }
         if self.allows("arrangement") {
             text.push_str(crate::arrangement_instructions());
@@ -95,6 +95,7 @@ pub fn tool_group(name: &str) -> &'static str {
         "write_lyrics" | "sing" | "list_voices" | "inspect_singer" | "set_singer_voice"
         | "edit_vocal_notes" | "analyze_lyrics" | "diagnose_song" | "repair_lyrics" => "vocals",
         "pipeline_read"
+        | "pipeline_edit"
         | "mixer_graph"
         | "automation"
         | "normalize_mix"

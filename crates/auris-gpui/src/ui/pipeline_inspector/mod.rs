@@ -1,10 +1,13 @@
 //! Progressive disclosure of the selected document's processing dependencies.
 //!
 //! The existing inspector owns scrolling and selection. This surface only reads the
-//! session projection; editing still goes through the existing musical controls.
+//! session projection; editing goes through the session commands of each owner.
 
+mod actions;
 mod model;
 
+#[cfg(test)]
+mod actions_tests;
 #[cfg(test)]
 mod tests;
 
@@ -322,6 +325,9 @@ impl AurisApp {
                     cx.notify();
                 }),
             ));
+        }
+        if let Some(actions) = self.pipeline_row_actions(node, cx) {
+            row = row.child(actions);
         }
         row.into_any_element()
     }

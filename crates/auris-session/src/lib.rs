@@ -133,14 +133,14 @@ pub use session::lyric_harness;
 pub use session::prepare_output_preview;
 pub use session::{
     AccompanyReport, Arm, AudioStatus, AutosaveJob, AutosaveResult, BalanceReport, CEILING_DB,
-    ChordPreview, ChordPreviewJob, Clipboard, CollectAssetsJob, CollectAssetsResult,
-    ComposeBalanceJob, ComposeBalancePhase, ComposeBalanceProgress, ComposeBalanceResult,
-    ComposeBalanceStep, ComposeReport, CopiedClip, CopiedContent, DEFAULT_OCTAVE, DEFAULT_PARTS,
-    DEFAULT_VELOCITY, DiscardRecoveryJob, DiskWatchJob, DiskWatchResult, InputChannels, LAYOUT,
-    LIMITER_ALLOWANCE_DB, LoadedFont, MIN_PHONEME_SECONDS, MidiExportJob, MidiExportResult,
-    MidiImportJob, MidiImportResult, MixAnalysis, MusicalTyping, NormalizeMixReport, OCTAVE_RANGE,
-    OpenProjectJob, OpenProjectResult, Played, PluginWindow, Quantize, RECOVERY_DIR_VAR,
-    RecordingReport, RecordingStatus, RecoveryCleanupJob, RecoveryJob,
+    ChordPreview, ChordPreviewJob, ClipTransformEdit, Clipboard, CollectAssetsJob,
+    CollectAssetsResult, ComposeBalanceJob, ComposeBalancePhase, ComposeBalanceProgress,
+    ComposeBalanceResult, ComposeBalanceStep, ComposeReport, CopiedClip, CopiedContent,
+    DEFAULT_OCTAVE, DEFAULT_PARTS, DEFAULT_VELOCITY, DiscardRecoveryJob, DiskWatchJob,
+    DiskWatchResult, InputChannels, LAYOUT, LIMITER_ALLOWANCE_DB, LoadedFont, MIN_PHONEME_SECONDS,
+    MidiExportJob, MidiExportResult, MidiImportJob, MidiImportResult, MixAnalysis, MusicalTyping,
+    NormalizeMixReport, OCTAVE_RANGE, OpenProjectJob, OpenProjectResult, Played, PluginWindow,
+    Quantize, RECOVERY_DIR_VAR, RecordingReport, RecordingStatus, RecoveryCleanupJob, RecoveryJob,
     RecoveryQuarantineCleanupJob, RecoveryResult, RecoverySnapshot, Release, SaveJob, SaveReport,
     SaveResult, SectionLoudness, Session, SessionOptions, SingPlan, SingerFramesExportJob,
     SingerFramesExportResult, SingerLandingJob, SingerLandingResult, SingerTakeState,
@@ -241,6 +241,7 @@ pub fn midi_extensions() -> &'static [&'static str] {
 /// text. Both names would compile — an explicit `use` beats a glob — but a reader would have to
 /// know that rule to tell which `Key` a line means, and one of the two would be wrong silently.
 pub mod prelude {
+    pub use crate::session::ClipTransformEdit;
     pub use crate::session::{PlaybackReadiness, PlaybackState};
     pub use crate::session::{RhythmGrid, RhythmRow};
     pub use crate::session::{TrackConversion, TrackConversionJob};

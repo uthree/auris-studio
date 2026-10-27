@@ -298,6 +298,7 @@ pub fn error_text(error: &SessionError, language: Language) -> String {
         },
         SessionError::UnknownTrack(_) => Key::ErrorUnknownTrack.get(language).to_string(),
         SessionError::UnknownClip(_) => Key::ErrorUnknownClip.get(language).to_string(),
+        SessionError::StaleRevision { .. } => Key::PipelineChanged.get(language).to_string(),
         SessionError::UnknownNote { .. } => Key::ErrorUnknownNote.get(language).to_string(),
         // The one vocal error a person can *fix* gets the sentence naming the fix; the others
         // carry the loader's or the frontend's own words, which name the folder or the text.

@@ -497,6 +497,15 @@ pub enum MenuCommand {
 
     /// Opens Auris's parameter editor for this exact plugin slot.
     PluginParameters(crate::ui::plugin_window::PluginSubject),
+    /// Edits one exact performance stage from the displayed document revision.
+    PipelineStage {
+        /// Clip owning the transform stack.
+        clip: ClipId,
+        /// Session revision captured when the stage was displayed.
+        revision: u64,
+        /// Discrete stage move or removal.
+        edit: auris_session::ClipTransformEdit,
+    },
     /// Closes this plugin's primary editor without toggling its audio.
     ClosePluginEditor(crate::ui::plugin_window::PluginSubject),
     /// Bypass or re-enable an effect.
@@ -1524,6 +1533,13 @@ impl AurisApp {
                 }
             }
 
+            MenuCommand::PipelineStage {
+                clip,
+                revision,
+                edit,
+            } => {
+                self.edit_pipeline_stage(clip, revision, edit);
+            }
             MenuCommand::ToggleEffect { track, slot } => self.toggle_effect(track, slot),
             MenuCommand::PluginParameters(subject) => self.open_plugin_window(subject),
             MenuCommand::ClosePluginEditor(subject) => self.close_plugin_editor(subject),

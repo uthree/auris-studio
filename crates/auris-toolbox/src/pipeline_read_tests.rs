@@ -12,6 +12,61 @@ fn live(session: &mut Session, args: Value) -> Result<Value, String> {
     serde_json::from_str(&text).map_err(|error| error.to_string())
 }
 
+fn edit(session: &mut Session, args: Value) -> Result<Value, String> {
+    let command = crate::live_agent::command("pipeline_edit", &args)?
+        .ok_or("pipeline_edit must be a canonical session command")?;
+    assert!(command.is_mutating());
+    assert!(!command.needs_worker());
+    let text = session.agent_command(command)?;
+    serde_json::from_str(&text).map_err(|error| error.to_string())
+}
+
+fn staged_session() -> (Session, ClipId) {
+    let mut session = Session::new(SessionOptions::headless()).unwrap();
+    let track = session.add_default_instrument_track("Lead").unwrap();
+    let clip = session
+        .add_midi_clip(track, "Phrase", Ticks::ZERO, Ticks::QUARTER * 4)
+        .unwrap();
+    session
+        .replace_notes(clip, vec![Note::new(60, Ticks::ZERO, Ticks::QUARTER)])
+        .unwrap();
+    session
+        .set_clip_transforms(
+            clip,
+            vec![
+                NoteTransform::Humanize {
+                    amount: 0.1,
+                    seed: 11,
+                },
+                NoteTransform::Humanize {
+                    amount: 0.2,
+                    seed: 22,
+                },
+                NoteTransform::Gate { amount: 0.8 },
+            ],
+        )
+        .unwrap();
+    (session, clip)
+}
+
+fn clip_revision_and_stage(session: &mut Session, clip: ClipId) -> (String, String) {
+    let page = live(
+        session,
+        json!({"scope":format!("clip:{}",clip.0),"limit":64,"edge_limit":128}),
+    )
+    .unwrap();
+    let stage = page["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|node| node["id"] == format!("clip:{}/stage:1", clip.0))
+        .unwrap();
+    (
+        page["revision"].as_str().unwrap().into(),
+        stage["id"].as_str().unwrap().into(),
+    )
+}
+
 #[test]
 fn pipeline_read_has_the_same_live_and_saved_contract_without_writes() {
     let directory = tempfile::tempdir().unwrap();
@@ -59,6 +114,182 @@ fn pipeline_read_has_the_same_live_and_saved_contract_without_writes() {
     assert_eq!(session.project(), &before);
     assert_eq!(session.revision(), history_revision);
     assert!(!session.is_dirty());
+    assert_eq!(std::fs::read(&path).unwrap(), bytes);
+    assert!(
+        crate::opened(path.to_str().unwrap())
+            .unwrap()
+            .checkpoints()
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn pipeline_edit_is_flat_bounded_and_uses_the_pipeline_content_revision() {
+    let definition = crate::live_agent::definitions()
+        .into_iter()
+        .find(|tool| tool.name == "pipeline_edit")
+        .expect("pipeline_edit is in the shared live catalog");
+    assert_eq!(crate::tool_group(&definition.name), "mix");
+    assert!(
+        definition.parameters["properties"]["action"]["enum"]
+            .as_array()
+            .is_some_and(|actions| actions.len() == 3)
+    );
+    assert!(
+        crate::live_agent::command(
+            "pipeline_edit",
+            &json!({"node":"clip:2/stage:0","expected_revision":"hash","action":"remove"})
+        )
+        .unwrap()
+        .is_some()
+    );
+    assert!(crate::live_agent::command(
+        "pipeline_edit",
+        &json!({"node":"clip:2/stage:0","expected_revision":"hash","action":"remove","operation":"remove"})
+    )
+    .is_err());
+}
+
+#[test]
+fn pipeline_edit_moves_exact_duplicate_stage_and_undoes_each_live_request() {
+    let (mut session, clip) = staged_session();
+    let authored = session.midi_clip(clip).unwrap().notes.clone();
+    let (revision, node) = clip_revision_and_stage(&mut session, clip);
+    edit(
+        &mut session,
+        json!({"node":node,"expected_revision":revision,"action":"move_earlier"}),
+    )
+    .unwrap();
+    assert!(matches!(
+        session.clip_transforms(clip).unwrap()[0],
+        NoteTransform::Humanize { seed: 22, .. }
+    ));
+    assert!(matches!(
+        session.clip_transforms(clip).unwrap()[1],
+        NoteTransform::Humanize { seed: 11, .. }
+    ));
+    let (revision, _) = clip_revision_and_stage(&mut session, clip);
+    edit(
+        &mut session,
+        json!({"node":format!("clip:{}/stage:1",clip.0),"expected_revision":revision,"action":"remove"}),
+    )
+    .unwrap();
+    assert_eq!(session.clip_transforms(clip).unwrap().len(), 2);
+    session.undo();
+    session.undo();
+    assert!(matches!(
+        session.clip_transforms(clip).unwrap()[0],
+        NoteTransform::Humanize { seed: 11, .. }
+    ));
+    assert!(matches!(
+        session.clip_transforms(clip).unwrap()[1],
+        NoteTransform::Humanize { seed: 22, .. }
+    ));
+    assert!(matches!(
+        session.clip_transforms(clip).unwrap()[2],
+        NoteTransform::Gate { .. }
+    ));
+    assert_eq!(session.midi_clip(clip).unwrap().notes, authored);
+}
+
+#[test]
+fn pipeline_edit_saved_live_parity_and_checkpoint_only_on_change() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("PipelineEdit.auris");
+    let (mut session, clip) = staged_session();
+    session.save(&path).unwrap();
+    let (revision, node) = clip_revision_and_stage(&mut session, clip);
+    let args = json!({"node":node,"expected_revision":revision,"action":"move_later"});
+    let live_result = edit(&mut session, args.clone()).unwrap();
+    let mut saved_args = args;
+    saved_args["project"] = json!(path);
+    let saved_result: Value = serde_json::from_str(
+        &crate::runtime::call_saved(
+            &crate::ToolGroups::parse("mix").unwrap(),
+            "pipeline_edit",
+            saved_args,
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(live_result["changed"], true);
+    assert_eq!(saved_result["changed"], true);
+    assert_eq!(saved_result["node"], live_result["node"]);
+    assert_eq!(saved_result["revision"], live_result["revision"]);
+    let saved = crate::opened(path.to_str().unwrap()).unwrap();
+    assert_eq!(saved.project(), session.project());
+    assert!(
+        !crate::opened(path.to_str().unwrap())
+            .unwrap()
+            .checkpoints()
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn pipeline_edit_rejects_stale_or_invalid_targets_without_writes_and_boundary_is_noop() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("PipelineEditNoop.auris");
+    let (mut session, clip) = staged_session();
+    session.save(&path).unwrap();
+    let bytes = std::fs::read(&path).unwrap();
+    let revision = clip_revision_and_stage(&mut session, clip).0;
+    assert!(edit(&mut session, json!({"node":format!("clip:{}/stage:0",clip.0),"expected_revision":"stale","action":"remove"})).is_err());
+    assert!(
+        edit(
+            &mut session,
+            json!({"node":"track:1","expected_revision":revision,"action":"remove"})
+        )
+        .is_err()
+    );
+    let mut stale_args = json!({"node":format!("clip:{}/stage:0",clip.0),"expected_revision":"stale","action":"remove","project":path});
+    assert!(
+        crate::runtime::call_saved(
+            &crate::ToolGroups::parse("mix").unwrap(),
+            "pipeline_edit",
+            stale_args.take()
+        )
+        .is_err()
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), bytes);
+    assert!(
+        crate::opened(path.to_str().unwrap())
+            .unwrap()
+            .checkpoints()
+            .unwrap()
+            .is_empty()
+    );
+
+    for node in ["track:1".to_owned(), format!("clip:{}/stage:999", clip.0)] {
+        assert!(
+            crate::runtime::call_saved(
+                &crate::ToolGroups::parse("mix").unwrap(),
+                "pipeline_edit",
+                json!({"node":node,"expected_revision":revision,"action":"remove","project":path})
+            )
+            .is_err()
+        );
+    }
+    assert_eq!(std::fs::read(&path).unwrap(), bytes);
+    assert!(
+        crate::opened(path.to_str().unwrap())
+            .unwrap()
+            .checkpoints()
+            .unwrap()
+            .is_empty()
+    );
+
+    let mut args = json!({"node":format!("clip:{}/stage:0",clip.0),"expected_revision":revision,"action":"move_earlier","project":path});
+    let result = crate::runtime::call_saved(
+        &crate::ToolGroups::parse("mix").unwrap(),
+        "pipeline_edit",
+        args.take(),
+    )
+    .unwrap();
+    let result: Value = serde_json::from_str(&result).unwrap();
+    assert_eq!(result["changed"], false);
     assert_eq!(std::fs::read(&path).unwrap(), bytes);
     assert!(
         crate::opened(path.to_str().unwrap())

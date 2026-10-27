@@ -2509,6 +2509,7 @@ mod tests {
         }
         for name in [
             "mixer_graph",
+            "pipeline_edit",
             "edit_notes",
             "read_notes",
             "generate_phrase",

@@ -62,6 +62,11 @@ impl InspectorModel {
         self.scope
     }
 
+    /// Session revision that owns the displayed ordinals and parameter bindings.
+    pub(super) fn revision(&self) -> Option<u64> {
+        self.revision
+    }
+
     /// The cached node page in session document order. Stages and effects are not resorted.
     pub(super) fn nodes(&self) -> impl Iterator<Item = &PipelineNode> {
         self.page.iter().flat_map(|page| page.nodes.iter())

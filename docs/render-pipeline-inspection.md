@@ -1,4 +1,4 @@
-# Inspecting the rendering pipeline
+# Inspecting and editing the rendering pipeline
 
 `pipeline_read` is the shared live/saved read tool for the document's sources,
 clip performance, instruments, singer takes, effects, faders, sends and
@@ -23,14 +23,30 @@ document's structure, not a linear callback execution schedule.
 The Inspector keeps one page of up to 32 nodes. Use **Previous** and **Next** for
 larger scopes. Selection changes and document edits, including Undo, refresh the
 page; unchanged paints reuse it. Disclosure, filtering and paging are transient
-view state and create no project edits, audio rebuilds or Undo entries. Continue
-editing with the existing performance, automation and mixer controls.
+view state and create no project edits, audio rebuilds or Undo entries.
+
+Each performance row's **Reorder or remove…** menu moves that exact stage earlier
+or later, or removes it. This distinguishes repeated stages of the same kind.
+Each operation is one Undo step and preserves the remaining payloads and seeds.
+If the project changes while a menu is open, reopen the menu before editing.
+Effect rows offer **Parameters…** and the existing actions menu for ordering,
+bypass, removal and routing. They address stable effect slots.
+
+**Edit automation** reveals the row's track-owned timeline lane, selecting its
+track and opening the timeline if necessary. Repeating it keeps the lane open.
+A missing descriptor or a saved plugin key that no longer matches is reported
+before navigation.
 
 The focused UI has model and gesture tests for cache reuse, pagination, selection,
 Undo, stage/effect order, send taps and singer labels. A Windows debug build was
 also exercised with a built-in-instrument fixture containing 51 projected nodes:
 Signal flow entry, page continuation, clip selection, keyboard disclosure and
 Japanese text at a narrow Inspector width were checked in the native window.
+The chain actions were then exercised in a 17-node built-in fixture: stage move
+and Undo, opening an effect's parameter window and actions menu, and repeated
+navigation to an existing automation lane. The narrow Japanese layout kept the
+actions within the Inspector. Removal and stale-menu behavior are covered by
+the gesture harness.
 
 ## Agent read tool
 
@@ -108,6 +124,28 @@ Use existing musical commands: `set_performance` for clip performance,
 `automation` for parameter curves, and `mixer_graph` for inserts, routing and
 mix controls. Only `track:N` and `effect:N` are mixer node addresses; other
 projection IDs identify dependencies, not new mixer editing endpoints.
+
+For an individual performance stage, `pipeline_edit` accepts the exact node ID
+and content revision returned by `pipeline_read`:
+
+```json
+{
+  "project": "/absolute/path/Song/Song.auris",
+  "node": "clip:2/stage:1",
+  "expected_revision": "copy-the-read-response-revision",
+  "action": "move_earlier"
+}
+```
+
+The actions are `move_earlier`, `move_later` and `remove`. The live tool omits
+`project`. A successful response includes `changed` and the resulting `revision`.
+Read the clip again after a change before addressing another ordinal; the
+response's `node` identifies the request and does not follow the moved stage.
+Stale revisions and unknown targets are rejected. Moving the first stage earlier
+or the last stage later changes nothing. Saved no-op and rejected requests leave
+file bytes and checkpoints unchanged. Session commands record discrete Undo steps;
+the live agent retains its usual turn-level grouping. Saved edits use the existing
+project checkpoint workflow.
 
 `instrument:track:N` and `singer_take:track:N` identify the current track-owned
 roles, not persistent processor or take instances. Replacing an instrument or

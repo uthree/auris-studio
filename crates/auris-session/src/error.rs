@@ -33,6 +33,16 @@ pub enum SessionError {
     /// A balance measurement no longer describes the document that is open.
     #[error("the project changed while its levels were being measured")]
     StaleBalance,
+    /// A revision-bound pipeline edit was based on an older document snapshot.
+    #[error(
+        "the rendering pipeline changed (expected revision {expected}, current revision {actual}); reread it before editing"
+    )]
+    StaleRevision {
+        /// Revision captured when the pipeline page was read.
+        expected: u64,
+        /// Revision currently held by the session.
+        actual: u64,
+    },
     /// An offline analysis requires a source that is missing or invalid.
     #[error("render source: {0}")]
     RenderSource(String),

@@ -80,6 +80,7 @@ mod note_preview;
 pub(crate) mod notes;
 mod output_preview;
 mod perform;
+pub use perform::ClipTransformEdit;
 mod physical_sounds;
 pub(crate) mod plugin_discovery;
 mod plugin_trust;

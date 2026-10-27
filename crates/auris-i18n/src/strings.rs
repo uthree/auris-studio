@@ -352,6 +352,12 @@ strings! {
     PipelineStageComposite { en: "Drum-voice group", ja: "ドラム音色グループ" }
     PipelineReadOnly { en: "Processing structure. Instrument and audio-file readiness is not checked.", ja: "処理の構成を表示します。音源や音声ファイルの準備状態は未確認です。" }
     PipelineBypassed { en: "Bypassed", ja: "バイパス中" }
+    PipelineStageActions { en: "Reorder or remove…", ja: "順序・削除…" }
+    PipelineMoveEarlier { en: "Move earlier", ja: "前へ移動" }
+    PipelineMoveLater { en: "Move later", ja: "後へ移動" }
+    PipelineEditAutomation { en: "Edit automation", ja: "オートメーションを編集" }
+    PipelineBindingUnavailable { en: "This automation binding is unavailable. Check the target's parameters before editing.", ja: "オートメーションの接続先を確認できません。対象のパラメーターを確認してください。" }
+    PipelineChanged { en: "The project changed. Reopen the operation and try again.", ja: "プロジェクトが変更されました。操作メニューを開き直してください。" }
     Master { en: "Master", ja: "マスター" }
     // Beside the master meter and the same width, so the caption has to be short enough not to
     // push the number off the end of its row.

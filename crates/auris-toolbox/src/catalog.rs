@@ -365,6 +365,11 @@ pub mod tool_help {
                 {"project":project,"scope":"track:1","limit":32,"edge_limit":64},
                 {"project":project,"offset":32,"edge_offset":64,"expected_revision":"copy-from-first-page"}
             ]),
+            "pipeline_edit" => serde_json::json!([
+                {"project":project,"node":"clip:2/stage:0","expected_revision":"copy-from-pipeline_read","action":"move_later"},
+                {"project":project,"node":"clip:2/stage:1","expected_revision":"copy-from-pipeline_read","action":"move_earlier"},
+                {"project":project,"node":"clip:2/stage:0","expected_revision":"copy-from-pipeline_read","action":"remove"}
+            ]),
             "mixer_graph" => serde_json::json!([
                 {"project":project,"operation":{"action":"read"}},
                 {"project":project,"operation":{"action":"set_strip","node":"track:1","gain_db":-6.0,"pan":0.25}},

@@ -209,6 +209,7 @@ pub const OPERATIONS: &[&str] = &[
     "edit_project.import_transcription",
     "export_audio_attachment",
     "edit_project.pipeline_read",
+    "edit_project.pipeline_edit",
     "edit_project.mixer_graph.read",
     "edit_project.mixer_graph.set_outputs",
     "edit_project.mixer_graph.add_send",
@@ -305,6 +306,13 @@ impl Operation {
                 || matches!(&parsed, crate::live_agent::Command::History { .. } if mutating)
                 || matches!(&parsed, crate::live_agent::Command::EditClip { operation, .. } if operation.requires_confirmation())
                 || matches!(&parsed, crate::live_agent::Command::EditNotes { edits, .. } if edits.iter().any(crate::live_agent::note_editing::NoteEdit::requires_confirmation))
+                || matches!(
+                    &parsed,
+                    crate::live_agent::Command::PipelineEdit {
+                        edit: crate::live_agent::PipelineEditAction::Remove,
+                        ..
+                    }
+                )
                 || matches!(
                     parsed,
                     crate::live_agent::Command::Listen { .. }
@@ -870,6 +878,49 @@ mod tests {
         policy.set_rule("edit_project.*", Some(true)).unwrap();
 
         assert!(matches!(policy.decide(&edit()), Decision::Deny(_)));
+    }
+
+    #[test]
+    fn pipeline_stage_removal_requires_confirmation_but_move_can_be_allowed() {
+        let parse = |action| {
+            Operation::parse(
+                "edit_project",
+                &serde_json::json!({
+                    "command": {
+                        "action": "pipeline_edit",
+                        "node": "clip:2/stage:1",
+                        "expected_revision": "revision",
+                        "edit": action,
+                    }
+                }),
+            )
+            .unwrap()
+        };
+        let move_operation = parse("move_later");
+        let remove_operation = parse("remove");
+        assert!(move_operation.mutating);
+        assert!(!move_operation.confirm);
+        assert!(remove_operation.mutating);
+        assert!(remove_operation.confirm);
+        assert_eq!(Policy::default().decide(&move_operation), Decision::Allow);
+        assert_eq!(Policy::default().decide(&remove_operation), Decision::Ask);
+
+        let allow_remove = Policy {
+            allow: vec![remove_operation.name.clone()],
+            ..Policy::default()
+        };
+        assert_eq!(allow_remove.decide(&remove_operation), Decision::Allow);
+        for mode in [Mode::ReadOnly, Mode::Plan] {
+            assert!(matches!(
+                Policy {
+                    mode,
+                    allow: vec!["edit_project.*".into()],
+                    ..Policy::default()
+                }
+                .decide(&remove_operation),
+                Decision::Deny(_)
+            ));
+        }
     }
 
     #[test]

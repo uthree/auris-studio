@@ -66,6 +66,25 @@ pub mod audio_attachment {
     }
 }
 
+/// Exact, revision-bound edits for one clip stage in the rendering pipeline projection.
+pub mod pipeline_edit {
+    /// Stable live tool name.
+    pub const NAME: &str = "pipeline_edit";
+    /// Shared guidance for all live transports.
+    pub const DESCRIPTION: &str = "Move/remove one clip stage. Copy the node and content revision from pipeline_read; reread after editing.";
+    /// Flat model-facing arguments; the session command keeps its internal discriminator separate.
+    #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+    #[serde(deny_unknown_fields)]
+    pub struct Args {
+        /// Exact clip:N/stage:I address.
+        pub node: String,
+        /// Content revision from pipeline_read.
+        pub expected_revision: String,
+        /// move_earlier, move_later or remove.
+        pub action: auris_session::live_agent::PipelineEditAction,
+    }
+}
+
 /// Import an external recognizer's events without impersonating a bundled model.
 pub mod transcription_import {
     /// Stable live tool name.
@@ -186,6 +205,9 @@ fn definitions_with_arrangement(arrangement_enabled: bool) -> Vec<Definition> {
                 });
                 continue;
             }
+            if action == pipeline_edit::NAME {
+                continue;
+            }
             let mut parameters = branch.clone();
             let description = parameters["description"]
                 .as_str()
@@ -218,6 +240,11 @@ fn definitions_with_arrangement(arrangement_enabled: bool) -> Vec<Definition> {
         description: audio_attachment::DESCRIPTION.into(),
         parameters: super::parameter_schema::<audio_attachment::Args>(),
     });
+    tools.push(Definition {
+        name: pipeline_edit::NAME.into(),
+        description: pipeline_edit::DESCRIPTION.into(),
+        parameters: super::parameter_schema::<pipeline_edit::Args>(),
+    });
     tools.extend(super::runtime::live_references());
     tools.push(Definition {
         name: production_record::NAME.into(),
@@ -244,6 +271,15 @@ pub fn command(tool: &str, args: &Value) -> Result<Option<Command>, String> {
             );
         }
         return args.command().map(Some);
+    }
+    if tool == pipeline_edit::NAME {
+        let args: pipeline_edit::Args = serde_json::from_value(args.clone())
+            .map_err(|error| format!("Invalid arguments for pipeline_edit: {error}"))?;
+        return Ok(Some(Command::PipelineEdit {
+            node: args.node,
+            expected_revision: args.expected_revision,
+            edit: args.action,
+        }));
     }
     if !definitions()
         .iter()

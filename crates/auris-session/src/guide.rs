@@ -36,6 +36,11 @@
 //! order is distinct from evaluation: pitch/controller gestures read final performed notes.
 //! Reading constructs no plugins, resolves no files and does not verify cached-take freshness.
 //! Full parameter/freshness inspection remains in the corresponding existing domain commands.
+//! `pipeline_edit` moves or removes one revision-scoped clip stage, using the same
+//! [`crate::Session::edit_clip_transform`] command as the desktop Inspector. The tool validates
+//! a content revision; the Inspector uses the session's cheap revision to guard open menus.
+//! Each effective operation is an independent Undo step. Effect actions retain stable slot IDs,
+//! and automation navigation checks the saved parameter key before revealing an existing lane.
 //!
 //! # Multiple project windows
 //!
@@ -2741,7 +2746,10 @@ pub mod harmony {
     //! still cannot alter the score. Presets select both; the song sheet preserves both fields.
     //!
     //! [`set_clip_transforms`](crate::Session::set_clip_transforms) replaces the stack whole,
-    //! and [`freeze_clip_transforms`](crate::Session::freeze_clip_transforms) is the recipe's
+    //! while [`edit_clip_transform`](crate::Session::edit_clip_transform) moves or removes an
+    //! exact ordinal under a revision guard, preserving the other stages and authored notes.
+    //! Each discrete edit records its own Undo step; invalid ordinals and clamped moves do not.
+    //! [`freeze_clip_transforms`](crate::Session::freeze_clip_transforms) is the recipe's
     //! trade again: the performance is written into the text and stops being derived from
     //! anything — including the pass, so a frozen loop rehearses its first pass forever. The
     //! transform arithmetic lives in `auris-core` beside the document, and carries the same

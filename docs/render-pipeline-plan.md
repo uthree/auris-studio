@@ -1,8 +1,8 @@
 # Typed rendering pipeline: implementation plan
 
 Status: implementation in progress, 2026-10-27. M0 is complete. M1's typed
-projection, shared read tool and focused read-only Inspector are implemented.
-Chain editing and richer inspection remain pending. M2 and later milestones
+projection, shared read/edit tools and focused Inspector support chain editing.
+Keyboard connection selection and richer inspection remain pending. M2 and later milestones
 have not started.
 The design baseline is `cd205c3c`; the saved format remains 32.
 
@@ -115,10 +115,26 @@ changes, repeated-stage/effect order, transform edits and Undo, send taps, singe
 guide roles, keyboard disclosure, unchanged document/layout state, and narrow
 Inspector layouts in English/Japanese with both themes and enlarged text.
 
+### Implemented chain editing
+
+Performance rows expose move earlier/later and remove operations. Each discrete
+operation validates the proposed stack and records an independent Undo step,
+preserving authored notes and stage payloads, including random seeds. Menus carry
+the session revision so an old ordinal cannot edit a different stage after a change.
+Effect rows open the existing parameter editor and slot-based actions menu.
+Automation rows reveal their track's existing timeline lane idempotently; a saved
+plugin key must still match its parameter descriptor before navigation.
+
+The compact `pipeline_edit` tool provides the same three performance-stage
+operations in live and saved sessions. It requires an exact stage node and the
+content revision from `pipeline_read`. Changes use the existing document owner;
+edge moves are no-ops, and failed/stale/no-op saved requests create no checkpoint.
+Effect and automation edits continue through their existing tool surfaces.
+
 ### Remaining M1 work
 
-Add chain editing through existing session commands, keyboard connection
-selection, and detailed parameter/intermediate-state inspection. Extend the UI
+Add keyboard connection selection and detailed parameter/intermediate-state
+inspection. Extend the UI
 matrix to those interactions and graph zoom before declaring the complete M1
 acceptance gate passed.
 

@@ -15,7 +15,86 @@ use crate::history::Edit;
 
 use super::Session;
 
+/// A single non-destructive change to a clip's ordered transform stack.
+///
+/// The ordinal is deliberately revision-scoped: callers must pass the session revision they
+/// used to display the stack to [`Session::edit_clip_transform`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ClipTransformEdit {
+    /// Move one stage by a signed number of positions.
+    Move {
+        /// Zero-based stage ordinal from the inspected revision.
+        index: usize,
+        /// Positive values move later in the stack; negative values move earlier.
+        delta: isize,
+    },
+    /// Remove one stage by its zero-based ordinal.
+    Remove {
+        /// Stage ordinal from the inspected revision.
+        index: usize,
+    },
+}
+
 impl Session {
+    /// Applies one revision-bound edit to a clip's non-destructive transform stack.
+    ///
+    /// The operation validates the current revision before looking up the clip, so a stale
+    /// pipeline page cannot accidentally edit a newly reused clip ID. Out-of-range ordinals and
+    /// moves that clamp to the current edge are quiet no-ops and do not create history entries.
+    /// A successful change is one ordinary [`Edit::SetClipTransforms`] undo step.
+    pub fn edit_clip_transform(
+        &mut self,
+        clip: ClipId,
+        expected_revision: u64,
+        edit: ClipTransformEdit,
+    ) -> Result<(), SessionError> {
+        let actual_revision = self.revision();
+        if actual_revision != expected_revision {
+            return Err(SessionError::StaleRevision {
+                expected: expected_revision,
+                actual: actual_revision,
+            });
+        }
+        let Some((_, target)) = self.project.midi_clip(clip) else {
+            return Err(SessionError::UnknownClip(clip.0));
+        };
+        let mut transforms = target.transforms.clone();
+        match edit {
+            ClipTransformEdit::Move { index, delta } => {
+                if index >= transforms.len() || delta == 0 {
+                    return Ok(());
+                }
+                let target_index = index
+                    .saturating_add_signed(delta)
+                    .min(transforms.len().saturating_sub(1));
+                if target_index == index {
+                    return Ok(());
+                }
+                let transform = transforms.remove(index);
+                transforms.insert(target_index, transform);
+            }
+            ClipTransformEdit::Remove { index } => {
+                if index >= transforms.len() {
+                    return Ok(());
+                }
+                transforms.remove(index);
+            }
+        }
+        if transforms == target.transforms {
+            return Ok(());
+        }
+        let mut candidate = target.clone();
+        candidate.transforms = transforms;
+        candidate.looped_note_instances()?;
+        self.record(Edit::SetClipTransforms(clip));
+        *self
+            .project
+            .midi_clip_mut(clip)
+            .ok_or(SessionError::UnknownClip(clip.0))? = candidate;
+        self.invalidate_graph();
+        Ok(())
+    }
+
     /// The transform stack a clip is performed through, in the order it is applied.
     pub fn clip_transforms(&self, clip: ClipId) -> Result<&[NoteTransform], SessionError> {
         self.project
@@ -288,6 +367,177 @@ mod tests {
         while session.redo().is_some() {}
         session.set_clip_transforms(clip, vec![swing()]).unwrap();
         assert_eq!(undo_depth(&mut session), before);
+    }
+
+    #[test]
+    fn revision_bound_stage_edits_preserve_order_and_undo_as_one_step() {
+        let (mut session, _, clip) = session_with_clip();
+        let first = NoteTransform::Gate { amount: 0.4 };
+        let second = NoteTransform::Gate { amount: 0.8 };
+        let third = NoteTransform::Transpose { semitones: 12 };
+        session
+            .set_clip_transforms(clip, vec![first.clone(), second.clone(), third.clone()])
+            .unwrap();
+        let revision = session.revision();
+        let before_notes = session.midi_clip(clip).unwrap().notes.clone();
+        session
+            .edit_clip_transform(
+                clip,
+                revision,
+                ClipTransformEdit::Move {
+                    index: 1,
+                    delta: -1,
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            session.clip_transforms(clip).unwrap(),
+            &[second.clone(), first, third.clone()]
+        );
+        assert_eq!(session.midi_clip(clip).unwrap().notes, before_notes);
+        assert_eq!(session.undo(), Some(Edit::SetClipTransforms(clip)));
+        assert_eq!(
+            session.clip_transforms(clip).unwrap(),
+            &[NoteTransform::Gate { amount: 0.4 }, second, third]
+        );
+    }
+
+    #[test]
+    fn revision_bound_stage_edit_rejects_stale_targets_without_history() {
+        let (mut session, _, clip) = session_with_clip();
+        session
+            .set_clip_transforms(clip, vec![swing(), NoteTransform::Gate { amount: 0.5 }])
+            .unwrap();
+        let revision = session.revision();
+        session.set_clip_transforms(clip, vec![swing()]).unwrap();
+        let depth = undo_depth(&mut session);
+        let current_revision = session.revision();
+        let error = session
+            .edit_clip_transform(clip, revision, ClipTransformEdit::Remove { index: 0 })
+            .expect_err("a page from the prior revision must not edit the clip");
+        assert!(matches!(error, SessionError::StaleRevision { .. }));
+        assert_eq!(session.clip_transforms(clip).unwrap(), &[swing()]);
+        assert_eq!(session.revision(), current_revision);
+        assert_eq!(undo_depth(&mut session), depth);
+    }
+
+    #[test]
+    fn revision_bound_stage_edit_skips_invalid_ordinals_and_rejects_missing_clips() {
+        let (mut session, _, clip) = session_with_clip();
+        session.set_clip_transforms(clip, vec![swing()]).unwrap();
+        let no_op_depth = undo_depth(&mut session);
+        let revision = session.revision();
+        session
+            .edit_clip_transform(
+                clip,
+                revision,
+                ClipTransformEdit::Move {
+                    index: 99,
+                    delta: -1,
+                },
+            )
+            .unwrap();
+        assert_eq!(session.revision(), revision);
+        assert!(matches!(
+            session.edit_clip_transform(
+                ClipId(999_999),
+                revision,
+                ClipTransformEdit::Remove { index: 0 }
+            ),
+            Err(SessionError::UnknownClip(999_999))
+        ));
+        assert_eq!(undo_depth(&mut session), no_op_depth);
+    }
+
+    #[test]
+    fn revision_bound_identical_stage_move_keeps_revision_and_history() {
+        let (mut session, _, clip) = session_with_clip();
+        session
+            .set_clip_transforms(clip, vec![swing(), swing()])
+            .unwrap();
+        let depth = undo_depth(&mut session);
+        let revision = session.revision();
+        session
+            .edit_clip_transform(
+                clip,
+                revision,
+                ClipTransformEdit::Move { index: 0, delta: 1 },
+            )
+            .unwrap();
+        assert_eq!(session.revision(), revision);
+        assert_eq!(undo_depth(&mut session), depth);
+    }
+
+    #[test]
+    fn consecutive_stage_moves_and_removals_have_separate_undo_steps_and_keep_seeds() {
+        let (mut session, _, clip) = session_with_clip();
+        let first = NoteTransform::Humanize {
+            amount: 0.1,
+            seed: 11,
+        };
+        let second = NoteTransform::Humanize {
+            amount: 0.2,
+            seed: 22,
+        };
+        session
+            .set_clip_transforms(clip, vec![first.clone(), second.clone()])
+            .unwrap();
+        let notes = session.midi_clip(clip).unwrap().notes.clone();
+        session
+            .edit_clip_transform(
+                clip,
+                session.revision(),
+                ClipTransformEdit::Move {
+                    index: 1,
+                    delta: -1,
+                },
+            )
+            .unwrap();
+        session
+            .edit_clip_transform(
+                clip,
+                session.revision(),
+                ClipTransformEdit::Remove { index: 1 },
+            )
+            .unwrap();
+        assert_eq!(
+            session.clip_transforms(clip).unwrap(),
+            std::slice::from_ref(&second)
+        );
+        session.undo();
+        assert_eq!(
+            session.clip_transforms(clip).unwrap(),
+            &[second.clone(), first.clone()]
+        );
+        session.undo();
+        assert_eq!(session.clip_transforms(clip).unwrap(), &[first, second]);
+        assert_eq!(session.midi_clip(clip).unwrap().notes, notes);
+    }
+
+    #[test]
+    fn revision_bound_stage_move_saturates_extreme_deltas_without_panicking() {
+        let (mut session, _, clip) = session_with_clip();
+        let stack = vec![
+            NoteTransform::Gate { amount: 0.1 },
+            NoteTransform::Gate { amount: 0.2 },
+            NoteTransform::Gate { amount: 0.3 },
+        ];
+        session.set_clip_transforms(clip, stack.clone()).unwrap();
+        let revision = session.revision();
+        session
+            .edit_clip_transform(
+                clip,
+                revision,
+                ClipTransformEdit::Move {
+                    index: 0,
+                    delta: isize::MAX,
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            session.clip_transforms(clip).unwrap(),
+            &[stack[1].clone(), stack[2].clone(), stack[0].clone()]
+        );
     }
 
     #[test]

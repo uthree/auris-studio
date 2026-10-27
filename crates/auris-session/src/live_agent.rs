@@ -35,6 +35,18 @@ pub enum HistoryOperation {
         expected_revision: u64,
     },
 }
+
+/// The deliberately small edit vocabulary exposed for pipeline stage nodes.
+#[derive(Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PipelineEditAction {
+    /// Move the addressed stage one position toward the start of the stack.
+    MoveEarlier,
+    /// Move the addressed stage one position toward the end of the stack.
+    MoveLater,
+    /// Remove the addressed stage from the stack.
+    Remove,
+}
 mod vocals;
 pub use vocals::{VocalJob, VocalResult, VocalStep};
 fn sound_search_limit() -> usize {
@@ -160,7 +172,7 @@ pub enum Command {
         #[schemars(length(min = 1, max = 256))]
         edits: Vec<vocal_editing::VocalEdit>,
     },
-    /// Read or edit native-unit parameter automation through stable track/effect/send IDs. Read first; writes require the returned document revision. Static values and authored notes are preserved.
+    /// Read/write native-unit automation. Targets use stable track/effect/send IDs. Read first; writes require the returned document revision. Static values and authored notes are preserved.
     Automation {
         /// Exact parameter address.
         target: automation::ControlTarget,
@@ -260,7 +272,7 @@ pub enum Command {
         /// Required for writes, returned by the latest lane read.
         expected_revision: Option<String>,
     },
-    /// Discover instrument parameter keys, value_domain, units, steps, read_only flags, values and automation overrides. VST3 values are normalized 0..1, not display units such as Hz/dB. Follow next_offset.
+    /// Inspect instrument controls and automation. Returns parameter keys, value_domain, units, steps, read_only flags, values and automation overrides. VST3 values are normalized 0..1, not display units such as Hz/dB. Follow next_offset.
     InspectInstrument {
         /// Stable instrument or drum track ID.
         track: u64,
@@ -274,14 +286,14 @@ pub enum Command {
         #[schemars(length(min = 1, max = 256))]
         edits: Vec<InstrumentControl>,
     },
-    /// Read a MIDI clip's non-destructive settings and measured note/pitch effects, including whether slide/glide actually contributes. Optional drum_voice addresses one named writer in a drum kit; omit it for the whole clip. Read completeness and warnings: stored settings alone are not verification. Notes, curves and generation recipes are unchanged. Use this before set_performance and independently read back afterward.
+    /// Inspect performed notes and pitch. Returns a MIDI clip's non-destructive settings and measured note/pitch effects, including whether slide/glide actually contributes. Optional drum_voice addresses one named writer in a drum kit; omit it for the whole clip. Read completeness and warnings: stored settings alone are not verification. Notes, curves and generation recipes are unchanged. Use this before set_performance and independently read back afterward.
     InspectPerformance {
         /// Stable MIDI clip ID from inspect_project or read_notes.
         clip: u64,
         /// Exact drum writer name from the clip's notes or recipe; omit for the whole clip.
         drum_voice: Option<String>,
     },
-    /// Adjust only supplied non-destructive playing controls and return measured note/pitch effects. Read inspect_performance first and independently afterward. Ratios use 0..1, swing 50..75 percent, times milliseconds and pitch semitones. slide inserts a discrete intermediate note; pitch.glide_ms creates a continuous pitch connection. Strum spreads simultaneous pitches, not single-note arpeggios. Check note_effects, pitch_effects, completeness and warnings before claiming an effective change. Omitted fields, stored notes, curves and recipes are preserved. settings.reset removes selected stages. Optional drum_voice scopes edits to one writer. More specific expression/ghost fields override humanize/brush. Edits validate atomically; identical retries are no-ops.
+    /// Edit non-destructive performance. Adjusts only supplied playing controls and returns measured note/pitch effects. Read inspect_performance first and independently afterward. Ratios use 0..1, swing 50..75 percent, times milliseconds and pitch semitones. slide inserts a discrete intermediate note; pitch.glide_ms creates a continuous pitch connection. Strum spreads simultaneous pitches, not single-note arpeggios. Check note_effects, pitch_effects, completeness and warnings before claiming an effective change. Omitted fields, stored notes, curves and recipes are preserved. settings.reset removes selected stages. Optional drum_voice scopes edits to one writer. More specific expression/ghost fields override humanize/brush. Edits validate atomically; identical retries are no-ops.
     SetPerformance {
         /// Stable MIDI clip ID.
         clip: u64,
@@ -367,12 +379,12 @@ pub enum Command {
         /// Digest returned by preview; required when applying multitrack drafts.
         preview_digest: Option<String>,
     },
-    /// Read or edit the live mixer DAG through stable node identities.
+    /// Read/edit mixer routing and effects. Uses stable node identities in the live mixer DAG.
     MixerGraph {
         /// The validated graph operation; persistence belongs to the frontend.
         operation: crate::mixer_graph::commands::GraphAction,
     },
-    /// Inspect source, performance, automation and audio dependencies. Read-only; continue both page streams with the returned revision. Edit owners through existing musical tools.
+    /// Inspect event/audio/control flow. Includes source, performance, automation and audio dependencies. Read-only; continue both page streams with the returned revision. Edit owners through existing musical tools.
     PipelineRead {
         /// Omit for all. track:N/clip:N include owned nodes; any other returned node ID focuses its neighbors.
         scope: Option<String>,
@@ -390,6 +402,15 @@ pub enum Command {
         edge_limit: Option<usize>,
         /// Exact revision from the first page; required when continuing a read.
         expected_revision: Option<String>,
+    },
+    /// Move or remove one exact non-destructive clip stage returned by pipeline_read.
+    PipelineEdit {
+        /// Exact clip:N/stage:I node address returned by pipeline_read.
+        node: String,
+        /// Content revision returned by pipeline_read, not the numeric history revision.
+        expected_revision: String,
+        /// One bounded edit; arbitrary graph editing is intentionally not supported here.
+        edit: PipelineEditAction,
     },
     /// Read the current arrangement and stable track/clip IDs. Use read_notes for note data.
     Inspect {},
@@ -959,6 +980,70 @@ impl Session {
             Command::MixerGraph { operation } => self
                 .apply_mixer_graph(&operation)
                 .map(|report| report.to_string()),
+            Command::PipelineEdit {
+                node,
+                expected_revision,
+                edit,
+            } => {
+                let Some((clip, index)) = node
+                    .strip_prefix("clip:")
+                    .and_then(|address| address.split_once("/stage:"))
+                    .and_then(|(clip, stage)| {
+                        Some((clip.parse::<u64>().ok()?, stage.parse::<usize>().ok()?))
+                    })
+                else {
+                    return Err(
+                        "pipeline_edit requires an exact clip:N/stage:I node from pipeline_read"
+                            .into(),
+                    );
+                };
+                let page = self
+                    .pipeline_graph(&crate::pipeline_graph::PipelineQuery {
+                        scope: crate::pipeline_graph::PipelineScope::Node { node: node.clone() },
+                        expected_revision: Some(expected_revision),
+                        ..Default::default()
+                    })
+                    .map_err(|error| error.to_string())?;
+                let Some(stage_node) = page.nodes.iter().find(|candidate| candidate.id == node)
+                else {
+                    return Err(
+                        "pipeline_edit target is not a clip stage; reread pipeline_read".into(),
+                    );
+                };
+                if !matches!(
+                    stage_node.data,
+                    crate::pipeline_graph::PipelineNodeData::ClipStage { .. }
+                ) || stage_node.clip_id != Some(clip)
+                {
+                    return Err(
+                        "pipeline_edit target is not a clip stage; reread pipeline_read".into(),
+                    );
+                }
+                let before = self
+                    .clip_transforms(auris_core::ClipId(clip))
+                    .map_err(|e| e.to_string())?
+                    .to_vec();
+                let operation = match edit {
+                    PipelineEditAction::MoveEarlier => {
+                        crate::ClipTransformEdit::Move { index, delta: -1 }
+                    }
+                    PipelineEditAction::MoveLater => {
+                        crate::ClipTransformEdit::Move { index, delta: 1 }
+                    }
+                    PipelineEditAction::Remove => crate::ClipTransformEdit::Remove { index },
+                };
+                self.edit_clip_transform(auris_core::ClipId(clip), self.revision(), operation)
+                    .map_err(|error| error.to_string())?;
+                let changed = self
+                    .clip_transforms(auris_core::ClipId(clip))
+                    .map_err(|e| e.to_string())?
+                    != before.as_slice();
+                let revision = self.agent_document_revision()?;
+                Ok(
+                    serde_json::json!({"changed":changed,"node":node,"revision":revision})
+                        .to_string(),
+                )
+            }
             Command::PipelineRead {
                 scope,
                 offset,
