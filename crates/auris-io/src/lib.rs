@@ -31,6 +31,9 @@ pub mod error;
 pub mod export;
 pub mod import;
 pub mod midi;
+pub mod pipeline_conversion;
+pub mod pipeline_migration;
+pub mod project_backup;
 pub mod project_file;
 pub mod record;
 pub mod soundfont;
@@ -48,6 +51,12 @@ pub use midi::{
     MidiImport, MidiTrack, StagedMidi, midi_extensions, read_midi_bytes, read_midi_file,
     stage_midi_file, write_midi_bytes, write_midi_file,
 };
+pub use pipeline_conversion::{PipelineConversionError, project_to_native};
+pub use pipeline_migration::{
+    NativeMigrationCandidate, PipelineMigrationError, PipelineMigrationReport,
+    load_native_candidate,
+};
+pub use project_backup::{LegacyBackupOutcome, ProjectBackupError, preserve_legacy_project_backup};
 pub use project_file::{
     AUDIO_DIR, MAX_PROJECT_FILE_BYTES, PROJECT_EXTENSION, StagedFile, StagedProject,
     document_in_folder, load_project, project_folder, save_project, stage_file_bytes,

@@ -80,6 +80,15 @@
 //! runtime commands and Undo still use the existing document. Legacy conversion and compiler
 //! integration follow the activation gate in `docs/render-pipeline-plan.md`. See
 //! `docs/render-pipeline-ownership.md` for the ownership contract and integration boundaries.
+//! [`auris_io::load_native_candidate`] captures bounded legacy bytes once, uses the existing
+//! version dispatcher and repairs, and converts into a separate native candidate. The report
+//! retains the original source version and repair facts. Conversion preserves sources, stages,
+//! opaque plugin state, singer takes, explicit sums/inserts/output routes and automation targets
+//! without constructing plugins or reading assets. Captured bytes can be preserved through
+//! [`auris_io::preserve_legacy_project_backup`] with synchronized no-clobber publication; an
+//! existing regular backup is accepted only when its bytes match. This candidate cannot publish
+//! a native project. Source-change checks and the activated writer remain part of the M2 gate.
+//! See `docs/render-pipeline-migration.md` for conversion and backup verification.
 //!
 //! # Multiple project windows
 //!

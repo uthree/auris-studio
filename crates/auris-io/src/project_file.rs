@@ -64,6 +64,11 @@ impl StagedFile {
     pub fn publish(self) -> Result<()> {
         publish_ready_staged_file(self.file, &self.path)
     }
+
+    /// Atomically claims an absent destination without replacing an existing file.
+    pub(crate) fn publish_noclobber(self) -> Result<()> {
+        publish_ready_staged_file_noclobber(self.file, &self.path)
+    }
 }
 
 impl StagedProject {
@@ -213,6 +218,9 @@ pub(crate) fn publish_ready_staged_file_noclobber(
     staged: NamedTempFile,
     path: &Path,
 ) -> Result<()> {
+    let _publish = PUBLISH_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     match staged.persist_noclobber(path) {
         Ok(_) => Ok(()),
         Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => {
@@ -296,6 +304,71 @@ pub fn stage_file_bytes(path: &Path, bytes: &[u8]) -> Result<StagedFile> {
 /// forgot to, and a project saved the day before would not open at all.
 const READABLE_OLDER: std::ops::RangeInclusive<u32> = 27..=31;
 
+/// Report from the legacy decoder, before migration changes the source format.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct LegacyDecodeReport {
+    /// Format version found in the captured source bytes.
+    pub source_format_version: u32,
+    /// Whether the legacy object ID counter was repaired in memory.
+    pub id_counter_repaired: bool,
+    /// Whether legacy pitch/controller points were sorted in memory.
+    pub curve_order_repaired: bool,
+    /// Whether invalid legacy routing was repaired in memory.
+    pub routing_repaired: bool,
+}
+
+/// Decodes and repairs one already-captured legacy project byte slice.
+pub(crate) fn decode_legacy_bytes(
+    bytes: &[u8],
+    path: &Path,
+) -> Result<(Project, LegacyDecodeReport)> {
+    let probe: FormatVersionProbe = serde_json::from_slice(bytes)?;
+    if probe.format_version != Project::FORMAT_VERSION
+        && !READABLE_OLDER.contains(&probe.format_version)
+    {
+        return Err(IoError::ProjectVersionMismatch {
+            found: probe.format_version,
+            supported: Project::FORMAT_VERSION,
+        });
+    }
+
+    let mut project: Project = serde_json::from_slice(bytes)?;
+    project.format_version = Project::FORMAT_VERSION;
+    if let Some(id) = project.conflicting_object_id() {
+        return Err(IoError::ProjectIdConflict(id));
+    }
+    project.validate_loop_expansion()?;
+    let old_next_id = project.next_id();
+    if !project.repair_id_counter() {
+        return Err(IoError::ProjectIdsExhausted);
+    }
+    let id_counter_repaired = project.next_id() != old_next_id;
+    let curve_order_repaired = project.repair_curve_order();
+    if curve_order_repaired {
+        log::warn!(
+            "{}: pitch-bend or controller points were out of order and have been sorted",
+            path.display()
+        );
+    }
+    let routing_repaired = project.repair_routing();
+    if routing_repaired {
+        log::warn!(
+            "{}: the routing named a bus that is not there, or looped back on itself; \
+             the tracks involved now go straight to the master",
+            path.display()
+        );
+    }
+    Ok((
+        project,
+        LegacyDecodeReport {
+            source_format_version: probe.format_version,
+            id_counter_repaired,
+            curve_order_repaired,
+            routing_repaired,
+        },
+    ))
+}
+
 /// Reads a project from `path`.
 ///
 /// The format version must match this build, or be one of the older versions it still reads:
@@ -307,43 +380,10 @@ const READABLE_OLDER: std::ops::RangeInclusive<u32> = 27..=31;
 /// in a circle has no order it can be rendered in, and repairing it beats refusing to open it.
 pub fn load_project(path: &Path) -> Result<Project> {
     let bytes = read_project_source(path, MAX_PROJECT_FILE_BYTES)?;
-
-    let probe: FormatVersionProbe = serde_json::from_slice(&bytes)?;
-    if probe.format_version != Project::FORMAT_VERSION
-        && !READABLE_OLDER.contains(&probe.format_version)
-    {
-        return Err(IoError::ProjectVersionMismatch {
-            found: probe.format_version,
-            supported: Project::FORMAT_VERSION,
-        });
-    }
-
-    let mut project: Project = serde_json::from_slice(&bytes)?;
-    project.format_version = Project::FORMAT_VERSION;
-    if let Some(id) = project.conflicting_object_id() {
-        return Err(IoError::ProjectIdConflict(id));
-    }
-    project.validate_loop_expansion()?;
-    if !project.repair_id_counter() {
-        return Err(IoError::ProjectIdsExhausted);
-    }
-    if project.repair_curve_order() {
-        log::warn!(
-            "{}: pitch-bend or controller points were out of order and have been sorted",
-            path.display()
-        );
-    }
-    if project.repair_routing() {
-        log::warn!(
-            "{}: the routing named a bus that is not there, or looped back on itself; \
-             the tracks involved now go straight to the master",
-            path.display()
-        );
-    }
-    Ok(project)
+    decode_legacy_bytes(&bytes, path).map(|(project, _)| project)
 }
 
-fn read_project_source(path: &Path, limit: usize) -> Result<Vec<u8>> {
+pub(crate) fn read_project_source(path: &Path, limit: usize) -> Result<Vec<u8>> {
     crate::bounded::read_with_limit(path, limit, |observed| {
         project_too_large(path, limit, observed)
     })

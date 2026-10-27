@@ -5,9 +5,10 @@ projection, shared read/edit tools and focused Inspector support chain editing.
 Keyboard connection selection and bounded intermediate inspection are implemented;
 the complete M1 acceptance gate is still pending. M2a includes pure typed topology,
 shared-source ownership, stable clip stages, conventional-command identity bindings,
-shared automation curves, processor-derived capability resolution and a standalone
-document envelope. Migration
-and compiler activation remain subsequent units.
+shared automation curves, processor-derived capability resolution and the standalone
+native document envelope. M2b's pre-activation conversion, captured-source report and
+exact-byte backup primitive are implemented. Compiler/command integration and native
+writer activation remain subsequent units.
 The design baseline is `cd205c3c`; the saved format remains 32.
 
 Read [the design](render-pipeline-design.md) for document ownership, port semantics,
@@ -223,9 +224,8 @@ share compatible drivers and retain disabled connections. Processor-derived
 capabilities and full fragment resolution validate policies, domains, driver conflicts
 and cycles under cumulative budgets. Missing legacy domains remain unresolved rather
 than inferred; the [automation contract](render-pipeline-automation.md) describes this
-boundary. The standalone document envelope retains track presentation, timeline
-context and asset registries; legacy conversion is the next integration unit.
-Existing session commands still operate
+boundary. The standalone native document envelope also validates asset-registry
+identities and track presentation/source roles. Existing session commands still operate
 on the current project; the new resolver is their future identity boundary, not an
 activated command backend. The M2 activation gate still applies to file writing
 and playback.
@@ -241,6 +241,24 @@ effect and send adapters, and a primary instrument reference for conventional co
 Test cloning, source sharing, branch deletion and independent-source duplication.
 
 ### M2b: Versioned decoding and migration
+
+The pre-activation IO path now converts every supported historical fixture into a
+standalone `NativeDocument`. It preserves ordered track presentation, shared timeline
+context and asset registries alongside the authoritative content graph. Sources,
+stable stages, inserts, sums, output routes, sends, sidechains, singer guide/take
+selection and automation targets are explicit. Caller-supplied budgets and the entire
+ID reservation are checked before construction. Plugin domains remain unresolved when
+metadata is unavailable; missing stable plugin keys reject the candidate unchanged.
+
+`load_native_candidate` reads bounded source bytes once, reuses the current decoder
+and repairs, and reports the original version and repair facts. Exact captured bytes
+can be backed up with synchronized no-clobber publication and byte-verified idempotence.
+It has no upgraded-project publication method. See the [migration contract and
+verification](render-pipeline-migration.md).
+
+The activated legacy-schema separation, new writer, backup/source-check transaction,
+checkpoint/recovery and Save As integration remain coupled to M2c/M2d. Current
+production loading/writing continues to use the existing format-32 model.
 
 Implement the design's conversion algorithm in the IO boundary with dedicated legacy
 representations. Expand the supported-version dispatcher from the current source,
