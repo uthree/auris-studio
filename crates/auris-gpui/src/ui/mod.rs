@@ -37,6 +37,7 @@ pub mod part;
 pub mod performance;
 pub(crate) mod physical_model;
 pub mod piano_roll;
+pub(crate) mod pipeline_inspector;
 pub(crate) mod pitch_performance;
 pub mod plugin_editor;
 pub mod plugin_window;

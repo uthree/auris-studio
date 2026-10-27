@@ -1,8 +1,9 @@
 # Typed rendering pipeline: implementation plan
 
 Status: implementation in progress, 2026-10-27. M0 is complete. M1's typed
-projection and shared read tool are implemented; its focused UI and richer
-inspection remain pending. M2 and later milestones have not started.
+projection, shared read tool and focused read-only Inspector are implemented.
+Chain editing and richer inspection remain pending. M2 and later milestones
+have not started.
 The design baseline is `cd205c3c`; the saved format remains 32.
 
 Read [the design](render-pipeline-design.md) for document ownership, port semantics,
@@ -93,24 +94,33 @@ and the complete workspace tests, Clippy and warning-denied API documentation.
 Singer source metadata is not evidence of file availability or take freshness;
 plugin parameter owners are checked without loading plugins or resolving keys.
 
-### Next UI unit
+### Implemented focused Inspector
 
-Extend `crates/auris-gpui/src/ui/mixer_graph.rs` with a collapsible pipeline detail
-list for the existing selection. Reuse `selected_clip`, then `selected_track`,
-and the existing selection commands; keep the mixer canvas as the routing editor.
-Show performance stages in stored order with evaluation labels, explicit
-pre/post-fader sends, automation targets, and singer take/guide roles.
+Signal flow's **Pipeline details** button and the command palette reveal a
+collapsible section in the existing Inspector. The list follows `selected_clip`,
+then `selected_track`, with explicit Track/Clip scope controls and existing owner
+selection commands. The mixer canvas remains the routing editor. Rows show
+performance stages in stored order with evaluation labels, explicit pre/post-fader
+sends and their destination, automation targets, and singer take/guide roles.
 
-Cache bounded pages in transient presentation state keyed by `Session::revision()`
-and scope. Do not hash the whole document on each paint or persist this cache in
-`MixerGraphView`. Expose continuation and empty/error states; navigating or opening
-the disclosure must not rebuild audio or change history. Only existing track and
-clip owners become navigation targets in the first slice.
+Transient presentation state caches one 32-node page, keyed by
+`Session::revision()` and scope. Unchanged paints do not hash the document.
+Previous/next controls and empty/error states remain inside the Inspector's
+existing scroll area. Disclosure and navigation do not change the project,
+`MixerGraphView`, history or audio graph. Track and clip owners are navigation
+targets; plugin and take readiness remain explicitly unchecked.
 
-Add harness coverage for selection changes, repeated-stage order, pre/post-fader
-labels, singer guide audition, and unchanged document/layout state. Follow with
-chain editing, keyboard paths, detailed parameter inspection, localization, zoom
-and small-window checks before declaring the complete M1 acceptance gate passed.
+Model and harness coverage exercises caching, bounded pagination, selection
+changes, repeated-stage/effect order, transform edits and Undo, send taps, singer
+guide roles, keyboard disclosure, unchanged document/layout state, and narrow
+Inspector layouts in English/Japanese with both themes and enlarged text.
+
+### Remaining M1 work
+
+Add chain editing through existing session commands, keyboard connection
+selection, and detailed parameter/intermediate-state inspection. Extend the UI
+matrix to those interactions and graph zoom before declaring the complete M1
+acceptance gate passed.
 
 ### Units of work
 

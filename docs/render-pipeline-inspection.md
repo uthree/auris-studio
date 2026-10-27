@@ -5,6 +5,35 @@ clip performance, instruments, singer takes, effects, faders, sends and
 automation. It projects the existing project model and makes no edits or saves.
 The saved tool takes `project`; the live tool uses the open document and omits it.
 
+## Desktop Inspector
+
+Select a track or clip, then choose **Pipeline details** in Signal flow or the
+command palette. The same section can be expanded directly in the Inspector.
+**Track** and **Clip** choose the scope; selecting a row's owner navigates to that
+track or clip using the normal selection. Enter and Space toggle the focused
+disclosure. The section shares the Inspector's scrolling and remains collapsed
+until opened.
+
+Rows distinguish notes, audio and control data. Performance stages retain their
+stored order and indicate deferred curve evaluation; sends identify their tap and
+destination. Singer guide and cached-take labels describe their roles without
+claiming that a take is fresh or its audio is available. This list describes the
+document's structure, not a linear callback execution schedule.
+
+The Inspector keeps one page of up to 32 nodes. Use **Previous** and **Next** for
+larger scopes. Selection changes and document edits, including Undo, refresh the
+page; unchanged paints reuse it. Disclosure, filtering and paging are transient
+view state and create no project edits, audio rebuilds or Undo entries. Continue
+editing with the existing performance, automation and mixer controls.
+
+The focused UI has model and gesture tests for cache reuse, pagination, selection,
+Undo, stage/effect order, send taps and singer labels. A Windows debug build was
+also exercised with a built-in-instrument fixture containing 51 projected nodes:
+Signal flow entry, page continuation, clip selection, keyboard disclosure and
+Japanese text at a narrow Inspector width were checked in the native window.
+
+## Agent read tool
+
 ```json
 {
   "project": "/absolute/path/Song/Song.auris",

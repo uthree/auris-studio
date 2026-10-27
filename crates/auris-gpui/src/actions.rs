@@ -180,6 +180,8 @@ actions!(
         TogglePianoRoll,
         /// Show or hide the mixer.
         ToggleMixer,
+        /// Reveal the selected track or clip's rendering pipeline in the inspector.
+        ShowPipelineDetails,
         /// Switch the central workspace between the timeline and track grid.
         ToggleTrackGrid,
         /// Show or hide the log.
@@ -529,6 +531,7 @@ bindable! {
         "view.piano_roll",      GroupView,      CmdShowPianoRoll,      "p"           => TogglePianoRoll;
         "edit.note_snap",       GroupNotes,     PianoRollSnap,        ""            => PianoRollSnap;
         "view.mixer",           GroupView,      CmdShowMixer,          "m"           => ToggleMixer;
+        "view.pipeline_details", GroupView,     PipelineDetails,       ""            => ShowPipelineDetails;
         "view.track_grid",      GroupView,      TrackGrid,             ""            => ToggleTrackGrid;
         // Out on `secondary-alt-` with the arrangement furniture rather than on a bare letter
         // like its three sibling panels: the log is opened on the day something is wrong and left

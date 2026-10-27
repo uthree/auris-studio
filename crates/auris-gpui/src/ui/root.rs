@@ -481,6 +481,7 @@ impl AurisApp {
                     .on_action(Self::window_listener(cx, Self::on_toggle_inspector))
                     .on_action(Self::window_listener(cx, Self::on_toggle_piano_roll))
                     .on_action(Self::window_listener(cx, Self::on_toggle_mixer))
+                    .on_action(Self::window_listener(cx, Self::on_show_pipeline_details))
                     .on_action(Self::window_listener(
                         cx,
                         |this, _: &actions::ToggleTrackGrid, window, cx| {
@@ -3554,6 +3555,15 @@ impl AurisApp {
     ) {
         self.toggle_panel(Panel::Mixer);
         cx.notify();
+    }
+
+    fn on_show_pipeline_details(
+        &mut self,
+        _: &actions::ShowPipelineDetails,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.show_pipeline_details(window, cx);
     }
 
     fn on_toggle_log(

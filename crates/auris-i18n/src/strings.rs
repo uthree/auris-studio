@@ -314,6 +314,44 @@ strings! {
     InspectorUnmodified { en: "Unmodified", ja: "未調整" }
     InspectorEmptyHint { en: "Select a track or clip to edit its settings.", ja: "トラックやクリップを選ぶと設定を編集できます。" }
     InspectorEffects { en: "Effects", ja: "エフェクト" }
+    PipelineDetails { en: "Pipeline details", ja: "処理の詳細" }
+    PipelineEmpty { en: "Select a track or clip to inspect its pipeline.", ja: "トラックまたはクリップを選ぶと処理の流れを確認できます。" }
+    PipelineUnavailable { en: "The selected scope is no longer available. Select a track or clip again.", ja: "選択した対象が見つかりません。トラックまたはクリップを選び直してください。" }
+    PipelineReadFailed { en: "Couldn’t read the pipeline. Select the track or clip again.", ja: "処理の流れを読み取れません。トラックまたはクリップを選び直してください。" }
+    PipelineTrack { en: "Track", ja: "トラック" }
+    PipelineClip { en: "Clip", ja: "クリップ" }
+    PipelinePrevious { en: "Previous", ja: "前へ" }
+    PipelineNext { en: "Next", ja: "次へ" }
+    PipelineInspectTrack { en: "Inspect track", ja: "トラックを確認" }
+    PipelineInspectClip { en: "Inspect clip", ja: "クリップを確認" }
+    PipelineNoteSource { en: "Score source", ja: "元の楽譜" }
+    PipelineAudioSource { en: "Audio source", ja: "音声ソース" }
+    PipelinePlacement { en: "Placement", ja: "配置" }
+    PipelineInstrument { en: "Instrument", ja: "音源" }
+    PipelineSingerTake { en: "Singer take", ja: "歌声テイク" }
+    PipelineStripInput { en: "Strip input", ja: "ストリップ入力" }
+    PipelineEffect { en: "Effect", ja: "エフェクト" }
+    PipelineFader { en: "Fader", ja: "フェーダー" }
+    PipelineSend { en: "Send", ja: "センド" }
+    PipelineAutomation { en: "Automation", ja: "オートメーション" }
+    PipelineOutput { en: "Output", ja: "出力" }
+    PipelineEventDomain { en: "Notes", ja: "ノート" }
+    PipelineAudioDomain { en: "Audio", ja: "音声" }
+    PipelineControlDomain { en: "Control", ja: "制御" }
+    PipelinePreFader { en: "Pre-fader", ja: "フェーダー前" }
+    PipelinePostFader { en: "Post-fader", ja: "フェーダー後" }
+    PipelineGuideAudition { en: "Guide: audition only", ja: "ガイド音源：試聴のみ" }
+    PipelineGuideFallback { en: "Guide instrument: fallback playback", ja: "ガイド音源：代替再生" }
+    PipelineTakeUnchecked { en: "Take freshness unchecked", ja: "楽譜との一致は未確認" }
+    PipelineSourceMissing { en: "Source information missing", ja: "音声ソースの情報がありません" }
+    PipelinePluginUnchecked { en: "Plugin availability unchecked", ja: "プラグインの利用可否は未確認" }
+    PipelineParameterUnchecked { en: "Parameter connection unchecked", ja: "パラメーター接続は未確認" }
+    PipelineTargetMissing { en: "Target owner missing", ja: "対象が見つかりません" }
+    PipelineStageNotes { en: "Note processing", ja: "ノート処理" }
+    PipelineStageCurves { en: "After note processing", ja: "ノート処理後" }
+    PipelineStageComposite { en: "Drum-voice group", ja: "ドラム音色グループ" }
+    PipelineReadOnly { en: "Processing structure. Instrument and audio-file readiness is not checked.", ja: "処理の構成を表示します。音源や音声ファイルの準備状態は未確認です。" }
+    PipelineBypassed { en: "Bypassed", ja: "バイパス中" }
     Master { en: "Master", ja: "マスター" }
     // Beside the master meter and the same width, so the caption has to be short enough not to
     // push the number off the end of its row.

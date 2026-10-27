@@ -1708,6 +1708,8 @@ pub struct AurisApp {
     pub(crate) mixer_canvas: Option<crate::ui::mixer_graph::MixerCanvas>,
     /// Whether the mixer shows signal flow or the console.
     pub(crate) mixer_graph_visible: bool,
+    /// Transient, revision-bound details for the selected track or clip.
+    pub(crate) pipeline_inspector: crate::ui::pipeline_inspector::PipelineInspector,
     /// Whether a connection gesture adds an auxiliary send instead of changing the output.
     pub(crate) mixer_connect_send: bool,
     /// The same, for the browser's list of instruments and effects.
@@ -2213,6 +2215,7 @@ impl AurisApp {
             mixer_scroll: gpui::ScrollHandle::new(),
             mixer_canvas: None,
             mixer_graph_visible: true,
+            pipeline_inspector: crate::ui::pipeline_inspector::PipelineInspector::new(cx),
             mixer_connect_send: false,
             library_scroll: gpui::ScrollHandle::new(),
             inspector_scroll: gpui::ScrollHandle::new(),

@@ -522,6 +522,17 @@ impl AurisApp {
                         }),
                     ))
                     .child(div().flex_1())
+                    .child(button(
+                        "mixer-pipeline-details",
+                        self.t(Key::PipelineDetails),
+                        ButtonStyle::Ghost,
+                        false,
+                        theme.accent_soft,
+                        &theme,
+                        cx.listener(|this, _, window, cx| {
+                            this.show_pipeline_details(window, cx);
+                        }),
+                    ))
                     .child(
                         button_enabled(
                             "mixer-zoom-out",

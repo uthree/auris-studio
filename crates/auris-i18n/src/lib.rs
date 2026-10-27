@@ -32,6 +32,7 @@
 pub mod audio;
 pub mod controller;
 pub mod messages;
+pub mod pipeline;
 mod strings;
 
 pub use strings::Key;

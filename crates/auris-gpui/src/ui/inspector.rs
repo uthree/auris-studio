@@ -156,6 +156,7 @@ impl AurisApp {
         cx: &mut gpui::Context<Self>,
     ) -> impl IntoElement + use<> {
         let theme = self.theme.clone();
+        let pipeline = self.render_pipeline_inspector(cx);
         let body = self.render_track_inspector(cx);
 
         // The selection stays outside the scrolling region so every visible setting has a target.
@@ -174,6 +175,7 @@ impl AurisApp {
                         .overflow_y_scroll()
                         .px_2()
                         .pb_3()
+                        .child(pipeline)
                         .child(body),
                     cx,
                 ),
