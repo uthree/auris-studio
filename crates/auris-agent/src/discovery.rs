@@ -153,9 +153,7 @@ async fn discover_candidates(candidates: Vec<AgentPreferences>) -> Result<String
             let connection = ModelConnection::from_preferences(&candidate);
             let answer = tokio::time::timeout(MODEL_LIST_PATIENCE, async {
                 match candidate.backend.as_str() {
-                    "codex" => backends::codex::list_models(&candidate).await,
-                    "claude" => backends::claude::list_models(&candidate).await,
-                    "opencode" => backends::opencode::list_models(&candidate).await,
+                    "codex" | "claude" | "opencode" => backends::acp::list_models(&candidate).await,
                     "antigravity" => backends::antigravity::list_models(&candidate).await,
                     _ => {
                         let Command::Models(options) = parse_command(

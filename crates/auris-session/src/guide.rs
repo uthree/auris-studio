@@ -349,22 +349,26 @@ pub mod architecture {
     //! a cancellable worker thread with an async runtime; channels carry requests, permission
     //! decisions and live-edit results. The worker never owns or edits the window's session.
     //! Dropping a worker cancels its network/approval waits without joining on the UI thread.
-    //! Rig runs in-process. The optional Codex backend launches the official `codex app-server`
-    //! over stdio. The Claude Code backend uses the CLI's bidirectional stream-json protocol.
-    //! The OpenCode backend uses `opencode acp` over stdio (ACP v1).
-    //! All CLI backends connect to a per-conversation, authenticated loopback MCP endpoint.
+    //! Rig runs in-process. OpenCode, Codex and Claude Code use one shared Rust
+    //! `agent-client-protocol` ACP v1 backend. OpenCode launches `opencode acp`; Codex and
+    //! Claude launch their installed ACP adapters, which in turn retain each native CLI's
+    //! authentication and inference behavior. Adapter discovery accepts the installed npm
+    //! package or the explicit `AURIS_CODEX_ACP` / `AURIS_CLAUDE_ACP` executable override;
+    //! Auris never invokes npm or auto-installs an adapter. Antigravity retains its existing
+    //! structured stream-json backend because its standalone ACP server is a separate runtime.
+    //! ACP backends connect to a per-conversation, authenticated loopback MCP endpoint.
     //! All backends use one live tool host and the same desktop permission/edit path; this
     //! embedded MCP never opens saved projects independently. Each CLI owns its authentication;
     //! the application never reads or copies its credential files. The model catalogue probes
     //! available connections off the UI thread; selecting a model selects its route as one
     //! decision. API endpoint configuration is retained independently of that selection.
-    //! CLI backends also expose native shell and file tools. Their working directory is the
+    //! ACP backends also expose native shell and file tools. Their working directory is the
     //! saved project folder, or disposable scratch space for an unsaved song. Native approvals
     //! cross the desktop's policy gate as `cli_command`, `cli_file_change`, or `cli_file_read`;
     //! external effects are durable and do not join the document's undo history. Codex keeps a
-    //! read-only sandbox and untrusted-command approval policy: trusted sandboxed reads can run
+    //! read-only sandbox and on-request approval policy: trusted sandboxed reads can run
     //! directly, while file writes and command escalations require a decision. Claude routes
-    //! its explicit native tool catalog through ask rules and the stdio approval callback.
+    //! its explicit native tool catalog through ask rules and ACP permission requests.
     //! OpenCode uses an isolated configuration directory, keeping its provider authentication in
     //! the CLI, and routes native permission requests through the same gate. It selects the
     //! configuration schema for CLI major version 1 or 2 before launching ACP; V2 exposes

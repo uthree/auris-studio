@@ -680,14 +680,10 @@ pub fn list_models_background(
                         .map_err(|error| error.to_string())?;
                     return runtime.block_on(async {
                         tokio::time::timeout(MODEL_LIST_PATIENCE, async {
-                            if prefs.backend == "opencode" {
-                                backends::opencode::list_models(&prefs).await
-                            } else if prefs.backend == "antigravity" {
+                            if prefs.backend == "antigravity" {
                                 backends::antigravity::list_models(&prefs).await
-                            } else if prefs.backend == "claude" {
-                                backends::claude::list_models(&prefs).await
                             } else {
-                                backends::codex::list_models(&prefs).await
+                                backends::acp::list_models(&prefs).await
                             }
                         })
                         .await

@@ -1,7 +1,5 @@
 # Agent backends
 
-[日本語](agent-backends.ja.md)
-
 The Agent panel discovers the signed-in Codex, Claude Code, OpenCode and Antigravity CLIs, local Ollama,
 and the API connection configured in Settings > Agent. An `OPENAI_API_KEY` also enables
 discovery at OpenAI's default endpoint. Providers are queried concurrently;
@@ -50,6 +48,9 @@ Consecutive tool calls share a collapsed summary showing their count and any
 running or failed calls. Open the group to inspect each call's arguments and
 result; user messages and assistant replies keep separate groups apart.
 
+The shared transport migration and its installed-agent verification are recorded in
+[Agent ACP verification](agent-acp-verification.md).
+
 ## Reference attachments
 
 Drop files onto the Agent panel to attach them to the next message. Dropping audio
@@ -93,35 +94,50 @@ CLI image/text payloads retain their separate 25 MiB combined budget, excluding 
 ## Codex setup
 
 Install [Codex CLI](https://learn.chatgpt.com/docs/cli) and run `codex login` with
-your ChatGPT account. Auris starts `codex app-server --listen stdio://`; Codex
-manages its authentication and inference. Auris does not read credential files or
-use subscription tokens through rig. API-key authentication is refused by this
-backend. Use rig for an API endpoint.
+your ChatGPT account. Auris launches the installed ACP adapter (`codex-acp` 2.3.0),
+which starts Codex App Server and translates it to ACP v1. The Rust
+`agent-client-protocol` 3.5.0 SDK owns the shared transport; Codex still manages its
+authentication and inference. Auris does not read credential files or use subscription
+tokens through rig. API-key authentication is refused by this backend. Use rig for an
+API endpoint.
 
 Leave the executable path empty to search PATH. On Windows, Auris also recognizes
 the native executable inside an npm installation; a custom path must name
-`codex.exe`, not a PowerShell or batch launcher. The integration is tested with
-Codex CLI 0.163.0. The app-server protocol is experimental, so incompatible CLI
-versions may report startup errors.
+`codex.exe`, not a PowerShell or batch launcher. The adapter is resolved from an
+installed npm package or `AURIS_CODEX_ACP`; Auris never invokes npm and never
+auto-installs or downloads an adapter. Startup checks `codex login status` and
+requires a ChatGPT subscription before the ACP child is started. The private child
+configuration disables inherited MCP servers, hooks and plugins while preserving the
+configured native executable path.
 
 Open the Agent Panel on a new, unsaved song and ask it to add an instrument track.
 The track appears immediately, the song remains unsaved, and Undo removes the
 track through the normal document history. The same permission modes and deny
 rules apply to all backends. Saving is still an explicit user action.
 
+Install its ACP adapter separately with `npm install -g @agentclientprotocol/codex-acp`.
+`AURIS_CODEX_ACP` may point to a native executable or a `.js`, `.mjs` or `.cjs` entry.
+JavaScript entries use Node from PATH or `AURIS_NODE`.
+
 ## Claude Code setup
 
 Install [Claude Code](https://code.claude.com/docs/en/setup) and run `claude` to
 sign in. Configure its executable in Settings > Agent, then choose a Claude Code
-model in the Agent panel. Authentication and inference stay inside the installed
-CLI; the rig endpoint and API-key preference are not used. CLI authentication through
-its own supported environment variables remains available.
+model in the Agent panel. Auris launches the installed ACP adapter
+(`claude-agent-acp` 0.97.0), using the shared Rust ACP v1 transport. Authentication
+and inference stay inside Claude Code; the rig endpoint and API-key preference are
+not used. CLI authentication through its own supported environment variables remains
+available.
 
 Leave the executable path empty to search PATH and the native `.local/bin`
 installation. On Windows, use the native `claude.exe`, not a `.cmd` or `.ps1`
-launcher. The integration uses the bidirectional stream-json control protocol
-and is tested with Claude Code 2.1.304. Models come from the CLI's initialization
-response. Default effort keeps the CLI default; None and Minimal map to Low.
+launcher. The adapter is resolved from an installed npm package or
+`AURIS_CLAUDE_ACP`; Auris never invokes npm and never auto-installs or downloads an
+adapter. Models and effort come from the ACP session configuration; Default keeps the
+agent default, while the adapter advertises supported values.
+
+Install its ACP adapter separately with `npm install -g @agentclientprotocol/claude-agent-acp`.
+`AURIS_CLAUDE_ACP` accepts the same executable/JavaScript paths as the Codex adapter.
 
 Claude Code connects to the same authenticated live MCP endpoint as Codex, so it
 can edit unsaved songs through the normal permission and Undo paths. Each worker
@@ -129,22 +145,21 @@ gets private MCP configuration, with inherited settings, hooks, plugins, slash
 commands and Chrome disabled. Its explicit native shell and file tools pass
 through the desktop's approval policy. Saved conversations use the project folder
 as their working directory; unsaved conversations use disposable scratch space.
-The bearer token stays in the temporary
-configuration file, which is removed when the worker ends. CLI session
-persistence is disabled; Auris stores the conversation and restores its text
+The bearer token is carried through the ACP session's private MCP declaration and
+is revoked with the worker. CLI session persistence is disabled; Auris stores the conversation and restores its text
 when a worker is replaced. Stop revokes tools, interrupts the turn and terminates
 the child. Audio can be inspected through `inspect_audio`.
 
-The optional transport smoke test uses an installed CLI without inference:
+The optional shared-ACP transport check uses an installed, authenticated adapter without
+running inference. Select the backend explicitly:
 
-```sh
-cargo test -p auris-agent installed_claude_connects_to_the_live_mcp_catalog -- --ignored
+```powershell
+$env:AURIS_ACP_EVAL_BACKEND = "claude"
+cargo test -p auris-agent installed_acp_initializes_models_and_live_catalog -- --ignored
 ```
 
-To check inference, `cargo test -p auris-agent
-installed_claude_edits_an_unsaved_song -- --ignored` asks Haiku to add one track
-to an in-memory song and verifies Undo. It uses the CLI's configured account and
-does not open or modify a saved song.
+Inference evidence uses the shared ACP evaluation tests described in the Validation
+section and requires an explicit model and fresh evidence directory.
 
 ## OpenCode setup
 
@@ -158,7 +173,8 @@ Model IDs retain the provider and any advertised variant, so similarly named
 models on different providers stay distinct. Select a model variant to control
 reasoning; the separate effort control stays at Default on this backend.
 
-Auris launches `opencode acp` and speaks [ACP v1 over stdio](https://opencode.ai/docs/acp/).
+Auris launches `opencode acp` and speaks [ACP v1 over stdio](https://opencode.ai/docs/acp/)
+through the shared Rust `agent-client-protocol` 3.5.0 transport.
 The transport supports both the original `models.availableModels` catalogue and
 model `configOptions`, including grouped choices. Authentication and inference
 stay inside OpenCode; Auris does not read its authentication store. The integration
@@ -175,7 +191,10 @@ not inherited. OpenCode's normal authentication data directory is retained, alon
 with the default authentication plugins and provider environment variables. Use a
 provider supported by OpenCode's authentication flow or environment configuration;
 the rig API settings do not configure this route. User configuration files are
-not edited. Native shell and file tools request the same Auris permission gate;
+not edited. On Windows, Auris selects `cmd.exe` for OpenCode native commands. PowerShell remains
+available through an explicit `powershell.exe -NoProfile -Command` invocation; this avoids
+the bare-expression approval gap found in OpenCode 1.19.1.
+Native shell and file tools request the same Auris permission gate;
 unknown requests and unsolicited client file/terminal requests are refused.
 V2 receives the live server through private configuration with `codemode: false`;
 its token is expanded from a child-only environment variable rather than stored
@@ -197,11 +216,12 @@ authenticated MCP tool catalogue request before allowing inference.
 
 Default tests use a scripted ACP peer and the real HTTP MCP endpoint to verify
 live edits, Undo, streaming, permission decisions and cancellation without model
-credentials. If OpenCode is installed and configured, this checks startup and the
-model catalogue without inference:
+credentials. If OpenCode is installed and configured, select it and check startup
+and the model catalogue without inference:
 
-```sh
-cargo test -p auris-agent installed_opencode_lists_models_and_opens_a_live_mcp_session -- --ignored
+```powershell
+$env:AURIS_ACP_EVAL_BACKEND = "opencode"
+cargo test -p auris-agent installed_acp_initializes_models_and_live_catalog -- --ignored
 ```
 
 ## Antigravity CLI setup
@@ -272,10 +292,10 @@ These checks require the `gemini-3.8-flash-low` model and consume inference cred
 ## Runtime boundary
 
 `auris-agent::Worker` owns the background runtime and cancellation. Its backend
-owns the conversation loop: rig runs it locally, while Codex drives an app-server
-child process, Claude Code uses stream-json, OpenCode uses ACP, and Antigravity returns
-structured requests for Auris to execute. Provider protocol types stay
-inside the backend. `ToolHost` normalizes flat toolbox calls, serializes authorization and execution, and sends
+owns the conversation loop: rig runs it locally, while OpenCode, Codex and Claude Code
+use the shared Rust ACP v1 backend with their native ACP adapters. Antigravity retains
+its existing structured stream-json route. Provider protocol types stay inside the
+backend. `ToolHost` normalizes flat toolbox calls, serializes authorization and execution, and sends
 live commands to the window. The window owns the session and rechecks permissions
 immediately before an edit.
 
@@ -307,19 +327,19 @@ histories, drafts and readable tool results for each project.
 
 ## Validation
 
-`cargo test -p auris-agent` includes a scripted app-server peer that calls the real
-HTTP MCP endpoint, passes the common permission gate, edits a real unsaved
-headless session and verifies Undo. The existing desktop harness verifies live
-edits and permissions in the window. The default tests require no model account.
+`cargo test -p auris-agent` includes scripted ACP peers that call the real HTTP MCP
+endpoint, pass the common permission gate, edit an unsaved headless session and verify
+Undo. The default tests require no model account. The opt-in ACP evaluation suite uses
+an explicitly selected backend, model and evidence directory:
 
-With a ChatGPT-authenticated Codex installation, this optional transport check
-starts app-server and verifies its live MCP catalog without running inference:
-
-```sh
-cargo test -p auris-agent installed_codex_connects_to_the_live_mcp_catalog -- --ignored
+```powershell
+$env:AURIS_ACP_EVAL_BACKEND = "codex" # or claude/opencode
+$env:AURIS_ACP_EVAL_MODEL = "<model-id>"
+$env:AURIS_ACP_EVAL_OUTPUT = "<fresh-evidence-directory>"
+cargo test -p auris-agent installed_acp_ -- --ignored --nocapture
 ```
 
-To verify a real model turn, `cargo test -p auris-agent
-installed_codex_edits_an_unsaved_song -- --ignored` uses the signed-in ChatGPT
-subscription to add one track to an in-memory session and verify Undo. It does
-not open or modify a saved song.
+The suite is intentionally environment-driven and does not auto-install adapters or
+open a saved song. It covers ACP startup, live MCP edits, permission decisions,
+cancellation, history handoff and media references when the selected agent advertises
+the corresponding capability.

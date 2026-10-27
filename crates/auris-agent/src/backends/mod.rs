@@ -2,6 +2,11 @@
 
 use crate::*;
 use std::path::Path;
+pub(super) mod acp;
+#[cfg(test)]
+mod acp_evaluation;
+pub(super) mod acp_launch;
+mod acp_process;
 pub(super) mod antigravity;
 pub(super) mod claude;
 pub(super) mod codex;
@@ -58,9 +63,7 @@ fn memory_context(memory: &memory::Memory) -> String {
 /// A runtime owns the entire model/tool loop, not just a completion API client.
 pub(crate) enum Backend {
     Rig(Options),
-    Codex(auris_session::AgentPreferences),
-    Claude(auris_session::AgentPreferences),
-    OpenCode(auris_session::AgentPreferences),
+    Acp(auris_session::AgentPreferences),
     Antigravity(auris_session::AgentPreferences),
 }
 
@@ -77,9 +80,7 @@ impl Backend {
                 };
                 Ok(Self::Rig(options))
             }
-            "codex" => Ok(Self::Codex(prefs.clone())),
-            "claude" => Ok(Self::Claude(prefs.clone())),
-            "opencode" => Ok(Self::OpenCode(prefs.clone())),
+            "codex" | "claude" | "opencode" => Ok(Self::Acp(prefs.clone())),
             "antigravity" => Ok(Self::Antigravity(prefs.clone())),
             other => Err(format!("Unknown agent backend: {other}")),
         }
@@ -94,17 +95,11 @@ impl Backend {
         cancelled: tokio::sync::oneshot::Receiver<()>,
     ) -> Result<(), String> {
         match self {
-            Self::OpenCode(prefs) => {
-                opencode::run(&prefs, bridge, history_path, fresh, history, cancelled).await
+            Self::Acp(prefs) => {
+                acp::run(&prefs, bridge, history_path, fresh, history, cancelled).await
             }
             Self::Antigravity(prefs) => {
                 antigravity::run(&prefs, bridge, history_path, fresh, history, cancelled).await
-            }
-            Self::Claude(prefs) => {
-                claude::run(&prefs, bridge, history_path, fresh, history, cancelled).await
-            }
-            Self::Codex(prefs) => {
-                codex::run(&prefs, bridge, history_path, fresh, history, cancelled).await
             }
             Self::Rig(options) => tokio::select! {
                 biased;

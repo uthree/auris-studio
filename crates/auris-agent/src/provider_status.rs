@@ -91,9 +91,7 @@ async fn probe(mut prefs: AgentPreferences) -> ProviderStatus {
     let listing = async {
         tokio::time::timeout(crate::MODEL_LIST_PATIENCE, async {
             match prefs.backend.as_str() {
-                "codex" => backends::codex::list_models(&prefs).await,
-                "claude" => backends::claude::list_models(&prefs).await,
-                "opencode" => backends::opencode::list_models(&prefs).await,
+                "codex" | "claude" | "opencode" => backends::acp::list_models(&prefs).await,
                 "antigravity" => backends::antigravity::list_models(&prefs).await,
                 _ => {
                     let Command::Models(options) = parse_command(
