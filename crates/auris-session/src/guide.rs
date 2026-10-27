@@ -23,6 +23,10 @@
 //! each crate's own front page explains what that crate is for, and this one explains why the
 //! boundaries between them are where they are.
 //!
+//! The proposed typed rendering pipeline is specified in `docs/render-pipeline-design.md`,
+//! with migration gates and delivery milestones in `docs/render-pipeline-plan.md`.
+//! These are implementation proposals; the contracts documented below describe current behavior.
+//!
 //! # Multiple project windows
 //!
 //! Each desktop project window owns a separate session, undo history, recovery workspace,
