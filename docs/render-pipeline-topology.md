@@ -91,6 +91,8 @@ minimum/maximum zoom with keyboard traversal at 640×480 in both languages and t
 Formatting, `cargo clippy --workspace --all-targets -- -D warnings` and
 `cargo doc --workspace --no-deps` with `RUSTDOCFLAGS=-D warnings` passed.
 
-The next M2a unit adds authored-source and stable stage ownership, group references
-and conventional-command identity adapters. Native saving remains gated on migration,
-compiler and command-adapter acceptance as specified in the implementation plan.
+The subsequent [ownership unit](render-pipeline-ownership.md) adds authored sources,
+stable clip stages, group references and conventional-command identity adapters.
+Its ownership checks complement this topology contract; processor-derived capability
+resolution will connect the two. Native saving remains gated on migration, compiler
+and command-adapter acceptance as specified in the implementation plan.

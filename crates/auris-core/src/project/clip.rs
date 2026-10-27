@@ -259,7 +259,8 @@ pub fn default_loop_end(start: Ticks, content: Ticks, next: Option<Ticks>) -> Ti
 
 /// A block of notes placed on an instrument track.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct MidiClip {
+#[serde(bound(deserialize = "T: Deserialize<'de>"))]
+pub struct MidiClip<T = super::NoteTransform> {
     /// Unique within the project.
     pub id: ClipId,
     /// Label shown on the clip.
@@ -326,7 +327,31 @@ pub struct MidiClip {
     /// [`NoteTransform`](super::NoteTransform) for what each one does. An empty stack is the
     /// identity, and is what every clip carried before this field existed.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub transforms: Vec<super::NoteTransform>,
+    pub transforms: Vec<T>,
+}
+
+impl<T> MidiClip<T> {
+    /// Maps the clip's ordered performance entries while preserving every other clip field.
+    ///
+    /// This is the boundary used by the native stage projection: legacy clips keep their
+    /// existing performer payloads, while each entry can gain a stable identity without
+    /// maintaining a second transform list.
+    pub fn map_transforms<U>(self, mut map: impl FnMut(T) -> U) -> MidiClip<U> {
+        MidiClip {
+            id: self.id,
+            name: self.name,
+            start: self.start,
+            length: self.length,
+            notes: self.notes,
+            muted: self.muted,
+            recipe: self.recipe,
+            bend: self.bend,
+            controllers: self.controllers,
+            length_is_explicit: self.length_is_explicit,
+            loop_end: self.loop_end,
+            transforms: self.transforms.into_iter().map(&mut map).collect(),
+        }
+    }
 }
 
 // JSON object keys are strings. TrackKind's internally tagged deserializer buffers them,

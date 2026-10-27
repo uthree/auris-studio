@@ -1,10 +1,11 @@
 # Typed rendering pipeline: implementation plan
 
-Status: implementation in progress, 2026-10-27. M0 is complete. M1's typed
+Status: implementation in progress, 2026-10-28. M0 is complete. M1's typed
 projection, shared read/edit tools and focused Inspector support chain editing.
 Keyboard connection selection and bounded intermediate inspection are implemented;
-the complete M1 acceptance gate is still pending. M2a has started with the pure
-typed topology and validation contract. Native ownership, migration and compiler
+the complete M1 acceptance gate is still pending. M2a includes pure typed topology,
+shared-source ownership, stable clip stages and conventional-command identity
+bindings. Automation ownership, capability integration, migration and compiler
 activation remain subsequent units.
 The design baseline is `cd205c3c`; the saved format remains 32.
 
@@ -210,8 +211,18 @@ This is a topology contract, not the canonical native project model. It is not
 stored on `Project`, used as a parallel routing store, or connected to playback.
 Node capabilities must eventually be resolved from their owning processors before
 validation; a structurally valid descriptor is not proof that a plugin implements
-it. Native source/stage ownership, group and legacy identity adapters are the next
-M2a slice. The M2 activation gate still applies to file writing and playback.
+it. The next slice, `auris_core::pipeline::content`, now supplies independent shared
+source ownership, processor/group payloads, stable clip stages and conventional
+command identity resolution. Source and branch copies have different ownership
+semantics; deletion and ID allocation are atomic candidate operations. See the
+[ownership contract](render-pipeline-ownership.md) for implemented APIs and tests.
+
+M2a remains in progress: independent automation-curve ownership and binding,
+processor-derived capability resolution, and validation of the complete native
+document are the next integration units. Existing session commands still operate
+on the current project; the new resolver is their future identity boundary, not an
+activated command backend. The M2 activation gate still applies to file writing
+and playback.
 
 Implement typed IDs, authored-source ownership, nodes/ports/edges, group references
 and automation targets in `auris-core`. Add version-independent pure validation for

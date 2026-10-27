@@ -54,8 +54,18 @@
 //! explicit event/audio/control ports, bounded validation and one dependency order across all
 //! edge domains. Its descriptors must be resolved from processor capabilities by their owner;
 //! validation does not load plugins or establish runtime availability. This foundation is not
-//! stored on [`auris_core::Project`] or used for playback yet. Native ownership, legacy conversion
-//! and compiler integration follow the activation gate in `docs/render-pipeline-plan.md`.
+//! stored on [`auris_core::Project`] or used for playback yet. The independent
+//! [`auris_core::pipeline::content`] fragment owns shared authored sources, processor state,
+//! groups and retained command identities. [`auris_core::project::StableMidiClip`] wraps each
+//! existing transform once with a persistent stage ID; explicit conversion reuses the current
+//! performer. Ownership validation checks the shared ID namespace and references, separately
+//! from capability/topology validation. Source copies allocate new clip/stage IDs, while branch
+//! copies retain source references and copy owned processor state. Command bindings resolve
+//! explicit source/strip/primary-instrument roles and require stable keys for plugin parameters.
+//! This fragment supports in-memory preparation and round trips; the current project writer,
+//! runtime commands and Undo still use the existing document. Legacy conversion and compiler
+//! integration follow the activation gate in `docs/render-pipeline-plan.md`. See
+//! `docs/render-pipeline-ownership.md` for the ownership contract and integration boundaries.
 //!
 //! # Multiple project windows
 //!

@@ -11,18 +11,29 @@
 
 mod validation;
 
+/// Native source and processor ownership, staged independently of project-file activation.
+pub mod content;
+
 use crate::ParamUnit;
+use serde::{Deserialize, Serialize};
 
 /// Stable identifier for a processing node within a project.
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
+#[serde(transparent)]
 pub struct NodeId(pub u64);
 
 /// Stable connection identifier, including parallel connections.
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
+#[serde(transparent)]
 pub struct EdgeId(pub u64);
 
 /// Stable processor-defined port key, unique across both directions of one node.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct PortId(pub String);
 
 impl PortId {
@@ -76,7 +87,7 @@ pub enum PortType {
 }
 
 /// Connection semantics at the receiving port.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EdgeRole {
     /// Primary audio signal.
     Main,
@@ -228,7 +239,7 @@ impl PipelineNode {
 }
 
 /// Directed dependency between an output port and an input port.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PipelineEdge {
     /// Stable identity, distinct even for parallel audio paths.
     pub id: EdgeId,
