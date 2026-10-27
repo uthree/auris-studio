@@ -41,7 +41,7 @@ fn dbfs(peak: f32) -> String {
 }
 
 impl AurisApp {
-    fn wire_node_name(&self, node: MixerNode) -> Option<String> {
+    pub(crate) fn wire_node_name(&self, node: MixerNode) -> Option<String> {
         let owner = match node {
             MixerNode::Strip(owner) | MixerNode::Effect(owner, _) => owner,
         };

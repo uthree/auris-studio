@@ -335,6 +335,13 @@ pub enum PipelineEdgeKind {
 }
 
 impl Session {
+    /// Finds one projection node without applying the public page-size limit.
+    pub(crate) fn pipeline_node(&self, node: &str) -> Result<Option<PipelineNode>, PipelineError> {
+        let mut projection = Projection::from_project(self.project())?;
+        projection.nodes.retain(|candidate| candidate.id == node);
+        Ok(projection.nodes.into_iter().next())
+    }
+
     /// Read a consistent page without opening assets or changing history.
     pub fn pipeline_graph(&self, query: &PipelineQuery) -> Result<PipelinePage, PipelineError> {
         if (query.offset > 0 || query.edge_offset > 0) && query.expected_revision.is_none() {

@@ -353,6 +353,29 @@ strings! {
     PipelineReadOnly { en: "Processing structure. Instrument and audio-file readiness is not checked.", ja: "処理の構成を表示します。音源や音声ファイルの準備状態は未確認です。" }
     PipelineBypassed { en: "Bypassed", ja: "バイパス中" }
     PipelineStageActions { en: "Reorder or remove…", ja: "順序・削除…" }
+    PipelineConnection { en: "Selected connection", ja: "選択中の接続" }
+    PipelineRevealSource { en: "Show source", ja: "接続元を表示" }
+    PipelineRevealTarget { en: "Show destination", ja: "接続先を表示" }
+    PipelineMonitorLevel { en: "Live monitor level", ja: "再生中のモニターレベル" }
+    PipelinePlaybackStopped { en: "Playback stopped", ja: "再生停止中" }
+    PipelineMonitorUnavailable { en: "Open signal flow to monitor", ja: "モニターするには信号フローを開いてください" }
+    MixerFocusConnections { en: "Select connection", ja: "接続を選択" }
+    MixerConnectionKeyboardHint { en: "Arrows select · Enter actions · Escape clear", ja: "矢印で選択 · Enterで操作 · Escapeで解除" }
+    PipelineInspectState { en: "Inspect state", ja: "中間状態を確認" }
+    PipelineRefreshState { en: "Refresh state", ja: "中間状態を更新" }
+    PipelineFirstPass { en: "First clip pass; note positions are relative to the clip.", ja: "クリップの初回演奏を表示します。ノートの時刻はクリップ先頭からの位置です。" }
+    PipelineBefore { en: "Before", ja: "処理前" }
+    PipelineAfter { en: "After", ja: "処理後" }
+    PipelineNoteColumns { en: "Pitch · velocity · start / length (ticks)", ja: "音高 · ベロシティ · 開始 / 長さ（tick）" }
+    PipelineNoteSample { en: "Showing the first 4 notes.", ja: "先頭4個のノートを表示しています。" }
+    PipelineDeferredState { en: "Controller curves are applied after note processing; these note samples do not include their effect.", ja: "制御カーブはノート処理の後に適用されます。このノート一覧には反映されていません。" }
+    PipelineWorkLimited { en: "This stage exceeds the preview work limit. Narrow the clip or reduce its stage stack to inspect it.", ja: "このステージはプレビューの処理上限を超えています。クリップの範囲または処理段数を減らすと確認できます。" }
+    PipelineStaticValue { en: "Stored value", ja: "保存値" }
+    PipelineAutomationValue { en: "Automation value", ja: "オートメーション値" }
+    PipelineEffectiveValue { en: "Evaluated value", ja: "評価値" }
+    PipelineParameterSnapshot { en: "Document values at the captured playhead; refresh after seeking. Audio is not rendered.", ja: "取得時の再生位置で計算した値です。位置を移動したら更新してください。音声のレンダリングは行いません。" }
+    PipelineNoValue { en: "Unavailable", ja: "取得できません" }
+    PipelineNoAutomation { en: "No curve value", ja: "カーブ値なし" }
     PipelineMoveEarlier { en: "Move earlier", ja: "前へ移動" }
     PipelineMoveLater { en: "Move later", ja: "後へ移動" }
     PipelineEditAutomation { en: "Edit automation", ja: "オートメーションを編集" }

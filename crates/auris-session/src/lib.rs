@@ -80,6 +80,12 @@ pub mod library;
 pub mod mixer_graph;
 pub mod param;
 pub mod pipeline_graph;
+pub mod pipeline_inspection;
+pub use pipeline_inspection::{
+    PipelineInspectionDetail, PipelineInspectionRequest, PipelineInspectionStatus,
+    PipelineIntermediateState, PipelineNodeInspection, PipelineNoteSample, PipelineParameterState,
+    PipelineStageState,
+};
 pub mod progressions;
 pub mod registry;
 pub mod render;

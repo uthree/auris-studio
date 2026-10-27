@@ -41,6 +41,14 @@
 //! a content revision; the Inspector uses the session's cheap revision to guard open menus.
 //! Each effective operation is an independent Undo step. Effect actions retain stable slot IDs,
 //! and automation navigation checks the saved parameter key before revealing an existing lane.
+//! `pipeline_read` also accepts `detail: true` with one exact returned node ID. Clip-stage
+//! details expose stored settings and bounded input/output samples (fixed at 32 per boundary,
+//! with pass-zero stage evaluation); fader, send and automation details expose passive native
+//! parameter values. `at_tick` is an absolute project tick for parameter details. Detail reads
+//! reject paging fields and stale revisions, never instantiate plugins, and do not write history,
+//! checkpoints or project bytes. The mixer canvas's Select connection control and unmodified
+//! arrow keys select visible graph edges transiently; Enter opens the existing edge menu and
+//! Escape clears selection, while modified arrows remain canvas navigation.
 //!
 //! # Multiple project windows
 //!

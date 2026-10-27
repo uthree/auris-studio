@@ -54,6 +54,11 @@ impl FlowGraph {
         self.focus_handle.is_focused(window)
     }
 
+    /// Give keyboard focus to the graph canvas from an embedding toolbar action.
+    pub fn focus(&self, window: &mut Window) {
+        window.focus(&self.focus_handle);
+    }
+
     pub fn new(state: Entity<FlowState>, cx: &mut Context<Self>) -> Self {
         Self {
             state,

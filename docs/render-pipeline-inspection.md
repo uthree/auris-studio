@@ -48,6 +48,18 @@ navigation to an existing automation lane. The narrow Japanese layout kept the
 actions within the Inspector. Removal and stale-menu behavior are covered by
 the gesture harness.
 
+### Selecting connections by keyboard
+
+Use **Select connection** to select the first visible, selectable connection.
+With the mixer canvas focused, unmodified Left/Right and Up/Down traverse those
+connections in stable graph order and wrap at either end. Enter or Return opens
+the selected connection's existing action menu, where **Delete connections** remains
+the existing destructive command. Escape clears the selection; an open menu keeps
+first claim on Escape. Modified arrows remain canvas navigation and do not change
+the selection. Hidden and internal chain edges are not keyboard targets. These
+actions only change transient selection/menu state until an existing menu command
+is chosen.
+
 ## Agent read tool
 
 ```json
@@ -63,6 +75,61 @@ Omit `scope` (or use `all`) for the whole project. Use `clip:2` to inspect a cli
 or any other returned node ID such as `effect:3` to inspect that node. Focused scopes
 include immediate incoming/outgoing neighbors, so boundary connections remain understandable.
 Unknown scopes are errors rather than silently empty results.
+
+For a bounded intermediate snapshot, pass one exact node ID returned by the graph:
+
+```json
+{
+  "project": "/absolute/path/Song/Song.auris",
+  "scope": "clip:2/stage:1",
+  "detail": true,
+  "at_tick": 0,
+  "expected_revision": "copy-from-current-read"
+}
+```
+
+Detail mode rejects omitted or non-exact scopes, nonzero cursors and paging limits. Clip stages
+return stored transform settings and bounded input/output note samples (at most 32
+per boundary); stage evaluation is deliberately pass zero. Fader, send and
+automation nodes return native parameter values, including static, automation and
+effective values when available. `at_tick` is an absolute project tick for those
+parameter values and must be nonnegative. Unsupported nodes return an explicit
+unavailable result. Unverified parameter bindings retain the stored curve value,
+with no claimed effective value, and never load a plugin. Detail reads use the
+same content revision guard as graph pages and never write the project, history or
+a checkpoint.
+
+The desktop Inspector is a presentation of this read: it shows counts and at most
+four note rows for each stage boundary, plus evaluation/bounded/unavailable status.
+The agent detail response also includes stored settings. Press **Refresh state**
+explicitly to capture the current playhead
+tick; repainting or moving the playhead does not silently replace a cached snapshot.
+
+### Detail and keyboard verification
+
+The gesture harness covers parallel-send traversal, pointer/keyboard selection,
+menu navigation and dismissal, deletion of the exact selected route and Undo.
+State snapshots are read-only and invalidated on edits and Undo. Narrow Inspector
+checks exercise English/daylight at 13px and Japanese/midnight at 16px; the native
+Japanese preview at 220px also shows the before/after note rows without horizontal
+clipping. Session and tool tests cover ordered stage boundaries, deferred pitch
+controls, sample and workload limits, live/saved parity, stale revisions and exact
+node reads with more than 64 immediate neighbors.
+
+The native preview also distinguished parallel sends #17 (pre-fader) and #18
+(post-fader), navigated the connection menu with Enter/Down/Escape, and resumed
+connection traversal after dismissal. Outside the focused graph, Right retained
+its transport behavior. The fader snapshot stayed at tick 0 after seeking and
+changed to tick 240 only on **Refresh state**; selection and reads left the project
+clean.
+
+Validation on 2026-10-27: formatting, the all-target workspace build, Clippy with
+warnings denied, and documentation generation with warnings denied passed. The
+parallel workspace run passed 4,834 tests with 51 ignored; one existing agent
+permission test encountered a deny-list rule from shared test configuration.
+The full desktop test binary then passed serially: 1,239 passed, 13 ignored.
+All other workspace suites, including the new session/tool tests and doctests,
+passed in the workspace run.
 
 ## Reading pages
 

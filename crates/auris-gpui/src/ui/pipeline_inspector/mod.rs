@@ -4,10 +4,14 @@
 //! session projection; editing goes through the session commands of each owner.
 
 mod actions;
+mod connections;
+mod inspection;
 mod model;
 
 #[cfg(test)]
 mod actions_tests;
+#[cfg(test)]
+mod inspection_tests;
 #[cfg(test)]
 mod tests;
 
@@ -35,6 +39,7 @@ pub(crate) struct PipelineInspector {
     focus: FocusHandle,
     keyboard_armed: bool,
     model: InspectorModel,
+    inspection: Option<inspection::InspectionSnapshot>,
 }
 
 impl PipelineInspector {
@@ -45,6 +50,7 @@ impl PipelineInspector {
             focus: cx.focus_handle(),
             keyboard_armed: false,
             model: InspectorModel::new(),
+            inspection: None,
         }
     }
 }
@@ -111,12 +117,32 @@ impl AurisApp {
             return section.into_any_element();
         }
 
+        let connection = self.selected_mixer_connection(cx);
+        if let Some(edge) = connection {
+            section = section.child(self.render_pipeline_connection(edge, cx));
+        }
+
         let clip = self
             .selected_clip
             .filter(|_| !self.pipeline_inspector.track_scope);
         self.pipeline_inspector
             .model
             .refresh(&self.session, clip, self.selected_track);
+        if self
+            .pipeline_inspector
+            .inspection
+            .as_ref()
+            .is_some_and(|snapshot| {
+                snapshot.revision != self.session.revision()
+                    || !self
+                        .pipeline_inspector
+                        .model
+                        .nodes()
+                        .any(|node| node.id == snapshot.node)
+            })
+        {
+            self.pipeline_inspector.inspection = None;
+        }
         let track_scope = matches!(
             self.pipeline_inspector.model.scope(),
             model::InspectorScope::Track(_)
@@ -181,6 +207,9 @@ impl AurisApp {
                 .into_any_element();
         }
         if model.is_empty() {
+            if connection.is_some() {
+                return section.into_any_element();
+            }
             return section
                 .child(
                     div()
@@ -328,6 +357,9 @@ impl AurisApp {
         }
         if let Some(actions) = self.pipeline_row_actions(node, cx) {
             row = row.child(actions);
+        }
+        if let Some(inspection) = self.pipeline_state_details(node, cx) {
+            row = row.child(inspection);
         }
         row.into_any_element()
     }

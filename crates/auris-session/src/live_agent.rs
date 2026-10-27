@@ -402,6 +402,12 @@ pub enum Command {
         edge_limit: Option<usize>,
         /// Exact revision from the first page; required when continuing a read.
         expected_revision: Option<String>,
+        /// Return bounded detail for one exact graph node.
+        #[serde(default)]
+        detail: bool,
+        /// Absolute tick for parameter detail; stage detail evaluates pass zero.
+        #[serde(default)]
+        at_tick: i64,
     },
     /// Move or remove one exact non-destructive clip stage returned by pipeline_read.
     PipelineEdit {
@@ -1051,7 +1057,44 @@ impl Session {
                 edge_offset,
                 edge_limit,
                 expected_revision,
+                detail,
+                at_tick,
             } => {
+                if detail {
+                    let Some(scope) = scope.as_deref() else {
+                        return Err("pipeline_read detail requires an exact node scope".into());
+                    };
+                    if offset != 0 || edge_offset != 0 || limit.is_some() || edge_limit.is_some() {
+                        return Err(
+                            "pipeline_read detail does not accept paging limits or offsets".into(),
+                        );
+                    }
+                    if at_tick < 0 {
+                        return Err("pipeline_read detail at_tick must be nonnegative".into());
+                    }
+                    let page = self
+                        .pipeline_graph(&crate::pipeline_graph::PipelineQuery {
+                            scope: crate::pipeline_graph::PipelineScope::Node {
+                                node: scope.into(),
+                            },
+                            expected_revision: expected_revision.clone(),
+                            ..Default::default()
+                        })
+                        .map_err(|error| error.to_string())?;
+                    // Resolving the node scope validates its existence even when its many
+                    // neighbors put the requested node beyond the first projection page.
+                    let state = self
+                        .inspect_pipeline_node(scope, auris_core::Ticks(at_tick))
+                        .map_err(|error| error.to_string())?;
+                    let mut report =
+                        serde_json::to_value(state).map_err(|error| error.to_string())?;
+                    report["revision"] = page.revision.into();
+                    report["scope"] = scope.into();
+                    return Ok(report.to_string());
+                }
+                if at_tick != 0 {
+                    return Err("pipeline_read at_tick requires detail=true".into());
+                }
                 let page = self
                     .pipeline_graph(&crate::pipeline_graph::PipelineQuery {
                         scope: crate::pipeline_graph::PipelineScope::from_address(scope.as_deref()),

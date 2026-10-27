@@ -25,7 +25,7 @@ impl AurisApp {
         cx: &mut gpui::Context<Self>,
     ) -> AnyElement {
         if self.mixer_graph_visible {
-            self.render_mixer_graph(cx)
+            self.render_mixer_graph(window, cx)
         } else {
             self.render_mixer_console(window, cx).into_any_element()
         }

@@ -2,8 +2,9 @@
 
 Status: implementation in progress, 2026-10-27. M0 is complete. M1's typed
 projection, shared read/edit tools and focused Inspector support chain editing.
-Keyboard connection selection and richer inspection remain pending. M2 and later milestones
-have not started.
+Keyboard connection selection and bounded intermediate inspection are implemented;
+the complete M1 acceptance gate is still pending. M2 and later milestones have not
+started.
 The design baseline is `cd205c3c`; the saved format remains 32.
 
 Read [the design](render-pipeline-design.md) for document ownership, port semantics,
@@ -131,12 +132,27 @@ content revision from `pipeline_read`. Changes use the existing document owner;
 edge moves are no-ops, and failed/stale/no-op saved requests create no checkpoint.
 Effect and automation edits continue through their existing tool surfaces.
 
+### Implemented keyboard connections and bounded detail
+
+The mixer canvas has a transient keyboard selection path for visible, selectable
+connections: the Select connection control selects the first edge, unmodified arrow
+keys traverse in stable order, Enter/Return opens the existing edge menu, and Escape
+clears selection. Modified arrows remain reserved for canvas navigation. Internal
+chain edges and hidden edges are excluded; no document state changes until an
+existing menu operation is invoked.
+
+`pipeline_read` detail mode accepts an exact returned node ID and the same content
+revision used by graph paging. It exposes bounded stage boundary samples and passive
+fader/send/automation parameter values. Stage evaluation is pass zero; `at_tick` is
+an absolute project tick for parameter values. Detail rejects paging/cursor options,
+negative ticks and stale revisions, and never creates plugins or writes a project.
+The tool keeps the fixed sample bound and does not add a per-request sampling knob.
+
 ### Remaining M1 work
 
-Add keyboard connection selection and detailed parameter/intermediate-state
-inspection. Extend the UI
-matrix to those interactions and graph zoom before declaring the complete M1
-acceptance gate passed.
+Complete the UI matrix evidence for the implemented keyboard connection selection
+and detailed parameter/intermediate-state inspection, and complete graph zoom
+coverage before declaring the complete M1 acceptance gate passed.
 
 ### Units of work
 
@@ -149,8 +165,9 @@ acceptance gate passed.
 3. Extend Signal flow with source/performance disclosure and selected-neighborhood
    filtering. Add the selected-group chain inspector, using current commands for
    stage edits, automation and effect ordering. Show the actual pre/post-fader order.
-4. Add keyboard connection selection, intermediate-state inspection and cross-view
-   selection. Expose pending/unavailable state without implying a signal is current.
+4. Add cross-view selection and graph zoom coverage around the implemented keyboard
+   connection selection and intermediate-state inspection. Expose pending/unavailable
+   state without implying a signal is current.
 
 The projection cannot provide arbitrary instrument branching while the old model
 still owns one instrument per track. Feature availability comes from capabilities;

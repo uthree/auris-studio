@@ -363,7 +363,8 @@ pub mod tool_help {
             "pipeline_read" => serde_json::json!([
                 {"project":project,"limit":32,"edge_limit":64},
                 {"project":project,"scope":"track:1","limit":32,"edge_limit":64},
-                {"project":project,"offset":32,"edge_offset":64,"expected_revision":"copy-from-first-page"}
+                {"project":project,"offset":32,"edge_offset":64,"expected_revision":"copy-from-first-page"},
+                {"project":project,"scope":"clip:2/stage:1","detail":true,"at_tick":0,"expected_revision":"copy-from-current-read"}
             ]),
             "pipeline_edit" => serde_json::json!([
                 {"project":project,"node":"clip:2/stage:0","expected_revision":"copy-from-pipeline_read","action":"move_later"},

@@ -20,6 +20,55 @@ use crate::ui::widgets::{
     ButtonState, ButtonStyle, button, button_enabled, db_to_meter_position, level_meter,
 };
 
+#[derive(Clone, Debug, PartialEq, gpui::Action)]
+#[action(namespace = auris_mixer_connections, no_json)]
+pub(crate) struct NavigateMixerConnection {
+    pub(crate) key: &'static str,
+}
+
+#[derive(Clone, Debug, PartialEq, gpui::Action)]
+#[action(namespace = auris_mixer_connections, no_json)]
+pub(crate) struct OpenMixerConnectionMenu;
+
+#[derive(Clone, Debug, PartialEq, gpui::Action)]
+#[action(namespace = auris_mixer_connections, no_json)]
+pub(crate) struct ClearMixerConnectionSelection;
+
+pub(crate) fn key_bindings() -> [gpui::KeyBinding; 6] {
+    [
+        gpui::KeyBinding::new(
+            "left",
+            NavigateMixerConnection { key: "left" },
+            Some("AurisMixerConnections"),
+        ),
+        gpui::KeyBinding::new(
+            "right",
+            NavigateMixerConnection { key: "right" },
+            Some("AurisMixerConnections"),
+        ),
+        gpui::KeyBinding::new(
+            "up",
+            NavigateMixerConnection { key: "up" },
+            Some("AurisMixerConnections"),
+        ),
+        gpui::KeyBinding::new(
+            "down",
+            NavigateMixerConnection { key: "down" },
+            Some("AurisMixerConnections"),
+        ),
+        gpui::KeyBinding::new(
+            "enter",
+            OpenMixerConnectionMenu,
+            Some("AurisMixerConnections"),
+        ),
+        gpui::KeyBinding::new(
+            "escape",
+            ClearMixerConnectionSelection,
+            Some("AurisMixerConnections"),
+        ),
+    ]
+}
+
 const NODE_WIDTH: f32 = 176.0;
 const COLUMN: f32 = 360.0;
 const ROW: f32 = 280.0;
@@ -37,6 +86,10 @@ mod wire_tooltip;
 #[cfg(test)]
 #[path = "mixer_graph_wires_tests.rs"]
 mod wire_tests;
+
+#[cfg(test)]
+#[path = "mixer_graph_keyboard_tests.rs"]
+mod keyboard_tests;
 
 #[cfg(test)]
 #[path = "mixer_graph_zoom_tests.rs"]
@@ -63,6 +116,7 @@ pub(crate) struct MixerCanvas {
     persist_layout: bool,
     layout_dragging: bool,
     stored_nodes: BTreeMap<String, MixerNodePosition>,
+    last_selected_edge: Option<SharedString>,
 }
 
 impl MixerCanvas {
@@ -225,6 +279,56 @@ fn edge_id(edge: &MixerEdge) -> SharedString {
     .into()
 }
 
+fn next_editable_edge_index(
+    editable: &[SharedString],
+    selected: Option<&SharedString>,
+    forward: bool,
+) -> Option<usize> {
+    if editable.is_empty() {
+        return None;
+    }
+    let current = selected.and_then(|id| editable.iter().position(|candidate| candidate == id));
+    Some(match current {
+        Some(index) if forward => (index + 1) % editable.len(),
+        Some(index) => (index + editable.len() - 1) % editable.len(),
+        None => 0,
+    })
+}
+
+#[cfg(test)]
+mod keyboard_selection_tests {
+    use super::next_editable_edge_index;
+    use gpui::SharedString;
+
+    fn ids(values: &[&str]) -> Vec<SharedString> {
+        values
+            .iter()
+            .map(|value| (*value).to_owned().into())
+            .collect()
+    }
+
+    #[test]
+    fn selection_skips_internal_chain_edges_and_wraps_by_stable_id() {
+        let editable = ids(&["output-a", "send-7", "sidechain-a"]);
+        let selected = SharedString::from("send-7");
+        assert_eq!(
+            next_editable_edge_index(&editable, Some(&selected), true),
+            Some(2)
+        );
+        assert_eq!(
+            next_editable_edge_index(&editable, Some(&selected), false),
+            Some(0)
+        );
+        assert_eq!(next_editable_edge_index(&editable, None, true), Some(0));
+    }
+
+    #[test]
+    fn empty_selection_has_no_keyboard_target() {
+        let empty: Vec<SharedString> = Vec::new();
+        assert_eq!(next_editable_edge_index(&empty, None, true), None);
+    }
+}
+
 fn gesture(graph: &MixerGraph, connection: &Connection) -> Option<(TrackId, MixerNode)> {
     let source = graph.nodes.iter().find_map(|node| match node {
         MixerNode::Strip(Some(track)) | MixerNode::Effect(Some(track), _)
@@ -349,14 +453,183 @@ impl AurisApp {
                 .update(cx, |view, cx| view.dismiss_edge_tooltip(cx))
         })
     }
+
+    /// Returns the document edge currently selected in the mixer canvas.
+    ///
+    /// The flow widget owns selection state while the session owns the authoritative edge. The
+    /// lookup deliberately resolves the stable flow ID back through the current graph so an
+    /// Inspector never describes a deleted or replaced connection.
+    pub(crate) fn selected_mixer_connection(&self, cx: &gpui::App) -> Option<MixerEdge> {
+        let canvas = self.mixer_canvas.as_ref()?;
+        let id = canvas
+            .state
+            .read(cx)
+            .edges
+            .iter()
+            .find(|edge| edge.selected)
+            .map(|edge| edge.id.clone())?;
+        canvas
+            .document
+            .edges
+            .iter()
+            .find(|edge| edge_id(edge) == id)
+            .copied()
+    }
+
+    fn handle_mixer_keyboard(
+        &mut self,
+        key: &str,
+        modifiers: gpui::Modifiers,
+        window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) -> bool {
+        let Some((view, state)) = self
+            .mixer_canvas
+            .as_ref()
+            .map(|canvas| (canvas.view.clone(), canvas.state.clone()))
+        else {
+            return false;
+        };
+        if !view.read(cx).is_focused(window) {
+            return false;
+        }
+        if key == "escape" {
+            // Context menus own Escape while open; let the event reach them first.
+            if self.menu.is_some() {
+                return false;
+            }
+            self.dismiss_mixer_wire_tooltip(cx);
+            state.update(cx, |state, cx| {
+                let changed = state.edges.iter().any(|edge| edge.selected);
+                for edge in &mut state.edges {
+                    edge.selected = false;
+                }
+                if changed {
+                    cx.notify();
+                }
+            });
+            view.update(cx, |view, _| view.focus(window));
+            return true;
+        }
+        if !matches!(key, "left" | "right" | "up" | "down" | "return" | "enter") {
+            return false;
+        }
+        // Modified arrows belong to zoom/navigation and must not change the edge selection.
+        if modifiers.secondary() || modifiers.control || modifiers.alt || modifiers.shift {
+            return false;
+        }
+        let editable: Vec<_> = state
+            .read(cx)
+            .edges
+            .iter()
+            .filter(|edge| edge.selectable && !edge.hidden)
+            .map(|edge| edge.id.clone())
+            .collect();
+        if editable.is_empty() {
+            return false;
+        }
+        if matches!(key, "return" | "enter") {
+            let Some(id) = state
+                .read(cx)
+                .edges
+                .iter()
+                .find(|edge| edge.selected)
+                .map(|edge| edge.id.clone())
+            else {
+                return false;
+            };
+            state.update(cx, |state, cx| {
+                let at = state
+                    .edge_label_bounds
+                    .iter()
+                    .find(|(edge_id, _)| *edge_id == id)
+                    .map(|(_, bounds)| bounds.center())
+                    .or_else(|| state.canvas_bounds.map(|bounds| bounds.center()))
+                    .unwrap_or_default();
+                state.pending_edge_menu = Some((id, at));
+                cx.notify();
+            });
+            return true;
+        }
+        let current_id = state
+            .read(cx)
+            .edges
+            .iter()
+            .find(|edge| edge.selected)
+            .map(|edge| edge.id.clone());
+        let forward = matches!(key, "right" | "down");
+        let Some(next) = next_editable_edge_index(&editable, current_id.as_ref(), forward) else {
+            return false;
+        };
+        state.update(cx, |state, cx| {
+            state.select_edge(&editable[next], false);
+            cx.notify();
+        });
+        true
+    }
     pub(crate) fn poll_mixer_signals(&mut self) {
         self.session.watch_mixer_signals(
             self.mixer_graph_visible && self.panels.is_open(crate::dock::Panel::Mixer),
         );
     }
 
+    fn focus_mixer_connections(&mut self, window: &mut gpui::Window, cx: &mut gpui::Context<Self>) {
+        let Some((view, state)) = self
+            .mixer_canvas
+            .as_ref()
+            .map(|canvas| (canvas.view.clone(), canvas.state.clone()))
+        else {
+            return;
+        };
+        view.update(cx, |view, _| view.focus(window));
+        let first = state
+            .read(cx)
+            .edges
+            .iter()
+            .find(|edge| edge.selectable && !edge.hidden)
+            .map(|edge| edge.id.clone());
+        if let Some(first) = first {
+            state.update(cx, |state, cx| {
+                state.select_edge(&first, false);
+                cx.notify();
+            });
+        }
+    }
+
+    fn reveal_mixer_connection_if_changed(
+        &mut self,
+        state: &Entity<FlowState>,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let selected = state
+            .read(cx)
+            .edges
+            .iter()
+            .find(|edge| edge.selected && edge.selectable && !edge.hidden)
+            .map(|edge| edge.id.clone());
+        let changed = self
+            .mixer_canvas
+            .as_ref()
+            .is_some_and(|canvas| canvas.last_selected_edge != selected);
+        if let Some(canvas) = self
+            .mixer_canvas
+            .as_mut()
+            .filter(|canvas| canvas.state == *state)
+        {
+            canvas.last_selected_edge = selected.clone();
+        }
+        if changed && selected.is_some() {
+            // The graph remains the focus owner; this only reveals the Inspector card.
+            self.show_pipeline_connection_details(cx);
+        }
+    }
+
     /// The graph is rebuilt from the document, preserving the positions of surviving identities.
-    pub(crate) fn render_mixer_graph(&mut self, cx: &mut gpui::Context<Self>) -> AnyElement {
+    pub(crate) fn render_mixer_graph(
+        &mut self,
+        window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) -> AnyElement {
         self.poll_mixer_signals();
         let document = self.session.mixer_graph();
         if self.mixer_canvas.is_none() {
@@ -373,6 +646,7 @@ impl AurisApp {
             });
             cx.observe(&state, |this, state, cx| {
                 this.apply_mixer_connections(&state, cx);
+                this.reveal_mixer_connection_if_changed(&state, cx);
                 if let Some(view) = this
                     .mixer_canvas
                     .as_ref()
@@ -414,6 +688,7 @@ impl AurisApp {
                 persist_layout: false,
                 layout_dragging: false,
                 stored_nodes: saved.nodes,
+                last_selected_edge: None,
             });
         }
         self.sync_mixer_graph(&document, cx);
@@ -433,6 +708,10 @@ impl AurisApp {
         }
         let theme = self.theme.clone();
         let view = self.mixer_canvas.as_ref().map(|canvas| canvas.view.clone());
+        let connection_keys = !self.keys_are_claimed()
+            && view
+                .as_ref()
+                .is_some_and(|view| view.read(cx).is_focused(window));
         let (zoom, min_zoom) = self
             .mixer_canvas
             .as_ref()
@@ -522,6 +801,20 @@ impl AurisApp {
                         }),
                     ))
                     .child(div().flex_1())
+                    .child(
+                        button(
+                            "mixer-focus-connections",
+                            self.t(Key::MixerFocusConnections),
+                            ButtonStyle::Ghost,
+                            false,
+                            theme.accent_soft,
+                            &theme,
+                            cx.listener(|this, _, window, cx| {
+                                this.focus_mixer_connections(window, cx);
+                            }),
+                        )
+                        .tooltip(self.tip(Key::MixerConnectionKeyboardHint, "")),
+                    )
                     .child(button(
                         "mixer-pipeline-details",
                         self.t(Key::PipelineDetails),
@@ -610,7 +903,59 @@ impl AurisApp {
                         }),
                     )),
             )
-            .child(div().flex_1().min_h_0().min_w_0().children(view))
+            .child(
+                div()
+                    .flex()
+                    .flex_1()
+                    .min_h_0()
+                    .min_w_0()
+                    .when(connection_keys, |element| {
+                        element.key_context("AurisMixerConnections")
+                    })
+                    .on_action(
+                        cx.listener(|this, action: &NavigateMixerConnection, window, cx| {
+                            if this.handle_mixer_keyboard(
+                                action.key,
+                                gpui::Modifiers::none(),
+                                window,
+                                cx,
+                            ) {
+                                cx.stop_propagation();
+                            } else {
+                                cx.propagate();
+                            }
+                        }),
+                    )
+                    .on_action(
+                        cx.listener(|this, _: &OpenMixerConnectionMenu, window, cx| {
+                            if this.handle_mixer_keyboard(
+                                "enter",
+                                gpui::Modifiers::none(),
+                                window,
+                                cx,
+                            ) {
+                                cx.stop_propagation();
+                            } else {
+                                cx.propagate();
+                            }
+                        }),
+                    )
+                    .on_action(cx.listener(
+                        |this, _: &ClearMixerConnectionSelection, window, cx| {
+                            if this.handle_mixer_keyboard(
+                                "escape",
+                                gpui::Modifiers::none(),
+                                window,
+                                cx,
+                            ) {
+                                cx.stop_propagation();
+                            } else {
+                                cx.propagate();
+                            }
+                        },
+                    ))
+                    .children(view),
+            )
             .child(
                 div()
                     .px_2()
