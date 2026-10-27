@@ -8,7 +8,8 @@ shared-source ownership, stable clip stages, conventional-command identity bindi
 shared automation curves, processor-derived capability resolution and the standalone
 native document envelope. M2b's pre-activation conversion, captured-source report and
 exact-byte backup primitive are implemented. M2c now has a conventional preparation
-and render-parity bridge. Live compiler/command integration and native writer
+and render-parity bridge, a private prepared-input boundary and native node controls.
+Live compiler/command integration and native writer
 activation remain subsequent units.
 The design baseline is `cd205c3c`; the saved format remains 32.
 
@@ -295,22 +296,45 @@ using existing event/loop budgets; derive new graph limits from M0 stress worklo
 Keep previous valid audio while a replacement plan is pending or failed and expose
 the document/audible-plan revision difference. Test successful publication and failure.
 
+The prepared-input boundary now keeps the conventional snapshot private in
+`NativeRenderInput`, with a complete mutable `NodeId` address table per graph.
+Native placements use node keys and validate live plugin descriptors against the
+lowering contract. Realtime node commands and generation-bound parameter handles
+prevent reordered positions from changing an operation's target. Offline builds
+use the same preparation path. See the conventional render contract for failure
+ownership and verification limits.
+
 The remaining integration order is:
 
-1. Replace the bridge's transient `Project` boundary with native prepared input and an
-   explicit `NodeId`-to-runtime-address table around `auris-engine/src/graph`.
-   `PlacedInstruments` is currently keyed by `TrackId`, while `PlacedEffects` uses
-   `EffectSlotId`; both need stable instance addressing before a group can own layers.
-2. Adapt `HostedPlugins` in `session/hosted.rs`, `Vst3Plugins` in `session/vst3.rs`
+1. Adapt `HostedPlugins` in `session/hosted.rs`, `Vst3Plugins` in `session/vst3.rs`
    and plugin-window selection together. Retain the live/spare instance handover,
    opaque state transfer and retirement lifecycle across graph replacement.
-3. Integrate preparation with `Session::rebuild_graph` in `session/mod.rs`. Validate
+2. Integrate preparation with `Session::rebuild_graph` in `session/mod.rs`. Validate
    the candidate and its revision before changing meter/scope readers or publishing
    to the engine. A failed preparation/publication retains the audible plan and
    reports the revision difference.
-4. Complete the M2d mutation/history audit before replacing the session's document
+3. Complete the M2d mutation/history audit before replacing the session's document
    authority. Activate native persistence only with that integration; the render
    bridge's legacy-shaped output is never a shortcut for save or command execution.
+
+Host integration must stage an instance handover, not just rename placement-map keys.
+The current `HostedPlugins::place`/`place_instruments` and VST3 equivalents can change
+live/spare or retiring ownership before `RenderGraph::build_with` returns. A native
+candidate therefore needs a preparation-owned handover record that retains the
+published instance/editor selection until validation and publication succeed.
+Failure drops candidate render halves on the preparation thread and returns their
+main-thread halves to the spare/retirement lifecycle without replacing the editor's
+current instance. State copied from the active plugin and document overrides must
+be associated with the same document revision used for preparation.
+
+Publication tests must distinguish queue acceptance from the audio callback adopting
+the graph. Meter/scope readers, the audible revision and native parameter handles
+must follow the adopted generation; a rejected or stale candidate must not redirect
+those readers. Cover both a full command queue and a retired graph still holding
+the previous plugin render half. Conventional `TrackId`/`EffectSlotId` editor adapters
+can resolve through native command bindings, while native instance ownership uses
+the persistent processor identity. Do not derive new processor IDs by reconverting
+the legacy document on every edit.
 
 ### M2d: Commands, history and transport compatibility
 

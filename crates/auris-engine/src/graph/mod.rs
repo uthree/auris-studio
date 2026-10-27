@@ -25,7 +25,10 @@
 
 mod automation;
 mod latency;
+mod native_control;
 mod schedule;
+#[cfg(test)]
+mod singer_take_tests;
 mod strip;
 mod track;
 
@@ -124,6 +127,7 @@ pub(crate) const MUTE_FADE_MS: f64 = 5.0;
 
 /// Every track plus the master bus, sized and prepared for one particular block size.
 pub struct RenderGraph {
+    pub(crate) native_addresses: crate::native::NativeRuntimeAddresses,
     pub(crate) tracks: Vec<RenderTrack>,
     pub(crate) master: RenderStrip,
     sample_rate: f64,
@@ -339,34 +343,37 @@ impl RenderGraph {
                 _ => None,
             };
             let source = match &track.kind {
-                TrackKind::Singer(inner) if sung_take.is_some() => {
-                    let entry = sung_take.expect("the guard checked");
+                TrackKind::Singer(inner) if inner.take.is_some() => {
                     let mut clips = Vec::with_capacity(1);
-                    let take_clip = auris_core::AudioClip::new(
-                        auris_core::ClipId(0),
-                        entry.name.clone(),
-                        auris_core::Ticks::ZERO,
-                        entry,
-                    );
-                    if let Err(error) = resolve_audio_clip(
-                        &take_clip,
-                        bank,
-                        &project.tempo_map,
-                        sample_rate,
-                        entry.sample_rate,
-                        scheduled_audio_windows_total,
-                        &mut clips,
-                    ) {
-                        retain_resource_error(
-                            &mut resource_error,
-                            &track.name,
-                            "audio loop",
-                            error,
+                    // A declared take remains selected when its metadata or samples are missing.
+                    // The guide instrument is retained for audition, never scheduled as a fallback.
+                    if let Some(entry) = sung_take {
+                        let take_clip = auris_core::AudioClip::new(
+                            auris_core::ClipId(0),
+                            entry.name.clone(),
+                            auris_core::Ticks::ZERO,
+                            entry,
                         );
-                        clips.clear();
-                    } else {
-                        scheduled_audio_windows_total =
-                            scheduled_audio_windows_total.saturating_add(clips.len());
+                        if let Err(error) = resolve_audio_clip(
+                            &take_clip,
+                            bank,
+                            &project.tempo_map,
+                            sample_rate,
+                            entry.sample_rate,
+                            scheduled_audio_windows_total,
+                            &mut clips,
+                        ) {
+                            retain_resource_error(
+                                &mut resource_error,
+                                &track.name,
+                                "audio loop",
+                                error,
+                            );
+                            clips.clear();
+                        } else {
+                            scheduled_audio_windows_total =
+                                scheduled_audio_windows_total.saturating_add(clips.len());
+                        }
                     }
                     let built = match instruments.remove(&track.id) {
                         Some(instrument) => Ok(instrument),
@@ -662,6 +669,7 @@ impl RenderGraph {
             .collect();
 
         RenderGraph {
+            native_addresses: crate::native::NativeRuntimeAddresses::default(),
             tracks,
             master,
             sample_rate,

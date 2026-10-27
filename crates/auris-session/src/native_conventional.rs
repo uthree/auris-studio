@@ -17,10 +17,15 @@ use auris_core::project::{
     Track, TrackId, TrackKind,
 };
 
+mod preparation;
+#[cfg(test)]
+mod preparation_tests;
 #[cfg(test)]
 mod shape_tests;
 #[cfg(test)]
 mod tests;
+
+pub use preparation::{NativePreparationError, prepare_native_conventional};
 
 /// Failure while lowering a native document into the conventional renderer snapshot.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
@@ -50,7 +55,7 @@ pub enum NativeConventionalError {
 /// native identity/topology and must not be passed to a save path. Its private allocation counter
 /// is not an authority. Every native node and signal edge must be consumed by this lowering;
 /// unsupported branches fail explicitly instead of being silently discarded.
-pub fn lower_native_conventional<P: CapabilityProvider>(
+pub(crate) fn lower_native_conventional<P: CapabilityProvider>(
     document: &NativeDocument,
     provider: &P,
     content_limits: auris_core::pipeline::content::ContentLimits,

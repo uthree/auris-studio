@@ -1253,6 +1253,15 @@ impl AudioEngine {
                 // staleness the graph it replaced had reported.
                 self.publish_latency();
             }
+            EngineCommand::Node { node, command } => {
+                let applied = self
+                    .graph
+                    .as_mut()
+                    .is_some_and(|graph| graph.apply_node_command(node, command));
+                if applied {
+                    self.publish_latency();
+                }
+            }
             EngineCommand::Play => {
                 self.stop_note_preview();
                 self.stop_preview();

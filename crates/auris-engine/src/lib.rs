@@ -84,6 +84,7 @@ pub mod handle;
 pub mod meter;
 pub mod metronome;
 pub mod monitor;
+pub mod native;
 pub mod offline;
 pub mod renderer;
 pub mod scope;
@@ -97,7 +98,7 @@ pub use capture::{
     Capture, CaptureReader, CaptureSettings, MAX_METERED_CHANNELS, MONITOR_SLOTS, input_devices,
     input_devices_for_host, shared_input_device, start_capture, start_capture_for_output,
 };
-pub use command::EngineCommand;
+pub use command::{EngineCommand, NativeNodeCommand};
 pub use device::{
     AudioDevice, AudioDeviceInfo, AudioSettings, audio_hosts, output_devices,
     output_devices_for_host, start_audio, start_silent, try_start_audio,

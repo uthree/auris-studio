@@ -89,13 +89,19 @@
 //! existing regular backup is accepted only when its bytes match. This candidate cannot publish
 //! a native project. Source-change checks and the activated writer remain part of the M2 gate.
 //! See `docs/render-pipeline-migration.md` for conversion and backup verification.
-//! [`crate::native_conventional::lower_native_conventional`] validates native ownership and
+//! [`crate::native_conventional::prepare_native_conventional`] validates native ownership and
 //! capabilities, then reconstructs a transient input for the existing renderer from conventional
 //! source/group topology. It consumes every signal edge and audible processor or fails without
 //! changing the candidate. Active automation resolves stable keys to runtime positions; disabled
 //! bindings leave static values in effect. Unbound authored curves remain in the native document.
-//! The returned legacy-shaped snapshot is never document authority and must not enter save/history
-//! paths. This bridge establishes numerical parity before live compiler/command activation; see
+//! The returned [`auris_engine::native::NativeRenderInput`] keeps the conventional snapshot private.
+//! Its complete node-to-runtime mapping is attached to every prepared graph. Node-keyed plugin
+//! placements must match the document identity and lowering parameter descriptors before ownership
+//! transfers. Native realtime controls resolve against the current graph; parameter handles also
+//! carry a graph generation so stale parameter positions are rejected. Realtime and offline builds
+//! share this preparation path. Control policies survive lowering: only continuous writable
+//! plugin parameters receive realtime handles. This establishes numerical parity before live
+//! activation; see
 //! `docs/render-pipeline-conventional.md` for its preparation and verification contract.
 //!
 //! # Multiple project windows

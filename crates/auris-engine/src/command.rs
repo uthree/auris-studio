@@ -4,10 +4,50 @@
 //! [`RenderGraph`] built off the audio thread. Everything else is a small, allocation-free
 //! command, so moving a fader does not rebuild the world.
 
-use auris_core::param::ParamId;
+use auris_core::ParamId;
+use auris_core::pipeline::NodeId;
 
 use crate::graph::RenderGraph;
 use crate::transport::CountIn;
+
+/// A realtime control addressed by a native pipeline node.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum NativeNodeCommand {
+    /// Sets a strip or send gain in decibels.
+    Gain(f32),
+    /// Sets a strip pan in the range -1..=1.
+    Pan(f32),
+    /// Sets a track or master strip mute state.
+    Mute(bool),
+    /// Sets a plugin parameter through a generation-bound runtime handle.
+    Parameter {
+        /// Generation-bound runtime parameter handle.
+        parameter: crate::native::NativeParameterHandle,
+        /// Parameter value in the plugin's native domain.
+        value: f32,
+    },
+    /// Queues an audition note-on event.
+    NoteOn {
+        /// MIDI pitch, 0..=127.
+        pitch: u8,
+        /// Attack velocity, 0..=1.
+        velocity: f32,
+    },
+    /// Queues an audition note-off event.
+    NoteOff {
+        /// MIDI pitch, 0..=127.
+        pitch: u8,
+    },
+    /// Queues an audition pitch bend in semitones.
+    PitchBend(f32),
+    /// Queues an audition controller value.
+    Controller {
+        /// MIDI controller number, 0..=127.
+        number: u8,
+        /// Controller value, 0..=1.
+        value: f32,
+    },
+}
 
 /// One instruction for the audio thread.
 ///
@@ -17,6 +57,13 @@ use crate::transport::CountIn;
 pub enum EngineCommand {
     /// Replaces the whole graph. The old one is handed back for the UI thread to drop.
     SetGraph(Box<RenderGraph>),
+    /// Applies a realtime control to a native pipeline node in the current graph.
+    Node {
+        /// Stable native node identity.
+        node: NodeId,
+        /// Allocation-free node control.
+        command: NativeNodeCommand,
+    },
     /// Starts the transport.
     Play,
     /// Counts a number of beats in front of the playhead before it starts moving.
@@ -196,6 +243,11 @@ impl std::fmt::Debug for EngineCommand {
             Self::SetGraph(graph) => f
                 .debug_struct("SetGraph")
                 .field("tracks", &graph.track_count())
+                .finish(),
+            Self::Node { node, command } => f
+                .debug_struct("Node")
+                .field("node", node)
+                .field("command", command)
                 .finish(),
             Self::Play => f.write_str("Play"),
             Self::CountIn(count) => f.debug_tuple("CountIn").field(count).finish(),

@@ -28,8 +28,26 @@ struct PluginMetadata {
     sidechain: bool,
 }
 
-struct BuiltinProvider {
+pub(super) struct BuiltinProvider {
     metadata: BTreeMap<NodeId, PluginMetadata>,
+}
+
+impl BuiltinProvider {
+    /// Test-only capability mutation used to verify policy survives preparation.
+    pub(super) fn set_policy_for_node(
+        &mut self,
+        node: NodeId,
+        policy: AutomationPolicy,
+    ) -> Option<String> {
+        let metadata = self.metadata.get_mut(&node)?;
+        for parameter in &mut metadata.parameters {
+            parameter.policy = policy;
+        }
+        metadata
+            .parameters
+            .first()
+            .map(|parameter| parameter.descriptor.key.to_string())
+    }
 }
 
 impl CapabilityProvider for BuiltinProvider {
@@ -44,7 +62,9 @@ impl CapabilityProvider for BuiltinProvider {
     }
 }
 
-fn builtin_provider(document: &auris_core::pipeline::document::NativeDocument) -> BuiltinProvider {
+pub(super) fn builtin_provider(
+    document: &auris_core::pipeline::document::NativeDocument,
+) -> BuiltinProvider {
     let registry = fixture_registry();
     let mut metadata = BTreeMap::new();
     for processor in &document.content.processors {
@@ -100,7 +120,7 @@ fn builtin_provider(document: &auris_core::pipeline::document::NativeDocument) -
     BuiltinProvider { metadata }
 }
 
-fn content_limits() -> auris_core::pipeline::content::ContentLimits {
+pub(super) fn content_limits() -> auris_core::pipeline::content::ContentLimits {
     auris_core::pipeline::content::ContentLimits {
         sources: 64,
         clips: 1024,
@@ -116,7 +136,7 @@ fn content_limits() -> auris_core::pipeline::content::ContentLimits {
     }
 }
 
-fn graph_limits() -> PipelineLimits {
+pub(super) fn graph_limits() -> PipelineLimits {
     PipelineLimits {
         nodes: 4096,
         edges: 8192,

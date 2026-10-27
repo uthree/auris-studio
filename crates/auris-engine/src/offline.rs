@@ -41,7 +41,7 @@ const MAX_RENDER_FRAMES: u64 = 24 * 60 * 60 * 192_000;
 const MAX_BUFFERED_RENDER_BYTES: usize = 512 * 1024 * 1024;
 
 /// Largest block whose event offsets and scratch allocation remain practical and representable.
-const MAX_BLOCK_FRAMES: usize = 1_048_576;
+pub(crate) const MAX_BLOCK_FRAMES: usize = 1_048_576;
 
 fn buffered_render_bytes(frames: usize) -> Result<usize, EngineError> {
     let too_large = || EngineError::RenderBufferTooLarge {
@@ -348,6 +348,18 @@ impl OfflineRender {
         if let Some(error) = graph.take_resource_error() {
             return Err(error);
         }
+
+        Self::from_graph(project, graph, options)
+    }
+
+    /// Shares offline range, tail and latency geometry with the native preparation path.
+    pub(crate) fn from_graph(
+        project: &Project,
+        graph: RenderGraph,
+        options: &OfflineOptions,
+    ) -> Result<Self, EngineError> {
+        let sample_rate = options.sample_rate.unwrap_or(project.sample_rate);
+        let block_frames = options.block_frames.clamp(1, MAX_BLOCK_FRAMES);
 
         let end_frames = options.end_frames.unwrap_or_else(|| {
             // Both figures measure the same thing, but `Project::end_tick` rounds an audio clip's
