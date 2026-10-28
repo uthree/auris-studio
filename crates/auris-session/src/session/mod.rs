@@ -83,7 +83,7 @@ mod perform;
 pub use perform::ClipTransformEdit;
 mod physical_sounds;
 pub(crate) mod plugin_discovery;
-mod plugin_trust;
+pub(crate) mod plugin_trust;
 mod punch;
 mod readiness;
 mod recognition;

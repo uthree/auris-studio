@@ -52,9 +52,27 @@ main-thread instances and editors; this API does not open plugin files.
 Native graph construction and offline preparation share the validated placement
 path. Initial placement or metadata failures preserve supplied maps. Later scheduling,
 descriptor changes during state loading/preparation, or offline-range failures may
-consume render halves, but return no publishable graph;
-the caller must retain the previously playing graph. Publication and host-instance
-retirement integration remain the next M2c boundary.
+consume render halves, but return no publishable graph; the caller must retain the
+previously playing graph.
+
+`auris_session::native_host::NativeHostedPlayback` is the pre-activation owner for
+this boundary. It owns an `AudioDevice`, an `EngineHandle`, isolated fresh CLAP/VST3
+control instances, and their render halves. It is deliberately separate from the
+legacy `Session`: preparation and snapshots do not mutate the native document, the
+format-32 `Project`, command history, or legacy hosted-plugin maps. Plugin trust is
+checked with the same standard/configured plugin-folder policy as the conventional
+session before a file is loaded. Runtime descriptors are checked after state restoration.
+
+Queueing requires the caller's current document revision to match the prepared
+revision. Only one candidate may be queued. A full command queue returns the intact candidate
+for retry; a silent engine rejects queueing; a stopped device retires an unadopted
+pending candidate without disturbing the published one. Publication occurs only
+when `EngineHandle::adopted_native_generation` exactly matches the candidate. The
+published host set retains persistent node identities and window intent, while old
+hosts remain alive until their returned graph no longer owns the corresponding
+render halves. `NativeHostSnapshot` reports node, document revision and graph
+generation together with opaque state and readable values for an explicit M2d
+reconciliation step.
 
 `EngineCommand::Node` resolves a persistent node against the current graph without
 allocation or locking. Unknown nodes, wrong roles and invalid numeric values are
@@ -110,8 +128,8 @@ and replacement by a conventional graph. A silent engine never acknowledges its
 queued candidate. The callback adoption and deferred paths require zero heap
 allocations and deallocations.
 
-These tests establish numerical compatibility for their fixtures. They do not make
-a listening assessment or establish behavior of an external plugin or singer model.
+These deterministic tests establish numerical compatibility for their fixtures.
+External-host checks below exercise selected installed plugins separately.
 
 Validation on 2026-10-28: `cargo test --workspace -- --test-threads=1` passed
 5,007 tests with 51 ignored across 71 suites, including all 1,241 desktop tests.
@@ -121,3 +139,39 @@ the complete engine suite (342 tests plus its doctest).
 `cargo fmt --all -- --check`,
 `cargo clippy --workspace --all-targets -- -D warnings`, and
 `cargo doc --workspace --no-deps` with `RUSTDOCFLAGS=-D warnings` passed.
+
+Native host ownership tests cover editor isolation and transfer, deferred instance
+release, silent/disconnected output, stale document revisions, and rejection of
+untrusted plugin files before the loader runs. A CLAP fixture processes audio before
+checking both opaque state and readable parameter overrides: a queued override is
+not evidence that the plugin has already received it.
+
+The opt-in `native_host::external_tests::native_hosted_candidate_is_isolated_and_renders`
+test prepares two native documents with the same processor IDs and different volume
+settings. It renders those actual prepared graphs, checks their RMS difference and
+the unchanged published host state, then verifies editor handover and retirement.
+`AURIS_NATIVE_PLUGIN` names the installed instrument and `AURIS_NATIVE_CONTROL`
+names its volume parameter. `AURIS_NATIVE_HOST_GUI=1` enables VST3 editor checks
+(including real HWND preservation/count/destruction on Windows).
+`AURIS_NATIVE_HOST_DEVICE=1` additionally queues a third candidate to a real output
+device and requires callback adoption before publishing its revision.
+
+On Windows, 2026-10-28, the complete native-host test group passed with each
+installed instrument (13 tests per run, including the opt-in test):
+
+| Instrument | Control | Prepared audio RMS, original to candidate | Real callback adoption | Native editor |
+| --- | --- | --- | --- | --- |
+| Vital VST3 | Volume | 0.1429963 to 0 | Passed | HWND preservation, handover and destruction passed |
+| Surge XT CLAP | Global Volume | 0.0875456 to 0.0004495 | Passed | Covered by deterministic CLAP fixture |
+
+Both runs preserved the old host's complete state while preparing the changed
+candidate and released its owner after returning the old graph. These are numeric
+and lifecycle checks; they do not evaluate musical quality. The real-device check
+uses stopped transport and verifies adoption, without treating that acknowledgment
+as a measurement of hardware output latency.
+
+The host-integration checkpoint passed `cargo test -p auris-engine -p auris-session
+-- --test-threads=1`: 1,541 tests passed and 11 opt-in tests were ignored across six
+suites. Both installed-plugin runs above passed separately. Workspace Clippy with
+warnings denied, workspace rustdoc with `RUSTDOCFLAGS=-D warnings`, formatting and
+diff checks also passed.

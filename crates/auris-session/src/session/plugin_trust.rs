@@ -52,7 +52,7 @@ impl Session {
 
 /// The plugin folders, resolved once, and the files refused since a frontend last asked.
 #[derive(Debug, Default)]
-pub(super) struct PluginTrust {
+pub(crate) struct PluginTrust {
     /// The user's own plugin folders and files, as configured.
     extra: Vec<PathBuf>,
     /// Every plugin folder with its links resolved. Folders that do not exist are left out.
@@ -65,7 +65,7 @@ pub(super) struct PluginTrust {
 
 impl PluginTrust {
     /// The standard plugin folders plus `extra`.
-    pub(super) fn new(extra: &[PathBuf]) -> Self {
+    pub(crate) fn new(extra: &[PathBuf]) -> Self {
         let mut trust = Self::default();
         trust.set_extra(extra);
         trust
@@ -90,7 +90,7 @@ impl PluginTrust {
     }
 
     /// Whether `file` lies in a plugin folder.
-    pub(super) fn allows(&self, file: &Path) -> bool {
+    pub(crate) fn allows(&self, file: &Path) -> bool {
         plugin_file_is_trusted(file, &self.roots)
     }
 

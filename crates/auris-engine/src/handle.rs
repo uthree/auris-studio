@@ -255,7 +255,28 @@ impl EngineHandle {
     /// Success means queue acceptance. For native graphs, compare the candidate generation
     /// with [`Self::adopted_native_generation`] to observe when the callback selects it.
     pub fn set_graph(&self, graph: RenderGraph) -> Result<(), EngineError> {
-        self.send(EngineCommand::SetGraph(Box::new(graph)))
+        self.try_set_graph(graph).map_err(|(error, _graph)| error)
+    }
+
+    /// Queues a graph while returning it when the command cannot be accepted.
+    ///
+    /// A native host prepares a complete candidate before publication and must retain that
+    /// candidate when the bounded command queue is full or the device has stopped. Unlike
+    /// [`Self::set_graph`], this method does not drop the graph on failure, allowing the caller
+    /// to retry or report the candidate without reconstructing its plugin instances.
+    pub fn try_set_graph(&self, graph: RenderGraph) -> Result<(), (EngineError, Box<RenderGraph>)> {
+        match self
+            .commands
+            .try_send(EngineCommand::SetGraph(Box::new(graph)))
+        {
+            Ok(()) => Ok(()),
+            Err(TrySendError::Full(command)) => {
+                Err((EngineError::CommandQueueFull, recover_graph(command)))
+            }
+            Err(TrySendError::Disconnected(command)) => {
+                Err((EngineError::NotRunning, recover_graph(command)))
+            }
+        }
     }
 
     /// Queues prepared device-rate PCM and returns its independent audition status.
@@ -433,5 +454,94 @@ impl std::fmt::Debug for EngineHandle {
             .field("playing", &self.is_playing())
             .field("playhead_frames", &self.playhead_frames())
             .finish()
+    }
+}
+
+fn recover_graph(command: EngineCommand) -> Box<RenderGraph> {
+    match command {
+        EngineCommand::SetGraph(graph) => graph,
+        _ => unreachable!("try_set_graph only sends SetGraph"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use super::*;
+    use crate::meter::MeterBank;
+    use crate::native::{NativeRenderInput, NativeRenderTarget};
+    use auris_core::pipeline::NodeId;
+    use auris_core::project::{AudioSourceBank, Project};
+
+    fn handle_with_full_queue() -> (EngineHandle, crossbeam_channel::Receiver<EngineCommand>) {
+        let (commands, command_receiver) = crossbeam_channel::bounded(1);
+        let (_, returned_graphs) = crossbeam_channel::bounded(1);
+        let running = Arc::new(AtomicBool::new(true));
+        (
+            EngineHandle {
+                commands,
+                returned_graphs,
+                playhead: Arc::new(AtomicU64::new(0)),
+                count_in: Arc::new(AtomicU64::new(0)),
+                meters: Arc::new(MeterBank::new(0)),
+                running,
+                playing: Arc::new(AtomicBool::new(false)),
+                latency_stale: Arc::new(AtomicBool::new(false)),
+                adopted_native_generation: Arc::new(AtomicU64::new(0)),
+                stream_notices: Arc::new(AtomicU32::new(0)),
+                clock: Arc::new(crate::clock::OutputClock::default()),
+                callbacks: Arc::new(AtomicU64::new(0)),
+                sample_rate: 48_000.0,
+                channel_count: 2,
+                max_block: 256,
+            },
+            command_receiver,
+        )
+    }
+
+    fn native_graph() -> RenderGraph {
+        let input = NativeRenderInput::new(
+            Project::default(),
+            vec![(NodeId(1), NativeRenderTarget::Strip(None))],
+            BTreeMap::new(),
+        )
+        .expect("native input");
+        let mut effects = crate::native::NodePlacedEffects::new();
+        let mut instruments = crate::native::NodePlacedInstruments::new();
+        input
+            .build(
+                &AudioSourceBank::new(),
+                &crate::testkit::registry(),
+                &mut effects,
+                &mut instruments,
+                256,
+                48_000.0,
+            )
+            .expect("native graph")
+    }
+
+    #[test]
+    fn try_set_graph_returns_the_same_native_candidate_when_queue_is_full() {
+        let (handle, _command_receiver) = handle_with_full_queue();
+        handle.send(EngineCommand::Play).unwrap();
+        let graph = native_graph();
+        let generation = graph.native_generation();
+        let (error, recovered) = handle.try_set_graph(graph).expect_err("queue is full");
+        assert!(matches!(error, EngineError::CommandQueueFull));
+        assert_eq!(recovered.native_generation(), generation);
+    }
+
+    #[test]
+    fn try_set_graph_returns_the_same_native_candidate_when_queue_is_disconnected() {
+        let (handle, command_receiver) = handle_with_full_queue();
+        drop(command_receiver);
+        let graph = native_graph();
+        let generation = graph.native_generation();
+        let (error, recovered) = handle
+            .try_set_graph(graph)
+            .expect_err("queue is disconnected");
+        assert!(matches!(error, EngineError::NotRunning));
+        assert_eq!(recovered.native_generation(), generation);
     }
 }

@@ -8,7 +8,8 @@ shared-source ownership, stable clip stages, conventional-command identity bindi
 shared automation curves, processor-derived capability resolution and the standalone
 native document envelope. M2b's pre-activation conversion, captured-source report and
 exact-byte backup primitive are implemented. M2c now has a conventional preparation
-and render-parity bridge, a private prepared-input boundary and native node controls.
+and render-parity bridge, a private prepared-input boundary, native node controls,
+callback adoption acknowledgments and isolated host/editor ownership by generation.
 Live compiler/command integration and native writer
 activation remain subsequent units.
 The design baseline is `cd205c3c`; the saved format remains 32.
@@ -305,15 +306,28 @@ use the same preparation path. See the conventional render contract for failure
 ownership and verification limits.
 
 The engine exposes a separate callback adoption observation for native generations.
-Preparing or queuing a graph does not advance it. Session publication can compare
-the candidate identity with this observation before committing its reader handover;
-the host/session transaction consuming that evidence remains to be integrated.
+Preparing or queuing a graph does not advance it. The pre-activation
+`auris_session::native_host::NativeHostedPlayback` component now owns an
+`AudioDevice` and `EngineHandle`, isolated fresh CLAP/VST3 instances, pending and
+published host generations, and the retiring host set. It is not a second Session
+authority: it receives a caller-owned `NativeDocument`, performs no document/history
+mutation, and exposes snapshots tagged with node, revision and generation.
+
+Preparation validates configured trusted plugin paths and host descriptors before building a
+candidate. Only one candidate may wait for adoption; a full queue returns it intact
+for retry, a silent engine rejects it, and a dead device retires an unadopted pending
+candidate while retaining the published generation. Promotion requires an exact
+`adopted_native_generation` match. Persistent node identities and editor/window intent
+survive replacement; old hosts remain until the returned graph releases their render
+halves. The host/session transaction consuming this evidence remains to be integrated.
 
 The remaining integration order is:
 
 1. Adapt `HostedPlugins` in `session/hosted.rs`, `Vst3Plugins` in `session/vst3.rs`
-   and plugin-window selection together. Retain the live/spare instance handover,
-   opaque state transfer and retirement lifecycle across graph replacement.
+   and plugin-window selection together. The pre-activation host intentionally uses
+   fresh isolated instances first; retain persistent node/window intent and retirement
+   across graph replacement, but do not introduce spare-instance reuse until the
+   native handover is proven. Preserve opaque state transfer.
 2. Integrate preparation with `Session::rebuild_graph` in `session/mod.rs`. Validate
    the candidate and its revision before changing meter/scope readers or publishing
    to the engine. A failed preparation/publication retains the audible plan and
@@ -323,14 +337,14 @@ The remaining integration order is:
    bridge's legacy-shaped output is never a shortcut for save or command execution.
 
 Host integration must stage an instance handover, not just rename placement-map keys.
-The current `HostedPlugins::place`/`place_instruments` and VST3 equivalents can change
-live/spare or retiring ownership before `RenderGraph::build_with` returns. A native
-candidate therefore needs a preparation-owned handover record that retains the
-published instance/editor selection until validation and publication succeed.
-Failure drops candidate render halves on the preparation thread and returns their
-main-thread halves to the spare/retirement lifecycle without replacing the editor's
-current instance. State copied from the active plugin and document overrides must
-be associated with the same document revision used for preparation.
+The isolated `NativeHostedPlayback` path keeps fresh candidate instances separate
+from the legacy `HostedPlugins::place`/`place_instruments` and VST3 equivalents.
+Its preparation-owned record retains the published node/window selection until
+validation and exact callback adoption succeed. Failure drops candidate render
+halves on the preparation thread and retires their control hosts without replacing
+the current editor. State copied from a host and document overrides must be
+associated with the same document revision used for preparation. Session integration
+must later adapt this record without creating a second document or command authority.
 
 Publication tests must distinguish queue acceptance from the audio callback adopting
 the graph. Meter/scope readers, the audible revision and native parameter handles

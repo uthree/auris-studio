@@ -109,6 +109,13 @@
 //! retain the previous value. It describes graph adoption, not transport playback or hardware
 //! output latency. Session reader/editor handover must use this boundary when native plans are
 //! activated; the conventional session does not yet switch its readers through this mechanism.
+//! [`crate::native_host::NativeHostedPlayback`] owns a native engine and its main-thread plugin
+//! instances. Each candidate uses isolated CLAP/VST3 instances keyed by persistent node identity.
+//! Preparing a candidate cannot restore state into a published editor. Only callback adoption
+//! promotes the candidate's window bindings; replaced instances remain owned until their audio
+//! halves return. Device and engine queues are destroyed before host owners. Native snapshots
+//! carry the adopted generation and do not implicitly edit the conventional session document.
+//! This playback component is an integration boundary for the native authority transition.
 //!
 //! # Multiple project windows
 //!
