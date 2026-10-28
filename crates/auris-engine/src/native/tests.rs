@@ -5,10 +5,11 @@ use auris_core::automation::AutomationCurve;
 use auris_core::pipeline::content::PluginParameter;
 use auris_core::pipeline::{AutomationPolicy, ControlDomain, NodeId};
 use auris_core::project::{EffectSlotId, Project, TrackId};
-use auris_core::{AssetPath, ParamId, ParamTarget};
+use auris_core::{AssetPath, AudioBuffer, Note, ParamId, ParamTarget, Ticks};
 
 use super::{NativeRenderInput, NativeRenderTarget, RuntimeNodeAddress};
 use crate::native::{NodePlacedEffects, NodePlacedInstruments};
+use crate::{Transport, render_block};
 
 fn contracts_for_project(
     project: &Project,
@@ -408,4 +409,94 @@ fn successful_build_consumes_supplied_instruments_and_effects() {
         .unwrap();
     assert!(effects.is_empty());
     assert!(instruments.is_empty());
+}
+
+fn tone_with_saved_gain(gain: f32) -> (Project, TrackId, EffectSlotId) {
+    let mut project = Project::default();
+    let track = project.add_instrument_track("Lead", crate::testkit::TONE_ID);
+    let clip = project
+        .add_midi_clip(track, "Tone", Ticks::ZERO, Ticks::from_beats(4.0))
+        .expect("the tone clip is added");
+    project
+        .midi_clip_mut(clip)
+        .expect("the clip exists")
+        .notes
+        .push(Note::new(60, Ticks::ZERO, Ticks::from_beats(2.0)));
+    let slot = project
+        .add_effect(Some(track), crate::testkit::GAIN_ID)
+        .expect("the gain is added");
+    project
+        .track_mut(track)
+        .expect("the track exists")
+        .mixer
+        .effects
+        .iter_mut()
+        .find(|effect| effect.id == slot)
+        .expect("the effect exists")
+        .state
+        .params
+        .insert("gain".into(), gain);
+    (project, track, slot)
+}
+
+fn render_native_tone(graph: &mut crate::RenderGraph) -> f32 {
+    let mut buffer = AudioBuffer::new(2, 128, 48_000.0);
+    render_block(graph, &mut Transport::playing_from(0), &mut buffer, false);
+    buffer.channel(0)[32]
+}
+
+#[test]
+fn registry_created_effect_loads_saved_state_before_rendering() {
+    let (project, track, slot) = tone_with_saved_gain(2.0);
+    let mapping = instrument_mapping(track, Some(slot));
+    let contracts = contracts_for_project(&project, &mapping);
+    let input = NativeRenderInput::new(project, mapping, contracts).unwrap();
+    let registry = crate::testkit::registry();
+    let mut effects = NodePlacedEffects::new();
+    let mut instruments = NodePlacedInstruments::new();
+    let mut graph = input
+        .build(
+            &auris_core::project::AudioSourceBank::new(),
+            &registry,
+            &mut effects,
+            &mut instruments,
+            128,
+            48_000.0,
+        )
+        .unwrap();
+    let value = render_native_tone(&mut graph);
+    assert!(
+        (value - 1.0).abs() < 1e-6,
+        "saved gain was not rendered: {value}"
+    );
+}
+
+#[test]
+fn caller_placed_effect_state_wins_over_saved_document_state() {
+    let (project, track, slot) = tone_with_saved_gain(2.0);
+    let mapping = instrument_mapping(track, Some(slot));
+    let contracts = contracts_for_project(&project, &mapping);
+    let input = NativeRenderInput::new(project, mapping, contracts).unwrap();
+    let registry = crate::testkit::registry();
+    let mut supplied = registry.create_effect(crate::testkit::GAIN_ID).unwrap();
+    supplied.set_param(ParamId(0), 4.0);
+    let mut effects = NodePlacedEffects::new();
+    effects.insert(NodeId(13), supplied);
+    let mut instruments = NodePlacedInstruments::new();
+    let mut graph = input
+        .build(
+            &auris_core::project::AudioSourceBank::new(),
+            &registry,
+            &mut effects,
+            &mut instruments,
+            128,
+            48_000.0,
+        )
+        .unwrap();
+    let value = render_native_tone(&mut graph);
+    assert!(
+        (value - 2.0).abs() < 1e-6,
+        "caller state was overwritten: {value}"
+    );
+    assert!((graph.tracks()[0].strip().effects[0].param(ParamId(0)) - 4.0).abs() < 1e-6);
 }

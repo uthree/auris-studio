@@ -378,12 +378,17 @@ stable clip stages and explicit source/branch copies. Additional adapters cover 
 creation/removal/order, source-owned clip edits, completed recording file landing and
 timeline settings, main routes, auxiliary sends and shared automation curves/bindings.
 Native mixer adapters resolve existing `ParamTarget` command addresses before one
-atomic edit. `NativeFileSession` adds guarded native save/reopen, asset copying,
+atomic edit. Native plugin adapters now resolve instrument/slot addresses for instance
+replacement, stable-key parameters, complete plugin state, bypass and conventional
+insert-chain/sidechain edits. Node and slot IDs survive replacement and reordering;
+shared automation curves survive removal of a replaced instance's binding. Ambiguous
+custom chains are refused before any mutation. `NativeFileSession` adds guarded native save/reopen, asset copying,
 edited legacy upgrades, checkpoint restore and leased native autosave/recovery to
 the same editor. The explicit Session transition prepares newly landed audio and
 reopens or recovers these native files, retaining an unsaved session's working assets.
 These adapters operate directly on native ownership; the default Session command
-implementations, input-device recording and autosave discovery have not switched.
+implementations and input-device recording remain conventional; ordinary persistence
+uses the format-33 codec described below.
 
 Adapt all document mutation paths to canonical sources/nodes. Prioritize existing
 track/clip/instrument/effect/automation commands and the graph facade, then audit:

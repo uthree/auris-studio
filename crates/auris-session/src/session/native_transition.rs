@@ -1,5 +1,8 @@
 //! Captures and prepares the native authority transition against the existing session runtime.
 
+#[cfg(test)]
+mod native_plugin_workflow;
+
 use auris_core::pipeline::PipelineLimits;
 use auris_core::pipeline::content::{CapabilityProvider, ContentLimits, ProcessorKind};
 use auris_engine::native::NativeGraphGeneration;

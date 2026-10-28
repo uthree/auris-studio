@@ -95,7 +95,8 @@ Implemented adapters cover:
 | --- | --- |
 | Track name, color and height | Track presentation |
 | Strip gain, pan, mute and solo | Persistent strip processor |
-| Effect bypass | Persistent effect processor |
+| Instrument/effect replacement, parameter/state edits and bypass | Persistent processor and effect-slot identities |
+| Effect insertion, removal, reordering and sidechains | Explicit insert edges and sidechain edges |
 | Authored note replacement | One shared source clip; existing bounded note contract |
 | Append, move and remove performance stages | Stable clip/stage identities |
 | Explicit source and processing-branch copies | Core native allocator and ownership operations |
@@ -108,8 +109,9 @@ Implemented adapters cover:
 
 Presentation-only edits retain the musical revision. Other edits currently request
 preparation conservatively. Command receipts describe authored changes; callback
-adoption remains a separate runtime observation. Plugin parameter commands need
-host-supplied descriptors and policies before they can join this boundary.
+adoption remains a separate runtime observation. Plugin parameter edits store finite,
+stable-keyed values. Interactive callers validate range and writability using current
+host descriptors; state restoration does not require an available plugin.
 
 Grid, document name, loop/punch switches, metronome and count-in update saved state
 without adding Undo entries. They synchronize only their own fields across history;
@@ -125,6 +127,33 @@ including removing its last point, detaches that target and retains a curve stil
 used elsewhere. Main-route and send tap/destination changes retain connection IDs;
 missing or ambiguous conventional routes are rejected instead of selecting an edge
 by vector order.
+
+`apply_plugin_command` resolves existing track, effect-slot, `PluginWindow` and
+`ParamTarget` addresses to the native processors. Instrument replacement uses the
+group's explicit primary instrument, including singer guides. Effect replacement
+keeps slot identity and bypass state. Replacing an instance detaches its automation
+bindings but preserves curves and source nodes, including curves used by other
+instances. An identical replacement is a no-op; parameter and complete-state updates
+retain bindings. Numeric parameter IDs never substitute for a missing stable key.
+
+Insert commands require an unambiguous `Sum -> Effect* -> Strip` chain in one group.
+Insertion reuses the split connection's ID; reordering preserves existing node,
+slot and connection IDs. Removal reconnects the neighboring inserts and removes
+only the deleted processor's bindings and incident connections. Sidechain retargeting
+retains its connection ID. Topology edits reject cycles, ambiguous branches and
+resource-limit violations before committing. Plugin capabilities are checked when
+preparing the candidate, separately from document ownership.
+
+Native preparation restores saved state into registry-created effects before handing
+them to the render graph. Caller-supplied hosted effects retain their already restored
+instance state; strip preparation does not overwrite it with the document snapshot.
+
+The `native_plugin_workflow` regression captures a normal Session, edits its native
+candidate, prepares actual built-in instruments/effects and renders stereo PCM. It
+checks a -12 dB gain change, audible insert-order and sidechain changes, exact Undo/Redo
+restoration, and Save As/reopen equality of identities and samples. Engine regressions
+also distinguish registry-created state restoration from caller-owned instance state.
+These are offline checks of prepared graphs, not audio-device callback adoption.
 
 ## Native persistence and recovery
 

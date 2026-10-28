@@ -328,10 +328,13 @@ impl NativeRenderInput {
                                 "hosted effect render half is missing",
                             ));
                         }
-                        let effect = registry
+                        let mut effect = registry
                             .create_effect(&slot.effect_id)
                             .map_err(|error| plugin_error(*node, error.to_string()))?;
                         self.check_effect(*node, slot, effect.as_ref())?;
+                        // Placed effects are already stateful: the strip only prepares them.
+                        // Restore registry-created instances here before handing them over.
+                        effect.load_state(&slot.state);
                         prepared_effects.insert(slot.id, effect);
                     }
                 }

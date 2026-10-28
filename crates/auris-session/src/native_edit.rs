@@ -8,7 +8,10 @@ mod audio;
 mod automation;
 mod clips;
 mod commands;
+mod effects;
 mod mixer_commands;
+mod plugin_commands;
+mod plugins;
 mod routing;
 mod timeline;
 mod tracks;
@@ -17,6 +20,9 @@ pub use audio::NativeAudioEdit;
 pub use automation::NativeAutomationEdit;
 pub use clips::NativeClipEdit;
 pub use commands::NativeEdit;
+pub use effects::NativeEffectEdit;
+pub use plugin_commands::NativePluginCommand;
+pub use plugins::NativePluginEdit;
 pub use routing::NativeRoutingEdit;
 pub use timeline::NativeTimelineEdit;
 pub use tracks::{NativeTrackEdit, NativeTrackKindSpec};
@@ -25,6 +31,12 @@ pub use tracks::{NativeTrackEdit, NativeTrackKindSpec};
 mod audio_tests;
 #[cfg(test)]
 mod clips_tests;
+#[cfg(test)]
+mod effects_tests;
+#[cfg(test)]
+mod plugin_commands_tests;
+#[cfg(test)]
+mod plugins_tests;
 #[cfg(test)]
 mod tracks_tests;
 

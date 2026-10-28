@@ -133,7 +133,14 @@
 //! bounded batches validate a private candidate before committing, transaction owners cannot
 //! interrupt one another, and undo retains the allocator high-water mark. Presentation changes
 //! have a separate revision from musical edits. These adapters are prerequisites for switching
-//! every conventional command family and activating native Save, recovery and checkpoints.
+//! every conventional command family to native runtime ownership.
+//! [`crate::native_edit::NativePluginCommand`] resolves existing track, effect-slot and parameter
+//! addresses into native edits. Plugin replacement preserves processor and slot identities,
+//! removes the replaced instance's control bindings, and retains shared automation sources.
+//! Parameter/state edits preserve bindings and use stable keys rather than numeric positions.
+//! Insert-chain commands validate an unambiguous sum/insert/strip path before rewiring it;
+//! sidechain changes participate in cycle checks. Ownership editing requires no plugin host,
+//! while capability validation and runtime publication remain separate preparation steps.
 //! The captured transition now owns [`crate::native_file_session::NativeFileSession`], sharing
 //! one editor across completed recording file landing, native edits, checkpoint restoration and
 //! guarded native persistence. Saving after legacy open preserves the exact source backup and

@@ -13,6 +13,8 @@ use auris_core::project::{ClipId, Note, NoteTransform, StageId, TrackId};
 /// A bounded edit addressed by persistent native identities.
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub enum NativeEdit {
+    /// Changes plugin instances or their stored state without loading a host.
+    Plugin(super::NativePluginEdit),
     /// Edits shared project-time automation and its stable parameter bindings.
     Automation(super::NativeAutomationEdit),
     /// Changes native main routes and auxiliary sends.
@@ -23,6 +25,8 @@ pub enum NativeEdit {
     Track(super::NativeTrackEdit),
     /// Places a recorded/imported asset directly into a canonical audio source.
     Audio(super::NativeAudioEdit),
+    /// Inserts, removes, moves or sidechains a conventional effect.
+    Effect(super::NativeEffectEdit),
     /// Changes persisted timeline/transport settings.
     Timeline(super::NativeTimelineEdit),
     /// Changes a track's display name.
@@ -115,11 +119,13 @@ pub(super) fn apply(
     limits: auris_core::pipeline::content::ContentLimits,
 ) -> Result<Vec<NativeCreated>, NativeEditError> {
     match edit {
+        NativeEdit::Plugin(edit) => return super::plugins::apply(document, edit, limits),
         NativeEdit::Automation(edit) => return super::automation::apply(document, edit, limits),
         NativeEdit::Routing(edit) => return super::routing::apply(document, edit, limits),
         NativeEdit::Clip(edit) => return super::clips::apply(document, edit, limits),
         NativeEdit::Track(edit) => return super::tracks::apply(document, edit, limits),
         NativeEdit::Audio(edit) => return super::audio::apply(document, edit, limits),
+        NativeEdit::Effect(edit) => return super::effects::apply(document, edit, limits),
         NativeEdit::Timeline(edit) => super::timeline::apply(document, edit)?,
         NativeEdit::RenameTrack { track, name } => {
             presentation(document, *track)?.name = name.clone()
