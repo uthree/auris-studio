@@ -40,7 +40,7 @@ impl From<LegacyDecodeReport> for PipelineMigrationReport {
 /// Explicit native publication uses [`crate::publish_native_upgrade`] to preserve these bytes
 /// and verify that the source has not changed. Ordinary Session saves remain conventional until
 /// the complete native authority switch.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct NativeMigrationCandidate {
     document: NativeDocument,
     report: PipelineMigrationReport,

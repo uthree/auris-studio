@@ -129,6 +129,14 @@
 //! interrupt one another, and undo retains the allocator high-water mark. Presentation changes
 //! have a separate revision from musical edits. These adapters are prerequisites for switching
 //! every conventional command family and activating native Save, recovery and checkpoints.
+//! The captured transition now owns [`crate::native_file_session::NativeFileSession`], sharing
+//! one editor across completed recording file landing, native edits, checkpoint restoration and
+//! guarded native persistence. Saving after legacy open preserves the exact source backup and
+//! writes the current edited native document. Detached save results carry per-session identity,
+//! revision and generation checks, and exact acknowledged bytes detect external changes.
+//! Native asset preparation resolves the candidate's folder and decodes newly added sources into
+//! an isolated bank; reopening a native transition retains its IDs and uses the existing engine.
+//! This explicit workflow does not yet replace ordinary Session recording, autosave or saving.
 //!
 //! # Multiple project windows
 //!

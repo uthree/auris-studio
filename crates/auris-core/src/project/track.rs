@@ -481,10 +481,13 @@ fn deserialize_outputs<'de, D: serde::Deserializer<'de>>(
 }
 
 fn default_track_height() -> f32 {
-    72.0
+    Track::DEFAULT_HEIGHT
 }
 
 impl Track {
+    /// Initial lane height shared by conventional and native track creation.
+    pub const DEFAULT_HEIGHT: f32 = 72.0;
+
     /// Position just past the last clip on this track, in ticks.
     ///
     /// Audio clip lengths depend on the tempo map, so it is passed in.

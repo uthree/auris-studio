@@ -4,16 +4,57 @@
 //! does not convert a document after edits. Runtime preparation may fail while the authored
 //! document remains editable, including when a referenced plugin is unavailable.
 
+mod audio;
+mod clips;
 mod commands;
+mod timeline;
+mod tracks;
 
+pub use audio::NativeAudioEdit;
+pub use clips::NativeClipEdit;
 pub use commands::NativeEdit;
+pub use timeline::NativeTimelineEdit;
+pub use tracks::{NativeTrackEdit, NativeTrackKindSpec};
 
+#[cfg(test)]
+mod audio_tests;
+#[cfg(test)]
+mod clips_tests;
+#[cfg(test)]
+mod tracks_tests;
+
+use std::collections::HashSet;
 use std::collections::VecDeque;
 
 use auris_core::pipeline::content::{ContentError, ContentLimits};
 use auris_core::pipeline::document::NativeDocument;
 
 use crate::Edit;
+
+/// A stable identity created by a successfully committed native batch, in operation order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NativeCreated {
+    /// Timeline track identity.
+    Track(auris_core::TrackId),
+    /// Clip identity.
+    Clip(auris_core::ClipId),
+    /// Audio asset registry identity.
+    AudioSource(auris_core::SourceId),
+    /// Shared authored source identity.
+    Source(auris_core::pipeline::content::SourceDocumentId),
+    /// Processing group identity.
+    Group(auris_core::pipeline::content::GroupId),
+    /// Processor identity.
+    Node(auris_core::pipeline::NodeId),
+    /// Clip-local performance stage identity.
+    Stage(auris_core::project::StageId),
+    /// Effect slot identity.
+    Effect(auris_core::EffectSlotId),
+    /// Send identity.
+    Send(auris_core::SendId),
+    /// Connection identity.
+    Edge(auris_core::pipeline::EdgeId),
+}
 
 /// Maximum number of operations committed as one native command batch.
 pub const MAX_NATIVE_EDITS: usize = 256;
@@ -40,7 +81,7 @@ pub struct NativeEditRevision {
 }
 
 /// Outcome of one atomic document operation.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NativeEditReceipt {
     /// Revisions after the operation.
     pub revision: NativeEditRevision,
@@ -48,6 +89,8 @@ pub struct NativeEditReceipt {
     pub changed: bool,
     /// Whether the musical revision advanced; this is not proof of callback adoption.
     pub needs_prepare: bool,
+    /// New identities, present only after a changed batch has committed successfully.
+    pub created: Vec<NativeCreated>,
 }
 
 /// A rejected native operation leaves the document, history and revision untouched.
@@ -124,9 +167,63 @@ impl NativeDocumentEditor {
         &self.document
     }
 
+    /// Lands recorded audio takes as one atomic, undoable native operation.
+    ///
+    /// A batch may target several audio tracks, but each track may occur only once: accepting
+    /// repeated targets would make a failed take indistinguishable from an intentional shared
+    /// source edit. The candidate is cloned before any validation or allocation, so a late bad
+    /// take leaves the document, counters, history and revisions untouched.
+    pub fn land_recorded_audio(
+        &mut self,
+        expected_revision: u64,
+        owner: NativeEditOwner,
+        takes: &[NativeAudioEdit],
+    ) -> Result<NativeEditReceipt, NativeEditError> {
+        self.check_revision(expected_revision)?;
+        self.check_owner(owner)?;
+        if takes.len() > MAX_NATIVE_EDITS {
+            return Err(ContentError::Limit("command_operations").into());
+        }
+        let mut targets = HashSet::with_capacity(takes.len());
+        let mut sources = HashSet::with_capacity(takes.len());
+        for take in takes {
+            if !targets.insert(take.track) {
+                return Err(NativeEditError::Invalid(
+                    "recording batch contains a duplicate audio target".into(),
+                ));
+            }
+            if let Some(source) = self
+                .document
+                .content
+                .tracks
+                .iter()
+                .find(|binding| binding.track == take.track)
+                .and_then(|binding| binding.source)
+                && !sources.insert(source)
+            {
+                return Err(NativeEditError::Invalid(
+                    "recording targets share one authored source".into(),
+                ));
+            }
+        }
+        let operations = takes
+            .iter()
+            .cloned()
+            .map(NativeEdit::Audio)
+            .collect::<Vec<_>>();
+        self.apply(expected_revision, owner, Edit::RecordTake, &operations)
+    }
+
     /// Current revision tokens, unchanged by rejected requests and no-op batches.
     pub fn revision(&self) -> NativeEditRevision {
         self.revision
+    }
+
+    /// Current gesture owner, used by save/recovery boundaries to refuse partial gestures.
+    pub fn transaction_owner(&self) -> Option<NativeEditOwner> {
+        self.transaction
+            .as_ref()
+            .map(|transaction| transaction.owner)
     }
 
     /// Whether authored state differs from the last acknowledged save.
@@ -170,23 +267,85 @@ impl NativeDocumentEditor {
             });
         }
         let mut candidate = self.document.clone();
+        let mut created = Vec::new();
         for operation in operations {
-            commands::apply(&mut candidate, operation, self.limits)?;
+            created.extend(commands::apply(&mut candidate, operation, self.limits)?);
         }
         candidate.validate_ownership(self.limits)?;
-        let receipt = self.change_receipt(&candidate)?;
+        let mut receipt = self.change_receipt(&candidate)?;
         if !receipt.changed {
             return Ok(receipt);
         }
-        if self.transaction.is_none() {
+        // Unrecorded settings are still persisted, but must not be rewound by an authored undo
+        // step. Synchronize the pre-edit snapshot with the final candidate before storing it.
+        let mut historical = self.document.clone();
+        for operation in operations {
+            if let NativeEdit::Timeline(timeline) = operation {
+                for entry in self.undo.iter_mut().chain(self.redo.iter_mut()) {
+                    timeline::synchronize_unrecorded(timeline, &candidate, &mut entry.document);
+                }
+            }
+        }
+        if self.transaction.is_some() {
+            // Keep the original authored snapshot for the whole gesture. Only its unrecorded
+            // fields follow the live candidate as transport/view settings are changed.
+            if let Some(transaction) = &mut self.transaction {
+                for operation in operations {
+                    if let NativeEdit::Timeline(timeline) = operation {
+                        timeline::synchronize_unrecorded(
+                            timeline,
+                            &candidate,
+                            &mut transaction.before.document,
+                        );
+                    }
+                }
+            }
+        } else {
+            for operation in operations {
+                if let NativeEdit::Timeline(timeline) = operation {
+                    timeline::synchronize_unrecorded(timeline, &candidate, &mut historical);
+                }
+            }
+        }
+        if self.transaction.is_none() && !authored_equal(&historical, &candidate) {
             self.push_undo(HistoryEntry {
                 edit,
-                document: self.document.clone(),
+                document: historical,
             });
             self.redo.clear();
         }
         self.document = candidate;
         self.revision = receipt.revision;
+        receipt.created = created;
+        Ok(receipt)
+    }
+
+    /// Restores a validated native snapshot as one undoable edit, retaining allocation history.
+    ///
+    /// Recovery may replace the whole authored document, but cannot reuse identities consumed
+    /// since the snapshot or interrupt another owner's gesture. No legacy document is involved.
+    pub fn replace_snapshot(
+        &mut self,
+        expected_revision: u64,
+        owner: NativeEditOwner,
+        edit: Edit,
+        mut document: NativeDocument,
+    ) -> Result<NativeEditReceipt, NativeEditError> {
+        self.check_revision(expected_revision)?;
+        self.check_owner(owner)?;
+        self.require_idle()?;
+        preserve_allocator(&self.document, &mut document);
+        document.validate_ownership(self.limits)?;
+        let receipt = self.change_receipt(&document)?;
+        if receipt.changed {
+            self.push_undo(HistoryEntry {
+                edit,
+                document: self.document.clone(),
+            });
+            self.redo.clear();
+            self.document = document;
+            self.revision = receipt.revision;
+        }
         Ok(receipt)
     }
 
@@ -237,19 +396,18 @@ impl NativeDocumentEditor {
     ) -> Result<NativeEditReceipt, NativeEditError> {
         self.check_revision(expected_revision)?;
         self.require_transaction(owner)?;
-        let before = &self
+        let mut before = self
             .transaction
             .as_ref()
             .ok_or(NativeEditError::NoTransaction)?
             .before
-            .document;
-        let receipt = self.change_receipt(before)?;
-        let mut before = self
+            .document
+            .clone();
+        let receipt = self.change_receipt(&before)?;
+        let _ = self
             .transaction
             .take()
-            .ok_or(NativeEditError::NoTransaction)?
-            .before
-            .document;
+            .ok_or(NativeEditError::NoTransaction)?;
         preserve_allocator(&self.document, &mut before);
         self.document = before;
         self.revision = receipt.revision;
@@ -276,10 +434,12 @@ impl NativeDocumentEditor {
         let Some(before) = self.undo.back() else {
             return Ok(None);
         };
-        let receipt = self.change_receipt(&before.document)?;
+        let target = before.document.clone();
+        let receipt = self.change_receipt(&target)?;
         let Some(mut before) = self.undo.pop_back() else {
             return Ok(None);
         };
+        before.document = target;
         preserve_allocator(&self.document, &mut before.document);
         let current = std::mem::replace(&mut self.document, before.document);
         self.redo.push(HistoryEntry {
@@ -300,10 +460,12 @@ impl NativeDocumentEditor {
         let Some(after) = self.redo.last() else {
             return Ok(None);
         };
-        let receipt = self.change_receipt(&after.document)?;
+        let target = after.document.clone();
+        let receipt = self.change_receipt(&target)?;
         let Some(mut after) = self.redo.pop() else {
             return Ok(None);
         };
+        after.document = target;
         preserve_allocator(&self.document, &mut after.document);
         let current = std::mem::replace(&mut self.document, after.document);
         self.push_undo(HistoryEntry {
@@ -379,6 +541,7 @@ impl NativeDocumentEditor {
             revision,
             changed,
             needs_prepare,
+            created: Vec::new(),
         })
     }
 }
@@ -413,6 +576,16 @@ fn preserve_allocator(current: &NativeDocument, restored: &mut NativeDocument) {
         .max(current.context.source_next_id);
 }
 
+/// Allocates only on the private command candidate; failure never consumes a committed ID.
+fn allocate(document: &mut NativeDocument) -> Result<u64, NativeEditError> {
+    let id = document.content.next_id;
+    if id == 0 {
+        return Err(ContentError::IdExhausted.into());
+    }
+    document.content.next_id = id.checked_add(1).ok_or(ContentError::IdExhausted)?;
+    Ok(id)
+}
+
 fn authored_equal(left: &NativeDocument, right: &NativeDocument) -> bool {
     let mut normalized = right.clone();
     normalized.content.next_id = left.content.next_id;
@@ -427,6 +600,13 @@ fn authored_equal(left: &NativeDocument, right: &NativeDocument) -> bool {
 fn musical_equal(left: &NativeDocument, right: &NativeDocument) -> bool {
     let mut normalized = right.clone();
     normalized.context.name.clone_from(&left.context.name);
+    normalized.context.grid = left.context.grid;
+    normalized.context.loop_region = left.context.loop_region;
+    normalized.context.loop_enabled = left.context.loop_enabled;
+    normalized.context.punch_region = left.context.punch_region;
+    normalized.context.punch_enabled = left.context.punch_enabled;
+    normalized.context.metronome = left.context.metronome;
+    normalized.context.count_in_bars = left.context.count_in_bars;
     normalized
         .context
         .mixer_graph_view
@@ -445,3 +625,6 @@ fn musical_equal(left: &NativeDocument, right: &NativeDocument) -> bool {
 
 #[cfg(test)]
 pub(crate) mod tests;
+
+#[cfg(test)]
+mod timeline_tests;

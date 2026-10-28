@@ -10,7 +10,7 @@ and save format-32 `Project` documents. M2 activation is still pending.
 `capture_native_transition` refuses active gestures, agent requests and recording,
 collects actual hosted plugin state, converts once, and records the originating
 session instance, revision and content digest. The returned `NativeSessionTransition`
-owns a `NativeDocumentEditor` and any isolated prepared host set. It retains no
+owns a `NativeFileSession` with one `NativeDocumentEditor` and any isolated prepared host set. It retains no
 mutable legacy Project and owns no audio device.
 
 `prepare_native_transition` validates the origin before collecting host state again
@@ -26,7 +26,14 @@ operations. The standalone `NativeHostedPlayback` delegates to that same manager
 so fixture and installed-plugin tests exercise the shared preparation/adoption path.
 The owner must destroy device/engine graphs before the manager's published hosts.
 The transition currently prepares only: callback publication waits for the complete
-native command authority switch.
+native command authority switch. `open_native_transition` reads persistent native IDs
+directly and uses the same existing Session engine for candidate preparation.
+
+Native preparation resolves the candidate's asset folder, decodes newly landed audio,
+and creates its own stretch cache. Matching immutable decoded buffers may be reused.
+Missing audio is reported on the candidate, and a failed replacement preserves its
+last successful prepared state. Save As changes the candidate's asset folder without
+changing the conventional Session's folder.
 
 ## Native commands and history
 
@@ -59,11 +66,40 @@ Implemented adapters cover:
 | Authored note replacement | One shared source clip; existing bounded note contract |
 | Append, move and remove performance stages | Stable clip/stage identities |
 | Explicit source and processing-branch copies | Core native allocator and ownership operations |
+| Track creation, deletion and ordering | Source, processing group, strip and typed edges |
+| Clip insertion, copy, removal, movement, name and mute | Canonical shared source and stable clip IDs |
+| Completed recording file landing | Full-file metadata plus retained source-frame window |
+| Tempo, meter and transport settings | Native project context with conventional snapping/history policy |
 
 Presentation-only edits retain the musical revision. Other edits currently request
 preparation conservatively. Command receipts describe authored changes; callback
 adoption remains a separate runtime observation. Plugin parameter commands need
 host-supplied descriptors and policies before they can join this boundary.
+
+Grid, document name, loop/punch switches, metronome and count-in update saved state
+without adding Undo entries. They synchronize only their own fields across history;
+authored loop/punch region edits remain undoable. Generated identities are returned
+only after a whole batch commits. Recorded batches reject duplicate tracks or two
+tracks sharing the same authored source.
+
+## Native persistence and recovery
+
+`NativeFileSession` owns the editor, exact acknowledged disk bytes, an instance-local
+save token and asset folder. Detached save work stages bytes; the owner verifies the
+revision, generation, path and gesture before publication. A result from another
+session or an older revision cannot publish or copy assets. External edits made even
+before save begins are compared against the bytes acknowledged at open/save.
+
+Explicitly opening a legacy file captures its bytes once. Its first in-place native
+save publishes the current edited document and preserves an exact legacy backup.
+Native opening and staging expose the actual source bytes, avoiding an independent
+read that could accidentally acknowledge a different file version.
+
+Save As copies inside audio/fonts and self-contained voice connections without
+overwriting different existing assets. Checkpoints retain native documents beside
+their asset folder and restore as one Undo step without lowering allocation counters.
+Checkpoint restore rejects another project's history directory. Ordinary desktop
+autosave discovery and crash recovery still use the conventional Session owner.
 
 ## Remaining activation work
 
@@ -79,6 +115,9 @@ Session. Activation must migrate these routes together:
 - Callback-adopted readers, native command handles, document/audible revisions and
   reconciliation of editor snapshots while another graph is pending.
 
+The explicit transition supports a completed-WAV landing, native edit, checkpoint
+restore, guarded native Save As and native reopen sequence. This does not migrate
+`Session::stop_recording`, the ordinary save/open actions, or their frontend callers.
 Those routes cannot run against a persistent mutable Project beside a native graph.
 The render bridge's temporary Project remains private renderer input. Explicit native
 IO round trips do not establish that ordinary Session reopen/save or recovery has
@@ -103,7 +142,13 @@ This is explicit native IO plus Session preparation, not ordinary Session native
 
 These checks establish document/runtime behavior, not subjective musical quality.
 
-### Windows validation, 2026-10-28
+The native recording workflow regression writes a real WAV with an excluded leading
+window, lands its metadata, edits the clip, removes it, restores a checkpoint, traverses
+Undo/Redo, copies assets on Save As and reopens. It prepares and renders on the same
+Session engine before and after reopen and compares samples and persistent IDs. It
+does not open an input device or demonstrate the ordinary Record button workflow.
+
+### Host-integration baseline, 2026-10-28
 
 `cargo test --workspace` passed 5,063 tests with 52 ignored across 71 suites,
 including all 1,241 desktop tests. The final focused native run passed 16 IO tests
@@ -128,3 +173,11 @@ The commands use `AURIS_NATIVE_PLUGIN`, `AURIS_NATIVE_CONTROL` and
 
 `cargo clippy --workspace --all-targets -- -D warnings`, workspace rustdoc with
 `RUSTDOCFLAGS=-D warnings`, formatting and diff checks also passed.
+
+### Native editing and persistence validation, 2026-10-28
+
+`cargo test --workspace -- --test-threads=1` passed 5,104 tests with 53 ignored across
+71 suites. The focused native Session run passed 109 tests with two installed-plugin
+tests ignored. Workspace Clippy and rustdoc with warnings denied also passed. These results cover
+the explicit native recording-file/edit/checkpoint/save/reopen workflow described
+above; they do not establish default Session authority activation or microphone capture.

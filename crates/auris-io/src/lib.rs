@@ -54,7 +54,9 @@ pub use midi::{
 };
 pub use native_file::{
     NATIVE_FORMAT_VERSION, NativeEnvelope, NativeFileError, NativeResult, StagedNativeDocument,
-    load_native, publish_native_update, publish_native_upgrade, save_native, stage_native,
+    load_native, load_native_with_source, publish_native_new, publish_native_new_with,
+    publish_native_update, publish_native_upgrade, publish_native_upgrade_document, save_native,
+    stage_native,
 };
 pub use pipeline_conversion::{PipelineConversionError, project_to_native};
 pub use pipeline_migration::{

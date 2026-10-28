@@ -5,7 +5,7 @@
 //! the legacy reader reject a native file before it attempts to decode the native payload.
 
 use std::fs::{File, OpenOptions};
-use std::io::Write;
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 use auris_core::pipeline::content::{ContentLimits, ProcessorKind, SourceContent};
@@ -90,6 +90,20 @@ pub struct StagedNativeDocument {
 }
 
 impl StagedNativeDocument {
+    /// Reads the bounded bytes currently held in the staging file.
+    pub fn encoded_bytes(&self) -> NativeResult<Vec<u8>> {
+        self.file
+            .as_file()
+            .try_clone()
+            .and_then(|mut file| {
+                file.seek(SeekFrom::Start(0))?;
+                let mut bytes = Vec::new();
+                file.take((MAX_PROJECT_FILE_BYTES + 1) as u64)
+                    .read_to_end(&mut bytes)?;
+                Ok(bytes)
+            })
+            .map_err(|error| NativeFileError::Io(IoError::from_fs(&self.path, error)))
+    }
     /// Atomically replaces the destination with the staged native document.
     fn publish(self) -> NativeResult<()> {
         publish_ready_staged_file(self.file, &self.path).map_err(NativeFileError::Io)
@@ -100,6 +114,28 @@ impl StagedNativeDocument {
         crate::project_file::publish_ready_staged_file_noclobber(self.file, &self.path)
             .map_err(NativeFileError::Io)
     }
+}
+
+/// Publishes a staged native document only when its destination is absent.
+pub fn publish_native_new(staged: StagedNativeDocument) -> NativeResult<()> {
+    publish_native_new_with(staged, || Ok(()))
+}
+
+/// Claims a new destination and prepares its assets under the same project write lock.
+///
+/// The callback runs only when the destination is absent. It must not overwrite assets.
+/// On failure the staged document is discarded without publishing a document.
+pub fn publish_native_new_with(
+    staged: StagedNativeDocument,
+    prepare_assets: impl FnOnce() -> NativeResult<()>,
+) -> NativeResult<()> {
+    let path = staged.path.clone();
+    let _lock = acquire_write_lock(&path)?;
+    if path.exists() {
+        return Err(NativeFileError::DestinationChanged(path));
+    }
+    prepare_assets()?;
+    staged.publish_noclobber()
 }
 
 /// Serialises and synchronises a native document into a private sibling of `path`.
@@ -217,11 +253,62 @@ pub fn publish_native_upgrade(
     backup: &Path,
     limits: ContentLimits,
 ) -> NativeResult<()> {
-    publish_upgrade(candidate, source, destination, backup, limits, || {})
+    publish_native_upgrade_document(
+        candidate,
+        candidate.document(),
+        source,
+        destination,
+        backup,
+        limits,
+    )
 }
 
+/// Converts a captured legacy source and publishes an explicitly edited native document safely.
+///
+/// The candidate supplies only the exact source bytes and migration provenance. The document is
+/// supplied separately because edits made after opening must be the bytes that become native.
+pub fn publish_native_upgrade_document(
+    candidate: &crate::NativeMigrationCandidate,
+    document: &NativeDocument,
+    source: &Path,
+    destination: &Path,
+    backup: &Path,
+    limits: ContentLimits,
+) -> NativeResult<()> {
+    publish_upgrade_document(
+        candidate,
+        document,
+        source,
+        destination,
+        backup,
+        limits,
+        || {},
+    )
+}
+
+#[cfg(test)]
 fn publish_upgrade(
     candidate: &crate::NativeMigrationCandidate,
+    source: &Path,
+    destination: &Path,
+    backup: &Path,
+    limits: ContentLimits,
+    after_stage: impl FnOnce(),
+) -> NativeResult<()> {
+    publish_upgrade_document(
+        candidate,
+        candidate.document(),
+        source,
+        destination,
+        backup,
+        limits,
+        after_stage,
+    )
+}
+
+fn publish_upgrade_document(
+    candidate: &crate::NativeMigrationCandidate,
+    document: &NativeDocument,
     source: &Path,
     destination: &Path,
     backup: &Path,
@@ -240,7 +327,7 @@ fn publish_upgrade(
         return Err(NativeFileError::SourceChanged(source.to_path_buf()));
     }
     candidate.preserve_backup(backup)?;
-    let staged = stage_native(destination, candidate.document(), limits)?;
+    let staged = stage_native(destination, document, limits)?;
     after_stage();
     if !candidate
         .source_matches(source)
@@ -301,8 +388,17 @@ fn acquire_write_lock_folder(folder: &Path) -> NativeResult<File> {
 
 /// Loads and validates one native pipeline document with the bounded project-file reader.
 pub fn load_native(path: &Path, limits: ContentLimits) -> NativeResult<NativeDocument> {
+    Ok(load_native_with_source(path, limits)?.0)
+}
+
+/// Loads a native document and returns the exact bounded source bytes read for it.
+pub fn load_native_with_source(
+    path: &Path,
+    limits: ContentLimits,
+) -> NativeResult<(NativeDocument, Vec<u8>)> {
     let bytes = read_project_source(path, MAX_PROJECT_FILE_BYTES)?;
-    decode_native_bytes(&bytes, limits)
+    let document = decode_native_bytes(&bytes, limits)?;
+    Ok((document, bytes))
 }
 
 fn decode_native_bytes(bytes: &[u8], limits: ContentLimits) -> NativeResult<NativeDocument> {
@@ -809,5 +905,18 @@ mod tests {
             load_native(destination.path(), limits()).unwrap(),
             *candidate.document()
         );
+    }
+
+    #[test]
+    fn load_native_with_source_returns_exact_bytes_and_staged_bytes() {
+        let source = TempFile::new("native-source-bytes.auris");
+        let document =
+            crate::project_to_native(&Project::new("bytes", 48_000.0), limits()).unwrap();
+        save_native(source.path(), &document, limits()).unwrap();
+        let bytes = std::fs::read(source.path()).unwrap();
+        let (_, loaded_bytes) = load_native_with_source(source.path(), limits()).unwrap();
+        assert_eq!(loaded_bytes, bytes);
+        let staged = stage_native(source.path(), &document, limits()).unwrap();
+        assert_eq!(staged.encoded_bytes().unwrap(), bytes);
     }
 }

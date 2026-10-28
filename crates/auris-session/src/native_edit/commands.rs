@@ -4,7 +4,7 @@
 //! applies one operation to a cloned document, validates the result, and commits that candidate
 //! as one history step.
 
-use super::NativeEditError;
+use super::{NativeCreated, NativeEditError};
 use auris_core::pipeline::NodeId;
 use auris_core::pipeline::content::{ContentError, ProcessorKind, SourceContent};
 use auris_core::pipeline::document::NativeDocument;
@@ -13,6 +13,14 @@ use auris_core::project::{ClipId, Note, NoteTransform, StageId, TrackId};
 /// A bounded edit addressed by persistent native identities.
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub enum NativeEdit {
+    /// Edits clips in one shared authored source.
+    Clip(super::NativeClipEdit),
+    /// Creates, removes or reorders a track and its native ownership.
+    Track(super::NativeTrackEdit),
+    /// Places a recorded/imported asset directly into a canonical audio source.
+    Audio(super::NativeAudioEdit),
+    /// Changes persisted timeline/transport settings.
+    Timeline(super::NativeTimelineEdit),
     /// Changes a track's display name.
     RenameTrack {
         /// Track identity.
@@ -101,8 +109,12 @@ pub(super) fn apply(
     document: &mut NativeDocument,
     edit: &NativeEdit,
     limits: auris_core::pipeline::content::ContentLimits,
-) -> Result<(), NativeEditError> {
+) -> Result<Vec<NativeCreated>, NativeEditError> {
     match edit {
+        NativeEdit::Clip(edit) => return super::clips::apply(document, edit, limits),
+        NativeEdit::Track(edit) => return super::tracks::apply(document, edit, limits),
+        NativeEdit::Audio(edit) => return super::audio::apply(document, edit, limits),
+        NativeEdit::Timeline(edit) => super::timeline::apply(document, edit)?,
         NativeEdit::RenameTrack { track, name } => {
             presentation(document, *track)?.name = name.clone()
         }
@@ -208,21 +220,33 @@ pub(super) fn apply(
                 clip.append_stage(id, transform.clone()).map(|_| true)
             })?;
             document.content.next_id += 1;
+            return Ok(vec![NativeCreated::Stage(id)]);
         }
         NativeEdit::DuplicateSource { source } => {
             let external = document.external_ids();
-            document
+            let copied = document
                 .content
                 .duplicate_source(*source, &external, limits)?;
+            return Ok(std::iter::once(NativeCreated::Source(copied.source))
+                .chain(copied.clips.into_values().map(NativeCreated::Clip))
+                .chain(copied.stages.into_values().map(NativeCreated::Stage))
+                .collect());
         }
         NativeEdit::DuplicateBranch { group } => {
             let external = document.external_ids();
-            document
+            let copied = document
                 .content
                 .duplicate_branch(*group, &external, limits)?;
+            return Ok(std::iter::once(NativeCreated::Group(copied.group))
+                .chain(copied.nodes.into_values().map(NativeCreated::Node))
+                .chain(copied.effects.into_values().map(NativeCreated::Effect))
+                .chain(copied.sends.into_values().map(NativeCreated::Send))
+                .chain(copied.edges.into_values().map(NativeCreated::Edge))
+                .chain(copied.bindings.into_values().map(NativeCreated::Edge))
+                .collect());
         }
     }
-    Ok(())
+    Ok(Vec::new())
 }
 
 fn presentation(

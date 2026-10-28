@@ -5,6 +5,7 @@ use auris_core::pipeline::content::{CapabilityProvider, ContentLimits, Processor
 use auris_engine::native::NativeGraphGeneration;
 
 use crate::native_edit::{NativeDocumentEditor, NativeEditError};
+use crate::native_file_session::{NativeFileSession, NativeFileSessionError};
 use crate::native_host::{NativeHostError, NativeHostManager, NativeHostResources};
 use crate::{Session, SessionError};
 
@@ -32,6 +33,12 @@ pub enum NativeTransitionError {
     /// Source content could not be fingerprinted.
     #[error("could not fingerprint the native transition source: {0}")]
     Fingerprint(String),
+    /// Native file-backed audio could not be prepared.
+    #[error("could not prepare native audio: {0}")]
+    Audio(String),
+    /// Guarded native save, reopen or recovery failed.
+    #[error(transparent)]
+    File(#[from] NativeFileSessionError),
 }
 
 /// A native candidate captured once from a conventional Session, with isolated prepared hosts.
@@ -40,29 +47,45 @@ pub enum NativeTransitionError {
 /// Native edits retain the IDs allocated during capture. Default Session editing and saving
 /// remain conventional until all command families have native adapters.
 pub struct NativeSessionTransition {
-    editor: NativeDocumentEditor,
+    files: NativeFileSession,
     hosts: Option<NativeHostManager>,
     prepared_revision: Option<u64>,
     origin: String,
     origin_revision: u64,
     origin_digest: String,
     content_limits: ContentLimits,
+    assets: crate::native_assets::NativeAudioAssets,
+    asset_document: auris_core::pipeline::document::NativeDocument,
 }
 
 impl NativeSessionTransition {
+    /// File-backed sources that could not be loaded for the most recent prepared candidate.
+    pub fn missing_audio(&self) -> &[crate::native_assets::NativeMissingAudio] {
+        &self.assets.missing
+    }
     /// Native command/history authority for this candidate only.
     pub fn editor(&self) -> &NativeDocumentEditor {
-        &self.editor
+        self.files.editor()
     }
 
     /// Edits the native candidate without reconverting the originating Project.
     pub fn editor_mut(&mut self) -> &mut NativeDocumentEditor {
-        &mut self.editor
+        self.files.editor_mut()
+    }
+
+    /// Native persistence and checkpoint authority, sharing this candidate's single editor.
+    pub fn files(&self) -> &NativeFileSession {
+        &self.files
+    }
+
+    /// Saves or restores this candidate without changing the conventional Session document.
+    pub fn files_mut(&mut self) -> &mut NativeFileSession {
+        &mut self.files
     }
 
     /// Prepared generation, only while it still describes the candidate's current revision.
     pub fn prepared_generation(&self) -> Option<NativeGraphGeneration> {
-        if self.prepared_revision != Some(self.editor.revision().document) {
+        if self.prepared_revision != Some(self.editor().revision().document) {
             return None;
         }
         self.hosts.as_ref()?.prepared_generation()
@@ -83,7 +106,46 @@ impl Session {
         self.collect_hosted_state()?;
         let native = auris_io::project_to_native(&self.project, limits)?;
         Ok(NativeSessionTransition {
-            editor: NativeDocumentEditor::new(native, limits)?,
+            asset_document: native.clone(),
+            assets: crate::native_assets::NativeAudioAssets {
+                bank: self.render_bank.clone(),
+                missing: Vec::new(),
+            },
+            files: NativeFileSession::from_editor(
+                NativeDocumentEditor::new(native, limits)?,
+                limits,
+                self.path
+                    .as_deref()
+                    .and_then(auris_io::project_folder)
+                    .map(std::path::Path::to_path_buf),
+            ),
+            hosts: None,
+            prepared_revision: None,
+            origin: self.sound_scope.clone(),
+            origin_revision: self.revision,
+            origin_digest: self
+                .agent_document_revision()
+                .map_err(NativeTransitionError::Fingerprint)?,
+            content_limits: limits,
+        })
+    }
+
+    /// Opens an explicit native candidate against this Session's existing runtime.
+    ///
+    /// The file's persistent IDs are read directly; no legacy projection is reconstructed.
+    /// Reopening does not adopt the candidate as the default Session document or publish audio.
+    pub fn open_native_transition(
+        &mut self,
+        path: &std::path::Path,
+        limits: ContentLimits,
+    ) -> Result<NativeSessionTransition, NativeTransitionError> {
+        self.require_native_transition_boundary()?;
+        self.collect_hosted_state()?;
+        let files = NativeFileSession::open(path, limits)?;
+        Ok(NativeSessionTransition {
+            asset_document: files.editor().document().clone(),
+            assets: crate::native_assets::NativeAudioAssets::default(),
+            files,
             hosts: None,
             prepared_revision: None,
             origin: self.sound_scope.clone(),
@@ -126,11 +188,11 @@ impl Session {
         {
             return Err(NativeTransitionError::Stale);
         }
-        let folder = self.path.as_deref().and_then(auris_io::project_folder);
+        let folder = transition.files.asset_folder();
         let mut plugin_paths = self.plugin_trust.extra_paths().to_vec();
         // An explicitly opened CLAP library is already authorized by the conventional host.
         // Carry that exact file permission into isolated preparation without trusting new files.
-        for processor in &transition.editor.document().content.processors {
+        for processor in &transition.editor().document().content.processors {
             let plugin = match &processor.kind {
                 ProcessorKind::Instrument(plugin) | ProcessorKind::Effect { plugin, .. } => plugin,
                 _ => continue,
@@ -145,24 +207,33 @@ impl Session {
             }
         }
         let mut hosts = NativeHostManager::new(&plugin_paths, self.engine.is_running());
-        // Reuse the current rate-matched bank. Existing stretch entries are immutable buffers;
-        // candidate preparation must not change the bank or readers used by the live graph.
+        // Decode newly landed native sources into an isolated bank. Existing rate-matched
+        // buffers may be shared, but a failed candidate never changes the live render bank.
+        let assets = crate::native_assets::prepare_native_audio_assets(
+            transition.editor().document(),
+            folder,
+            self.engine.sample_rate(),
+            Some((&transition.asset_document, &transition.assets.bank)),
+        )
+        .map_err(NativeTransitionError::Audio)?;
         let resources = NativeHostResources {
-            bank: &self.render_bank,
+            bank: &assets.bank,
             registry: &self.registry,
             project_folder: folder,
             content_limits: transition.content_limits,
             graph_limits,
         };
-        let revision = transition.editor.revision().document;
+        let revision = transition.editor().revision().document;
         let generation = hosts.prepare(
             &self.engine,
-            transition.editor.document(),
+            transition.editor().document(),
             revision,
             provider,
             resources,
         )?;
         transition.hosts = Some(hosts);
+        transition.asset_document = transition.editor().document().clone();
+        transition.assets = assets;
         transition.prepared_revision = Some(revision);
         Ok(generation)
     }
