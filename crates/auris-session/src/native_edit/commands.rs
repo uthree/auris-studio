@@ -13,6 +13,10 @@ use auris_core::project::{ClipId, Note, NoteTransform, StageId, TrackId};
 /// A bounded edit addressed by persistent native identities.
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub enum NativeEdit {
+    /// Edits shared project-time automation and its stable parameter bindings.
+    Automation(super::NativeAutomationEdit),
+    /// Changes native main routes and auxiliary sends.
+    Routing(super::NativeRoutingEdit),
     /// Edits clips in one shared authored source.
     Clip(super::NativeClipEdit),
     /// Creates, removes or reorders a track and its native ownership.
@@ -111,6 +115,8 @@ pub(super) fn apply(
     limits: auris_core::pipeline::content::ContentLimits,
 ) -> Result<Vec<NativeCreated>, NativeEditError> {
     match edit {
+        NativeEdit::Automation(edit) => return super::automation::apply(document, edit, limits),
+        NativeEdit::Routing(edit) => return super::routing::apply(document, edit, limits),
         NativeEdit::Clip(edit) => return super::clips::apply(document, edit, limits),
         NativeEdit::Track(edit) => return super::tracks::apply(document, edit, limits),
         NativeEdit::Audio(edit) => return super::audio::apply(document, edit, limits),

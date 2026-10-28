@@ -5,14 +5,19 @@
 //! document remains editable, including when a referenced plugin is unavailable.
 
 mod audio;
+mod automation;
 mod clips;
 mod commands;
+mod mixer_commands;
+mod routing;
 mod timeline;
 mod tracks;
 
 pub use audio::NativeAudioEdit;
+pub use automation::NativeAutomationEdit;
 pub use clips::NativeClipEdit;
 pub use commands::NativeEdit;
+pub use routing::NativeRoutingEdit;
 pub use timeline::NativeTimelineEdit;
 pub use tracks::{NativeTrackEdit, NativeTrackKindSpec};
 
@@ -40,6 +45,8 @@ pub enum NativeCreated {
     Clip(auris_core::ClipId),
     /// Audio asset registry identity.
     AudioSource(auris_core::SourceId),
+    /// Shared automation curve identity.
+    Automation(auris_core::pipeline::content::AutomationId),
     /// Shared authored source identity.
     Source(auris_core::pipeline::content::SourceDocumentId),
     /// Processing group identity.
@@ -139,7 +146,7 @@ struct Transaction {
 /// have native adapters.
 pub struct NativeDocumentEditor {
     document: NativeDocument,
-    saved: NativeDocument,
+    saved: Option<NativeDocument>,
     revision: NativeEditRevision,
     limits: ContentLimits,
     undo: VecDeque<HistoryEntry>,
@@ -152,7 +159,7 @@ impl NativeDocumentEditor {
     pub fn new(document: NativeDocument, limits: ContentLimits) -> Result<Self, NativeEditError> {
         document.validate_ownership(limits)?;
         Ok(Self {
-            saved: document.clone(),
+            saved: Some(document.clone()),
             document,
             revision: NativeEditRevision::default(),
             limits,
@@ -165,6 +172,16 @@ impl NativeDocumentEditor {
     /// Reads the single authored native document; runtime plans are separate snapshots.
     pub fn document(&self) -> &NativeDocument {
         &self.document
+    }
+
+    /// Creates an unsaved authority, including a recovered document with no disk baseline.
+    pub fn new_unsaved(
+        document: NativeDocument,
+        limits: ContentLimits,
+    ) -> Result<Self, NativeEditError> {
+        let mut editor = Self::new(document, limits)?;
+        editor.saved = None;
+        Ok(editor)
     }
 
     /// Lands recorded audio takes as one atomic, undoable native operation.
@@ -228,7 +245,9 @@ impl NativeDocumentEditor {
 
     /// Whether authored state differs from the last acknowledged save.
     pub fn is_dirty(&self) -> bool {
-        !authored_equal(&self.document, &self.saved)
+        self.saved
+            .as_ref()
+            .is_none_or(|saved| !authored_equal(&self.document, saved))
     }
 
     /// Acknowledges successful persistence of exactly the current document revision.
@@ -238,7 +257,7 @@ impl NativeDocumentEditor {
     pub fn acknowledge_save(&mut self, expected_revision: u64) -> Result<(), NativeEditError> {
         self.check_revision(expected_revision)?;
         self.require_idle()?;
-        self.saved = self.document.clone();
+        self.saved = Some(self.document.clone());
         Ok(())
     }
 
