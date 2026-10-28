@@ -26,11 +26,10 @@
 //!
 //! # What a take needs before it can start
 //!
-//! A folder. A recording is a file, and a project that has never been saved has nowhere to put
-//! one; every other asset a project refers to can sit outside the folder until a save picks it up,
-//! but a take has to be *written* somewhere the moment it begins. So this is the one command that
-//! refuses on an unsaved document, and says so rather than inventing a temporary directory whose
-//! contents would be lost the first time the machine tidied it.
+//! A folder. Every session has private working storage even before its first save, so the writer
+//! has a durable location from the moment capture begins. Save As collects those files into the
+//! chosen project folder. The WAV holds the full take; count-in and punch trimming are authored
+//! clip offsets so the same source window survives saving, recovery and reopening.
 //!
 //! A track to record onto, too, and an audio one. Which track that is follows the selection: an
 //! audio track that is selected is where the take lands, so recording is choosing a track and
@@ -956,11 +955,9 @@ impl Session {
                 outside_punch: punch.is_some(),
             });
         };
-        let buffer = match (head + offset, kept == buffer.frame_count() as u64) {
-            (0, true) => buffer,
-            (from, _) => buffer.slice(from as usize, kept as usize),
-        };
-        let seconds = buffer.frame_count() as f64 / project_rate;
+        // The source describes the full file that reload_assets will decode after reopen.
+        // Trimming only the live buffer would make that file play from the wrong source frame.
+        let seconds = kept as f64 / project_rate;
         let start = self
             .project
             .tempo_map
@@ -998,6 +995,8 @@ impl Session {
         // the number it needs is already there and right.
         let played_at = self.project.tempo_map.bpm_at(start);
         if let Some(audio) = self.project.audio_clip_mut(clip) {
+            audio.offset_frames = head + offset;
+            audio.length_frames = kept;
             audio.source_bpm = Some(played_at);
         }
         self.install_source(source, Arc::new(buffer));
@@ -1573,6 +1572,138 @@ mod tests {
             session.project().audio_clip(clip).is_some(),
             "and the clip is really in the document"
         );
+    }
+
+    #[test]
+    fn trimmed_take_windows_survive_undo_save_reopen_and_native_save_as() {
+        use crate::session::fixtures::{Scratch, write_tone};
+        use auris_core::pipeline::content::SourceContent;
+        use auris_engine::{OfflineOptions, RenderProgress};
+
+        for punched in [false, true] {
+            let scratch = Scratch::new(if punched {
+                "punch-window-reopen"
+            } else {
+                "count-window-reopen"
+            });
+            let mut live = session();
+            let track = live.add_audio_track("Take");
+            live.project.tempo_map = TempoMap::constant(120.0);
+            live.save_as(&scratch.join("Window.auris")).unwrap();
+            if punched {
+                live.set_punch_region(Ticks::QUARTER, Ticks::QUARTER * 2);
+                live.set_punch_enabled(true);
+            }
+            let folder = live.project_folder().unwrap().to_path_buf();
+            let path = live.path().unwrap().to_path_buf();
+            std::fs::create_dir_all(folder.join(auris_io::AUDIO_DIR)).unwrap();
+            let file = TakeFile {
+                path: write_tone(&folder.join("Audio/take.wav"), 48_000),
+                inside: std::path::PathBuf::from("Audio/take.wav"),
+                track,
+            };
+            live.forget_history();
+            live.begin_transaction(Edit::RecordTake);
+            let report = live.land_take(&file, 0, 120, 48_000.0).unwrap();
+            live.end_transaction();
+            let clip_id = report.clip.unwrap();
+            let clip = live.project.audio_clip(clip_id).unwrap().clone();
+            let expected_offset = if punched { 24_120 } else { 120 };
+            let expected_length = 48_000 - expected_offset;
+            assert_eq!(clip.offset_frames, expected_offset);
+            assert_eq!(clip.length_frames, expected_length);
+            assert_eq!(live.project.audio_sources[&clip.source].frame_count, 48_000);
+            assert_eq!(live.bank.get(clip.source).unwrap().frame_count(), 48_000);
+            assert!((report.seconds - expected_length as f64 / 48_000.0).abs() < 1e-12);
+            assert_eq!(live.undo(), Some(Edit::RecordTake));
+            assert!(live.project.audio_clip(clip_id).is_none());
+            assert_eq!(live.redo(), Some(Edit::RecordTake));
+            assert_eq!(live.project.audio_clip(clip_id), Some(&clip));
+
+            let options = OfflineOptions {
+                end_frames: Some(48_000),
+                include_tail: false,
+                ..Default::default()
+            };
+            let before = live
+                .render_job()
+                .render(&options, &mut RenderProgress::default())
+                .unwrap();
+            assert!(before.channel(0).iter().any(|sample| sample.abs() > 0.01));
+            live.save(&path).unwrap();
+            let mut reopened = session();
+            assert!(reopened.open(&path).unwrap().is_empty());
+            assert_eq!(reopened.project.audio_clip(clip_id), Some(&clip));
+            let after = reopened
+                .render_job()
+                .render(&options, &mut RenderProgress::default())
+                .unwrap();
+            assert_eq!(after.channel(0), before.channel(0));
+            assert_eq!(after.channel(1), before.channel(1));
+
+            let limits = crate::native_edit::tests::limits();
+            let mut native = reopened.capture_native_transition(limits).unwrap();
+            let checkpoint = native.files().create_checkpoint("recorded-window").unwrap();
+            let source = native
+                .editor()
+                .document()
+                .content
+                .tracks
+                .iter()
+                .find(|binding| binding.track == track)
+                .unwrap()
+                .source
+                .unwrap();
+            native
+                .editor_mut()
+                .apply(
+                    0,
+                    crate::native_edit::NativeEditOwner::Human,
+                    Edit::RenameClip,
+                    &[crate::native_edit::NativeEdit::Clip(
+                        crate::native_edit::NativeClipEdit::Rename {
+                            source,
+                            clip: clip_id,
+                            name: "Edited after recording".into(),
+                        },
+                    )],
+                )
+                .unwrap();
+            native
+                .files_mut()
+                .restore_checkpoint(&checkpoint, 1, crate::native_edit::NativeEditOwner::Human)
+                .unwrap();
+            native.editor_mut().undo(2).unwrap();
+            native.editor_mut().redo(3).unwrap();
+            let job = native
+                .files_mut()
+                .begin_save_as(&scratch.join("Native.auris"))
+                .unwrap();
+            native.files_mut().finish_save(job.run().unwrap()).unwrap();
+            let saved = auris_io::load_native(native.files().path().unwrap(), limits).unwrap();
+            let native_clip = saved
+                .content
+                .sources
+                .iter()
+                .find_map(|source| match &source.content {
+                    SourceContent::Audio(clips) => clips.iter().find(|entry| entry.id == clip_id),
+                    _ => None,
+                })
+                .unwrap();
+            assert_eq!(native_clip, &clip);
+            let assets = crate::native_assets::prepare_native_audio_assets(
+                &saved,
+                native.files().asset_folder(),
+                48_000.0,
+                None,
+            )
+            .unwrap();
+            assert!(assets.missing.is_empty());
+            assert_eq!(
+                assets.bank.get(clip.source).unwrap().channel(0),
+                live.bank.get(clip.source).unwrap().channel(0)
+            );
+        }
     }
 
     #[test]

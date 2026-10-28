@@ -148,6 +148,15 @@ Undo/Redo, copies assets on Save As and reopens. It prepares and renders on the 
 Session engine before and after reopen and compares samples and persistent IDs. It
 does not open an input device or demonstrate the ordinary Record button workflow.
 
+Ordinary `Session` recording finalization also retains the complete WAV in its source
+registry and buffer bank. Count-in and punch exclusions are stored as clip offsets
+and lengths. Previously only the in-memory buffer was sliced while its path still
+named the full WAV, so reopening selected the wrong frames. The regression covers
+both count-in and punch, normal Undo/Redo and save/open with sample-equal renders,
+then native capture, clip editing, checkpoint restore, native Save As and asset reload.
+It exercises the recorder's actual landing helper with finalized WAV files, without
+opening a microphone device. Default document authority remains conventional.
+
 ### Host-integration baseline, 2026-10-28
 
 `cargo test --workspace` passed 5,063 tests with 52 ignored across 71 suites,
@@ -181,3 +190,8 @@ The commands use `AURIS_NATIVE_PLUGIN`, `AURIS_NATIVE_CONTROL` and
 tests ignored. Workspace Clippy and rustdoc with warnings denied also passed. These results cover
 the explicit native recording-file/edit/checkpoint/save/reopen workflow described
 above; they do not establish default Session authority activation or microphone capture.
+
+After the ordinary recording-window correction, the full serial workspace run passed
+5,105 tests with 53 ignored across the same 71 suites. Workspace Clippy, formatting
+and Session rustdoc with warnings denied also passed. The added test covers both
+count-in and punch windows through normal save/open and the explicit native workflow.
