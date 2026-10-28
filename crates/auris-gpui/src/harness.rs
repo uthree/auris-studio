@@ -965,6 +965,99 @@ mod tests {
         std::fs::remove_dir_all(&root).unwrap();
     }
 
+    /// The ordinary Save and Open commands persist the native envelope without changing the
+    /// keyboard/menu path that owns the document.
+    #[gpui::test]
+    fn normal_save_and_open_round_trip_the_native_document(cx: &mut TestAppContext) {
+        let (app, cx) = open(cx);
+        let root = std::env::temp_dir().join(format!(
+            "auris-harness-native-save-open-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+
+        let (document, track, clip) = app.update(cx, |this, _| {
+            let track = this
+                .session
+                .add_default_instrument_track("Native round trip")
+                .unwrap();
+            let clip = this
+                .session
+                .add_midi_clip(track, "Editable clip", Ticks::ZERO, CLIP_LENGTH)
+                .unwrap();
+            this.session
+                .save_as(&root.join("Native round trip.auris"))
+                .unwrap();
+            this.open_clip_in_editor(clip);
+            this.session
+                .set_clip_loop(clip, CLIP_LENGTH + CLIP_LENGTH)
+                .unwrap();
+            assert!(
+                this.session.can_undo(),
+                "the edit must be undoable before saving"
+            );
+            this.undo();
+            assert_eq!(
+                this.session
+                    .project()
+                    .tracks
+                    .iter()
+                    .find(|candidate| candidate.id == track)
+                    .and_then(|candidate| candidate.kind.as_instrument())
+                    .and_then(|instrument| instrument
+                        .clips
+                        .iter()
+                        .find(|candidate| candidate.id == clip))
+                    .map(|candidate| candidate.loop_end),
+                Some(Ticks::ZERO),
+                "Undo must remove the loop edit"
+            );
+            this.session.redo();
+            (this.session.path().unwrap().to_path_buf(), track, clip)
+        });
+
+        cx.update(|window, cx| app.update(cx, |this, cx| this.save(window, cx)));
+        cx.run_until_parked();
+
+        let raw: serde_json::Value = serde_json::from_slice(&std::fs::read(&document).unwrap())
+            .expect("the normal Save command writes JSON");
+        assert_eq!(raw["format_version"], serde_json::json!(33));
+        let project_name = app.read_with(cx, |this, _| this.session.project().name.clone());
+        assert_eq!(raw["document"]["context"]["name"], project_name);
+
+        app.update(cx, |this, cx| this.open_project_at(document.clone(), cx));
+        cx.run_until_parked();
+        app.read_with(cx, |this, _| {
+            assert_eq!(this.session.path(), Some(document.as_path()));
+            let track = this
+                .session
+                .project()
+                .tracks
+                .iter()
+                .find(|candidate| candidate.id == track)
+                .expect("the track identity survives Open");
+            let clip = track
+                .kind
+                .as_instrument()
+                .and_then(|instrument| {
+                    instrument
+                        .clips
+                        .iter()
+                        .find(|candidate| candidate.id == clip)
+                })
+                .expect("the clip identity survives Open");
+            assert_eq!(clip.loop_end, CLIP_LENGTH + CLIP_LENGTH);
+            assert_eq!(
+                this.selected_clip,
+                Some(clip.id),
+                "reopening the same document retains a still-valid clip selection"
+            );
+            assert!(!this.session.is_dirty());
+            assert!(!this.session.can_undo(), "Open starts a new edit history");
+        });
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
     /// Another writer at the open file, seen from the window: a clean window follows the
     /// disk silently, a dirty one gets a standing offer and autosave holds its fire, and a
     /// save of its own takes the file back and the offer down.

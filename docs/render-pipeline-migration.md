@@ -61,15 +61,16 @@ existing regular file is an idempotent success; different bytes, directories, sy
 and special files are rejected. Oversized input is rejected before staging.
 
 The explicit native IO path now groups source checks, backup and atomic replacement
-under the same `.auris-write.lock` convention as Session saves. Default Session
-Save, recovery and checkpoint jobs remain at format 32 until their command authority
-has migrated. Native IO primitives do not change that rollout gate.
+under the same `.auris-write.lock` convention as Session saves. Default Session Save,
+recovery and checkpoints now write format 33 through a separate lossless conventional
+codec. The [storage transition decision](render-pipeline-plan.md#storage-transition-decision-2026-10-28)
+separates that migration from activation of the native runtime command owner.
 
 ## Guarded native persistence
 
 The native envelope uses `NATIVE_FORMAT_VERSION = 33` beside the legacy
 `Project::FORMAT_VERSION = 32`. `load_native` probes the envelope version before
-decoding its payload; the legacy reader rejects native files before interpreting
+decoding its payload; the explicit legacy decoder rejects native files before interpreting
 them as a legacy score. Native ownership, numeric playback fields and existing
 clip loop/event budgets are validated without opening assets or plugins.
 

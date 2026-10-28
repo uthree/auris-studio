@@ -13,9 +13,10 @@ callback adoption acknowledgments and isolated host/editor ownership by generati
 The normal Session can now capture and prepare a revision-bound native transition
 using its existing engine. Native document edits have atomic batches and snapshot
 history. Explicit native IO APIs support bounded format-33 files, guarded updates
-and backed-up in-place upgrades. The default Session authority, playback publication,
-Save, recovery and checkpoints still require the remaining command migration.
-The design baseline is `cd205c3c`; the saved format remains 32.
+and backed-up in-place upgrades. Ordinary Session Save, recovery and checkpoints now
+use format 33 through a lossless conventional persistence codec. Runtime command
+authority and native playback publication remain a separate integration gate.
+The design baseline is `cd205c3c`; legacy format 32 remains readable.
 
 Read [the design](render-pipeline-design.md) for document ownership, port semantics,
 migration, UI and agent contracts. Update `auris_session::guide` as each contract
@@ -27,7 +28,7 @@ becomes implemented. Keep current user documentation accurate to shipped behavio
 | --- | --- | --- | --- | --- |
 | M0 | Baselines and executable contracts | None | None | Existing behavior characterized |
 | M1 | Unified projection and focused UI | M0 | No semantic format change | Useful inspection without a second routing store |
-| M2 | Typed model, migration and conventional-project compiler | M0, M1 identities | New format at activation | Existing projects survive native round trips and render equivalently |
+| M2 | Typed model, migration and conventional-project compiler | M0, M1 identities | Format 33 storage precedes full runtime activation | Existing projects survive native round trips and render equivalently |
 | M3 | Shared source, independent instrument branches, automation | M2 | Covered by M2 schema; bump again if incompatible | First complete product workflow passes |
 | M4 | Singer branches and dependency-aware jobs | M3 | Version any new stored variants | Independent takes, safe invalidation and landing |
 | M5 | Control composition and reusable processing groups | M3; singer support follows M4 | Version incompatible additions | Usability and execution semantics demonstrated |
@@ -233,8 +234,8 @@ than inferred; the [automation contract](render-pipeline-automation.md) describe
 boundary. The standalone native document envelope also validates asset-registry
 identities and track presentation/source roles. Existing session commands still operate
 on the current project; the new resolver is their future identity boundary, not an
-activated command backend. The M2 activation gate still applies to file writing
-and playback.
+activated command backend. The M2 activation gate still applies to native runtime
+editing and playback; conventional format-33 persistence has its separate lossless gate.
 
 Implement typed IDs, authored-source ownership, nodes/ports/edges, group references
 and automation targets in `auris-core`. Add version-independent pure validation for
@@ -263,9 +264,8 @@ The explicit `publish_native_upgrade` IO operation now combines that candidate w
 backup, source checks and staged format-33 publication. Native updates require the
 observed destination bytes. See the [migration contract and verification](render-pipeline-migration.md).
 
-The ordinary Session writer switch, legacy-schema separation, checkpoint/recovery and
-Save As integration remain coupled to M2c/M2d. The guarded native IO APIs are tested
-independently; default Session loading/writing continues to use format 32.
+Ordinary Session persistence uses the guarded format-33 path described below. Its
+conventional runtime model remains the single editable authority until M2d completes.
 
 Implement the design's conversion algorithm in the IO boundary with dedicated legacy
 representations. Expand the supported-version dispatcher from the current source,
@@ -277,9 +277,9 @@ atomic publication and no-clobber backup creation. Include recovery/checkpoints,
 Save As, collected assets and missing external plugins. Migration never runs a
 generator, loads a model or regenerates a take.
 
-Do not activate ordinary native-format saves until the compiler and command adapters
-below are ready. Pre-activation work may exercise explicit IO APIs in isolated files. A runtime rollout
-flag must not permit writing a file that the same installed build cannot reopen.
+The storage transition is allowed only for shapes that the installed conventional
+editor can reopen without loss. A runtime rollout flag must not permit writing a
+file that the same installed build cannot reopen.
 
 ### M2c: Compile conventional projects
 
@@ -401,6 +401,32 @@ Keep musical revision distinct from layout changes and transport-specific histor
 counters. Request receipts and their timestamps are excluded from the semantic
 revision/digest to avoid self-referential hashes.
 
+### Storage transition decision, 2026-10-28
+
+Separate the file-format transition from replacement of the runtime command owner.
+Ordinary Save, Save As, autosave, recovery, checkpoints and song candidate documents
+write the native envelope. Existing UI commands, recording, Undo and agent commands
+continue to operate on one mutable `Project`. An immutable, non-serialized identity
+checkpoint retains native IDs; it is neither an editable graph nor a second saved score.
+Conversion occurs at persistence boundaries, not on each edit.
+
+The IO codec reconstructs only the conventional subset, without loading plugins, and
+requires re-encoding to preserve the authored native document. Unsupported graphs
+fail before replacing the live session. Native plugin parameter keys remain canonical;
+the Session resolves them to the installed plugin's runtime parameter positions.
+Stable clip-stage IDs accompany conventional history and transform edits.
+
+Publication keeps the existing worker/revision checks, validates destination bytes,
+and preserves the exact legacy source before the first upgraded overwrite. Save As
+and recovery keep their existing asset-folder and lease semantics. The normal UI
+keeps its keyboard, chooser and background-job paths.
+
+This revises the earlier requirement to activate storage and all commands together.
+It does not satisfy the full native runtime gate below: editing shared sources and
+arbitrary native branches in the ordinary Session still requires native command
+dispatch, native history and callback-adopted readers. See
+[native session integration](render-pipeline-native-session.md#ordinary-session-persistence).
+
 ### Activation gate
 
 - Every supported legacy fixture migrates without authored-content or opaque-state loss.
@@ -414,10 +440,10 @@ revision/digest to avoid self-referential hashes.
 - All audited editing paths operate on the native model. No production shadow copies
   of old routes, instrument ownership or automation targets remain.
 
-M2 activation is an atomic integration boundary. Data types can land earlier, but
-format activation waits for all four units and the gate. Rollback before release
-keeps the old writer. After native files ship, recovery for an older executable uses
-the preserved legacy backup; native edits require a compatible reader.
+Full native runtime activation remains an atomic integration boundary. Format-33
+storage for conventional sessions precedes it under the lossless gate above. Recovery
+with an older executable uses the preserved legacy backup; native edits require a
+compatible reader.
 
 ## M3 — First complete layered-instrument workflow
 

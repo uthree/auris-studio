@@ -7,7 +7,10 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use auris_core::Project;
-use auris_io::{IoError, StagedProject, load_project, save_project, stage_project};
+use auris_io::{
+    IoError, StagedProject, load_project, save_session_project as save_project,
+    stage_session_project as stage_project,
+};
 
 use super::Session;
 use crate::SessionError;
@@ -307,7 +310,7 @@ impl Session {
     /// stale session refuses before making a snapshot or changing the project file.
     pub fn save_with_checkpoint(&mut self) -> Result<(), SessionError> {
         let path = self.path.clone().ok_or(SessionError::NoPath)?;
-        if load_project(&path)? != self.saved_project {
+        if !super::files::same_persisted_project(&load_project(&path)?, &self.saved_project) {
             return Err(SessionError::ExternalChanges(path));
         }
         if self.project != self.saved_project {

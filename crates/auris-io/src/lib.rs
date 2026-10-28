@@ -32,6 +32,7 @@ pub mod export;
 pub mod import;
 pub mod midi;
 pub mod native_file;
+pub mod native_persistence;
 pub mod pipeline_conversion;
 pub mod pipeline_migration;
 pub mod project_backup;
@@ -58,6 +59,10 @@ pub use native_file::{
     publish_native_update, publish_native_upgrade, publish_native_upgrade_document, save_native,
     stage_native,
 };
+pub use native_persistence::{
+    NativePersistenceError, native_to_project, native_to_project_lossless,
+    project_to_native_preserving, validate_lossless_conventional,
+};
 pub use pipeline_conversion::{PipelineConversionError, project_to_native};
 pub use pipeline_migration::{
     NativeMigrationCandidate, PipelineMigrationError, PipelineMigrationReport,
@@ -66,8 +71,8 @@ pub use pipeline_migration::{
 pub use project_backup::{LegacyBackupOutcome, ProjectBackupError, preserve_legacy_project_backup};
 pub use project_file::{
     AUDIO_DIR, MAX_PROJECT_FILE_BYTES, PROJECT_EXTENSION, StagedFile, StagedProject,
-    document_in_folder, load_project, project_folder, save_project, stage_file_bytes,
-    stage_project,
+    document_in_folder, load_project, project_folder, save_project, save_session_project,
+    stage_file_bytes, stage_project, stage_session_project,
 };
 pub use record::WavRecorder;
 pub use soundfont::{

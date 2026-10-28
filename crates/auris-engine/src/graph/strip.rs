@@ -305,6 +305,17 @@ pub struct RenderStrip {
 }
 
 impl RenderStrip {
+    /// Resolves a prepared effect parameter by its persisted stable key.
+    ///
+    /// This lookup runs while a graph is built, never on the audio callback.
+    pub(crate) fn effect_param_for_key(&self, slot: usize, key: &str) -> Option<ParamId> {
+        self.effects
+            .get(slot)?
+            .parameters()
+            .iter()
+            .find(|descriptor| descriptor.key.as_ref() == key)
+            .map(|descriptor| descriptor.id)
+    }
     /// A strip with no effects.
     ///
     /// `sample_rate` sizes the mute fade, which is measured in milliseconds and therefore has to

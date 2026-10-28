@@ -871,13 +871,13 @@ impl Session {
     /// A lane addresses a plugin parameter by position, and a plugin is free to move one: a hosted
     /// CLAP plugin renumbers its whole list the moment its author inserts a parameter, and a
     /// built-in one does the same on any in-house edit to its `parameters()`. So a document that
-    /// has been away is asked, once, where each key sits now — and a lane whose parameter no longer
-    /// exists is dropped rather than left driving whatever took its place.
+    /// has been away is asked, once, where each key sits now. Legacy files drop missing keys;
+    /// native files retain them under unused transient IDs, inactive in the renderer.
     ///
     /// Called from [`Session::open`](Session::open) after the graph is built, because a hosted
     /// plugin cannot be asked for its parameter list until it has been placed. Returns whether the
-    /// document was changed, which leaves the project dirty for the same reason a relocated audio
-    /// file does: the answer is worth keeping, and only a save keeps it.
+    /// runtime targets changed. Legacy repairs mark the document dirty; native parameter positions
+    /// are transient and do not change the saved document.
     pub(super) fn realign_automation(&mut self) -> bool {
         let asking: Vec<(ParamTarget, String)> = self
             .project
@@ -907,19 +907,62 @@ impl Session {
             lists.push((plugin, list));
         }
 
-        let mut automation = std::mem::take(&mut self.project.automation);
-        let changed = automation.realign_by_key(|target, key| {
+        let native_projection = self.project.native_identity().is_some();
+        // Native persistence must retain a lane whose plugin key is not available in this build,
+        // but the runtime must never let its synthetic position collide with a real parameter.
+        // Reserve IDs from the top of the parameter space, per plugin, outside both the current
+        // descriptor IDs and any other unresolved keys. The same closure is used for the live and
+        // saved-edit projections so their transient targets remain comparable.
+        let mut unresolved: Vec<(ParamTarget, String, ParamId)> = Vec::new();
+        if native_projection {
+            for (owner, descriptors) in &lists {
+                let missing: std::collections::BTreeSet<_> = asking
+                    .iter()
+                    .filter(|(target, key)| {
+                        target.with_param(ParamId(0)) == *owner
+                            && !descriptors.iter().any(|entry| entry.key == key.as_str())
+                    })
+                    .map(|(_, key)| key.clone())
+                    .collect();
+                let used: std::collections::BTreeSet<_> =
+                    descriptors.iter().map(|entry| entry.id).collect();
+                let available = (0..=u32::MAX)
+                    .rev()
+                    .map(ParamId)
+                    .filter(|candidate| !used.contains(candidate));
+                unresolved.extend(
+                    missing
+                        .into_iter()
+                        .zip(available)
+                        .map(|(key, id)| (*owner, key, id)),
+                );
+            }
+        }
+        let resolve = |target: ParamTarget, key: &str| {
             let plugin = target.with_param(ParamId(0));
-            lists
+            let descriptor = lists
                 .iter()
-                .find(|(seen, _)| *seen == plugin)?
-                .1
+                .find(|(seen, _)| *seen == plugin)
+                .and_then(|(_, descriptors)| {
+                    descriptors.iter().find(|descriptor| descriptor.key == key)
+                })
+                .map(|descriptor| descriptor.id);
+            if descriptor.is_some() || !native_projection {
+                return descriptor;
+            }
+            unresolved
                 .iter()
-                .find(|descriptor| descriptor.key == key)
-                .map(|descriptor| descriptor.id)
-        });
+                .find(|(owner, existing, _)| *owner == plugin && existing == key)
+                .map(|(_, _, id)| *id)
+        };
+        let mut automation = std::mem::take(&mut self.project.automation);
+        let changed = automation.realign_by_key(resolve);
         self.project.automation = automation;
-        if changed {
+        if native_projection {
+            // Runtime parameter positions are absent from the native file. Resolving them is
+            // not an authored edit; missing keys stay stored and are ignored by the renderer.
+            self.saved_edit_project.automation.realign_by_key(resolve);
+        } else if changed {
             self.dirty = true;
         }
         changed
@@ -1756,6 +1799,56 @@ mod tests {
         assert!(
             session.is_dirty(),
             "a repair worth keeping leaves the document unsaved, as a relocated sample does"
+        );
+    }
+
+    #[test]
+    fn an_unresolved_native_key_gets_a_non_colliding_runtime_parameter_id() {
+        let mut session = session();
+        let track = session.add_default_instrument_track("Lead").unwrap();
+        let descriptor = session.instrument_descriptors(track)[0].clone();
+        let target = ParamTarget::Instrument {
+            track,
+            param: descriptor.id,
+        };
+        let identity =
+            auris_io::project_to_native(session.project(), crate::native_edit::tests::limits())
+                .expect("the conventional project has a native identity");
+        session.project.automation.set_point(
+            target,
+            Some("missing.parameter".into()),
+            AutomationCurve::Linear,
+            Ticks::ZERO,
+            0.25,
+        );
+        session.project.set_native_identity(Arc::new(identity));
+        session.saved_edit_project = session.project.clone();
+
+        assert!(session.realign_automation());
+        let unresolved = session
+            .automation()
+            .lanes()
+            .iter()
+            .find(|lane| lane.key() == Some("missing.parameter"))
+            .expect("the durable unresolved lane remains present");
+        assert_eq!(unresolved.target.param(), Some(ParamId(u32::MAX)));
+        assert!(session.automation().lane(target).is_none());
+
+        assert!(session.set_automation_point(target, Ticks::ZERO, descriptor.default));
+        assert_eq!(session.automation().len(), 2);
+        assert_eq!(
+            session
+                .automation()
+                .lane(target)
+                .and_then(|lane| lane.key()),
+            Some(&*descriptor.key)
+        );
+        assert!(
+            session
+                .automation()
+                .lanes()
+                .iter()
+                .any(|lane| lane.key() == Some("missing.parameter"))
         );
     }
 

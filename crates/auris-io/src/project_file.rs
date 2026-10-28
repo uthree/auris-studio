@@ -49,6 +49,12 @@ pub struct StagedProject {
     path: PathBuf,
     modified: Option<std::time::SystemTime>,
     fingerprint: u64,
+    publication: Option<SessionPublication>,
+}
+
+enum SessionPublication {
+    New,
+    Existing { bytes: Vec<u8>, legacy: bool },
 }
 
 /// An already-written and synchronised sibling file awaiting atomic publication.
@@ -88,6 +94,30 @@ impl StagedProject {
 
     /// Atomically replaces the destination with the already-synchronised staged document.
     pub fn publish(self) -> Result<()> {
+        if let Some(publication) = &self.publication {
+            match publication {
+                SessionPublication::New => {
+                    return publish_ready_staged_file_noclobber(self.file, &self.path);
+                }
+                SessionPublication::Existing { bytes, legacy } => {
+                    let verify = || -> Result<()> {
+                        if read_project_source(&self.path, MAX_PROJECT_FILE_BYTES)? != *bytes {
+                            return Err(IoError::NativeProject(
+                                "the destination changed while the save was being prepared".into(),
+                            ));
+                        }
+                        Ok(())
+                    };
+                    verify()?;
+                    if *legacy {
+                        let backup = self.path.with_extension("auris.legacy-backup");
+                        crate::preserve_legacy_project_backup(bytes, &backup)
+                            .map_err(|error| IoError::NativeProject(error.to_string()))?;
+                        verify()?;
+                    }
+                }
+            }
+        }
         publish_ready_staged_file(self.file, &self.path)
     }
 }
@@ -100,6 +130,22 @@ pub const PROJECT_EXTENSION: &str = "auris";
 /// Sixty-four MiB leaves room for hundreds of thousands of notes and automation points while
 /// bounding both the source buffer and serde's decoded allocations for an untrusted file.
 pub const MAX_PROJECT_FILE_BYTES: usize = 64 * 1024 * 1024;
+
+/// Native ownership budgets used by ordinary session persistence, in addition to the byte limit.
+pub const SESSION_CONTENT_LIMITS: auris_core::pipeline::content::ContentLimits =
+    auris_core::pipeline::content::ContentLimits {
+        sources: 4_096,
+        clips: 262_144,
+        stages: 262_144,
+        processors: 65_536,
+        groups: 4_097,
+        tracks: 4_096,
+        edges: 262_144,
+        external_ids: 65_536,
+        automations: 65_536,
+        automation_points: 1_048_576,
+        bindings: 65_536,
+    };
 
 /// Sub-folder of a project folder holding the audio that project owns.
 pub const AUDIO_DIR: &str = "Audio";
@@ -268,10 +314,71 @@ pub fn stage_project(path: &Path, project: &mut Project) -> Result<StagedProject
         path: path.to_path_buf(),
         modified,
         fingerprint,
+        publication: None,
     })
 }
 
-/// Writes `project` to `path` as pretty-printed JSON, stamped with this build's format version.
+/// Stages an ordinary session as a native format-33 document.
+///
+/// Conversion is lossless and retains native identities across conventional edits. The input
+/// adopts its identity checkpoint only after staging succeeds. Publication rechecks the exact
+/// destination bytes and preserves a legacy original before replacing it. Callers that edit on
+/// another thread must still validate their session revision before publishing the result.
+pub fn stage_session_project(path: &Path, project: &mut Project) -> Result<StagedProject> {
+    let publication = if path.exists() {
+        let bytes = read_project_source(path, MAX_PROJECT_FILE_BYTES)?;
+        let probe: FormatVersionProbe = serde_json::from_slice(&bytes)?;
+        let legacy = probe.format_version != crate::NATIVE_FORMAT_VERSION;
+        if legacy {
+            decode_legacy_bytes(&bytes, path)?;
+        }
+        SessionPublication::Existing { bytes, legacy }
+    } else {
+        SessionPublication::New
+    };
+    let mut candidate = project.clone();
+    candidate.validate_loop_expansion()?;
+    candidate.format_version = Project::FORMAT_VERSION;
+    candidate.saved_by = env!("CARGO_PKG_VERSION").to_string();
+    candidate.reconcile_native_stage_ids();
+    let limits = SESSION_CONTENT_LIMITS;
+    let document = crate::native_persistence::project_to_native_preserving(&candidate, limits)
+        .map_err(|error| IoError::NativeProject(error.to_string()))?;
+    crate::native_persistence::native_to_project(&document, limits)
+        .map_err(|error| IoError::NativeProject(error.to_string()))?;
+    let native = crate::stage_native(path, &document, limits)
+        .map_err(|error| IoError::NativeProject(error.to_string()))?;
+    candidate.set_native_identity(std::sync::Arc::new(document));
+    let (file, path) = native.into_staged_parts();
+    let bytes = read_project_source(file.path(), MAX_PROJECT_FILE_BYTES)?;
+    let mut hasher = DefaultHasher::new();
+    hasher.write(&bytes);
+    let fingerprint = hasher.finish();
+    let modified = file
+        .as_file()
+        .metadata()
+        .ok()
+        .and_then(|meta| meta.modified().ok());
+    *project = candidate;
+    Ok(StagedProject {
+        file,
+        path,
+        modified,
+        fingerprint,
+        publication: Some(publication),
+    })
+}
+
+/// Saves an ordinary session using native persistence, keeping the input unchanged on failure.
+pub fn save_session_project(path: &Path, project: &mut Project) -> Result<()> {
+    let mut candidate = project.clone();
+    stage_session_project(path, &mut candidate)?.publish()?;
+    *project = candidate;
+    Ok(())
+}
+
+/// Writes an explicit legacy `Project` file, stamped with the conventional format version.
+/// Ordinary Session persistence uses [`save_session_project`] instead.
 ///
 /// The document is written through the already-open handle of a randomly named sibling and then
 /// renamed over the target, so an interrupted save — a full disk, a lost connection to a network
@@ -369,17 +476,26 @@ pub(crate) fn decode_legacy_bytes(
     ))
 }
 
-/// Reads a project from `path`.
+/// Reads a conventional editor project from a legacy or native file at `path`.
 ///
-/// The format version must match this build, or be one of the older versions it still reads:
+/// Native format 33 is accepted only when the lossless persistence codec can reconstruct it.
+/// Legacy files must match the conventional format, or one of the older versions still read:
 /// 31 with each track's single output, 30 without the latest extended chords, 29 without
 /// eleventh chords, 28 without named drum lanes, or 27, whose volume contour is defaulted.
-/// After parsing, the
+/// After parsing a legacy file, the
 /// id counter is repaired, which is what stops freshly created tracks and clips from colliding
 /// with ids already in the document, and so is the routing — a file whose buses feed each other
 /// in a circle has no order it can be rendered in, and repairing it beats refusing to open it.
 pub fn load_project(path: &Path) -> Result<Project> {
     let bytes = read_project_source(path, MAX_PROJECT_FILE_BYTES)?;
+    let probe: FormatVersionProbe = serde_json::from_slice(&bytes)?;
+    if probe.format_version == crate::NATIVE_FORMAT_VERSION {
+        let limits = SESSION_CONTENT_LIMITS;
+        let document = crate::native_file::decode_native_bytes(&bytes, limits)
+            .map_err(|error| IoError::NativeProject(error.to_string()))?;
+        return crate::native_persistence::native_to_project_lossless(&document, limits)
+            .map_err(|error| IoError::NativeProject(error.to_string()));
+    }
     decode_legacy_bytes(&bytes, path).map(|(project, _)| project)
 }
 
@@ -416,6 +532,54 @@ mod tests {
     use std::fs::OpenOptions;
     use std::io::Write;
     use std::sync::{Arc, Barrier};
+
+    #[test]
+    fn ordinary_native_save_round_trips_and_preserves_legacy_bytes() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("Song.auris");
+        let mut project = demo_project();
+        save_project(&path, &mut project).unwrap();
+        let mut legacy = std::fs::read(&path).unwrap();
+        legacy.extend_from_slice(b"\n \n");
+        std::fs::write(&path, &legacy).unwrap();
+        save_session_project(&path, &mut project).unwrap();
+        assert_eq!(
+            std::fs::read(path.with_extension("auris.legacy-backup")).unwrap(),
+            legacy
+        );
+        let document = crate::load_native(&path, SESSION_CONTENT_LIMITS).unwrap();
+        let mut reopened = load_project(&path).unwrap();
+        assert_eq!(reopened, project);
+        save_session_project(&path, &mut reopened).unwrap();
+        assert_eq!(
+            crate::load_native(&path, SESSION_CONTENT_LIMITS).unwrap(),
+            document
+        );
+    }
+
+    #[test]
+    fn native_publication_refuses_changed_or_claimed_destinations_and_backup_conflicts() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("Song.auris");
+        let mut project = demo_project();
+        let staged = stage_session_project(&path, &mut project.clone()).unwrap();
+        std::fs::write(&path, b"another writer").unwrap();
+        assert!(staged.publish().is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), b"another writer");
+        save_project(&path, &mut project).unwrap();
+        let before = std::fs::read(&path).unwrap();
+        let staged = stage_session_project(&path, &mut project.clone()).unwrap();
+        std::fs::write(&path, b"edited during staging").unwrap();
+        assert!(staged.publish().is_err());
+        assert!(!path.with_extension("auris.legacy-backup").exists());
+        std::fs::write(&path, &before).unwrap();
+        std::fs::write(path.with_extension("auris.legacy-backup"), b"older backup").unwrap();
+        let original = project.clone();
+        assert!(save_session_project(&path, &mut project).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        assert_eq!(project, original);
+        assert!(project.native_identity().is_none());
+    }
 
     fn legacy_predictable_scratch_path(path: &Path) -> PathBuf {
         let mut name = path
@@ -817,7 +981,7 @@ mod tests {
     #[test]
     fn different_format_versions_are_rejected_before_parsing_the_document() {
         let file = TempFile::new("version.auris");
-        for version in [0, 1, 26, Project::FORMAT_VERSION + 1] {
+        for version in [0, 1, 26, crate::NATIVE_FORMAT_VERSION + 1] {
             std::fs::write(
                 file.path(),
                 format!(r#"{{"format_version": {version}, "tracks": "unsupported shape"}}"#),

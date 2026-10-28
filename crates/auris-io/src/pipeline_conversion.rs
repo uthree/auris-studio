@@ -177,11 +177,23 @@ pub fn project_to_native(
             let source_id = SourceDocumentId(ids.take()?);
             let mut clips = Vec::with_capacity(kind.len());
             for clip in kind {
-                let stage_ids = clip
-                    .transforms
-                    .iter()
-                    .map(|_| ids.take().map(auris_core::project::StageId))
-                    .collect::<Result<Vec<_>, _>>()?;
+                let stage_ids = if let Some(existing) = project.native_stage_ids(clip.id) {
+                    if existing.len() != clip.transforms.len() {
+                        return Err(PipelineConversionError::Stage(
+                            auris_core::project::StageError::LengthMismatch {
+                                clip: clip.id,
+                                stages: clip.transforms.len(),
+                                ids: existing.len(),
+                            },
+                        ));
+                    }
+                    existing.to_vec()
+                } else {
+                    clip.transforms
+                        .iter()
+                        .map(|_| ids.take().map(auris_core::project::StageId))
+                        .collect::<Result<Vec<_>, _>>()?
+                };
                 clips.push(clip.clone().with_stage_ids(stage_ids)?);
             }
             content.sources.push(SourceDocument {
@@ -646,6 +658,9 @@ fn preflight(project: &Project, limits: ContentLimits) -> Result<u64, PipelineCo
     }
     let start = project
         .allocation_start()
+        .into_iter()
+        .chain(project.native_allocation_start())
+        .max()
         .ok_or(PipelineConversionError::IdExhausted)?;
     let required = [
         groups,

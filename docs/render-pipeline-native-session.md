@@ -2,8 +2,41 @@
 
 The normal Session now captures and prepares a native transition using its existing
 engine and resources. Native document commands and guarded format-33 IO are available
-as integration components. The default desktop, CLI and agent sessions still edit
-and save format-32 `Project` documents. M2 activation is still pending.
+as integration components. The default desktop, CLI and agent sessions now save
+format-33 documents. They retain a single conventional editing authority while full
+native runtime activation is pending.
+
+## Ordinary Session persistence
+
+Normal Save, Save As, autosave, recovery, checkpoints and song-candidate saves use
+`stage_session_project` / `save_session_project`. `load_project` dispatches legacy
+formats and native format 33. No UI command or model-facing tool must select a
+different save operation.
+
+The codec is distinct from renderer lowering. It decodes conventional ownership,
+sources, insert chains, routes, sends and automation without creating plugins, then
+re-encodes and checks the native document for loss. A file that cannot be represented
+by the ordinary editor is refused before replacing the open document. Plugin stable
+parameter keys survive decoding; the Session resolves runtime parameter positions.
+Missing keys retain their curves under distinct unused transient parameter IDs, so
+editing an available control cannot overwrite them. The renderer resolves stable
+keys against prepared plugins and ignores unavailable bindings without deleting data.
+
+The editable `Project` carries only a non-serialized immutable identity checkpoint and
+stage-ID associations. Native groups, sources, nodes, edges and automation identities
+survive compatible edits, saving and reopening. Undo retains allocator high-water
+marks and stage reordering preserves stage IDs. There is no second editable native
+document in this conventional runtime, and no legacy payload embedded in format 33.
+
+Staging captures the exact destination bytes. Publication checks them again and
+preserves the first legacy overwrite as `Name.auris.legacy-backup`. A conflicting
+backup or changed destination prevents replacement. Cancelled/stale Session jobs do
+not publish; only accepted saves adopt identity and location changes. Autosave adopts
+its identity checkpoint while retaining dirty state. Recovery remains unsaved and
+owns copied private assets until a permanent Save As.
+
+This storage transition precedes full native command/host activation. The explicit
+native editor remains the integration path for general graphs and source sharing.
 
 ## Session capture and preparation
 
@@ -145,11 +178,12 @@ Session. Activation must migrate these routes together:
 
 The explicit transition supports a completed-WAV landing, native edit, checkpoint
 restore, guarded native Save As and native reopen sequence. This does not migrate
-`Session::stop_recording`, the ordinary save/open actions, or their frontend callers.
-Those routes cannot run against a persistent mutable Project beside a native graph.
+`Session::stop_recording` or the runtime command authority. Ordinary save/open actions
+now use the separate lossless persistence codec described above. Those routes cannot
+run against a persistent mutable Project beside an independently editable native graph.
 The render bridge's temporary Project remains private renderer input. Explicit native
-IO round trips do not establish that ordinary Session reopen/save or recovery has
-crossed this authority boundary. See the [migration contract](render-pipeline-migration.md)
+IO round trips do not establish that the runtime has crossed this authority boundary.
+See the [migration contract](render-pipeline-migration.md)
 for guarded publication and backup semantics.
 
 ## Verification scope
@@ -245,3 +279,39 @@ physical microphone capture or default desktop native activation.
 The final serial workspace run passed 5,136 tests with 53 ignored across 71 suites.
 Workspace Clippy (`--all-targets -- -D warnings`), workspace rustdoc
 (`RUSTDOCFLAGS=-D warnings`), formatting and diff checks passed on the same code.
+
+### Ordinary UI persistence validation, 2026-10-28
+
+The desktop harness exercises the normal background Save/Open paths after edits and
+Undo/Redo, and the recovery prompt through permanent Save As and reopening. These
+checks inspect the actual format-33 envelope and adopted Session state.
+
+The normal recovery regression uses a real WAV in an abandoned private workspace,
+recovers it into a new Session, saves to a permanent project folder, and reopens it.
+Offline stereo PCM is sample-equal before recovery, after recovery and after reopening.
+The existing ordinary recording-finalization test now passes through the same native
+writer. These tests do not exercise a physical microphone or make a listening claim.
+
+Additional checks cover exact legacy backups, publication conflicts, cancellation,
+stale save jobs, source/stage IDs through Undo and new allocations, checkpoints,
+unsupported graph rejection, and automation keys whose installed parameter positions
+have changed or disappeared. Runtime automation uses prepared plugin descriptors;
+unresolved curves remain saved and cannot overwrite an available parameter's lane.
+
+The final serial workspace run (`cargo test --workspace --no-fail-fast --
+--test-threads=1`) passed 5,159 tests with 53 ignored across 71 suites, including
+1,242 desktop tests, 1,283 Session tests and 199 IO unit tests. Workspace Clippy
+(`--all-targets -- -D warnings`) also passed.
+
+Workspace rustdoc (`RUSTDOCFLAGS=-D warnings`), formatting and diff checks passed.
+The workspace-built `external_hosted_parameters` test executable was then run
+separately for two installed instruments, without opening editors or an audio device:
+
+| Instrument | Control | Left-channel RMS before / after setting minimum |
+| --- | --- | --- |
+| Vital VST3 | Volume | 0.12513068 / 0 |
+| Surge XT CLAP | Global Volume | 0.06997609 / 0.00173658 |
+
+Both runs passed live tool edits, Undo/Redo, ordinary native saving, saved-project
+tool edits, no-op retry byte preservation, reopening and rendered-level restoration.
+The RMS measurements establish a signal change, not a musical-quality judgment.

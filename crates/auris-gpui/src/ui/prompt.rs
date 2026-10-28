@@ -3185,7 +3185,14 @@ mod window_tests {
             &std::fs::read(&source_document).expect("the saved project can be read"),
         )
         .expect("a saved project is JSON");
-        source_json["name"] = serde_json::Value::String(project_name.to_owned());
+        // Native files keep the project metadata under the envelope document. Legacy fixtures
+        // deliberately continue to use the top-level field through the migration loader.
+        if source_json.get("document").is_some() {
+            source_json["document"]["context"]["name"] =
+                serde_json::Value::String(project_name.to_owned());
+        } else {
+            source_json["name"] = serde_json::Value::String(project_name.to_owned());
+        }
         std::fs::write(
             &source_document,
             serde_json::to_vec_pretty(&source_json).unwrap(),
@@ -3274,6 +3281,28 @@ mod window_tests {
             fixture.source_bytes,
             "recovery must not write the permanent source project"
         );
+        let saved_root =
+            private_recovery_test_dir(&std::env::temp_dir(), "auris-gpui-recovered-save");
+        let recovered_document = app.update(cx, |this, _| {
+            this.session
+                .save_as(&saved_root.join("Recovered native.auris"))
+                .expect("recovered work can be saved through the normal Session API")
+                .document
+        });
+        let saved: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&recovered_document).unwrap())
+                .expect("the recovered Save As output is JSON");
+        assert_eq!(saved["format_version"], serde_json::json!(33));
+        app.update(cx, |this, cx| {
+            this.open_project_at(recovered_document.clone(), cx)
+        });
+        cx.run_until_parked();
+        app.read_with(cx, |this, _| {
+            assert_eq!(this.session.path(), Some(recovered_document.as_path()));
+            assert_eq!(this.session.project().name, "Recovered song");
+            assert!(!this.session.is_dirty());
+        });
+        std::fs::remove_dir_all(saved_root).unwrap();
         assert!(
             Session::recovery_snapshots()
                 .unwrap()

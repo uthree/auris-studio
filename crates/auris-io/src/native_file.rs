@@ -90,6 +90,9 @@ pub struct StagedNativeDocument {
 }
 
 impl StagedNativeDocument {
+    pub(crate) fn into_staged_parts(self) -> (NamedTempFile, PathBuf) {
+        (self.file, self.path)
+    }
     /// Reads the bounded bytes currently held in the staging file.
     pub fn encoded_bytes(&self) -> NativeResult<Vec<u8>> {
         self.file
@@ -401,7 +404,10 @@ pub fn load_native_with_source(
     Ok((document, bytes))
 }
 
-fn decode_native_bytes(bytes: &[u8], limits: ContentLimits) -> NativeResult<NativeDocument> {
+pub(crate) fn decode_native_bytes(
+    bytes: &[u8],
+    limits: ContentLimits,
+) -> NativeResult<NativeDocument> {
     #[derive(Deserialize)]
     struct VersionProbe {
         format_version: u32,
@@ -574,7 +580,10 @@ mod tests {
         let file = TempFile::new("native-reject.auris");
         save_native(file.path(), &document, limits()).unwrap();
         assert!(matches!(
-            crate::load_project(file.path()),
+            crate::project_file::decode_legacy_bytes(
+                &std::fs::read(file.path()).unwrap(),
+                file.path()
+            ),
             Err(crate::error::IoError::ProjectVersionMismatch { .. })
         ));
     }
@@ -741,7 +750,10 @@ mod tests {
             *candidate.document()
         );
         assert!(matches!(
-            crate::load_project(source.path()),
+            crate::project_file::decode_legacy_bytes(
+                &std::fs::read(source.path()).unwrap(),
+                source.path()
+            ),
             Err(IoError::ProjectVersionMismatch {
                 found: NATIVE_FORMAT_VERSION,
                 ..

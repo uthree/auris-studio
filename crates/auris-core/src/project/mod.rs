@@ -86,6 +86,7 @@ pub use transform::{NoteTransform, StrokeDirection, performed};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
+use std::sync::Arc;
 
 use crate::asset::AssetPath;
 use crate::harmony::Harmony;
@@ -172,6 +173,22 @@ pub struct PresetRef {
     pub bank: i32,
     /// MIDI program number within that bank.
     pub patch: i32,
+}
+
+#[derive(Clone, Debug, Default)]
+struct NativeIdentityState {
+    document: Option<Arc<crate::pipeline::document::NativeDocument>>,
+    stage_ids: BTreeMap<ClipId, Vec<StageId>>,
+    stage_payloads: BTreeMap<ClipId, Vec<NoteTransform>>,
+    next_id: u64,
+}
+
+// Identity bookkeeping is an in-memory compatibility aid, not project content. In particular,
+// attaching or refreshing it must not dirty a document or change an undo comparison.
+impl PartialEq for NativeIdentityState {
+    fn eq(&self, _other: &Self) -> bool {
+        true
+    }
 }
 
 /// The whole document.
@@ -287,10 +304,59 @@ pub struct Project {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub transcription_provenance: BTreeMap<ClipId, String>,
     next_id: u64,
+    /// Ephemeral native identity checkpoint used when a legacy edit is persisted as format 33.
+    ///
+    /// This is deliberately not serialised and is never a second editable document. The legacy
+    /// [`Project`] remains the only mutable authority; the checkpoint only supplies stable native
+    /// identities when the renderer-facing conversion is repeated.
+    #[serde(skip)]
+    native_identity: NativeIdentityState,
 }
 
 fn default_grid() -> Ticks {
     Ticks(crate::time::TICKS_PER_QUARTER / 4)
+}
+
+fn match_stage_ids(
+    old: &[NoteTransform],
+    old_ids: &[StageId],
+    new: &[NoteTransform],
+    mut next_id: u64,
+) -> (Vec<StageId>, u64) {
+    let mut used = BTreeSet::new();
+    let mut ids = vec![None; new.len()];
+
+    // First reserve every unchanged payload. This prevents an insertion at the front from
+    // consuming the old index zero before the unchanged stage at index one gets matched.
+    for (new_index, transform) in new.iter().enumerate() {
+        let match_index = old
+            .iter()
+            .enumerate()
+            .find(|(index, candidate)| !used.contains(index) && *candidate == transform)
+            .map(|(index, _)| index);
+        if let Some(index) = match_index {
+            used.insert(index);
+            ids[new_index] = Some(old_ids[index]);
+        }
+    }
+
+    // Then retain the positional identity for a changed payload where that old slot was not
+    // already claimed by an unchanged stage. Remaining entries are genuinely new identities.
+    for (new_index, id) in ids.iter_mut().enumerate() {
+        if id.is_some() {
+            continue;
+        }
+        if new_index < old_ids.len() && used.insert(new_index) {
+            *id = Some(old_ids[new_index]);
+        } else {
+            let allocated = next_id;
+            next_id = next_id
+                .checked_add(1)
+                .expect("the native identity space is exhausted");
+            *id = Some(StageId(allocated));
+        }
+    }
+    (ids.into_iter().map(Option::unwrap).collect(), next_id)
 }
 
 impl Default for Project {
@@ -300,7 +366,8 @@ impl Default for Project {
 }
 
 impl Project {
-    /// Schema version written into saved files and required when opening them.
+    /// Schema version of the conventional model and explicit legacy files.
+    /// Ordinary Session persistence uses the separate native document envelope version.
     /// Version 32 stores zero or more track outputs; older files' single outputs load as one route.
     /// Version 31 adds power, added-tone, 6/9 and thirteenth chord qualities to stored harmony.
     /// Version 30 adds eleventh chord qualities to stored harmony.
@@ -354,15 +421,223 @@ impl Project {
             composition_baseline: None,
             transcription_provenance: BTreeMap::new(),
             next_id: 1,
+            native_identity: NativeIdentityState::default(),
         }
     }
 
+    /// Returns the immutable native identity checkpoint, when this project was converted before.
+    pub fn native_identity(&self) -> Option<&Arc<crate::pipeline::document::NativeDocument>> {
+        self.native_identity.document.as_ref()
+    }
+
+    /// Returns the next ID above both the persisted native basis and ephemeral stage edits.
+    pub fn native_allocation_start(&self) -> Option<u64> {
+        let next = self
+            .native_identity
+            .document
+            .as_ref()
+            .map_or(0, |document| document.content.next_id)
+            .max(self.native_identity.next_id)
+            .max(self.next_id);
+        (next < u64::MAX).then_some(next)
+    }
+
+    /// Installs an ephemeral native checkpoint without changing the legacy document contents.
+    ///
+    /// The checkpoint is intentionally skipped by serde. Callers should invoke this after a
+    /// successful conversion and retain the returned native document separately for persistence.
+    pub fn set_native_identity(
+        &mut self,
+        document: Arc<crate::pipeline::document::NativeDocument>,
+    ) {
+        self.native_identity.stage_ids = document
+            .content
+            .sources
+            .iter()
+            .filter_map(|source| match &source.content {
+                crate::pipeline::content::SourceContent::Notes(clips) => Some(clips),
+                crate::pipeline::content::SourceContent::Audio(_) => None,
+            })
+            .flat_map(|clips| clips.iter())
+            .map(|clip| {
+                (
+                    clip.id,
+                    clip.transforms.iter().map(|stage| stage.id).collect(),
+                )
+            })
+            .collect();
+        self.native_identity.stage_payloads = self
+            .native_identity
+            .stage_ids
+            .keys()
+            .filter_map(|clip| {
+                self.midi_clip(*clip)
+                    .map(|(_, clip)| (clip.id, clip.transforms.clone()))
+            })
+            .collect();
+        self.native_identity.next_id = document.content.next_id;
+        self.native_identity.document = Some(document);
+    }
+
+    /// Inherits an identity checkpoint while restoring an older legacy history snapshot.
+    ///
+    /// Undo snapshots created before native persistence was enabled have no checkpoint of their
+    /// own. The current checkpoint is therefore retained and stage IDs are matched against the
+    /// snapshot's actual transform payloads before the snapshot replaces the live project.
+    pub fn retain_native_identity_from(&mut self, other: &Self) {
+        self.native_identity.next_id = self
+            .native_identity
+            .next_id
+            .max(other.native_identity.next_id)
+            .max(other.next_id);
+        if self.native_identity.document.is_some() || other.native_identity.document.is_none() {
+            return;
+        }
+        self.native_identity.document = other.native_identity.document.clone();
+        let clips: Vec<_> = other.native_identity.stage_ids.keys().copied().collect();
+        self.native_identity.stage_ids.clear();
+        for clip in clips {
+            let Some(old_ids) = other.native_stage_ids(clip) else {
+                continue;
+            };
+            let Some((_, old_clip)) = other.midi_clip(clip) else {
+                continue;
+            };
+            let Some((_, new_clip)) = self.midi_clip(clip) else {
+                continue;
+            };
+            if old_ids.len() != old_clip.transforms.len() {
+                continue;
+            }
+            let new_transforms = new_clip.transforms.clone();
+            let (ids, next) = match_stage_ids(
+                &old_clip.transforms,
+                old_ids,
+                &new_transforms,
+                self.native_identity.next_id,
+            );
+            self.native_identity.next_id = next;
+            self.native_identity.stage_ids.insert(clip, ids);
+            self.native_identity
+                .stage_payloads
+                .insert(clip, new_transforms);
+        }
+    }
+
+    /// Returns the stable stage identities paired with one legacy MIDI clip.
+    pub fn native_stage_ids(&self, clip: ClipId) -> Option<&[StageId]> {
+        self.native_identity.stage_ids.get(&clip).map(Vec::as_slice)
+    }
+
+    /// Replaces the ephemeral stage identity pairing for one legacy MIDI clip.
+    ///
+    /// The caller owns the edit transaction and must provide one nonzero, unique ID per
+    /// transform. The method does not alter the legacy transform payload.
+    pub fn set_native_stage_ids(&mut self, clip: ClipId, ids: Vec<StageId>) {
+        self.native_identity.next_id = self.native_identity.next_id.max(1);
+        if let Some(next) = ids
+            .iter()
+            .map(|id| id.0)
+            .max()
+            .and_then(|id| id.checked_add(1))
+        {
+            self.native_identity.next_id = self.native_identity.next_id.max(next);
+        }
+        self.native_identity.stage_ids.insert(clip, ids);
+        if let Some((_, midi)) = self.midi_clip(clip) {
+            self.native_identity
+                .stage_payloads
+                .insert(clip, midi.transforms.clone());
+        }
+    }
+
+    /// Retains native stage identities while replacing a legacy transform stack.
+    ///
+    /// Equal payloads are matched left-to-right among unused old entries. This preserves IDs
+    /// through reorder and replacement of a different entry; a newly inserted payload receives
+    /// a fresh project ID. The operation is a no-op until a native checkpoint has been installed.
+    pub fn remap_native_stage_ids(
+        &mut self,
+        clip: ClipId,
+        old: &[NoteTransform],
+        new: &[NoteTransform],
+    ) {
+        let Some(old_ids) = self.native_identity.stage_ids.get(&clip).cloned() else {
+            return;
+        };
+        if old_ids.len() != old.len() {
+            return;
+        }
+        let (ids, next_id) = match_stage_ids(old, &old_ids, new, self.native_identity.next_id);
+        self.native_identity.next_id = next_id;
+        self.native_identity.stage_ids.insert(clip, ids);
+        self.native_identity
+            .stage_payloads
+            .insert(clip, new.to_vec());
+    }
+
+    /// Drops the identity pairing when a transform stack is destructively frozen.
+    pub fn clear_native_stage_ids(&mut self, clip: ClipId) {
+        self.native_identity.stage_ids.remove(&clip);
+        self.native_identity.stage_payloads.remove(&clip);
+    }
+
+    /// Reconciles stage identities immediately before a native persistence conversion.
+    ///
+    /// Direct legacy edit paths are allowed to replace a transform vector without going through
+    /// the stage-aware command. The payload checkpoint makes that operation deterministic: equal
+    /// transforms retain their IDs, changed entries retain their position where possible, and
+    /// newly duplicated clips receive fresh IDs. Missing clips are removed from the checkpoint.
+    pub fn reconcile_native_stage_ids(&mut self) {
+        if self.native_identity.document.is_none() {
+            return;
+        }
+        self.native_identity.next_id = self.native_identity.next_id.max(self.next_id).max(
+            self.native_identity
+                .document
+                .as_ref()
+                .map_or(0, |document| document.content.next_id),
+        );
+        let current: Vec<_> = self
+            .tracks
+            .iter()
+            .filter_map(|track| track.kind.note_clips())
+            .flatten()
+            .map(|clip| (clip.id, clip.transforms.clone()))
+            .collect();
+        let mut stage_ids = BTreeMap::new();
+        let mut stage_payloads = BTreeMap::new();
+        for (clip, transforms) in current {
+            let old_ids = self.native_identity.stage_ids.get(&clip).cloned();
+            let old_payloads = self.native_identity.stage_payloads.get(&clip).cloned();
+            let (ids, next) = match (old_ids, old_payloads) {
+                (Some(ids), Some(payloads)) if ids.len() == payloads.len() => {
+                    match_stage_ids(&payloads, &ids, &transforms, self.native_identity.next_id)
+                }
+                (Some(ids), _) if ids.len() == transforms.len() => {
+                    (ids, self.native_identity.next_id)
+                }
+                _ => match_stage_ids(&[], &[], &transforms, self.native_identity.next_id),
+            };
+            self.native_identity.next_id = next;
+            stage_ids.insert(clip, ids);
+            stage_payloads.insert(clip, transforms);
+        }
+        self.native_identity.stage_ids = stage_ids;
+        self.native_identity.stage_payloads = stage_payloads;
+    }
+
     fn allocate_id(&mut self) -> u64 {
+        // Native conversion may have allocated graph identities above the legacy counter. New
+        // legacy objects must stay above that immutable checkpoint as well, otherwise a later
+        // native re-encoding could assign one number to two different owners.
+        self.next_id = self.next_id.max(self.native_identity.next_id);
         let id = self.next_id;
         self.next_id = self
             .next_id
             .checked_add(1)
             .expect("the project id space is exhausted");
+        self.native_identity.next_id = self.next_id;
         id
     }
 
@@ -490,6 +765,16 @@ impl Project {
         };
         self.next_id = next;
         true
+    }
+
+    /// Restores a legacy allocator high-water mark supplied by a native persistence decoder.
+    ///
+    /// The stored value is retained when it is ahead of the objects currently present, while a
+    /// stale value is repaired above every decoded object. This keeps the native context's
+    /// provenance without allowing a malformed counter to create a future collision.
+    pub fn restore_allocation_counter(&mut self, next_id: u64) -> bool {
+        self.next_id = next_id;
+        self.repair_id_counter()
     }
 
     /// Returns a collision-free allocation start without changing this document.
@@ -681,5 +966,80 @@ mod tests {
 
         assert!(!project.repair_id_counter());
         assert_ne!(track, project.tracks[0].id);
+    }
+
+    #[test]
+    fn native_stage_checkpoint_survives_reorder_replace_remove_without_dirtying_project_ids() {
+        let mut project = demo_project();
+        let clip = project
+            .tracks
+            .iter()
+            .flat_map(|track| track.kind.note_clips().into_iter().flatten())
+            .next()
+            .expect("fixture clip")
+            .id;
+        let first = NoteTransform::Transpose { semitones: 12 };
+        let second = NoteTransform::Gate { amount: 0.5 };
+        let replacement = NoteTransform::Swing {
+            percent: 60,
+            subdivision: crate::project::Subdivision::Eighth,
+        };
+        let before_next = project.next_id;
+        project.set_native_stage_ids(clip, vec![StageId(100), StageId(101)]);
+
+        project.remap_native_stage_ids(
+            clip,
+            &[first.clone(), second.clone()],
+            &[second.clone(), first.clone()],
+        );
+        assert_eq!(
+            project.native_stage_ids(clip),
+            Some(&[StageId(101), StageId(100)][..])
+        );
+        project.remap_native_stage_ids(
+            clip,
+            &[second, first.clone()],
+            &[replacement.clone(), first.clone()],
+        );
+        assert_eq!(
+            project.native_stage_ids(clip),
+            Some(&[StageId(101), StageId(100)][..])
+        );
+        project.remap_native_stage_ids(clip, &[replacement, first], &[]);
+        assert_eq!(project.native_stage_ids(clip), Some(&[][..]));
+        assert_eq!(project.next_id, before_next);
+
+        let restored: Project =
+            serde_json::from_str(&serde_json::to_string(&project).unwrap()).unwrap();
+        assert_eq!(restored, project);
+        assert_eq!(restored.native_stage_ids(clip), None);
+    }
+
+    #[test]
+    fn native_stage_matching_does_not_steal_ids_when_inserting_before_unchanged_stages() {
+        let mut project = demo_project();
+        let clip = project
+            .tracks
+            .iter()
+            .flat_map(|track| track.kind.note_clips().into_iter().flatten())
+            .next()
+            .expect("fixture clip")
+            .id;
+        let first = NoteTransform::Transpose { semitones: 12 };
+        let second = NoteTransform::Gate { amount: 0.5 };
+        let inserted = NoteTransform::Swing {
+            percent: 60,
+            subdivision: crate::project::Subdivision::Eighth,
+        };
+        project.set_native_stage_ids(clip, vec![StageId(100), StageId(101)]);
+        project.remap_native_stage_ids(
+            clip,
+            &[first.clone(), second.clone()],
+            &[inserted, first, second],
+        );
+        assert_eq!(
+            project.native_stage_ids(clip),
+            Some(&[StageId(102), StageId(100), StageId(101)][..])
+        );
     }
 }

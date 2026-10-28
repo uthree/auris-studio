@@ -90,7 +90,12 @@
 //! separate format-33 envelope. [`auris_io::publish_native_upgrade`] combines captured-source
 //! checks, a distinct exact-byte backup and synchronized replacement under the project write
 //! lock. [`auris_io::publish_native_update`] accepts only an unchanged native preimage. Default
-//! Session saves remain format 32 until the M2 authority/command activation gate passes.
+//! Session saves now use format 33 through a separate lossless conventional persistence codec.
+//! The codec checks decode/re-encode equivalence before ordinary Open adopts a native file.
+//! The mutable conventional document carries an immutable, non-serialized identity checkpoint;
+//! it does not share edit authority with a native graph. Save, recovery and checkpoints retain
+//! the existing Session revision checks and publish only after destination-byte validation.
+//! Native runtime authority remains gated on command migration and callback-adopted readers.
 //! See `docs/render-pipeline-migration.md` for conversion and backup verification.
 //! [`crate::native_conventional::prepare_native_conventional`] validates native ownership and
 //! capabilities, then reconstructs a transient input for the existing renderer from conventional
@@ -142,7 +147,8 @@
 //! It copies inside assets before staging, rejects stale completions before publication, and
 //! recovers into an unsaved native editor with its own asset lifetime. Capture retains an
 //! unsaved Session's working folder, and Save As publishes outside disposable recovery storage.
-//! This explicit workflow does not yet replace ordinary Session recording, autosave or saving.
+//! This explicit workflow remains separate from ordinary Session runtime commands. Ordinary
+//! recording, autosave, recovery and saving now use the lossless conventional format-33 codec.
 //!
 //! # Multiple project windows
 //!
@@ -2419,7 +2425,7 @@ pub mod documents {
     //!
     //! # A folder, not a file
     //!
-    //! The document is pretty-printed JSON — [`auris_io::save_project`] writes it, and it holds
+    //! The document is pretty-printed JSON — [`auris_io::save_session_project`] writes it, and it holds
     //! no samples, only ids and parameter values. It lives in a folder of its own, with the audio
     //! the song owns beside it:
     //!

@@ -84,13 +84,17 @@ impl Session {
             return Ok(());
         }
         let mut candidate = target.clone();
+        let old_transforms = target.transforms.clone();
         candidate.transforms = transforms;
+        let new_transforms = candidate.transforms.clone();
         candidate.looped_note_instances()?;
         self.record(Edit::SetClipTransforms(clip));
         *self
             .project
             .midi_clip_mut(clip)
             .ok_or(SessionError::UnknownClip(clip.0))? = candidate;
+        self.project
+            .remap_native_stage_ids(clip, &old_transforms, &new_transforms);
         self.invalidate_graph();
         Ok(())
     }
@@ -121,7 +125,9 @@ impl Session {
             return Ok(());
         }
         let mut candidate = target.clone();
+        let old_transforms = target.transforms.clone();
         candidate.transforms = transforms;
+        let new_transforms = candidate.transforms.clone();
         candidate.looped_note_instances()?;
 
         self.record_repeating(Edit::SetClipTransforms(clip));
@@ -129,6 +135,8 @@ impl Session {
             .project
             .midi_clip_mut(clip)
             .ok_or(SessionError::UnknownClip(clip.0))? = candidate;
+        self.project
+            .remap_native_stage_ids(clip, &old_transforms, &new_transforms);
         self.invalidate_graph();
         Ok(())
     }
@@ -260,6 +268,7 @@ impl Session {
             .project
             .midi_clip_mut(clip)
             .ok_or(SessionError::UnknownClip(clip.0))? = candidate;
+        self.project.clear_native_stage_ids(clip);
         self.invalidate_graph();
         Ok(count)
     }

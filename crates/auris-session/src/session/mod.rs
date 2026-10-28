@@ -78,6 +78,8 @@ mod multitrack_transcription;
 mod musical_analysis;
 mod native_transition;
 pub use native_transition::{NativeSessionTransition, NativeTransitionError};
+#[cfg(test)]
+mod native_persistence_tests;
 mod note_preview;
 pub(crate) mod notes;
 mod output_preview;
@@ -1411,6 +1413,9 @@ impl Session {
         {
             self.restore_history_project(transaction.edit, transaction.before);
         } else {
+            transaction
+                .before
+                .retain_native_identity_from(&self.project);
             self.replace_project(transaction.before);
         }
         self.dirty = transaction.dirty_before;
@@ -1492,7 +1497,8 @@ impl Session {
         layout_only
     }
 
-    fn restore_history_project(&mut self, edit: Edit, project: Project) {
+    fn restore_history_project(&mut self, edit: Edit, mut project: Project) {
+        project.retain_native_identity_from(&self.project);
         if matches!(edit, Edit::MoveMixerNodes | Edit::ArrangeMixerNodes) {
             // Save may since have stamped the build or collected assets. A layout edit must
             // retain those changes as well as live plugin state, rather than adopting its file.

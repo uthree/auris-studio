@@ -380,7 +380,7 @@ fn read_metadata(path: &Path) -> Option<RecoveryMetadata> {
 
 fn write_snapshot(
     document: &Path,
-    project: &Project,
+    project: &mut Project,
     source_document: Option<PathBuf>,
 ) -> Result<(), SessionError> {
     let metadata_path = document
@@ -392,8 +392,9 @@ fn write_snapshot(
         &recovery_metadata_bytes(project, source_document)?,
     )?;
     let mut recovery = project.clone();
-    let staged = auris_io::stage_project(document, &mut recovery)?;
+    let staged = auris_io::stage_session_project(document, &mut recovery)?;
     staged.publish()?;
+    *project = recovery;
     metadata.publish().map_err(SessionError::from)
 }
 
@@ -808,6 +809,7 @@ pub struct AutosaveResult {
     document: auris_io::StagedProject,
     metadata: auris_io::StagedFile,
     replacement: Option<SessionWorkspace>,
+    identity: Option<Arc<auris_core::pipeline::document::NativeDocument>>,
 }
 
 /// A saved-document identity captured for an off-thread external-change check.
@@ -933,7 +935,7 @@ impl AutosaveJob {
         let document_path = workspace.join(AUTOSAVE_FILE);
         let metadata_path = workspace.join(METADATA_FILE);
         let metadata_bytes = recovery_metadata_bytes(&project, source_document)?;
-        let document = auris_io::stage_project(&document_path, &mut project)?;
+        let document = auris_io::stage_session_project(&document_path, &mut project)?;
         if cancelled.load(Ordering::Relaxed) {
             return Ok(None);
         }
@@ -949,6 +951,7 @@ impl AutosaveJob {
             document,
             metadata,
             replacement,
+            identity: project.native_identity().cloned(),
         }))
     }
 }
@@ -963,7 +966,7 @@ impl RecoveryJob {
         if cancelled.load(Ordering::Relaxed) {
             return Ok(None);
         }
-        let project = auris_io::load_project(&self.snapshot.document)?;
+        let mut project = auris_io::load_project(&self.snapshot.document)?;
         validate_snapshot(&self.snapshot)?;
         let replacement = create_recovery_workspace_in(&self.snapshot.registry)?;
         if !migrate_private_assets_with_cancel(
@@ -976,7 +979,7 @@ impl RecoveryJob {
         }
         write_snapshot(
             &replacement.path().join(AUTOSAVE_FILE),
-            &project,
+            &mut project,
             self.snapshot.source_document.clone(),
         )?;
         if cancelled.load(Ordering::Relaxed) {
@@ -1172,6 +1175,7 @@ impl Session {
             document,
             metadata,
             replacement,
+            identity,
             ..
         } = result;
         let destination = workspace.join(AUTOSAVE_FILE);
@@ -1202,6 +1206,9 @@ impl Session {
         if let Some(replacement) = replacement {
             let previous = std::mem::replace(&mut self.work_dir, replacement);
             drop(previous);
+        }
+        if let Some(identity) = identity {
+            self.project.set_native_identity(identity);
         }
         true
     }
@@ -1454,9 +1461,13 @@ impl Session {
         }
         write_snapshot(
             &self.autosave_path(),
-            &recovery,
+            &mut recovery,
             source_document(self.path.as_deref()),
-        )
+        )?;
+        if let Some(identity) = recovery.native_identity() {
+            self.project.set_native_identity(Arc::clone(identity));
+        }
+        Ok(())
     }
 
     /// Restarts the autosave clock. Called by every path that writes the document — and by
@@ -2394,6 +2405,85 @@ mod tests {
             1,
             "the replacement snapshot becomes discoverable after a crash releases its lease"
         );
+    }
+
+    #[test]
+    fn native_recovery_preserves_rendered_pcm_for_private_wav_assets() {
+        let abandoned_registry = tempfile::tempdir().unwrap();
+        let replacement = tempfile::tempdir().unwrap();
+        let mut crashed = crate::Session::new(crate::SessionOptions::headless()).unwrap();
+        move_workspace_into(&mut crashed, abandoned_registry.path());
+
+        let private_audio = crashed.work_dir.path().join("Audio").join("take.wav");
+        std::fs::create_dir_all(private_audio.parent().unwrap()).unwrap();
+        super::super::fixtures::write_tone(&private_audio, 480);
+        let clip = crashed
+            .import_audio(&private_audio, auris_core::time::Ticks::ZERO)
+            .unwrap();
+        let source = crashed.project.audio_clip(clip).unwrap().source;
+        crashed.project.audio_sources.get_mut(&source).unwrap().path =
+            auris_core::AssetPath::inside("Audio/take.wav");
+
+        let options = crate::prelude::OfflineOptions {
+            start_frames: 0,
+            end_frames: Some(480),
+            include_tail: false,
+            ..crate::prelude::OfflineOptions::default()
+        };
+        let mut progress = crate::prelude::RenderProgress::default();
+        let before = crashed
+            .render_job()
+            .render(&options, &mut progress)
+            .unwrap();
+        assert!(before.channel(0).iter().any(|sample| sample.abs() > 0.01));
+        crashed.save_autosave().unwrap();
+        let abandoned_workspace = crashed.work_dir.path().to_path_buf();
+        leave_workspace_behind(&mut crashed, replacement.path());
+        drop(crashed);
+
+        let snapshot = recovery_snapshots_in(abandoned_registry.path())
+            .unwrap()
+            .pop()
+            .unwrap();
+        let mut recovered = crate::Session::new(crate::SessionOptions::headless()).unwrap();
+        recovered.recover_autosave(&snapshot).unwrap();
+        let mut progress = crate::prelude::RenderProgress::default();
+        let after = recovered
+            .render_job()
+            .render(&options, &mut progress)
+            .unwrap();
+
+        assert_eq!(
+            after.channel(0),
+            before.channel(0),
+            "recovery and reopen must preserve rendered PCM exactly"
+        );
+        assert_eq!(after.channel(1), before.channel(1));
+        assert!(recovered.path().is_none());
+        assert!(recovered.is_dirty());
+        assert!(
+            !abandoned_workspace.exists(),
+            "the consumed source workspace is disposed"
+        );
+
+        let saved_root = tempfile::tempdir().unwrap();
+        let saved = recovered
+            .save_as(&saved_root.path().join("Recovered.auris"))
+            .unwrap()
+            .document;
+        let mut reopened = crate::Session::new(crate::SessionOptions::headless()).unwrap();
+        reopened.open(&saved).unwrap();
+        let mut progress = crate::prelude::RenderProgress::default();
+        let after_save_as = reopened
+            .render_job()
+            .render(&options, &mut progress)
+            .unwrap();
+        assert_eq!(
+            after_save_as.channel(0),
+            before.channel(0),
+            "Save As and a second Open must preserve the recovered PCM"
+        );
+        assert_eq!(after_save_as.channel(1), before.channel(1));
     }
 
     #[test]

@@ -210,6 +210,10 @@ pub enum IoError {
     #[error("project JSON error: {0}")]
     Json(#[from] serde_json::Error),
 
+    /// Native persistence could not represent or safely publish the requested document.
+    #[error("native project operation failed: {0}")]
+    NativeProject(String),
+
     /// The project file uses a different schema version.
     #[error(
         "project format version {found} does not match the supported version {supported}; \

@@ -667,6 +667,7 @@ impl RenderGraph {
             .map(|track| track.strip.latency_frames())
             .chain(std::iter::once(master.latency_frames()))
             .collect();
+        let automation = resolve_automation(project, &tracks, &master);
 
         RenderGraph {
             native_addresses: crate::native::NativeRuntimeAddresses::default(),
@@ -682,7 +683,7 @@ impl RenderGraph {
             latency: plan.total,
             built_latencies,
             tempo_map: project.tempo_map.clone(),
-            automation: resolve_automation(project),
+            automation,
             automation_from: None,
             metronome: {
                 let mut metronome = crate::metronome::Metronome::new(project.signatures.clone());

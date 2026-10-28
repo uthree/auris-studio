@@ -18,6 +18,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use auris_core::param::{ParamId, ParamTarget};
 use auris_core::project::CurvePoint;
 use auris_core::time::Ticks;
 use auris_core::{
@@ -25,7 +26,8 @@ use auris_core::{
 };
 use auris_io::{
     IoError, SoundFont, SoundFontPreset, byte_size, document_in_folder, font_name,
-    import_audio_file, load_project, load_soundfont, preset_count, presets, save_project,
+    import_audio_file, load_project, load_soundfont, preset_count, presets,
+    save_session_project as save_project,
 };
 
 use crate::error::SessionError;
@@ -33,6 +35,38 @@ use crate::history::Edit;
 
 use super::assets::{PreparedAssets, prepare_project_assets};
 use super::{CachedFont, MidiReport, SaveReport, Session};
+
+/// Compares a disk projection with the live saved baseline without treating a plugin parameter's
+/// synthetic decode index as a document edit. Native persistence identifies plugin lanes by their
+/// stable key; only the transient `ParamId` is allowed to differ here. All lane values, owners,
+/// ordering, additions and removals still participate in the final `Project` comparison.
+pub(super) fn same_persisted_project(left: &Project, right: &Project) -> bool {
+    if left.automation.len() != right.automation.len() {
+        return false;
+    }
+    let disk_lanes: Vec<(ParamTarget, String, ParamId)> = left
+        .automation
+        .lanes()
+        .iter()
+        .filter_map(|lane| {
+            Some((
+                lane.target.with_param(ParamId(0)),
+                lane.key()?.to_owned(),
+                lane.target.param()?,
+            ))
+        })
+        .collect();
+    let mut aligned = right.clone();
+    aligned.automation.realign_by_key(|target, key| {
+        let owner = target.with_param(ParamId(0));
+        disk_lanes
+            .iter()
+            .find(|(candidate, candidate_key, _)| *candidate == owner && candidate_key == key)
+            .map(|(_, _, param)| *param)
+            .or_else(|| target.param())
+    });
+    aligned == *left
+}
 
 /// Decodes an audio file to `sample_rate`, without a session and without touching a document.
 ///
@@ -394,13 +428,13 @@ impl SaveJob {
                 // chooser returns its full path). Treat that as an in-place overwrite.
                 if self.policy == SaveAsPolicy::RefuseReplacement
                     && self.original_path.as_deref() == Some(self.document.as_path())
-                    && load_project(&self.document)? != self.saved_project
+                    && !same_persisted_project(&load_project(&self.document)?, &self.saved_project)
                 {
                     return Err(SessionError::ExternalChanges(self.document));
                 }
             }
         } else if (self.document.exists() || self.had_disk_fingerprint)
-            && load_project(&self.document)? != self.saved_project
+            && !same_persisted_project(&load_project(&self.document)?, &self.saved_project)
         {
             return Err(SessionError::ExternalChanges(self.document));
         }
@@ -535,7 +569,7 @@ impl SaveJob {
             return Ok(None);
         }
 
-        let staged_document = auris_io::stage_project(&self.document, &mut self.project)?;
+        let staged_document = auris_io::stage_session_project(&self.document, &mut self.project)?;
         let disk_stamp = staged_document.modified();
         let disk_fingerprint = staged_document.fingerprint();
         Ok(Some(SaveResult {
@@ -956,6 +990,7 @@ impl Session {
     /// location wants [`Self::save_as`] instead — this one would leave the audio behind.
     pub fn save(&mut self, path: &Path) -> Result<(), SessionError> {
         self.collect_hosted_state()?;
+        let _lock = project_write_lock(path)?;
         save_project(path, &mut self.project)?;
         self.path = Some(path.to_path_buf());
         self.dirty = false;
@@ -3492,6 +3527,7 @@ mod tests {
 
         // A file from before the record existed is an older build by definition — one that
         // left no name, which is what the empty answer says.
+        auris_io::save_project(&path, &mut reopened.project().clone()).unwrap();
         let unsigned: String = std::fs::read_to_string(&path)
             .unwrap()
             .lines()

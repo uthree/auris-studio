@@ -469,7 +469,7 @@ impl SongCandidate {
             source.byte_size = auris_io::byte_size(&from);
         }
         // Also refuse a destination created by a writer that does not use Auris's lock.
-        auris_io::stage_project(&document, &mut project)?
+        auris_io::stage_session_project(&document, &mut project)?
             .publish_noclobber()
             .map_err(|error| match error {
                 auris_io::IoError::ExportDestinationExists(path) => {

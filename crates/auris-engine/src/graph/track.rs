@@ -140,6 +140,21 @@ pub struct RenderTrack {
 }
 
 impl RenderTrack {
+    /// Resolves a prepared instrument parameter by its persisted stable key.
+    ///
+    /// This lookup runs while a graph is built, never on the audio callback.
+    pub(crate) fn instrument_param_for_key(&self, key: &str) -> Option<ParamId> {
+        match &self.source {
+            RenderSource::Instrument { instrument, .. } | RenderSource::Sung { instrument, .. } => {
+                instrument
+                    .parameters()
+                    .iter()
+                    .find(|descriptor| descriptor.key.as_ref() == key)
+                    .map(|descriptor| descriptor.id)
+            }
+            _ => None,
+        }
+    }
     /// Attaches an optional post-fader reader for a simultaneous track overview.
     /// Attach on the building thread, before handing the graph to audio.
     pub fn set_overview_scope(&mut self, scope: Arc<crate::Scope>) {

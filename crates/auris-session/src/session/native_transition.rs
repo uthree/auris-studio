@@ -24,6 +24,9 @@ pub enum NativeTransitionError {
     /// Legacy conversion failed without changing the document authority.
     #[error(transparent)]
     Conversion(#[from] auris_io::PipelineConversionError),
+    /// The ordinary native persistence projection could not retain authored identities.
+    #[error(transparent)]
+    Persistence(#[from] auris_io::NativePersistenceError),
     /// Native candidate ownership was invalid.
     #[error(transparent)]
     Edit(#[from] NativeEditError),
@@ -44,8 +47,8 @@ pub enum NativeTransitionError {
 /// A native candidate captured once from a conventional Session, with isolated prepared hosts.
 ///
 /// This value owns no audio device and cannot enqueue a graph or write over the source project.
-/// Native edits retain the IDs allocated during capture. Default Session editing and saving
-/// remain conventional until all command families have native adapters.
+/// Native edits retain persistent IDs captured from ordinary format-33 sessions. Default
+/// Session editing remains conventional until all command families have native adapters.
 pub struct NativeSessionTransition {
     files: NativeFileSession,
     hosts: Option<NativeHostManager>,
@@ -104,7 +107,9 @@ impl Session {
     ) -> Result<NativeSessionTransition, NativeTransitionError> {
         self.require_native_transition_boundary()?;
         self.collect_hosted_state()?;
-        let native = auris_io::project_to_native(&self.project, limits)?;
+        let mut source = self.project.clone();
+        source.reconcile_native_stage_ids();
+        let native = auris_io::project_to_native_preserving(&source, limits)?;
         let editor = if self.is_dirty() || self.path.is_none() {
             NativeDocumentEditor::new_unsaved(native.clone(), limits)?
         } else {

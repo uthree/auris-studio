@@ -56,7 +56,11 @@ pub(super) struct RenderAutomation {
 /// because the document removes a lane along with the track or effect slot it points at. Dropping
 /// it here is the second lock on that door: what a lane resolved wrongly would do is drive a
 /// parameter on whatever now occupies that position, which is worse than silence.
-pub(super) fn resolve_automation(project: &Project) -> Vec<RenderAutomation> {
+pub(super) fn resolve_automation(
+    project: &Project,
+    tracks: &[RenderTrack],
+    master: &RenderStrip,
+) -> Vec<RenderAutomation> {
     project
         .automation
         .lanes()
@@ -64,14 +68,20 @@ pub(super) fn resolve_automation(project: &Project) -> Vec<RenderAutomation> {
         .filter_map(|lane| {
             Some(RenderAutomation {
                 lane: lane.clone(),
-                slot: resolve_slot(project, lane.target)?,
+                slot: resolve_slot(project, tracks, master, lane)?,
             })
         })
         .collect()
 }
 
 /// Where one target lands in a graph built from `project`, if it lands anywhere.
-fn resolve_slot(project: &Project, target: ParamTarget) -> Option<AutomationSlot> {
+fn resolve_slot(
+    project: &Project,
+    tracks: &[RenderTrack],
+    master: &RenderStrip,
+    lane: &AutomationLane,
+) -> Option<AutomationSlot> {
+    let target = lane.target;
     let chain_position = |track: Option<TrackId>, slot: EffectSlotId| {
         let effects = match track {
             Some(id) => &project.track(id)?.mixer.effects,
@@ -92,18 +102,38 @@ fn resolve_slot(project: &Project, target: ParamTarget) -> Option<AutomationSlot
                 .iter()
                 .position(|existing| existing.id == send)?,
         }),
-        ParamTarget::Instrument { track, param } => Some(AutomationSlot::Instrument {
-            track: project.track_index(track)?,
-            param,
-        }),
-        ParamTarget::Effect { track, slot, param } => Some(AutomationSlot::Effect {
-            track: match track {
+        ParamTarget::Instrument { track, param } => {
+            let index = project.track_index(track)?;
+            let resolved = lane
+                .key()
+                .and_then(|key| tracks.get(index)?.instrument_param_for_key(key))
+                .or_else(|| lane.key().is_none().then_some(param))?;
+            Some(AutomationSlot::Instrument {
+                track: index,
+                param: resolved,
+            })
+        }
+        ParamTarget::Effect { track, slot, param } => {
+            let index = match track {
                 Some(id) => Some(project.track_index(id)?),
                 None => None,
-            },
-            slot: chain_position(track, slot)?,
-            param,
-        }),
+            };
+            let resolved = lane
+                .key()
+                .and_then(|key| match index {
+                    Some(index) => tracks
+                        .get(index)?
+                        .strip
+                        .effect_param_for_key(chain_position(track, slot)?, key),
+                    None => master.effect_param_for_key(chain_position(track, slot)?, key),
+                })
+                .or_else(|| lane.key().is_none().then_some(param))?;
+            Some(AutomationSlot::Effect {
+                track: index,
+                slot: chain_position(track, slot)?,
+                param: resolved,
+            })
+        }
     }
 }
 
@@ -179,5 +209,122 @@ pub(super) fn drive_automation(
                 None => master.set_effect_param(slot, param, value),
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::graph::{RenderGraph, RenderSource};
+    use crate::testkit;
+    use auris_core::automation::AutomationCurve;
+    use auris_core::project::{AudioSourceBank, Project};
+
+    #[test]
+    fn keyed_instrument_lane_uses_runtime_descriptor_not_saved_numeric_id() {
+        let mut project = Project::new("automation", 48_000.0);
+        let track = project.add_instrument_track("tone", testkit::TONE_ID);
+        let effect = project
+            .add_effect(Some(track), testkit::GAIN_ID)
+            .expect("effect");
+        let master = project
+            .add_effect(None, testkit::GAIN_ID)
+            .expect("master effect");
+        project.automation.set_point(
+            ParamTarget::Instrument {
+                track,
+                param: ParamId(99),
+            },
+            Some("amplitude".into()),
+            AutomationCurve::Hold,
+            Ticks::ZERO,
+            0.25,
+        );
+        project.automation.set_point(
+            ParamTarget::Effect {
+                track: Some(track),
+                slot: effect,
+                param: ParamId(99),
+            },
+            Some("gain".into()),
+            AutomationCurve::Hold,
+            Ticks::ZERO,
+            2.0,
+        );
+        project.automation.set_point(
+            ParamTarget::Effect {
+                track: None,
+                slot: master,
+                param: ParamId(99),
+            },
+            Some("gain".into()),
+            AutomationCurve::Hold,
+            Ticks::ZERO,
+            3.0,
+        );
+        let mut graph =
+            RenderGraph::build(&project, &AudioSourceBank::new(), &testkit::registry(), 512);
+        graph.apply_automation(0, 1);
+        let RenderSource::Instrument { instrument, .. } = graph.tracks()[0].source() else {
+            panic!("expected instrument");
+        };
+        assert_eq!(instrument.param(ParamId(0)), 0.25);
+        assert_eq!(graph.tracks()[0].strip().effects[0].param(ParamId(0)), 2.0);
+        assert_eq!(graph.master().effects[0].param(ParamId(0)), 3.0);
+        assert_eq!(graph.automated_count(), 3);
+    }
+
+    #[test]
+    fn missing_keyed_instrument_and_effect_lanes_are_dropped_instead_of_colliding() {
+        let mut project = Project::new("automation", 48_000.0);
+        let track = project.add_instrument_track("tone", testkit::TONE_ID);
+        let effect = project
+            .add_effect(Some(track), testkit::GAIN_ID)
+            .expect("effect");
+        let master = project
+            .add_effect(None, testkit::GAIN_ID)
+            .expect("master effect");
+        project.automation.set_point(
+            ParamTarget::Instrument {
+                track,
+                param: ParamId(0),
+            },
+            Some("not-a-real-key".into()),
+            AutomationCurve::Hold,
+            Ticks::ZERO,
+            0.25,
+        );
+        project.automation.set_point(
+            ParamTarget::Effect {
+                track: Some(track),
+                slot: effect,
+                param: ParamId(0),
+            },
+            Some("not-a-real-key".into()),
+            AutomationCurve::Hold,
+            Ticks::ZERO,
+            2.0,
+        );
+        project.automation.set_point(
+            ParamTarget::Effect {
+                track: None,
+                slot: master,
+                param: ParamId(0),
+            },
+            Some("not-a-real-key".into()),
+            AutomationCurve::Hold,
+            Ticks::ZERO,
+            3.0,
+        );
+        let mut graph =
+            RenderGraph::build(&project, &AudioSourceBank::new(), &testkit::registry(), 512);
+        graph.apply_automation(0, 1);
+        let RenderSource::Instrument { instrument, .. } = graph.tracks()[0].source() else {
+            panic!("expected instrument");
+        };
+        assert_eq!(instrument.param(ParamId(0)), testkit::TONE_AMPLITUDE);
+        assert_eq!(graph.tracks()[0].strip().effects[0].param(ParamId(0)), 1.0);
+        assert_eq!(graph.master().effects[0].param(ParamId(0)), 1.0);
+        assert_eq!(graph.automated_count(), 0);
     }
 }

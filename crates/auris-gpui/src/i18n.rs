@@ -731,6 +731,10 @@ fn io_error_text(error: &IoError, language: Language) -> String {
             format!("project JSON error: {detail}"),
             format!("プロジェクトJSONのエラー: {detail}"),
         ),
+        IoError::NativeProject(detail) => (
+            format!("Could not open or save the project without losing data: {detail}"),
+            format!("プロジェクトの内容を保持して開くか保存することができませんでした: {detail}"),
+        ),
         IoError::ProjectVersionMismatch { found, supported } => (
             format!(
                 "project format version {found} does not match the supported version {supported}; open this project with a build supporting its format"
