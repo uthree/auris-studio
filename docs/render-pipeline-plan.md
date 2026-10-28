@@ -376,9 +376,12 @@ separate; history restores identities while preserving the allocation high-water
 mark. Initial adapters cover presentation, strips, effect bypass, authored notes,
 stable clip stages and explicit source/branch copies. Additional adapters cover track
 creation/removal/order, source-owned clip edits, completed recording file landing and
-timeline settings. `NativeFileSession` adds guarded native save/reopen, asset copying,
-edited legacy upgrades and checkpoint restore to the same editor. The explicit
-Session transition prepares newly landed audio and reopens these native files.
+timeline settings, main routes, auxiliary sends and shared automation curves/bindings.
+Native mixer adapters resolve existing `ParamTarget` command addresses before one
+atomic edit. `NativeFileSession` adds guarded native save/reopen, asset copying,
+edited legacy upgrades, checkpoint restore and leased native autosave/recovery to
+the same editor. The explicit Session transition prepares newly landed audio and
+reopens or recovers these native files, retaining an unsaved session's working assets.
 These adapters operate directly on native ownership; the default Session command
 implementations, input-device recording and autosave discovery have not switched.
 

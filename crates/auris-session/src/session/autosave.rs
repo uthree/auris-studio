@@ -31,8 +31,8 @@ use super::Session;
 use super::assets::{PreparedAssets, prepare_project_assets};
 use crate::error::SessionError;
 
-const AUTOSAVE_FILE: &str = "Autosave.auris";
-const METADATA_FILE: &str = "Recovery.json";
+pub(crate) const AUTOSAVE_FILE: &str = "Autosave.auris";
+pub(crate) const METADATA_FILE: &str = "Recovery.json";
 const LEASE_FILE: &str = "Session.lock";
 const RECOVERY_FOLDER: &str = "auris-studio-recovery";
 const WORKSPACE_PREFIX: &str = "session-";
@@ -146,7 +146,7 @@ struct RecoveryMetadata {
 ///
 /// Field order is intentional: the open file releases its lock before [`tempfile::TempDir`]
 /// removes the directory during an ordinary shutdown.
-pub(super) struct SessionWorkspace {
+pub(crate) struct SessionWorkspace {
     _lease: Option<File>,
     directory: Option<tempfile::TempDir>,
     registered: bool,
@@ -169,14 +169,14 @@ impl SessionWorkspace {
         }
     }
 
-    pub(super) fn path(&self) -> &Path {
+    pub(crate) fn path(&self) -> &Path {
         self.directory
             .as_ref()
             .expect("a live session workspace has a directory")
             .path()
     }
 
-    fn keep_for_recovery(&mut self) {
+    pub(crate) fn keep_for_recovery(&mut self) {
         // Close the lease first: the next process must be able to acquire it as soon as the
         // unwinding thread has finished preserving the directory.
         drop(self._lease.take());
@@ -259,7 +259,7 @@ fn create_registered_workspace(
     create_unregistered_recovery_workspace()
 }
 
-fn create_recovery_workspace_in(root: &Path) -> Result<SessionWorkspace, SessionError> {
+pub(crate) fn create_recovery_workspace_in(root: &Path) -> Result<SessionWorkspace, SessionError> {
     fs::create_dir_all(root).map_err(|error| io_error(root, error))?;
     let directory = tempfile::Builder::new()
         .prefix(WORKSPACE_PREFIX)
@@ -320,10 +320,17 @@ fn recovery_metadata_bytes(
     project: &Project,
     source_document: Option<PathBuf>,
 ) -> Result<Vec<u8>, SessionError> {
+    recovery_metadata_for(&project.name, source_document)
+}
+
+pub(crate) fn recovery_metadata_for(
+    name: &str,
+    original: Option<PathBuf>,
+) -> Result<Vec<u8>, SessionError> {
     let metadata = RecoveryMetadata {
         version: METADATA_VERSION,
-        project_name: metadata_project_name(&project.name),
-        source_document,
+        project_name: metadata_project_name(name),
+        source_document: source_document(original.as_deref()),
     };
     serde_json::to_vec_pretty(&metadata)
         .map_err(auris_io::IoError::from)
@@ -522,7 +529,7 @@ fn cleanup_recovery_quarantines_in(
     }
 }
 
-fn recovery_snapshots_in(root: &Path) -> Result<Vec<RecoverySnapshot>, SessionError> {
+pub(crate) fn recovery_snapshots_in(root: &Path) -> Result<Vec<RecoverySnapshot>, SessionError> {
     let entries = match fs::read_dir(root) {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -583,7 +590,7 @@ fn recovery_snapshots_from_known_roots() -> Result<Vec<RecoverySnapshot>, Sessio
     recovery_snapshots_from_roots(&known_recovery_roots())
 }
 
-fn known_recovery_roots() -> Vec<PathBuf> {
+pub(crate) fn known_recovery_roots() -> Vec<PathBuf> {
     let primary = recovery_dir();
     let fallback = fallback_recovery_dir();
     if primary == fallback {
@@ -619,7 +626,7 @@ fn recovery_snapshots_from_roots(roots: &[PathBuf]) -> Result<Vec<RecoverySnapsh
     Ok(snapshots)
 }
 
-fn validate_snapshot(snapshot: &RecoverySnapshot) -> Result<(), SessionError> {
+pub(crate) fn validate_snapshot(snapshot: &RecoverySnapshot) -> Result<(), SessionError> {
     let expected_document = snapshot.workspace.join(AUTOSAVE_FILE);
     let document_metadata = fs::symlink_metadata(&snapshot.document).ok();
     if !registry_workspace(&snapshot.registry, &snapshot.workspace)
@@ -647,7 +654,7 @@ fn validate_snapshot(snapshot: &RecoverySnapshot) -> Result<(), SessionError> {
     Ok(())
 }
 
-fn acquire_snapshot_lease(snapshot: &RecoverySnapshot) -> Result<File, SessionError> {
+pub(crate) fn acquire_snapshot_lease(snapshot: &RecoverySnapshot) -> Result<File, SessionError> {
     validate_snapshot(snapshot)?;
     let lease = try_workspace_lease(&snapshot.workspace)?
         .ok_or_else(|| SessionError::RecoveryUnavailable(snapshot.document.clone()))?;

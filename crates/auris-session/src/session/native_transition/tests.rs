@@ -30,6 +30,171 @@ fn graph_limits() -> PipelineLimits {
 }
 
 #[test]
+fn native_routing_and_automation_render_through_session_and_reopen_with_stable_ids() {
+    use crate::native_edit::{NativeCreated, NativeRoutingEdit};
+    use crate::native_file_session::NativeRecordingFile;
+    use auris_core::{AssetPath, AudioBuffer, ParamTarget, Ticks};
+    use auris_engine::{Transport, render_block};
+
+    fn samples(transition: &mut NativeSessionTransition) -> AudioBuffer {
+        let graph = transition
+            .hosts
+            .as_mut()
+            .unwrap()
+            .prepared_graph_mut()
+            .unwrap();
+        let mut buffer = AudioBuffer::new(2, 4096, 48_000.0);
+        render_block(graph, &mut Transport::playing_from(0), &mut buffer, true);
+        buffer
+    }
+    fn power(buffer: &AudioBuffer) -> f64 {
+        buffer
+            .channel(0)
+            .iter()
+            .map(|sample| f64::from(*sample).powi(2))
+            .sum::<f64>()
+    }
+    let directory = tempfile::tempdir().unwrap();
+    let mut session = session();
+    let track = session.add_audio_track("Take");
+    let main_bus = session.add_bus_track("Main branch");
+    let send_bus = session.add_bus_track("Aux branch");
+    let folder = session.project_folder().unwrap().to_path_buf();
+    std::fs::create_dir_all(folder.join("Audio")).unwrap();
+    let mut writer =
+        auris_io::WavRecorder::create(&folder.join("Audio/take.wav"), 48_000.0, 1).unwrap();
+    writer
+        .write(
+            &(0..8192)
+                .map(|n| (n as f32 * 0.05).sin() * 0.02)
+                .collect::<Vec<_>>(),
+        )
+        .unwrap();
+    writer.finish().unwrap();
+    let limits = crate::native_edit::tests::limits();
+    let mut transition = session.capture_native_transition(limits).unwrap();
+    transition
+        .files_mut()
+        .land_recorded_files(
+            0,
+            NativeEditOwner::Human,
+            &[NativeRecordingFile {
+                track,
+                path: AssetPath::inside("Audio/take.wav"),
+                start: Ticks::ZERO,
+                offset_frames: 0,
+                length_frames: None,
+            }],
+        )
+        .unwrap();
+    let group = |track| {
+        transition
+            .editor()
+            .document()
+            .content
+            .tracks
+            .iter()
+            .find(|binding| binding.track == track)
+            .unwrap()
+            .group
+    };
+    let main = group(main_bus);
+    let aux = group(send_bus);
+    let receipt = transition
+        .editor_mut()
+        .apply(
+            1,
+            NativeEditOwner::Human,
+            Edit::AddSend,
+            &[
+                NativeEdit::Routing(NativeRoutingEdit::SetMainRoute {
+                    track,
+                    destination: main,
+                }),
+                NativeEdit::Routing(NativeRoutingEdit::AddSend {
+                    track,
+                    destination: aux,
+                    level_db: -6.0,
+                    pre_fader: false,
+                }),
+            ],
+        )
+        .unwrap();
+    let send = receipt
+        .created
+        .iter()
+        .find_map(|id| {
+            if let NativeCreated::Send(send) = id {
+                Some(*send)
+            } else {
+                None
+            }
+        })
+        .unwrap();
+    session
+        .prepare_native_transition(&mut transition, &NoPlugins, graph_limits())
+        .unwrap();
+    let baseline = samples(&mut transition);
+    assert!(power(&baseline) > 0.01);
+    transition
+        .editor_mut()
+        .set_automation_point(
+            2,
+            NativeEditOwner::Human,
+            ParamTarget::TrackGain(track),
+            Ticks::ZERO,
+            -12.0,
+        )
+        .unwrap();
+    session
+        .prepare_native_transition(&mut transition, &NoPlugins, graph_limits())
+        .unwrap();
+    let post = samples(&mut transition);
+    let ratio = (power(&post) / power(&baseline)).sqrt();
+    assert!(
+        (ratio - 10.0_f64.powf(-12.0 / 20.0)).abs() < 0.01,
+        "post-fader gain ratio {ratio}"
+    );
+    transition
+        .editor_mut()
+        .apply(
+            3,
+            NativeEditOwner::Human,
+            Edit::AddSend,
+            &[NativeEdit::Routing(NativeRoutingEdit::SetSendPreFader {
+                send,
+                pre_fader: true,
+            })],
+        )
+        .unwrap();
+    session
+        .prepare_native_transition(&mut transition, &NoPlugins, graph_limits())
+        .unwrap();
+    let pre = samples(&mut transition);
+    assert!(power(&pre) > power(&post) * 2.0);
+    assert!(power(&pre) < power(&baseline));
+    let document = transition.editor().document().clone();
+    let save = transition
+        .files_mut()
+        .begin_save_as(&directory.path().join("Routed.auris"))
+        .unwrap()
+        .run()
+        .unwrap();
+    transition.files_mut().finish_save(save).unwrap();
+    let mut reopened = session
+        .open_native_transition(transition.files().path().unwrap(), limits)
+        .unwrap();
+    assert_eq!(reopened.editor().document(), &document);
+    session
+        .prepare_native_transition(&mut reopened, &NoPlugins, graph_limits())
+        .unwrap();
+    let output = samples(&mut reopened);
+    assert_eq!(output.channel(0), pre.channel(0));
+    assert_eq!(output.channel(1), pre.channel(1));
+    assert_eq!(session.engine.adopted_native_generation(), None);
+}
+
+#[test]
 fn recorded_native_candidate_edit_recovery_save_as_reopen_preserves_render_and_ids() {
     use crate::native_edit::{NativeClipEdit, NativeCreated};
     use crate::native_file_session::NativeRecordingFile;

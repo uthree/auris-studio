@@ -70,6 +70,8 @@ Implemented adapters cover:
 | Clip insertion, copy, removal, movement, name and mute | Canonical shared source and stable clip IDs |
 | Completed recording file landing | Full-file metadata plus retained source-frame window |
 | Tempo, meter and transport settings | Native project context with conventional snapping/history policy |
+| Main routing and auxiliary sends | Group destinations, persistent connection IDs and pre/post-fader taps |
+| Automation curves and shared bindings | Stable curve/source/binding IDs, built-in units and point validation |
 
 Presentation-only edits retain the musical revision. Other edits currently request
 preparation conservatively. Command receipts describe authored changes; callback
@@ -81,6 +83,15 @@ without adding Undo entries. They synchronize only their own fields across histo
 authored loop/punch region edits remain undoable. Generated identities are returned
 only after a whole batch commits. Recorded batches reject duplicate tracks or two
 tracks sharing the same authored source.
+
+The native mixer adapter accepts existing `ParamTarget` addresses and resolves them
+through the validated command bindings. Gain, pan, send levels and automation point
+editing therefore use the same stable track/send identities as the conventional
+commands. Curve edits affect all bindings sharing that curve. Clearing one target,
+including removing its last point, detaches that target and retains a curve still
+used elsewhere. Main-route and send tap/destination changes retain connection IDs;
+missing or ambiguous conventional routes are rejected instead of selecting an edge
+by vector order.
 
 ## Native persistence and recovery
 
@@ -100,6 +111,23 @@ overwriting different existing assets. Checkpoints retain native documents besid
 their asset folder and restore as one Undo step without lowering allocation counters.
 Checkpoint restore rejects another project's history directory. Ordinary desktop
 autosave discovery and crash recovery still use the conventional Session owner.
+
+Native autosave jobs now copy inside assets and stage format-33 snapshots in leased
+recovery workspaces. Publication checks owner identity, document revision, job
+generation, permanent path, asset folder and transaction state. A stale, cancelled
+or foreign completion cannot replace a recovery snapshot. Autosave leaves the
+permanent save baseline and dirty state unchanged.
+
+Native discovery uses a separate `native` registry subtree and the existing lease,
+metadata and discard rules. Live owners remain hidden. Recovery opens an unsaved
+native editor, copies its assets to a new leased workspace, and retains the original
+snapshot until it is explicitly discarded. Save As publishes outside disposable
+recovery storage before releasing the copied assets. The Session runtime can prepare
+this recovered document through `recover_native_transition`.
+
+Capturing an unsaved ordinary Session now retains its actual working asset folder
+and unsaved status. Save As asset copies use a synced temporary file and no-clobber
+publication, so a failed copy cannot leave a partial destination file.
 
 ## Remaining activation work
 
@@ -195,3 +223,25 @@ After the ordinary recording-window correction, the full serial workspace run pa
 5,105 tests with 53 ignored across the same 71 suites. Workspace Clippy, formatting
 and Session rustdoc with warnings denied also passed. The added test covers both
 count-in and punch windows through normal save/open and the explicit native workflow.
+
+### Native routing and recovery validation, 2026-10-28
+
+The routing regression lands an actual WAV through a captured Session, changes its
+main route, adds a send, and writes gain automation using the existing parameter
+address. Rendering verifies a -12 dB change and the different result of switching
+the send to pre-fader. Format-33 save/reopen retains the document IDs and produces
+sample-equal stereo output.
+
+The recovery regression publishes a native autosave containing a recorded source
+window, removes the original unsaved Session's working folder, discovers the
+abandoned snapshot, and recovers it through another Session's runtime. It then
+edits, traverses Undo/Redo, saves to a permanent folder and reopens. Source samples,
+clip offsets and persistent IDs are retained. Separate checks cover a blocked
+primary registry, stale/foreign/out-of-order completions, cancellation, active
+gestures, post-save invalidation, recovery-folder Save As rejection and injected
+asset-copy failure. These are explicit native APIs with finalized WAV files, not
+physical microphone capture or default desktop native activation.
+
+The final serial workspace run passed 5,136 tests with 53 ignored across 71 suites.
+Workspace Clippy (`--all-targets -- -D warnings`), workspace rustdoc
+(`RUSTDOCFLAGS=-D warnings`), formatting and diff checks passed on the same code.

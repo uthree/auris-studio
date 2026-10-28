@@ -105,6 +105,11 @@ impl Session {
         self.require_native_transition_boundary()?;
         self.collect_hosted_state()?;
         let native = auris_io::project_to_native(&self.project, limits)?;
+        let editor = if self.is_dirty() || self.path.is_none() {
+            NativeDocumentEditor::new_unsaved(native.clone(), limits)?
+        } else {
+            NativeDocumentEditor::new(native.clone(), limits)?
+        };
         Ok(NativeSessionTransition {
             asset_document: native.clone(),
             assets: crate::native_assets::NativeAudioAssets {
@@ -112,12 +117,9 @@ impl Session {
                 missing: Vec::new(),
             },
             files: NativeFileSession::from_editor(
-                NativeDocumentEditor::new(native, limits)?,
+                editor,
                 limits,
-                self.path
-                    .as_deref()
-                    .and_then(auris_io::project_folder)
-                    .map(std::path::Path::to_path_buf),
+                self.project_folder().map(std::path::Path::to_path_buf),
             ),
             hosts: None,
             prepared_revision: None,
@@ -142,6 +144,31 @@ impl Session {
         self.require_native_transition_boundary()?;
         self.collect_hosted_state()?;
         let files = NativeFileSession::open(path, limits)?;
+        self.transition_with_files(files, limits)
+    }
+
+    /// Recovers a native snapshot into an unsaved candidate using this Session's runtime.
+    ///
+    /// Recovery copies inside assets into a leased workspace. It never overwrites the original
+    /// project or adopts the autosave path as a permanent save destination.
+    pub fn recover_native_transition(
+        &mut self,
+        snapshot: &crate::native_file_session::NativeRecoverySnapshot,
+        limits: ContentLimits,
+    ) -> Result<NativeSessionTransition, NativeTransitionError> {
+        self.require_native_transition_boundary()?;
+        self.collect_hosted_state()?;
+        let files = NativeFileSession::begin_recovery(snapshot, limits)
+            .run(&std::sync::atomic::AtomicBool::new(false))?
+            .ok_or_else(|| NativeFileSessionError::Recovery("recovery was cancelled".into()))?;
+        self.transition_with_files(files, limits)
+    }
+
+    fn transition_with_files(
+        &self,
+        files: NativeFileSession,
+        limits: ContentLimits,
+    ) -> Result<NativeSessionTransition, NativeTransitionError> {
         Ok(NativeSessionTransition {
             asset_document: files.editor().document().clone(),
             assets: crate::native_assets::NativeAudioAssets::default(),

@@ -17,6 +17,10 @@ use crate::native_edit::{NativeDocumentEditor, NativeEditError};
 
 mod recording;
 pub use recording::NativeRecordingFile;
+mod recovery;
+pub use recovery::{
+    NativeAutosaveJob, NativeAutosaveResult, NativeRecoveryJob, NativeRecoverySnapshot,
+};
 
 /// Errors from the native persistence authority.
 #[derive(Debug, thiserror::Error)]
@@ -39,6 +43,9 @@ pub enum NativeFileSessionError {
     /// The editor has an active human or agent gesture.
     #[error("finish the active native edit before saving")]
     ActiveEdit,
+    /// Recovery storage or lease validation failed.
+    #[error("native recovery failed: {0}")]
+    Recovery(String),
 }
 
 /// A native document authority with explicit editor and file identity.
@@ -53,6 +60,10 @@ pub struct NativeFileSession {
     disk_bytes: Option<Vec<u8>>,
     save_generation: u64,
     legacy_source: Option<NativeMigrationCandidate>,
+    recovery: Option<recovery::RecoveryState>,
+    recovery_generation: u64,
+    /// Keeps recovered inside-project files alive until Save As copies them out.
+    asset_workspace: Option<Arc<crate::session::autosave::SessionWorkspace>>,
 }
 
 impl NativeFileSession {
@@ -70,6 +81,9 @@ impl NativeFileSession {
             disk_bytes: None,
             save_generation: 0,
             legacy_source: None,
+            recovery: None,
+            recovery_generation: 0,
+            asset_workspace: None,
         })
     }
 
@@ -88,6 +102,9 @@ impl NativeFileSession {
             disk_bytes: None,
             save_generation: 0,
             legacy_source: None,
+            recovery: None,
+            recovery_generation: 0,
+            asset_workspace: None,
         }
     }
 
@@ -155,6 +172,7 @@ impl NativeFileSession {
         if self.editor.transaction_owner().is_some() {
             return Err(NativeFileSessionError::ActiveEdit);
         }
+        self.require_permanent_destination(&path)?;
         self.save_generation = self
             .save_generation
             .checked_add(1)
@@ -193,6 +211,8 @@ impl NativeFileSession {
         self.path = Some(path);
         self.disk_bytes = Some(disk_bytes);
         self.legacy_source = None;
+        self.recovery = None;
+        self.asset_workspace = None;
         Ok(())
     }
 
@@ -260,6 +280,8 @@ impl NativeFileSession {
     }
 }
 
+#[cfg(test)]
+mod asset_copy_tests;
 #[cfg(test)]
 mod tests;
 
@@ -462,10 +484,8 @@ fn copy_file_noclobber(source: &Path, destination: &Path) -> Result<(), NativeFi
             source.display()
         )));
     }
-    if let Ok(existing) = std::fs::read(destination) {
-        let source_bytes =
-            std::fs::read(source).map_err(|e| NativeFileSessionError::AssetCopy(e.to_string()))?;
-        if existing == source_bytes {
+    if destination.is_file() {
+        if files_equal(source, destination)? {
             return Ok(());
         }
         return Err(NativeFileSessionError::AssetCopy(format!(
@@ -477,14 +497,64 @@ fn copy_file_noclobber(source: &Path, destination: &Path) -> Result<(), NativeFi
         std::fs::create_dir_all(parent)
             .map_err(|e| NativeFileSessionError::AssetCopy(e.to_string()))?;
     }
-    let mut input = std::fs::File::open(source)
+    let parent = destination.parent().ok_or_else(|| {
+        NativeFileSessionError::AssetCopy("destination has no parent folder".into())
+    })?;
+    let input = std::fs::File::open(source)
         .map_err(|e| NativeFileSessionError::AssetCopy(e.to_string()))?;
-    let mut output = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(destination)
+    match copy_reader_noclobber(input, parent, destination) {
+        Ok(()) => Ok(()),
+        Err(_error) if destination.is_file() && files_equal(source, destination)? => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
+fn copy_reader_noclobber<R: std::io::Read>(
+    mut input: R,
+    parent: &Path,
+    destination: &Path,
+) -> Result<(), NativeFileSessionError> {
+    // NamedTempFile removes the staged file on every error path. Persisting it with
+    // `persist_noclobber` keeps a concurrently-created destination intact.
+    let mut temporary = tempfile::NamedTempFile::new_in(parent)
         .map_err(|e| NativeFileSessionError::AssetCopy(e.to_string()))?;
-    std::io::copy(&mut input, &mut output)
+    std::io::copy(&mut input, temporary.as_file_mut())
+        .and_then(|_| temporary.as_file().sync_all())
         .map_err(|e| NativeFileSessionError::AssetCopy(e.to_string()))?;
-    Ok(())
+    temporary
+        .persist_noclobber(destination)
+        .map(|_| ())
+        .map_err(|error| NativeFileSessionError::AssetCopy(error.error.to_string()))
+}
+
+fn files_equal(left: &Path, right: &Path) -> Result<bool, NativeFileSessionError> {
+    let left_len = std::fs::metadata(left)
+        .map_err(|e| NativeFileSessionError::AssetCopy(e.to_string()))?
+        .len();
+    let right_len = std::fs::metadata(right)
+        .map_err(|e| NativeFileSessionError::AssetCopy(e.to_string()))?
+        .len();
+    if left_len != right_len {
+        return Ok(false);
+    }
+    let mut left = std::io::BufReader::new(
+        std::fs::File::open(left).map_err(|e| NativeFileSessionError::AssetCopy(e.to_string()))?,
+    );
+    let mut right = std::io::BufReader::new(
+        std::fs::File::open(right).map_err(|e| NativeFileSessionError::AssetCopy(e.to_string()))?,
+    );
+    let mut left_buf = [0_u8; 64 * 1024];
+    let mut right_buf = [0_u8; 64 * 1024];
+    loop {
+        let left_read = std::io::Read::read(&mut left, &mut left_buf)
+            .map_err(|e| NativeFileSessionError::AssetCopy(e.to_string()))?;
+        let right_read = std::io::Read::read(&mut right, &mut right_buf)
+            .map_err(|e| NativeFileSessionError::AssetCopy(e.to_string()))?;
+        if left_read != right_read || left_buf[..left_read] != right_buf[..right_read] {
+            return Ok(false);
+        }
+        if left_read == 0 {
+            return Ok(true);
+        }
+    }
 }

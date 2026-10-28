@@ -136,6 +136,12 @@
 //! revision and generation checks, and exact acknowledged bytes detect external changes.
 //! Native asset preparation resolves the candidate's folder and decodes newly added sources into
 //! an isolated bank; reopening a native transition retains its IDs and uses the existing engine.
+//! Native mixer adapters resolve existing parameter targets to persistent node identities;
+//! routing and automation changes pass through that same candidate commit boundary. Native
+//! autosave uses the common leased recovery workspaces under a separate registry subtree.
+//! It copies inside assets before staging, rejects stale completions before publication, and
+//! recovers into an unsaved native editor with its own asset lifetime. Capture retains an
+//! unsaved Session's working folder, and Save As publishes outside disposable recovery storage.
 //! This explicit workflow does not yet replace ordinary Session recording, autosave or saving.
 //!
 //! # Multiple project windows

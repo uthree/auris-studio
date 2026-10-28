@@ -53,7 +53,7 @@ pub use sound_search::{SoundFilter, SoundLibraryJob, SoundSearch, SoundSource};
 mod analysis;
 mod assets;
 mod audition;
-mod autosave;
+pub(crate) mod autosave;
 mod checkpoints;
 #[cfg(test)]
 mod choir_tests;
