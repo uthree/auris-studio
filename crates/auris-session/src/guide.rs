@@ -141,6 +141,11 @@
 //! Insert-chain commands validate an unambiguous sum/insert/strip path before rewiring it;
 //! sidechain changes participate in cycle checks. Ownership editing requires no plugin host,
 //! while capability validation and runtime publication remain separate preparation steps.
+//! [`crate::midi_import::PreparedMidiImport`] shares parsed notes and channel performance
+//! between ordinary MIDI replacement and native append. A native import allocates all of its
+//! track/source/clip identities within one candidate and one Undo step. Worker results are
+//! bound to the native editor's revision and session identity; an active gesture blocks their
+//! handoff. Appending preserves the destination tempo, meter, assets and file path.
 //! The captured transition now owns [`crate::native_file_session::NativeFileSession`], sharing
 //! one editor across completed recording file landing, native edits, checkpoint restoration and
 //! guarded native persistence. Saving after legacy open preserves the exact source backup and

@@ -77,6 +77,7 @@ pub use plugin_worker::{
 pub mod guide;
 pub mod history;
 pub mod library;
+pub mod midi_import;
 pub mod mixer_graph;
 pub mod native_assets;
 pub mod native_conventional;

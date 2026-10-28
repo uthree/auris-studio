@@ -382,7 +382,11 @@ atomic edit. Native plugin adapters now resolve instrument/slot addresses for in
 replacement, stable-key parameters, complete plugin state, bypass and conventional
 insert-chain/sidechain edits. Node and slot IDs survive replacement and reordering;
 shared automation curves survive removal of a replaced instance's binding. Ambiguous
-custom chains are refused before any mutation. `NativeFileSession` adds guarded native save/reopen, asset copying,
+custom chains are refused before any mutation. MIDI append uses shared parsed material
+with ordinary import, allocating tracks, source processors and complete note/performance
+clips in one atomic native edit. Revision-bound worker handoff rejects foreign results
+and active gestures; append retains the existing tempo and meter. `NativeFileSession`
+adds guarded native save/reopen, asset copying,
 edited legacy upgrades, checkpoint restore and leased native autosave/recovery to
 the same editor. The explicit Session transition prepares newly landed audio and
 reopens or recovers these native files, retaining an unsaved session's working assets.

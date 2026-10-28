@@ -25,6 +25,13 @@ pub enum NativeEdit {
     Track(super::NativeTrackEdit),
     /// Places a recorded/imported asset directly into a canonical audio source.
     Audio(super::NativeAudioEdit),
+    /// Appends prepared MIDI tracks as one atomic native history entry.
+    ImportMidi {
+        /// Prepared tracks and their complete clip performance data.
+        tracks: Vec<crate::midi_import::PreparedMidiTrack>,
+        /// Timeline offset applied to every imported clip.
+        at: auris_core::Ticks,
+    },
     /// Inserts, removes, moves or sidechains a conventional effect.
     Effect(super::NativeEffectEdit),
     /// Changes persisted timeline/transport settings.
@@ -125,6 +132,9 @@ pub(super) fn apply(
         NativeEdit::Clip(edit) => return super::clips::apply(document, edit, limits),
         NativeEdit::Track(edit) => return super::tracks::apply(document, edit, limits),
         NativeEdit::Audio(edit) => return super::audio::apply(document, edit, limits),
+        NativeEdit::ImportMidi { tracks, at } => {
+            return super::midi::apply(document, tracks, *at, limits);
+        }
         NativeEdit::Effect(edit) => return super::effects::apply(document, edit, limits),
         NativeEdit::Timeline(edit) => super::timeline::apply(document, edit)?,
         NativeEdit::RenameTrack { track, name } => {

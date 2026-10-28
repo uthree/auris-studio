@@ -9,6 +9,7 @@ mod automation;
 mod clips;
 mod commands;
 mod effects;
+mod midi;
 mod mixer_commands;
 mod plugin_commands;
 mod plugins;
@@ -33,6 +34,8 @@ mod audio_tests;
 mod clips_tests;
 #[cfg(test)]
 mod effects_tests;
+#[cfg(test)]
+mod midi_tests;
 #[cfg(test)]
 mod plugin_commands_tests;
 #[cfg(test)]

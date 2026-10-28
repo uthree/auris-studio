@@ -19,10 +19,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use auris_core::param::{ParamId, ParamTarget};
-use auris_core::project::CurvePoint;
 use auris_core::time::Ticks;
 use auris_core::{
-    AssetPath, AudioBuffer, ClipId, Note, Project, SoundFontId, SoundFontRef, SourceId, TrackId,
+    AssetPath, AudioBuffer, ClipId, Project, SoundFontId, SoundFontRef, SourceId, TrackId,
 };
 use auris_io::{
     IoError, SoundFont, SoundFontPreset, byte_size, document_in_folder, font_name,
@@ -32,6 +31,7 @@ use auris_io::{
 
 use crate::error::SessionError;
 use crate::history::Edit;
+use crate::midi_import::PreparedMidiImport;
 
 use super::assets::{PreparedAssets, prepare_project_assets};
 use super::{CachedFont, MidiReport, SaveReport, Session};
@@ -96,9 +96,6 @@ pub fn read_soundfont(path: &Path) -> Result<LoadedFont, SessionError> {
 
 /// The instrument a track that played on the drum channel is given.
 const DRUM_INSTRUMENT: &str = "auris.synth.noisedrum";
-
-/// MIDI's drum channel, 0-based. Channel 10, counting the way a musician does.
-const DRUM_CHANNEL: u8 = 9;
 
 /// A MIDI import captured on the session thread and ready to parse on a worker.
 ///
@@ -295,74 +292,17 @@ impl OpenProjectJob {
 impl MidiImportJob {
     /// Reads and builds the replacement document, returning `None` when cancellation was seen.
     pub fn run(self, cancelled: &AtomicBool) -> Result<Option<MidiImportResult>, SessionError> {
-        if cancelled.load(Ordering::Relaxed) {
+        let Some(imported) =
+            PreparedMidiImport::read(&self.path, &self.fallback, &self.drums, cancelled)?
+        else {
             return Ok(None);
-        }
-        let imported = auris_io::read_midi_file(&self.path)?;
-        if cancelled.load(Ordering::Relaxed) {
-            return Ok(None);
-        }
-        let name = self
-            .path
-            .file_stem()
-            .map(|stem| stem.to_string_lossy().to_string())
-            .unwrap_or_else(|| "Untitled".to_string());
-        let mut project = Project::new(name, self.sample_rate);
-        project.tempo_map = imported.tempo_map.clone();
-        project.signatures = imported.signatures.clone();
-        let mut report = MidiReport {
-            tracks: 0,
-            notes: 0,
-            length: imported.end(),
         };
-
-        for track in &imported.tracks {
-            if cancelled.load(Ordering::Relaxed) {
-                return Ok(None);
-            }
-            let instrument = match track.channel {
-                DRUM_CHANNEL => self.drums.clone(),
-                _ => self.fallback.clone(),
-            };
-            let track_id = if track.channel == DRUM_CHANNEL {
-                project.add_drum_track(&track.name, instrument)
-            } else {
-                project.add_instrument_track(&track.name, instrument)
-            };
-            let Some(first) = track.notes.iter().map(|note| note.start).min() else {
-                continue;
-            };
-            let last = track.end();
-            let Some(clip_id) = project.add_midi_clip(
-                track_id,
-                &track.name,
-                first,
-                Ticks((last - first).raw().max(1)),
-            ) else {
-                continue;
-            };
-            if let Some(clip) = project.midi_clip_mut(clip_id) {
-                clip.notes = track
-                    .notes
-                    .iter()
-                    .map(|note| Note {
-                        start: note.start - first,
-                        ..note.clone()
-                    })
-                    .collect();
-                clip.bend = rebase_curve(&track.bend, first, last);
-                for (number, points) in &track.controllers {
-                    let points = rebase_curve(points, first, last);
-                    if !points.is_empty() {
-                        clip.controllers.insert(*number, points);
-                    }
-                }
-                clip.length_is_explicit = true;
-                report.notes += clip.notes.len();
-            }
-            report.tracks += 1;
+        let Some((project, report)) = imported.into_project(self.sample_rate, cancelled)? else {
+            return Ok(None);
+        };
+        if cancelled.load(Ordering::Relaxed) {
+            return Ok(None);
         }
-        project.validate_loop_expansion()?;
         Ok(Some(MidiImportResult {
             owner: self.owner,
             revision: self.revision,
@@ -657,23 +597,27 @@ impl Session {
 
     /// Captures a MIDI import for worker execution without reading the file.
     pub fn begin_midi_import(&self, path: &Path) -> Result<MidiImportJob, SessionError> {
-        let fallback = self
-            .registry
-            .default_instrument_id()
-            .ok_or_else(|| SessionError::UnknownPlugin("<any instrument>".into()))?
-            .to_string();
-        let drums = match self.registry.has_instrument(DRUM_INSTRUMENT) {
-            true => DRUM_INSTRUMENT.to_string(),
-            false => fallback.clone(),
-        };
+        let (fallback, drums) = self.midi_import_instruments()?;
         Ok(MidiImportJob {
             owner: Arc::clone(&self.registry),
             revision: self.revision,
             path: path.to_path_buf(),
             sample_rate: self.project.sample_rate,
-            fallback,
-            drums,
+            fallback: fallback.to_owned(),
+            drums: drums.to_owned(),
         })
+    }
+
+    pub(super) fn midi_import_instruments(&self) -> Result<(&str, &str), SessionError> {
+        let fallback = self
+            .registry
+            .default_instrument_id()
+            .ok_or_else(|| SessionError::UnknownPlugin("<any instrument>".into()))?;
+        let drums = match self.registry.has_instrument(DRUM_INSTRUMENT) {
+            true => DRUM_INSTRUMENT,
+            false => fallback,
+        };
+        Ok((fallback, drums))
     }
 
     /// Applies a prepared MIDI document if the originating session is still unchanged.
@@ -1772,34 +1716,6 @@ enum SaveAsPolicy {
     Replace,
 }
 
-fn rebase_curve(points: &[CurvePoint], first: Ticks, last: Ticks) -> Vec<CurvePoint> {
-    let mut rebased: Vec<_> = points
-        .iter()
-        .filter(|point| point.at >= first && point.at <= last)
-        .map(|point| CurvePoint {
-            at: point.at - first,
-            ..*point
-        })
-        .collect();
-    // Curves are channel state. Carry the latest value before the first note into the clip when
-    // no point exists exactly at that note.
-    if !rebased.iter().any(|point| point.at == Ticks::ZERO)
-        && let Some(point) = points
-            .iter()
-            .filter(|point| point.at < first)
-            .max_by_key(|point| point.at)
-    {
-        rebased.insert(
-            0,
-            CurvePoint {
-                at: Ticks::ZERO,
-                value: point.value,
-            },
-        );
-    }
-    rebased
-}
-
 fn relocate_composed_font_in_project(project: &mut Project, from: &AssetPath, to: &AssetPath) {
     let Some(text) = project.song_spec.as_ref() else {
         return;
@@ -1895,8 +1811,10 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
+    use crate::midi_import::rebase_curve;
     use crate::session::fixtures::{Scratch, named_font, session};
-    use auris_core::project::TrackKind;
+    use auris_core::Note;
+    use auris_core::project::{CurvePoint, TrackKind};
     use auris_io::AUDIO_DIR;
 
     fn directory_entries(path: &Path) -> Vec<PathBuf> {

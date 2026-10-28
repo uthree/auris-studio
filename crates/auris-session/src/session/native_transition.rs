@@ -7,8 +7,11 @@ use auris_core::pipeline::PipelineLimits;
 use auris_core::pipeline::content::{CapabilityProvider, ContentLimits, ProcessorKind};
 use auris_engine::native::NativeGraphGeneration;
 
-use crate::native_edit::{NativeDocumentEditor, NativeEditError};
-use crate::native_file_session::{NativeFileSession, NativeFileSessionError};
+use crate::native_edit::{NativeDocumentEditor, NativeEditError, NativeEditOwner};
+use crate::native_file_session::{
+    NativeFileSession, NativeFileSessionError, NativeMidiImportJob, NativeMidiImportReceipt,
+    NativeMidiImportResult,
+};
 use crate::native_host::{NativeHostError, NativeHostManager, NativeHostResources};
 use crate::{Session, SessionError};
 
@@ -99,6 +102,37 @@ impl NativeSessionTransition {
 }
 
 impl Session {
+    /// Captures a MIDI append for a native candidate using this Session's instrument policy.
+    ///
+    /// The worker owns no live session and imports no destination identities. Both the ordinary
+    /// origin and native editor are checked again by [`Self::finish_native_midi_append`].
+    pub fn begin_native_midi_append(
+        &self,
+        transition: &NativeSessionTransition,
+        path: &std::path::Path,
+        at: auris_core::Ticks,
+        owner: NativeEditOwner,
+    ) -> Result<NativeMidiImportJob, NativeTransitionError> {
+        self.require_native_transition_origin(transition)?;
+        let (fallback, drums) = self.midi_import_instruments()?;
+        Ok(transition
+            .files
+            .begin_midi_append(path, at, owner, fallback, drums)?)
+    }
+
+    /// Appends a completed MIDI worker result to the native candidate as one Undo step.
+    ///
+    /// Rejects a stale ordinary origin before touching the native editor. The conventional
+    /// document and audible graph remain unchanged; native preparation is a separate step.
+    pub fn finish_native_midi_append(
+        &self,
+        transition: &mut NativeSessionTransition,
+        result: NativeMidiImportResult,
+    ) -> Result<NativeMidiImportReceipt, NativeTransitionError> {
+        self.require_native_transition_origin(transition)?;
+        Ok(transition.files.finish_midi_append(result)?)
+    }
+
     /// Captures actual hosted state and converts this document once into a native candidate.
     ///
     /// No graph is replaced and no file is written. Conversion failures leave the conventional
@@ -203,26 +237,9 @@ impl Session {
         provider: &P,
         graph_limits: PipelineLimits,
     ) -> Result<NativeGraphGeneration, NativeTransitionError> {
-        self.require_native_transition_boundary()?;
-        if transition.origin != self.sound_scope
-            || transition.origin_revision != self.revision
-            || transition.origin_digest
-                != self
-                    .agent_document_revision()
-                    .map_err(NativeTransitionError::Fingerprint)?
-        {
-            return Err(NativeTransitionError::Stale);
-        }
+        self.require_native_transition_origin(transition)?;
         self.collect_hosted_state()?;
-        if transition.origin != self.sound_scope
-            || transition.origin_revision != self.revision
-            || transition.origin_digest
-                != self
-                    .agent_document_revision()
-                    .map_err(NativeTransitionError::Fingerprint)?
-        {
-            return Err(NativeTransitionError::Stale);
-        }
+        self.require_native_transition_origin(transition)?;
         let folder = transition.files.asset_folder();
         let mut plugin_paths = self.plugin_trust.extra_paths().to_vec();
         // An explicitly opened CLAP library is already authorized by the conventional host.
@@ -273,6 +290,23 @@ impl Session {
         Ok(generation)
     }
 
+    fn require_native_transition_origin(
+        &self,
+        transition: &NativeSessionTransition,
+    ) -> Result<(), NativeTransitionError> {
+        self.require_native_transition_boundary()?;
+        if transition.origin != self.sound_scope
+            || transition.origin_revision != self.revision
+            || transition.origin_digest
+                != self
+                    .agent_document_revision()
+                    .map_err(NativeTransitionError::Fingerprint)?
+        {
+            return Err(NativeTransitionError::Stale);
+        }
+        Ok(())
+    }
+
     fn require_native_transition_boundary(&self) -> Result<(), NativeTransitionError> {
         if self.transaction.is_some() || self.agent_request.is_some() || self.take.is_some() {
             return Err(NativeTransitionError::ActiveEdit);
@@ -283,3 +317,6 @@ impl Session {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod native_midi_workflow;

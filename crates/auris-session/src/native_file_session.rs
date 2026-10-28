@@ -17,6 +17,8 @@ use crate::native_edit::{NativeDocumentEditor, NativeEditError};
 
 mod recording;
 pub use recording::NativeRecordingFile;
+mod midi;
+pub use midi::{NativeMidiImportJob, NativeMidiImportReceipt, NativeMidiImportResult};
 mod recovery;
 pub use recovery::{
     NativeAutosaveJob, NativeAutosaveResult, NativeRecoveryJob, NativeRecoverySnapshot,
@@ -41,11 +43,17 @@ pub enum NativeFileSessionError {
     #[error("native save job is stale or out of order")]
     StaleSave,
     /// The editor has an active human or agent gesture.
-    #[error("finish the active native edit before saving")]
+    #[error("finish the active native edit before this file operation")]
     ActiveEdit,
     /// Recovery storage or lease validation failed.
     #[error("native recovery failed: {0}")]
     Recovery(String),
+    /// MIDI import parsing or preparation failed.
+    #[error("native MIDI import failed: {0}")]
+    MidiImport(String),
+    /// A MIDI import result no longer belongs to this native editor.
+    #[error("native MIDI import is stale or belongs to another session")]
+    StaleMidiImport,
 }
 
 /// A native document authority with explicit editor and file identity.
@@ -282,6 +290,8 @@ impl NativeFileSession {
 
 #[cfg(test)]
 mod asset_copy_tests;
+#[cfg(test)]
+mod midi_tests;
 #[cfg(test)]
 mod tests;
 

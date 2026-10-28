@@ -103,6 +103,7 @@ Implemented adapters cover:
 | Track creation, deletion and ordering | Source, processing group, strip and typed edges |
 | Clip insertion, copy, removal, movement, name and mute | Canonical shared source and stable clip IDs |
 | Completed recording file landing | Full-file metadata plus retained source-frame window |
+| MIDI append | Fresh track/source/clip identities and complete clip-local performance, in one edit |
 | Tempo, meter and transport settings | Native project context with conventional snapping/history policy |
 | Main routing and auxiliary sends | Group destinations, persistent connection IDs and pre/post-fader taps |
 | Automation curves and shared bindings | Stable curve/source/binding IDs, built-in units and point validation |
@@ -154,6 +155,29 @@ checks a -12 dB gain change, audible insert-order and sidechain changes, exact U
 restoration, and Save As/reopen equality of identities and samples. Engine regressions
 also distinguish registry-created state restoration from caller-owned instance state.
 These are offline checks of prepared graphs, not audio-device callback adoption.
+
+`PreparedMidiImport` is the shared material boundary for ordinary MIDI replacement
+and native append. It allocates no destination IDs and keeps notes, bend and MIDI
+controllers in clip-local time, carrying preceding channel state into the first
+note and retaining later performance events in the explicit clip length. Channel 10
+maps to a drum track through the caller's instrument policy.
+`Session::begin_native_midi_append` supplies the same registry policy used by normal
+MIDI replacement; its matching finish method validates the originating Session's
+identity, revision and digest before the native handoff.
+
+`NativeFileSession::begin_midi_append` captures the editor revision, per-session
+identity and edit owner before worker parsing. `finish_midi_append` rejects foreign
+or stale results and any active gesture, then commits one `NativeEdit::ImportMidi`.
+The operation allocates all tracks, sources, processors and clips inside one private
+candidate. It never predicts IDs or publishes partially imported tracks. The
+destination tempo, meter, assets and file path remain intact. Each import is bounded
+to 256 tracks and 200,000 notes as well as the normal 1 MiB command payload and native
+ownership limits; the first exhausted limit rejects the entire operation.
+
+The native MIDI workflow test compares exact imported notes and performance curves
+with ordinary import, prepares and renders the appended material, and checks stereo
+PCM after Undo/Redo and native Save As/reopen. This extends the explicit native
+transition; the ordinary Session still owns conventional runtime commands.
 
 ## Native persistence and recovery
 
@@ -344,3 +368,18 @@ separately for two installed instruments, without opening editors or an audio de
 Both runs passed live tool edits, Undo/Redo, ordinary native saving, saved-project
 tool edits, no-op retry byte preservation, reopening and rendered-level restoration.
 The RMS measurements establish a signal change, not a musical-quality judgment.
+
+## Native MIDI append verification (2026-10-28)
+
+The final serial workspace run passed 5,207 tests with 53 ignored across 71 suites.
+The workspace-built Session executable also passed all 33 tests matching `midi`,
+including ordinary/agent import compatibility, source-bound native worker handoff,
+atomic ownership-limit rejection, shared-source preservation, Undo/Redo identity
+retention and native save/reopen. The import/render workflow compared exact stereo
+PCM after history traversal and reopening. A raw SMF fixture separately preserved
+same-tick events, a 24-semitone RPN bend range and a pedal release after the notes.
+
+Workspace Clippy (`--all-targets -- -D warnings`), rustdoc
+(`RUSTDOCFLAGS=-D warnings`), formatting and diff checks passed. These MIDI checks
+use isolated files and offline prepared graphs; they do not establish audio-device
+callback adoption or replace the ordinary Session's runtime command authority.
