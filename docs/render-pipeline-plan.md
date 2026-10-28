@@ -10,8 +10,11 @@ native document envelope. M2b's pre-activation conversion, captured-source repor
 exact-byte backup primitive are implemented. M2c now has a conventional preparation
 and render-parity bridge, a private prepared-input boundary, native node controls,
 callback adoption acknowledgments and isolated host/editor ownership by generation.
-Live compiler/command integration and native writer
-activation remain subsequent units.
+The normal Session can now capture and prepare a revision-bound native transition
+using its existing engine. Native document edits have atomic batches and snapshot
+history. Explicit native IO APIs support bounded format-33 files, guarded updates
+and backed-up in-place upgrades. The default Session authority, playback publication,
+Save, recovery and checkpoints still require the remaining command migration.
 The design baseline is `cd205c3c`; the saved format remains 32.
 
 Read [the design](render-pipeline-design.md) for document ownership, port semantics,
@@ -256,12 +259,13 @@ metadata is unavailable; missing stable plugin keys reject the candidate unchang
 `load_native_candidate` reads bounded source bytes once, reuses the current decoder
 and repairs, and reports the original version and repair facts. Exact captured bytes
 can be backed up with synchronized no-clobber publication and byte-verified idempotence.
-It has no upgraded-project publication method. See the [migration contract and
-verification](render-pipeline-migration.md).
+The explicit `publish_native_upgrade` IO operation now combines that candidate with
+backup, source checks and staged format-33 publication. Native updates require the
+observed destination bytes. See the [migration contract and verification](render-pipeline-migration.md).
 
-The activated legacy-schema separation, new writer, backup/source-check transaction,
-checkpoint/recovery and Save As integration remain coupled to M2c/M2d. Current
-production loading/writing continues to use the existing format-32 model.
+The ordinary Session writer switch, legacy-schema separation, checkpoint/recovery and
+Save As integration remain coupled to M2c/M2d. The guarded native IO APIs are tested
+independently; default Session loading/writing continues to use format 32.
 
 Implement the design's conversion algorithm in the IO boundary with dedicated legacy
 representations. Expand the supported-version dispatcher from the current source,
@@ -273,8 +277,8 @@ atomic publication and no-clobber backup creation. Include recovery/checkpoints,
 Save As, collected assets and missing external plugins. Migration never runs a
 generator, loads a model or regenerates a take.
 
-Do not publish native-format saves until the compiler and command adapters below
-are ready. Pre-activation work may use test-only models/readers. A runtime rollout
+Do not activate ordinary native-format saves until the compiler and command adapters
+below are ready. Pre-activation work may exercise explicit IO APIs in isolated files. A runtime rollout
 flag must not permit writing a file that the same installed build cannot reopen.
 
 ### M2c: Compile conventional projects
@@ -336,6 +340,15 @@ The remaining integration order is:
    authority. Activate native persistence only with that integration; the render
    bridge's legacy-shaped output is never a shortcut for save or command execution.
 
+`Session::capture_native_transition` and `prepare_native_transition` now implement
+the capture/preparation portion of this seam. They collect actual host state, convert
+once, and retain native IDs across candidate edits. The borrowed host manager uses
+the existing engine geometry, assets and plugin trust; the transition owns no second
+audio device. Origin, revision and content checks reject stale candidates. This seam
+does not enqueue the graph while ordinary commands still write the legacy document.
+See [native session integration](render-pipeline-native-session.md) for implemented
+command families and the remaining authority boundary.
+
 Host integration must stage an instance handover, not just rename placement-map keys.
 The isolated `NativeHostedPlayback` path keeps fresh candidate instances separate
 from the legacy `HostedPlugins::place`/`place_instruments` and VST3 equivalents.
@@ -356,6 +369,13 @@ the persistent processor identity. Do not derive new processor IDs by reconverti
 the legacy document on every edit.
 
 ### M2d: Commands, history and transport compatibility
+
+The `NativeDocumentEditor` boundary now owns native snapshots, bounded command
+batches, owner-scoped gestures and Undo/Redo. Presentation and musical revisions are
+separate; history restores identities while preserving the allocation high-water
+mark. Initial adapters cover presentation, strips, effect bypass, authored notes,
+stable clip stages and explicit source/branch copies. These adapters operate directly
+on native ownership; the default Session command implementations have not switched.
 
 Adapt all document mutation paths to canonical sources/nodes. Prioritize existing
 track/clip/instrument/effect/automation commands and the graph facade, then audit:

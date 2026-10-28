@@ -23,7 +23,7 @@ mod preparation_tests;
 #[cfg(test)]
 mod shape_tests;
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 pub use preparation::{NativePreparationError, prepare_native_conventional};
 

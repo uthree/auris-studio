@@ -20,6 +20,7 @@ use auris_engine::{RenderGraph, Transport, render_block};
 use auris_vst3::plugins_in;
 
 use super::{NativeHostResources, NativeHostedPlayback, Prepared};
+use crate::{Session, SessionOptions};
 
 struct Metadata {
     plugin_id: String,
@@ -155,6 +156,100 @@ fn rms(buffer: &auris_core::AudioBuffer) -> f64 {
     (sum / count.max(1) as f64).sqrt()
 }
 
+#[test]
+#[ignore = "loads and executes an installed third-party instrument through Session"]
+fn normal_session_native_transition_reuses_captured_identity() {
+    let path = plugin_path().expect("AURIS_NATIVE_PLUGIN must name a plugin");
+    let plugin_id = class_id(&path).expect("plugin must expose an instrument class");
+    let mut project = Project::new("native session transition", 48_000.0);
+    let track = project.add_instrument_track("Hosted", &plugin_id);
+    assert!(project.set_hosted_instrument(track, &plugin_id, AssetPath::external(&path)));
+    let clip = project
+        .add_midi_clip(track, "note", Ticks::ZERO, Ticks::from_beats(1.0))
+        .expect("fixture clip");
+    project
+        .midi_clip_mut(clip)
+        .expect("fixture clip")
+        .notes
+        .push(Note::new(60, Ticks::ZERO, Ticks::from_beats(1.0)));
+
+    let directory = tempfile::tempdir().expect("session project directory");
+    let saved = directory.path().join("transition.auris");
+    auris_io::save_project(&saved, &mut project).expect("save legacy fixture");
+    let mut session =
+        Session::new(SessionOptions::headless().with_plugin_paths(vec![path.clone()]))
+            .expect("headless session");
+    session.open(&saved).expect("open legacy fixture");
+    let limits = limits();
+    let mut transition = session
+        .capture_native_transition(limits.0)
+        .expect("capture native transition");
+    // Capture collects actual opaque state. Preparation must then preserve that source.
+    let before = session.project().clone();
+    let dirty = session.is_dirty();
+    let revision = session.revision();
+    let native = transition.editor().document().clone();
+    assert!(
+        native.content.processors.iter().any(|processor| {
+            matches!(&processor.kind, ProcessorKind::Instrument(instance)
+            if instance.state.hosted_bytes().is_some_and(|bytes| !bytes.is_empty()))
+        }),
+        "capture must include the loaded instrument's actual opaque state"
+    );
+    let native_directory = tempfile::tempdir().expect("native project directory");
+    let native_path = native_directory.path().join("transition.auris");
+    auris_io::save_native(&native_path, &native, limits.0).expect("save captured native state");
+    let reopened = auris_io::load_native(&native_path, limits.0).expect("reopen native state");
+    assert_eq!(
+        reopened, native,
+        "preserve real hosted state and identities"
+    );
+    let ids: Vec<_> = transition
+        .editor()
+        .document()
+        .content
+        .processors
+        .iter()
+        .map(|processor| processor.id)
+        .collect();
+    let prepare = PrepareContext::new(48_000.0, 256, 2);
+    let provider = provider_for(&reopened, &path, &prepare).expect("native capabilities");
+    let first = session
+        .prepare_native_transition(&mut transition, &provider, limits.1)
+        .expect("first native preparation");
+    let second = session
+        .prepare_native_transition(&mut transition, &provider, limits.1)
+        .expect("repeated native preparation");
+    assert_ne!(
+        first, second,
+        "each prepared graph has a fresh runtime generation"
+    );
+    assert_eq!(
+        ids,
+        transition
+            .editor()
+            .document()
+            .content
+            .processors
+            .iter()
+            .map(|p| p.id)
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        &before,
+        session.project(),
+        "native preparation must not mutate the captured legacy project"
+    );
+    assert_eq!(
+        dirty,
+        session.is_dirty(),
+        "native preparation must not dirty the session"
+    );
+    assert_eq!(session.revision(), revision);
+    assert_eq!(transition.editor().document(), &native);
+    assert_eq!(transition.prepared_generation(), Some(second));
+}
+
 #[cfg(target_os = "windows")]
 fn editor_windows() -> Option<Vec<usize>> {
     use windows::Win32::Foundation::{HWND, LPARAM};
@@ -236,13 +331,17 @@ fn native_hosted_candidate_is_isolated_and_renders() {
     let Prepared {
         graph: first_graph,
         owners: first_owners,
-    } = playback.prepared.take().expect("prepared native graph");
+    } = playback
+        .manager
+        .prepared
+        .take()
+        .expect("prepared native graph");
     let mut first_graph = first_graph;
     let first = render_graph(&mut first_graph);
     assert!(rms(&first).is_finite() && rms(&first) > 1.0e-6);
     let node = *first_owners.hosts.keys().next().expect("hosted node");
     let first_generation = first_owners.generation;
-    playback.pending = Some(first_owners);
+    playback.manager.pending = Some(first_owners);
     playback.promote(Some(first_generation), &mut Default::default());
     let gui = std::env::var_os("AURIS_NATIVE_HOST_GUI").is_some();
     if gui {
@@ -301,7 +400,11 @@ fn native_hosted_candidate_is_isolated_and_renders() {
     let Prepared {
         graph: second_graph,
         owners: second_owners,
-    } = playback.prepared.take().expect("changed native graph");
+    } = playback
+        .manager
+        .prepared
+        .take()
+        .expect("changed native graph");
     let mut second_graph = second_graph;
     let second = render_graph(&mut second_graph);
     assert!(rms(&second).is_finite());
@@ -325,7 +428,7 @@ fn native_hosted_candidate_is_isolated_and_renders() {
         );
     }
     let second_generation = second_owners.generation;
-    playback.pending = Some(second_owners);
+    playback.manager.pending = Some(second_owners);
     let mut update = super::NativeHostUpdate::default();
     playback.promote(Some(second_generation), &mut update);
     assert!(update.errors.is_empty(), "{:?}", update.errors);
@@ -348,11 +451,11 @@ fn native_hosted_candidate_is_isolated_and_renders() {
             assert!(windows.is_empty(), "host must destroy the native window");
         }
     }
-    assert_eq!(playback.retiring.len(), 1);
+    assert_eq!(playback.manager.retiring.len(), 1);
     drop(first_graph);
     let update = playback.poll();
     assert!(update.errors.is_empty(), "{:?}", update.errors);
-    assert!(playback.retiring.is_empty());
+    assert!(playback.manager.retiring.is_empty());
     assert_eq!(playback.snapshot(node).expect("new host").revision, 2);
     drop(second_graph);
     if device {
@@ -390,7 +493,7 @@ fn native_hosted_candidate_is_isolated_and_renders() {
                 .revision,
             3
         );
-        assert!(playback.retiring.is_empty());
+        assert!(playback.manager.retiring.is_empty());
     }
     eprintln!(
         "native hosted RMS: {} -> {}; GUI={gui}; device={device}",

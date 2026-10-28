@@ -76,6 +76,8 @@ mod mixer;
 mod monitor;
 mod multitrack_transcription;
 mod musical_analysis;
+mod native_transition;
+pub use native_transition::{NativeSessionTransition, NativeTransitionError};
 mod note_preview;
 pub(crate) mod notes;
 mod output_preview;

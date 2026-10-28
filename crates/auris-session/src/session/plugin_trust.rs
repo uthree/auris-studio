@@ -64,6 +64,11 @@ pub(crate) struct PluginTrust {
 }
 
 impl PluginTrust {
+    /// Configured paths used when preparing isolated hosts against this session's policy.
+    pub(super) fn extra_paths(&self) -> &[PathBuf] {
+        &self.extra
+    }
+
     /// The standard plugin folders plus `extra`.
     pub(crate) fn new(extra: &[PathBuf]) -> Self {
         let mut trust = Self::default();

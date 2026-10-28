@@ -1,8 +1,8 @@
 //! Native ownership fragment for sources, processors and conventional command identities.
 //!
-//! This serializable data is not embedded in [`crate::Project`], written by the project IO
-//! layer, or installed in playback. It keeps authored data in one source, processor state in
-//! one node, and routing in explicit edges. Topology/parameter capabilities are resolved and
+//! This serializable data is not embedded in [`crate::Project`]. The native document envelope
+//! keeps authored data in one source, processor state in one node, and routing in explicit
+//! edges. Topology/parameter capabilities are resolved and
 //! validated separately with [`crate::pipeline::Pipeline`]; this module validates ownership only.
 
 mod automation;

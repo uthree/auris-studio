@@ -60,11 +60,38 @@ using a private synchronized sibling and atomic no-clobber publication. An ident
 existing regular file is an idempotent success; different bytes, directories, symlinks
 and special files are rejected. Oversized input is rejected before staging.
 
-This primitive does not publish a native project or make source-check, backup and
-replacement one transaction. At activation, the save path must choose a distinct
-backup destination, re-check the captured source, and integrate backup failure,
-staging/publication failure, recovery, checkpoints and Save As. The existing format
-constant and writer remain at version 32 until the compiler and command audit pass.
+The explicit native IO path now groups source checks, backup and atomic replacement
+under the same `.auris-write.lock` convention as Session saves. Default Session
+Save, recovery and checkpoint jobs remain at format 32 until their command authority
+has migrated. Native IO primitives do not change that rollout gate.
+
+## Guarded native persistence
+
+The native envelope uses `NATIVE_FORMAT_VERSION = 33` beside the legacy
+`Project::FORMAT_VERSION = 32`. `load_native` probes the envelope version before
+decoding its payload; the legacy reader rejects native files before interpreting
+them as a legacy score. Native ownership, numeric playback fields and existing
+clip loop/event budgets are validated without opening assets or plugins.
+
+`stage_native` serializes through the bounded 64 MiB writer, validates a lossless
+decode of the staged payload, synchronizes a private sibling, and returns an owned
+staging value. Dropping it removes that sibling. Its replacement method is private;
+public callers use one of three guarded publication operations:
+
+- `save_native` claims an absent destination and refuses an existing file.
+- `publish_native_update` requires the exact destination bytes observed by its caller,
+  validates that they describe a native document, and rejects a changed destination.
+- `publish_native_upgrade` checks the captured legacy bytes, preserves a distinct
+  exact-byte backup, stages the native document, rechecks the source, and publishes.
+  An in-place upgrade replaces the source; another destination must be absent.
+
+Each operation holds the project write lock during its checks and publication. An
+upgrade across folders holds both the source and destination folder locks. A busy
+lock reports failure for the caller to retry. The lock coordinates Auris writers;
+an unrelated program that ignores it can still race the final check and rename.
+Backup/source aliases, conflicting backups and stale sources fail without replacing
+the source. Asset collection and Save As remain Session policies, not implicit IO
+side effects: these functions receive an exact file path and do not copy assets.
 
 ## Verification
 

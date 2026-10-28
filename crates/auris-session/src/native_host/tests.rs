@@ -197,7 +197,7 @@ fn silent_engine_rejects_prepared_candidate_without_consuming_it() {
     let mut playback = NativeHostedPlayback::silent(&AudioSettings::default(), &[]);
     let prepared = prepared_empty();
     let generation = prepared.owners.generation;
-    playback.prepared = Some(prepared);
+    playback.manager.prepared = Some(prepared);
 
     assert!(playback.queue_prepared(7).is_err());
     assert_eq!(playback.prepared_generation(), Some(generation));
@@ -208,7 +208,7 @@ fn changed_document_revision_cannot_enqueue_the_old_candidate() {
     let mut playback = NativeHostedPlayback::silent(&AudioSettings::default(), &[]);
     let prepared = prepared_empty();
     let generation = prepared.owners.generation;
-    playback.prepared = Some(prepared);
+    playback.manager.prepared = Some(prepared);
     assert!(matches!(
         playback.queue_prepared(8),
         Err(NativeHostError::StaleRevision {
@@ -224,7 +224,7 @@ fn changed_document_revision_cannot_enqueue_the_old_candidate() {
 fn unmatched_adoption_does_not_promote_pending_hosts() {
     let mut playback = NativeHostedPlayback::silent(&AudioSettings::default(), &[]);
     let generation = prepared_empty().owners.generation;
-    playback.pending = Some(HostGeneration {
+    playback.manager.pending = Some(HostGeneration {
         generation,
         revision: 9,
         hosts: BTreeMap::new(),
@@ -243,7 +243,7 @@ fn unmatched_adoption_does_not_promote_pending_hosts() {
 fn exact_adoption_promotes_only_the_matching_generation() {
     let mut playback = NativeHostedPlayback::silent(&AudioSettings::default(), &[]);
     let generation = prepared_empty().owners.generation;
-    playback.pending = Some(HostGeneration {
+    playback.manager.pending = Some(HostGeneration {
         generation,
         revision: 11,
         hosts: BTreeMap::new(),
@@ -263,8 +263,8 @@ fn lost_output_reports_once_and_keeps_published_hosts() {
     let mut playback = NativeHostedPlayback::silent(&AudioSettings::default(), &[]);
     let prepared = prepared_empty();
     let generation = prepared.owners.generation;
-    playback.published = Some(prepared.owners);
-    playback.output_was_running = true;
+    playback.manager.published = Some(prepared.owners);
+    playback.manager.output_was_running = true;
     assert!(matches!(
         playback.poll().errors.as_slice(),
         [NativeHostError::Engine(
@@ -278,7 +278,7 @@ fn lost_output_reports_once_and_keeps_published_hosts() {
 #[test]
 fn stopped_device_retires_unadopted_candidate_without_promoting_it() {
     let mut playback = NativeHostedPlayback::silent(&AudioSettings::default(), &[]);
-    playback.pending = Some(prepared_empty().owners);
+    playback.manager.pending = Some(prepared_empty().owners);
     assert!(!playback.poll().errors.is_empty());
     assert!(playback.pending_generation().is_none());
     assert!(playback.published_generation().is_none());
@@ -318,14 +318,14 @@ fn hosted_candidate_promotes_editor_intent_and_retires_old_instance_after_graph_
         NativeHostedPlayback::silent(&AudioSettings::default(), &[directory.path().to_path_buf()]);
 
     let first = prepare_fixture(&mut playback, &document, &provider, 3).expect("first candidate");
-    let first_prepared = playback.prepared.take().expect("prepared first");
+    let first_prepared = playback.manager.prepared.take().expect("prepared first");
     let first_graph = first_prepared.graph;
-    playback.pending = Some(first_prepared.owners);
+    playback.manager.pending = Some(first_prepared.owners);
     let mut update = NativeHostUpdate::default();
     playback.promote(Some(first), &mut update);
     assert_eq!(playback.published_generation(), Some(first));
 
-    playback.open_windows.insert(node);
+    playback.manager.open_windows.insert(node);
     playback
         .set_window_open(node, true)
         .expect("open first editor");
@@ -333,9 +333,9 @@ fn hosted_candidate_promotes_editor_intent_and_retires_old_instance_after_graph_
 
     let second =
         prepare_fixture(&mut playback, &document, &provider, 4).expect("replacement candidate");
-    let second_prepared = playback.prepared.take().expect("prepared second");
+    let second_prepared = playback.manager.prepared.take().expect("prepared second");
     let _second_graph = second_prepared.graph;
-    playback.pending = Some(second_prepared.owners);
+    playback.manager.pending = Some(second_prepared.owners);
     playback.promote(Some(second), &mut update);
     assert_eq!(playback.published_generation(), Some(second));
     assert!(
@@ -345,12 +345,16 @@ fn hosted_candidate_promotes_editor_intent_and_retires_old_instance_after_graph_
     let snapshot = playback.snapshot(node).expect("snapshot");
     assert_eq!(snapshot.revision, 4);
     assert_eq!(snapshot.generation, second);
-    assert_eq!(playback.retiring.len(), 1, "old host remains parked");
+    assert_eq!(
+        playback.manager.retiring.len(),
+        1,
+        "old host remains parked"
+    );
 
     drop(first_graph);
     playback.poll();
     assert!(
-        playback.retiring.is_empty(),
+        playback.manager.retiring.is_empty(),
         "old host releases after graph return"
     );
 }
@@ -364,9 +368,9 @@ fn invalid_host_replacement_preserves_the_published_generation() {
     let mut playback =
         NativeHostedPlayback::silent(&AudioSettings::default(), &[directory.path().to_path_buf()]);
     let generation = prepare_fixture(&mut playback, &document, &provider, 8).expect("candidate");
-    let prepared = playback.prepared.take().expect("prepared");
+    let prepared = playback.manager.prepared.take().expect("prepared");
     let _graph = prepared.graph;
-    playback.pending = Some(prepared.owners);
+    playback.manager.pending = Some(prepared.owners);
     playback.promote(Some(generation), &mut NativeHostUpdate::default());
 
     let invalid = FixtureProvider {

@@ -28,7 +28,7 @@ struct PluginMetadata {
     sidechain: bool,
 }
 
-pub(super) struct BuiltinProvider {
+pub(crate) struct BuiltinProvider {
     metadata: BTreeMap<NodeId, PluginMetadata>,
 }
 
@@ -62,7 +62,7 @@ impl CapabilityProvider for BuiltinProvider {
     }
 }
 
-pub(super) fn builtin_provider(
+pub(crate) fn builtin_provider(
     document: &auris_core::pipeline::document::NativeDocument,
 ) -> BuiltinProvider {
     let registry = fixture_registry();

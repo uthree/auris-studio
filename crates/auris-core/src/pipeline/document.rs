@@ -63,7 +63,7 @@ pub struct TrackPresentation {
 /// Project-level context and registries retained beside the native graph.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct NativeProjectContext {
-    /// Source project schema version; the native envelope is not a replacement writer format.
+    /// Original project schema version, independent of the native file envelope's version.
     pub source_format_version: u32,
     /// Informational build stamp.
     pub saved_by: String,

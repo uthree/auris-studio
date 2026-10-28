@@ -205,15 +205,12 @@ struct Placement {
     hosts: BTreeMap<NodeId, Host>,
 }
 
-/// Native playback engine and main-thread hosted instances.
+/// Control state for native hosts which can be attached to an existing session runtime.
 ///
-/// Only one queued candidate is permitted. Further preparation waits for adoption or device
-/// failure, bounding pending host ownership. Fresh candidate instances intentionally trade load
-/// cost for isolation; the conventional session's live/spare maps are never reused here.
-/// Device, queued/retired graphs, then host owners are dropped in that order.
-pub struct NativeHostedPlayback {
-    device: AudioDevice,
-    engine: EngineHandle,
+/// The manager deliberately owns no audio device or engine. Callers that already own an
+/// [`AudioDevice`] and [`EngineHandle`] can therefore keep one callback and one graph queue while
+/// still using the native host handover protocol.
+pub(crate) struct NativeHostManager {
     prepared: Option<Prepared>,
     pending: Option<HostGeneration>,
     published: Option<HostGeneration>,
@@ -224,56 +221,46 @@ pub struct NativeHostedPlayback {
     output_was_running: bool,
 }
 
-impl NativeHostedPlayback {
-    /// Opens a real output device, returning the hardware error instead of a silent fallback.
-    /// Additional trusted plugin paths have the same folder/file semantics as Session settings.
-    pub fn start(
-        settings: &AudioSettings,
-        plugin_paths: &[PathBuf],
-    ) -> Result<Self, NativeHostError> {
-        let (device, engine) = auris_engine::try_start_audio(settings)?;
-        Ok(Self::from_engine(device, engine, plugin_paths))
-    }
+/// Native playback engine and main-thread hosted instances.
+///
+/// One candidate may wait for callback adoption. Fresh instances isolate candidate preparation
+/// from published editors. Declaration order drops device and engine queues before host owners.
+pub struct NativeHostedPlayback {
+    device: AudioDevice,
+    engine: EngineHandle,
+    manager: NativeHostManager,
+}
 
-    /// Creates a control-thread preparation environment without opening hardware.
-    /// Queueing is rejected because a silent engine cannot acknowledge callback adoption.
-    pub fn silent(settings: &AudioSettings, plugin_paths: &[PathBuf]) -> Self {
-        let (device, engine) = auris_engine::start_silent(settings);
-        Self::from_engine(device, engine, plugin_paths)
-    }
-
-    fn from_engine(device: AudioDevice, engine: EngineHandle, plugin_paths: &[PathBuf]) -> Self {
-        let trust = crate::session::plugin_trust::PluginTrust::new(plugin_paths);
-        let output_was_running = device.is_running();
+impl NativeHostManager {
+    /// Creates host state for an already-open session runtime.
+    pub(crate) fn new(plugin_paths: &[PathBuf], running: bool) -> Self {
         Self {
-            device,
-            engine,
             prepared: None,
             pending: None,
             published: None,
             retiring: Vec::new(),
-            trust,
+            trust: crate::session::plugin_trust::PluginTrust::new(plugin_paths),
             parent: None,
             open_windows: BTreeSet::new(),
-            output_was_running,
+            output_was_running: running,
         }
     }
 
-    /// Validates and prepares a revision without touching the published graph or its editors.
-    /// The provider supplies policy/domain contracts; actual hosted descriptors and sidechain
-    /// capabilities must agree. A failed replacement also preserves any previously prepared plan.
-    pub fn prepare<P: CapabilityProvider>(
+    /// Prepares a candidate against an existing engine without taking ownership of it.
+    pub(crate) fn prepare<P: CapabilityProvider>(
         &mut self,
+        engine: &EngineHandle,
         document: &NativeDocument,
         revision: u64,
         provider: &P,
         resources: NativeHostResources<'_>,
     ) -> Result<NativeGraphGeneration, NativeHostError> {
-        self.prepare_with(document, revision, provider, resources, load_host)
+        self.prepare_with(engine, document, revision, provider, resources, load_host)
     }
 
     fn prepare_with<P: CapabilityProvider>(
         &mut self,
+        engine: &EngineHandle,
         document: &NativeDocument,
         revision: u64,
         provider: &P,
@@ -294,7 +281,7 @@ impl NativeHostedPlayback {
             resources.content_limits,
             resources.graph_limits,
         )?;
-        let prepare = PrepareContext::new(self.engine.sample_rate(), self.engine.max_block(), 2);
+        let prepare = PrepareContext::new(engine.sample_rate(), engine.max_block(), 2);
         let mut placement = Placement::default();
         let mut windows = BTreeMap::new();
         for processor in &document.content.processors {
@@ -303,9 +290,7 @@ impl NativeHostedPlayback {
                 ProcessorKind::Effect { plugin, .. } => (plugin, false),
                 _ => continue,
             };
-            let Some(file) = &instance.file else {
-                continue;
-            };
+            let Some(file) = &instance.file else { continue };
             let file = file
                 .resolve_for_automatic_access(resources.project_folder)
                 .filter(|path| self.trust.allows(path))
@@ -330,10 +315,9 @@ impl NativeHostedPlayback {
                 Host::Clap(host) => (host.parameters(), host.supports_sidechain()),
                 Host::Vst3(host) => (host.parameters(), host.supports_sidechain()),
             };
-            if !descriptors.iter().eq(capabilities
-                .parameters
+            if !descriptors
                 .iter()
-                .map(|parameter| &parameter.descriptor))
+                .eq(capabilities.parameters.iter().map(|p| &p.descriptor))
                 || sidechain != capabilities.sidechain
             {
                 return Err(NativeHostError::InvalidPlugin(
@@ -369,8 +353,8 @@ impl NativeHostedPlayback {
             resources.registry,
             &mut placement.effects,
             &mut placement.instruments,
-            self.engine.max_block(),
-            self.engine.sample_rate(),
+            engine.max_block(),
+            engine.sample_rate(),
         )?;
         let generation = graph.native_generation().ok_or_else(|| {
             NativeHostError::InvalidPlugin("prepared graph has no native generation".into())
@@ -387,15 +371,10 @@ impl NativeHostedPlayback {
         Ok(generation)
     }
 
-    /// Releases a candidate which has not been enqueued, leaving published playback untouched.
-    pub fn discard_prepared(&mut self) {
-        self.prepared = None;
-    }
-
-    /// Enqueues a candidate only for the caller's current document revision.
-    /// A full queue or stale revision leaves the candidate available for retry or discard.
-    pub fn queue_prepared(
+    /// Queues the prepared candidate on an existing session engine.
+    pub(crate) fn queue_prepared(
         &mut self,
+        engine: &EngineHandle,
         current_revision: u64,
     ) -> Result<NativeGraphGeneration, NativeHostError> {
         if self.pending.is_some() {
@@ -408,12 +387,12 @@ impl NativeHostedPlayback {
                 current: current_revision,
             });
         }
-        if !self.device.is_running() {
+        if !engine.is_running() {
             return Err(EngineError::NotRunning.into());
         }
         let Prepared { graph, owners } =
             self.prepared.take().ok_or(NativeHostError::NotPrepared)?;
-        match self.engine.try_set_graph(graph) {
+        match engine.try_set_graph(graph) {
             Ok(()) => {
                 let generation = owners.generation;
                 self.pending = Some(owners);
@@ -429,25 +408,12 @@ impl NativeHostedPlayback {
         }
     }
 
-    /// Generation prepared on the control thread but not enqueued.
-    pub fn prepared_generation(&self) -> Option<NativeGraphGeneration> {
-        self.prepared.as_ref().map(|plan| plan.owners.generation)
-    }
-    /// Generation queued and waiting for callback adoption.
-    pub fn pending_generation(&self) -> Option<NativeGraphGeneration> {
-        self.pending.as_ref().map(|plan| plan.generation)
-    }
-    /// Generation whose host/editor bindings have been published after adoption.
-    pub fn published_generation(&self) -> Option<NativeGraphGeneration> {
-        self.published.as_ref().map(|plan| plan.generation)
-    }
-    /// Native document revision associated with the adopted host/editor bindings.
-    pub fn published_revision(&self) -> Option<u64> {
-        self.published.as_ref().map(|plan| plan.revision)
-    }
-
-    /// Services all live host instances, collects returned graphs, and applies adoption.
-    pub fn poll(&mut self) -> NativeHostUpdate {
+    /// Services hosts and promotes only the generation adopted by the shared callback.
+    pub(crate) fn poll(
+        &mut self,
+        engine: &EngineHandle,
+        device: &mut AudioDevice,
+    ) -> NativeHostUpdate {
         let mut update = NativeHostUpdate::default();
         if let Some(plan) = &mut self.published {
             service_generation(plan, true, &mut update);
@@ -463,18 +429,18 @@ impl NativeHostedPlayback {
         if let Some(plan) = &mut self.prepared {
             service_generation(&mut plan.owners, false, &mut update);
         }
-        self.engine.collect_garbage();
-        // Observe adoption before discarding a dead device's queue: it may have adopted just
-        // before disconnecting. Adoption remains meaningful even without hardware playback.
-        self.promote(self.engine.adopted_native_generation(), &mut update);
-        let running = self.device.is_running();
+        engine.collect_garbage();
+        // A device can stop just after adopting a graph. Observe adoption before discarding
+        // its unconsumed queue, so the matching host generation is still promoted correctly.
+        self.promote(engine.adopted_native_generation(), &mut update);
+        let running = device.is_running();
         let lost_output = self.output_was_running && !running;
         self.output_was_running = running;
         if lost_output {
             update.errors.push(EngineError::NotRunning.into());
         }
         if !running && let Some(pending) = self.pending.take() {
-            self.device.discard_pending();
+            device.discard_pending();
             self.retiring.extend(pending.hosts.into_values());
             if !lost_output {
                 update.errors.push(EngineError::NotRunning.into());
@@ -518,26 +484,53 @@ impl NativeHostedPlayback {
         }
     }
 
-    /// Resolves the conventional editor subject through the adopted native binding.
-    pub fn window_node(&self, window: PluginWindow) -> Option<NodeId> {
+    pub(crate) fn published_generation(&self) -> Option<NativeGraphGeneration> {
+        self.published.as_ref().map(|p| p.generation)
+    }
+    pub(crate) fn published_revision(&self) -> Option<u64> {
+        self.published.as_ref().map(|p| p.revision)
+    }
+
+    pub(crate) fn discard_prepared(&mut self) {
+        self.prepared = None;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn prepared_graph_mut(&mut self) -> Option<&mut RenderGraph> {
+        self.prepared.as_mut().map(|prepared| &mut prepared.graph)
+    }
+
+    pub(crate) fn prepared_generation(&self) -> Option<NativeGraphGeneration> {
+        self.prepared.as_ref().map(|p| p.owners.generation)
+    }
+
+    pub(crate) fn pending_generation(&self) -> Option<NativeGraphGeneration> {
+        self.pending.as_ref().map(|p| p.generation)
+    }
+
+    pub(crate) fn window_node(&self, window: PluginWindow) -> Option<NodeId> {
         self.published.as_ref()?.windows.get(&window).copied()
     }
-    /// Whether the published host offers a native editor.
-    pub fn has_window(&mut self, node: NodeId) -> bool {
+
+    pub(crate) fn has_window(&mut self, node: NodeId) -> bool {
         self.published
             .as_mut()
             .and_then(|plan| plan.hosts.get_mut(&node))
             .is_some_and(Host::has_window)
     }
-    /// Whether the published instance's editor is currently open.
-    pub fn window_is_open(&self, node: NodeId) -> bool {
+
+    pub(crate) fn window_is_open(&self, node: NodeId) -> bool {
         self.published
             .as_ref()
             .and_then(|plan| plan.hosts.get(&node))
             .is_some_and(Host::window_is_open)
     }
-    /// Opens/closes the editor belonging to the adopted node, preserving its intent on handover.
-    pub fn set_window_open(&mut self, node: NodeId, open: bool) -> Result<(), NativeHostError> {
+
+    pub(crate) fn set_window_open(
+        &mut self,
+        node: NodeId,
+        open: bool,
+    ) -> Result<(), NativeHostError> {
         let host = self
             .published
             .as_mut()
@@ -553,16 +546,12 @@ impl NativeHostedPlayback {
         Ok(())
     }
 
-    /// Sets the native editor parent window.
-    ///
-    /// # Safety
-    /// A supplied handle must name a live application window that outlives this playback owner.
-    pub unsafe fn set_window_parent(&mut self, parent: Option<RawWindowHandle>) {
+    /// Sets the native editor parent window for future and restored editors.
+    pub(crate) unsafe fn set_window_parent(&mut self, parent: Option<RawWindowHandle>) {
         self.parent = parent;
     }
 
-    /// Captures the adopted instance's actual state without changing a document or history.
-    pub fn snapshot(&mut self, node: NodeId) -> Result<NativeHostSnapshot, NativeHostError> {
+    pub(crate) fn snapshot(&mut self, node: NodeId) -> Result<NativeHostSnapshot, NativeHostError> {
         let plan = self
             .published
             .as_mut()
@@ -580,6 +569,138 @@ impl NativeHostedPlayback {
             generation: plan.generation,
             state,
         })
+    }
+}
+
+impl NativeHostedPlayback {
+    /// Opens a real output device, returning the hardware error instead of a silent fallback.
+    /// Additional trusted plugin paths have the same folder/file semantics as Session settings.
+    pub fn start(
+        settings: &AudioSettings,
+        plugin_paths: &[PathBuf],
+    ) -> Result<Self, NativeHostError> {
+        let (device, engine) = auris_engine::try_start_audio(settings)?;
+        Ok(Self::from_engine(device, engine, plugin_paths))
+    }
+
+    /// Creates a control-thread preparation environment without opening hardware.
+    /// Queueing is rejected because a silent engine cannot acknowledge callback adoption.
+    pub fn silent(settings: &AudioSettings, plugin_paths: &[PathBuf]) -> Self {
+        let (device, engine) = auris_engine::start_silent(settings);
+        Self::from_engine(device, engine, plugin_paths)
+    }
+
+    fn from_engine(device: AudioDevice, engine: EngineHandle, plugin_paths: &[PathBuf]) -> Self {
+        let output_was_running = device.is_running();
+        Self {
+            device,
+            engine,
+            manager: NativeHostManager::new(plugin_paths, output_was_running),
+        }
+    }
+
+    /// Validates and prepares a revision without touching the published graph or its editors.
+    /// The provider supplies policy/domain contracts; actual hosted descriptors and sidechain
+    /// capabilities must agree. A failed replacement also preserves any previously prepared plan.
+    pub fn prepare<P: CapabilityProvider>(
+        &mut self,
+        document: &NativeDocument,
+        revision: u64,
+        provider: &P,
+        resources: NativeHostResources<'_>,
+    ) -> Result<NativeGraphGeneration, NativeHostError> {
+        self.manager
+            .prepare(&self.engine, document, revision, provider, resources)
+    }
+
+    #[cfg(test)]
+    fn prepare_with<P: CapabilityProvider>(
+        &mut self,
+        document: &NativeDocument,
+        revision: u64,
+        provider: &P,
+        resources: NativeHostResources<'_>,
+        load: impl FnMut(
+            &Path,
+            &auris_core::pipeline::content::PluginInstance,
+            &PrepareContext,
+            bool,
+        ) -> Result<(Host, RenderHalf), NativeHostError>,
+    ) -> Result<NativeGraphGeneration, NativeHostError> {
+        self.manager
+            .prepare_with(&self.engine, document, revision, provider, resources, load)
+    }
+
+    /// Releases a candidate which has not been enqueued, leaving published playback untouched.
+    pub fn discard_prepared(&mut self) {
+        self.manager.discard_prepared();
+    }
+
+    /// Enqueues a candidate only for the caller's current document revision.
+    /// A full queue or stale revision leaves the candidate available for retry or discard.
+    pub fn queue_prepared(
+        &mut self,
+        current_revision: u64,
+    ) -> Result<NativeGraphGeneration, NativeHostError> {
+        self.manager.queue_prepared(&self.engine, current_revision)
+    }
+
+    /// Generation prepared on the control thread but not enqueued.
+    pub fn prepared_generation(&self) -> Option<NativeGraphGeneration> {
+        self.manager.prepared_generation()
+    }
+    /// Generation queued and waiting for callback adoption.
+    pub fn pending_generation(&self) -> Option<NativeGraphGeneration> {
+        self.manager.pending_generation()
+    }
+    /// Generation whose host/editor bindings have been published after adoption.
+    pub fn published_generation(&self) -> Option<NativeGraphGeneration> {
+        self.manager.published_generation()
+    }
+    /// Native document revision associated with the adopted host/editor bindings.
+    pub fn published_revision(&self) -> Option<u64> {
+        self.manager.published_revision()
+    }
+
+    /// Services all live host instances, collects returned graphs, and applies adoption.
+    pub fn poll(&mut self) -> NativeHostUpdate {
+        self.manager.poll(&self.engine, &mut self.device)
+    }
+
+    #[cfg(test)]
+    fn promote(&mut self, adopted: Option<NativeGraphGeneration>, update: &mut NativeHostUpdate) {
+        self.manager.promote(adopted, update)
+    }
+
+    /// Resolves the conventional editor subject through the adopted native binding.
+    pub fn window_node(&self, window: PluginWindow) -> Option<NodeId> {
+        self.manager.window_node(window)
+    }
+    /// Whether the published host offers a native editor.
+    pub fn has_window(&mut self, node: NodeId) -> bool {
+        self.manager.has_window(node)
+    }
+    /// Whether the published instance's editor is currently open.
+    pub fn window_is_open(&self, node: NodeId) -> bool {
+        self.manager.window_is_open(node)
+    }
+    /// Opens/closes the editor belonging to the adopted node, preserving its intent on handover.
+    pub fn set_window_open(&mut self, node: NodeId, open: bool) -> Result<(), NativeHostError> {
+        self.manager.set_window_open(node, open)
+    }
+
+    /// Sets the native editor parent window.
+    ///
+    /// # Safety
+    /// A supplied handle must name a live application window that outlives this playback owner.
+    pub unsafe fn set_window_parent(&mut self, parent: Option<RawWindowHandle>) {
+        // SAFETY: The caller guarantees the handle lifetime for this owner's manager as well.
+        unsafe { self.manager.set_window_parent(parent) };
+    }
+
+    /// Captures the adopted instance's actual state without changing a document or history.
+    pub fn snapshot(&mut self, node: NodeId) -> Result<NativeHostSnapshot, NativeHostError> {
+        self.manager.snapshot(node)
     }
 
     /// Starts or stops transport on the owned native engine.

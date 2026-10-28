@@ -86,8 +86,11 @@
 //! opaque plugin state, singer takes, explicit sums/inserts/output routes and automation targets
 //! without constructing plugins or reading assets. Captured bytes can be preserved through
 //! [`auris_io::preserve_legacy_project_backup`] with synchronized no-clobber publication; an
-//! existing regular backup is accepted only when its bytes match. This candidate cannot publish
-//! a native project. Source-change checks and the activated writer remain part of the M2 gate.
+//! existing regular backup is accepted only when its bytes match. Explicit native IO uses a
+//! separate format-33 envelope. [`auris_io::publish_native_upgrade`] combines captured-source
+//! checks, a distinct exact-byte backup and synchronized replacement under the project write
+//! lock. [`auris_io::publish_native_update`] accepts only an unchanged native preimage. Default
+//! Session saves remain format 32 until the M2 authority/command activation gate passes.
 //! See `docs/render-pipeline-migration.md` for conversion and backup verification.
 //! [`crate::native_conventional::prepare_native_conventional`] validates native ownership and
 //! capabilities, then reconstructs a transient input for the existing renderer from conventional
@@ -116,6 +119,16 @@
 //! halves return. Device and engine queues are destroyed before host owners. Native snapshots
 //! carry the adopted generation and do not implicitly edit the conventional session document.
 //! This playback component is an integration boundary for the native authority transition.
+//! Its host manager can also borrow the conventional session's engine during candidate
+//! preparation, so preparing the transition opens no second output stream. The transition
+//! captures host state once and binds the native candidate to the originating session, revision
+//! and content digest. An edit, reopen or active gesture prevents reuse of a stale transition.
+//! It does not enqueue the candidate or replace the conventional document authority.
+//! [`crate::native_edit::NativeDocumentEditor`] supplies the native command/history boundary:
+//! bounded batches validate a private candidate before committing, transaction owners cannot
+//! interrupt one another, and undo retains the allocator high-water mark. Presentation changes
+//! have a separate revision from musical edits. These adapters are prerequisites for switching
+//! every conventional command family and activating native Save, recovery and checkpoints.
 //!
 //! # Multiple project windows
 //!

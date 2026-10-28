@@ -31,6 +31,7 @@ pub mod error;
 pub mod export;
 pub mod import;
 pub mod midi;
+pub mod native_file;
 pub mod pipeline_conversion;
 pub mod pipeline_migration;
 pub mod project_backup;
@@ -50,6 +51,10 @@ pub use import::{
 pub use midi::{
     MidiImport, MidiTrack, StagedMidi, midi_extensions, read_midi_bytes, read_midi_file,
     stage_midi_file, write_midi_bytes, write_midi_file,
+};
+pub use native_file::{
+    NATIVE_FORMAT_VERSION, NativeEnvelope, NativeFileError, NativeResult, StagedNativeDocument,
+    load_native, publish_native_update, publish_native_upgrade, save_native, stage_native,
 };
 pub use pipeline_conversion::{PipelineConversionError, project_to_native};
 pub use pipeline_migration::{
