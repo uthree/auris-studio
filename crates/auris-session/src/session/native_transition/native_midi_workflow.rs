@@ -264,12 +264,16 @@ fn ordinary_and_native_midi_append_preserve_performance_and_render_after_reopen(
     assert!(appended.channel(1).iter().any(|sample| sample.abs() > 1e-6));
 
     let revision = transition.editor().revision().document;
-    transition.editor_mut().undo(revision).unwrap();
+    source
+        .undo_native_transition(&mut transition, revision)
+        .unwrap();
     let undone = prepare_render(&mut source, &mut transition, append_frame);
     assert_eq!(undone.channel(0), baseline.channel(0));
     assert_eq!(undone.channel(1), baseline.channel(1));
     let revision = transition.editor().revision().document;
-    transition.editor_mut().redo(revision).unwrap();
+    source
+        .redo_native_transition(&mut transition, revision)
+        .unwrap();
     let redone = prepare_render(&mut source, &mut transition, append_frame);
     assert_eq!(redone.channel(0), appended.channel(0));
     assert_eq!(redone.channel(1), appended.channel(1));

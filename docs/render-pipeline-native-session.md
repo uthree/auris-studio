@@ -217,6 +217,15 @@ publication, so a failed copy cannot leave a partial destination file.
 
 ## Remaining activation work
 
+Native command adapters now have origin-checked Session entry points for `apply`, transaction
+begin/commit/rollback, and Undo/Redo. Each call first rejects a foreign, changed, or busy
+ordinary origin, then delegates native revision and gesture ownership to the candidate's one
+editor. A sequence of edits in a gesture creates one history entry; cancellation retains an
+existing redo branch. Failed validation leaves both the candidate and its history intact.
+These entry points do not enqueue a render graph or switch ordinary UI command authority.
+The MIDI append workflow uses the Session Undo/Redo entry points through rendering and native
+save/reopen, so history traversal is exercised with actual prepared audio.
+
 The audit found direct Project mutation and snapshot ownership across the existing
 Session. Activation must migrate these routes together:
 
@@ -383,3 +392,21 @@ Workspace Clippy (`--all-targets -- -D warnings`), rustdoc
 (`RUSTDOCFLAGS=-D warnings`), formatting and diff checks passed. These MIDI checks
 use isolated files and offline prepared graphs; they do not establish audio-device
 callback adoption or replace the ordinary Session's runtime command authority.
+
+## Session history facade verification (2026-10-29)
+
+The origin-checked Session facade now covers native batches, owned gestures,
+rollback, Undo and Redo. Four regressions verify one-step gesture history,
+persistent identities, owner isolation, cancellation with redo retention, atomic
+batch failure, and rejection of busy, stale and foreign Session origins. The MIDI
+workflow now traverses this facade before native save/reopen and exact PCM
+comparison. Ordinary Session runtime authority remains the next activation step.
+
+After integration with main at `3140d6c1`, the serial workspace run passed all
+non-desktop suites. Two desktop assertions exposed an obsolete wire-colour
+expectation and unscaled graph tokens; after correction, the complete desktop
+executable passed 1,262 tests with 14 ignored. Together these runs cover 5,268
+passing tests and 55 ignored. Workspace Clippy and rustdoc with warnings denied
+also passed. Real-window checking of the inspector additionally exposed a
+shrinking numeric column, which is corrected in the associated UI integration.
+After that final layout correction, all 23 pipeline-inspector tests passed again.

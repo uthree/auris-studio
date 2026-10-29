@@ -1,5 +1,10 @@
 //! Captures and prepares the native authority transition against the existing session runtime.
 
+mod history;
+
+#[cfg(test)]
+mod history_tests;
+
 #[cfg(test)]
 mod native_plugin_workflow;
 

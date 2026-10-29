@@ -134,6 +134,10 @@
 //! interrupt one another, and undo retains the allocator high-water mark. Presentation changes
 //! have a separate revision from musical edits. These adapters are prerequisites for switching
 //! every conventional command family to native runtime ownership.
+//! [`crate::Session::apply_native_transition`] and the native transaction/Undo/Redo entry points
+//! check the ordinary origin before entering that editor. Foreign, changed or busy origins
+//! cannot consume history or finish a gesture. Native revision and human/agent gesture ownership
+//! are checked by the single candidate editor; these entry points do not publish a graph.
 //! [`crate::native_edit::NativePluginCommand`] resolves existing track, effect-slot and parameter
 //! addresses into native edits. Plugin replacement preserves processor and slot identities,
 //! removes the replaced instance's control bindings, and retains shared automation sources.
