@@ -421,7 +421,7 @@ impl Session {
                     },
                     ..Default::default()
                 };
-                let job = self.job_for(render_project);
+                let job = self.job_for_at(render_project, options.sample_rate);
                 let (mut targets, folder) = match destination {
                     AudioDestination::Mix { path } => (vec![(local_path(&path)?, None)], None),
                     AudioDestination::Stems { folder } => {
@@ -498,7 +498,7 @@ impl Session {
                         NEXT.fetch_add(1, Ordering::Relaxed)
                     ));
                 Work::Audio {
-                    job: self.render_job(),
+                    job: self.render_job_at(options.sample_rate),
                     guard: self.export_guard(),
                     targets: vec![(path, None)],
                     folder: None,
@@ -610,14 +610,19 @@ impl Session {
             }
             Outcome::Verified(text) => Ok(text),
             Outcome::Midi(result) => {
-                let (path, notes) = self
+                let report = self
                     .continue_midi_export(result, cancelled)
                     .map_err(|e| e.to_string())?
                     .ok_or("MIDI export became stale")?;
-                Ok(
-                    serde_json::json!({"path":path,"notes":notes,"document_unchanged":true})
-                        .to_string(),
-                )
+                Ok(serde_json::json!({
+                    "path": report.path,
+                    "notes": report.notes,
+                    "duration_ticks": report.duration_ticks,
+                    "ticks_per_quarter": report.ticks_per_quarter,
+                    "duration_seconds": report.duration_seconds,
+                    "document_unchanged": true
+                })
+                .to_string())
             }
             Outcome::Audio(staged, manifest) => {
                 let staged_manifest = if let Some(manifest) = &manifest {
@@ -1105,7 +1110,13 @@ mod tests {
             .run(&cancelled)
             .unwrap();
         assert!(!midi.exists());
-        session.continue_agent_file_job(result, &cancelled).unwrap();
+        let report: serde_json::Value =
+            serde_json::from_str(&session.continue_agent_file_job(result, &cancelled).unwrap())
+                .unwrap();
+        assert_eq!(report["notes"], 1);
+        assert_eq!(report["duration_ticks"], 3840);
+        assert_eq!(report["ticks_per_quarter"], 960);
+        assert_eq!(report["duration_seconds"], 2.0);
         assert!(std::fs::read(&midi).unwrap().starts_with(b"MThd"));
         let result = session
             .begin_agent_file_job(Command::Preview {

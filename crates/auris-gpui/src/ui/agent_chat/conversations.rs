@@ -1163,6 +1163,9 @@ impl AurisApp {
                         cx.notify();
                     }),
                 )
+                .w(theme.atelier.density.control_sm)
+                .px_0()
+                .flex_shrink_0()
                 .tooltip(crate::ui::tooltip::keyed_tip(
                     self.t(Key::AgentConversationActions),
                     "",
@@ -1513,7 +1516,7 @@ mod tests {
             let actions = cx.debug_bounds("agent-active-conversation-menu").unwrap();
             assert!(
                 actions.top() >= header.top() && actions.bottom() <= header.bottom(),
-                "Conversation actions belong in the header, without a second row repeating the request"
+                "Conversation actions belong in the header: {actions:?} inside {header:?}"
             );
             assert!(actions.left() >= header.left() && actions.right() <= header.right());
         }

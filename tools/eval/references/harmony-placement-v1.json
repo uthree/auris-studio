@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "conditions": "音符・ファイル・外部評価・シェル操作は不要。和声の設定だけを行って。",
+  "axes": ["request_fit", "melody", "form", "ensemble", "sound"],
+  "delivery_prompt": "inspect_projectで実際の配置を読み返し、8小節の各小節にコードが1つずつ置かれていることを確認して。音符や書き出しファイルは作らず、確認結果だけ簡潔に報告して。",
+  "cases": [
+    {
+      "id": "one_chord_per_bar",
+      "split": "development",
+      "fixture": "blank",
+      "prompts": ["ハ長調、4/4で、最初の8小節に C→G→Am→F を2回、1小節に1つずつコード進行として配置して。音符はまだ作らず、キーとコード進行の設定だけお願い。"]
+    }
+  ]
+}

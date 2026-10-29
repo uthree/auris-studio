@@ -127,9 +127,9 @@ pub use drum_analysis::{
     DrumVoiceAnalysis, probe_drum_request,
 };
 pub use files::{
-    CollectAssetsJob, CollectAssetsResult, LoadedFont, MidiExportJob, MidiExportResult,
-    MidiImportJob, MidiImportResult, OpenProjectJob, OpenProjectResult, SaveJob, SaveResult,
-    decode_audio, read_soundfont,
+    CollectAssetsJob, CollectAssetsResult, LoadedFont, MidiExportJob, MidiExportReport,
+    MidiExportResult, MidiImportJob, MidiImportResult, OpenProjectJob, OpenProjectResult, SaveJob,
+    SaveResult, decode_audio, read_soundfont,
 };
 pub use hosted::PluginWindow;
 pub use levels::{
@@ -161,7 +161,7 @@ pub use spectrogram::{RenderedSpectrogramJob, SpectrogramJob};
 pub use record::{
     Arm, InputChannels, RecordingReport, RecordingStatus, TakeReport, input_level_of,
 };
-pub use timbre::{TimbreMap, TimbreMapControl, TimbreMapJob, TimbreSound};
+pub use timbre::{TimbreCluster, TimbreMap, TimbreMapControl, TimbreMapJob, TimbreSound};
 pub use tracks::{MAX_TRACK_HEIGHT, MIN_TRACK_HEIGHT};
 pub use typing::{
     DEFAULT_OCTAVE, DEFAULT_VELOCITY, LAYOUT, MusicalTyping, OCTAVE_RANGE, Played, Release, Struck,
@@ -1298,6 +1298,15 @@ impl Session {
         self.job_for(self.project.clone())
     }
 
+    /// [`Self::render_job`] for a render at `rate` rather than the project's.
+    ///
+    /// The rate has to be known here, not only in the render's options, because this is where
+    /// hosted plugins are activated and activation is the only time a plugin hears its rate. A
+    /// job from [`Self::render_job`] refuses another rate instead of playing out of tune.
+    pub fn render_job_at(&mut self, rate: Option<f64>) -> RenderJob {
+        self.job_for_at(self.project.clone(), rate)
+    }
+
     /// A job that renders `project` rather than the document, with this session's sounds.
     ///
     /// What the balance pass measures is a *variation* on the open document — one track soloed,
@@ -1305,11 +1314,17 @@ impl Session {
     /// the same registry and the same hosted plugins as the real thing, or the measurement would
     /// be of something else.
     pub(crate) fn job_for(&mut self, project: Project) -> RenderJob {
-        // The export's own instances, at the project's rate rather than the device's. A plugin
+        self.job_for_at(project, None)
+    }
+
+    /// [`Self::job_for`] with its hosted plugins activated at `rate`.
+    pub(crate) fn job_for_at(&mut self, project: Project, rate: Option<f64>) -> RenderJob {
+        // The export's own instances, at the render's rate rather than the device's. A plugin
         // that is already rendering keeps doing so: `place` hands out a second instance and takes
         // the first back when the export drops it.
+        let rate = rate.unwrap_or(self.project.sample_rate);
         let prepare = auris_core::plugin::PrepareContext::new(
-            self.project.sample_rate,
+            rate,
             self.engine.max_block(),
             auris_engine::RENDER_CHANNELS,
         );
@@ -1325,6 +1340,7 @@ impl Session {
             placed,
             instruments,
         )
+        .with_hosted_rate(rate)
     }
 
     /// Starts a gesture. Mutations until [`Self::end_transaction`] become one undo step.

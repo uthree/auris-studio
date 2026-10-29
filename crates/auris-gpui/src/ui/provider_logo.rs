@@ -6,6 +6,54 @@ use gpui::{AssetSource, Hsla, IntoElement, SharedString, div, prelude::*, svg};
 
 const MARKS: &[(&str, &[u8])] = &[
     (
+        "icons/auris-volume.svg",
+        include_bytes!("../../assets/icons/auris-volume.svg"),
+    ),
+    (
+        "icons/auris-volume-muted.svg",
+        include_bytes!("../../assets/icons/auris-volume-muted.svg"),
+    ),
+    (
+        "icons/auris-punch.svg",
+        include_bytes!("../../assets/icons/auris-punch.svg"),
+    ),
+    (
+        "icons/auris-notes.svg",
+        include_bytes!("../../assets/icons/auris-notes.svg"),
+    ),
+    (
+        "icons/auris-keyboard.svg",
+        include_bytes!("../../assets/icons/auris-keyboard.svg"),
+    ),
+    (
+        "icons/auris-knob.svg",
+        include_bytes!("../../assets/icons/auris-knob.svg"),
+    ),
+    (
+        "icons/auris-redo.svg",
+        include_bytes!("../../assets/icons/auris-redo.svg"),
+    ),
+    (
+        "icons/auris-bolt.svg",
+        include_bytes!("../../assets/icons/auris-bolt.svg"),
+    ),
+    (
+        "icons/caption-minimize.svg",
+        include_bytes!("../../assets/icons/caption-minimize.svg"),
+    ),
+    (
+        "icons/caption-maximize.svg",
+        include_bytes!("../../assets/icons/caption-maximize.svg"),
+    ),
+    (
+        "icons/caption-restore.svg",
+        include_bytes!("../../assets/icons/caption-restore.svg"),
+    ),
+    (
+        "icons/caption-close.svg",
+        include_bytes!("../../assets/icons/caption-close.svg"),
+    ),
+    (
         "providers/openai.svg",
         include_bytes!("../../assets/providers/openai.svg"),
     ),
@@ -88,7 +136,9 @@ mod tests {
     use super::*;
 
     #[gpui::test]
-    fn embedded_marks_render_without_external_files(cx: &mut gpui::TestAppContext) {
+    fn embedded_provider_and_extension_icons_render_without_external_files(
+        cx: &mut gpui::TestAppContext,
+    ) {
         let renderer = cx.update(|cx| cx.svg_renderer());
         for (path, _) in MARKS {
             let bytes = ProviderAssets.load(path).unwrap().unwrap();
@@ -105,6 +155,25 @@ mod tests {
                     .any(|pixel| pixel[3] > 0),
                 "{path} is empty"
             );
+        }
+    }
+
+    #[test]
+    fn extension_icon_inventory_is_complete_and_unique() {
+        let paths: Vec<_> = MARKS
+            .iter()
+            .map(|(path, _)| *path)
+            .filter(|path| path.starts_with("icons/auris-"))
+            .collect();
+        assert_eq!(paths.len(), 8);
+        assert_eq!(
+            paths.iter().collect::<std::collections::HashSet<_>>().len(),
+            paths.len()
+        );
+        for path in paths {
+            let bytes = ProviderAssets.load(path).unwrap().unwrap();
+            assert!(bytes.starts_with(b"<svg"), "{path} is not an SVG asset");
+            assert!(bytes.windows(10).any(|window| window == b"width=\"24\""));
         }
     }
 

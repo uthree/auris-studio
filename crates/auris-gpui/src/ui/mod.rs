@@ -5,6 +5,7 @@
 //! [`tooltip`] is the intentional standalone view needed by gpui's tooltip API.
 
 pub mod agent_chat;
+pub(crate) mod agent_components;
 mod agent_markdown;
 pub mod analyser;
 pub mod arrangement;
@@ -16,6 +17,8 @@ pub(crate) mod compose_progress;
 pub mod compose_sheet;
 pub mod context_menu;
 mod convert;
+#[cfg(test)]
+mod design_language_tests;
 pub mod drop;
 pub mod drum_assignments;
 pub mod drum_editor;

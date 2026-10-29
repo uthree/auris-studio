@@ -1,0 +1,422 @@
+{
+  "schema_version": 1,
+  "genres": [
+    "pop",
+    "city_pop",
+    "lofi",
+    "neo_soul",
+    "dance_electronic",
+    "anime_song",
+    "game_bgm"
+  ],
+  "conditions": "内蔵音源だけを使った器楽曲として作曲し、プロジェクトは未保存のまま残して。",
+  "axes": [
+    "request_fit",
+    "melody",
+    "form",
+    "ensemble",
+    "sound"
+  ],
+  "songeval_axes": [
+    "Coherence",
+    "Musicality",
+    "Memorability",
+    "Clarity",
+    "Naturalness"
+  ],
+  "delivery_prompt": "完成した曲全体を24bit WAV「{output}/result.wav」とMIDI「{output}/result.mid」に書き出して。16小節ちょうどであること、実ファイルの長さ、無音、音割れを確認して。プロジェクトは未保存のまま残して。",
+  "cases": [
+    {
+      "id": "pop-development",
+      "genre": "pop",
+      "split": "development",
+      "fixture": "blank",
+      "bars": 16,
+      "key": "C major",
+      "tempo": 112,
+      "brief": "現代的なJ-POP寄りの16小節インスト。明快な主旋律、シンコペーションするベース、8小節から展開するドラムと明るいサビ感。",
+      "prompts": [
+        "現代的なJ-POP寄りの16小節インスト。明快な主旋律、シンコペーションするベース、8小節から展開するドラムと明るいサビ感。 112 BPM、C major、4/4、16小節。Aは1〜8小節、Bは9〜16小節。"
+      ],
+      "sections": [
+        {
+          "name": "A",
+          "start_bar": 1,
+          "end_bar": 8
+        },
+        {
+          "name": "B",
+          "start_bar": 9,
+          "end_bar": 16
+        }
+      ],
+      "instrumentation": [
+        "built-in"
+      ]
+    },
+    {
+      "id": "pop-holdout",
+      "genre": "pop",
+      "split": "holdout",
+      "fixture": "blank",
+      "bars": 16,
+      "key": "C major",
+      "tempo": 112,
+      "brief": "現代的なJ-POP寄りの16小節インスト。明快な主旋律、シンコペーションするベース、8小節から展開するドラムと明るいサビ感。 別テイクとして音域とアクセントを変え、同じ狙いを保つ。",
+      "prompts": [
+        "現代的なJ-POP寄りの16小節インスト。明快な主旋律、シンコペーションするベース、8小節から展開するドラムと明るいサビ感。 別テイクとして音域とアクセントを変え、同じ狙いを保つ。 112 BPM、C major、4/4、16小節。Aは1〜8小節、Bは9〜16小節。"
+      ],
+      "sections": [
+        {
+          "name": "A",
+          "start_bar": 1,
+          "end_bar": 8
+        },
+        {
+          "name": "B",
+          "start_bar": 9,
+          "end_bar": 16
+        }
+      ],
+      "instrumentation": [
+        "built-in"
+      ]
+    },
+    {
+      "id": "city_pop-development",
+      "genre": "city_pop",
+      "split": "development",
+      "fixture": "blank",
+      "bars": 16,
+      "key": "F major",
+      "tempo": 104,
+      "brief": "シティポップの16小節インスト。都会的な7thコード、跳ねすぎないベース、エレピとクリーンギターの会話、後半に開く展開。",
+      "prompts": [
+        "シティポップの16小節インスト。都会的な7thコード、跳ねすぎないベース、エレピとクリーンギターの会話、後半に開く展開。 104 BPM、F major、4/4、16小節。Aは1〜8小節、Bは9〜16小節。"
+      ],
+      "sections": [
+        {
+          "name": "A",
+          "start_bar": 1,
+          "end_bar": 8
+        },
+        {
+          "name": "B",
+          "start_bar": 9,
+          "end_bar": 16
+        }
+      ],
+      "instrumentation": [
+        "built-in"
+      ]
+    },
+    {
+      "id": "city_pop-holdout",
+      "genre": "city_pop",
+      "split": "holdout",
+      "fixture": "blank",
+      "bars": 16,
+      "key": "F major",
+      "tempo": 104,
+      "brief": "シティポップの16小節インスト。都会的な7thコード、跳ねすぎないベース、エレピとクリーンギターの会話、後半に開く展開。 別テイクとして音域とアクセントを変え、同じ狙いを保つ。",
+      "prompts": [
+        "シティポップの16小節インスト。都会的な7thコード、跳ねすぎないベース、エレピとクリーンギターの会話、後半に開く展開。 別テイクとして音域とアクセントを変え、同じ狙いを保つ。 104 BPM、F major、4/4、16小節。Aは1〜8小節、Bは9〜16小節。"
+      ],
+      "sections": [
+        {
+          "name": "A",
+          "start_bar": 1,
+          "end_bar": 8
+        },
+        {
+          "name": "B",
+          "start_bar": 9,
+          "end_bar": 16
+        }
+      ],
+      "instrumentation": [
+        "built-in"
+      ]
+    },
+    {
+      "id": "lofi-development",
+      "genre": "lofi",
+      "split": "development",
+      "fixture": "blank",
+      "bars": 16,
+      "key": "A minor",
+      "tempo": 78,
+      "brief": "Lo-Fiの16小節インスト。少し後ろに置いたヒップホップグルーヴ、温かい鍵盤、短い反復動機と控えめなドラム、後半に小変化。",
+      "prompts": [
+        "Lo-Fiの16小節インスト。少し後ろに置いたヒップホップグルーヴ、温かい鍵盤、短い反復動機と控えめなドラム、後半に小変化。 78 BPM、A minor、4/4、16小節。Aは1〜8小節、Bは9〜16小節。"
+      ],
+      "sections": [
+        {
+          "name": "A",
+          "start_bar": 1,
+          "end_bar": 8
+        },
+        {
+          "name": "B",
+          "start_bar": 9,
+          "end_bar": 16
+        }
+      ],
+      "instrumentation": [
+        "built-in"
+      ]
+    },
+    {
+      "id": "lofi-holdout",
+      "genre": "lofi",
+      "split": "holdout",
+      "fixture": "blank",
+      "bars": 16,
+      "key": "A minor",
+      "tempo": 78,
+      "brief": "Lo-Fiの16小節インスト。少し後ろに置いたヒップホップグルーヴ、温かい鍵盤、短い反復動機と控えめなドラム、後半に小変化。 別テイクとして音域とアクセントを変え、同じ狙いを保つ。",
+      "prompts": [
+        "Lo-Fiの16小節インスト。少し後ろに置いたヒップホップグルーヴ、温かい鍵盤、短い反復動機と控えめなドラム、後半に小変化。 別テイクとして音域とアクセントを変え、同じ狙いを保つ。 78 BPM、A minor、4/4、16小節。Aは1〜8小節、Bは9〜16小節。"
+      ],
+      "sections": [
+        {
+          "name": "A",
+          "start_bar": 1,
+          "end_bar": 8
+        },
+        {
+          "name": "B",
+          "start_bar": 9,
+          "end_bar": 16
+        }
+      ],
+      "instrumentation": [
+        "built-in"
+      ]
+    },
+    {
+      "id": "neo_soul-development",
+      "genre": "neo_soul",
+      "split": "development",
+      "fixture": "blank",
+      "bars": 16,
+      "key": "E♭ major",
+      "tempo": 88,
+      "brief": "ネオソウルの16小節インスト。濃い拡張コード、細かい休符を含む鍵盤フック、歌うベースとレイドバックしたドラム、後半の応答。",
+      "prompts": [
+        "ネオソウルの16小節インスト。濃い拡張コード、細かい休符を含む鍵盤フック、歌うベースとレイドバックしたドラム、後半の応答。 88 BPM、E♭ major、4/4、16小節。Aは1〜8小節、Bは9〜16小節。"
+      ],
+      "sections": [
+        {
+          "name": "A",
+          "start_bar": 1,
+          "end_bar": 8
+        },
+        {
+          "name": "B",
+          "start_bar": 9,
+          "end_bar": 16
+        }
+      ],
+      "instrumentation": [
+        "built-in"
+      ]
+    },
+    {
+      "id": "neo_soul-holdout",
+      "genre": "neo_soul",
+      "split": "holdout",
+      "fixture": "blank",
+      "bars": 16,
+      "key": "E♭ major",
+      "tempo": 88,
+      "brief": "ネオソウルの16小節インスト。濃い拡張コード、細かい休符を含む鍵盤フック、歌うベースとレイドバックしたドラム、後半の応答。 別テイクとして音域とアクセントを変え、同じ狙いを保つ。",
+      "prompts": [
+        "ネオソウルの16小節インスト。濃い拡張コード、細かい休符を含む鍵盤フック、歌うベースとレイドバックしたドラム、後半の応答。 別テイクとして音域とアクセントを変え、同じ狙いを保つ。 88 BPM、E♭ major、4/4、16小節。Aは1〜8小節、Bは9〜16小節。"
+      ],
+      "sections": [
+        {
+          "name": "A",
+          "start_bar": 1,
+          "end_bar": 8
+        },
+        {
+          "name": "B",
+          "start_bar": 9,
+          "end_bar": 16
+        }
+      ],
+      "instrumentation": [
+        "built-in"
+      ]
+    },
+    {
+      "id": "dance_electronic-development",
+      "genre": "dance_electronic",
+      "split": "development",
+      "fixture": "blank",
+      "bars": 16,
+      "key": "B minor",
+      "tempo": 126,
+      "brief": "EDM/ハウスの16小節インスト。4つ打ち、反復するベースとシンセフック、9小節目でレイヤーを増やし、終端から自然に戻れる構造。",
+      "prompts": [
+        "EDM/ハウスの16小節インスト。4つ打ち、反復するベースとシンセフック、9小節目でレイヤーを増やし、終端から自然に戻れる構造。 126 BPM、B minor、4/4、16小節。Aは1〜8小節、Bは9〜16小節。"
+      ],
+      "sections": [
+        {
+          "name": "A",
+          "start_bar": 1,
+          "end_bar": 8
+        },
+        {
+          "name": "B",
+          "start_bar": 9,
+          "end_bar": 16
+        }
+      ],
+      "instrumentation": [
+        "built-in"
+      ]
+    },
+    {
+      "id": "dance_electronic-holdout",
+      "genre": "dance_electronic",
+      "split": "holdout",
+      "fixture": "blank",
+      "bars": 16,
+      "key": "B minor",
+      "tempo": 126,
+      "brief": "EDM/ハウスの16小節インスト。4つ打ち、反復するベースとシンセフック、9小節目でレイヤーを増やし、終端から自然に戻れる構造。 別テイクとして音域とアクセントを変え、同じ狙いを保つ。",
+      "prompts": [
+        "EDM/ハウスの16小節インスト。4つ打ち、反復するベースとシンセフック、9小節目でレイヤーを増やし、終端から自然に戻れる構造。 別テイクとして音域とアクセントを変え、同じ狙いを保つ。 126 BPM、B minor、4/4、16小節。Aは1〜8小節、Bは9〜16小節。"
+      ],
+      "sections": [
+        {
+          "name": "A",
+          "start_bar": 1,
+          "end_bar": 8
+        },
+        {
+          "name": "B",
+          "start_bar": 9,
+          "end_bar": 16
+        }
+      ],
+      "instrumentation": [
+        "built-in"
+      ]
+    },
+    {
+      "id": "anime_song-development",
+      "genre": "anime_song",
+      "split": "development",
+      "fixture": "blank",
+      "bars": 16,
+      "key": "D major",
+      "tempo": 150,
+      "brief": "アニメソング風の16小節インスト。冒頭の印象的な動機、上向きの主旋律、8小節目から高揚するコードとドラム、明確なクライマックス。",
+      "prompts": [
+        "アニメソング風の16小節インスト。冒頭の印象的な動機、上向きの主旋律、8小節目から高揚するコードとドラム、明確なクライマックス。 150 BPM、D major、4/4、16小節。Aは1〜8小節、Bは9〜16小節。"
+      ],
+      "sections": [
+        {
+          "name": "A",
+          "start_bar": 1,
+          "end_bar": 8
+        },
+        {
+          "name": "B",
+          "start_bar": 9,
+          "end_bar": 16
+        }
+      ],
+      "instrumentation": [
+        "built-in"
+      ]
+    },
+    {
+      "id": "anime_song-holdout",
+      "genre": "anime_song",
+      "split": "holdout",
+      "fixture": "blank",
+      "bars": 16,
+      "key": "D major",
+      "tempo": 150,
+      "brief": "アニメソング風の16小節インスト。冒頭の印象的な動機、上向きの主旋律、8小節目から高揚するコードとドラム、明確なクライマックス。 別テイクとして音域とアクセントを変え、同じ狙いを保つ。",
+      "prompts": [
+        "アニメソング風の16小節インスト。冒頭の印象的な動機、上向きの主旋律、8小節目から高揚するコードとドラム、明確なクライマックス。 別テイクとして音域とアクセントを変え、同じ狙いを保つ。 150 BPM、D major、4/4、16小節。Aは1〜8小節、Bは9〜16小節。"
+      ],
+      "sections": [
+        {
+          "name": "A",
+          "start_bar": 1,
+          "end_bar": 8
+        },
+        {
+          "name": "B",
+          "start_bar": 9,
+          "end_bar": 16
+        }
+      ],
+      "instrumentation": [
+        "built-in"
+      ]
+    },
+    {
+      "id": "game_bgm-development",
+      "genre": "game_bgm",
+      "split": "development",
+      "fixture": "blank",
+      "bars": 16,
+      "key": "G minor",
+      "tempo": 132,
+      "brief": "ゲーム用戦闘BGMの16小節インスト。ループ可能な主動機、主旋律と対旋律、推進するベースとドラム、後半の強度上昇と自然なループ終端。",
+      "prompts": [
+        "ゲーム用戦闘BGMの16小節インスト。ループ可能な主動機、主旋律と対旋律、推進するベースとドラム、後半の強度上昇と自然なループ終端。 132 BPM、G minor、4/4、16小節。Aは1〜8小節、Bは9〜16小節。"
+      ],
+      "sections": [
+        {
+          "name": "A",
+          "start_bar": 1,
+          "end_bar": 8
+        },
+        {
+          "name": "B",
+          "start_bar": 9,
+          "end_bar": 16
+        }
+      ],
+      "instrumentation": [
+        "built-in"
+      ]
+    },
+    {
+      "id": "game_bgm-holdout",
+      "genre": "game_bgm",
+      "split": "holdout",
+      "fixture": "blank",
+      "bars": 16,
+      "key": "G minor",
+      "tempo": 132,
+      "brief": "ゲーム用戦闘BGMの16小節インスト。ループ可能な主動機、主旋律と対旋律、推進するベースとドラム、後半の強度上昇と自然なループ終端。 別テイクとして音域とアクセントを変え、同じ狙いを保つ。",
+      "prompts": [
+        "ゲーム用戦闘BGMの16小節インスト。ループ可能な主動機、主旋律と対旋律、推進するベースとドラム、後半の強度上昇と自然なループ終端。 別テイクとして音域とアクセントを変え、同じ狙いを保つ。 132 BPM、G minor、4/4、16小節。Aは1〜8小節、Bは9〜16小節。"
+      ],
+      "sections": [
+        {
+          "name": "A",
+          "start_bar": 1,
+          "end_bar": 8
+        },
+        {
+          "name": "B",
+          "start_bar": 9,
+          "end_bar": 16
+        }
+      ],
+      "instrumentation": [
+        "built-in"
+      ]
+    }
+  ]
+}

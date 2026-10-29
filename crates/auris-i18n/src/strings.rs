@@ -49,6 +49,8 @@ strings! {
     WorkshopContinue { en: "Continue with this song", ja: "この曲で続ける" }
     WorkshopSelected { en: "Current song", ja: "制作中の曲" }
     WorkshopOpenEditor { en: "Open editor", ja: "エディタで開く" }
+    WorkshopOpenEditorHint { en: "Continue with a song to open it", ja: "曲を選ぶと開けます" }
+    WorkshopGenerating { en: "Generating", ja: "生成中" }
     WorkshopMemory { en: "Use my preferences", ja: "好みを記録・活用" }
     WorkshopMemoryView { en: "Selection history", ja: "選択履歴" }
     WorkshopForget { en: "Clear preference history", ja: "好みの履歴を消去" }
@@ -111,6 +113,8 @@ strings! {
     WorkshopEnergetic { en: "Energetic", ja: "激しい" }
     WorkshopPlanning { en: "Planning the next step…", ja: "作曲の進め方を考えています…" }
     WorkshopRendering { en: "Composing and preparing audio…", ja: "作曲・試聴音声を準備しています…" }
+    WorkshopDraftPreview { en: "Work in progress", ja: "途中経過" }
+    WorkshopLatestPreview { en: "Play latest audio", ja: "最新の音源を聴く" }
     WorkshopListen { en: "Listen", ja: "試聴" }
     WorkshopStop { en: "Stop", ja: "停止" }
     WorkshopRetry { en: "Regenerate this candidate", ja: "この候補を作り直す" }
@@ -154,6 +158,9 @@ strings! {
     ChooseRecent { en: "Recent projects", ja: "最近使った項目" }
     ChooseEmpty { en: "Empty project", ja: "空のプロジェクト" }
     ChooseEmptyHelp { en: "Start with an instrument track and build your arrangement.", ja: "音源トラックから、自由に曲を作り始めます。" }
+    ChooseStartHelp { en: "Choose how to begin your song.", ja: "曲の始め方を選んでください。" }
+    ChooseAiHelp { en: "Describe your idea and compare three song candidates.", ja: "作りたい曲を伝えて、3つの候補を聴き比べます。" }
+    ChooseStartAi { en: "Start with AI…", ja: "AIで作り始める…" }
     ChooseRecentEmpty { en: "No recent projects. Open an existing project to get started.", ja: "最近使ったプロジェクトはありません。既存のプロジェクトを開いて始められます。" }
     ChooseExisting { en: "Open existing project…", ja: "既存のプロジェクトを開く…" }
     ChooseCreate { en: "Create", ja: "作成" }
@@ -175,6 +182,14 @@ strings! {
     ToolbarVisualizer { en: "Audio visualizer", ja: "オーディオビジュアライザー" }
     ToolbarSpectrum { en: "Spectrum…", ja: "スペクトラム…" }
     PhysicalMotion { en: "Model motion", ja: "物理モデルの動き" }
+    PhysicalInstrumentView { en: "Instrument", ja: "楽器" }
+    PhysicalVoicesView { en: "Voices", ja: "声部" }
+    PhysicalDisplacement { en: "Displacement", ja: "変位" }
+    PhysicalModes { en: "Resonant modes 1–8", ja: "共鳴モード 1–8" }
+    PhysicalParameters { en: "Sound parameters", ja: "音色パラメーター" }
+    PhysicalObserved { en: "Captured model state · amplitude enlarged", ja: "モデルの観測値 · 振幅を拡大表示" }
+    PhysicalLive { en: "Live", ja: "観測中" }
+    PhysicalFrozen { en: "Frozen", ja: "表示停止中" }
     PhysicalResume { en: "Resume display", ja: "表示を再開" }
     PhysicalWaiting { en: "Play a test note or start playback to see the model move", ja: "試奏または再生すると、モデルの動きを確認できます" }
     PhysicalProjection { en: "Motion enlarged · Marker: contact · Bars: resonant modes", ja: "振動を拡大表示 · マーカー：接触位置 · 棒：共鳴モード" }
@@ -254,13 +269,31 @@ strings! {
     SongSearchApply { en: "Apply Best & Play", ja: "最良候補を適用して再生" }
     SongSearchApplyHint { en: "Replaces the project with the best score and starts playback. Undo restores the previous project.", ja: "最良候補でプロジェクトを置き換えて再生します。元に戻す操作で、適用前のプロジェクトに戻せます。" }
     TimbreMap { en: "Timbre Map", ja: "音色マップ" }
-    TimbreMapHint { en: "Melodic built-ins and loaded SoundFonts · click a point to audition", ja: "内蔵楽器と読み込み済みSoundFontのメロディ音色 · 点をクリックして試聴" }
-    TimbreMapGeometry { en: "Color: acoustic group · axes: PCA · nearest sounds use full features", ja: "色：音響クラスタ · 軸：PCA · 類似音は元の特徴量で検索" }
+    TimbreMapHint { en: "Drag to rotate · click a point or choose a sound to audition", ja: "ドラッグで回転 · 点または一覧の音色を選んで試聴" }
+    TimbreMapGeometry { en: "Color: acoustic group · axes: PC1–PC3 · similarity uses full features", ja: "色：音響クラスタ · 軸：PC1–PC3 · 類似音は元の特徴量で検索" }
+    TimbreMapSelect { en: "Select a sound to audition and compare its neighbors", ja: "音色を選ぶと試聴し、似ている音色を確認できます" }
+    TimbreMapReady { en: "Scan the library to explore its sounds", ja: "ライブラリを解析すると音色を探索できます" }
+    TimbreMapNameWithAi { en: "Name Clusters with AI", ja: "AIでクラスタに名前を付ける" }
+    TimbreMapNaming { en: "Naming clusters…", ja: "クラスタ名を考えています…" }
+    TimbreMapNamingHint { en: "Send representative sound names and cluster sizes to the configured agent. No audio is sent.", ja: "代表音色の名前とクラスタの音色数を設定済みエージェントに送ります。音声は送信しません。" }
+    TimbreMapConfigureAi { en: "Configure an AI model in Settings to suggest cluster names.", ja: "設定でAIモデルを指定すると、クラスタ名を提案できます。" }
+    TimbreMapRepresentativeNames { en: "Names from representative sounds", ja: "代表音色の名前を表示中" }
+    TimbreMapAiNames { en: "AI-suggested names", ja: "AIが提案した名前を表示中" }
+    TimbreMapResetNames { en: "Restore Representative Names", ja: "代表音色の名前に戻す" }
+    TimbreMapNamingFailed { en: "Could not name clusters", ja: "クラスタ名を取得できませんでした" }
+    TimbreMapView3d { en: "3D", ja: "3D" }
+    TimbreMapViewTop { en: "Top", ja: "上面" }
+    TimbreMapViewFront { en: "Front", ja: "正面" }
+    TimbreMapViewSide { en: "Side", ja: "側面" }
+    TimbreMapTurnLeft { en: "Rotate left", ja: "左に回転" }
+    TimbreMapTurnRight { en: "Rotate right", ja: "右に回転" }
+    TimbreMapTiltUp { en: "Tilt up", ja: "上に傾ける" }
+    TimbreMapTiltDown { en: "Tilt down", ja: "下に傾ける" }
     TimbreMapRescan { en: "Rescan Library", ja: "ライブラリを再解析" }
     TimbreMapNearest { en: "Similar Sounds", ja: "似ている音色" }
     TimbreMapAll { en: "All Sounds", ja: "すべての音色" }
     TimbreMapUse { en: "Use on Selected Track", ja: "選択トラックに適用" }
-    TimbreMapVariance { en: "Variance shown", ja: "平面に保持した情報量" }
+    TimbreMapVariance { en: "Variance shown", ja: "3D空間に保持した情報量" }
     TimbreMapSkipped { en: "Silent references skipped", ja: "基準音が無音のため除外" }
     TimbreMapAudition { en: "Audition through track (including its mixer settings)", ja: "試聴先トラック（ミキサー設定も反映）" }
     TimbreMapEmpty { en: "No audible sounds. Load a SoundFont and rescan.", ja: "測定できる音色がありません。SoundFontを読み込んで再解析してください。" }
@@ -604,6 +637,22 @@ strings! {
     TabGeneral { en: "General", ja: "一般" }
     TabAudio { en: "Audio", ja: "オーディオ" }
     TabKeys { en: "Key Bindings", ja: "キー割り当て" }
+    SettingsGeneralHelp {
+        en: "Language, appearance, the toolbar and how the editor behaves.",
+        ja: "言語、外観、ツールバー、エディターの動作を設定します。"
+    }
+    SettingsAudioHelp {
+        en: "Where sound comes from and goes to, and how much the device buffers.",
+        ja: "音の入出力先と、デバイスのバッファサイズを設定します。"
+    }
+    SettingsAgentHelp {
+        en: "Which model the agent talks to and what it may change without asking.",
+        ja: "エージェントが使うモデルと、確認なしで変更できる範囲を設定します。"
+    }
+    SettingsKeysHelp {
+        en: "Click a shortcut, then press the keys you want instead.",
+        ja: "ショートカットをクリックして、割り当てたいキーを押してください。"
+    }
     LanguageHeading { en: "Language", ja: "言語" }
     LanguageFollowSystem { en: "System", ja: "システムに合わせる" }
     LanguageNote {
@@ -2109,6 +2158,7 @@ new のオプション
     AgentPanel { en: "Agent", ja: "エージェント" }
     CmdShowAgent { en: "Agent", ja: "エージェント" }
     AgentPlaceholder { en: "Ask about this song…", ja: "この曲について話しかける…" }
+    AgentIntro { en: "Discuss the arrangement, instruments or a change you want to make.", ja: "アレンジや音色の相談、変えたい箇所を伝えてください。" }
     AgentNotConfigured { en: "Name a model to talk to.", ja: "話しかけるモデルを設定してください。" }
     AgentConfigure { en: "Settings", ja: "設定" }
     AgentApply { en: "Apply", ja: "適用" }
@@ -2349,9 +2399,24 @@ new のオプション
     BrowserSetupDiffSinger { en: "Set Up DiffSinger…", ja: "DiffSingerを設定…" }
     BrowserSetupLeapSinger { en: "Set Up LeapSinger…", ja: "LeapSingerを設定…" }
     VoiceSetupTitle { en: "Singing Backend Setup", ja: "歌声合成バックエンド設定" }
-    VoiceSetupVoicevox { en: "VOICEVOX Engine", ja: "VOICEVOX Engine設定" }
-    VoiceSetupDiffSinger { en: "DiffSinger", ja: "DiffSinger設定" }
-    VoiceSetupLeapSinger { en: "LeapSinger", ja: "LeapSinger設定" }
+    VoiceSetupVoicevox { en: "VOICEVOX Engine", ja: "VOICEVOX Engine" }
+    VoiceSetupDiffSinger { en: "DiffSinger", ja: "DiffSinger" }
+    VoiceSetupLeapSinger { en: "LeapSinger", ja: "LeapSinger" }
+    VoiceSetupVoicevoxBrief { en: "Sing through a running Engine", ja: "起動中のEngineで歌わせる" }
+    VoiceSetupDiffSingerBrief { en: "An OpenUtau voicebank", ja: "OpenUtau形式の音源" }
+    VoiceSetupLeapSingerBrief { en: "Exported ONNX models", ja: "書き出したONNXモデル" }
+    VoiceSetupVoicevoxHelp {
+        en: "Connect to VOICEVOX Engine, load its singers and choose who sings. If the Engine is not running, start it from here.",
+        ja: "VOICEVOX Engineに接続して歌い手を読み込み、歌わせる声を選びます。Engineが起動していなければ、ここから起動できます。"
+    }
+    VoiceSetupDiffSingerHelp {
+        en: "Choose the folder of an OpenUtau-compatible DiffSinger voicebank and name the files it uses. Writing the configuration registers the voice.",
+        ja: "OpenUtau互換のDiffSinger音源フォルダーを選び、使うファイルを指定します。設定を書き込むと声が登録されます。"
+    }
+    VoiceSetupConnection { en: "Connection", ja: "接続" }
+    VoiceSetupSingers { en: "Singers", ja: "歌い手" }
+    VoiceSetupFiles { en: "Files", ja: "ファイル" }
+    VoiceSetupModel { en: "Model", ja: "モデル" }
     VoiceSetupEntry { en: "Voice entry", ja: "ボイス設定ファイル" }
     VoiceSetupOpenEntry { en: "Open entry…", ja: "設定を開く…" }
     VoiceSetupChooseFile { en: "Choose…", ja: "選択…" }
@@ -2491,6 +2556,13 @@ mod tests {
             Key::FormatWav,
             Key::FormatFlac,
             Key::FormatMp3,
+            // Dimensional notation is the same in both languages.
+            Key::TimbreMapView3d,
+            // Product names, which the navigation column shows as names rather than as the
+            // sentence 「…設定」 the old tab row needed.
+            Key::VoiceSetupVoicevox,
+            Key::VoiceSetupDiffSinger,
+            Key::VoiceSetupLeapSinger,
         ];
         for key in Key::ALL {
             if SHARED.contains(key) {

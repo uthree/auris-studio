@@ -4,6 +4,7 @@
 //! project and should not compete with it for space. It holds a weak handle to the main view
 //! and applies every change through that, so there is still exactly one owner of the session.
 
+use atelier::{Edge, IconName, SectionHeader, Sidebar};
 use auris_i18n::{Key, Language, messages};
 use auris_session::prelude::*;
 use auris_session::session::AudioStatus;
@@ -23,7 +24,7 @@ use crate::titlebar;
 use crate::ui::icons::Icon;
 use crate::ui::palette;
 use crate::ui::text_field::{HasTextField, KeyEffect, TextField};
-use crate::ui::widgets::{ButtonStyle, button, chain_button, divider};
+use crate::ui::widgets::{ButtonStyle, button, chain_button, divider, nav_item};
 use crate::voice_setup_window::VoiceSetupTab;
 
 mod agent;
@@ -365,57 +366,96 @@ impl SettingsWindow {
         cx.notify();
     }
 
-    fn render_tabs(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+    /// The navigation column: search first, then the four pages, then the setup guide.
+    ///
+    /// Atelier's preferences layout: a leading `Sidebar` of list rows instead of a row of
+    /// latched buttons squeezed into the title bar, so every page is named in full at every
+    /// window size and the title bar keeps only the title. The rows are [`nav_item`]s rather
+    /// than Atelier's `ListItem` so the pages stay in the Tab order.
+    fn render_nav(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let theme = self.theme.clone();
-        let tab = self.tab;
-        div()
-            .flex()
-            .items_center()
-            .flex_shrink_0()
-            .gap_1()
-            .pr_2()
-            .child(button(
+        let spacing = theme.atelier.spacing;
+        let current = (!self.searching()).then_some(self.tab);
+        let search = self.render_search(cx);
+        let page = |id: &'static str, label: Key, icon: IconName, tab: SettingsTab| {
+            nav_item(
+                id,
+                self.t(label),
+                None,
+                icon,
+                current == Some(tab),
+                true,
+                &theme,
+                cx.listener(move |this, _, window, cx| this.select_tab(tab, window, cx)),
+            )
+        };
+        Sidebar::new(Edge::Left)
+            .w(if window.viewport_size().width < px(640.0) {
+                px(168.0)
+            } else {
+                px(208.0)
+            })
+            .h_full()
+            .p(spacing.sm)
+            .gap(spacing.xxs)
+            .child(div().pb(spacing.sm).child(search))
+            .child(page(
                 "tab-general",
-                self.t(Key::TabGeneral),
-                ButtonStyle::Normal,
-                !self.searching() && tab == SettingsTab::General,
-                theme.accent,
-                &theme,
-                cx.listener(|this, _, window, cx| {
-                    this.select_tab(SettingsTab::General, window, cx);
-                }),
+                Key::TabGeneral,
+                IconName::Settings,
+                SettingsTab::General,
             ))
-            .child(button(
+            .child(page(
                 "tab-audio",
-                self.t(Key::TabAudio),
-                ButtonStyle::Normal,
-                !self.searching() && tab == SettingsTab::Audio,
-                theme.accent,
-                &theme,
-                cx.listener(|this, _, window, cx| {
-                    this.select_tab(SettingsTab::Audio, window, cx);
-                }),
+                Key::TabAudio,
+                IconName::Waveform,
+                SettingsTab::Audio,
             ))
-            .child(button(
+            .child(page(
                 "tab-agent",
-                self.t(Key::AgentPanel),
-                ButtonStyle::Normal,
-                !self.searching() && tab == SettingsTab::Agent,
-                theme.accent,
-                &theme,
-                cx.listener(|this, _, window, cx| this.select_tab(SettingsTab::Agent, window, cx)),
+                Key::AgentPanel,
+                IconName::Sparkles,
+                SettingsTab::Agent,
             ))
-            .child(button(
+            .child(page(
                 "tab-keys",
-                self.t(Key::TabKeys),
-                ButtonStyle::Normal,
-                !self.searching() && tab == SettingsTab::Keys,
-                theme.accent,
-                &theme,
-                cx.listener(|this, _, window, cx| {
-                    this.select_tab(SettingsTab::Keys, window, cx);
-                }),
+                Key::TabKeys,
+                IconName::Code,
+                SettingsTab::Keys,
             ))
+            .child(div().flex_1())
+            .child(
+                div()
+                    .debug_selector(|| "settings-setup-guide".into())
+                    .child(
+                        atelier::Button::new("settings-setup-guide", self.t(Key::SetupGuide))
+                            .ghost()
+                            .icon(IconName::Info)
+                            .full_width()
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                let _ = this.app.update(cx, |app, cx| app.open_setup_guide(cx));
+                            })),
+                    ),
+            )
+    }
+
+    /// The page's own heading: what it is called and what it covers.
+    fn render_page_header(&self) -> Option<AnyElement> {
+        if self.searching() {
+            return None;
+        }
+        let (title, description) = match self.tab {
+            SettingsTab::General => (Key::TabGeneral, Key::SettingsGeneralHelp),
+            SettingsTab::Audio => (Key::TabAudio, Key::SettingsAudioHelp),
+            SettingsTab::Agent => (Key::AgentPanel, Key::SettingsAgentHelp),
+            SettingsTab::Keys => (Key::TabKeys, Key::SettingsKeysHelp),
+        };
+        Some(
+            div()
+                .pb(self.theme.atelier.spacing.lg)
+                .child(SectionHeader::new(self.t(title)).description(self.t(description)))
+                .into_any_element(),
+        )
     }
 
     fn select_tab(&mut self, tab: SettingsTab, window: &mut Window, cx: &mut Context<Self>) {
@@ -506,18 +546,7 @@ impl SettingsWindow {
             .flex_col()
             .gap_2()
             .when(self.matches_section(Section::Appearance), |view| {
-                view.child(button(
-                    "settings-setup-guide",
-                    self.t(Key::SetupGuide),
-                    ButtonStyle::Normal,
-                    false,
-                    theme.accent,
-                    &theme,
-                    cx.listener(|this, _, _, cx| {
-                        let _ = this.app.update(cx, |app, cx| app.open_setup_guide(cx));
-                    }),
-                ))
-                .child(appearance_control)
+                view.child(appearance_control)
             })
             .when(self.matches_section(Section::Language), |view| {
                 view.child(divider(&theme))
@@ -1993,25 +2022,14 @@ impl Render for SettingsWindow {
         }
 
         let theme = self.theme.clone();
-        let titlebar = titlebar::titlebar(window, &theme)
-            .child(
-                titlebar::drag_region("settings-title")
-                    .flex_1()
-                    .min_w(px(40.0))
-                    .px_3()
-                    .child(
-                        div()
-                            .min_w_0()
-                            .truncate()
-                            .text_xs()
-                            .text_color(theme.text_muted)
-                            .child(self.t(Key::Settings)),
-                    ),
-            )
-            .child(self.render_tabs(cx))
-            .child(titlebar::controls(window, &theme, |_, window, _| {
+        let titlebar = titlebar::composed(
+            window,
+            &theme,
+            titlebar::Parts::new("settings-title", self.t(Key::Settings)),
+            titlebar::controls(window, &theme, |_, window, _| {
                 window.remove_window();
-            }));
+            }),
+        );
         let body = if self.searching() {
             self.render_results(cx)
         } else {
@@ -2023,6 +2041,7 @@ impl Render for SettingsWindow {
             }
         };
         let status = self.status.clone();
+        let page_header = self.render_page_header();
         let dropdown = self.render_dropdown(window, cx);
 
         div()
@@ -2033,7 +2052,7 @@ impl Render for SettingsWindow {
             .flex()
             .flex_col()
             .size_full()
-            .bg(theme.background)
+            .bg(theme.atelier.window_fill())
             .text_color(theme.text)
             .font(theme.font.clone())
             .text_sm()
@@ -2048,40 +2067,57 @@ impl Render for SettingsWindow {
             .child(titlebar)
             .child(
                 div()
-                    .px_3()
-                    .pt_2()
-                    .flex_shrink_0()
-                    .child(self.render_search(cx)),
-            )
-            .child(
-                div()
-                    .id("settings-body")
-                    .debug_selector(|| "settings-body".to_string())
                     .flex()
-                    .flex_col()
                     .flex_1()
                     .min_h_0()
-                    .overflow_y_scroll()
-                    .track_scroll(&self.body_scroll)
-                    .p_3()
-                    .child(body),
-            )
-            .child(
-                div()
-                    .id("settings-status")
-                    .flex()
-                    .items_center()
-                    .min_h(Metrics::STATUS_HEIGHT)
-                    .max_h(px(84.0))
-                    .flex_shrink_0()
-                    .overflow_y_scroll()
-                    .px_3()
-                    .bg(theme.surface_raised)
-                    .border_t_1()
-                    .border_color(theme.border)
-                    .text_xs()
-                    .text_color(theme.text_muted)
-                    .child(status),
+                    .child(self.render_nav(window, cx))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .flex_1()
+                            .min_w_0()
+                            .bg(theme.surface)
+                            .child(
+                                div()
+                                    .id("settings-body")
+                                    .debug_selector(|| "settings-body".to_string())
+                                    .flex()
+                                    .flex_col()
+                                    .flex_1()
+                                    .min_h_0()
+                                    .overflow_y_scroll()
+                                    .track_scroll(&self.body_scroll)
+                                    .px(theme.atelier.spacing.xl)
+                                    .py(theme.atelier.spacing.lg)
+                                    .child(
+                                        div()
+                                            .debug_selector(|| "settings-page".to_string())
+                                            .flex()
+                                            .flex_col()
+                                            .w_full()
+                                            .max_w(px(760.0))
+                                            .children(page_header)
+                                            .child(body),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .id("settings-status")
+                                    .flex()
+                                    .items_center()
+                                    .min_h(Metrics::STATUS_HEIGHT)
+                                    .max_h(px(84.0))
+                                    .flex_shrink_0()
+                                    .overflow_y_scroll()
+                                    .px(theme.atelier.spacing.xl)
+                                    .border_t_1()
+                                    .border_color(theme.border_subtle)
+                                    .text_size(theme.atelier.typography.size_sm)
+                                    .text_color(theme.text_muted)
+                                    .child(status),
+                            ),
+                    ),
             )
             .children(dropdown)
             .children(titlebar::resize_handles(window))
@@ -2091,17 +2127,19 @@ impl Render for SettingsWindow {
 /// A line of explanation under a section's heading.
 fn note(text: &str, theme: &Theme) -> AnyElement {
     div()
-        .text_xs()
+        .text_size(theme.atelier.typography.size_sm)
         .text_color(theme.text_muted)
         .child(text.to_string())
         .into_any_element()
 }
 
+/// A group's heading inside a page, in Atelier's section weight.
 fn section_title(title: &str, theme: &Theme) -> AnyElement {
     div()
-        .pt_2()
-        .text_xs()
-        .text_color(theme.text_faint)
+        .pt(theme.atelier.spacing.md)
+        .text_size(theme.atelier.typography.size_md)
+        .font_weight(theme.atelier.typography.heading_weight)
+        .text_color(theme.text)
         .child(title.to_string())
         .into_any_element()
 }
@@ -2162,7 +2200,7 @@ mod tests {
     use super::*;
 
     #[gpui::test]
-    fn titlebar_tabs_remain_clickable_in_a_small_settings_window(cx: &mut gpui::TestAppContext) {
+    fn sidebar_pages_remain_clickable_in_a_small_settings_window(cx: &mut gpui::TestAppContext) {
         let (app, cx) = crate::harness::open(cx);
         app.update(cx, |this, cx| this.open_settings(cx));
         cx.run_until_parked();
@@ -2183,20 +2221,24 @@ mod tests {
         cx.simulate_resize(gpui::size(px(480.0), px(360.0)));
         cx.run_until_parked();
         let title = cx.debug_bounds("settings-title").unwrap();
+        let mut above = title.bottom();
         for (id, expected) in [
-            ("tab-audio", SettingsTab::Audio),
-            ("tab-keys", SettingsTab::Keys),
-            ("tab-agent", SettingsTab::Agent),
             ("tab-general", SettingsTab::General),
+            ("tab-audio", SettingsTab::Audio),
+            ("tab-agent", SettingsTab::Agent),
+            ("tab-keys", SettingsTab::Keys),
         ] {
-            let tab = cx.debug_bounds(id).unwrap();
-            assert!(tab.top() >= title.top() && tab.bottom() <= title.bottom());
-            assert!(tab.left() >= title.right() && tab.right() <= px(480.0));
+            // The pages are a column under the title bar, in reading order, inside the window.
+            let page = cx.debug_bounds(id).unwrap();
+            assert!(page.top() >= above, "{id} overlaps what is above it");
+            assert!(page.bottom() <= px(360.0) && page.right() <= px(480.0));
+            above = page.bottom();
             crate::harness::click(id, cx);
             handle
                 .update(cx, |this, _, _| assert_eq!(this.tab, expected))
                 .unwrap();
         }
+        assert!(cx.debug_bounds("settings-setup-guide").is_some());
         if !cfg!(target_os = "macos") {
             crate::harness::click("window-close", cx);
             assert!(handle.update(cx, |_, _, _| ()).is_err());

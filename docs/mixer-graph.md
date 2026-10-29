@@ -20,7 +20,8 @@ sidechain connections all participate in cycle validation. A connection that
 would lead back to its source is refused before the document or undo history
 changes.
 
-Wire roles use themed colors, labels and distinct line styles:
+Audio wires share Atelier's audio port color. Labels and distinct line styles identify their
+routing roles independently of document track colors:
 
 | Connection | Line | Label |
 | --- | --- | --- |
@@ -33,8 +34,8 @@ source and destination use separate curved lanes, including multiple sends to
 one bus. Their labels follow their lanes and identify each send independently.
 
 During playback, wires glow and become slightly thicker in proportion to the
-signal they actually carry. Outputs, sends and sidechains retain their own
-colors and line styles. Short highlights travel from each source towards its
+signal they actually carry. Outputs, sends and sidechains retain the audio
+color and their line styles. Short highlights travel from each source towards its
 destination, following curves and bends at a steady visual speed. Their fading
 trails point back towards the source and their brightness follows the signal.
 Turn off **Animate signals** in the graph toolbar to stop moving highlights
@@ -47,7 +48,7 @@ Measurement runs only while **Signal flow** is open and does not change the
 sound, project or undo history.
 
 Click a wire or its label to select it. Selection adds a thicker accent outline
-while retaining the role color and line style. Press Delete or Backspace, or right-click the wire or label and choose
+while retaining the audio color and line style. Press Delete or Backspace, or right-click the wire or label and choose
 **Delete connections**. Hold Ctrl on Windows or Command on macOS while clicking
 to select several wires; their deletion is one Undo step. Undo and Redo restore
 the actual routing, including removed send automation. A disconnection removes

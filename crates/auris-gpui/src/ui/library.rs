@@ -12,9 +12,9 @@
 //! default is not the same everywhere: the plugins want to be visible, the hundred and
 //! twenty-eight sounds want to be asked for.
 //!
-//! Colour identifies what a choice does, using the theme slots shared with track kinds.
-//! Headings and item icons share these colours in both the tree and search results;
-//! names, indentation and check marks carry the same information without relying on colour.
+//! Headings identify roles with the theme slots shared with track kinds. Measured default
+//! instruments and melodic presets use the timbre map's cluster colours and names in both
+//! the tree and search results. Other choices retain their role colour.
 
 use std::collections::{HashMap, HashSet};
 
@@ -2821,12 +2821,22 @@ impl AurisApp {
         let source =
             source.map(|source| self.session.resolve_song_source(&source).unwrap_or(source));
         let theme = self.theme.clone();
-        let accent = if role == LibraryRole::Instrument && category == PluginCategory::Drum {
-            LibraryRole::Drum
+        let cluster = if role == LibraryRole::Instrument && source.is_none() {
+            self.library_timbre_cluster(&plugin.id, None)
         } else {
-            role
-        }
-        .color(&theme);
+            None
+        };
+        let accent = cluster
+            .as_ref()
+            .map(|(color, _)| *color)
+            .unwrap_or_else(|| {
+                if role == LibraryRole::Instrument && category == PluginCategory::Drum {
+                    LibraryRole::Drum
+                } else {
+                    role
+                }
+                .color(&theme)
+            });
         let searching = !self.library_query(target).content().trim().is_empty();
         let enabled = role != LibraryRole::Instrument || self.library_takes_instrument(target);
         let selected = role == LibraryRole::Instrument
@@ -2850,6 +2860,10 @@ impl AurisApp {
             format!("{} · {description}", self.category_label(category))
         } else {
             description
+        };
+        let description = match &cluster {
+            Some((_, name)) => format!("{name} · {description}"),
+            None => description,
         };
         let target_hint = if enabled {
             ""
@@ -2957,12 +2971,24 @@ impl AurisApp {
         F: Fn(&MouseDownEvent, &mut Window, &mut gpui::App) + 'static,
     {
         let theme = self.theme.clone();
-        let accent = if choice.bank == PERCUSSION_BANK {
-            LibraryRole::Drum
-        } else {
-            LibraryRole::Instrument
-        }
-        .color(&theme);
+        // Song-part browsing can include fonts not loaded into this document's bank.
+        let cluster = self
+            .session
+            .soundfonts()
+            .any(|font| font.id == choice.font)
+            .then(|| self.library_timbre_cluster(SAMPLER_ID, Some(choice)))
+            .flatten();
+        let accent = cluster
+            .as_ref()
+            .map(|(color, _)| *color)
+            .unwrap_or_else(|| {
+                if choice.bank == PERCUSSION_BANK {
+                    LibraryRole::Drum
+                } else {
+                    LibraryRole::Instrument
+                }
+                .color(&theme)
+            });
         let searching = !self.library_query(target).content().trim().is_empty();
         let enabled = self.library_takes_instrument(target);
         let selected = match target {
@@ -2993,8 +3019,17 @@ impl AurisApp {
         } else {
             self.t(Key::LibraryNeedsInstrumentTrack)
         };
+        let cluster_label = cluster
+            .as_ref()
+            .map(|(_, name)| name.clone())
+            .unwrap_or_default();
+        let tooltip_detail = if cluster.is_some() {
+            format!("{cluster_label} · {detail}")
+        } else {
+            detail.clone()
+        };
         let tooltip = crate::ui::tooltip::keyed_tip(
-            format!("{} · {detail} {target_hint}", preset.name),
+            format!("{} · {tooltip_detail} {target_hint}", preset.name),
             "",
             &theme,
         );
@@ -3047,13 +3082,19 @@ impl AurisApp {
                             .truncate()
                             .child(preset.name.clone()),
                     )
-                    .when(searching, |this| {
+                    .when(searching || cluster.is_some(), |this| {
                         this.child(
                             div()
                                 .text_xs()
                                 .text_color(theme.text_muted)
                                 .truncate()
-                                .child(detail),
+                                .child(if searching && cluster.is_some() {
+                                    format!("{cluster_label} · {detail}")
+                                } else if searching {
+                                    detail
+                                } else {
+                                    cluster_label
+                                }),
                         )
                     }),
             )

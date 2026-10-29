@@ -14,8 +14,10 @@ pub use provider_status::{ProviderStatus, check_providers_background};
 mod attachments;
 pub use attachments::{AttachmentKind, attachment_kind, validate_attachments};
 pub mod approval_review;
+mod completion;
 pub mod song_authoring;
 pub mod song_ideas;
+pub mod timbre_names;
 pub mod workshop;
 
 use std::io::Read;
@@ -339,25 +341,16 @@ fn preamble() -> String {
 }
 
 fn preamble_for_profile(modular: bool) -> String {
-    if modular {
-        return format!(
-            "{}\n{}\n{}{}",
-            include_str!("prompts/composition.md"),
-            MUSICAL_DESIGN_INSTRUCTIONS,
-            toolbox::composition_workflows::COMMON,
-            toolbox::composition_workflows::VOCAL_SONG_FORM
-        );
-    }
     let mut text = format!(
         "{}\n{}\n{}",
         include_str!("prompts/composition.md"),
         MUSICAL_DESIGN_INSTRUCTIONS,
         include_str!("prompts/live-tools.md")
     );
-    text.push_str(toolbox::MELODY_PHRASING_INSTRUCTIONS);
-    text.push_str(toolbox::composition_workflows::VOCAL_SONG_FORM);
-    text.push_str(toolbox::PERFORMANCE_INSTRUCTIONS);
-    text.push_str(toolbox::arrangement_instructions());
+    // Detailed musical/operation guidance is returned by tool_help when needed.
+    if modular {
+        text.push_str("\nFor music-making select production_record select_workflow (composition, accompaniment, vocals, local_edit or delivery), choose writing_order harmony_first, melody_first or rhythm_first, and follow the returned workflow.\n");
+    }
     text
 }
 
@@ -1479,7 +1472,11 @@ mod tests {
         let legacy = preamble_for_profile(false);
         for text in [&modular, &legacy] {
             assert_eq!(text.matches(MUSICAL_DESIGN_INSTRUCTIONS).count(), 1);
-            assert!(text.contains(toolbox::composition_workflows::VOCAL_SONG_FORM));
+            assert!(
+                text.len() < 9000,
+                "Shared prompt grew to {} bytes",
+                text.len()
+            );
             for contract in [
                 "inspect_project",
                 "read_notes",

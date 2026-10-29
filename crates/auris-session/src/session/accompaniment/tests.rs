@@ -42,6 +42,24 @@ fn assigned_drums_keep_their_recipe_addresses_and_unassigned_drums_are_refused()
 }
 
 #[test]
+fn switching_to_the_builtin_drum_kit_allows_generated_kick_backing() {
+    let (mut session, lead, _, _) = fixture();
+    let drums = session
+        .add_drum_track("Drums", auris_synth::NoiseDrum::ID)
+        .unwrap();
+    session
+        .set_track_instrument(drums, auris_synth::DrumKit::ID)
+        .unwrap();
+    let operation = serde_json::from_value(json!({"kind":"generate","parts":[
+        {"track":drums.0,"name":"Kick","part":"kick","start_bar":1,"bars":4,"seed":3}
+    ]}))
+    .unwrap();
+
+    let report = execute(&mut session, lead, operation);
+    assert_eq!(report["clips"].as_array().map(Vec::len), Some(1));
+}
+
+#[test]
 fn looped_backing_cannot_be_overlapped_or_changed_outside_the_harmony_range() {
     let (mut session, lead, bass, chords) = fixture();
     let report = execute(&mut session, lead, generate(bass, chords));
@@ -155,6 +173,73 @@ fn explicit_foreground_is_required_protected_and_validated_before_publication() 
         let command = Command::Accompaniment {
             expected_revision: session.agent_document_revision().unwrap(),
             protected_clips: vec![lead.0],
+            foreground_clips: foreground,
+            operation: generate(bass, chords),
+        };
+        assert!(session.agent_command(command).is_err());
+        assert_eq!(session.project(), &before);
+        assert!(!session.can_undo());
+    }
+}
+
+#[test]
+fn non_foreground_empty_and_drum_protected_clips_are_allowed_without_publication_leak() {
+    let (mut session, lead, bass, chords) = fixture();
+    let pad = session.add_default_instrument_track("Pad").unwrap();
+    let empty_pad = session
+        .add_midi_clip(pad, "Empty pad", Ticks::ZERO, Ticks::QUARTER * 16)
+        .unwrap();
+    let drums = session
+        .add_drum_track("Drums", crate::DEFAULT_INSTRUMENT)
+        .unwrap();
+    let empty_drums = session
+        .add_midi_clip(drums, "Empty drums", Ticks::ZERO, Ticks::QUARTER * 16)
+        .unwrap();
+    session.forget_history();
+    let before = session.project().clone();
+    let command = Command::Accompaniment {
+        expected_revision: session.agent_document_revision().unwrap(),
+        protected_clips: vec![lead.0, empty_pad.0, empty_drums.0],
+        foreground_clips: vec![lead.0],
+        operation: generate(bass, chords),
+    };
+    let report = session.agent_command(command).unwrap();
+    assert_eq!(
+        serde_json::from_str::<Value>(&report).unwrap()["foreground_clips"],
+        json!([lead.0])
+    );
+    assert_eq!(
+        session.project.midi_clip(empty_pad),
+        before.midi_clip(empty_pad)
+    );
+    assert_eq!(
+        session.project.midi_clip(empty_drums),
+        before.midi_clip(empty_drums)
+    );
+}
+
+#[test]
+fn empty_or_drum_foreground_is_rejected_before_publication() {
+    let (mut session, lead, bass, chords) = fixture();
+    let pad = session.add_default_instrument_track("Pad").unwrap();
+    let empty_pad = session
+        .add_midi_clip(pad, "Empty pad", Ticks::ZERO, Ticks::QUARTER * 16)
+        .unwrap();
+    let drums = session
+        .add_drum_track("Drums", crate::DEFAULT_INSTRUMENT)
+        .unwrap();
+    let empty_drums = session
+        .add_midi_clip(drums, "Empty drums", Ticks::ZERO, Ticks::QUARTER * 16)
+        .unwrap();
+    session
+        .add_note(empty_drums, Note::new(36, Ticks::ZERO, Ticks::QUARTER))
+        .unwrap();
+    session.forget_history();
+    let before = session.project().clone();
+    for foreground in [vec![empty_pad.0], vec![empty_drums.0]] {
+        let command = Command::Accompaniment {
+            expected_revision: session.agent_document_revision().unwrap(),
+            protected_clips: vec![lead.0, empty_pad.0, empty_drums.0],
             foreground_clips: foreground,
             operation: generate(bass, chords),
         };

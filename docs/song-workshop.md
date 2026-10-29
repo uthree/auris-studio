@@ -15,7 +15,15 @@ voice processing and final rendering share a conservative audio-work limit.
 Candidates are bounded to five minutes plus an ending, and each worker has a time
 and tool-call budget.
 
-Completed alternatives can be auditioned while other workers continue. Stop applies
+Once a worker has playable notes, its card offers an audition marked **Work in progress**.
+Draft audio is captured at most once every ten seconds after score changes and rendered
+on a background worker, sharing the voice/render work limit. The previous audition stays
+available while a newer one is being prepared. Playback, seeking and volume work during
+composition. New audio does not interrupt a playing snapshot; **Play latest audio** switches
+to the newest one from the beginning. Unfinished singer parts may still use a guide sound.
+Draft auditions are temporary and cannot be selected or saved as finished candidates.
+
+Completed alternatives can also be auditioned while other workers continue. Stop applies
 to one candidate or the entire batch. Regenerating a completed candidate creates a new artifact identity and leaves
 earlier results available. Selecting **Continue with this song** establishes the
 exact score for the next request without closing the conversation. Ask for revisions

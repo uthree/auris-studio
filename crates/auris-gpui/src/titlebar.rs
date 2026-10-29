@@ -5,9 +5,9 @@
 //! turn a button inside it into a window drag on Windows.
 
 use gpui::{
-    App, Bounds, ClickEvent, CursorStyle, Decorations, Div, ElementId, IntoElement, PathBuilder,
+    AnyElement, App, ClickEvent, CursorStyle, Decorations, Div, ElementId, Hsla, IntoElement,
     Pixels, ResizeEdge, SharedString, Stateful, TitlebarOptions, Window, WindowControlArea,
-    WindowDecorations, WindowOptions, canvas, div, point, prelude::*, px,
+    WindowDecorations, WindowOptions, div, point, prelude::*, px, svg,
 };
 
 use crate::theme::Theme;
@@ -17,6 +17,14 @@ pub const HEIGHT: Pixels = px(40.0);
 
 const CONTROL_WIDTH: Pixels = px(46.0);
 const TRAFFIC_LIGHT_INSET: Pixels = px(78.0);
+const GLYPH_SIZE: Pixels = px(10.0);
+
+/// The narrowest a centred title is squeezed to before the controls beside it give way.
+const MIN_TITLE_WIDTH: Pixels = px(72.0);
+
+/// How much faster than the title the two balancing sides shrink. Atelier's `TitleBar` uses the
+/// same ratio: the empty drag space goes first, then the subtitle, and the title last.
+const YIELD_SHRINK: f32 = 1000.0;
 
 /// Window defaults for application-drawn chrome on every desktop platform.
 pub fn options(title: impl Into<SharedString>) -> WindowOptions {
@@ -191,12 +199,134 @@ pub fn titlebar(window: &Window, theme: &Theme) -> Stateful<Div> {
         .pt(resize_inset(window))
         .border_b_1()
         .border_color(theme.border_subtle)
-        .bg(theme.surface)
+        .bg(bar_fill(
+            theme.atelier.colors.chrome,
+            cfg!(target_os = "windows"),
+        ))
         .text_color(if window.is_window_active() {
             theme.text
         } else {
             theme.text_muted
         })
+}
+
+/// The title bar's fill: the theme's chrome, made solid on Windows.
+///
+/// To put its acrylic behind the whole window, Atelier extends the DWM frame over the client
+/// area, and DWM then draws the native caption buttons in it. gpui's content sits above them,
+/// so they only show through translucent chrome — exactly under ours on a normal window, a few
+/// pixels off on a maximized one, where every glyph is seen twice.
+fn bar_fill(chrome: Hsla, windows: bool) -> Hsla {
+    if windows {
+        Hsla { a: 1.0, ..chrome }
+    } else {
+        chrome
+    }
+}
+
+/// What goes in a title bar laid out the way Atelier's `TitleBar` lays it out.
+///
+/// The title sits on the window's centre line, a short subtitle beside it rather than under it,
+/// with frequent commands at the leading edge and draggable space between them and the title.
+/// Nothing in Auris needs a trailing command yet: a page's own actions belong to the page.
+pub struct Parts {
+    id: &'static str,
+    title: SharedString,
+    subtitle: Option<SharedString>,
+    leading: Vec<AnyElement>,
+}
+
+impl Parts {
+    /// A bar whose title region is found by tests as `id`.
+    pub fn new(id: &'static str, title: impl Into<SharedString>) -> Self {
+        Self {
+            id,
+            title: title.into(),
+            subtitle: None,
+            leading: Vec::new(),
+        }
+    }
+
+    /// Muted text after the title on the same line.
+    pub fn subtitle(mut self, subtitle: impl Into<SharedString>) -> Self {
+        self.subtitle = Some(subtitle.into());
+        self
+    }
+
+    /// A control at the leading edge, such as Back.
+    pub fn leading(mut self, element: impl IntoElement) -> Self {
+        self.leading.push(element.into_any_element());
+        self
+    }
+}
+
+/// A complete title bar: `parts` balanced around the window's centre line, then `controls`.
+///
+/// The two sides grow by the same amount from bases that make up for the uneven native edges —
+/// the traffic lights at one end, the caption buttons at the other — so the title is centred
+/// on the *window*, not on whatever space the controls happen to leave. A side whose controls
+/// need more room keeps them and pushes the title over, which then truncates.
+pub fn composed(window: &Window, theme: &Theme, parts: Parts, controls: Div) -> Stateful<Div> {
+    let leading_edge = traffic_light_inset(window);
+    let trailing_edge = controls_width(window);
+    let gap = theme.atelier.spacing.xs;
+    let inset = theme.atelier.spacing.sm;
+    // The basis includes the side's padding: a basis smaller than its padding is rounded up to
+    // it, and the two sides would no longer differ by exactly the native edges.
+    let side = |basis: Pixels| {
+        let mut side = div();
+        side.style().flex_shrink = Some(YIELD_SHRINK);
+        side.flex()
+            .flex_grow()
+            .flex_basis(basis.max(px(0.0)) + inset)
+            .h_full()
+            .items_center()
+            .gap(gap)
+    };
+    let id = parts.id;
+    let leading = side(trailing_edge - leading_edge)
+        .pl(inset)
+        .children(
+            parts
+                .leading
+                .into_iter()
+                .map(|child| div().flex().flex_none().child(child)),
+        )
+        .child(drag_region(SharedString::from(format!("{id}-leading"))).flex_1());
+    let trailing = side(leading_edge - trailing_edge)
+        .pr(inset)
+        .child(drag_region(SharedString::from(format!("{id}-trailing"))).flex_1());
+    let subtitle = parts.subtitle.map(|subtitle| {
+        let mut part = div();
+        part.style().flex_shrink = Some(YIELD_SHRINK);
+        part.min_w_0()
+            .truncate()
+            .text_size(theme.atelier.typography.size_sm)
+            .text_color(theme.text_faint)
+            .child(subtitle)
+    });
+    let heading = drag_region(id)
+        .flex_shrink()
+        .min_w(MIN_TITLE_WIDTH)
+        .overflow_hidden()
+        .justify_center()
+        .gap(theme.atelier.spacing.sm)
+        .px(theme.atelier.spacing.sm)
+        .child(
+            div()
+                .flex_shrink()
+                .min_w_0()
+                .truncate()
+                .text_size(theme.atelier.typography.size_md)
+                .font_weight(theme.atelier.typography.label_weight)
+                .child(parts.title),
+        )
+        .children(subtitle);
+    titlebar(window, theme)
+        .child(leading)
+        .child(heading)
+        .child(trailing)
+        .child(controls)
 }
 
 /// A native window-drag target containing only a label or empty space.
@@ -303,9 +433,8 @@ fn control(
         .w(CONTROL_WIDTH)
         .h_full()
         .flex_shrink_0()
-        .text_color(theme.text_muted)
-        .hover(move |this| this.bg(hover_background).text_color(hover_foreground))
-        .active(move |this| this.bg(hover_background).text_color(hover_foreground))
+        .hover(move |this| this.bg(hover_background))
+        .active(move |this| this.bg(hover_background))
         .when(cfg!(target_os = "windows"), |this| {
             this.window_control_area(area)
         })
@@ -326,64 +455,42 @@ fn control(
                 })
             })
         })
-        .child(control_icon(area, maximized))
+        .group(id)
+        .child(
+            control_icon(area, maximized)
+                .text_color(theme.text_muted)
+                .group_hover(id, move |this| this.text_color(hover_foreground)),
+        )
 }
 
-fn control_icon(area: WindowControlArea, maximized: bool) -> impl IntoElement {
-    canvas(
-        |_, _, _| (),
-        move |bounds, _, window, _| paint_control_icon(bounds, area, maximized, window),
-    )
-    .size(px(12.0))
-}
-
-fn paint_control_icon(
-    bounds: Bounds<Pixels>,
-    area: WindowControlArea,
-    maximized: bool,
-    window: &mut Window,
-) {
-    let at = |x: f32, y: f32| bounds.origin + point(px(x), px(y));
-    let mut path = PathBuilder::stroke(px(1.0));
-    match area {
-        WindowControlArea::Min => {
-            path.move_to(at(1.0, 6.0));
-            path.line_to(at(11.0, 6.0));
-        }
-        WindowControlArea::Max if maximized => {
-            path.move_to(at(4.0, 1.0));
-            path.line_to(at(11.0, 1.0));
-            path.line_to(at(11.0, 8.0));
-            path.move_to(at(1.0, 4.0));
-            path.line_to(at(8.0, 4.0));
-            path.line_to(at(8.0, 11.0));
-            path.line_to(at(1.0, 11.0));
-            path.close();
-        }
-        WindowControlArea::Max => {
-            path.move_to(at(1.0, 1.0));
-            path.line_to(at(11.0, 1.0));
-            path.line_to(at(11.0, 11.0));
-            path.line_to(at(1.0, 11.0));
-            path.close();
-        }
-        WindowControlArea::Close => {
-            path.move_to(at(1.0, 1.0));
-            path.line_to(at(11.0, 11.0));
-            path.move_to(at(11.0, 1.0));
-            path.line_to(at(1.0, 11.0));
-        }
-        WindowControlArea::Drag => return,
-    }
-    if let Ok(path) = path.build() {
-        let color = window.text_style().color;
-        window.paint_path(path, color);
-    }
+/// The caption glyph, drawn as an icon like every other glyph in the window.
+fn control_icon(area: WindowControlArea, maximized: bool) -> gpui::Svg {
+    let path = match area {
+        WindowControlArea::Min => "icons/caption-minimize.svg",
+        WindowControlArea::Max if maximized => "icons/caption-restore.svg",
+        WindowControlArea::Max => "icons/caption-maximize.svg",
+        WindowControlArea::Close | WindowControlArea::Drag => "icons/caption-close.svg",
+    };
+    svg().path(path).size(GLYPH_SIZE).flex_none()
 }
 
 #[cfg(test)]
 mod tests {
+    use gpui::hsla;
+
     use crate::harness::{open, paint, press, release};
+
+    #[test]
+    fn translucent_chrome_turns_solid_only_where_native_caption_buttons_lie_beneath() {
+        let glass = hsla(0.7, 0.05, 0.18, 0.42);
+        assert_eq!(super::bar_fill(glass, true).a, 1.0);
+        assert_eq!(
+            super::bar_fill(glass, true).l,
+            glass.l,
+            "same colour, only solid"
+        );
+        assert_eq!(super::bar_fill(glass, false), glass);
+    }
 
     #[gpui::test]
     fn a_caption_press_does_not_let_the_focusable_root_cancel_native_dragging(

@@ -1354,6 +1354,49 @@ mod tests {
     }
 
     #[test]
+    fn a_hosted_plugin_renders_only_at_the_rate_it_was_activated_at() {
+        // A plugin hears its rate once, at activation. A job built for the project's rate and
+        // run at another used to play every hosted part out of tune — the workshop's 22.05 kHz
+        // audition sounded more than a semitone flat beside the same song opened as a project.
+        let scratch = super::super::fixtures::Scratch::new("hosted-render-rate");
+        let file = scratch.join("tone.clap");
+        std::fs::write(&file, b"fixture").unwrap();
+        let mut session = super::super::fixtures::session();
+        session
+            .hosted
+            .libraries
+            .insert(file.clone(), instrument_library());
+        let track = session.add_default_instrument_track("Tone").unwrap();
+        session
+            .set_hosted_instrument(track, &file, TONE_ID)
+            .unwrap();
+        let clip = session
+            .add_midi_clip(track, "Note", Ticks::ZERO, Ticks::QUARTER * 4)
+            .unwrap();
+        session
+            .add_note(
+                clip,
+                auris_core::Note::new(60, Ticks::ZERO, Ticks::QUARTER * 2),
+            )
+            .unwrap();
+        let options = auris_engine::OfflineOptions {
+            sample_rate: Some(22_050.0),
+            ..Default::default()
+        };
+        let mut progress = auris_engine::RenderProgress::default();
+        assert!(matches!(
+            session.render_job().render(&options, &mut progress),
+            Err(crate::SessionError::RenderSource(_))
+        ));
+        let audio = session
+            .render_job_at(Some(22_050.0))
+            .render(&options, &mut progress)
+            .unwrap();
+        assert_eq!(audio.sample_rate(), 22_050.0);
+        assert!(audio.peak() > 0.1);
+    }
+
+    #[test]
     fn reusable_sound_captures_effect_values_changed_inside_the_plugin() {
         let scratch = super::super::fixtures::Scratch::new("reusable-clap-effect");
         let file = scratch.join("gain.clap");

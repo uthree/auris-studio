@@ -1002,7 +1002,7 @@ impl AurisApp {
         self.spectrogram_tracks.clear();
         self.music_analysis.clear();
         self.close_timbre_map();
-        self.timbre_map.map = None;
+        self.timbre_map.clear();
         self.spectrograms.clear();
         self.cancel_auto_sing();
         self.invalidate_sung_previews();
@@ -2733,10 +2733,10 @@ impl AurisApp {
                             .session
                             .continue_midi_export(result, cancelled.as_ref())
                         {
-                            Ok(Some((path, notes))) => this.set_status(messages::midi_exported(
+                            Ok(Some(report)) => this.set_status(messages::midi_exported(
                                 this.language(),
-                                &path.display().to_string(),
-                                notes,
+                                &report.path.display().to_string(),
+                                report.notes,
                             )),
                             Ok(None) => {
                                 this.set_status(this.t(Key::BackgroundCommandChanged).to_string())
@@ -3459,7 +3459,9 @@ impl AurisApp {
             self.set_status(self.t(Key::ExportAlreadyRunning));
             return;
         }
-        let mut job = self.session.render_job();
+        let mut job = self
+            .session
+            .render_job_at(export.sample_rate.map(f64::from));
         let guard = self.session.export_guard();
         // Refused before the dialog opens, for the reason a cycle export is: a folder chosen for
         // an export that cannot happen is a question asked for nothing.
@@ -3579,7 +3581,9 @@ impl AurisApp {
             return;
         }
         // A snapshot, so the render is unaffected by anything edited while it runs.
-        let mut job = self.session.render_job();
+        let mut job = self
+            .session
+            .render_job_at(export.sample_rate.map(f64::from));
         let guard = self.session.export_guard();
         // Set before the cycle region is converted, because `loop_options` turns ticks into
         // frames against the rate the render will run at. A region measured at the project's

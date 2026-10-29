@@ -330,18 +330,27 @@ impl Session {
         if foreground.iter().any(|id| !protected.contains(id)) {
             return Err("foreground_clips must be a subset of protected_clips".into());
         }
+        // Protected clips need only exist: they reserve their tracks and remain
+        // untouched, but clips outside the explicit foreground need not contain
+        // pitched notes (for example an empty pad or a drum clip). Only the
+        // foreground is read to adapt generated backing around written notes.
         for id in protected {
+            self.project
+                .midi_clip(ClipId(*id))
+                .ok_or("Unknown protected clip")?;
+        }
+        for id in foreground {
             let (track, clip) = self
                 .project
                 .midi_clip(ClipId(*id))
-                .ok_or("Unknown protected melody clip")?;
+                .ok_or("Unknown foreground clip")?;
             if clip.notes.is_empty()
                 || self
                     .project
                     .track(track)
                     .is_none_or(|track| track.kind.is_drum())
             {
-                return Err("Protected melody clips must contain pitched notes".into());
+                return Err("Foreground clips must contain pitched notes".into());
             }
         }
         // Bound the snapshot before cloning it. The content hash already serializes this document.

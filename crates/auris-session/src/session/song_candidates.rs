@@ -612,7 +612,7 @@ impl SongCandidate {
         ));
         progress("render");
         let audio = session
-            .render_job()
+            .render_job_at(Some(22_050.0))
             .render(
                 &OfflineOptions {
                     sample_rate: Some(22_050.0),
@@ -688,7 +688,7 @@ impl Session {
             return Err("Candidate assets could not be collected".into());
         }
         let audio = self
-            .render_job()
+            .render_job_at(Some(22_050.0))
             .render(
                 &OfflineOptions {
                     sample_rate: Some(22_050.0),

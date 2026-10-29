@@ -79,9 +79,13 @@ def manifest(path: Path) -> dict:
         if not isinstance(rubric, dict) or set(rubric) - set(AXES):
             raise ValueError("Listening rubric keys must be evaluation axes")
         for axis, questions in rubric.items():
-            if not isinstance(questions, list) or not questions or not all(
-                isinstance(question, str) and question.strip()
-                for question in questions
+            if (
+                not isinstance(questions, list)
+                or not questions
+                or not all(
+                    isinstance(question, str) and question.strip()
+                    for question in questions
+                )
             ):
                 raise ValueError(
                     f"Listening rubric for {axis} needs nonempty string questions"
@@ -98,7 +102,9 @@ def manifest(path: Path) -> dict:
         if case["split"] not in {"development", "holdout"}:
             raise ValueError("Invalid split")
         if case["fixture"] not in {
-            "blank", "melody_six_eight", "melody_six_eight_eight_bars"
+            "blank",
+            "melody_six_eight",
+            "melody_six_eight_eight_bars",
         }:
             raise ValueError("Unknown fixture")
         if not case["prompts"] or not all(
@@ -165,6 +171,7 @@ def freeze_seed_project(source: Path, destination: Path) -> dict[str, object]:
 
 def run(args) -> None:
     suite = manifest(args.manifest)
+    args.repetition_start = getattr(args, "repetition_start", 1)
     condition = None
     condition_payload = None
     condition_sha256 = None
@@ -172,7 +179,11 @@ def run(args) -> None:
         condition, condition_payload, condition_sha256 = prompt_condition(
             args.prompt_condition.resolve(strict=True)
         )
-    if not 1 <= args.repetitions <= 20 or not 1 <= args.timeout <= 3600:
+    if not 1 <= args.repetition_start <= 20 or not 1 <= args.repetitions <= 20:
+        raise ValueError("Use repetition start/count in 1..20")
+    if args.repetition_start + args.repetitions - 1 > 20:
+        raise ValueError("Repetition range must end at 20 or earlier")
+    if not 1 <= args.timeout <= 3600:
         raise ValueError("Use 1..20 repetitions and 1..3600 seconds per turn")
     if not 8192 <= args.context_tokens <= 262144:
         raise ValueError("Use 8192..262144 context tokens")
@@ -182,8 +193,7 @@ def run(args) -> None:
     selected_cases = [
         case
         for case in suite["cases"]
-        if case["split"] == args.split
-        and (not args.case or case["id"] in args.case)
+        if case["split"] == args.split and (not args.case or case["id"] in args.case)
     ]
     if args.seed_project is not None and any(
         case["fixture"] != "blank" for case in selected_cases
@@ -217,6 +227,8 @@ def run(args) -> None:
         "runner_sha256": digest(Path(__file__)),
         "split": args.split,
         "repetitions": args.repetitions,
+        "repetition_start": args.repetition_start,
+        "repetition_end": args.repetition_start + args.repetitions - 1,
         "source_commit": subprocess.check_output(
             ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
         ).strip(),
@@ -272,8 +284,10 @@ def run(args) -> None:
     for case in suite["cases"]:
         if case["split"] != args.split or (args.case and case["id"] not in args.case):
             continue
-        for repetition in range(args.repetitions):
-            trial_id = f"{case['id']}-{repetition + 1:02}"
+        for repetition in range(
+            args.repetition_start, args.repetition_start + args.repetitions
+        ):
+            trial_id = f"{case['id']}-{repetition:02}"
             destination = output / trial_id
             config = {
                 "model": args.model,
@@ -290,12 +304,18 @@ def run(args) -> None:
                 input_root = output / "input-projects" / trial_id
                 shutil.copytree(frozen_seed, input_root)
                 config["seed_project"] = str(
-                    (input_root / args.seed_project.stem / args.seed_project.name).resolve()
+                    (
+                        input_root / args.seed_project.stem / args.seed_project.name
+                    ).resolve()
                 )
             if condition is not None:
                 config["prompt_condition"] = {
                     key: condition[key]
-                    for key in ("expected_prefix", "replacement_prefix", "skill_context")
+                    for key in (
+                        "expected_prefix",
+                        "replacement_prefix",
+                        "skill_context",
+                    )
                 }
             config_path = output / f"{trial_id}.config.json"
             if provenance["backend"] != "codex":
@@ -347,7 +367,7 @@ def run(args) -> None:
                 {
                     "id": trial_id,
                     "case": case["id"],
-                    "repetition": repetition + 1,
+                    "repetition": repetition,
                     "elapsed_seconds": time.monotonic() - started,
                     "exit_code": process.returncode,
                     "transport_pass": process.returncode == 0
@@ -428,6 +448,239 @@ def pairs(before: Path, after: Path, seed: int) -> list[dict]:
         result.append({"trial": trial["id"], "status": "ready", "audio": audio})
     rng.shuffle(result)
     return result
+
+
+def _condition_fingerprint(suite: dict) -> dict:
+    """Return fields that must remain identical when repetitions are combined."""
+    return {
+        key: suite.get(key)
+        for key in (
+            "manifest_sha256",
+            "manifest",
+            "model",
+            "backend",
+            "prompt_profile",
+            "candidate_tools_enabled",
+            "context_tokens",
+            "source_commit",
+            "source_diff",
+            "untracked_rust_sources",
+            "runtime",
+            "prompt_condition_sha256",
+            "prompt_condition",
+            "selected_cases",
+            "split",
+        )
+    }
+
+
+def _is_link(path: Path) -> bool:
+    return path.is_symlink() or getattr(path, "is_junction", lambda: False)()
+
+
+def _copy_metadata(
+    root: Path, output: Path, name: str, expected: str | None = None
+) -> str | None:
+    source = root / name
+    if not source.exists():
+        return None
+    if _is_link(source) or source.resolve().parent != root or not source.is_file():
+        raise ValueError(f"Unsafe metadata path: {source}")
+    sha256 = digest(source)
+    if expected is not None and sha256 != expected:
+        raise ValueError(f"Changed metadata: {source}")
+    target = output / name
+    if not target.exists():
+        shutil.copy2(source, target)
+    if digest(target) != sha256:
+        raise ValueError(f"Conflicting or changed metadata: {name}")
+    return sha256
+
+
+def combine_repetitions(
+    inputs: list[Path], output: Path, runner_change_reason: str | None = None
+) -> None:
+    """Combine disjoint repetition suites without changing trial identities."""
+    if len(inputs) < 2:
+        raise ValueError("Provide at least two input suites")
+    if output.exists():
+        raise FileExistsError(f"Output already exists: {output}")
+    if runner_change_reason is not None and not runner_change_reason.strip():
+        raise ValueError("Runner change reason must be nonempty")
+    suites = []
+    for root in inputs:
+        root = root.resolve(strict=True)
+        data = read_json(root / "suite.json")
+        if not isinstance(data.get("trials"), list) or not data["trials"]:
+            raise ValueError(f"Suite has no trials: {root}")
+        suites.append((root, data))
+    required = {
+        "manifest_sha256",
+        "manifest",
+        "model",
+        "backend",
+        "prompt_profile",
+        "candidate_tools_enabled",
+        "context_tokens",
+        "split",
+        "repetitions",
+        "selected_cases",
+        "runtime",
+        "source_commit",
+        "source_diff",
+        "untracked_rust_sources",
+        "runner_sha256",
+    }
+    for root, data in suites:
+        missing = required - data.keys()
+        if missing:
+            raise ValueError(f"Missing provenance fields in {root}: {sorted(missing)}")
+        if data.get("seed_project") is not None:
+            raise ValueError("Seeded suites cannot be combined")
+        if len(data["selected_cases"]) != len(set(data["selected_cases"])):
+            raise ValueError("Duplicate selected cases")
+        if "prompt_condition_sha256" in data and "prompt_condition" not in data:
+            raise ValueError("Prompt condition hash has no payload")
+    fingerprint = _condition_fingerprint(suites[0][1])
+    if any(_condition_fingerprint(data) != fingerprint for _, data in suites[1:]):
+        raise ValueError("Repetition suites have different frozen conditions")
+    runner_hashes = {data["runner_sha256"] for _, data in suites}
+    if len(runner_hashes) > 1 and not runner_change_reason:
+        raise ValueError("Runner drift requires --runner-change-reason")
+    selected = suites[0][1].get("selected_cases", [])
+    if not selected:
+        raise ValueError("Suite has no selected cases")
+    all_trials: list[tuple[Path, dict]] = []
+    seen_ids: set[str] = set()
+    reps: set[int] = set()
+    for root, data in suites:
+        raw_start = data.get("repetition_start", 1)
+        raw_count = data["repetitions"]
+        if isinstance(raw_start, bool) or not isinstance(raw_start, int):
+            raise TypeError(f"Invalid repetition start in {root}")
+        if isinstance(raw_count, bool) or not isinstance(raw_count, int):
+            raise TypeError(f"Invalid repetition count in {root}")
+        start, count = raw_start, raw_count
+        end = data.get("repetition_end", start + count - 1)
+        if isinstance(end, bool) or not isinstance(end, int):
+            raise TypeError(f"Invalid repetition end in {root}")
+        if count <= 0 or end != start + count - 1 or start < 1 or end > 20:
+            raise ValueError(f"Invalid repetition range in {root}")
+        expected_ids = {
+            f"{case}-{repetition:02}"
+            for case in selected
+            for repetition in range(start, end + 1)
+        }
+        actual_ids = {trial.get("id") for trial in data["trials"]}
+        if actual_ids != expected_ids:
+            raise ValueError(f"Noncanonical or incomplete trial IDs in {root}")
+        for trial in data["trials"]:
+            trial_id = trial.get("id", "")
+            if any(character in trial_id for character in "/\\:"):
+                raise ValueError(f"Unsafe trial path: {trial_id}")
+            if trial_id in seen_ids:
+                raise ValueError(f"Duplicate trial ID: {trial_id}")
+            seen_ids.add(trial_id)
+            try:
+                case, suffix = trial_id.rsplit("-", 1)
+                repetition = int(suffix)
+            except (ValueError, AttributeError):
+                raise ValueError(f"Invalid trial ID: {trial_id}") from None
+            if case not in selected or not start <= repetition <= end:
+                raise ValueError(f"Trial is outside selected cohort: {trial_id}")
+            if repetition not in reps:
+                reps.add(repetition)
+            if trial.get("repetition") not in (None, repetition):
+                raise ValueError(f"Trial repetition mismatch: {trial_id}")
+            trial = dict(trial)
+            trial["repetition"] = repetition
+            artifacts = trial.get("artifacts", {})
+            raw_trial = root / trial_id
+            if _is_link(raw_trial):
+                raise ValueError(f"Unsafe trial path: {trial_id}")
+            source_trial = raw_trial.resolve()
+            if root not in source_trial.parents:
+                raise ValueError(f"Unsafe trial path: {trial_id}")
+            source_audio = source_trial / "result.wav"
+            if trial.get("delivery_present") and (
+                not source_audio.is_file() or not artifacts.get("result.wav")
+            ):
+                raise ValueError(f"Missing delivered artifact: {trial_id}")
+            for relative, expected_hash in artifacts.items():
+                relative_path = Path(relative)
+                if (
+                    relative_path.is_absolute()
+                    or ".." in relative_path.parts
+                    or ":" in relative
+                ):
+                    raise ValueError(f"Unsafe artifact path: {trial_id}/{relative}")
+                raw_artifact = source_trial / relative_path
+                if _is_link(raw_artifact) or any(
+                    _is_link(part) for part in [source_trial, *raw_artifact.parents]
+                ):
+                    raise ValueError(f"Unsafe artifact path: {trial_id}/{relative}")
+                artifact_path = raw_artifact.resolve()
+                if (
+                    source_trial not in artifact_path.parents
+                    or artifact_path.is_symlink()
+                ):
+                    raise ValueError(f"Unsafe artifact path: {trial_id}/{relative}")
+                if (
+                    not artifact_path.is_file()
+                    or digest(artifact_path) != expected_hash
+                ):
+                    raise ValueError(
+                        f"Changed or missing artifact: {trial_id}/{relative}"
+                    )
+            all_trials.append((root, trial))
+    if reps != set(range(1, max(reps) + 1)):
+        raise ValueError("Repetition IDs must form a contiguous range starting at 1")
+    expected = len(selected) * len(reps)
+    if len(all_trials) != expected:
+        raise ValueError("Incomplete repetition cohort")
+    output.mkdir(parents=True)
+    base = dict(suites[0][1])
+    base["repetitions"] = len(reps)
+    base["repetition_start"] = 1
+    base["repetition_end"] = max(reps)
+    base["trials"] = []
+    base["combined_from"] = []
+    if runner_change_reason:
+        base["runner_change_reason"] = runner_change_reason
+        base["input_runner_sha256"] = sorted(runner_hashes)
+    copied_metadata: dict[str, str] = {}
+    for root, data in suites:
+        base["combined_from"].append(
+            {
+                "path": str(root),
+                "suite_sha256": digest(root / "suite.json"),
+                "runner_sha256": data["runner_sha256"],
+            }
+        )
+        for name, expected in (
+            ("prompt-condition.json", data.get("prompt_condition_sha256")),
+            ("source-suite.json", data.get("source_reference_sha256")),
+        ):
+            if copied_hash := _copy_metadata(root, output, name, expected):
+                copied_metadata[name] = copied_hash
+    for root, trial in sorted(all_trials, key=lambda item: item[1]["id"]):
+        destination = output / trial["id"]
+        destination.mkdir()
+        for relative, expected_hash in trial.get("artifacts", {}).items():
+            source = (root / trial["id"] / relative).resolve()
+            copied = destination / relative
+            copied.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, copied)
+            if not copied.is_file() or digest(copied) != expected_hash:
+                raise ValueError(f"Copied artifact mismatch: {trial['id']}/{relative}")
+        for suffix in (".config.json", ".log"):
+            name = f"{trial['id']}{suffix}"
+            if copied_hash := _copy_metadata(root, output, name):
+                copied_metadata[name] = copied_hash
+        base["trials"].append(trial)
+    if copied_metadata:
+        base["copied_metadata"] = copied_metadata
+    write_json(output / "suite.json", base)
 
 
 def blind(args) -> None:
@@ -527,6 +780,12 @@ def main() -> None:
         "--split", choices=["development", "holdout"], default="development"
     )
     runner.add_argument("--repetitions", type=int, default=3)
+    runner.add_argument(
+        "--repetition-start",
+        type=int,
+        default=1,
+        help="First repetition ID to run; use this to extend a frozen pilot",
+    )
     runner.add_argument("--timeout", type=int, default=600)
     runner.add_argument("--context-tokens", type=int, default=65536)
     runner.add_argument("--case", action="append")
@@ -535,8 +794,21 @@ def main() -> None:
     comparison.add_argument("--after", type=Path, required=True)
     comparison.add_argument("--output", type=Path, required=True)
     comparison.add_argument("--seed", type=int, default=20261024)
+    combine = commands.add_parser(
+        "combine-repetitions", help="Combine disjoint frozen repetition suites"
+    )
+    combine.add_argument(
+        "--input", type=Path, action="append", required=True, dest="inputs"
+    )
+    combine.add_argument("--output", type=Path, required=True)
+    combine.add_argument("--runner-change-reason")
     args = parser.parse_args()
-    (run if args.command == "run" else blind)(args)
+    if args.command == "run":
+        run(args)
+    elif args.command == "blind":
+        blind(args)
+    else:
+        combine_repetitions(args.inputs, args.output, args.runner_change_reason)
 
 
 if __name__ == "__main__":

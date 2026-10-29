@@ -12,38 +12,84 @@ impl AurisApp {
             .iter()
             .find(|m| m.matches(&s.preferences))
             .map(|m| m.label())
-            .unwrap_or_else(|| format!("{} / {}", s.preferences.backend, s.preferences.model));
-        let effort = s.preferences.effort.as_str();
-        let mut body = div()
-            .flex()
-            .flex_col()
-            .gap_2()
-            .child(self.workshop_field(0, Key::WorkshopMessage, true, cx))
-            .child(
-                div()
-                    .flex()
-                    .flex_wrap()
-                    .gap_2()
-                    .child(button(
-                        "workshop-model",
-                        model,
-                        ButtonStyle::Normal,
-                        false,
-                        theme.accent,
-                        &theme,
-                        cx.listener(|this, event: &gpui::ClickEvent, _, cx| {
-                            this.workshop_model_menu(event.position());
-                            cx.notify();
-                        }),
-                    ))
-                    .child(button(
-                        "workshop-effort",
-                        format!("effort: {effort}"),
-                        ButtonStyle::Normal,
-                        false,
-                        theme.accent,
-                        &theme,
-                        cx.listener(|this, _, _, cx| {
+            .unwrap_or_else(|| {
+                if s.preferences.model.is_empty() {
+                    self.t(Key::AgentChooseModel).to_string()
+                } else {
+                    format!("{} / {}", s.preferences.backend, s.preferences.model)
+                }
+            });
+        let effort = self.t(crate::ui::agent_chat::controls::effort_key(
+            s.preferences.effort,
+        ));
+        let focused = s.active_field == Some(0);
+        let busy = s.busy();
+        let can_send =
+            !busy && !s.brief.content().trim().is_empty() && s.preferences.is_configured();
+        let action = if busy {
+            agent_components::composer_action(
+                "song-cancel",
+                self.t(Key::WorkshopCancel),
+                agent_components::ComposerAction::Stop,
+                true,
+                true,
+                &theme,
+                cx.listener(|this, _, _, cx| {
+                    if let Some(s) = &mut this.song_workshop {
+                        s.stop();
+                    }
+                    cx.notify();
+                }),
+            )
+        } else {
+            agent_components::composer_action(
+                "song-generate",
+                self.t(Key::WorkshopSend),
+                agent_components::ComposerAction::Send,
+                can_send,
+                true,
+                &theme,
+                cx.listener(|this, _, _, cx| this.start_song_workshop(cx)),
+            )
+        };
+        let mut body = crate::ui::agent_components::composer_frame(
+            "song-workshop-composer",
+            &theme,
+            focused,
+            s.model_error.is_some(),
+        )
+        .debug_selector(|| "song-workshop-composer".to_owned())
+        .m_0()
+        .child(self.workshop_field(0, Key::WorkshopBriefHint, true, cx))
+        .child(
+            agent_components::composer_controls("workshop-composer-controls", &theme)
+                .child(
+                    div()
+                        .debug_selector(|| "workshop-model".into())
+                        .min_w_0()
+                        .max_w_full()
+                        .overflow_hidden()
+                        .child(
+                            atelier::Button::new("workshop-model", model)
+                                .ghost()
+                                .size(atelier::ControlSize::Small)
+                                .icon_after(atelier::IconName::ChevronDown)
+                                .on_click(cx.listener(|this, event: &gpui::ClickEvent, _, cx| {
+                                    this.workshop_model_menu(event.position());
+                                    cx.notify();
+                                })),
+                        ),
+                )
+                .child(
+                    div().debug_selector(|| "workshop-effort".into()).child(
+                        atelier::Button::new(
+                            "workshop-effort",
+                            format!("{}: {effort}", self.t(Key::AgentEffort)),
+                        )
+                        .ghost()
+                        .size(atelier::ControlSize::Small)
+                        .icon(atelier::IconName::Brain)
+                        .on_click(cx.listener(|this, _, _, cx| {
                             if let Some(s) = &mut this.song_workshop {
                                 let levels = s
                                     .models
@@ -62,22 +108,32 @@ impl AurisApp {
                                 }
                             }
                             cx.notify();
-                        }),
-                    ))
-                    .child(button(
-                        "workshop-model-settings",
-                        self.t(Key::AgentConfigure),
-                        ButtonStyle::Normal,
-                        false,
-                        theme.accent,
-                        &theme,
-                        cx.listener(|this, _, _, cx| {
-                            this.open_settings_tab(crate::settings_window::SettingsTab::Agent, cx)
-                        }),
-                    )),
-            );
+                        })),
+                    ),
+                )
+                .child(
+                    div()
+                        .debug_selector(|| "workshop-model-settings".into())
+                        .child(
+                            atelier::Button::icon_only(
+                                "workshop-model-settings",
+                                atelier::IconName::Settings,
+                            )
+                            .size(atelier::ControlSize::Small)
+                            .tooltip(self.t(Key::AgentConfigure))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.open_settings_tab(
+                                    crate::settings_window::SettingsTab::Agent,
+                                    cx,
+                                )
+                            })),
+                        ),
+                )
+                .child(div().flex_1())
+                .child(action),
+        );
         if let Some(error) = &s.model_error {
-            body = body.child(div().text_color(theme.danger).child(error.clone()));
+            body = body.child(crate::ui::agent_components::error_notice(error.clone()));
         }
         body.into_any_element()
     }
@@ -190,7 +246,7 @@ impl AurisApp {
     fn workshop_field(
         &self,
         index: usize,
-        label: Key,
+        placeholder: Key,
         multiline: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -199,6 +255,7 @@ impl AurisApp {
         let focus = s.foci[index].clone();
         let theme = self.theme.clone();
         let active = s.active_field == Some(index);
+        let theme_faint = theme.text_faint;
         let mut field = div()
             .id(("workshop-field", index))
             .debug_selector(move || {
@@ -209,12 +266,9 @@ impl AurisApp {
                 }
             })
             .track_focus(&focus)
+            .relative()
             .flex_shrink_0()
-            .border_1()
-            .border_color(theme.border)
-            .rounded_md()
-            .bg(theme.surface)
-            .focus(|d| d.border_color(theme.selection))
+            .text_size(theme.atelier.typography.size_md)
             .on_mouse_down(
                 gpui::MouseButton::Left,
                 cx.listener(move |this, event: &gpui::MouseDownEvent, window, cx| {
@@ -288,12 +342,21 @@ impl AurisApp {
                 .px_2()
                 .child(text.content().to_owned());
         }
-        div()
-            .flex()
-            .flex_col()
-            .gap_2()
-            .child(self.t(label))
-            .child(field)
-            .into_any_element()
+        // Atelier's composer has no inner well and no caption: the prompt is the placeholder,
+        // drawn where the first line will be until there is a first line.
+        if text.content().is_empty() {
+            field = field.child(
+                div()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .px_2()
+                    .py(gpui::px(5.0))
+                    .line_height(crate::ui::text_area::AREA_LINE_HEIGHT)
+                    .text_color(theme_faint)
+                    .child(self.t(placeholder)),
+            );
+        }
+        field.into_any_element()
     }
 }

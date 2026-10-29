@@ -327,6 +327,7 @@ impl AurisApp {
     /// Draws the editor while its track and plugin still exist.
     pub(crate) fn render_plugin_window(
         &mut self,
+        host_window: &gpui::Window,
         cx: &mut gpui::Context<Self>,
     ) -> Option<AnyElement> {
         let window = self.plugin_window.take()?;
@@ -390,10 +391,50 @@ impl AurisApp {
             }
             _ => None,
         };
-        let physical = self.physical_model_display(cx);
+        let wide = host_window.viewport_size().width >= host_window.rem_size() * 48.;
+        let physical = self.physical_model_display(wide, cx);
         // The native editor leaves this window open behind it. Building thousands of hidden
         // controls on every meter tick otherwise starves the same UI thread that drives it.
-        let body = if descriptors.len() > 128 && physical.is_none() {
+        let body = if let Some(physical) = physical {
+            let spacing = theme.atelier.spacing;
+            div()
+                .id("pw-body")
+                .debug_selector(|| "pw-body".into())
+                .flex_1()
+                .min_h_0()
+                .flex()
+                .gap(spacing.lg)
+                .p(spacing.lg)
+                .when(!wide, |body| body.flex_col().overflow_y_scroll())
+                .child(
+                    div()
+                        .id("pw-physical-view")
+                        .flex_1()
+                        .min_w_0()
+                        .when(wide, |pane| pane.min_h_0().overflow_y_scroll())
+                        .child(physical),
+                )
+                .child(
+                    div()
+                        .id("pw-physical-parameters")
+                        .flex()
+                        .flex_col()
+                        .pt(spacing.lg)
+                        .gap(spacing.sm)
+                        .w(gpui::rems(20.))
+                        .flex_shrink_0()
+                        .when(wide, |pane| pane.min_h_0().overflow_y_scroll())
+                        .when(!wide, |pane| pane.w_full())
+                        .child(atelier::SectionHeader::new(self.t(Key::PhysicalParameters)))
+                        .children(self.param_controls(
+                            &descriptors,
+                            move |param| subject.param_target(param),
+                            subject.id_prefix(),
+                            cx,
+                        )),
+                )
+                .into_any_element()
+        } else if descriptors.len() > 128 {
             self.parameter_list(
                 descriptors,
                 move |param| subject.param_target(param),
@@ -411,7 +452,6 @@ impl AurisApp {
                 .flex_col()
                 .gap_1()
                 .p_2()
-                .children(physical)
                 .children(self.param_controls(
                     &descriptors,
                     move |param| subject.param_target(param),

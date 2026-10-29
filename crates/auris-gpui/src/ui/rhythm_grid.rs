@@ -57,17 +57,12 @@ impl Render for RhythmWindow {
         if !self.focus.contains_focused(window, cx) {
             window.focus(&self.focus);
         }
-        let bar = crate::titlebar::titlebar(window, &theme)
-            .child(
-                crate::titlebar::drag_region("rhythm-title")
-                    .flex_1()
-                    .min_w_0()
-                    .px_3()
-                    .child(div().min_w_0().truncate().child(title)),
-            )
-            .child(crate::titlebar::controls(window, &theme, |_, window, _| {
-                window.remove_window()
-            }));
+        let bar = crate::titlebar::composed(
+            window,
+            &theme,
+            crate::titlebar::Parts::new("rhythm-title", title),
+            crate::titlebar::controls(window, &theme, |_, window, _| window.remove_window()),
+        );
         div()
             .id("rhythm-window")
             .relative()

@@ -569,6 +569,12 @@ pub mod architecture {
     //! at 128 MiB per turn; this is an Auris budget, not a provider capability guarantee.
     //! Live agents write bounded harmony with `edit_harmony` and singer lyrics with
     //! `write_lyrics`; both are undoable document edits and never regenerate notes.
+    //! Bar-addressed harmony follows the meter map independently of the pointer editing grid.
+    //! A supplied key replaces internal modulations; the range restores its previous key and
+    //! chord (including silence) at the end, leaving outside harmony intact.
+    //! Agent chord arrays give one explicit bar per entry, with whitespace inside an entry
+    //! dividing that bar. String charts use explicit `|` bar groups or a catalogue name;
+    //! unbarred multi-chord lists are refused before editing rather than guessed into one bar.
     //! `list_voices`, `inspect_singer`, `set_singer_voice` and `sing` complete the vocal workflow.
     //! Voice discovery, local-access model loading, synthesis and WAV staging run on cancellable
     //! workers through `live_agent::VocalJob`. Only the UI continues a job against the original

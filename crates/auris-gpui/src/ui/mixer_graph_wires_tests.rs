@@ -591,12 +591,20 @@ fn lane_order_and_wire_vocabulary_survive_parameter_changes_and_all_schemes() {
         }
         let mut custom = theme.clone();
         custom.track_palette = [theme.surface_sunken; 8];
+        assert_eq!(
+            wire_palette(&custom),
+            wire_palette(&theme),
+            "document colors must not change interface port types"
+        );
+        assert_eq!(custom.mixer_output_color(), custom.mixer_send_color());
+        assert_eq!(custom.mixer_output_color(), custom.mixer_sidechain_color());
         for color in [
             custom.mixer_output_color(),
             custom.mixer_send_color(),
             custom.mixer_sidechain_color(),
         ] {
             assert!(crate::theme::contrast_ratio(color, custom.surface_sunken) >= 4.5);
+            assert!(crate::theme::contrast_ratio(color, custom.background) >= 4.5);
         }
     }
 }
@@ -679,7 +687,17 @@ fn overlapping_output_sends_and_sidechain_are_individually_selected_deleted_and_
             })
             .unwrap();
         assert_eq!(output.stroke, EdgeStroke::Solid);
-        assert_ne!(output.color, sidechain.color);
+        // Both carry audio; routing roles remain distinct through stroke and label.
+        assert_eq!(output.color, sidechain.color);
+        assert_ne!(output.stroke, sidechain.stroke);
+        assert!(
+            state
+                .nodes
+                .iter()
+                .flat_map(|node| &node.handles)
+                .all(|handle| handle.color == output.color),
+            "audio ports and their wires share the same data-type color"
+        );
     });
     let mut original = app.read_with(cx, |this, _| serde_json::to_value(this.project()).unwrap());
     original.as_object_mut().unwrap().remove("mixer_graph_view");

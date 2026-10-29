@@ -130,17 +130,42 @@ pub fn timbre_features(
     Ok(Some(features))
 }
 
-/// Standardized features, a two-component PCA display and deterministic k-means memberships.
+/// Standardized features, a three-component PCA display and deterministic k-means memberships.
 #[derive(Clone, Debug)]
 pub struct TimbreProjection {
     /// Coordinates centered and scaled per feature; use these for nearest-neighbor queries.
     pub standardized: Vec<Vec<f64>>,
-    /// Two principal component scores, in the input order. Axes have no fixed perceptual label.
-    pub positions: Vec<[f64; 2]>,
+    /// Three principal component scores, in input order. Axes have no fixed perceptual label.
+    pub positions: Vec<[f64; 3]>,
     /// Zero-based k-means groups fitted in feature space, not display coordinates.
     pub clusters: Vec<usize>,
-    /// Fraction of total standardized variance represented in this plane.
+    /// Fraction of total standardized variance represented in this volume.
     pub explained_variance: f64,
+}
+
+#[path = "timbre_clusters.rs"]
+mod clustering;
+
+/// Maximum number of groups in a refined library timbre map.
+pub const MAX_TIMBRE_CLUSTERS: usize = 24;
+
+/// Projects a library catalogue and refines populous groups without moving its PCA coordinates.
+///
+/// Starts with up to twelve coarse groups, then bisects groups larger than twice the average
+/// coarse population (at least twelve sounds). Splits need two children of at least three sounds
+/// and a five-percent reduction in within-group squared error. At most 24 groups are returned;
+/// identical or weakly separable sounds may stay together above the population target.
+pub fn project_timbres_refined(
+    rows: &[Vec<f64>],
+    initial_clusters: usize,
+) -> Result<TimbreProjection, &'static str> {
+    let mut projection = project_timbres(rows, initial_clusters.clamp(1, 12))?;
+    projection.clusters = clustering::refine(
+        &projection.standardized,
+        projection.clusters,
+        MAX_TIMBRE_CLUSTERS,
+    );
+    Ok(projection)
 }
 
 /// Centers and scales the full feature space for acoustic nearest-neighbor search.
@@ -172,7 +197,7 @@ pub fn standardize_timbres(rows: &[Vec<f64>]) -> Result<Vec<Vec<f64>>, &'static 
 /// Fits a bounded, reproducible exploratory map. Empty input produces an empty map.
 ///
 /// Constant features become zero. Deterministically restarted, matrix-free power iteration finds
-/// two PCA axes without a dense covariance matrix. Stable ties make both the map and k-means
+/// three PCA axes without a dense covariance matrix. Stable ties make both the map and k-means
 /// with farthest-first seeds repeatable.
 pub fn project_timbres(
     rows: &[Vec<f64>],
@@ -183,9 +208,9 @@ pub fn project_timbres(
     }
     let data = standardize_timbres(rows)?;
     let dims = rows.first().map_or(0, Vec::len);
-    let mut positions = vec![[0.0; 2]; rows.len()];
+    let mut positions = vec![[0.0; 3]; rows.len()];
     let mut axes: Vec<Vec<f64>> = Vec::new();
-    for component in 0..2 {
+    for component in 0..3 {
         // The largest residual row provides a seed even for low-rank catalogues. It can be
         // orthogonal to a stronger shared direction, so also try two mixed feature seeds.
         let mut largest = vec![0.0; dims];
@@ -253,7 +278,8 @@ pub fn project_timbres(
     } else {
         0.0
     };
-    let groups = kmeans(&data, clusters.clamp(1, rows.len().max(1)));
+    let references: Vec<_> = data.iter().map(Vec::as_slice).collect();
+    let groups = kmeans(&references, clusters.clamp(1, rows.len().max(1)));
     Ok(TimbreProjection {
         standardized: data,
         positions,
@@ -284,11 +310,11 @@ fn orthogonalize(v: &mut [f64], axes: &[Vec<f64>]) {
         }
     }
 }
-fn kmeans(rows: &[Vec<f64>], k: usize) -> Vec<usize> {
+fn kmeans(rows: &[&[f64]], k: usize) -> Vec<usize> {
     let Some(first) = rows.first() else {
         return Vec::new();
     };
-    let mut centers = vec![first.clone()];
+    let mut centers = vec![first.to_vec()];
     while centers.len() < k {
         let farthest = rows
             .iter()
@@ -305,8 +331,15 @@ fn kmeans(rows: &[Vec<f64>], k: usize) -> Vec<usize> {
         if centers.iter().any(|c| distance(c, farthest) < 1e-12) {
             break;
         }
-        centers.push(farthest.clone());
+        centers.push(farthest.to_vec());
     }
+    lloyd(rows, centers)
+}
+
+fn lloyd(rows: &[&[f64]], mut centers: Vec<Vec<f64>>) -> Vec<usize> {
+    let Some(first) = rows.first() else {
+        return Vec::new();
+    };
     let mut labels = vec![usize::MAX; rows.len()];
     for _ in 0..60 {
         let next: Vec<_> = rows
@@ -325,7 +358,7 @@ fn kmeans(rows: &[Vec<f64>], k: usize) -> Vec<usize> {
         let mut counts = vec![0; centers.len()];
         for (row, &label) in rows.iter().zip(&labels) {
             counts[label] += 1;
-            for (sum, value) in sums[label].iter_mut().zip(row) {
+            for (sum, value) in sums[label].iter_mut().zip(row.iter()) {
                 *sum += value;
             }
         }
@@ -413,6 +446,32 @@ mod tests {
     }
 
     #[test]
+    fn projection_keeps_three_independent_directions_without_inventing_a_fourth() {
+        let rows: Vec<_> = (0..8)
+            .map(|i| {
+                vec![
+                    if i & 1 == 0 { -1. } else { 1. },
+                    if i & 2 == 0 { -1. } else { 1. },
+                    if i & 4 == 0 { -1. } else { 1. },
+                ]
+            })
+            .collect();
+        let map = project_timbres(&rows, 2).unwrap();
+        assert!((map.explained_variance - 1.).abs() < 1e-9);
+        for i in 0..rows.len() {
+            for j in 0..rows.len() {
+                assert!(
+                    (distance(&map.standardized[i], &map.standardized[j])
+                        - distance(&map.positions[i], &map.positions[j]))
+                    .abs()
+                        < 1e-6
+                );
+            }
+        }
+        assert!(map.positions.iter().any(|p| p[2].abs() > 0.5));
+    }
+
+    #[test]
     fn projection_prefers_shared_variance_over_an_orthogonal_outlier() {
         let mut rows = Vec::new();
         for _ in 0..3 {
@@ -429,9 +488,16 @@ mod tests {
         ]);
         let map = project_timbres(&rows, 3).unwrap();
         // Standardization gives eigenvalues 28, 28 and 14. The largest individual rows
-        // occupy only the weaker fifth axis, which neither principal component should keep.
-        assert!((map.explained_variance - 0.8).abs() < 1e-9);
-        assert!(map.positions[12..].iter().all(|p| dot(p, p) < 1e-9));
+        // occupy only the weaker fifth axis, which belongs to the third component.
+        assert!((map.explained_variance - 1.0).abs() < 1e-9);
+        assert!(
+            map.positions[12..]
+                .iter()
+                .all(|p| p[0].powi(2) + p[1].powi(2) < 1e-9),
+            "outlier coordinates: {:?}",
+            &map.positions[12..]
+        );
+        assert!(map.positions[12..].iter().all(|p| p[2].abs() > 1.0));
         assert_eq!(map.positions, project_timbres(&rows, 3).unwrap().positions);
     }
 
@@ -439,9 +505,27 @@ mod tests {
     fn constant_empty_and_invalid_catalogues_are_handled() {
         assert!(project_timbres(&[], 4).unwrap().positions.is_empty());
         let map = project_timbres(&[vec![1.0; 3]; 1], 5).unwrap();
-        assert_eq!(map.positions, vec![[0.0; 2]]);
+        assert_eq!(map.positions, vec![[0.0; 3]]);
         assert!(project_timbres(&[vec![f64::INFINITY]], 1).is_err());
         assert!(project_timbres(&[vec![1.0], vec![]], 1).is_err());
+        assert!(
+            project_timbres_refined(&[], 12)
+                .unwrap()
+                .clusters
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn refinement_preserves_geometry_and_full_feature_similarity() {
+        let rows: Vec<_> = (0..40)
+            .map(|i| vec![(i as f64 * 0.2).sin(), (i as f64 * 0.4).cos()])
+            .collect();
+        let coarse = project_timbres(&rows, 6).unwrap();
+        let refined = project_timbres_refined(&rows, 6).unwrap();
+        assert_eq!(refined.standardized, coarse.standardized);
+        assert_eq!(refined.positions, coarse.positions);
+        assert_eq!(refined.explained_variance, coarse.explained_variance);
     }
 
     #[test]

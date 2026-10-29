@@ -43,6 +43,8 @@ pub struct HandleDef {
     pub position: HandlePosition,
     /// Whether this handle can accept/start connections. Default: true.
     pub is_connectable: bool,
+    /// Optional data-type color supplied by the embedding application.
+    pub color: Option<u32>,
 }
 
 impl HandleDef {
@@ -52,6 +54,7 @@ impl HandleDef {
             handle_type: HandleType::Source,
             position,
             is_connectable: true,
+            color: None,
         }
     }
 
@@ -61,11 +64,18 @@ impl HandleDef {
             handle_type: HandleType::Target,
             position,
             is_connectable: true,
+            color: None,
         }
     }
 
     pub fn connectable(mut self, connectable: bool) -> Self {
         self.is_connectable = connectable;
+        self
+    }
+
+    /// Colors this port with its data type's packed RGB value.
+    pub fn color(mut self, color: u32) -> Self {
+        self.color = Some(color);
         self
     }
 

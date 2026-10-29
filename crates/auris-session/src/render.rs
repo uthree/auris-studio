@@ -371,6 +371,10 @@ pub struct RenderJob {
     placed: PlacedEffects,
     /// Instruments the session built, for the same reason.
     instruments: PlacedInstruments,
+    /// The rate `placed` and `instruments` were activated at. A hosted plugin learns its rate
+    /// once, at activation, and cannot be told another from here; run at any other rate it
+    /// plays out of tune rather than failing, so a render at a different rate is refused.
+    hosted_rate: f64,
 }
 
 impl RenderJob {
@@ -460,12 +464,33 @@ impl RenderJob {
         instruments: PlacedInstruments,
     ) -> Self {
         Self {
+            hosted_rate: project.sample_rate,
             project,
             bank,
             registry,
             placed,
             instruments,
         }
+    }
+
+    /// Records the rate the hosted plugins were activated at, when it is not the project's.
+    pub(crate) fn with_hosted_rate(mut self, rate: f64) -> Self {
+        self.hosted_rate = rate;
+        self
+    }
+
+    /// Refuses a render at a rate the hosted plugins were not activated at.
+    fn check_hosted_rate(&self, rate: f64) -> Result<(), SessionError> {
+        if (self.placed.is_empty() && self.instruments.is_empty())
+            || (rate - self.hosted_rate).abs() < 0.5
+        {
+            return Ok(());
+        }
+        Err(SessionError::RenderSource(format!(
+            "hosted plugins were prepared at {} Hz and cannot render at {} Hz; \
+             build the job with Session::render_job_at",
+            self.hosted_rate, rate
+        )))
     }
 
     /// The document this job will render.
@@ -541,6 +566,7 @@ impl RenderJob {
         options: &OfflineOptions,
     ) -> Result<OfflineRender, SessionError> {
         let rate = options.sample_rate.unwrap_or(self.project.sample_rate);
+        self.check_hosted_rate(rate)?;
         let mut bank = bank_at_rate(&self.bank, rate);
         // An export builds its own graph from its own bank, so it stretches its own copies. They
         // are made at the rate the export runs at, which is the rate the clips are measured
@@ -895,6 +921,12 @@ impl RenderJob {
             });
         }
         let rate = options.sample_rate.unwrap_or(self.project.sample_rate);
+        if let Err(error) = self.check_hosted_rate(rate) {
+            return Err(StemRenderFailure {
+                error,
+                written: Vec::new(),
+            });
+        }
         let mut bank = bank_at_rate(&self.bank, rate);
         fill_stretches(&self.project, &mut bank);
 

@@ -385,13 +385,18 @@ where
         .flex()
         .items_center()
         .justify_center()
-        .h(Metrics::CONTROL_HEIGHT)
-        .px_2()
-        .rounded(Metrics::RADIUS_SM)
+        .h(theme.atelier.density.control_sm)
+        .px(theme.atelier.density.control_padding * 0.75)
+        .rounded(
+            theme
+                .atelier
+                .control_radius(theme.atelier.density.control_sm),
+        )
         .border_1()
         .border_color(border)
         .bg(background)
-        .text_xs()
+        .text_size(theme.atelier.typography.size_sm)
+        .font_weight(theme.atelier.typography.label_weight)
         .text_color(if enabled {
             text_color
         } else {
@@ -401,11 +406,93 @@ where
             this.tab_index(0)
                 .focus(|this| this.border_color(theme.selection))
                 .hover(|this| this.bg(hover))
-                .active(|this| this.opacity(0.75))
+                .active(|this| this.bg(atelier::mix(hover, text_color, 0.08)))
                 .on_click(on_click)
         })
         .when(!enabled, |this| this.opacity(0.62))
         .child(label)
+}
+
+/// One page of a navigation column: Atelier's `ListItem`, made reachable from the keyboard.
+///
+/// Atelier's row is drawn for the pointer only; a window whose pages are chosen from a sidebar
+/// still has to be operable with Tab and Enter, so this is the same row (icon lane, label, an
+/// optional faint description, the selected fill) with a focus stop and the shared focus ring.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn nav_item<F>(
+    id: &'static str,
+    label: impl Into<SharedString>,
+    description: Option<SharedString>,
+    glyph: atelier::IconName,
+    selected: bool,
+    enabled: bool,
+    theme: &Theme,
+    on_click: F,
+) -> gpui::Stateful<gpui::Div>
+where
+    F: Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+{
+    let atelier = &theme.atelier;
+    let colors = &atelier.colors;
+    let height = match description {
+        Some(_) => atelier.density.row + atelier.typography.size_sm,
+        None => atelier.density.row,
+    };
+    let hover = colors.hover;
+    div()
+        .id(id)
+        .debug_selector(move || id.into())
+        .flex()
+        .flex_none()
+        .items_center()
+        .gap(atelier.spacing.sm)
+        .h(height)
+        .px(atelier.spacing.sm)
+        .rounded(atelier.shape.radius_sm)
+        .border_1()
+        .border_color(gpui::transparent_black())
+        .text_size(atelier.typography.size_md)
+        .text_color(if selected {
+            colors.text
+        } else {
+            colors.text_muted
+        })
+        .when(selected, |row| {
+            row.bg(colors.selected)
+                .font_weight(atelier.typography.label_weight)
+        })
+        .when(enabled && !selected, |row| {
+            row.hover(move |style| style.bg(hover))
+        })
+        .when(enabled, |row| {
+            row.tab_index(0)
+                .focus(|row| row.border_color(theme.selection))
+                .on_click(on_click)
+        })
+        .when(!enabled, |row| row.opacity(0.62))
+        .child(div().flex().flex_none().justify_center().w(px(16.0)).child(
+            atelier::Icon::new(glyph).size(px(15.0)).color(if selected {
+                colors.accent_text
+            } else {
+                colors.text_faint
+            }),
+        ))
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .flex_1()
+                .min_w_0()
+                .child(div().truncate().child(label.into()))
+                .children(description.map(|description| {
+                    div()
+                        .truncate()
+                        .text_size(atelier.typography.size_sm)
+                        .font_weight(gpui::FontWeight::NORMAL)
+                        .text_color(colors.text_faint)
+                        .child(description)
+                })),
+        )
 }
 
 /// A square button holding one drawn icon, used in the transport bar.
@@ -426,17 +513,23 @@ where
     I: Into<ElementId>,
     F: Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 {
+    // Atelier draws toolbar icons as ghost buttons: no fill or hairline until the pointer is
+    // over them, and a latched one filled with its own colour.
     let background = if active {
         active_color
     } else {
-        theme.surface_raised
+        gpui::transparent_black()
     };
     let foreground = if active {
         theme.text_on(active_color)
     } else {
-        theme.text
+        theme.text_muted
     };
-    let hover = theme.hovered(background, 0.14);
+    let hover = if active {
+        theme.hovered(background, 0.14)
+    } else {
+        theme.surface_hover
+    };
 
     // The id again, this time as a name a test can find the button by. `debug_selector` compiles
     // to nothing unless gpui is built with `test-support`, which only `cargo test` does — so the
@@ -453,14 +546,22 @@ where
         .flex()
         .items_center()
         .justify_center()
-        .size(px(32.0))
-        .rounded(Metrics::RADIUS_MD)
+        .size(theme.atelier.density.control_md)
+        .rounded(
+            theme
+                .atelier
+                .control_radius(theme.atelier.density.control_md),
+        )
         .border_1()
-        .border_color(if active { active_color } else { theme.border })
+        .border_color(if active {
+            active_color
+        } else {
+            gpui::transparent_black()
+        })
         .bg(background)
         .hover(|this| this.bg(hover))
         .active(|this| this.opacity(0.75))
-        .child(icon(glyph, px(15.0), foreground))
+        .child(icon(glyph, theme.atelier.typography.size_lg, foreground))
         .on_click(on_click)
 }
 
@@ -487,10 +588,14 @@ where
         .flex()
         .items_center()
         .justify_center()
-        .gap_1()
-        .h(Metrics::CONTROL_HEIGHT)
-        .px_1p5()
-        .rounded(Metrics::RADIUS_SM)
+        .gap(theme.atelier.spacing.xs)
+        .h(theme.atelier.density.control_sm)
+        .px(theme.atelier.spacing.sm)
+        .rounded(
+            theme
+                .atelier
+                .control_radius(theme.atelier.density.control_sm),
+        )
         .border_1()
         .border_color(theme.border)
         .bg(theme.surface_raised)
@@ -498,7 +603,11 @@ where
         .text_color(theme.text)
         .hover(|this| this.bg(theme.surface_hover))
         .active(|this| this.opacity(0.75))
-        .child(icon(glyph, px(10.0), theme.text_muted))
+        .child(icon(
+            glyph,
+            theme.atelier.typography.size_sm,
+            theme.text_muted,
+        ))
         .child(label.into())
         .on_click(on_click)
 }
@@ -526,8 +635,12 @@ where
         .flex()
         .items_center()
         .justify_center()
-        .size(px(20.0))
-        .rounded(Metrics::RADIUS_SM)
+        .size(theme.atelier.density.control_sm)
+        .rounded(
+            theme
+                .atelier
+                .control_radius(theme.atelier.density.control_sm),
+        )
         .bg(theme.surface)
         .border_1()
         .border_color(theme.border_subtle)
@@ -652,6 +765,7 @@ fn shape_picker_label(
     width: Pixels,
     window: &Window,
 ) -> (gpui::ShapedLine, Pixels) {
+    let value = super::paint::single_line_text(value);
     let style = window.text_style();
     let font_size = style.font_size.to_pixels(window.rem_size());
     let line_height = style
@@ -1031,6 +1145,11 @@ pub const SLIDER_PERCENT_STEP: f32 = 0.01;
 #[action(namespace = auris_disclosure, no_json)]
 pub(crate) struct ClaimDisclosureActivation;
 
+/// Reserves Enter/Space for focused visualization controls instead of transport shortcuts.
+#[derive(Clone, Debug, PartialEq, gpui::Action)]
+#[action(namespace = auris_visualization, no_json)]
+pub(crate) struct ClaimVisualizationActivation;
+
 /// A slider-local action carrying the standard key that requested an adjustment.
 #[derive(Clone, Debug, PartialEq, gpui::Action)]
 #[action(namespace = auris_slider, no_json)]
@@ -1042,7 +1161,7 @@ pub(crate) struct AdjustSlider {
 ///
 /// Control contexts are below pane and window contexts in the focus path. Sliders claim their
 /// adjustment keys, and disclosures reserve Enter/Space for activation instead of transport.
-pub(crate) fn key_bindings() -> [gpui::KeyBinding; 10] {
+pub(crate) fn key_bindings() -> [gpui::KeyBinding; 12] {
     [
         gpui::KeyBinding::new("left", AdjustSlider { key: "left" }, Some("AurisSlider")),
         gpui::KeyBinding::new("down", AdjustSlider { key: "down" }, Some("AurisSlider")),
@@ -1062,6 +1181,16 @@ pub(crate) fn key_bindings() -> [gpui::KeyBinding; 10] {
         gpui::KeyBinding::new("end", AdjustSlider { key: "end" }, Some("AurisSlider")),
         gpui::KeyBinding::new("enter", ClaimDisclosureActivation, Some("AurisDisclosure")),
         gpui::KeyBinding::new("space", ClaimDisclosureActivation, Some("AurisDisclosure")),
+        gpui::KeyBinding::new(
+            "enter",
+            ClaimVisualizationActivation,
+            Some("AurisVisualizationControls"),
+        ),
+        gpui::KeyBinding::new(
+            "space",
+            ClaimVisualizationActivation,
+            Some("AurisVisualizationControls"),
+        ),
     ]
 }
 
@@ -1400,6 +1529,61 @@ pub fn level_meter(
         .when(clipped, |this| this.child(clip_light.bg(theme.danger)))
 }
 
+/// What a channel's meter reads: each side's linear peak, and whether to show the two apart.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MeterReading {
+    /// Left and right linear peaks.
+    pub peaks: [f32; 2],
+    /// Whether the two sides have been carrying different signals. Mono material panned
+    /// somewhere still comes out of two channels, but it is one signal, and two bars for it
+    /// would say there were two.
+    pub stereo: bool,
+}
+
+impl MeterReading {
+    /// The louder side, which is what a single bar shows.
+    pub fn peak(&self) -> f32 {
+        self.peaks[0].max(self.peaks[1])
+    }
+}
+
+/// A channel's level meter: one bar for mono material, one for each side of stereo material.
+///
+/// The pair shares the single bar's footprint, left before right — left-to-right across a
+/// vertical meter, top-to-bottom along a horizontal one, the way a console stacks them — and
+/// each side is coloured by its own level, so a hard-panned signal reads as one side running hot.
+pub fn channel_meter(
+    reading: MeterReading,
+    clipped: bool,
+    axis: Axis,
+    theme: &Theme,
+) -> impl IntoElement + use<> {
+    let bar = |gain: f32| {
+        let db = auris_session::prelude::gain_to_db(gain);
+        let position = db_to_meter_position(db);
+        div().flex_1().min_w_0().min_h_0().child(level_meter(
+            position,
+            position,
+            clipped,
+            axis,
+            theme.meter_color(db),
+            theme,
+        ))
+    };
+    let frame = div().flex().size_full().gap(px(1.0));
+    let frame = match axis {
+        Axis::Vertical => frame.flex_row(),
+        Axis::Horizontal => frame.flex_col(),
+    };
+    if reading.stereo {
+        frame
+            .child(bar(reading.peaks[0]))
+            .child(bar(reading.peaks[1]))
+    } else {
+        frame.child(bar(reading.peak()))
+    }
+}
+
 /// Quietest level a meter draws anything for.
 ///
 /// Named because a readout beside a meter has to agree with it about what counts as silence: a
@@ -1586,15 +1770,25 @@ mod tests {
     ) {
         let (_, cx) = crate::harness::open(cx);
         cx.update(|window, _| {
-            for value in ["1番 Aメロ", "雨上がりの街を歩きながら聴く曲"] {
+            for (value, expected) in [
+                ("1番 Aメロ", "1番 Aメロ"),
+                (
+                    "雨上がりの街を歩きながら聴く曲",
+                    "雨上がりの街を歩きながら聴く曲",
+                ),
+                (
+                    "雨のしずくが\r\n傘を離れ\n空が揺れる",
+                    "雨のしずくが 傘を離れ 空が揺れる",
+                ),
+            ] {
                 let value = SharedString::from(value);
                 for _ in 0..3 {
                     let (narrow, _) = shape_picker_label(value.clone(), px(1.0), window);
                     assert_eq!(narrow.text.as_ref(), "…");
                     assert_eq!(narrow.len(), narrow.text.len());
                     let (wide, _) = shape_picker_label(value.clone(), px(10000.0), window);
-                    assert_eq!(wide.text, value);
-                    assert_eq!(wide.len(), value.len());
+                    assert_eq!(wide.text.as_ref(), expected);
+                    assert_eq!(wide.len(), expected.len());
                 }
             }
         });

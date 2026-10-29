@@ -248,10 +248,11 @@ impl Render for AurisApp {
             .flex()
             .flex_col()
             .size_full()
-            .bg(theme.background)
+            // Chrome supplies its own tint; an opaque root would hide the native backdrop.
+            .bg(theme.atelier.window_fill())
             .text_color(theme.text)
             .font(theme.font.clone())
-            .text_sm()
+            .text_size(theme.atelier.typography.size_md)
             .child(title_bar)
             .children(menu_bar)
             .child(transport)
@@ -260,6 +261,7 @@ impl Render for AurisApp {
                     .flex()
                     .flex_1()
                     .min_h_0()
+                    .bg(theme.background)
                     // The left dock leads, then the arrangement with the bottom dock under it,
                     // then the right dock — so the bottom one spans the middle column rather than
                     // the whole window, which is what leaves the side docks full height. Only the
@@ -374,9 +376,10 @@ impl AurisApp {
     pub(crate) fn input_root(&self, cx: &mut Context<Self>) -> gpui::Div {
         let modal_blocks_document_actions = self.modal_blocks_document_actions();
         div()
-            .capture_any_mouse_down(
-                cx.listener(|this, _, window, _| this.claim_event_window(window)),
-            )
+            .capture_any_mouse_down(cx.listener(|this, _, window, cx| {
+                this.claim_event_window(window);
+                atelier::set_focus_visible(false, cx);
+            }))
             .on_action(Self::window_listener(
                 cx,
                 |this, action: &crate::auxiliary_window::TogglePanelWindow, _, cx| {

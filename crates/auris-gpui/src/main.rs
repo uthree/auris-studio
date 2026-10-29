@@ -65,16 +65,17 @@ fn main() {
     // open-document event rather than an argument. The handler has no window to talk to, so it
     // posts the URLs here and the window collects them once it exists.
     let (handed_over, open_requests) = std::sync::mpsc::channel::<Vec<String>>();
-    let application = Application::new().with_assets(ui::provider_logo::ProviderAssets);
+    let application = Application::new().with_assets(atelier::Assets::with_fallback(
+        ui::provider_logo::ProviderAssets,
+    ));
     application.on_open_urls(move |urls| {
         let _ = handed_over.send(urls);
     });
     application.run(move |cx: &mut App| {
         termination::install();
-        // Installs the Markdown renderer's theme and language registry. The agent transcript uses
-        // gpui-component's TextView, as picocode does, while the rest of the window keeps Auris's
-        // own deliberately small widget set and palette.
+        // The Markdown renderer and Atelier share the application's resolved palette.
         gpui_component::init(cx);
+        appearance::Appearance::load().theme().install(cx);
         // The menu bar is built before the window, so the language comes from the settings file
         // rather than from the view that has not been created yet. `AurisApp` loads the same
         // file a moment later, and rebuilds these menus whenever the choice changes.

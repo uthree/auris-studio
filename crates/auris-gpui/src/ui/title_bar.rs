@@ -1,11 +1,14 @@
 //! Project identity and playback controls in the themed window title bar.
 
+use auris_i18n::Key;
 use gpui::{Context, IntoElement, Pixels, Window, div, prelude::*, px};
 
 use crate::app::AurisApp;
 use crate::dock::Dock;
 use crate::titlebar;
+use crate::ui::icons::Icon;
 use crate::ui::prompt::PendingAction;
+use crate::ui::widgets::icon_button;
 
 /// Whether there is room beside playback and the native controls for the panel switches.
 ///
@@ -49,13 +52,21 @@ impl AurisApp {
                     // line as the readouts below, regardless of which platform owns the frame.
                     .pr(titlebar::traffic_light_inset(window))
                     .child(
-                        div().flex_1().min_w_0().h_full().child(
-                            titlebar::drag_region("project-title")
-                                .w_full()
-                                .px_3()
-                                .text_xs()
-                                .child(div().truncate().child(self.window_title())),
-                        ),
+                        div()
+                            .flex()
+                            .flex_1()
+                            .min_w_0()
+                            .h_full()
+                            .items_center()
+                            .child(self.render_history_buttons(cx))
+                            .child(
+                                titlebar::drag_region("project-title")
+                                    .flex_1()
+                                    .px_3()
+                                    .text_size(theme.atelier.typography.size_md)
+                                    .font_weight(theme.atelier.typography.label_weight)
+                                    .child(div().truncate().child(self.window_title())),
+                            ),
                     )
                     .child(
                         div()
@@ -108,6 +119,58 @@ impl AurisApp {
                     .right_0()
                     .h(titlebar::HEIGHT - titlebar::resize_inset(window) - px(1.0)),
             )
+    }
+}
+
+impl AurisApp {
+    /// Undo and Redo at the leading edge of the title bar, where Back sits on the other screens.
+    ///
+    /// They are the commands people reach for most often after playback, and the menu bar is a
+    /// long way from the canvas. Each is disabled while there is nothing to step over, and its
+    /// tooltip carries the key so the button teaches the shortcut.
+    fn render_history_buttons(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let theme = &self.theme;
+        let step = |id: &'static str, glyph: Icon, enabled: bool, label, command| {
+            icon_button(
+                id,
+                glyph,
+                false,
+                theme.accent,
+                theme,
+                cx.listener(move |this, _, _, cx| {
+                    if glyph == Icon::Undo {
+                        this.undo();
+                    } else {
+                        this.redo();
+                    }
+                    cx.notify();
+                }),
+            )
+            .size(theme.atelier.density.control_sm)
+            .when(!enabled, |button| button.opacity(0.45))
+            .tooltip(self.tip(label, command))
+        };
+        div()
+            .debug_selector(|| "titlebar-history".into())
+            .flex()
+            .flex_shrink_0()
+            .items_center()
+            .gap(theme.atelier.spacing.xxs)
+            .pl(theme.atelier.spacing.sm)
+            .child(step(
+                "titlebar-undo",
+                Icon::Undo,
+                self.session.can_undo(),
+                Key::CmdUndo,
+                "edit.undo",
+            ))
+            .child(step(
+                "titlebar-redo",
+                Icon::Redo,
+                self.session.can_redo(),
+                Key::CmdRedo,
+                "edit.redo",
+            ))
     }
 }
 

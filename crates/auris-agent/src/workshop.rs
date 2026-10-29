@@ -16,6 +16,17 @@ use std::{
     time::{Duration, Instant},
 };
 
+mod preview;
+
+/// An immutable audition of an unfinished candidate, separate from adoptable music.
+#[derive(Clone)]
+pub struct Preview {
+    /// Content revision captured before rendering.
+    pub revision: u64,
+    /// Rendered audio; never mutated while the user is listening.
+    pub audio: Arc<auris_session::prelude::AudioBuffer>,
+}
+
 /// Automatic restarts allowed per candidate and explicit recovery request.
 pub const AUTO_RECOVERY_LIMIT: u32 = 3;
 
@@ -49,6 +60,10 @@ pub struct Snapshot {
     pub document: Document,
     /// Completed candidates currently available for preview or adoption.
     pub candidates: BTreeMap<u64, Arc<SongCandidate>>,
+    /// Latest in-progress auditions, which cannot be selected or saved as finished songs.
+    pub previews: BTreeMap<u64, Preview>,
+    /// Nonfatal audition failures; cleared after the next successful audition.
+    pub preview_errors: BTreeMap<u64, String>,
     /// Real current stages; absence means the job is not running.
     pub progress: BTreeMap<u64, String>,
     /// The director is responding.
@@ -96,6 +111,8 @@ impl Workshop {
                     let _ = events.send(Snapshot {
                         document: Document::default(),
                         candidates: BTreeMap::new(),
+                        previews: BTreeMap::new(),
+                        preview_errors: BTreeMap::new(),
                         progress: BTreeMap::new(),
                         planning: false,
                         preferences: Preferences::default(),
@@ -226,6 +243,7 @@ fn decision(text: &str) -> Result<Decision, String> {
 
 enum JobEvent {
     Progress(u64, String),
+    Preview(u64, Result<Preview, String>),
     Recovering(u64, u32, String),
     Done(u64, Result<Arc<SongCandidate>, String>),
 }
@@ -300,6 +318,8 @@ impl Owner {
             snapshot: Snapshot {
                 document,
                 candidates,
+                previews: BTreeMap::new(),
+                preview_errors: BTreeMap::new(),
                 progress: BTreeMap::new(),
                 planning: false,
                 preferences,
@@ -314,6 +334,8 @@ impl Owner {
         let _ = self.events.send(Snapshot {
             document: self.snapshot.document.clone(),
             candidates: self.snapshot.candidates.clone(),
+            previews: self.snapshot.previews.clone(),
+            preview_errors: self.snapshot.preview_errors.clone(),
             progress: self.snapshot.progress.clone(),
             planning: self.planner.is_some(),
             preferences: self.snapshot.preferences.clone(),
@@ -367,6 +389,23 @@ impl Owner {
             }
             while let Ok(event) = self.job_receiver.try_recv() {
                 match event {
+                    JobEvent::Preview(id, result)
+                        if self
+                            .jobs
+                            .get(&id)
+                            .is_some_and(|c| !c.load(Ordering::Acquire)) =>
+                    {
+                        match result {
+                            Ok(preview) => {
+                                self.snapshot.preview_errors.remove(&id);
+                                self.snapshot.previews.insert(id, preview);
+                            }
+                            Err(error) => {
+                                self.snapshot.preview_errors.insert(id, error);
+                            }
+                        }
+                        self.publish(false);
+                    }
                     JobEvent::Recovering(id, count, error) if self.jobs.contains_key(&id) => {
                         if let Some(candidate) = self
                             .snapshot
@@ -410,6 +449,8 @@ impl Owner {
                                     Ok(candidate) => {
                                         entry.ready = true;
                                         entry.error = None;
+                                        self.snapshot.previews.remove(&id);
+                                        self.snapshot.preview_errors.remove(&id);
                                         self.snapshot.candidates.insert(id, candidate);
                                     }
                                     Err(e) => entry.error = Some(e),
@@ -621,6 +662,12 @@ impl Owner {
                         .collect();
                     self.snapshot.candidates.retain(|id, _| {
                         ids.contains(id) || Some(*id) == self.snapshot.document.selected
+                    });
+                    self.snapshot.previews.retain(|id, _| {
+                        self.jobs.contains_key(id) || round.candidates.iter().any(|c| c.id == *id)
+                    });
+                    self.snapshot.preview_errors.retain(|id, _| {
+                        self.jobs.contains_key(id) || round.candidates.iter().any(|c| c.id == *id)
                     });
                     for candidate in &round.candidates {
                         if candidate.ready && !self.snapshot.candidates.contains_key(&candidate.id)
@@ -906,6 +953,7 @@ fn compose(
         auris_toolbox::workshop::COMPOSER
     );
     let worker = crate::Worker::spawn(prefs.clone(), None, true, None)?;
+    let mut previews = preview::Renderer::start(candidate.id, sender.clone())?;
     if candidate.direction.protected_tracks.len() > 128
         || candidate
             .direction
@@ -926,6 +974,7 @@ fn compose(
     )?;
     let deadline = Instant::now() + Duration::from_secs(900);
     let mut edits = 0;
+    let mut denials = 0;
     let mut last_failure = String::new();
     let completion = loop {
         if cancel.load(Ordering::Acquire) {
@@ -934,6 +983,8 @@ fn compose(
         if Instant::now() > deadline {
             return Err("Candidate production timed out".into());
         }
+        // Capturing is cheap; rendering happens separately while the model keeps composing.
+        previews.capture(&mut session);
         let event = match worker.try_recv() {
             Ok(event) => event,
             Err(mpsc::TryRecvError::Empty) => {
@@ -958,9 +1009,19 @@ fn compose(
                             .iter()
                             .any(|t| t.name == op.name)
                 });
-                worker.send(&json!({"event":"permission_result","id":event["id"],"ok":allowed,"reason":"Isolated candidate music operations only"}).to_string())?;
+                // A refusal is an answer the composer can act on: CLI runtimes reach for their
+                // own shell and file tools (Claude Code reads oversized tool output back from a
+                // file), and one such reach should not discard the whole candidate.
+                worker.send(&json!({"event":"permission_result","id":event["id"],"ok":allowed,
+                    "reason":"Isolated candidate: only Auris music tools are available. Do not use shell or file tools; continue with the Auris tools."}).to_string())?;
                 if !allowed {
-                    return Err(AttemptError::permanent("Candidate operation was denied"));
+                    denials += 1;
+                    if denials > 8 {
+                        return Err(AttemptError::permanent(format!(
+                            "Candidate operation was denied: {}",
+                            event["tool"].as_str().unwrap_or_default()
+                        )));
+                    }
                 }
             }
             "edit" => {
@@ -1019,6 +1080,8 @@ fn compose(
             _ => {}
         }
     };
+    // Join before publishing a finished candidate so no late draft can replace its audition.
+    drop(previews);
     session.end_agent_request();
     validate_protected(&session)?;
     if session.project() == &before {
@@ -1119,6 +1182,78 @@ fn execute(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    #[ignore = "real model inference; requires AURIS_WORKSHOP_EVAL_OUTPUT and AURIS_WORKSHOP_EVAL_MODEL"]
+    fn installed_composer_finishes_music_and_publishes_audio_before_completion() {
+        let folder = PathBuf::from(
+            std::env::var_os("AURIS_WORKSHOP_EVAL_OUTPUT").expect("fresh output path"),
+        );
+        assert!(folder.is_absolute() && !folder.exists());
+        std::fs::create_dir_all(&folder).unwrap();
+        let prefs = AgentPreferences {
+            backend: std::env::var("AURIS_WORKSHOP_EVAL_BACKEND")
+                .unwrap_or_else(|_| "codex".into()),
+            model: std::env::var("AURIS_WORKSHOP_EVAL_MODEL").expect("explicit model"),
+            ..Default::default()
+        };
+        let mut candidate = assignment();
+        candidate.direction.instructions = "朝の散歩を描く8小節のオリジナル器楽曲を作って。120 BPM、4/4、ハ長調。前半4小節と後半4小節に主題のつながりと対比を作り、ピアノの主旋律、ベース、控えめなドラムで、最後は余韻を残して終わって。内蔵音源のみ。歌、外部評価、ファイル書き出しは不要。曲全体の譜面とミックスを確認して完成させて。".into();
+        let (sender, events) = mpsc::channel();
+        let started = Instant::now();
+        let collector = std::thread::spawn(move || {
+            events.into_iter().map(|event| match event {
+                JobEvent::Preview(id, Ok(preview)) => json!({"candidate":id,"event":"preview","elapsed_seconds":started.elapsed().as_secs_f64(),"revision":preview.revision,"seconds":preview.audio.duration_seconds(),"peak":preview.audio.peak()}),
+                JobEvent::Preview(id, Err(error)) => json!({"candidate":id,"event":"preview_error","error":error}),
+                JobEvent::Progress(id, stage) => json!({"candidate":id,"event":"progress","stage":stage,"elapsed_seconds":started.elapsed().as_secs_f64()}),
+                _ => json!({"event":"other"}),
+            }).collect::<Vec<_>>()
+        });
+        let result = compose(
+            &candidate,
+            prefs.clone(),
+            Settings::default(),
+            folder.join("candidate"),
+            None,
+            &AtomicBool::new(false),
+            &sender,
+        );
+        drop(sender);
+        let events = collector.join().unwrap();
+        let score_seconds = result.as_ref().ok().map(|_| {
+            let mut check = Session::new(SessionOptions::headless()).unwrap();
+            check
+                .open(&folder.join("candidate/song/song.auris"))
+                .unwrap();
+            check.project().duration_seconds()
+        });
+        let report = json!({"backend":prefs.backend,"model":prefs.model,"assignment":candidate.direction.instructions,"elapsed_seconds":started.elapsed().as_secs_f64(),"error":result.as_ref().err().map(|e| &e.message),"events":events,"outline":result.as_ref().ok().map(SongCandidate::workshop_outline),"score_seconds":score_seconds,"seconds":result.as_ref().ok().map(|c| c.audio.duration_seconds()),"peak":result.as_ref().ok().map(|c| c.audio.peak()),"listening":"unassessed"});
+        std::fs::write(
+            folder.join("report.json"),
+            serde_json::to_vec_pretty(&report).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(
+            folder.join("system-prompt.txt"),
+            format!(
+                "{}\n{}",
+                crate::default_system_prompt(),
+                auris_toolbox::workshop::COMPOSER
+            ),
+        )
+        .unwrap();
+        assert!(result.is_ok(), "{}", report);
+        assert!(
+            events.iter().any(|event| event["event"] == "preview"),
+            "No intermediate audio: {report}"
+        );
+        assert!(
+            report["score_seconds"]
+                .as_f64()
+                .is_some_and(|seconds| (seconds - 16.0).abs() < 0.01),
+            "Unexpected duration: {report}"
+        );
+    }
+
     #[test]
     fn director_does_not_leak_its_read_only_role_into_composer_assignments() {
         let answer =

@@ -8,10 +8,9 @@ impl AurisApp {
         let Some(state) = &mut self.song_workshop else {
             return;
         };
-        let Some(candidate) = &state.candidates[index] else {
+        let Some(audio) = state.audition(index) else {
             return;
         };
-        let audio = candidate.audio.clone();
         for player in &mut state.players {
             player.stop();
         }
@@ -21,6 +20,7 @@ impl AurisApp {
         state.preparing = Some(index);
         let rate = self.session.sample_rate();
         cx.spawn(async move |this, cx| {
+            let source = Arc::clone(&audio);
             let prepared = cx
                 .background_executor()
                 .spawn(async move { auris_session::prepare_output_preview(&audio, rate) })
@@ -40,7 +40,10 @@ impl AurisApp {
                     let options = state.players[index].options(audio.duration_seconds());
                     this.session.play_output_preview_with(audio, options)
                 }) {
-                    Ok(status) => state.players[index].start(status),
+                    Ok(status) => {
+                        state.played_audio[index] = Some(source);
+                        state.players[index].start(status);
+                    }
                     Err(error) => state.error = Some(error.to_string()),
                 }
                 cx.notify();

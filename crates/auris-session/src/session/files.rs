@@ -138,6 +138,20 @@ pub struct MidiExportResult {
     staged: auris_io::StagedMidi,
 }
 
+/// The result published by a MIDI export, including the exact score extent written to the SMF.
+pub struct MidiExportReport {
+    /// Destination path.
+    pub path: PathBuf,
+    /// Number of performed notes encoded.
+    pub notes: usize,
+    /// Exported score duration in Auris ticks.
+    pub duration_ticks: Ticks,
+    /// Exported MIDI resolution in ticks per quarter note.
+    pub ticks_per_quarter: i64,
+    /// Exported score duration under the captured tempo map.
+    pub duration_seconds: f64,
+}
+
 /// A project open captured for worker-side parsing and asset decoding.
 pub struct OpenProjectJob {
     owner: Arc<auris_core::PluginRegistry>,
@@ -796,15 +810,22 @@ impl Session {
         &self,
         result: MidiExportResult,
         cancelled: &AtomicBool,
-    ) -> Result<Option<(PathBuf, usize)>, SessionError> {
+    ) -> Result<Option<MidiExportReport>, SessionError> {
         if cancelled.load(Ordering::Relaxed)
             || !Arc::ptr_eq(&self.registry, &result.owner)
             || self.revision != result.revision
         {
             return Ok(None);
         }
-        let notes = result.staged.publish()?;
-        Ok(Some((result.path, notes)))
+        let report = MidiExportReport {
+            path: result.path,
+            notes: result.staged.notes(),
+            duration_ticks: result.staged.duration_ticks(),
+            ticks_per_quarter: result.staged.ticks_per_quarter(),
+            duration_seconds: result.staged.duration_seconds(),
+        };
+        result.staged.publish()?;
+        Ok(Some(report))
     }
 
     /// The folder relative asset paths resolve against.
@@ -2051,11 +2072,14 @@ mod tests {
             std::fs::read(&current_path).unwrap(),
             b"previous MIDI bytes"
         );
-        assert_eq!(
-            live.continue_midi_export(result, &AtomicBool::new(false))
-                .unwrap(),
-            Some((current_path.clone(), 1))
-        );
+        let report = live
+            .continue_midi_export(result, &AtomicBool::new(false))
+            .unwrap()
+            .unwrap();
+        assert_eq!(report.path, current_path.clone());
+        assert_eq!(report.notes, 1);
+        assert_eq!(report.duration_ticks, Ticks::QUARTER);
+        assert_eq!(report.ticks_per_quarter, 960);
         assert_eq!(&std::fs::read(&current_path).unwrap()[..4], b"MThd");
         assert_eq!(
             directory_entries(current_path.parent().unwrap()),

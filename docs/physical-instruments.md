@@ -179,6 +179,13 @@ Parameter controls keep their ordinary keyboard adjustment, typed values, reset,
 save/load and one-gesture Undo behavior. The window scrolls at smaller sizes; Tab reaches the
 test-note/display buttons and sliders, Enter/Space activate a button, and Escape closes it.
 
+The Atelier view selector switches between **Instrument**, the mechanical projection, and
+**Voices**, four captured displacement lanes with their eight resonant-mode amplitudes.
+String lanes preserve fixed endpoints and recent observed trails; membrane and plate voices
+show signed displacement fields. Both views share display gain, effects and freeze state.
+The wide editor places sound parameters beside the visualization; narrow windows stack and
+scroll the regions. Test-note controls stay above the visualization.
+
 ## Development verification
 
 ```sh

@@ -5,7 +5,7 @@ use crate::{Edit, SessionError};
 use auris_core::plugin::{NoteEvent, PluginState, PrepareContext, ProcessContext};
 use auris_core::project::PresetRef;
 use auris_core::{AudioBuffer, ParamTarget, PluginRegistry, TrackId};
-use auris_dsp::timbre::{TimbreProjection, project_timbres, timbre_features};
+use auris_dsp::timbre::{TimbreProjection, project_timbres_refined, timbre_features};
 use std::sync::{
     Arc,
     atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -24,6 +24,19 @@ pub struct TimbreSound {
     pub instrument_id: String,
     /// Exact library preset where this is a SoundFont sound.
     pub preset: Option<PresetRef>,
+}
+
+/// One populated acoustic cluster, summarized using the full standardized feature space.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TimbreCluster {
+    /// Label shared with `TimbreMap::clusters`; stable only within this scan.
+    pub id: usize,
+    /// Number of measured sources assigned to this cluster.
+    pub sound_count: usize,
+    /// Source closest to the cluster centroid; a useful default display name.
+    pub representative: TimbreSound,
+    /// Up to eight source names, ordered by distance to the centroid.
+    pub examples: Vec<String>,
 }
 
 /// Shareable cancellation and completed-source count for a library scan.
@@ -64,6 +77,7 @@ pub struct TimbreMap {
     /// Sources omitted because at least one reference trigger was silent.
     pub skipped: Vec<String>,
     projection: TimbreProjection,
+    summaries: Vec<TimbreCluster>,
     previews: Vec<Arc<AudioBuffer>>,
     sample_rate: f64,
 }
@@ -239,11 +253,13 @@ impl TimbreMapJob {
         }
         control.check()?;
         let groups = (sounds.len() as f64).sqrt().round() as usize;
-        let projection = project_timbres(&rows, groups.clamp(1, 12)).map_err(failure)?;
+        let projection = project_timbres_refined(&rows, groups.clamp(1, 12)).map_err(failure)?;
+        let summaries = cluster_summaries(&sounds, &projection);
         Ok(TimbreMap {
             sounds,
             skipped,
             projection,
+            summaries,
             previews,
             sample_rate: self.sample_rate,
         })
@@ -251,15 +267,29 @@ impl TimbreMapJob {
 }
 
 impl TimbreMap {
-    /// Raw two-component PCA coordinates in source order.
-    pub fn positions(&self) -> &[[f64; 2]] {
+    /// Populated clusters, with representatives and bounded examples for display or naming.
+    pub fn cluster_summaries(&self) -> &[TimbreCluster] {
+        &self.summaries
+    }
+    /// Find a measured library sound by identity, never by its display name.
+    ///
+    /// Built-in entries represent default patches only. Callers must not use their labels for
+    /// edited or factory patches that were not measured. Fonts are matched by id, bank and patch.
+    pub fn cluster_for(&self, instrument_id: &str, preset: Option<PresetRef>) -> Option<usize> {
+        self.sounds
+            .iter()
+            .position(|sound| sound.instrument_id == instrument_id && sound.preset == preset)
+            .map(|index| self.projection.clusters[index])
+    }
+    /// Raw three-component PCA coordinates in source order.
+    pub fn positions(&self) -> &[[f64; 3]] {
         &self.projection.positions
     }
     /// Zero-based group labels computed in standardized feature space.
     pub fn clusters(&self) -> &[usize] {
         &self.projection.clusters
     }
-    /// Fraction of feature variance retained by the two displayed components.
+    /// Fraction of feature variance retained by the three displayed components.
     pub fn explained_variance(&self) -> f64 {
         self.projection.explained_variance
     }
@@ -289,6 +319,46 @@ impl TimbreMap {
         neighbors.truncate(limit);
         neighbors
     }
+}
+
+fn cluster_summaries(sounds: &[TimbreSound], projection: &TimbreProjection) -> Vec<TimbreCluster> {
+    let mut summaries = Vec::new();
+    for id in 0..=projection.clusters.iter().copied().max().unwrap_or(0) {
+        let mut members: Vec<_> = projection
+            .clusters
+            .iter()
+            .enumerate()
+            .filter_map(|(i, cluster)| (*cluster == id).then_some(i))
+            .collect();
+        let Some(&first) = members.first() else {
+            continue;
+        };
+        let mut centroid = vec![0.; projection.standardized[first].len()];
+        for &index in &members {
+            for (mean, value) in centroid.iter_mut().zip(&projection.standardized[index]) {
+                *mean += value / members.len() as f64;
+            }
+        }
+        let distance = |index: usize| {
+            projection.standardized[index]
+                .iter()
+                .zip(&centroid)
+                .map(|(a, b)| (a - b).powi(2))
+                .sum::<f64>()
+        };
+        members.sort_by(|a, b| distance(*a).total_cmp(&distance(*b)).then(a.cmp(b)));
+        summaries.push(TimbreCluster {
+            id,
+            sound_count: members.len(),
+            representative: sounds[members[0]].clone(),
+            examples: members
+                .iter()
+                .take(8)
+                .map(|&i| sounds[i].name.clone())
+                .collect(),
+        });
+    }
+    summaries
 }
 
 pub(super) fn render_reference(
@@ -376,6 +446,64 @@ mod tests {
     use auris_core::Ticks;
 
     #[test]
+    fn summaries_use_full_features_and_identity_not_names_or_display_coordinates() {
+        let sounds: Vec<_> = (0..4)
+            .map(|i| TimbreSound {
+                name: "Shared name".into(),
+                instrument_id: if i == 0 {
+                    "builtin"
+                } else {
+                    auris_sampler::SAMPLER_ID
+                }
+                .into(),
+                preset: (i != 0).then_some(PresetRef {
+                    font: auris_core::SoundFontId(i as u64),
+                    bank: 0,
+                    patch: 4,
+                }),
+            })
+            .collect();
+        let projection = TimbreProjection {
+            standardized: vec![vec![0., 0.], vec![0., 1.], vec![0., 9.], vec![10., 0.]],
+            positions: vec![[0.; 3]; 4],
+            clusters: vec![2, 2, 2, 5],
+            explained_variance: 0.,
+        };
+        let summaries = cluster_summaries(&sounds, &projection);
+        assert_eq!(
+            summaries.iter().map(|c| c.id).collect::<Vec<_>>(),
+            vec![2, 5]
+        );
+        assert_eq!(summaries[0].sound_count, 3);
+        assert_eq!(summaries[0].representative, sounds[1]);
+        let map = TimbreMap {
+            sounds,
+            skipped: vec![],
+            projection,
+            summaries,
+            previews: vec![],
+            sample_rate: 48_000.,
+        };
+        assert_eq!(map.cluster_for("builtin", None), Some(2));
+        assert_eq!(
+            map.cluster_for(auris_sampler::SAMPLER_ID, map.sounds[3].preset),
+            Some(5)
+        );
+        assert_eq!(
+            map.cluster_for(
+                auris_sampler::SAMPLER_ID,
+                Some(PresetRef {
+                    bank: 128,
+                    ..map.sounds[3].preset.unwrap()
+                })
+            ),
+            None
+        );
+        assert_eq!(map.cluster_for(auris_sampler::SAMPLER_ID, None), None);
+        assert_eq!(map.cluster_for("unmeasured", None), None);
+    }
+
+    #[test]
     fn adopting_the_current_builtin_restores_its_measured_sound_in_one_undo_step() {
         let mut session = Session::new(SessionOptions::headless()).unwrap();
         let track = session.add_default_instrument_track("Lead").unwrap();
@@ -421,6 +549,24 @@ mod tests {
         assert_eq!(control.completed(), count);
         assert!(map.sounds.len() >= 2);
         assert_eq!(map.positions().len(), map.sounds.len());
+        assert_eq!(
+            map.cluster_summaries()
+                .iter()
+                .map(|c| c.sound_count)
+                .sum::<usize>(),
+            map.sounds.len()
+        );
+        for summary in map.cluster_summaries() {
+            assert_eq!(
+                map.cluster_for(
+                    &summary.representative.instrument_id,
+                    summary.representative.preset
+                ),
+                Some(summary.id)
+            );
+            assert_eq!(summary.examples[0], summary.representative.name);
+            assert!(summary.examples.len() <= 8);
+        }
         assert_eq!(map.nearest(0, 3).len(), 3.min(map.sounds.len() - 1));
         assert!(
             map.nearest(0, 10)

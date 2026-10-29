@@ -333,40 +333,82 @@ fn require_chatgpt(account: &Value) -> Result<(), String> {
     }
 }
 
-pub(crate) async fn review(
+pub(crate) async fn complete(
     prefs: &auris_session::AgentPreferences,
     prompt: &str,
 ) -> Result<String, String> {
     let cwd = tempfile::tempdir().map_err(|error| error.to_string())?;
     let mut rpc = Rpc::connect(prefs, cwd.path(), None).await?;
     let result = async {
-        let thread = rpc.request("thread/start", json!({"model":prefs.model,"cwd":cwd.path(),"ephemeral":true,
-            "sandbox":"read-only","approvalPolicy":"never","baseInstructions":crate::approval_review::INSTRUCTIONS})).await?;
-        let id = thread["thread"]["id"].as_str().ok_or("Missing reviewer thread")?.to_owned();
+        let thread = rpc
+            .request(
+                "thread/start",
+                json!({"model":prefs.model,"cwd":cwd.path(),"ephemeral":true,
+            "sandbox":"read-only","approvalPolicy":"never","baseInstructions":prefs.system_prompt}),
+            )
+            .await?;
+        let id = thread["thread"]["id"]
+            .as_str()
+            .ok_or("Missing text-only thread")?
+            .to_owned();
         rpc.thread = Some(id.clone());
-        let turn = rpc.request("turn/start", json!({"threadId":id,"input":[{"type":"text","text":prompt}]})).await?;
+        let turn = rpc
+            .request(
+                "turn/start",
+                json!({"threadId":id,"input":[{"type":"text","text":prompt}]}),
+            )
+            .await?;
         rpc.turn = turn["turn"]["id"].as_str().map(str::to_owned);
         let mut answer = String::new();
         loop {
-            let message = match rpc.deferred.pop_front() { Some(message) => message, None => rpc.read().await? };
+            let message = match rpc.deferred.pop_front() {
+                Some(message) => message,
+                None => rpc.read().await?,
+            };
             rpc.reject_request(&message).await?;
             let params = &message["params"];
-            if params["threadId"].as_str().is_some_and(|thread| thread != id) { continue; }
+            if params["threadId"]
+                .as_str()
+                .is_some_and(|thread| thread != id)
+            {
+                continue;
+            }
             match message["method"].as_str() {
-                Some("item/agentMessage/delta") => answer.push_str(params["delta"].as_str().unwrap_or_default()),
-                Some("item/completed") if params["item"]["type"] == "agentMessage" && answer.is_empty() =>
-                    answer = params["item"]["text"].as_str().unwrap_or_default().to_owned(),
-                Some("item/started") if !matches!(params["item"]["type"].as_str(), Some("reasoning" | "agentMessage" | "userMessage")) =>
-                    return Err("Approval reviewer attempted to use a tool".into()),
+                Some("item/agentMessage/delta") => {
+                    answer.push_str(params["delta"].as_str().unwrap_or_default())
+                }
+                Some("item/completed")
+                    if params["item"]["type"] == "agentMessage" && answer.is_empty() =>
+                {
+                    answer = params["item"]["text"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_owned()
+                }
+                Some("item/started")
+                    if !matches!(
+                        params["item"]["type"].as_str(),
+                        Some("reasoning" | "agentMessage" | "userMessage")
+                    ) =>
+                {
+                    return Err("Text-only agent attempted to use a tool".into());
+                }
                 Some("turn/completed") => {
                     rpc.turn = None;
-                    return if params["turn"]["status"] == "completed" { Ok(answer) } else { Err("Approval reviewer failed".into()) };
+                    return if params["turn"]["status"] == "completed" {
+                        Ok(answer)
+                    } else {
+                        Err("Text-only agent failed".into())
+                    };
                 }
                 _ => {}
             }
-            if answer.len() > 8192 { return Err("Approval review response was too large".into()); }
+            if answer.len() > 8192 {
+                return Err("Text-only response was too large".into());
+            }
         }
-    }.await;
+    }
+    .await;
     rpc.stop().await;
     result
 }

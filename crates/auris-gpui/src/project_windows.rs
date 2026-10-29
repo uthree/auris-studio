@@ -98,6 +98,31 @@ pub(crate) fn open(path: Option<PathBuf>, cx: &mut App) {
     });
 }
 
+fn apply_window_theme(window: &mut gpui::Window, cx: &App) {
+    let theme = &cx.global::<crate::theme::Theme>().atelier;
+    if cfg!(test) {
+        // The headless platform has no native window handle for Atelier's OS backdrop.
+        window.set_background_appearance(theme.window_background());
+    } else {
+        atelier::set_window_background(window, theme);
+    }
+}
+
+/// Opens a start screen showing its setup guide, for a request made where none is showing.
+pub(crate) fn open_setup_guide(cx: &mut App) {
+    match create(cx) {
+        Ok(handle) => {
+            let _ = handle.update(cx, |view, window, cx| {
+                view.show_project_chooser(window, cx);
+                if let Some(chooser) = &mut view.project_chooser {
+                    chooser.page = crate::ui::project_chooser::ChooserPage::Setup;
+                }
+            });
+        }
+        Err(error) => log::error!("could not open project window: {error}"),
+    }
+}
+
 pub(crate) fn create(cx: &mut App) -> Result<WindowHandle<AurisApp>, String> {
     let remembered = auris_session::Settings::load().window;
     let handle = cx
@@ -106,9 +131,22 @@ pub(crate) fn create(cx: &mut App) -> Result<WindowHandle<AurisApp>, String> {
                 window_bounds: Some(crate::opening_window_bounds(remembered, cx)),
                 window_min_size: Some(size(px(640.0), px(480.0))),
                 focus: true,
+                window_background: cx
+                    .global::<crate::theme::Theme>()
+                    .atelier
+                    .window_background(),
                 ..crate::titlebar::options("Auris Studio")
             },
-            |_, cx| cx.new(AurisApp::new),
+            |window, cx| {
+                let view = cx.new(AurisApp::new);
+                apply_window_theme(window, cx);
+                window
+                    .observe_global::<crate::theme::Theme>(cx, |window, cx| {
+                        apply_window_theme(window, cx);
+                    })
+                    .detach();
+                view
+            },
         )
         .map_err(|error| error.to_string())?;
     handle

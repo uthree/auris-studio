@@ -54,10 +54,11 @@ impl AurisApp {
             .items_center()
             .gap_2()
             .h(Metrics::STATUS_HEIGHT)
-            .px_1()
-            .bg(theme.surface_raised)
+            .px_2()
+            // Status is a quiet chrome region; keep the editor canvas visually dominant.
+            .bg(theme.surface)
             .border_t_1()
-            .border_color(theme.border)
+            .border_color(theme.border_subtle)
             .text_xs()
             .text_color(theme.text_muted)
             .when(compact, |bar| {

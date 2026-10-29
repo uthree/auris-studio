@@ -2,6 +2,7 @@
 
 use crate::{RenderJob, Session, prelude::*};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 /// An authored note intersecting the inspected range (before performance transforms).
@@ -67,6 +68,37 @@ pub(crate) fn bar_range(
     Ok((start, end))
 }
 
+fn harmony_events(project: &Project, start: Ticks, end: Ticks) -> (Vec<serde_json::Value>, usize) {
+    // Include the in-force harmony at the left edge, then every key/chord change. A key
+    // change can alter the sounding chord without adding a new numeral to the chord map.
+    let ticks: BTreeSet<_> = std::iter::once(start)
+        .chain(project.harmony.keys.points().iter().map(|point| point.tick))
+        .chain(
+            project
+                .harmony
+                .chords
+                .points()
+                .iter()
+                .map(|point| point.tick),
+        )
+        .filter(|tick| *tick >= start && *tick < end)
+        .collect();
+    let count = ticks.len();
+    let start_seconds = project.tempo_map.ticks_to_seconds(start).0;
+    let events = ticks
+        .into_iter()
+        .take(128)
+        .map(|tick| {
+            let (bar, beat, tick_in_beat) = project.signatures.bar_beat_at(tick);
+            serde_json::json!({"tick":tick.raw(),"bar":bar,"beat":beat,"tick_in_beat":tick_in_beat,
+            "start_seconds":project.tempo_map.ticks_to_seconds(tick).0 - start_seconds,
+            "key":project.harmony.key_at(tick).to_text(),
+            "chord":project.harmony.chord_at(tick).map(|chord|chord.to_string())})
+        })
+        .collect();
+    (events, count)
+}
+
 impl Session {
     /// Prepare an inspection of 1..8 bars, at most 30 seconds, without altering the document.
     pub fn audio_inspection_job(
@@ -82,7 +114,7 @@ impl Session {
         let (start, end) = bar_range(project, start_bar, bars)?;
         Ok(InspectionJob {
             revision: self.revision(),
-            render: self.render_job(),
+            render: self.render_job_at(Some(48_000.0)),
             track: track.map(TrackId),
             start,
             end,
@@ -138,6 +170,7 @@ impl InspectionJob {
             let tick = project.signatures.bar_start(bar);
             serde_json::json!({"bar":bar, "key":project.harmony.key_at(tick).to_text(), "chord":project.harmony.chord_at(tick).map(|chord| chord.to_string())})
         }).collect();
+        let (harmony_events, harmony_event_count) = harmony_events(project, self.start, self.end);
         let options = OfflineOptions {
             start_frames: (start_seconds * 48000.0).round() as u64,
             end_frames: Some(((start_seconds + seconds) * 48000.0).round() as u64),
@@ -175,7 +208,7 @@ impl InspectionJob {
             .ok_or("Inspection cancelled or unusable audio")?;
         Ok(Inspection {
             revision: self.revision,
-            measurements: serde_json::json!({"start_bar":self.start_bar,"bars":self.bars,"start_seconds":start_seconds,"seconds":seconds,"sample_rate":audio.sample_rate(),"peak_dbfs":db(peak),"rms_dbfs":db(rms),"samples_at_or_above_full_scale":clipping,"silent":peak < 0.000001,"track":self.track.map(|id|id.0),"tracks":tracks,"harmony_at_bar_starts":harmony,"score_note_count":total_notes,"score_truncated":total_notes > notes.len(),"score_representation":"authored notes before performance transforms; includes muted score parts","render_representation":"actual mix with mute/solo, or requested track solo routing; no appended tail","mel_representation":"2048-frame Hann FFT; 64 triangular HTK mel filters; average channel power; fixed power reference 1; display -90 to 0 dB"}),
+            measurements: serde_json::json!({"start_bar":self.start_bar,"bars":self.bars,"start_seconds":start_seconds,"seconds":seconds,"sample_rate":audio.sample_rate(),"peak_dbfs":db(peak),"rms_dbfs":db(rms),"samples_at_or_above_full_scale":clipping,"silent":peak < 0.000001,"track":self.track.map(|id|id.0),"tracks":tracks,"harmony_at_bar_starts":harmony,"harmony_events":harmony_events,"harmony_event_count":harmony_event_count,"harmony_events_truncated":harmony_event_count > harmony_events.len(),"score_note_count":total_notes,"score_truncated":total_notes > notes.len(),"score_representation":"authored notes before performance transforms; includes muted score parts","render_representation":"actual mix with mute/solo, or requested track solo routing; no appended tail","mel_representation":"2048-frame Hann FFT; 64 triangular HTK mel filters; average channel power; fixed power reference 1; display -90 to 0 dB"}),
             columns: mel.columns,
             frequencies: mel.frequencies,
             mel_db: mel.levels,
@@ -187,6 +220,76 @@ impl InspectionJob {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn harmony_event_limit_counts_changes_without_rounding_or_duplicates() {
+        let session = Session::new(crate::SessionOptions::headless().with_balance(false)).unwrap();
+        let mut project = session.project().clone();
+        let numeral = Numeral::parse("I").unwrap();
+        for index in 0..200 {
+            project
+                .harmony
+                .chords
+                .set_point(Ticks(index * 15), Some(numeral));
+        }
+        project
+            .harmony
+            .keys
+            .set_point(Ticks(15), MusicalKey::parse("D major").unwrap());
+        let (events, count) = harmony_events(&project, Ticks::ZERO, Ticks(200 * 15));
+        assert_eq!(count, 200);
+        assert_eq!(events.len(), 128);
+        assert_eq!(events[1]["tick_in_beat"], 15);
+        assert_eq!(events[1]["key"], "D major");
+        assert_eq!(events[127]["tick"], 127 * 15);
+        let (events, count) = harmony_events(&project, Ticks(2980), Ticks(2985));
+        assert_eq!(count, 1);
+        assert_eq!(events[0]["tick"], 2980);
+        assert_eq!(events[0]["chord"], "D");
+    }
+
+    #[test]
+    fn inspection_includes_within_bar_harmony_and_carries_the_starting_chord() {
+        let mut session =
+            Session::new(crate::SessionOptions::headless().with_balance(false)).unwrap();
+        let track = session.add_default_instrument_track("Harmony").unwrap();
+        session
+            .add_midi_clip(track, "Range", Ticks::ZERO, Ticks::QUARTER * 16)
+            .unwrap();
+        session.stamp_progression(
+            &Chart::parse("| I | IV V | vi | ii V |").unwrap(),
+            Ticks::ZERO,
+            4,
+        );
+        session.remove_chord(Ticks::QUARTER * 4);
+        session.set_key(Ticks::QUARTER * 7, MusicalKey::parse("D major").unwrap());
+        let before = session.project().clone();
+        let job = session.audio_inspection_job(2, 2, None).unwrap();
+        // The inspection must retain its snapshot even if the live harmony changes.
+        session.clear_harmony(Ticks::ZERO, Ticks::QUARTER * 16);
+        let report = job.run(&AtomicBool::new(false)).unwrap().measurements;
+        let events = report["harmony_events"].as_array().expect("harmony events");
+        assert_eq!(report["harmony_event_count"], 4);
+        assert_eq!(report["harmony_events_truncated"], false);
+        for (event, (tick, bar, beat, seconds, chord)) in events.iter().zip([
+            (3840, 2, 1, 0.0, "C"),
+            (5760, 2, 3, 1.0, "G"),
+            (6720, 2, 4, 1.5, "A"),
+            (7680, 3, 1, 2.0, "Bm"),
+        ]) {
+            assert_eq!(event["tick"], tick);
+            assert_eq!(event["bar"], bar);
+            assert_eq!(event["beat"], beat);
+            assert_eq!(event["tick_in_beat"], 0);
+            assert_eq!(event["start_seconds"], seconds);
+            assert_eq!(event["chord"], chord);
+        }
+        assert_eq!(events[0]["key"], "C major");
+        assert_eq!(events[2]["key"], "D major");
+        assert_eq!(report["harmony_at_bar_starts"][0]["chord"], "C");
+        assert_eq!(before.tracks, session.project().tracks);
+    }
+
     #[test]
     fn inspection_is_a_read_only_snapshot_and_measures_real_gain_and_mute() {
         let mut session =

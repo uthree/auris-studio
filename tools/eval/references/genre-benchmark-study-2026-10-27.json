@@ -1,0 +1,1551 @@
+{
+  "schema_version": 1,
+  "study_date": "2026-10-27",
+  "manifest_sha256": "cae3a194badb6bc952a92d09ff1894dcff21b591a860b1424c2422c17200ae4c",
+  "model": "gpt-6.1-sol",
+  "backend": "codex",
+  "prompt_profile": "legacy",
+  "candidate_tools_enabled": true,
+  "context_tokens": 65536,
+  "llm_sampling_seed": null,
+  "holdout_attempts": 0,
+  "evaluator_runtime": {
+    "device": "cpu",
+    "torch_threads": 4,
+    "upstream": "https://github.com/ASLP-lab/SongEval",
+    "upstream_revision": "848fb2ff3a2a9d64dcb20d46f07238c28abd7add",
+    "requested_upstream_revision": "848fb2ff3a2a9d64dcb20d46f07238c28abd7add",
+    "artifacts": {
+      "checkpoint": "0cb1eb8be02b96e9949ca3a2b66997c5ac7d9da3567240df4dbfc2048eb98efd",
+      "muq": {
+        "model.safetensors": "273febab2be02872c37d2c37e48a9d6c52c1c9392f3eeeabd498efa281ccb7a6",
+        "pytorch_model.bin": "334df3de2832ec1acfd8b6ce54e7de4073401fe821f7ec0ad0d954832be2d26a"
+      },
+      "muq_config": "237335ee27d8fb951ce778701a12a79e06c51ae636dd786f97e45f51ce532543",
+      "source": {
+        "model.py": "5c40c1cf318c46f6d97e33231356f09a5fe9d00f5896b410f6035076052fc6b2",
+        "eval.py": "8bda6eb4499133962a8b82bbbc05ed9acfa99bb54677173299fe3b6f6e6ab152",
+        "config.yaml": "833ab78c6f380b63ceb08daa66e9af3e19ae1c3105d113274317843f229c951d"
+      }
+    },
+    "packages": {
+      "torch": "2.7.0",
+      "torchaudio": "2.7.0",
+      "librosa": "0.11.0",
+      "muq": "0.1.0",
+      "numpy": "2.4.6",
+      "soundfile": "0.14.0",
+      "transformers": "4.57.6",
+      "hydra-core": "1.3.2",
+      "huggingface-hub": "0.36.2",
+      "safetensors": "0.8.0",
+      "scipy": "1.17.1"
+    },
+    "preprocessing_version": "songeval-adapter-v2",
+    "preprocessing": "librosa mono 24 kHz; MuQ hidden_states[6]; no loudness normalization"
+  },
+  "conditions": {
+    "baseline": {
+      "repetitions": 2,
+      "attempts": 14,
+      "delivered": 14,
+      "scored": 14,
+      "using_generation": 0,
+      "successful_generation_calls": 0,
+      "mean_elapsed_seconds": 806.47748,
+      "suite_sha256": {
+        "baseline-development": "fcba4967c43ef3a24b0f255d21a6553e7eb530a7e0ccc91ad49e01dbd029fd2b",
+        "baseline-development-rep2": "0458bcc23140436fd9596ffca053ba58f5e9d7d693dd3ff455f6a648aac1603c"
+      },
+      "source_commit": "cd205c3c662a150ae822911427f82211de9d40f3",
+      "source_provenance_sha256": "f205ceba27db5b5d859c0053539e881fd5b85f3e7f2c3972b928683636af9fb8",
+      "prompt_condition_sha256": "0e91b74ff5defc4986ca29d32ff170008b99466bcac49fe0c147a210a88ad059",
+      "executables": {
+        "auris_studio-afdcc21b3886817c.exe": "74416f309eef598808d3656c55dd0aad477ce9ed7138f0cb86b3437ecbd4e0b5"
+      },
+      "trials": [
+        {
+          "id": "pop-development-01",
+          "transport_pass": true,
+          "scores": {
+            "Coherence": 3.0109,
+            "Musicality": 2.8411,
+            "Memorability": 2.8116,
+            "Clarity": 2.8286,
+            "Naturalness": 2.6086
+          },
+          "wav_sha256": "d2b5e69f135dcfe79236364f9b54c642ea48703d4bb869445584295612586246",
+          "efficiency": {
+            "available": true,
+            "tool_calls": 140,
+            "successful_generation_calls": 0,
+            "failed_generation_calls": 0,
+            "edit_notes_calls": 2,
+            "elapsed_seconds": 791.7887346000025
+          }
+        },
+        {
+          "id": "city_pop-development-01",
+          "transport_pass": true,
+          "scores": {
+            "Coherence": 2.9923,
+            "Musicality": 2.7527,
+            "Memorability": 2.887,
+            "Clarity": 2.9373,
+            "Naturalness": 2.621
+          },
+          "wav_sha256": "16b5888f5bd2f8be1fb6eeba42be2272175a028bcc19ef884837d2a4edf19e7b",
+          "efficiency": {
+            "available": true,
+            "tool_calls": 214,
+            "successful_generation_calls": 0,
+            "failed_generation_calls": 0,
+            "edit_notes_calls": 4,
+            "elapsed_seconds": 691.9383902000009
+          }
+        },
+        {
+          "id": "lofi-development-01",
+          "transport_pass": true,
+          "scores": {
+            "Coherence": 2.6435,
+            "Musicality": 2.4388,
+            "Memorability": 2.3254,
+            "Clarity": 2.149,
+            "Naturalness": 2.0918
+          },
+          "wav_sha256": "277475055dfda52ca513f5c16ce37c1aae5927ac8bd87bab3b4b32f6fb87ec48",
+          "efficiency": {
+            "available": true,
+            "tool_calls": 154,
+            "successful_generation_calls": 0,
+            "failed_generation_calls": 0,
+            "edit_notes_calls": 1,
+            "elapsed_seconds": 816.4360850000012
+          }
+        },
+        {
+          "id": "neo_soul-development-01",
+          "transport_pass": true,
+          "scores": {
+            "Coherence": 2.1945,
+            "Musicality": 2.0322,
+            "Memorability": 1.982,
+            "Clarity": 1.8124,
+            "Naturalness": 1.9282
+          },
+          "wav_sha256": "1876483844b8cb47e9d0f5b0ad3420241306ad25317d06e3d9d92bf57b4552d7",
+          "efficiency": {
+            "available": true,
+            "tool_calls": 161,
+            "successful_generation_calls": 0,
+            "failed_generation_calls": 0,
+            "edit_notes_calls": 3,
+            "elapsed_seconds": 599.3380116000008
+          }
+        },
+        {
+          "id": "dance_electronic-development-01",
+          "transport_pass": true,
+          "scores": {
+            "Coherence": 2.1597,
+            "Musicality": 1.9273,
+            "Memorability": 2.0034,
+            "Clarity": 1.9059,
+            "Naturalness": 1.9218
+          },
+          "wav_sha256": "a0e3cb2e0f0be10f7d0b4294eb96bb3d2298f9d4569f8c0cccc18c342495bd02",
+          "efficiency": {
+            "available": true,
+            "tool_calls": 182,
+            "successful_generation_calls": 0,
+            "failed_generation_calls": 0,
+            "edit_notes_calls": 1,
+            "elapsed_seconds": 946.8188652999997
+          }
+        },
+        {
+          "id": "anime_song-development-01",
+          "transport_pass": true,
+          "scores": {
+            "Coherence": 3.0408,
+            "Musicality": 2.8128,
+            "Memorability": 2.8408,
+            "Clarity": 2.9492,
+            "Naturalness": 2.7748
+          },
+          "wav_sha256": "0f224a0fc745b26183a36e50ee4c77b75e1bb6af60f00d4c230f9269beaa5128",
+          "efficiency": {
+            "available": true,
+            "tool_calls": 147,
+            "successful_generation_calls": 0,
+            "failed_generation_calls": 0,
+            "edit_notes_calls": 3,
+            "elapsed_seconds": 996.8027903000002
+          }
+        },
+        {
+          "id": "game_bgm-development-01",
+          "transport_pass": true,
+          "scores": {
+            "Coherence": 2.8182,
+            "Musicality": 2.6432,
+            "Memorability": 2.4674,
+            "Clarity": 2.6644,
+            "Naturalness": 2.3716
+          },
+          "wav_sha256": "a714a771d532995e7a75fbc5814da8495e22ca0290735c70eebc8f9feb250c99",
+          "efficiency": {
+            "available": true,
+            "tool_calls": 164,
+            "successful_generation_calls": 0,
+            "failed_generation_calls": 0,
+            "edit_notes_calls": 2,
+            "elapsed_seconds": 977.6175664000002
+          }
+        },
+        {
+          "id": "pop-development-02",
+          "transport_pass": true,
+          "scores": {
+            "Coherence": 3.0028,
+            "Musicality": 2.8436,
+            "Memorability": 2.9685,
+            "Clarity": 2.8116,
+            "Naturalness": 2.6505
+          },
+          "wav_sha256": "077e21cbe398188d06b4c98f21081fc2757991b18a9bebae65e3f44a75d584b8",
+          "efficiency": {
+            "available": true,
+            "tool_calls": 134,
+            "successful_generation_calls": 0,
+            "failed_generation_calls": 0,
+            "edit_notes_calls": 3,
+            "elapsed_seconds": 685.9250030999974
+          }
+        },
+        {
+          "id": "city_pop-development-02",
+          "transport_pass": true,
+          "scores": {
+            "Coherence": 2.5695,
+            "Musicality": 2.3933,
+            "Memorability": 2.4369,
+            "Clarity": 2.3645,
+            "Naturalness": 2.3265
+          },
+          "wav_sha256": "f651f6f2e30fc250e5c455eb9bd7f468b4bef0fec7258952605b10b1dc83f185",
+          "efficiency": {
+            "available": true,
+            "tool_calls": 171,
+            "successful_generation_calls": 0,
+            "failed_generation_calls": 0,
+            "edit_notes_calls": 2,
+            "elapsed_seconds": 696.8070722999983
+          }
+        },
+        {
+          "id": "lofi-development-02",
+          "transport_pass": true,
+          "scores": {
+            "Coherence": 2.7047,
+            "Musicality": 2.5543,
+            "Memorability": 2.5346,
+            "Clarity": 2.2187,
+            "Naturalness": 2.3356
+          },
+          "wav_sha256": "9f48aae41767d6b88da9e20fe3e1049cce7c6ea14a2ced0bfa8ea621675e25fa",
+          "efficiency": {
+            "available": true,
+            "tool_calls": 138,
+            "successful_generation_calls": 0,
+            "failed_generation_calls": 0,
+            "edit_notes_calls": 2,
+            "elapsed_seconds": 895.1039673000014
+          }
+        },
+        {
+          "id": "neo_soul-development-02",
+          "transport_pass": true,
+          "scores": {
+            "Coherence": 2.3731,
+            "Musicality": 2.259,
+            "Memorability": 2.1884,
+            "Clarity": 2.1325,
+            "Naturalness": 2.167
+          },
+          "wav_sha256": "76a3f4503b8e9bfddb14a7dffc318219b5e6c3816906440fec6ed577d532a461",
+          "efficiency": {
+            "available": true,
+            "tool_calls": 157,
+            "successful_generation_calls": 0,
+            "failed_generation_calls": 0,
+            "edit_notes_calls": 3,
+            "elapsed_seconds": 843.1816669
+          }
+        },
+        {
+          "id": "dance_electronic-development-02",
+          "transport_pass": true,
+          "scores": {
+            "Coherence": 2.3715,
+            "Musicality": 2.357,
+            "Memorability": 2.2131,
+            "Clarity": 2.2766,
+            "Naturalness": 2.3176
+          },
+          "wav_sha256": "e6a82541df9ac2276cb715ea4d262ada0ca01785950728106d832f79f20d9cf1",
+          "efficiency": {
+            "available": true,
+            "tool_calls": 178,
+            "successful_generation_calls": 0,
+            "failed_generation_calls": 0,
+            "edit_notes_calls": 2,
+            "elapsed_seconds": 902.4571213000017
+          }
+        },
+        {
+          "id": "anime_song-development-02",
+          "transport_pass": true,
+          "scores": {
+            "Coherence": 3.1032,
+            "Musicality": 3.0399,
+            "Memorability": 2.9363,
+            "Clarity": 2.9807,
+            "Naturalness": 2.8482
+          },
+          "wav_sha256": "46287eeafdb66faa13443415366b4f601c26893f5be9447582df75f5e4976176",
+          "efficiency": {
+            "available": true,
+            "tool_calls": 121,
+            "successful_generation_calls": 0,
+            "failed_generation_calls": 0,
+            "edit_notes_calls": 4,
+            "elapsed_seconds": 636.5826508999999
+          }
+        },
+        {
+          "id": "game_bgm-development-02",
+          "transport_pass": true,
+          "scores": {
+            "Coherence": 2.9079,
+            "Musicality": 2.8017,
+            "Memorability": 2.7732,
+            "Clarity": 2.8453,
+            "Naturalness": 2.5943
+          },
+          "wav_sha256": "d7bce6012be78f7bef7396f3da28bc953a3483a47df232499029bbf0f704cc19",
+          "efficiency": {
+            "available": true,
+            "tool_calls": 154,
+            "successful_generation_calls": 0,
+            "failed_generation_calls": 0,
+            "edit_notes_calls": 3,
+            "elapsed_seconds": 809.8867984000026
+          }
+        }
+      ]
+    },
+    "v1": {
+      "repetitions": 1,
+      "attempts": 7,
+      "delivered": 7,
+      "scored": 7,
+      "using_generation": 7,
+      "successful_generation_calls": 9,
+      "mean_elapsed_seconds": 817.203659,
+      "suite_sha256": {
+        "v1-development": "5819d244f0a6bab43fdb128ff61b168a1e5fc00f5d0417cbb355c29e3f6ee586"
+      },
+      "source_commit": "cd205c3c662a150ae822911427f82211de9d40f3",
+      "source_provenance_sha256": "ce06a8e5105e7b741660e048ad03b1e6e921e68ae7008647367be784bf991334",
+      "prompt_condition_sha256": "35aebff0f6af7f5791a428e54f36b90deec7dc6f565700a9df1fcf53ed416691",
+      "executables": {
+        "auris_studio-afdcc21b3886817c.exe": "ed4e46c9facf859f21102ce1a7f3ff99f1c4ec56672f80eaf5b1f5cb759be1e6"
+      },
+      "trials": [
+        {
+          "id": "pop-development-01",
+          "transport_pass": true,
+          "scores": {
+            "Coherence": 2.9018,
+            "Musicality": 2.4996,
+            "Memorability": 2.5394,
+            "Clarity": 2.4352,
+            "Naturalness": 2.428
+          },
+          "wav_sha256": "55882d7282c4d9c4cb82138f072b176ce02df70db658de4e2f0bffdffa06e010",
+          "efficiency": {
+            "available": true,
+            "tool_calls": 141,
+            "successful_generation_calls": 1,
+            "failed_generation_calls": 3,
+            "edit_notes_calls": 2,
+            "elapsed_seconds": 647.7656815000009
+          }
+        },
+        {
+          "id": "city_pop-development-01",
+          "transport_pass": true,
+          "scores": {
+            "Coherence": 2.6378,
+            "Musicality": 2.3714,
+            "Memorability": 2.3796,
+            "Clarity": 2.3483,
+            "Naturalness": 2.2407
+          },
+          "wav_sha256": "2987901dbaeb255f5c89183d63a1d2db82c37e9385fcb809ecb2cc56783e6155",
+          "efficiency": {
+            "available": true,
+            "tool_calls": 189,
+            "successful_generation_calls": 2,
+            "failed_generation_calls": 4,
+            "edit_notes_calls": 2,
+            "elapsed_seconds": 693.0203374999983
+          }
+        },
+        {
+          "id": "lofi-development-01",
+          "transport_pass": true,
+          "scores": {
+            "Coherence": 2.5146,
+            "Musicality": 2.3472,
+            "Memorability": 2.3666,
+            "Clarity": 2.0921,
+            "Naturalness": 2.1606
+          },
+          "wav_sha256": "361f022fb5d08d792f2ca9abcb8981376df0c55c5489ee3707f1700f9fa8d1ab",
+          "efficiency": {
+            "available": true,
+            "tool_calls": 195,
+            "successful_generation_calls": 2,
+            "failed_generation_calls": 5,
+            "edit_notes_calls": 2,
+            "elapsed_seconds": 729.4348131000006
+          }
+        },
+        {
+          "id": "neo_soul-development-01",
+          "transport_pass": true,
+          "scores": {
+            "Coherence": 2.2423,
+            "Musicality": 2.0033,
+            "Memorability": 2.0092,
+            "Clarity": 1.8945,
+            "Naturalness": 1.8819
+          },
+          "wav_sha256": "7d112636e8c6ae9a6ee47785df774893fb7e389c77cf50c095a62adf7216b17c",
+          "efficiency": {
+            "available": true,
+            "tool_calls": 180,
+            "successful_generation_calls": 1,
+            "failed_generation_calls": 2,
+            "edit_notes_calls": 2,
+            "elapsed_seconds": 752.4058590999994
+          }
+        },
+        {
+          "id": "dance_electronic-development-01",
+          "transport_pass": true,
+          "scores": {
+            "Coherence": 2.1697,
+            "Musicality": 1.9764,
+            "Memorability": 1.9341,
+            "Clarity": 1.9372,
+            "Naturalness": 2.0183
+          },
+          "wav_sha256": "a27800950b52af3d51059eec1902c074c44204f4285b47a406e733aaf26f9816",
+          "efficiency": {
+            "available": true,
+            "tool_calls": 144,
+            "successful_generation_calls": 1,
+            "failed_generation_calls": 2,
+            "edit_notes_calls": 2,
+            "elapsed_seconds": 786.8284767000005
+          }
+        },
+        {
+          "id": "anime_song-development-01",
+          "transport_pass": true,
+          "scores": {
+            "Coherence": 3.174,
+            "Musicality": 2.8772,
+            "Memorability": 2.8341,
+            "Clarity": 2.9105,
+            "Naturalness": 2.7962
+          },
+          "wav_sha256": "d1c2e116119ad1b2fbd1a654f582f45548294554c2ad1249fe1760010075f47e",
+          "efficiency": {
+            "available": true,
+            "tool_calls": 175,
+            "successful_generation_calls": 1,
+            "failed_generation_calls": 3,
+            "edit_notes_calls": 2,
+            "elapsed_seconds": 800.6910621999996
+          }
+        },
+        {
+          "id": "game_bgm-development-01",
+          "transport_pass": true,
+          "scores": {
+            "Coherence": 3.0625,
+            "Musicality": 2.7451,
+            "Memorability": 2.7158,
+            "Clarity": 2.9387,
+            "Naturalness": 2.5828
+          },
+          "wav_sha256": "33ee044a5296310ebf6616fbb1458e92229d51919a11c63c7b8400d3b2be935a",
+          "efficiency": {
+            "available": true,
+            "tool_calls": 232,
+            "successful_generation_calls": 1,
+            "failed_generation_calls": 3,
+            "edit_notes_calls": 2,
+            "elapsed_seconds": 1310.2793861000027
+          }
+        }
+      ]
+    },
+    "v2": {
+      "repetitions": 1,
+      "attempts": 7,
+      "delivered": 6,
+      "scored": 6,
+      "using_generation": 6,
+      "successful_generation_calls": 7,
+      "mean_elapsed_seconds": 707.6774,
+      "suite_sha256": {
+        "v2-development": "3d761dfb8cd5ca61d58e5c1ed9a26f50f31cb727dd9e8dd77d2c7c8a40974d13"
+      },
+      "source_commit": "cd205c3c662a150ae822911427f82211de9d40f3",
+      "source_provenance_sha256": "50083c213914f9d655f39b051dfb6686cbe210d718543a36fdc31ad1af462dcb",
+      "prompt_condition_sha256": "9e4a9726f7320a6a207a4d2716d4fe6bf1e1b2b7fcd8616c4af72fc250d37f53",
+      "executables": {
+        "auris_studio-afdcc21b3886817c.exe": "48c446b42bd68d532f5038ca3c51f28df7397752da60400d8aa30b3ec7103c42"
+      },
+      "trials": [
+        {
+          "id": "pop-development-01",
+          "transport_pass": false,
+          "scores": null,
+          "wav_sha256": null,
+          "efficiency": {
+            "available": true,
+            "tool_calls": 0,
+            "successful_generation_calls": 0,
+            "failed_generation_calls": 0,
+            "edit_notes_calls": 0,
+            "elapsed_seconds": 31.747955900002125
+          }
+        },
+        {
+          "id": "city_pop-development-01",
+          "transport_pass": true,
+          "scores": {
+            "Coherence": 2.6974,
+            "Musicality": 2.5678,
+            "Memorability": 2.5068,
+            "Clarity": 2.5189,
+            "Naturalness": 2.53
+          },
+          "wav_sha256": "a5267843fd556745e6dda0b4b9d97601eda9cfa7e4e30d0900d568f5b45c53f7",
+          "efficiency": {
+            "available": true,
+            "tool_calls": 199,
+            "successful_generation_calls": 1,
+            "failed_generation_calls": 2,
+            "edit_notes_calls": 2,
+            "elapsed_seconds": 669.6487651000025
+          }
+        },
+        {
+          "id": "lofi-development-01",
+          "transport_pass": true,
+          "scores": {
+            "Coherence": 2.7558,
+            "Musicality": 2.5405,
+            "Memorability": 2.5612,
+            "Clarity": 2.3547,
+            "Naturalness": 2.4022
+          },
+          "wav_sha256": "abcdd40b95a03b19668994c1ec5d52a783db6e15df7aa4c23642c931a08f2fc9",
+          "efficiency": {
+            "available": true,
+            "tool_calls": 179,
+            "successful_generation_calls": 1,
+            "failed_generation_calls": 1,
+            "edit_notes_calls": 2,
+            "elapsed_seconds": 764.2161183999997
+          }
+        },
+        {
+          "id": "neo_soul-development-01",
+          "transport_pass": true,
+          "scores": {
+            "Coherence": 2.269,
+            "Musicality": 2.1019,
+            "Memorability": 2.0397,
+            "Clarity": 1.919,
+            "Naturalness": 1.882
+          },
+          "wav_sha256": "ddaa64480cf95b93a3786d790dcdbe7ee2858b7be1e8e6e67551f2a6a3425c2d",
+          "efficiency": {
+            "available": true,
+            "tool_calls": 150,
+            "successful_generation_calls": 1,
+            "failed_generation_calls": 0,
+            "edit_notes_calls": 2,
+            "elapsed_seconds": 514.1018245000014
+          }
+        },
+        {
+          "id": "dance_electronic-development-01",
+          "transport_pass": true,
+          "scores": {
+            "Coherence": 2.5578,
+            "Musicality": 2.4811,
+            "Memorability": 2.3992,
+            "Clarity": 2.445,
+            "Naturalness": 2.4555
+          },
+          "wav_sha256": "085b9e07ebc8565c2988b56e9aab31d3fb6e21cbfacf4b59875635d31d1b4a7b",
+          "efficiency": {
+            "available": true,
+            "tool_calls": 190,
+            "successful_generation_calls": 1,
+            "failed_generation_calls": 0,
+            "edit_notes_calls": 2,
+            "elapsed_seconds": 706.8220480999989
+          }
+        },
+        {
+          "id": "anime_song-development-01",
+          "transport_pass": true,
+          "scores": {
+            "Coherence": 3.2834,
+            "Musicality": 3.0784,
+            "Memorability": 3.0924,
+            "Clarity": 3.1258,
+            "Naturalness": 3.0086
+          },
+          "wav_sha256": "996dcc66e7da016f694ffe9ef837e558c5d8bad7180ed8b185f8cdaaca6296a9",
+          "efficiency": {
+            "available": true,
+            "tool_calls": 193,
+            "successful_generation_calls": 2,
+            "failed_generation_calls": 2,
+            "edit_notes_calls": 2,
+            "elapsed_seconds": 757.7202479000007
+          }
+        },
+        {
+          "id": "game_bgm-development-01",
+          "transport_pass": true,
+          "scores": {
+            "Coherence": 2.4846,
+            "Musicality": 2.3016,
+            "Memorability": 2.2721,
+            "Clarity": 2.3274,
+            "Naturalness": 2.2447
+          },
+          "wav_sha256": "da5ebc05c33a070de5c887cd1a918a27f12b9b875cf947c6f2ade47dd629d779",
+          "efficiency": {
+            "available": true,
+            "tool_calls": 223,
+            "successful_generation_calls": 1,
+            "failed_generation_calls": 0,
+            "edit_notes_calls": 2,
+            "elapsed_seconds": 833.5553949000023
+          }
+        }
+      ]
+    },
+    "v3": {
+      "repetitions": 2,
+      "attempts": 14,
+      "delivered": 14,
+      "scored": 14,
+      "using_generation": 14,
+      "successful_generation_calls": 15,
+      "mean_elapsed_seconds": 719.31794,
+      "suite_sha256": {
+        "v3-development": "319cd1c024c642b50c30b9b8f7065aa9bf52e24c03f7800812f15ea06865b678",
+        "v3-development-rep2": "1b6a21d212b3b577f765c3a09ff9848379f4381300a16ff5271f1e4d48741759"
+      },
+      "source_commit": "ecf2cd06f3d16ecb4fe3cd86eab22f72849daa62",
+      "source_provenance_sha256": "68b509ba7602157dfef75109bea65329c0585d5a4562a80a307e0b23915c3803",
+      "prompt_condition_sha256": "b3f8ae036da178d6587bdf160b0d6497cf6891013a6ba615f8998d98313599f4",
+      "executables": {
+        "auris_studio-afdcc21b3886817c.exe": "658f57dde55218bbb3c7b2db1842b527152f1787952e6de32ec4ac735e7b8869"
+      },
+      "trials": [
+        {
+          "id": "pop-development-01",
+          "transport_pass": true,
+          "scores": {
+            "Coherence": 3.4477,
+            "Musicality": 3.0767,
+            "Memorability": 3.2415,
+            "Clarity": 3.1013,
+            "Naturalness": 2.937
+          },
+          "wav_sha256": "5fe94f88b89f49a11f4cab0c382c61310357eabb5fa0a79e5a481ae59401b762",
+          "efficiency": {
+            "available": true,
+            "tool_calls": 165,
+            "successful_generation_calls": 1,
+            "failed_generation_calls": 1,
+            "edit_notes_calls": 3,
+            "elapsed_seconds": 830.7362949000017
+          }
+        },
+        {
+          "id": "city_pop-development-01",
+          "transport_pass": true,
+          "scores": {
+            "Coherence": 2.8938,
+            "Musicality": 2.6226,
+            "Memorability": 2.7028,
+            "Clarity": 2.6721,
+            "Naturalness": 2.556
+          },
+          "wav_sha256": "b7d4300d6bdfa39f1c12ee356b8a314a02c283a17b45bbe355445ae4d9217a75",
+          "efficiency": {
+            "available": true,
+            "tool_calls": 151,
+            "successful_generation_calls": 1,
+            "failed_generation_calls": 0,
+            "edit_notes_calls": 2,
+            "elapsed_seconds": 718.7214413000002
+          }
+        },
+        {
+          "id": "lofi-development-01",
+          "transport_pass": true,
+          "scores": {
+            "Coherence": 2.5266,
+            "Musicality": 2.4549,
+            "Memorability": 2.4087,
+            "Clarity": 2.2455,
+            "Naturalness": 2.3522
+          },
+          "wav_sha256": "4df1f17a27dddf9b207138e6f9433cc3c653d3316e192775564de01c524f0bc0",
+          "efficiency": {
+            "available": true,
+            "tool_calls": 181,
+            "successful_generation_calls": 1,
+            "failed_generation_calls": 0,
+            "edit_notes_calls": 3,
+            "elapsed_seconds": 738.4408169000017
+          }
+        },
+        {
+          "id": "neo_soul-development-01",
+          "transport_pass": true,
+          "scores": {
+            "Coherence": 2.7131,
+            "Musicality": 2.3654,
+            "Memorability": 2.4454,
+            "Clarity": 2.287,
+            "Naturalness": 2.3439
+          },
+          "wav_sha256": "e13f7c7d73427b89e0a3580f375b95858e3407af5e320ce453a2422b8f392d40",
+          "efficiency": {
+            "available": true,
+            "tool_calls": 191,
+            "successful_generation_calls": 1,
+            "failed_generation_calls": 0,
+            "edit_notes_calls": 3,
+            "elapsed_seconds": 800.054809199999
+          }
+        },
+        {
+          "id": "dance_electronic-development-01",
+          "transport_pass": true,
+          "scores": {
+            "Coherence": 2.3047,
+            "Musicality": 2.14,
+            "Memorability": 2.1016,
+            "Clarity": 2.1666,
+            "Naturalness": 2.1648
+          },
+          "wav_sha256": "961abe5880adf1541f2c40ca460278bd66114168281c2e766ff8b28dae1c9d24",
+          "efficiency": {
+            "available": true,
+            "tool_calls": 219,
+            "successful_generation_calls": 1,
+            "failed_generation_calls": 0,
+            "edit_notes_calls": 2,
+            "elapsed_seconds": 670.8673076999985
+          }
+        },
+        {
+          "id": "anime_song-development-01",
+          "transport_pass": true,
+          "scores": {
+            "Coherence": 3.1589,
+            "Musicality": 3.0211,
+            "Memorability": 3.1086,
+            "Clarity": 2.9602,
+            "Naturalness": 2.8437
+          },
+          "wav_sha256": "03618b9d21eecdaee01813f40f5c9c0b5b31cb8c6db161fc968234e268f8b1f2",
+          "efficiency": {
+            "available": true,
+            "tool_calls": 150,
+            "successful_generation_calls": 1,
+            "failed_generation_calls": 0,
+            "edit_notes_calls": 2,
+            "elapsed_seconds": 605.4235041000029
+          }
+        },
+        {
+          "id": "game_bgm-development-01",
+          "transport_pass": true,
+          "scores": {
+            "Coherence": 2.4848,
+            "Musicality": 2.2541,
+            "Memorability": 2.0174,
+            "Clarity": 2.2672,
+            "Naturalness": 2.0242
+          },
+          "wav_sha256": "60d4e5ebceed6d7bdae7ae08f6ff38d839995e152adda3860a8a5149bf1c25a1",
+          "efficiency": {
+            "available": true,
+            "tool_calls": 181,
+            "successful_generation_calls": 1,
+            "failed_generation_calls": 0,
+            "edit_notes_calls": 2,
+            "elapsed_seconds": 806.9626204000015
+          }
+        },
+        {
+          "id": "pop-development-02",
+          "transport_pass": true,
+          "scores": {
+            "Coherence": 3.1557,
+            "Musicality": 2.7203,
+            "Memorability": 2.8926,
+            "Clarity": 2.7259,
+            "Naturalness": 2.4804
+          },
+          "wav_sha256": "ae13fd11680627e4806edbf1a1070c75a58545cf86ab1713fa7a9122960e8db0",
+          "efficiency": {
+            "available": true,
+            "tool_calls": 168,
+            "successful_generation_calls": 1,
+            "failed_generation_calls": 0,
+            "edit_notes_calls": 2,
+            "elapsed_seconds": 750.2131698999983
+          }
+        },
+        {
+          "id": "city_pop-development-02",
+          "transport_pass": true,
+          "scores": {
+            "Coherence": 2.966,
+            "Musicality": 2.7144,
+            "Memorability": 2.7615,
+            "Clarity": 2.8034,
+            "Naturalness": 2.6756
+          },
+          "wav_sha256": "3bf621afcedd6ad0560997c44f06dfe3feef89ef1a8af8918098de1b9b834976",
+          "efficiency": {
+            "available": true,
+            "tool_calls": 161,
+            "successful_generation_calls": 1,
+            "failed_generation_calls": 0,
+            "edit_notes_calls": 2,
+            "elapsed_seconds": 771.6079919999975
+          }
+        },
+        {
+          "id": "lofi-development-02",
+          "transport_pass": true,
+          "scores": {
+            "Coherence": 2.6549,
+            "Musicality": 2.4864,
+            "Memorability": 2.4855,
+            "Clarity": 2.3225,
+            "Naturalness": 2.2538
+          },
+          "wav_sha256": "f2ad04cf6c314c9998f7a45d40dbf455ca0d284b0507a19056f681f1afbe9c3b",
+          "efficiency": {
+            "available": true,
+            "tool_calls": 201,
+            "successful_generation_calls": 2,
+            "failed_generation_calls": 0,
+            "edit_notes_calls": 2,
+            "elapsed_seconds": 678.6893779999991
+          }
+        },
+        {
+          "id": "neo_soul-development-02",
+          "transport_pass": true,
+          "scores": {
+            "Coherence": 2.4822,
+            "Musicality": 2.097,
+            "Memorability": 2.2164,
+            "Clarity": 2.0951,
+            "Naturalness": 2.1334
+          },
+          "wav_sha256": "354645b735b1bec5c53c7bcce1b6b388a3604c78cd543875d9e8b42f63c294c0",
+          "efficiency": {
+            "available": true,
+            "tool_calls": 168,
+            "successful_generation_calls": 1,
+            "failed_generation_calls": 0,
+            "edit_notes_calls": 2,
+            "elapsed_seconds": 762.8125146999992
+          }
+        },
+        {
+          "id": "dance_electronic-development-02",
+          "transport_pass": true,
+          "scores": {
+            "Coherence": 2.3207,
+            "Musicality": 2.1174,
+            "Memorability": 2.0908,
+            "Clarity": 1.9868,
+            "Naturalness": 2.0997
+          },
+          "wav_sha256": "c941eef24549a7486f01cd9625a84201145cf39dec19acea270c33db61bae80d",
+          "efficiency": {
+            "available": true,
+            "tool_calls": 193,
+            "successful_generation_calls": 1,
+            "failed_generation_calls": 0,
+            "edit_notes_calls": 2,
+            "elapsed_seconds": 614.9422610000001
+          }
+        },
+        {
+          "id": "anime_song-development-02",
+          "transport_pass": true,
+          "scores": {
+            "Coherence": 2.7212,
+            "Musicality": 2.5182,
+            "Memorability": 2.5993,
+            "Clarity": 2.5472,
+            "Naturalness": 2.4629
+          },
+          "wav_sha256": "5a56e48b4bed506e81e59ab8d934e78e7c56bc596133f0d0f60c79f1a9c8ae40",
+          "efficiency": {
+            "available": true,
+            "tool_calls": 149,
+            "successful_generation_calls": 1,
+            "failed_generation_calls": 0,
+            "edit_notes_calls": 2,
+            "elapsed_seconds": 661.6833122999997
+          }
+        },
+        {
+          "id": "game_bgm-development-02",
+          "transport_pass": true,
+          "scores": {
+            "Coherence": 2.4397,
+            "Musicality": 2.2208,
+            "Memorability": 2.1704,
+            "Clarity": 2.2837,
+            "Naturalness": 2.0845
+          },
+          "wav_sha256": "faca22f66d84eb41fd4cb876f83ffc7bd6daf5c10a87ffb94e79609518dcf774",
+          "efficiency": {
+            "available": true,
+            "tool_calls": 154,
+            "successful_generation_calls": 1,
+            "failed_generation_calls": 0,
+            "edit_notes_calls": 3,
+            "elapsed_seconds": 659.2957411000025
+          }
+        }
+      ]
+    },
+    "v4": {
+      "repetitions": 2,
+      "attempts": 14,
+      "delivered": 14,
+      "scored": 14,
+      "using_generation": 14,
+      "successful_generation_calls": 15,
+      "mean_elapsed_seconds": 641.536671,
+      "suite_sha256": {
+        "v4-development": "9a9fbe24a0c6bb32587ef13e36353fda89ea77fd294bb11100cbbc06decc49c8",
+        "v4-development-rep2": "3ff0a83929c9d2dc98c8154e55a3afc7954686222b0a550d8d3e464b86e8938d"
+      },
+      "source_commit": "e9acd88b8998fdafbb8be5b9c6cfe4f3a94c14c1",
+      "source_provenance_sha256": "d998bf42eb77ffb690ce68cc3b38a7c187ecdb9d5f27c4a9703b6717f7be01c6",
+      "prompt_condition_sha256": "801155aa9ca05d34b57f7d0f01956cfcc838db80ef06b33c2954953db2a12131",
+      "executables": {
+        "auris_studio-afdcc21b3886817c.exe": "7d75f70a555f4dabecf3404c07ef594edac305f16011c5eb9d4de712801ab7fb"
+      },
+      "trials": [
+        {
+          "id": "pop-development-01",
+          "transport_pass": true,
+          "scores": {
+            "Coherence": 2.7638,
+            "Musicality": 2.5336,
+            "Memorability": 2.6828,
+            "Clarity": 2.5245,
+            "Naturalness": 2.4818
+          },
+          "wav_sha256": "969cb078b9c0c911f673db82dcbb32ca255b31162d5a57d0ebb279bab122f6cb",
+          "efficiency": {
+            "available": true,
+            "tool_calls": 156,
+            "successful_generation_calls": 1,
+            "failed_generation_calls": 1,
+            "edit_notes_calls": 3,
+            "elapsed_seconds": 607.156066399999
+          }
+        },
+        {
+          "id": "city_pop-development-01",
+          "transport_pass": true,
+          "scores": {
+            "Coherence": 2.5407,
+            "Musicality": 2.2792,
+            "Memorability": 2.263,
+            "Clarity": 2.2711,
+            "Naturalness": 2.3051
+          },
+          "wav_sha256": "3ee2a2d1ccb5d83ad118238d46bde3e31bcfbd20e138b6057bc0573651fef6f7",
+          "efficiency": {
+            "available": true,
+            "tool_calls": 186,
+            "successful_generation_calls": 1,
+            "failed_generation_calls": 0,
+            "edit_notes_calls": 2,
+            "elapsed_seconds": 599.0860022000015
+          }
+        },
+        {
+          "id": "lofi-development-01",
+          "transport_pass": true,
+          "scores": {
+            "Coherence": 2.5922,
+            "Musicality": 2.398,
+            "Memorability": 2.4908,
+            "Clarity": 2.1758,
+            "Naturalness": 2.2405
+          },
+          "wav_sha256": "54f79f73ca550eda78bb851bad747034dcbdd334d1acf2adf5fc331ca6c387ac",
+          "efficiency": {
+            "available": true,
+            "tool_calls": 173,
+            "successful_generation_calls": 1,
+            "failed_generation_calls": 0,
+            "edit_notes_calls": 3,
+            "elapsed_seconds": 606.314714600001
+          }
+        },
+        {
+          "id": "neo_soul-development-01",
+          "transport_pass": true,
+          "scores": {
+            "Coherence": 2.2639,
+            "Musicality": 2.0958,
+            "Memorability": 2.1985,
+            "Clarity": 1.908,
+            "Naturalness": 1.9926
+          },
+          "wav_sha256": "ec5e51b06ec5bb287072529daf96294246761fe13465d0afe721a0d69ad3f8b0",
+          "efficiency": {
+            "available": true,
+            "tool_calls": 164,
+            "successful_generation_calls": 1,
+            "failed_generation_calls": 0,
+            "edit_notes_calls": 2,
+            "elapsed_seconds": 638.242792099998
+          }
+        },
+        {
+          "id": "dance_electronic-development-01",
+          "transport_pass": true,
+          "scores": {
+            "Coherence": 2.2071,
+            "Musicality": 2.0186,
+            "Memorability": 2.0089,
+            "Clarity": 1.9889,
+            "Naturalness": 2.023
+          },
+          "wav_sha256": "ff69db945c2bc448d3dd71c215721d9d218acab215e2ff05972aa5e855bf4317",
+          "efficiency": {
+            "available": true,
+            "tool_calls": 202,
+            "successful_generation_calls": 1,
+            "failed_generation_calls": 0,
+            "edit_notes_calls": 2,
+            "elapsed_seconds": 954.2675456000034
+          }
+        },
+        {
+          "id": "anime_song-development-01",
+          "transport_pass": true,
+          "scores": {
+            "Coherence": 2.9933,
+            "Musicality": 2.8595,
+            "Memorability": 2.9301,
+            "Clarity": 2.8591,
+            "Naturalness": 2.6894
+          },
+          "wav_sha256": "10bbd3b7716446659472f9381666f94d648342689198573322fcac1271eb9e7a",
+          "efficiency": {
+            "available": true,
+            "tool_calls": 150,
+            "successful_generation_calls": 2,
+            "failed_generation_calls": 1,
+            "edit_notes_calls": 3,
+            "elapsed_seconds": 658.6299154999942
+          }
+        },
+        {
+          "id": "game_bgm-development-01",
+          "transport_pass": true,
+          "scores": {
+            "Coherence": 2.7637,
+            "Musicality": 2.5208,
+            "Memorability": 2.3567,
+            "Clarity": 2.4414,
+            "Naturalness": 2.3793
+          },
+          "wav_sha256": "b1f59cc97a7de64a86674cd2ef0a16a3df02fb3d5aa0eb126f49d0188e144a2a",
+          "efficiency": {
+            "available": true,
+            "tool_calls": 176,
+            "successful_generation_calls": 1,
+            "failed_generation_calls": 0,
+            "edit_notes_calls": 2,
+            "elapsed_seconds": 752.4383000000016
+          }
+        },
+        {
+          "id": "pop-development-02",
+          "transport_pass": true,
+          "scores": {
+            "Coherence": 3.0116,
+            "Musicality": 2.6523,
+            "Memorability": 2.761,
+            "Clarity": 2.7343,
+            "Naturalness": 2.5829
+          },
+          "wav_sha256": "c0d7547a38b753bb34a939ed7b8dba6352df17a3a5cd62a65cd9983b457be142",
+          "efficiency": {
+            "available": true,
+            "tool_calls": 118,
+            "successful_generation_calls": 1,
+            "failed_generation_calls": 0,
+            "edit_notes_calls": 2,
+            "elapsed_seconds": 526.9674563000008
+          }
+        },
+        {
+          "id": "city_pop-development-02",
+          "transport_pass": true,
+          "scores": {
+            "Coherence": 2.7064,
+            "Musicality": 2.501,
+            "Memorability": 2.5936,
+            "Clarity": 2.592,
+            "Naturalness": 2.5344
+          },
+          "wav_sha256": "a298335b59aa981a8635155e12268ab05673fdc3f4e8786f83e2d9e18fefa21c",
+          "efficiency": {
+            "available": true,
+            "tool_calls": 138,
+            "successful_generation_calls": 1,
+            "failed_generation_calls": 0,
+            "edit_notes_calls": 2,
+            "elapsed_seconds": 561.0560172999976
+          }
+        },
+        {
+          "id": "lofi-development-02",
+          "transport_pass": true,
+          "scores": {
+            "Coherence": 2.463,
+            "Musicality": 2.2497,
+            "Memorability": 2.2346,
+            "Clarity": 2.1737,
+            "Naturalness": 2.186
+          },
+          "wav_sha256": "35cccb1753fcfa176ed479f15cfc98696e26d91c9a7343f0e27a6cda1ddf76f3",
+          "efficiency": {
+            "available": true,
+            "tool_calls": 169,
+            "successful_generation_calls": 1,
+            "failed_generation_calls": 0,
+            "edit_notes_calls": 3,
+            "elapsed_seconds": 635.2476707999995
+          }
+        },
+        {
+          "id": "neo_soul-development-02",
+          "transport_pass": true,
+          "scores": {
+            "Coherence": 2.1963,
+            "Musicality": 1.9834,
+            "Memorability": 1.991,
+            "Clarity": 1.9054,
+            "Naturalness": 1.9426
+          },
+          "wav_sha256": "ea7f77a13f536e3b38970f28ffa5ab7856d8cbf641a4ac37850e651032cd123a",
+          "efficiency": {
+            "available": true,
+            "tool_calls": 166,
+            "successful_generation_calls": 1,
+            "failed_generation_calls": 0,
+            "edit_notes_calls": 3,
+            "elapsed_seconds": 599.7823028999992
+          }
+        },
+        {
+          "id": "dance_electronic-development-02",
+          "transport_pass": true,
+          "scores": {
+            "Coherence": 1.9662,
+            "Musicality": 1.8939,
+            "Memorability": 1.8045,
+            "Clarity": 1.7669,
+            "Naturalness": 1.883
+          },
+          "wav_sha256": "c49e86c0dbe305fd1938ca3ff63b57a65e3c6dae2a24e85fc824805fb70b82e3",
+          "efficiency": {
+            "available": true,
+            "tool_calls": 141,
+            "successful_generation_calls": 1,
+            "failed_generation_calls": 0,
+            "edit_notes_calls": 2,
+            "elapsed_seconds": 635.4290438999997
+          }
+        },
+        {
+          "id": "anime_song-development-02",
+          "transport_pass": true,
+          "scores": {
+            "Coherence": 2.7674,
+            "Musicality": 2.4871,
+            "Memorability": 2.5103,
+            "Clarity": 2.4293,
+            "Naturalness": 2.5145
+          },
+          "wav_sha256": "7e5417e65ab1a148f7f30b5ef1b22578591ebf7410aeb0d3c8169e7236ff3de3",
+          "efficiency": {
+            "available": true,
+            "tool_calls": 168,
+            "successful_generation_calls": 1,
+            "failed_generation_calls": 0,
+            "edit_notes_calls": 3,
+            "elapsed_seconds": 540.686254399996
+          }
+        },
+        {
+          "id": "game_bgm-development-02",
+          "transport_pass": true,
+          "scores": {
+            "Coherence": 2.4123,
+            "Musicality": 2.2046,
+            "Memorability": 2.0286,
+            "Clarity": 2.2159,
+            "Naturalness": 2.1039
+          },
+          "wav_sha256": "da264a7c754a34006600713cde8b25e736b8bfdc9986b1a8276de9603a33e161",
+          "efficiency": {
+            "available": true,
+            "tool_calls": 160,
+            "successful_generation_calls": 1,
+            "failed_generation_calls": 0,
+            "edit_notes_calls": 2,
+            "elapsed_seconds": 666.2093093000003
+          }
+        }
+      ]
+    }
+  },
+  "two_take_development_comparisons": {
+    "v3": {
+      "report_sha256": "4a06a528b13cd9a0a985e866b49222ba68ea2c893df25ffae7de0a67ca610cde",
+      "selection_policy_version": "overall-mean-priority-v2",
+      "acceptance_rule": {
+        "selection_policy_version": "overall-mean-priority-v2",
+        "overall_mean_delta_at_least": 0.03,
+        "holdout_mean_delta_positive": true,
+        "combined_mean_delta_at_least": 0.03
+      },
+      "overall": {
+        "count": 14,
+        "before_mean": 2.534176,
+        "after_mean": 2.51712,
+        "mean_delta": -0.017056,
+        "axis_delta": {
+          "Coherence": 0.026957,
+          "Musicality": -0.0634,
+          "Memorability": -0.009007,
+          "Clarity": -0.029443,
+          "Naturalness": -0.010386
+        }
+      },
+      "genres": {
+        "pop": {
+          "count": 2,
+          "before_mean": 2.83778,
+          "after_mean": 2.97791,
+          "mean_delta": 0.14013,
+          "axis_delta": {
+            "Coherence": 0.29485,
+            "Musicality": 0.05615,
+            "Memorability": 0.177,
+            "Clarity": 0.0935,
+            "Naturalness": 0.07915
+          }
+        },
+        "city_pop": {
+          "count": 2,
+          "before_mean": 2.6281,
+          "after_mean": 2.73682,
+          "mean_delta": 0.10872,
+          "axis_delta": {
+            "Coherence": 0.149,
+            "Musicality": 0.0955,
+            "Memorability": 0.0702,
+            "Clarity": 0.08685,
+            "Naturalness": 0.14205
+          }
+        },
+        "lofi": {
+          "count": 2,
+          "before_mean": 2.39964,
+          "after_mean": 2.4191,
+          "mean_delta": 0.01946,
+          "axis_delta": {
+            "Coherence": -0.08335,
+            "Musicality": -0.0259,
+            "Memorability": 0.0171,
+            "Clarity": 0.10015,
+            "Naturalness": 0.0893
+          }
+        },
+        "neo_soul": {
+          "count": 2,
+          "before_mean": 2.10693,
+          "after_mean": 2.31789,
+          "mean_delta": 0.21096,
+          "axis_delta": {
+            "Coherence": 0.31385,
+            "Musicality": 0.0856,
+            "Memorability": 0.2457,
+            "Clarity": 0.2186,
+            "Naturalness": 0.19105
+          }
+        },
+        "dance_electronic": {
+          "count": 2,
+          "before_mean": 2.14539,
+          "after_mean": 2.14931,
+          "mean_delta": 0.00392,
+          "axis_delta": {
+            "Coherence": 0.0471,
+            "Musicality": -0.01345,
+            "Memorability": -0.01205,
+            "Clarity": -0.01455,
+            "Naturalness": 0.01255
+          }
+        },
+        "anime_song": {
+          "count": 2,
+          "before_mean": 2.93267,
+          "after_mean": 2.79413,
+          "mean_delta": -0.13854,
+          "axis_delta": {
+            "Coherence": -0.13195,
+            "Musicality": -0.1567,
+            "Memorability": -0.0346,
+            "Clarity": -0.21125,
+            "Naturalness": -0.1582
+          }
+        },
+        "game_bgm": {
+          "count": 2,
+          "before_mean": 2.68872,
+          "after_mean": 2.22468,
+          "mean_delta": -0.46404,
+          "axis_delta": {
+            "Coherence": -0.4008,
+            "Musicality": -0.485,
+            "Memorability": -0.5264,
+            "Clarity": -0.4794,
+            "Naturalness": -0.4286
+          }
+        }
+      },
+      "supplementary": {
+        "count": 14,
+        "before_mean": 2.568479,
+        "after_mean": 2.549755,
+        "mean_delta": -0.018723,
+        "axis_delta": {
+          "Coherence": 0.026957,
+          "Musicality": -0.0634,
+          "Memorability": -0.009007,
+          "Clarity": -0.029443
+        }
+      },
+      "acceptance": {
+        "all_pairs_valid": true,
+        "complete_development_and_holdout": false,
+        "candidate_eligible": false,
+        "overall_mean_delta": -0.017056,
+        "worst_genre_delta": -0.46404,
+        "improved_genres": 5,
+        "holdout_mean_delta": null,
+        "accepted": false
+      }
+    },
+    "v4": {
+      "report_sha256": "09eea5389ebbcd9c07ef357b3c29736ae3b5874b3d9a7cfbac76f5e883c57a44",
+      "selection_policy_version": "overall-mean-priority-v2",
+      "acceptance_rule": {
+        "selection_policy_version": "overall-mean-priority-v2",
+        "overall_mean_delta_at_least": 0.03,
+        "holdout_mean_delta_positive": true,
+        "combined_mean_delta_at_least": 0.03
+      },
+      "overall": {
+        "count": 14,
+        "before_mean": 2.534176,
+        "after_mean": 2.357501,
+        "mean_delta": -0.176674,
+        "axis_delta": {
+          "Coherence": -0.160336,
+          "Musicality": -0.215671,
+          "Memorability": -0.179586,
+          "Clarity": -0.206457,
+          "Naturalness": -0.121321
+        }
+      },
+      "genres": {
+        "pop": {
+          "count": 2,
+          "before_mean": 2.83778,
+          "after_mean": 2.67286,
+          "mean_delta": -0.16492,
+          "axis_delta": {
+            "Coherence": -0.11915,
+            "Musicality": -0.2494,
+            "Memorability": -0.16815,
+            "Clarity": -0.1907,
+            "Naturalness": -0.0972
+          }
+        },
+        "city_pop": {
+          "count": 2,
+          "before_mean": 2.6281,
+          "after_mean": 2.45865,
+          "mean_delta": -0.16945,
+          "axis_delta": {
+            "Coherence": -0.15735,
+            "Musicality": -0.1829,
+            "Memorability": -0.23365,
+            "Clarity": -0.21935,
+            "Naturalness": -0.054
+          }
+        },
+        "lofi": {
+          "count": 2,
+          "before_mean": 2.39964,
+          "after_mean": 2.32043,
+          "mean_delta": -0.07921,
+          "axis_delta": {
+            "Coherence": -0.1465,
+            "Musicality": -0.1727,
+            "Memorability": -0.0673,
+            "Clarity": -0.0091,
+            "Naturalness": -0.00045
+          }
+        },
+        "neo_soul": {
+          "count": 2,
+          "before_mean": 2.10693,
+          "after_mean": 2.04775,
+          "mean_delta": -0.05918,
+          "axis_delta": {
+            "Coherence": -0.0537,
+            "Musicality": -0.106,
+            "Memorability": 0.00955,
+            "Clarity": -0.06575,
+            "Naturalness": -0.08
+          }
+        },
+        "dance_electronic": {
+          "count": 2,
+          "before_mean": 2.14539,
+          "after_mean": 1.9561,
+          "mean_delta": -0.18929,
+          "axis_delta": {
+            "Coherence": -0.17895,
+            "Musicality": -0.1859,
+            "Memorability": -0.20155,
+            "Clarity": -0.21335,
+            "Naturalness": -0.1667
+          }
+        },
+        "anime_song": {
+          "count": 2,
+          "before_mean": 2.93267,
+          "after_mean": 2.704,
+          "mean_delta": -0.22867,
+          "axis_delta": {
+            "Coherence": -0.19165,
+            "Musicality": -0.25305,
+            "Memorability": -0.16835,
+            "Clarity": -0.32075,
+            "Naturalness": -0.20955
+          }
+        },
+        "game_bgm": {
+          "count": 2,
+          "before_mean": 2.68872,
+          "after_mean": 2.34272,
+          "mean_delta": -0.346,
+          "axis_delta": {
+            "Coherence": -0.27505,
+            "Musicality": -0.35975,
+            "Memorability": -0.42765,
+            "Clarity": -0.4262,
+            "Naturalness": -0.24135
+          }
+        }
+      },
+      "supplementary": {
+        "count": 14,
+        "before_mean": 2.568479,
+        "after_mean": 2.377966,
+        "mean_delta": -0.190513,
+        "axis_delta": {
+          "Coherence": -0.160336,
+          "Musicality": -0.215671,
+          "Memorability": -0.179586,
+          "Clarity": -0.206457
+        }
+      },
+      "acceptance": {
+        "all_pairs_valid": true,
+        "complete_development_and_holdout": false,
+        "candidate_eligible": false,
+        "overall_mean_delta": -0.176674,
+        "worst_genre_delta": -0.346,
+        "improved_genres": 0,
+        "holdout_mean_delta": null,
+        "accepted": false
+      }
+    }
+  },
+  "notes": [
+    "Mean scores use five equally weighted SongEval axes; four-axis sensitivity excludes Naturalness.",
+    "Failed v2 pop startup is retained, without substitution or selective retry.",
+    "Elapsed times are descriptive under concurrent execution, not a causal speed benchmark.",
+    "The common installed host skill was read in some trials; prompt context was not fully isolated.",
+    "No human listening assessment; short built-in-instrument demos do not establish full-song or vocal quality."
+  ]
+}

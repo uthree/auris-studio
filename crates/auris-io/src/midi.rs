@@ -594,10 +594,12 @@ struct ExportTrackPlan {
     channel: u4,
     bend_range: f32,
     event_capacity: usize,
+    end_tick: Ticks,
 }
 
 struct ExportPlan {
     conductor_capacity: usize,
+    conductor_end_tick: Ticks,
     instrument_tracks: Vec<ExportTrackPlan>,
 }
 
@@ -749,6 +751,14 @@ fn preflight_export(project: &Project, limits: ExportLimits) -> Result<ExportPla
 
     let mut file_notes = 0;
     let mut file_curve_events = 0;
+    let mut conductor_end_tick = project
+        .tempo_map
+        .points()
+        .iter()
+        .map(|point| point.tick)
+        .chain(project.signatures.points().iter().map(|point| point.tick))
+        .max()
+        .unwrap_or(Ticks::ZERO);
     let mut instrument_tracks = Vec::new();
     reserve_export(
         &mut instrument_tracks,
@@ -761,6 +771,14 @@ fn preflight_export(project: &Project, limits: ExportLimits) -> Result<ExportPla
             .as_instrument()
             .ok_or_else(|| IoError::MidiWrite("instrument export plan changed".to_string()))?;
         let bend_range = bend_ranges[usize::from(seed.channel.as_int())];
+        let end_tick = instrument
+            .clips
+            .iter()
+            .filter(|clip| !clip.muted)
+            .map(|clip| clip.sounding_end())
+            .max()
+            .unwrap_or(Ticks::ZERO);
+        conductor_end_tick = conductor_end_tick.max(end_tick);
         let mut track_notes = 0;
         let mut track_curve_events = 0;
         let mut track_events = 0;
@@ -847,6 +865,7 @@ fn preflight_export(project: &Project, limits: ExportLimits) -> Result<ExportPla
                     limits.track_events,
                 )
             })?,
+            end_tick,
         });
     }
     Ok(ExportPlan {
@@ -857,6 +876,7 @@ fn preflight_export(project: &Project, limits: ExportLimits) -> Result<ExportPla
                 limits.track_events,
             )
         })?,
+        conductor_end_tick,
         instrument_tracks,
     })
 }
@@ -869,12 +889,29 @@ pub struct StagedMidi {
     file: NamedTempFile,
     path: PathBuf,
     notes: usize,
+    duration_ticks: Ticks,
+    duration_seconds: f64,
 }
 
 impl StagedMidi {
     /// Number of performed notes encoded in the staged file.
     pub fn notes(&self) -> usize {
         self.notes
+    }
+
+    /// The exported score extent in the file's 960-PPQ ticks.
+    pub fn duration_ticks(&self) -> Ticks {
+        self.duration_ticks
+    }
+
+    /// The exported score extent in seconds under the captured tempo map.
+    pub fn duration_seconds(&self) -> f64 {
+        self.duration_seconds
+    }
+
+    /// The fixed metrical resolution used by Auris MIDI exports.
+    pub const fn ticks_per_quarter(&self) -> i64 {
+        TICKS_PER_QUARTER
     }
 
     /// Atomically replaces the destination with the already-synchronised MIDI file.
@@ -896,7 +933,7 @@ impl StagedMidi {
 /// happen before this function returns; publication is one short rename after the caller has
 /// revalidated cancellation and live document ownership.
 pub fn stage_midi_file(path: &Path, project: &Project) -> Result<StagedMidi> {
-    let (smf_tracks, notes) = build_tracks(project)?;
+    let (smf_tracks, notes, duration_ticks) = build_tracks(project)?;
     let smf = Smf {
         header: Header::new(
             Format::Parallel,
@@ -913,6 +950,8 @@ pub fn stage_midi_file(path: &Path, project: &Project) -> Result<StagedMidi> {
         file,
         path: path.to_path_buf(),
         notes,
+        duration_ticks,
+        duration_seconds: project.tempo_map.ticks_to_seconds(duration_ticks).0,
     })
 }
 
@@ -932,7 +971,7 @@ pub fn write_midi_file(path: &Path, project: &Project) -> Result<usize> {
 
 /// [`write_midi_file`] into memory, so a round trip can be tested without a filesystem.
 pub fn write_midi_bytes(project: &Project) -> Result<Vec<u8>> {
-    let (tracks, _) = build_tracks(project)?;
+    let (tracks, _, _) = build_tracks(project)?;
     let smf = Smf {
         header: Header::new(
             Format::Parallel,
@@ -947,7 +986,7 @@ pub fn write_midi_bytes(project: &Project) -> Result<Vec<u8>> {
 }
 
 /// The file's tracks, and how many notes went into them.
-fn build_tracks(project: &Project) -> Result<(Vec<Vec<TrackEvent<'static>>>, usize)> {
+fn build_tracks(project: &Project) -> Result<(Vec<Vec<TrackEvent<'static>>>, usize, Ticks)> {
     let plan = preflight_export(project, EXPORT_LIMITS)?;
     let mut tracks = Vec::new();
     reserve_export(
@@ -955,7 +994,9 @@ fn build_tracks(project: &Project) -> Result<(Vec<Vec<TrackEvent<'static>>>, usi
         plan.instrument_tracks.len().saturating_add(1),
         "the Standard MIDI File track list",
     )?;
-    tracks.push(conductor_track(project, plan.conductor_capacity)?);
+    // Reserve the conductor slot until every performed event's end is known.
+    tracks.push(Vec::new());
+    let mut actual_end_tick = plan.conductor_end_tick;
     let mut count = 0usize;
     for track_plan in plan.instrument_tracks {
         let track = project.tracks.get(track_plan.track_index).ok_or_else(|| {
@@ -1056,9 +1097,17 @@ fn build_tracks(project: &Project) -> Result<(Vec<Vec<TrackEvent<'static>>>, usi
                 },
             )
         });
-        tracks.push(delta_encode(track.name.clone(), events)?);
+        if let Some((at, _)) = events.last() {
+            actual_end_tick = actual_end_tick.max(*at);
+        }
+        tracks.push(delta_encode(
+            track.name.clone(),
+            events,
+            track_plan.end_tick,
+        )?);
     }
-    Ok((tracks, count))
+    tracks[0] = conductor_track(project, plan.conductor_capacity, actual_end_tick)?;
+    Ok((tracks, count, actual_end_tick))
 }
 
 fn ensure_planned_events<T>(events: &[T], additional: usize, event_capacity: usize) -> Result<()> {
@@ -1071,7 +1120,11 @@ fn ensure_planned_events<T>(events: &[T], additional: usize, event_capacity: usi
 }
 
 /// The first track of a format 1 file: the clock, and nothing that makes a sound.
-fn conductor_track(project: &Project, event_capacity: usize) -> Result<Vec<TrackEvent<'static>>> {
+fn conductor_track(
+    project: &Project,
+    event_capacity: usize,
+    end_tick: Ticks,
+) -> Result<Vec<TrackEvent<'static>>> {
     let mut events: Vec<(Ticks, TrackEventKind<'static>)> = Vec::new();
     reserve_export(
         &mut events,
@@ -1100,13 +1153,14 @@ fn conductor_track(project: &Project, event_capacity: usize) -> Result<Vec<Track
         ));
     }
     events.sort_by_key(|(at, _)| *at);
-    delta_encode(project.name.clone(), events)
+    delta_encode(project.name.clone(), events, end_tick)
 }
 
 /// Turns absolute positions into the deltas a file stores, with a name and an end marker.
 fn delta_encode(
     name: String,
     events: Vec<(Ticks, TrackEventKind<'static>)>,
+    end_tick: Ticks,
 ) -> Result<Vec<TrackEvent<'static>>> {
     let capacity = events
         .len()
@@ -1136,8 +1190,14 @@ fn delta_encode(
             kind,
         });
     }
+    let terminal_delta = (end_tick - previous).raw().max(0) as u64;
+    if terminal_delta > 0x0fff_ffff {
+        return Err(IoError::MidiWrite(format!(
+            "event delta of {terminal_delta} ticks exceeds the Standard MIDI File limit"
+        )));
+    }
     out.push(TrackEvent {
-        delta: u28::new(0),
+        delta: u28::new(terminal_delta as u32),
         kind: TrackEventKind::Meta(MetaMessage::EndOfTrack),
     });
     Ok(out)
@@ -2080,6 +2140,86 @@ mod tests {
         clip.loop_end = Ticks::QUARTER * 2;
     }
 
+    fn track_end_ticks(bytes: &[u8], track: usize) -> u32 {
+        let smf = Smf::parse(bytes).expect("valid SMF");
+        smf.tracks[track]
+            .iter()
+            .map(|event| event.delta.as_int())
+            .sum()
+    }
+
+    #[test]
+    fn midi_eot_preserves_clip_extent_and_excludes_audio_extent() {
+        let mut project = project_with(
+            vec![Note::new(60, Ticks::ZERO, Ticks::QUARTER)],
+            Ticks::QUARTER * 64,
+        );
+        let audio = project.add_audio_track("Long audio");
+        let source = project.add_audio_source(
+            "long",
+            auris_core::AssetPath::external("long.wav"),
+            4_800_000,
+            48_000.0,
+            1,
+        );
+        project.add_audio_clip(audio, source, Ticks::ZERO).unwrap();
+
+        let bytes = write_midi_bytes(&project).unwrap();
+        assert_eq!(track_end_ticks(&bytes, 0), 64 * TICKS_PER_QUARTER as u32);
+        assert_eq!(track_end_ticks(&bytes, 1), 64 * TICKS_PER_QUARTER as u32);
+    }
+
+    #[test]
+    fn looped_clip_eot_includes_trailing_loop_extent_without_changing_notes() {
+        let mut project = Project::new("Loop extent", 48_000.0);
+        let track = project.add_instrument_track("Loop", "synth");
+        let clip = project
+            .add_midi_clip(track, "Loop", Ticks::ZERO, Ticks::QUARTER * 2)
+            .unwrap();
+        let clip = project.midi_clip_mut(clip).unwrap();
+        clip.notes = vec![Note::new(60, Ticks::ZERO, Ticks::QUARTER)];
+        clip.loop_end = Ticks::QUARTER * 4;
+        let bytes = write_midi_bytes(&project).unwrap();
+        let imported = read_midi_bytes(&bytes).unwrap();
+        assert_eq!(imported.tracks[0].notes.len(), 2);
+        assert_eq!(imported.tracks[0].notes[0].start, Ticks::ZERO);
+        assert_eq!(imported.tracks[0].notes[0].length, Ticks::QUARTER);
+        assert_eq!(imported.tracks[0].notes[1].start, Ticks::QUARTER * 2);
+        assert_eq!(imported.tracks[0].notes[1].length, Ticks::QUARTER);
+        assert_eq!(track_end_ticks(&bytes, 1), (Ticks::QUARTER).0 as u32 * 4);
+    }
+
+    #[test]
+    fn staged_midi_duration_uses_the_captured_tempo_map() {
+        let mut project = project_with(
+            vec![Note::new(60, Ticks::ZERO, Ticks::QUARTER)],
+            Ticks::QUARTER * 8,
+        );
+        project.tempo_map = TempoMap::from_points(vec![
+            auris_core::time::TempoPoint {
+                tick: Ticks::ZERO,
+                bpm: 60.0,
+            },
+            auris_core::time::TempoPoint {
+                tick: Ticks::QUARTER * 4,
+                bpm: 120.0,
+            },
+        ])
+        .unwrap();
+        let destination = TempFile::new("tempo-duration.mid");
+        let staged = stage_midi_file(destination.path(), &project).unwrap();
+        assert_eq!(staged.duration_ticks(), Ticks::QUARTER * 8);
+        assert!((staged.duration_seconds() - 6.0).abs() < 0.0001);
+    }
+
+    #[test]
+    fn delta_encode_keeps_an_actual_event_tail_after_the_planned_extent() {
+        let events = vec![(Ticks(100), note_on(0, 60, 100).kind)];
+        let encoded = delta_encode("tail".into(), events, Ticks(50)).unwrap();
+        let end: u32 = encoded.iter().map(|event| event.delta.as_int()).sum();
+        assert_eq!(end, 100);
+    }
+
     #[test]
     fn export_note_budget_is_checked_per_track_and_across_all_tracks_before_expansion() {
         let mut one_track = Project::new("Track limit", 48_000.0);
@@ -2188,6 +2328,8 @@ mod tests {
 
         let staged = stage_midi_file(&destination, &project).unwrap();
         assert_eq!(staged.notes(), 1);
+        assert_eq!(staged.duration_ticks(), Ticks::QUARTER);
+        assert_eq!(staged.ticks_per_quarter(), 960);
         assert_eq!(std::fs::read(&destination).unwrap(), b"previous MIDI bytes");
         drop(staged);
         assert_eq!(std::fs::read_dir(folder.path()).unwrap().count(), 1);

@@ -185,6 +185,57 @@ impl Session {
         self.project.harmony.stamp(chart, from, bars, signature)
     }
 
+    /// Writes validated, bar-addressed agent harmony without pointer-grid snapping.
+    /// The caller groups this with section edits in one transaction.
+    pub(crate) fn write_bounded_harmony(
+        &mut self,
+        start_bar: u32,
+        bars: u32,
+        key: Option<MusicalKey>,
+        chart: Option<&Chart>,
+        clear_chords: bool,
+    ) {
+        if key.is_none() && chart.is_none() && !clear_chords {
+            return;
+        }
+        self.record(Edit::StampProgression);
+        let start = self.project.signatures.bar_start(start_bar);
+        let end = self.project.signatures.bar_start(start_bar + bars);
+        if let Some(key) = key {
+            let resumes = self.project.harmony.key_at(end);
+            let internal = self
+                .project
+                .harmony
+                .keys
+                .points()
+                .iter()
+                .filter(|point| point.tick > start && point.tick < end)
+                .map(|point| point.tick)
+                .collect::<Vec<_>>();
+            for tick in internal {
+                self.project.harmony.keys.remove_point(tick);
+            }
+            self.project.harmony.keys.set_point(start, key);
+            self.project.harmony.keys.set_point(end, resumes);
+        }
+        if clear_chords || chart.is_some() {
+            let resumes = self.project.harmony.numeral_at(end);
+            self.project.harmony.clear(start, end);
+            if let Some(chart) = chart {
+                let mut bar_chart = chart.clone();
+                for offset in 0..bars {
+                    let at = self.project.signatures.bar_start(start_bar + offset);
+                    let signature = self.project.signatures.signature_at(at);
+                    bar_chart.bars = vec![chart.bars[offset as usize % chart.bars.len()].clone()];
+                    self.project.harmony.stamp(&bar_chart, at, 1, signature);
+                }
+            }
+            // A chord map holds its last value indefinitely. Restore even silence explicitly:
+            // clearing an already empty range cannot create this boundary before the stamp.
+            self.project.harmony.chords.set_point(end, resumes);
+        }
+    }
+
     /// Names the section of the song beginning at the bar `at` falls in.
     ///
     /// Sections snap to bar lines rather than to the editing grid: 「サビはこの小節から」 is

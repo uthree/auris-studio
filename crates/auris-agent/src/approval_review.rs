@@ -1,28 +1,9 @@
 //! Independent, tool-free review of an operation awaiting the desktop's approval.
 
 use crate::*;
-use rig::agent::{ModelTurnAction, ModelTurnFinished};
 use serde::Deserialize;
 use std::sync::mpsc;
 mod evidence;
-
-struct CompleteReview;
-
-impl AgentHook for CompleteReview {
-    async fn on_model_turn_finished(
-        &self,
-        _: &HookContext,
-        event: ModelTurnFinished<'_>,
-    ) -> ModelTurnAction {
-        if event.raw["done_reason"] == "length"
-            || event.raw["choices"][0]["finish_reason"] == "length"
-        {
-            ModelTurnAction::stop("Approval reviewer reached the output limit")
-        } else {
-            ModelTurnAction::continue_run()
-        }
-    }
-}
 
 /// The reviewer's recommendation; only `Approve` can grant a one-time permit.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
@@ -138,30 +119,7 @@ pub fn start_with_evidence(
 }
 
 async fn review(prefs: &auris_session::AgentPreferences, prompt: &str) -> Result<Review, String> {
-    let text = match prefs.backend.as_str() {
-        "codex" => backends::codex::review(prefs, prompt).await?,
-        "claude" => backends::claude::review(prefs, prompt).await?,
-        "opencode" => backends::opencode::review(prefs, prompt).await?,
-        "antigravity" => backends::antigravity::review(prefs, prompt).await?,
-        "" | "rig" => {
-            let Command::Run(options) =
-                parse_command(&[], &|name| std::env::var(name).ok(), prefs)?
-            else {
-                return Err("Expected reviewer settings".into());
-            };
-            let agent = build_with(&options, |builder| {
-                builder.preamble(INSTRUCTIONS).max_tokens(1024).build()
-            })?;
-            agent
-                .prompt(prompt)
-                .add_hook(CompleteReview)
-                .await
-                .map_err(|error| error.to_string())?
-                .output()
-                .to_owned()
-        }
-        _ => return Err("Unknown approval reviewer backend".into()),
-    };
+    let text = crate::completion::prompt(prefs, INSTRUCTIONS, prompt, 1024).await?;
     parse(&text)
 }
 

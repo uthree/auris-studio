@@ -423,6 +423,7 @@ impl FlowGraph {
                 let handle_id = handle.id.clone();
                 let handle_type = handle.handle_type;
                 let handle_position = handle.position;
+                let default_bg = handle.color.unwrap_or(default_bg);
                 let state = state.clone();
 
                 // Highlight: strongly if this is the snapped target, mildly if potential target

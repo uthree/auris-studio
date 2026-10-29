@@ -304,11 +304,26 @@ and `name` names the piano track. Notes remain estimates; review timing and timb
 See the [external note API](transcription-api.md) for its validation and permission contract.
 
 For a new song, write its musical decisions into the document with `edit_harmony`, for example
-`{"start_bar":1,"bars":16,"key":"D major","chords":"| I | vi | IV | V |"}`.
+`{"start_bar":1,"bars":16,"key":"D major","chords":["I","IV V","vi","ii V"]}`.
+Each array entry is one bar, with one or more chords sharing it equally. In 4/4,
+`"IV V"` places IV on beat 1 and V on beat 3. Mix different numbers of chords
+per bar to suit the phrase. Explicit pipe-delimited strings such as
+`"| I | IV V | vi | ii V |"`, single
+chords and catalogue references are also accepted. A bare multi-chord string such as
+`"I V vi IV"` is ambiguous and is rejected before editing. The response includes
+`chart_bars` and the number of `chord_changes` in the range to check the placement.
 The chart repeats over the requested bars. The previous key resumes after the range;
-existing interior key points remain. The operation edits the key/chord map, preserves notes
+supplied keys replace interior key changes. The operation edits the key/chord map, preserves notes
 and mix, and is one Undo step. Audible chord notes alone do not populate this map.
 `clear_chords:true` clears the selected range; omit `chords` when clearing.
+
+`inspect_audio` reports `harmony_events` for the inspected range: the harmony in
+force at the start, then every chord or key change, including changes inside a
+bar. Each event has absolute `tick`, 1-based `bar`/`beat`, `tick_in_beat` and
+range-relative `start_seconds`. Ticks use 960 per quarter; the beat follows the
+local meter. At most 128 events are returned; check `harmony_event_count` and
+`harmony_events_truncated`, and use `inspect_project` for full maps when needed.
+`harmony_at_bar_starts` remains a summary, so it cannot verify intra-bar changes.
 
 Write the form into the section lane too. For example,
 `{"start_bar":1,"bars":4,"section":"Intro"}` and
@@ -414,17 +429,15 @@ input support to listen to it. Deliver the playable file and report the score an
 
 ## Live agent system prompt
 
-The standard live prompt starts with musical decisions: motif development,
-phrase direction, lyric prosody, harmonic motion, section contrasts, arrangement
-roles and a complete ending. The model chooses a writing order suited to the brief
-and can author accompaniment or use a generation recipe. It completes the requested
-form before repeated local polishing, checks the actual score and rendered passages,
-and distinguishes those observations from listening preference.
+The standard prompt gives the agent a short production sequence: inspect, establish
+form/harmony, author notes, arrange/mix, then verify and deliver. Explicit constraints
+take priority over creative choices. It completes the requested form before repeated
+local polishing and distinguishes score/audio measurements from listening preference.
 
 Musical knowledge lives in `crates/auris-agent/src/prompts/musical-design.md`, shared by
 both live prompt profiles, the startup song-direction planner and standalone lyric generation.
-It covers motif rhythm/development, phrase releases, harmonic colour, chorus register,
-prosody, arrangement, interludes, effects and interpreting component-specific feedback.
+It prioritizes motif development, phrase destinations/releases, section contrast,
+lyric fit, foreground support and balancing the actual sounds.
 The startup planner selects three directions. Each then runs the configured tool-using agent
 in an isolated, note-free session, with the same resolved composition prompt as the panel.
 Selected instruments and singers are prepared first. The agent authors expressive notes,
@@ -439,11 +452,14 @@ denials. Note replacement is allowed inside the new disposable candidate; operat
 interactive approval remain unavailable. No external evaluator or shell setup is required.
 Lyric generation applies it to words and phrase structure without claiming known pitches.
 
-Live editing instructions remain in `crates/auris-agent/src/prompts/composition.md`; the standard
-profile also includes `prompts/live-tools.md` for operation contracts. Shared vocal
-form, phrasing and performance guidance is appended by `default_system_prompt`.
-The experimental modular profile uses the same musical guidance with its workflow
-instructions. Codex and Claude Code receive the same resolved composition prompt.
+The production sequence lives in `crates/auris-agent/src/prompts/composition.md`;
+`prompts/live-tools.md` retains essential operation contracts such as IDs, revisions,
+note units, lyrics, singer takes and final-render verification. Exact schemas and
+detailed task guidance are obtained through discovery and `tool_help` when needed.
+The experimental modular profile additionally selects a production-record workflow.
+The editor panel and workshop composers resolve the same shared prompt; the workshop
+adds its private-session and host-owned export constraints. Codex and Claude Code
+receive the same resolved composition prompt.
 
 Settings → Agent includes a multiline **System prompt** editor shared by Codex,
 Claude Code and Rig models. It starts with the current standard prompt in full.

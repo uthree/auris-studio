@@ -6,6 +6,7 @@
 use std::path::PathBuf;
 use std::process::Child;
 
+use atelier::{Edge, IconName, SectionHeader, Sidebar};
 use auris_i18n::{Key, Language, messages};
 use auris_session::{
     DiffSingerSetup, LeapSingerCheck, LeapSingerSetup, LeapSingerVariant, VoicevoxCatalog,
@@ -15,7 +16,7 @@ use auris_session::{
 };
 use gpui::{
     AnyElement, App, Bounds, Context, FocusHandle, Focusable, IntoElement, KeyDownEvent, Render,
-    WeakEntity, Window, WindowBounds, WindowHandle, WindowOptions, div, prelude::*, px, rems, size,
+    WeakEntity, Window, WindowBounds, WindowHandle, WindowOptions, div, prelude::*, px, size,
 };
 
 use crate::app::AurisApp;
@@ -23,7 +24,7 @@ use crate::theme::{Metrics, Theme};
 use crate::titlebar;
 use crate::ui::prompt::{editable_text, field_text};
 use crate::ui::text_field::{HasTextField, KeyEffect, TextField};
-use crate::ui::widgets::{ButtonState, ButtonStyle, button, button_enabled};
+use crate::ui::widgets::{ButtonState, ButtonStyle, button, button_enabled, disclosure, nav_item};
 
 /// Which external backend is being configured.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -365,26 +366,22 @@ impl VoiceSetupWindow {
             .into_any_element(),
             false => field_text(value.content().to_string(), theme.text).into_any_element(),
         };
+        let height = theme.atelier.density.control_md;
+        // Atelier's form row: the label above its field, so a long translated label never
+        // squeezes the value it names, and the field gets the whole width of the page.
         div()
             .flex()
-            .items_center()
-            .gap_2()
-            .child(
-                div()
-                    .w(rems(9.0))
-                    .flex_shrink_0()
-                    .text_xs()
-                    .text_color(theme.text_muted)
-                    .child(self.t(label)),
-            )
+            .flex_col()
+            .gap(theme.atelier.spacing.xxs)
+            .child(field_label(self.t(label), &theme))
             .child(
                 div()
                     .id(("voice-setup-field", field as usize))
                     .debug_selector(move || format!("voice-setup-field-{}", field as usize))
-                    .h_7()
-                    .flex_1()
+                    .h(height)
+                    .w_full()
                     .min_w_0()
-                    .rounded(Metrics::RADIUS_SM)
+                    .rounded(theme.atelier.control_radius(height))
                     .bg(theme.surface_sunken)
                     .border_1()
                     .border_color(if active { theme.accent } else { theme.border })
@@ -406,59 +403,74 @@ impl VoiceSetupWindow {
             .into_any_element()
     }
 
-    fn render_tabs(&self, cx: &mut Context<Self>) -> AnyElement {
+    /// The three backends as a navigation column, each named with what it is for.
+    fn render_nav(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let theme = self.theme.clone();
-        div()
-            .flex()
-            .items_center()
-            .flex_shrink_0()
-            .gap_1()
-            .px_3()
-            .py_2()
-            .border_b_1()
-            .border_color(theme.border)
-            .child(button_enabled(
+        let page = |id: &'static str, tab: VoiceSetupTab, label: Key, brief: Key| {
+            let glyph = match tab {
+                VoiceSetupTab::Voicevox => IconName::Mic,
+                VoiceSetupTab::DiffSinger => IconName::Folder,
+                VoiceSetupTab::LeapSinger => IconName::Waveform,
+            };
+            nav_item(
+                id,
+                self.t(label),
+                Some(self.t(brief).into()),
+                glyph,
+                self.tab == tab,
+                !self.saving,
+                &theme,
+                cx.listener(move |this, _, _, cx| {
+                    this.invalidate_request();
+                    this.tab = tab;
+                    this.active = Field::first(tab);
+                    cx.notify();
+                }),
+            )
+        };
+        let pages = [
+            page(
                 "voice-tab-voicevox",
-                self.t(Key::VoiceSetupVoicevox),
-                ButtonStyle::Normal,
-                ButtonState::available(self.tab == VoiceSetupTab::Voicevox, !self.saving),
-                theme.accent,
-                &theme,
-                cx.listener(|this, _, _, cx| {
-                    this.invalidate_request();
-                    this.tab = VoiceSetupTab::Voicevox;
-                    this.active = Field::first(this.tab);
-                    cx.notify();
-                }),
-            ))
-            .child(button_enabled(
+                VoiceSetupTab::Voicevox,
+                Key::VoiceSetupVoicevox,
+                Key::VoiceSetupVoicevoxBrief,
+            ),
+            page(
                 "voice-tab-diffsinger",
-                self.t(Key::VoiceSetupDiffSinger),
-                ButtonStyle::Normal,
-                ButtonState::available(self.tab == VoiceSetupTab::DiffSinger, !self.saving),
-                theme.accent,
-                &theme,
-                cx.listener(|this, _, _, cx| {
-                    this.invalidate_request();
-                    this.tab = VoiceSetupTab::DiffSinger;
-                    this.active = Field::first(this.tab);
-                    cx.notify();
-                }),
-            ))
-            .child(button_enabled(
+                VoiceSetupTab::DiffSinger,
+                Key::VoiceSetupDiffSinger,
+                Key::VoiceSetupDiffSingerBrief,
+            ),
+            page(
                 "voice-tab-leapsinger",
-                self.t(Key::VoiceSetupLeapSinger),
-                ButtonStyle::Normal,
-                ButtonState::available(self.tab == VoiceSetupTab::LeapSinger, !self.saving),
-                theme.accent,
-                &theme,
-                cx.listener(|this, _, _, cx| {
-                    this.invalidate_request();
-                    this.tab = VoiceSetupTab::LeapSinger;
-                    this.active = Field::first(this.tab);
-                    cx.notify();
-                }),
-            ))
+                VoiceSetupTab::LeapSinger,
+                Key::VoiceSetupLeapSinger,
+                Key::VoiceSetupLeapSingerBrief,
+            ),
+        ];
+        Sidebar::new(Edge::Left)
+            .w(if window.viewport_size().width < px(640.0) {
+                px(176.0)
+            } else {
+                px(224.0)
+            })
+            .h_full()
+            .p(theme.atelier.spacing.sm)
+            .gap(theme.atelier.spacing.xxs)
+            .children(pages)
+            .into_any_element()
+    }
+
+    /// The page's heading: which backend this is and what setting it up involves.
+    fn render_page_header(&self) -> AnyElement {
+        let (title, description) = match self.tab {
+            VoiceSetupTab::Voicevox => (Key::VoiceSetupVoicevox, Key::VoiceSetupVoicevoxHelp),
+            VoiceSetupTab::DiffSinger => (Key::VoiceSetupDiffSinger, Key::VoiceSetupDiffSingerHelp),
+            VoiceSetupTab::LeapSinger => (Key::VoiceSetupLeapSinger, Key::VoiceSetupLeapSingerNote),
+        };
+        div()
+            .pb(self.theme.atelier.spacing.lg)
+            .child(SectionHeader::new(self.t(title)).description(self.t(description)))
             .into_any_element()
     }
 
@@ -467,29 +479,24 @@ impl VoiceSetupWindow {
         div()
             .flex()
             .flex_col()
-            .gap_2()
+            .gap(theme.atelier.spacing.md)
+            .child(group_title(self.t(Key::VoiceSetupConnection), &theme))
             .children([
                 self.render_field(Field::VoicevoxName, Key::VoiceSetupName, cx),
                 self.render_field(Field::VoicevoxUrl, Key::VoiceSetupUrl, cx),
             ])
+            .child(group_title(self.t(Key::VoiceSetupSingers), &theme))
             .when(self.catalog.is_none(), |this| {
-                this.child(
-                    div()
-                        .text_xs()
-                        .text_color(theme.text_muted)
-                        .child(self.t(Key::VoiceSetupChooseSingers)),
-                )
+                this.child(note(self.t(Key::VoiceSetupChooseSingers), &theme))
             })
             .when_some(self.catalog.as_ref(), |this, catalog| {
                 this.child(self.render_styles(&catalog.query, true, cx))
                     .child(self.render_styles(&catalog.decode, false, cx))
             })
-            .child(button(
+            .child(disclosure(
                 "voicevox-advanced",
                 self.t(Key::VoiceSetupAdvanced),
-                ButtonStyle::Ghost,
                 self.advanced,
-                theme.accent,
                 &theme,
                 cx.listener(|this, _, _, cx| {
                     this.invalidate_request();
@@ -536,17 +543,15 @@ impl VoiceSetupWindow {
         div()
             .flex()
             .flex_col()
-            .gap_1()
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(theme.text_muted)
-                    .child(self.t(if query {
-                        Key::VoiceSetupQueryVoice
-                    } else {
-                        Key::VoiceSetupDecodeVoice
-                    })),
-            )
+            .gap(theme.atelier.spacing.xxs)
+            .child(field_label(
+                self.t(if query {
+                    Key::VoiceSetupQueryVoice
+                } else {
+                    Key::VoiceSetupDecodeVoice
+                }),
+                &theme,
+            ))
             .child(
                 div()
                     .id(id)
@@ -585,11 +590,11 @@ impl VoiceSetupWindow {
             .flex_wrap()
             .flex_shrink_0()
             .justify_end()
-            .gap_2()
-            .p_2()
+            .gap(theme.atelier.spacing.sm)
+            .px(theme.atelier.spacing.xl)
+            .py(theme.atelier.spacing.md)
             .border_t_1()
-            .border_color(theme.border)
-            .bg(theme.surface_raised);
+            .border_color(theme.border_subtle);
         match self.tab {
             VoiceSetupTab::Voicevox => actions
                 .child(button(
@@ -720,12 +725,16 @@ impl VoiceSetupWindow {
         div()
             .flex()
             .flex_col()
-            .gap_2()
+            .gap(theme.atelier.spacing.md)
+            .child(group_title(self.t(Key::VoiceSetupFiles), &theme))
             .children([
                 self.render_field(Field::DiffFolder, Key::VoiceSetupFolder, cx),
                 self.render_field(Field::DiffPhonemes, Key::VoiceSetupPhonemes, cx),
                 self.render_field(Field::DiffAcoustic, Key::VoiceSetupAcoustic, cx),
                 self.render_field(Field::DiffVocoder, Key::VoiceSetupVocoder, cx),
+            ])
+            .child(group_title(self.t(Key::VoiceSetupModel), &theme))
+            .children([
                 self.render_field(Field::DiffSampleRate, Key::VoiceSetupSampleRate, cx),
                 self.render_field(Field::DiffHop, Key::VoiceSetupHopSize, cx),
                 self.render_field(Field::DiffMelBins, Key::VoiceSetupMelBins, cx),
@@ -768,13 +777,8 @@ impl VoiceSetupWindow {
         let mut view = div()
             .flex()
             .flex_col()
-            .gap_2()
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(theme.text_muted)
-                    .child(self.t(Key::VoiceSetupLeapSingerNote)),
-            )
+            .gap(theme.atelier.spacing.md)
+            .child(group_title(self.t(Key::VoiceSetupFiles), &theme))
             .child(self.render_field(Field::LeapEntry, Key::VoiceSetupEntry, cx))
             .child(self.render_field(Field::LeapName, Key::VoiceSetupName, cx));
         for (field, label) in [
@@ -785,8 +789,8 @@ impl VoiceSetupWindow {
             view = view.child(
                 div()
                     .flex()
-                    .items_center()
-                    .gap_2()
+                    .items_end()
+                    .gap(theme.atelier.spacing.sm)
                     .child(
                         div()
                             .flex_1()
@@ -808,14 +812,7 @@ impl VoiceSetupWindow {
             .flex()
             .flex_wrap()
             .items_center()
-            .gap_2()
-            .child(
-                div()
-                    .w(rems(9.0))
-                    .text_xs()
-                    .text_color(theme.text_muted)
-                    .child(self.t(Key::VoiceSetupModelFormat)),
-            )
+            .gap(theme.atelier.spacing.xs)
             .children(
                 [
                     (LeapSingerVariant::Full, Key::VoiceSetupLeapFull),
@@ -845,14 +842,7 @@ impl VoiceSetupWindow {
             .flex()
             .flex_wrap()
             .items_center()
-            .gap_2()
-            .child(
-                div()
-                    .w(rems(9.0))
-                    .text_xs()
-                    .text_color(theme.text_muted)
-                    .child(self.t(Key::VoiceSetupHopSize)),
-            )
+            .gap(theme.atelier.spacing.xs)
             .children([256, 512].into_iter().map(|hop| {
                 button_enabled(
                     ("leap-hop", hop as usize),
@@ -882,27 +872,32 @@ impl VoiceSetupWindow {
                 .collect::<Vec<_>>()
                 .join(" / ")
         };
-        view.child(variants)
-            .child(hops)
+        let gap = theme.atelier.spacing.xxs;
+        view.child(group_title(self.t(Key::VoiceSetupModel), &theme))
             .child(
                 div()
                     .flex()
-                    .gap_2()
-                    .child(
-                        div()
-                            .w(rems(9.0))
-                            .flex_shrink_0()
-                            .text_xs()
-                            .text_color(theme.text_muted)
-                            .child(self.t(Key::VoiceSetupSpeakers)),
-                    )
-                    .child(div().flex_1().min_w_0().child(speakers)),
+                    .flex_col()
+                    .gap(gap)
+                    .child(field_label(self.t(Key::VoiceSetupModelFormat), &theme))
+                    .child(variants),
             )
             .child(
                 div()
-                    .text_xs()
-                    .text_color(theme.text_muted)
-                    .child(self.t(Key::VoiceSetupLeapSpeakerNote)),
+                    .flex()
+                    .flex_col()
+                    .gap(gap)
+                    .child(field_label(self.t(Key::VoiceSetupHopSize), &theme))
+                    .child(hops),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(gap)
+                    .child(field_label(self.t(Key::VoiceSetupSpeakers), &theme))
+                    .child(div().min_w_0().child(speakers))
+                    .child(note(self.t(Key::VoiceSetupLeapSpeakerNote), &theme)),
             )
             .into_any_element()
     }
@@ -1480,29 +1475,20 @@ impl Render for VoiceSetupWindow {
             window.focus(&self.focus);
         }
         let theme = self.theme.clone();
-        let titlebar = titlebar::titlebar(window, &theme)
-            .child(
-                titlebar::drag_region("voice-setup-title")
-                    .flex_1()
-                    .min_w(px(40.0))
-                    .px_3()
-                    .child(
-                        div()
-                            .min_w_0()
-                            .truncate()
-                            .text_xs()
-                            .text_color(theme.text_muted)
-                            .child(self.t(Key::VoiceSetupTitle)),
-                    ),
-            )
-            .child(titlebar::controls(window, &theme, |_, window, _| {
+        let titlebar = titlebar::composed(
+            window,
+            &theme,
+            titlebar::Parts::new("voice-setup-title", self.t(Key::VoiceSetupTitle)),
+            titlebar::controls(window, &theme, |_, window, _| {
                 window.remove_window();
-            }));
+            }),
+        );
         let body = match self.tab {
             VoiceSetupTab::Voicevox => self.render_voicevox(cx),
             VoiceSetupTab::DiffSinger => self.render_diffsinger(cx),
             VoiceSetupTab::LeapSinger => self.render_leapsinger(cx),
         };
+        let header = self.render_page_header();
         div()
             .id("voice-setup-root")
             .relative()
@@ -1511,7 +1497,7 @@ impl Render for VoiceSetupWindow {
             .flex()
             .flex_col()
             .size_full()
-            .bg(theme.background)
+            .bg(theme.atelier.window_fill())
             .text_color(theme.text)
             .font(theme.font.clone())
             .text_sm()
@@ -1521,40 +1507,91 @@ impl Render for VoiceSetupWindow {
                 }
             }))
             .child(titlebar)
-            .child(self.render_tabs(cx))
             .child(
                 div()
-                    .id("voice-setup-scroll")
+                    .flex()
                     .flex_1()
                     .min_h_0()
-                    .overflow_y_scroll()
-                    .p_3()
-                    .child(body),
-            )
-            .child(self.render_actions(cx))
-            .child(
-                div()
-                    .id("voice-setup-status")
-                    .min_h(Metrics::STATUS_HEIGHT)
-                    .max_h_24()
-                    .flex_shrink_0()
-                    .overflow_y_scroll()
-                    .px_3()
-                    .flex()
-                    .items_center()
-                    .bg(theme.surface_raised)
-                    .border_t_1()
-                    .border_color(theme.border)
-                    .text_xs()
-                    .text_color(if self.status_failed {
-                        theme.danger
-                    } else {
-                        theme.text_muted
-                    })
-                    .child(self.status.clone()),
+                    .child(self.render_nav(window, cx))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .flex_1()
+                            .min_w_0()
+                            .bg(theme.surface)
+                            .child(
+                                div()
+                                    .id("voice-setup-scroll")
+                                    .flex()
+                                    .flex_col()
+                                    .flex_1()
+                                    .min_h_0()
+                                    .overflow_y_scroll()
+                                    .px(theme.atelier.spacing.xl)
+                                    .py(theme.atelier.spacing.lg)
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .flex_col()
+                                            .w_full()
+                                            .max_w(px(640.0))
+                                            .child(header)
+                                            .child(body),
+                                    ),
+                            )
+                            .child(self.render_actions(cx))
+                            .child(
+                                div()
+                                    .id("voice-setup-status")
+                                    .min_h(Metrics::STATUS_HEIGHT)
+                                    .max_h_24()
+                                    .flex_shrink_0()
+                                    .overflow_y_scroll()
+                                    .px(theme.atelier.spacing.xl)
+                                    .flex()
+                                    .items_center()
+                                    .border_t_1()
+                                    .border_color(theme.border_subtle)
+                                    .text_size(theme.atelier.typography.size_sm)
+                                    .text_color(if self.status_failed {
+                                        theme.danger
+                                    } else {
+                                        theme.text_muted
+                                    })
+                                    .child(self.status.clone()),
+                            ),
+                    ),
             )
             .children(titlebar::resize_handles(window))
     }
+}
+
+/// A field's name, above the field.
+fn field_label(text: &str, theme: &Theme) -> impl IntoElement + use<> {
+    div()
+        .text_size(theme.atelier.typography.size_sm)
+        .font_weight(theme.atelier.typography.label_weight)
+        .text_color(theme.text_muted)
+        .child(text.to_string())
+}
+
+/// The heading of a group of fields on a page.
+fn group_title(text: &str, theme: &Theme) -> impl IntoElement + use<> {
+    div()
+        .pt(theme.atelier.spacing.sm)
+        .text_size(theme.atelier.typography.size_md)
+        .font_weight(theme.atelier.typography.heading_weight)
+        .text_color(theme.text)
+        .child(text.to_string())
+}
+
+/// Explanatory text under a group.
+fn note(text: &str, theme: &Theme) -> impl IntoElement + use<> {
+    div()
+        .text_size(theme.atelier.typography.size_sm)
+        .text_color(theme.text_muted)
+        .child(text.to_string())
 }
 
 impl AurisApp {
@@ -1580,7 +1617,7 @@ impl AurisApp {
         let app = cx.entity().downgrade();
         let theme = self.theme.clone();
         let language = self.language();
-        let bounds = Bounds::centered(None, size(px(680.0), px(650.0)), cx);
+        let bounds = Bounds::centered(None, size(px(820.0), px(660.0)), cx);
         let opened: Result<WindowHandle<VoiceSetupWindow>, _> = cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
@@ -1717,6 +1754,8 @@ mod tests {
         cx.run_until_parked();
         let handle = app.read_with(cx, |this, _| this.voice_setup_window.unwrap());
         let cx = &mut gpui::VisualTestContext::from_window(handle.into(), cx);
+        // Tall enough that the model choices below the file fields are on screen to click.
+        cx.simulate_resize(size(px(820.0), px(1000.0)));
         cx.run_until_parked();
         crate::harness::click("leap-variant-1", cx);
         crate::harness::click("leap-hop-512", cx);

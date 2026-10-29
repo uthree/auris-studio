@@ -11,6 +11,7 @@
 //! address a track from the other end.
 
 use auris_core::plugin::{PluginKind, PluginState};
+use auris_core::project::{DrumMap, DrumRole};
 use auris_core::{AuxSend, Color, Output, PresetRef, SendId, Track, TrackId};
 use auris_engine::EngineCommand;
 use auris_sampler::{SAMPLER_ID, store_preset, stored_preset};
@@ -32,6 +33,17 @@ pub const MIN_TRACK_HEIGHT: f32 = 24.0;
 /// Not a limit anyone reaches on purpose — it is the guard against a drag that ran away, and
 /// against a document that arrived with a nonsense number in it.
 pub const MAX_TRACK_HEIGHT: f32 = 400.0;
+
+fn authored_drum_kit_map() -> DrumMap {
+    DrumMap::from_voices([
+        (DrumRole::Kick, 36),
+        (DrumRole::Snare, 38),
+        (DrumRole::ClosedHat, 42),
+        (DrumRole::OpenHat, 46),
+        (DrumRole::Crash, 49),
+        (DrumRole::Tom, 47),
+    ])
+}
 
 impl Session {
     /// Appends an instrument track.
@@ -74,16 +86,7 @@ impl Session {
         self.record(Edit::AddDrumTrack);
         let id = self.project.add_drum_track(name, instrument_id);
         if instrument_id == auris_synth::DrumKit::ID {
-            use auris_core::project::{DrumMap, DrumRole};
-            let map = DrumMap::from_voices([
-                (DrumRole::Kick, 36),
-                (DrumRole::Snare, 38),
-                (DrumRole::ClosedHat, 42),
-                (DrumRole::OpenHat, 46),
-                (DrumRole::Crash, 49),
-                (DrumRole::Tom, 47),
-            ]);
-            map.store(
+            authored_drum_kit_map().store(
                 &mut self
                     .project
                     .track_mut(id)
@@ -398,7 +401,8 @@ impl Session {
     }
 
     /// Replaces a track's instrument, discarding the previous plugin's parameter values and the
-    /// automation that drove them.
+    /// automation that drove them. Selecting the built-in drum kit on a drum track also
+    /// installs that kit's authored role assignments in the same undo step.
     pub fn set_track_instrument(
         &mut self,
         id: TrackId,
@@ -457,6 +461,16 @@ impl Session {
             // And so do the curves that were writing those values every block, for the same
             // reason. After the `record`, so that undo brings the lanes back with the plugin.
             self.project.remove_instrument_automation(id);
+        }
+        if self
+            .project
+            .track(id)
+            .is_some_and(|track| track.kind.is_drum())
+            && instrument_id == auris_synth::DrumKit::ID
+        {
+            // This map is part of the built-in kit's authored source contract. Other sources
+            // remain unassigned because their MIDI roles cannot be inferred safely.
+            self.set_drum_source_map(id, authored_drum_kit_map())?;
         }
         self.invalidate_graph();
         Ok(())
@@ -1048,6 +1062,89 @@ mod tests {
         session.undo();
         assert!(session.project.track(track).unwrap().kind.is_drum());
         assert_eq!(session.track_preset(track), Some(preset));
+    }
+
+    #[test]
+    fn selecting_the_builtin_drum_kit_installs_its_authored_map() {
+        let mut session = session();
+        let track = session
+            .add_drum_track("Kit", auris_synth::NoiseDrum::ID)
+            .unwrap();
+        assert!(session.drum_assignments(track).unwrap().lanes.is_empty());
+
+        session
+            .set_track_instrument(track, auris_synth::DrumKit::ID)
+            .unwrap();
+
+        assert_eq!(
+            session.drum_assignments(track).unwrap(),
+            authored_drum_kit_map()
+        );
+    }
+
+    #[test]
+    fn switching_to_an_unknown_drum_source_does_not_inherit_the_old_map() {
+        let mut session = session();
+        let track = session.add_default_drum_track("Kit").unwrap();
+        session
+            .set_track_instrument(track, auris_synth::NoiseDrum::ID)
+            .unwrap();
+
+        assert!(session.drum_assignments(track).unwrap().lanes.is_empty());
+    }
+
+    #[test]
+    fn selecting_the_current_drum_kit_preserves_explicit_empty_and_partial_maps() {
+        let mut session = session();
+        let track = session.add_default_drum_track("Kit").unwrap();
+        let mut partial = DrumMap::default();
+        partial.add_lane(60, "custom kick");
+        for map in [DrumMap::default(), partial] {
+            session.set_drum_map(track, map.clone()).unwrap();
+            session.forget_history();
+            session
+                .set_track_instrument(track, auris_synth::DrumKit::ID)
+                .unwrap();
+            assert_eq!(session.drum_assignments(track).unwrap(), map);
+            assert!(!session.can_undo());
+        }
+    }
+
+    #[test]
+    fn builtin_drum_kit_map_is_restored_with_instrument_undo_and_redo() {
+        let mut session = session();
+        let track = session
+            .add_drum_track("Kit", auris_synth::NoiseDrum::ID)
+            .unwrap();
+        session.forget_history();
+
+        session
+            .set_track_instrument(track, auris_synth::DrumKit::ID)
+            .unwrap();
+        assert_eq!(
+            session.drum_assignments(track).unwrap(),
+            authored_drum_kit_map()
+        );
+
+        assert_eq!(session.undo(), Some(Edit::ChangeInstrument));
+        assert_eq!(
+            session
+                .project
+                .track(track)
+                .unwrap()
+                .kind
+                .as_instrument()
+                .unwrap()
+                .instrument_id,
+            auris_synth::NoiseDrum::ID
+        );
+        assert!(session.drum_assignments(track).unwrap().lanes.is_empty());
+
+        assert_eq!(session.redo(), Some(Edit::ChangeInstrument));
+        assert_eq!(
+            session.drum_assignments(track).unwrap(),
+            authored_drum_kit_map()
+        );
     }
 
     #[test]

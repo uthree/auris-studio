@@ -79,6 +79,17 @@ fn command(
     native: bool,
 ) -> Result<Command, String> {
     let mut command = Command::new(executable(prefs)?);
+    // A file, not an argument: the preamble outgrows Windows' 32 767-character command line.
+    let prompt = cwd.join("system-prompt.md");
+    std::fs::write(
+        &prompt,
+        if native {
+            super::cli_preamble(prefs)
+        } else {
+            prefs.system_prompt.clone()
+        },
+    )
+    .map_err(|error| format!("Cannot write the Claude Code system prompt: {error}"))?;
     command
         .args([
             "--print",
@@ -110,7 +121,8 @@ fn command(
             "permissions":{"allow":["mcp__auris_live__*"],"ask":if native { NATIVE_TOOLS } else { &[] }}})
             .to_string(),
         )
-        .args(["--system-prompt", &if native { super::cli_preamble(prefs) } else { crate::approval_review::INSTRUCTIONS.into() }])
+        .arg("--system-prompt-file")
+        .arg(&prompt)
         .current_dir(cwd)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -315,7 +327,7 @@ pub(crate) async fn list_models(prefs: &auris_session::AgentPreferences) -> Resu
     Ok(json!({"models":models}).to_string())
 }
 
-pub(crate) async fn review(
+pub(crate) async fn complete(
     prefs: &auris_session::AgentPreferences,
     prompt: &str,
 ) -> Result<String, String> {
@@ -337,23 +349,23 @@ pub(crate) async fn review(
                     .as_array()
                     .is_none_or(|tools| !tools.is_empty())
             {
-                return Err("Approval reviewer exposed tools".into());
+                return Err("Text-only agent exposed tools".into());
             }
             if message["type"] == "assistant"
                 && message["message"]["content"]
                     .as_array()
                     .is_some_and(|parts| parts.iter().any(|part| part["type"] == "tool_use"))
             {
-                return Err("Approval reviewer attempted to use a tool".into());
+                return Err("Text-only agent attempted to use a tool".into());
             }
             if message["type"] == "result" {
                 return if message["subtype"] == "success" && message["is_error"] != true {
                     message["result"]
                         .as_str()
                         .map(str::to_owned)
-                        .ok_or("Missing reviewer answer".into())
+                        .ok_or("Missing text-only answer".into())
                 } else {
-                    Err("Approval reviewer failed".into())
+                    Err("Text-only agent failed".into())
                 };
             }
         }
@@ -902,21 +914,25 @@ mod tests {
                 .any(|arg| arg.contains("Bearer") || arg.contains("bypassPermissions"))
         );
         assert_eq!(command.as_std().get_current_dir(), Some(cwd.path()));
-        assert!(
-            args.windows(2)
-                .any(|pair| pair == ["--system-prompt", crate::approval_review::INSTRUCTIONS])
-        );
+        let prompt = |args: &[String]| {
+            let pair = args
+                .windows(2)
+                .find(|pair| pair[0] == "--system-prompt-file")
+                .unwrap();
+            std::fs::read_to_string(&pair[1]).unwrap()
+        };
+        assert_eq!(prompt(&args), prefs.system_prompt);
+        assert!(!args.iter().any(|arg| arg == "--system-prompt"));
         let native = super::command(&prefs, cwd.path(), true).unwrap();
         let args: Vec<_> = native
             .as_std()
             .get_args()
             .map(|arg| arg.to_string_lossy().into_owned())
             .collect();
-        assert!(
-            args.windows(2).any(|pair| pair[0] == "--system-prompt"
-                && pair[1] == super::super::cli_preamble(&prefs))
-        );
-        assert!(args.iter().any(|arg| arg.starts_with(&prefs.system_prompt)));
+        assert_eq!(prompt(&args), super::super::cli_preamble(&prefs));
+        assert!(prompt(&args).starts_with(&prefs.system_prompt));
+        // The whole command line stays far below Windows' 32 767-character limit.
+        assert!(args.iter().map(|arg| arg.len() + 1).sum::<usize>() < 8 * 1024);
         assert!(
             args.windows(2)
                 .any(|args| args == ["--permission-mode", "default"])

@@ -121,6 +121,8 @@ pub use auris_core::CoreError;
 pub use auris_core::motion::{MotionFrame, MotionGeometry, MotionVoice};
 /// PCM-derived drum measurements, exposed without a frontend DSP dependency.
 pub use auris_dsp::drum_analysis::{AcousticCharacter, DrumAcoustics, DrumSpectrum};
+/// Upper bound on populated groups in a refined library timbre map.
+pub use auris_dsp::timbre::MAX_TIMBRE_CLUSTERS;
 /// Workspace-owned engine error variants exposed for frontend localisation.
 pub use auris_engine::EngineError;
 /// Completion status and cancellation of a queued or playing output audition.
@@ -150,16 +152,17 @@ pub use session::{
     ComposeBalanceResult, ComposeBalanceStep, ComposeReport, CopiedClip, CopiedContent,
     DEFAULT_OCTAVE, DEFAULT_PARTS, DEFAULT_VELOCITY, DiscardRecoveryJob, DiskWatchJob,
     DiskWatchResult, InputChannels, LAYOUT, LIMITER_ALLOWANCE_DB, LoadedFont, MIN_PHONEME_SECONDS,
-    MidiExportJob, MidiExportResult, MidiImportJob, MidiImportResult, MixAnalysis, MusicalTyping,
-    NormalizeMixReport, OCTAVE_RANGE, OpenProjectJob, OpenProjectResult, Played, PluginWindow,
-    Quantize, RECOVERY_DIR_VAR, RecordingReport, RecordingStatus, RecoveryCleanupJob, RecoveryJob,
-    RecoveryQuarantineCleanupJob, RecoveryResult, RecoverySnapshot, Release, SaveJob, SaveReport,
-    SaveResult, SectionLoudness, Session, SessionOptions, SingPlan, SingerFramesExportJob,
-    SingerFramesExportResult, SingerLandingJob, SingerLandingResult, SingerTakeState,
-    SingerVoiceInfo, SingerVoiceLoadJob, SingerVoiceLoadResult, Struck, SungFrames, TARGET_LUFS,
-    TYPING_BEND, TakeReport, TrackLevel, TrackLoudness, TypingRole, VELOCITY_STEP, WHEEL_STEPS,
-    decode_audio, fader_for, faders_lift_db, input_level_of, master_gain_db, quantized,
-    read_soundfont, recovery_dir, shadows_musical_typing, take_fingerprint,
+    MidiExportJob, MidiExportReport, MidiExportResult, MidiImportJob, MidiImportResult,
+    MixAnalysis, MusicalTyping, NormalizeMixReport, OCTAVE_RANGE, OpenProjectJob,
+    OpenProjectResult, Played, PluginWindow, Quantize, RECOVERY_DIR_VAR, RecordingReport,
+    RecordingStatus, RecoveryCleanupJob, RecoveryJob, RecoveryQuarantineCleanupJob, RecoveryResult,
+    RecoverySnapshot, Release, SaveJob, SaveReport, SaveResult, SectionLoudness, Session,
+    SessionOptions, SingPlan, SingerFramesExportJob, SingerFramesExportResult, SingerLandingJob,
+    SingerLandingResult, SingerTakeState, SingerVoiceInfo, SingerVoiceLoadJob,
+    SingerVoiceLoadResult, Struck, SungFrames, TARGET_LUFS, TYPING_BEND, TakeReport, TrackLevel,
+    TrackLoudness, TypingRole, VELOCITY_STEP, WHEEL_STEPS, decode_audio, fader_for, faders_lift_db,
+    input_level_of, master_gain_db, quantized, read_soundfont, recovery_dir,
+    shadows_musical_typing, take_fingerprint,
 };
 pub use session::{
     AudioAnalysisJob, ChordAnalysisJob, ChordAnalysisReport, ClipAudioAnalysis,
@@ -179,7 +182,7 @@ pub use session::{
     SongCandidate, SongIdea, SongRequest, SongSinger, SongSinging, SongSourceChoice,
 };
 pub use session::{SoundFilter, SoundLibraryJob, SoundSearch, SoundSource};
-pub use session::{TimbreMap, TimbreMapControl, TimbreMapJob, TimbreSound};
+pub use session::{TimbreCluster, TimbreMap, TimbreMapControl, TimbreMapJob, TimbreSound};
 pub use session::{TrackConversion, TrackConversionJob};
 pub use settings::{
     AgentEndpoint, AgentPreferences, AudioPreferences, CONFIG_DIR_VAR, ExportPreferences,

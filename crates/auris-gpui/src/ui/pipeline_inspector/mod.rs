@@ -87,8 +87,8 @@ impl AurisApp {
             .flex()
             .flex_col()
             .min_w_0()
-            .gap_1()
-            .pt_2()
+            .gap(theme.atelier.spacing.xs)
+            .pt(theme.atelier.spacing.sm)
             .child(
                 disclosure(
                     "pipeline-disclosure",
@@ -110,7 +110,7 @@ impl AurisApp {
                 .capture_action(cx.listener(|this, _: &ClaimDisclosureActivation, _, _| {
                     this.pipeline_inspector.keyboard_armed = true;
                 }))
-                .h_7()
+                .h(theme.atelier.density.control_sm)
                 .px_0(),
             );
         if !expanded {
@@ -153,7 +153,7 @@ impl AurisApp {
                     .flex()
                     .flex_wrap()
                     .items_center()
-                    .gap_1()
+                    .gap(theme.atelier.spacing.xs)
                     .min_w_0()
                     .child(button_enabled(
                         "pipeline-scope-track",
@@ -182,7 +182,7 @@ impl AurisApp {
             )
             .child(
                 div()
-                    .text_xs()
+                    .text_size(theme.atelier.typography.size_xs)
                     .text_color(theme.text_muted)
                     .child(self.t(Key::PipelineReadOnly)),
             );
@@ -199,8 +199,8 @@ impl AurisApp {
                     div()
                         .id("pipeline-error")
                         .debug_selector(|| "pipeline-error".into())
-                        .py_2()
-                        .text_xs()
+                        .py(theme.atelier.spacing.sm)
+                        .text_size(theme.atelier.typography.size_xs)
                         .text_color(theme.text_muted)
                         .child(self.t(key)),
                 )
@@ -215,8 +215,8 @@ impl AurisApp {
                     div()
                         .id("pipeline-empty")
                         .debug_selector(|| "pipeline-empty".into())
-                        .py_2()
-                        .text_xs()
+                        .py(theme.atelier.spacing.sm)
+                        .text_size(theme.atelier.typography.size_xs)
                         .text_color(theme.text_muted)
                         .child(self.t(Key::PipelineEmpty)),
                 )
@@ -235,10 +235,15 @@ impl AurisApp {
                 div()
                     .flex()
                     .flex_wrap()
-                    .gap_1()
+                    .gap(theme.atelier.spacing.xs)
                     .items_center()
                     .min_w_0()
-                    .child(div().text_xs().text_color(theme.text_muted).child(range))
+                    .child(
+                        div()
+                            .text_size(theme.atelier.typography.size_xs)
+                            .text_color(theme.text_muted)
+                            .child(range),
+                    )
                     .when(offset > 0 || has_next, |row| {
                         row.child(button_enabled(
                             "pipeline-previous",
@@ -282,17 +287,18 @@ impl AurisApp {
             .flex()
             .flex_col()
             .min_w_0()
-            .gap_1()
-            .py_2()
+            .flex_none()
+            .gap(theme.atelier.spacing.xs)
+            .py(theme.atelier.spacing.sm)
             .border_b_1()
             .border_color(theme.border_subtle)
             .child(
                 div()
                     .flex()
                     .flex_wrap()
-                    .gap_2()
+                    .gap(theme.atelier.spacing.sm)
                     .items_center()
-                    .text_xs()
+                    .text_size(theme.atelier.typography.size_xs)
                     .text_color(theme.text_muted)
                     .child(self.t(text.kind))
                     .child(self.t(text.domain)),
@@ -306,7 +312,7 @@ impl AurisApp {
                     // can cache an ellipsis from GPUI's initial minimum-width measurement.
                     .text_ellipsis()
                     .line_clamp(1)
-                    .text_sm()
+                    .text_size(theme.atelier.typography.size_sm)
                     .text_color(theme.text)
                     .tooltip(keyed_tip(text.title.clone(), "", theme))
                     .child(text.title),
@@ -314,7 +320,7 @@ impl AurisApp {
             .when(!text.detail.is_empty(), |row| {
                 row.child(
                     div()
-                        .text_xs()
+                        .text_size(theme.atelier.typography.size_xs)
                         .text_color(theme.text_muted)
                         .child(text.detail),
                 )

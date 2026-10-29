@@ -119,7 +119,7 @@ fn configuration(prefs: &auris_session::AgentPreferences, native: bool, major: u
         return json!({"$schema":"https://opencode.ai/config.json", "update":"disable",
             "share":"disabled", "snapshots":false, "lsp":false, "formatter":false,
             "default_agent":"auris", "permissions":permissions,
-            "agents":{"auris":{"mode":"primary", "system":if native { opencode_preamble(prefs) } else { crate::approval_review::INSTRUCTIONS.into() },
+            "agents":{"auris":{"mode":"primary", "system":if native { opencode_preamble(prefs) } else { prefs.system_prompt.clone() },
                 "permissions":permissions}}});
     }
     let mut tools = json!({"*":false});
@@ -137,7 +137,7 @@ fn configuration(prefs: &auris_session::AgentPreferences, native: bool, major: u
     json!({"$schema":"https://opencode.ai/config.json", "autoupdate":false,
         "share":"disabled", "snapshot":false, "lsp":false, "formatter":false,
         "default_agent":"auris", "permission":permission, "tools":tools,
-        "agent":{"auris":{"mode":"primary", "prompt":if native { opencode_preamble(prefs) } else { crate::approval_review::INSTRUCTIONS.into() },
+        "agent":{"auris":{"mode":"primary", "prompt":if native { opencode_preamble(prefs) } else { prefs.system_prompt.clone() },
             "permission":permission, "tools":tools}}})
 }
 
@@ -528,7 +528,7 @@ impl Turn {
                 }
             }
             "tool_call" | "tool_call_update" => {
-                let bridge = bridge.ok_or("Approval reviewer attempted to use a tool")?;
+                let bridge = bridge.ok_or("Text-only agent attempted to use a tool")?;
                 let id = update["toolCallId"]
                     .as_str()
                     .ok_or("OpenCode omitted a tool call ID")?;
@@ -654,7 +654,7 @@ pub(crate) async fn list_models(prefs: &auris_session::AgentPreferences) -> Resu
     result
 }
 
-pub(crate) async fn review(
+pub(crate) async fn complete(
     prefs: &auris_session::AgentPreferences,
     prompt: &str,
 ) -> Result<String, String> {
@@ -905,7 +905,7 @@ mod tests {
     }
 
     #[test]
-    fn custom_system_prompt_does_not_override_review_instructions() {
+    fn tool_free_configuration_uses_only_the_supplied_instructions() {
         let prefs = auris_session::AgentPreferences {
             system_prompt: "Keep the motif.\n二番も作る。".into(),
             ..Default::default()
@@ -924,10 +924,7 @@ mod tests {
                     .starts_with(&prefs.system_prompt)
             );
             let review = configuration(&prefs, false, major);
-            assert_eq!(
-                review[agents]["auris"][prompt],
-                crate::approval_review::INSTRUCTIONS
-            );
+            assert_eq!(review[agents]["auris"][prompt], prefs.system_prompt);
         }
     }
 
@@ -1204,7 +1201,7 @@ mod tests {
         assert!(
             turn.update(&json!({"sessionUpdate":"tool_call"}), None)
                 .unwrap_err()
-                .contains("reviewer")
+                .contains("tool")
         );
     }
 

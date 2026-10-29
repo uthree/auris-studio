@@ -12,7 +12,7 @@ use crate::theme::Metrics;
 use crate::ui::icons::Icon;
 use crate::ui::inspector::{Insert, insert_element_key, insert_rows};
 use crate::ui::scrollbars::ScrollPanel;
-use crate::ui::widgets::{ButtonStyle, button, db_to_meter_position, icon_label, level_meter};
+use crate::ui::widgets::{ButtonStyle, button, channel_meter, icon_label};
 
 /// Width of one channel strip.
 const STRIP_WIDTH: f32 = 128.0;
@@ -131,7 +131,7 @@ impl AurisApp {
             .iter()
             .map(|slot| (slot.id, slot.effect_id.clone(), slot.enabled))
             .collect();
-        let level_db = gain_to_db(self.track_level(index));
+        let meter = self.track_meter(index);
         let clipped = self.session.meters().track_clipped(index);
         let selected = self.selected_track == Some(track_id);
         let outputs = track.outputs.clone();
@@ -332,12 +332,10 @@ impl AurisApp {
                             .gap_0p5()
                             .children(effect_rows),
                     )
-                    .child(div().w(px(10.0)).h_full().child(level_meter(
-                        db_to_meter_position(level_db),
-                        db_to_meter_position(level_db),
+                    .child(div().w(px(10.0)).h_full().child(channel_meter(
+                        meter,
                         clipped,
                         Axis::Vertical,
-                        theme.meter_color(level_db),
                         &theme,
                     ))),
             )
@@ -561,7 +559,7 @@ impl AurisApp {
         let theme = self.theme.clone();
         let gain_db = self.project().master.gain_db;
         let pan = self.project().master.pan;
-        let level_db = gain_to_db(self.master_level());
+        let meter = self.master_meter();
         let clipped = self.session.meters().master_clipped();
         let effects: Vec<(EffectSlotId, String, bool)> = self
             .project()
@@ -640,12 +638,10 @@ impl AurisApp {
                             .gap_0p5()
                             .children(effect_rows),
                     )
-                    .child(div().w(px(10.0)).h_full().child(level_meter(
-                        db_to_meter_position(level_db),
-                        db_to_meter_position(level_db),
+                    .child(div().w(px(10.0)).h_full().child(channel_meter(
+                        meter,
                         clipped,
                         Axis::Vertical,
-                        theme.meter_color(level_db),
                         &theme,
                     ))),
             )

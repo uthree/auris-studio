@@ -20,7 +20,11 @@ fn dropdown_fields_have_disclosure_indicators_while_commands_do_not(cx: &mut Tes
 #[gpui::test]
 fn sound_choices_generate_modal_songs_and_survive_mood_and_style_changes(cx: &mut TestAppContext) {
     let (app, cx) = open(cx);
-    app.update(cx, |this, _| this.open_song_sheet());
+    app.update(cx, |this, _| {
+        // Keep this UI fixture focused on mode selection; measured mixing has dedicated tests.
+        this.session = Session::new(SessionOptions::headless().with_balance(false)).unwrap();
+        this.open_song_sheet();
+    });
     paint(&app, cx);
     for language in [
         auris_i18n::Language::English,

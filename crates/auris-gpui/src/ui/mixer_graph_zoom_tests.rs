@@ -294,6 +294,7 @@ fn control_wheel_scales_nodes_handles_and_controls_and_pans_without_editing_audi
     let id = node_id(MixerNode::Strip(Some(track)));
     let node_selector = Box::leak(id.to_string().into_boxed_str());
     let gain_selector = Box::leak(format!("graph-gain-{id}").into_boxed_str());
+    let title_selector = Box::leak(format!("graph-node-title-{id}").into_boxed_str());
     let handle_selector = Box::leak(format!("flow-handle-{id}-0").into_boxed_str());
     app.update(cx, |this, cx| {
         let canvas = this.mixer_canvas.as_ref().unwrap();
@@ -313,6 +314,7 @@ fn control_wheel_scales_nodes_handles_and_controls_and_pans_without_editing_audi
     paint(&app, cx);
     let node_before = cx.debug_bounds(node_selector).unwrap();
     let gain_before = cx.debug_bounds(gain_selector).unwrap();
+    let title_before = cx.debug_bounds(title_selector).unwrap();
     let handle_before = cx.debug_bounds(handle_selector).unwrap();
     let document = app.read_with(cx, |this, _| musical_document(this.project()));
     let at = node_before.center();
@@ -345,11 +347,25 @@ fn control_wheel_scales_nodes_handles_and_controls_and_pans_without_editing_audi
     assert!(zoom > 1.);
     let node_after = cx.debug_bounds(node_selector).unwrap();
     let gain_after = cx.debug_bounds(gain_selector).unwrap();
+    let title_after = cx.debug_bounds(title_selector).unwrap();
     let handle_after = cx.debug_bounds(handle_selector).unwrap();
     // These are control hit regions, not raster assertions: interactions must grow with the card.
     assert!((node_after.size.width / node_before.size.width - zoom).abs() < 0.02);
     assert!((gain_after.size.height / gain_before.size.height - zoom).abs() < 0.02);
     assert!((handle_after.size.width / handle_before.size.width - zoom).abs() < 0.02);
+    // Token-sized text and insets must follow the same graph-space scale as the hit targets.
+    assert!(
+        (title_after.size.height / title_before.size.height - zoom).abs() < 0.02,
+        "node title must scale with the canvas"
+    );
+    let inset_before = gain_before.left() - node_before.left() - px(1.0);
+    let inset_after = gain_after.left() - node_after.left() - px(1.0);
+    // Layout rounds the two frames to device pixels (8 * 1.3499 becomes 11). Compare the
+    // distance with a one-pixel bound rather than magnifying that rounding into a ratio.
+    assert!(
+        (inset_after - inset_before * zoom).abs() <= px(1.0),
+        "node content inset must scale with the canvas: before={inset_before:?}, after={inset_after:?}, zoom={zoom}"
+    );
     assert_eq!(
         app.read_with(cx, |this, _| musical_document(this.project())),
         document

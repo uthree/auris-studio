@@ -100,6 +100,88 @@ pub struct Scheme<'a> {
 /// deepen colours where needed to clear 3:1 against every surface, including hover.
 /// Surface ramps remain derived independently from these categorical colours.
 pub const SCHEMES: &[Scheme<'static>] = &[
+    Scheme {
+        id: "glass-dark",
+        name: "Glass Dark",
+        hue: 0.667,
+        chroma: 0.08,
+        base: 0.094,
+        accent: Hsla {
+            h: 0.5836735,
+            s: 1.0,
+            l: 0.51960784,
+            a: 1.0,
+        },
+        track_palette: [
+            Some(0x64b5ff),
+            Some(0x5fd5b0),
+            Some(0xff8b82),
+            Some(0xe8c66c),
+            Some(0xc6a1ef),
+            Some(0x95c977),
+            Some(0xeab17d),
+            Some(0xf49fc5),
+        ],
+        velocity_palette: [Some(0x64b5ff), Some(0xff8b82)],
+        velocity_stops: &[
+            GradientStop {
+                position: 0.4,
+                color: 0x5fd5b0,
+            },
+            GradientStop {
+                position: 0.75,
+                color: 0xe8c66c,
+            },
+        ],
+        signal_palette: [
+            Some(0x30d158),
+            Some(0xffd60a),
+            Some(0xff453a),
+            Some(0x64d2ff),
+        ],
+        chord_palette: [None; 7],
+    },
+    Scheme {
+        id: "glass-light",
+        name: "Glass Light",
+        hue: 0.667,
+        chroma: 0.08,
+        base: 0.965,
+        accent: Hsla {
+            h: 0.5837004,
+            s: 1.0,
+            l: 0.44509804,
+            a: 1.0,
+        },
+        track_palette: [
+            Some(0x1a64ad),
+            Some(0x1b7664),
+            Some(0xb34343),
+            Some(0x89671e),
+            Some(0x7752a6),
+            Some(0x49722b),
+            Some(0x9a572d),
+            Some(0x9c416e),
+        ],
+        velocity_palette: [Some(0x1a64ad), Some(0xb34343)],
+        velocity_stops: &[
+            GradientStop {
+                position: 0.4,
+                color: 0x1b7664,
+            },
+            GradientStop {
+                position: 0.75,
+                color: 0x89671e,
+            },
+        ],
+        signal_palette: [
+            Some(0x248a3d),
+            Some(0xb25000),
+            Some(0xd70015),
+            Some(0x0071a4),
+        ],
+        chord_palette: [None; 7],
+    },
     // The palette the application shipped with: blue-grey, near-black, a mid blue accent.
     Scheme {
         id: "midnight",
@@ -438,7 +520,7 @@ pub const SCHEMES: &[Scheme<'static>] = &[
 
 /// The scheme used when nothing has been chosen, and when a stored choice names one this build
 /// does not have.
-pub const DEFAULT_SCHEME: &str = "midnight";
+pub const DEFAULT_SCHEME: &str = "glass-dark";
 
 /// The scheme with this id.
 pub fn scheme(id: &str) -> Option<&'static Scheme<'static>> {
@@ -587,6 +669,10 @@ pub(crate) fn palette_label(language: auris_i18n::Language, index: usize) -> Str
 /// The application colour palette.
 #[derive(Clone, Debug)]
 pub struct Theme {
+    /// Shared Atelier tokens for controls, chrome and both agent surfaces.
+    pub atelier: atelier::Theme,
+    /// Whether this theme keeps Atelier Glass's surface and chrome geometry.
+    is_glass: bool,
     /// Id of the scheme this was built from, so a picker can tick the one in force.
     pub scheme: String,
     /// Interface font, including the fallbacks used for Japanese and other scripts.
@@ -705,19 +791,19 @@ impl Default for Theme {
 }
 
 impl Theme {
-    /// Color for main mixer output wires, following the source-track palette.
+    /// Atelier's audio port color, adjusted for contrast on the active canvas palette.
     pub fn mixer_output_color(&self) -> Hsla {
-        readable_indicator(self.track_palette[0], self)
+        readable_indicator(self.atelier.colors.ports[0], self)
     }
 
-    /// Color for auxiliary mixer branches, following the bus/effects palette.
+    /// Audio sends use the audio port color; the dashed stroke identifies their routing role.
     pub fn mixer_send_color(&self) -> Hsla {
-        readable_indicator(self.track_palette[3], self)
+        self.mixer_output_color()
     }
 
-    /// Color for detector/control wires, separate from audio-output branches.
+    /// A sidechain carries audio too; its dotted stroke identifies the detector input.
     pub fn mixer_sidechain_color(&self) -> Hsla {
-        readable_indicator(self.track_palette[4], self)
+        self.mixer_output_color()
     }
 
     /// The palette a scheme describes.
@@ -727,7 +813,27 @@ impl Theme {
     /// surfaces from furthest to nearest, and every scheme gets the same stack.
     pub fn from_scheme(scheme: &Scheme<'_>) -> Self {
         let accent = scheme.accent;
+        // Custom schemes keep these neutral parameters when copied from Glass, even though their
+        // ids are user-defined. Treat those copies as Glass so derived surfaces and chrome stay
+        // stable while their edited accent and document colours remain independent. Editing the
+        // neutral parameters instead selects the user-defined surface ramp.
+        let is_glass = SCHEMES.iter().any(|preset| {
+            matches!(preset.id, "glass-dark" | "glass-light")
+                && scheme.hue == preset.hue
+                && scheme.chroma == preset.chroma
+                && scheme.base == preset.base
+        });
+        let atelier = atelier::Theme::new(
+            atelier::Direction::Glass,
+            if scheme.base < 0.5 {
+                atelier::Appearance::Dark
+            } else {
+                atelier::Appearance::Light
+            },
+        );
         let mut theme = Self {
+            atelier,
+            is_glass,
             scheme: scheme.id.to_owned(),
             track_palette: [accent; 8],
             signal_palette: [accent; 4],
@@ -803,6 +909,9 @@ impl Theme {
                 .map(|stop| (stop.position, rgb(stop.color).into()))
                 .collect(),
         };
+        if is_glass {
+            theme.apply_glass_surfaces();
+        }
         theme.track_palette = std::array::from_fn(|index| {
             scheme.track_palette[index].map_or_else(
                 || theme.group_color([0.0, -0.18, -0.32, -0.44, 0.23, 0.10, 0.42, -0.08][index]),
@@ -840,7 +949,121 @@ impl Theme {
         theme.velocity_loud = scheme.velocity_palette[1]
             .map(|packed| rgb(packed).into())
             .unwrap_or(theme.track_palette[2]);
+        theme.sync_atelier();
         theme
+    }
+
+    /// Installs the same token snapshot for application widgets and Atelier components.
+    pub fn install(&self, cx: &mut gpui::App) {
+        cx.set_global(self.clone());
+        if cx.has_global::<gpui_component::Theme>() {
+            gpui_component::Theme::change(
+                if self.background.l < 0.5 {
+                    gpui_component::ThemeMode::Dark
+                } else {
+                    gpui_component::ThemeMode::Light
+                },
+                None,
+                cx,
+            );
+            let markdown = gpui_component::Theme::global_mut(cx);
+            markdown.font_family = self.font.family.clone();
+            markdown.colors.background = self.surface;
+            markdown.colors.foreground = self.text;
+            markdown.colors.muted = self.surface_sunken;
+            markdown.colors.muted_foreground = self.text_muted;
+            markdown.colors.border = self.border;
+            markdown.colors.link = self.accent_text;
+            markdown.colors.link_hover = self.accent_text;
+            markdown.colors.link_active = self.accent_text;
+            markdown.colors.primary = self.accent;
+            markdown.colors.primary_foreground = self.text_on_accent;
+            markdown.colors.ring = self.selection;
+        }
+        if cx.has_global::<atelier::Theme>() {
+            self.atelier.clone().install(cx);
+        } else {
+            atelier::init(cx, self.atelier.clone());
+        }
+    }
+
+    fn apply_glass_surfaces(&mut self) {
+        let colors = &self.atelier.colors;
+        self.background = colors.background;
+        self.surface = colors.surface;
+        self.surface_raised = colors.elevated;
+        self.surface_sunken = colors.sunken;
+        self.clip_fade_scrim = Self::translucent(colors.sunken, 0.32);
+        // Older canvas painters expect opaque fills; Atelier washes are composited once here.
+        self.surface_hover = colors.elevated.blend(colors.hover);
+        self.border = colors.border_strong;
+        self.border_subtle = colors.separator;
+        let surfaces = [
+            self.background,
+            self.surface,
+            self.surface_raised,
+            self.surface_sunken,
+            self.surface_hover,
+        ];
+        let readable = |color, ratio| {
+            surfaces.into_iter().fold(color, |color, fill| {
+                atelier::ensure_contrast(color, fill, ratio)
+            })
+        };
+        self.text = readable(colors.text, 7.0);
+        self.text_muted = readable(colors.text_muted, 4.5);
+        self.text_faint = readable(colors.text_faint, 3.5);
+        self.accent_text = readable(self.accent, 4.5);
+        self.text_on_accent = self.text_on(self.accent);
+        self.accent_soft = self.surface.blend(Self::translucent(self.accent, 0.14));
+        self.selection = self.accent;
+        self.key_row_black = atelier::mix(colors.sunken, colors.text, 0.025);
+        self.grid_bar = colors.sunken.blend(colors.grid);
+        self.grid_beat = colors.sunken.blend(colors.grid_faint);
+        self.grid_subdivision = atelier::mix(colors.sunken, self.grid_beat, 0.5);
+    }
+
+    /// Keeps imported and custom Auris palettes consistent with shared Atelier components.
+    pub fn sync_atelier(&mut self) {
+        self.atelier.typography.ui = self.font.clone();
+        let colors = &mut self.atelier.colors;
+        colors.background = self.background;
+        colors.surface = self.surface;
+        colors.elevated = self.surface_raised;
+        colors.sunken = self.surface_sunken;
+        colors.text = self.text;
+        colors.text_muted = self.text_muted;
+        colors.text_faint = self.text_faint;
+        colors.text_disabled = Self::translucent(self.text, 0.38);
+        colors.border = self.border_subtle;
+        colors.border_strong = self.border;
+        colors.separator = self.border_subtle;
+        colors.accent = self.accent;
+        colors.accent_text = self.accent_text;
+        colors.accent_hover = atelier::mix(self.accent, self.text, 0.08);
+        colors.on_accent = self.text_on_accent;
+        colors.user_bubble = self.accent;
+        colors.on_user_bubble = self.text_on_accent;
+        colors.accent_wash = Self::translucent(self.accent, 0.14);
+        colors.selected = Self::translucent(self.accent, 0.20);
+        colors.focus_ring = self.selection;
+        colors.success = self.playing;
+        colors.warning = self.warning;
+        colors.danger = self.danger;
+        colors.info = self.mute;
+        colors.success_wash = Self::translucent(self.playing, 0.14);
+        colors.warning_wash = Self::translucent(self.warning, 0.14);
+        colors.danger_wash = Self::translucent(self.danger, 0.14);
+        colors.info_wash = Self::translucent(self.mute, 0.14);
+        colors.record = self.record;
+        colors.playhead = self.playhead;
+        colors.meter = [self.meter_low, self.meter_mid, self.meter_high];
+        colors.agent = atelier::ensure_contrast(colors.agent, self.surface, 4.5);
+        colors.agent_wash = Self::translucent(colors.agent, 0.10);
+        if !self.is_glass {
+            colors.chrome = Self::translucent(self.surface_raised, 0.55);
+            colors.overlay = self.surface_raised;
+        }
     }
 
     /// The palette named by `id`, or the default one when nothing answers to it.
@@ -1133,15 +1356,15 @@ impl Metrics {
     /// Width the left-hand dock opens at.
     pub const LEFT_DOCK_WIDTH: Pixels = px(240.0);
     /// Width the right-hand dock opens at.
-    pub const RIGHT_DOCK_WIDTH: Pixels = px(300.0);
+    pub const RIGHT_DOCK_WIDTH: Pixels = px(380.0);
     /// Height the bottom dock opens at, including the panel's own header strip.
     pub const BOTTOM_DOCK_HEIGHT: Pixels = px(280.0);
     /// Height of the header strip at the top of a docked panel.
-    pub const PANEL_HEADER_HEIGHT: Pixels = px(22.0);
+    pub const PANEL_HEADER_HEIGHT: Pixels = px(28.0);
     /// Height of the status bar along the bottom of the window.
-    pub const STATUS_HEIGHT: Pixels = px(22.0);
+    pub const STATUS_HEIGHT: Pixels = px(24.0);
     /// Height of a control row inside the inspector.
-    pub const CONTROL_HEIGHT: Pixels = px(22.0);
+    pub const CONTROL_HEIGHT: Pixels = px(24.0);
     /// Width reserved for a dropdown's trailing disclosure indicator.
     pub const DROPDOWN_INDICATOR_WIDTH: Pixels = px(14.0);
     /// Size of the chevron inside a dropdown's trailing indicator lane.
@@ -1167,6 +1390,51 @@ impl Metrics {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn glass_presets_share_upstream_surfaces_and_preserve_document_palettes() {
+        for (id, appearance) in [
+            ("glass-dark", atelier::Appearance::Dark),
+            ("glass-light", atelier::Appearance::Light),
+        ] {
+            let expected = atelier::Theme::new(atelier::Direction::Glass, appearance);
+            let actual = Theme::named(id);
+            assert_eq!(actual.background, expected.colors.background);
+            assert_eq!(actual.surface, expected.colors.surface);
+            assert_eq!(actual.surface_raised, expected.colors.elevated);
+            assert_eq!(actual.surface_sunken, expected.colors.sunken);
+            assert_eq!(actual.atelier.density.control_sm, Metrics::CONTROL_HEIGHT);
+            assert_eq!(actual.atelier.colors.text, actual.text);
+            assert_eq!(actual.atelier.colors.on_user_bubble, actual.text_on_accent);
+            for (color, packed) in actual
+                .track_palette
+                .into_iter()
+                .zip(scheme(id).unwrap().track_palette)
+            {
+                assert_eq!(color, Hsla::from(rgb(packed.unwrap())));
+            }
+
+            let mut copied = crate::appearance::CustomScheme::from_scheme(
+                format!("{id}-copy"),
+                format!("{id} copy"),
+                scheme(id).unwrap(),
+            );
+            copied.accent = 0xff3377;
+            let edited = Theme::from_scheme(&copied.definition());
+            assert_eq!(edited.background, actual.background);
+            assert_eq!(edited.surface_raised, actual.surface_raised);
+            assert_eq!(edited.atelier.colors.chrome, actual.atelier.colors.chrome);
+            assert_eq!(edited.atelier.colors.overlay, actual.atelier.colors.overlay);
+            assert_eq!(edited.accent, Hsla::from(rgb(copied.accent)));
+            assert_eq!(
+                edited.accent_soft,
+                edited
+                    .surface
+                    .blend(Theme::translucent(edited.accent, 0.14))
+            );
+            assert_ne!(edited.atelier.colors.accent, actual.atelier.colors.accent);
+        }
+    }
 
     #[test]
     fn visualization_colours_follow_the_palette_and_remain_visible_in_every_scheme() {
@@ -1252,7 +1520,12 @@ mod tests {
                 ("raised", theme.surface_raised),
                 ("hover", theme.surface_hover),
             ];
-            for pair in ladder.windows(2) {
+            // Glass light uses white content surfaces above a grey canvas. Custom Auris
+            // ramps retain their original strictly ordered lightness contract.
+            for pair in ladder
+                .windows(2)
+                .filter(|_| !entry.id.starts_with("glass-"))
+            {
                 let ((below, under), (above, over)) = (pair[0], pair[1]);
                 assert!(
                     (over.l - under.l) * toward > 0.0,

@@ -128,8 +128,12 @@ pub struct RenderTrack {
     /// the playhead jumped — a seek, a loop wrap or a fresh start — and the notes that should be
     /// sounding there have to be chased.
     pub(crate) continued_from: Option<u64>,
-    /// Post-fader peak of the last block, published to the meters by the engine.
-    pub(crate) peak: f32,
+    /// Post-fader peak of each channel over the last block, published to the meters by the
+    /// engine.
+    pub(crate) peaks: [f32; 2],
+    /// Whether the two channels of the last block carried different signals; see
+    /// `renderer::sides_differ`.
+    pub(crate) sides_differ: bool,
     /// Which of the graph's sidechain taps this track's output is copied into, if any chain in
     /// the project keys from it.
     ///
@@ -191,9 +195,19 @@ impl RenderTrack {
         &self.source
     }
 
-    /// Post-fader peak of the most recently rendered block.
+    /// Post-fader peak of the most recently rendered block, over both channels.
     pub fn peak(&self) -> f32 {
-        self.peak
+        self.peaks[0].max(self.peaks[1])
+    }
+
+    /// Post-fader peak of one channel of the most recently rendered block.
+    pub fn channel_peak(&self, channel: usize) -> f32 {
+        self.peaks.get(channel).copied().unwrap_or(0.0)
+    }
+
+    /// Whether the two channels of the last block carried different signals.
+    pub fn sides_differ(&self) -> bool {
+        self.sides_differ
     }
 
     /// Number of scheduled note events, or 0 for a track with no instrument.

@@ -8,22 +8,31 @@ use serde::{Deserialize, Serialize};
 #[serde(deny_unknown_fields)]
 pub struct RecipePatch {
     /// Note density, 0..1.
+    #[schemars(range(min = 0.0, max = 1.0))]
     pub density: Option<f32>,
     /// Playing intensity, 0..1.
+    #[schemars(range(min = 0.0, max = 1.0))]
     pub intensity: Option<f32>,
     /// Gate ratio, 0..1.
+    #[schemars(range(min = 0.0, max = 1.0))]
     pub gate: Option<f32>,
     /// Dynamic variation, 0..1.
+    #[schemars(range(min = 0.0, max = 1.0))]
     pub dynamics: Option<f32>,
     /// Syncopation, 0..1.
+    #[schemars(range(min = 0.0, max = 1.0))]
     pub syncopation: Option<f32>,
     /// Drum fill amount, 0..1.
+    #[schemars(range(min = 0.0, max = 1.0))]
     pub fill: Option<f32>,
-    /// Relative octave, -2..2.
+    /// Octave offset -2..2 relative to the writer's native register; 0 keeps it.
+    #[schemars(range(min = -2, max = 2))]
     pub octave: Option<i32>,
     /// Swing percentage, 50..75.
+    #[schemars(range(min = 50, max = 75))]
     pub swing: Option<u8>,
-    /// Exact groove name from the recipe inspector.
+    /// Exact groove name from this schema or the recipe inspector.
+    #[schemars(schema_with = "groove_schema")]
     pub groove: Option<String>,
     /// eighth, sixteenth, eighth-triplet or sixteenth-triplet.
     #[schemars(with = "Option<String>", extend("enum" = ["eighth","sixteenth","eighth-triplet","sixteenth-triplet",null]))]
@@ -35,6 +44,17 @@ pub struct RecipePatch {
     pub rhythm: Option<String>,
     /// Explicit take seed; omitted preserves the current seed.
     pub seed: Option<u64>,
+}
+
+fn groove_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    let mut names = groove_catalog()
+        .iter()
+        .map(|groove| serde_json::Value::String(groove.name.to_owned()))
+        .collect::<Vec<_>>();
+    names.push(serde_json::Value::Null);
+    serde_json::json!({"type": ["string", "null"], "enum": names})
+        .try_into()
+        .expect("groove schema is an object")
 }
 
 /// Explicit choice of regeneration take.

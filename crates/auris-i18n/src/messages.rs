@@ -51,6 +51,16 @@ pub fn physical_activity(
     }
 }
 
+/// How the song workshop's current round stands, beside its title.
+pub fn workshop_round(language: Language, candidates: usize, generating: usize) -> String {
+    match (language, generating) {
+        (Language::English, 0) => format!("{candidates} candidates"),
+        (Language::English, _) => format!("{candidates} candidates · {generating} generating"),
+        (Language::Japanese, 0) => format!("{candidates}案"),
+        (Language::Japanese, _) => format!("{candidates}案 · {generating}案を生成中"),
+    }
+}
+
 macro_rules! messages {
     ($(
         $(#[$doc:meta])*

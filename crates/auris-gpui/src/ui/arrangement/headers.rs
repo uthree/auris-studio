@@ -14,7 +14,9 @@ use crate::app::{AurisApp, Drag};
 use crate::i18n::track_kind_key;
 use crate::theme::Metrics;
 use crate::ui::automation;
-use crate::ui::widgets::{ButtonStyle, Latch, button, db_to_meter_position, level_meter};
+use crate::ui::widgets::{
+    ButtonStyle, Latch, button, channel_meter, db_to_meter_position, level_meter,
+};
 
 /// How tall the strip along the bottom of a header that resizes its lane is.
 ///
@@ -220,7 +222,7 @@ impl AurisApp {
                     (false, true) => Some(self.t(Key::TakeBehind)),
                     (false, false) => None,
                 };
-                let level_db = gain_to_db(self.track_level(index));
+                let meter = self.track_meter(index);
                 // Latched by the engine and only put out by asking, so a transient that went
                 // over is still saying so long after the meter beside it has fallen back.
                 let clipped = self.session.meters().track_clipped(index);
@@ -271,7 +273,7 @@ impl AurisApp {
                         .border_b_1()
                         .border_color(theme.border_subtle)
                         .bg(if is_selected {
-                            theme.surface_raised
+                            theme.accent_soft
                         } else {
                             theme.surface
                         })
@@ -368,21 +370,24 @@ impl AurisApp {
                         )
                         .children(input.map(|(level, input_clipped)| {
                             let db = gain_to_db(level);
-                            div().w(px(4.0)).h_full().py(px(1.0)).child(level_meter(
-                                db_to_meter_position(db),
-                                db_to_meter_position(db),
-                                input_clipped,
-                                Axis::Vertical,
-                                theme.meter_color(db),
-                                &theme,
-                            ))
+                            div()
+                                .w(px(4.0))
+                                .mr(px(2.0))
+                                .h_full()
+                                .py(px(1.0))
+                                .child(level_meter(
+                                    db_to_meter_position(db),
+                                    db_to_meter_position(db),
+                                    input_clipped,
+                                    Axis::Vertical,
+                                    theme.meter_color(db),
+                                    &theme,
+                                ))
                         }))
-                        .child(div().w(px(7.0)).h_full().py(px(1.0)).child(level_meter(
-                            db_to_meter_position(level_db),
-                            db_to_meter_position(level_db),
+                        .child(div().w(px(7.0)).h_full().py(px(1.0)).child(channel_meter(
+                            meter,
                             clipped,
                             Axis::Vertical,
-                            theme.meter_color(level_db),
                             &theme,
                         )))
                         .child(self.lane_resize_band(index, id, height, cx))
@@ -410,7 +415,7 @@ impl AurisApp {
                     .border_b_1()
                     .border_color(theme.border_subtle)
                     .bg(if is_selected {
-                        theme.surface_raised
+                        theme.accent_soft
                     } else {
                         theme.surface
                     })
@@ -665,25 +670,28 @@ impl AurisApp {
                             .child(self.pan_control(id, pan, cx)),
                     )
                     // The input, left of what the track puts out, which is the order the signal
-                    // travels in — and narrower, so the pair reads as two different things at a
-                    // glance rather than as a stereo meter.
+                    // travels in — narrower, and set a little apart, so it reads as a different
+                    // thing at a glance rather than as one side of the stereo pair beside it.
                     .children(input.map(|(level, input_clipped)| {
                         let db = gain_to_db(level);
-                        div().w(px(4.0)).h_full().py(px(1.0)).child(level_meter(
-                            db_to_meter_position(db),
-                            db_to_meter_position(db),
-                            input_clipped,
-                            Axis::Vertical,
-                            theme.meter_color(db),
-                            &theme,
-                        ))
+                        div()
+                            .w(px(4.0))
+                            .mr(px(2.0))
+                            .h_full()
+                            .py(px(1.0))
+                            .child(level_meter(
+                                db_to_meter_position(db),
+                                db_to_meter_position(db),
+                                input_clipped,
+                                Axis::Vertical,
+                                theme.meter_color(db),
+                                &theme,
+                            ))
                     }))
-                    .child(div().w(px(7.0)).h_full().py(px(1.0)).child(level_meter(
-                        db_to_meter_position(level_db),
-                        db_to_meter_position(level_db),
+                    .child(div().w(px(7.0)).h_full().py(px(1.0)).child(channel_meter(
+                        meter,
                         clipped,
                         Axis::Vertical,
-                        theme.meter_color(level_db),
                         &theme,
                     )))
                     // Last, so it paints over the fader it overlaps and so a press on it is the

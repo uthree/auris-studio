@@ -9,9 +9,11 @@ note counts and recipe summaries rather than complete note arrays.
 
 Inspect the project first. Identify the foreground by its musical role and copy its clip IDs
 into both `foreground_clips` and `protected_clips`. The foreground must be a nonempty
-subset of protected clips. It explicitly selects written melody notes for chord/arpeggio
-spacing, including hand-written and imported notes without a recipe. Additional protected
-clips need not participate in this musical foreground. Protection preserves the entire clips, including authored notes,
+subset of protected clips, and every foreground clip must contain pitched notes on a
+non-drum track. It explicitly selects written melody notes for chord/arpeggio spacing,
+including hand-written and imported notes without a recipe. Additional protected clips need
+only exist: they reserve their tracks and remain untouched, but may be empty pad clips or
+drum clips and do not participate in foreground adaptation. Protection preserves the entire clips, including authored notes,
 curves, lyrics, performance and recipes. It does not infer a new progression from the melody.
 Choose harmony deliberately with `suggest_harmony` and `edit_harmony`; existing phrase-writing and backing-adjustment
 algorithms perform the score. A seventh, suspension or diminished chord is a musical choice,
@@ -74,7 +76,12 @@ notes is rejected; rests within a phrase retain the preceding harmony.
 ## Generate and regenerate backing
 
 Create separate backing tracks and select their sounds using the normal track tools.
-For drums, assign the track's sounds before generating. Copy track IDs and the current
+For drums, inspect the track's role assignments before generating. Creating or switching to
+the built-in drum kit installs its authored assignments; reselecting the current source
+preserves an explicitly edited or empty map. Other sounds need their own accepted assignments.
+A single drum track cannot receive
+overlapping generated clips in one range: generate one `drums` clip with its configured
+voices, split the ranges, or use separate drum tracks for kick, snare and hat. Copy track IDs and the current
 content `revision` from `inspect_project` into the request. Example IDs below are placeholders.
 Saved calls add a `project` path or project ID to the same arguments.
 
@@ -135,7 +142,9 @@ still reflect the previous progression. Choose the intended targets explicitly. 
 `edit_harmony` also preserves notes; omit `harmony` from a later `regenerate` request to use
 the current project harmony. Changing recipe controls remains an explicit `edit_recipe` operation.
 
-Regeneration preserves clip IDs, position, length, loop settings, recipe controls and seeds,
+Recipe settings use the existing `edit_recipe` vocabulary. `octave` is an integer relative
+offset from the writer's native register, limited to `-2..2`; `0` keeps the native register
+and it is not an absolute MIDI octave. Regeneration preserves clip IDs, position, length, loop settings, recipe controls and seeds,
 authored curves and performance stacks. A hand-edited generated score is refused rather than
 overwritten, and a frozen clip has no recipe to regenerate. The protected foreground may be
 authored manually or generated; neither is rewritten by this tool.

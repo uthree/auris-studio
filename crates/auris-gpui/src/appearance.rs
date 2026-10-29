@@ -215,6 +215,7 @@ impl Appearance {
     pub fn theme(&self) -> Theme {
         let mut theme = Theme::from_scheme(&self.selected_scheme());
         theme.font = ui_font_for(self.font_family.as_deref());
+        theme.sync_atelier();
         theme
     }
 

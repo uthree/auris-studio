@@ -12,9 +12,7 @@ use crate::theme::Metrics;
 use crate::ui::context_menu::count_in_label;
 use crate::ui::icons::Icon;
 use crate::ui::prompt::{Prompt, PromptTarget};
-use crate::ui::widgets::{
-    ButtonStyle, button, db_to_meter_position, icon_button, level_meter, readout,
-};
+use crate::ui::widgets::{ButtonStyle, MeterReading, button, channel_meter, icon_button, readout};
 
 /// Grid divisions offered in the transport bar, as a fraction of a quarter note.
 ///
@@ -160,7 +158,7 @@ fn take_block(
 fn meter_block(
     caption: &'static str,
     value: String,
-    db: f32,
+    reading: MeterReading,
     clipped: bool,
     width: Pixels,
     theme: &crate::theme::Theme,
@@ -179,12 +177,10 @@ fn meter_block(
                 .child(div().text_color(theme.text_faint).child(caption))
                 .child(div().text_color(theme.text_muted).child(value)),
         )
-        .child(div().h(px(7.0)).mt_1().child(level_meter(
-            db_to_meter_position(db),
-            db_to_meter_position(db),
+        .child(div().h(px(7.0)).mt_1().child(channel_meter(
+            reading,
             clipped,
             Axis::Horizontal,
-            theme.meter_color(db),
             theme,
         )))
 }
@@ -427,7 +423,7 @@ impl AurisApp {
             .map(|numeral| numeral.name_in(self.project().harmony.keys.key_at(playhead)))
             .unwrap_or_else(|| "—".to_string());
         let grid_label = self.grid_label();
-        let master_db = gain_to_db(self.master_level());
+        let master = self.master_meter();
         let master_clipped = self.session.meters().master_clipped();
         let anything_clipped = self.anything_clipped();
         let master_gain_db = self.project().master.gain_db;
@@ -569,7 +565,12 @@ impl AurisApp {
                     meter_block(
                         self.t(Key::InputMeter),
                         input_peak_text(db),
-                        db,
+                        // The input is drawn as one bar: its channels are each beside the track
+                        // armed on them, and this says only whether anything is arriving.
+                        MeterReading {
+                            peaks: [self.input_level; 2],
+                            stereo: false,
+                        },
                         self.input_clipped,
                         meter_width,
                         &theme,
@@ -583,7 +584,7 @@ impl AurisApp {
                     .child(meter_block(
                         self.t(Key::Master),
                         format!("{master_gain_db:+.1} dB"),
-                        master_db,
+                        master,
                         master_clipped,
                         meter_width,
                         &theme,
@@ -611,9 +612,11 @@ impl AurisApp {
             .items_center()
             .h(Metrics::TRANSPORT_HEIGHT)
             .px_3()
-            .bg(theme.surface_raised)
+            // Transport is a single chrome band; its sunken LCD fields provide the only
+            // elevation and keep the timeline below visually primary.
+            .bg(theme.surface)
             .border_b_1()
-            .border_color(theme.border)
+            .border_color(theme.border_subtle)
             .child(
                 div()
                     .flex()

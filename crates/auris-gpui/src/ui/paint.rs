@@ -178,6 +178,17 @@ pub fn area_under(window: &mut Window, points: &[Point<Pixels>], baseline: Pixel
 /// half off the edge of a lane.
 pub const LINE_HEIGHT: f32 = 1.35;
 
+/// Flattens line separators for single-line controls without changing document text.
+pub(crate) fn single_line_text(text: gpui::SharedString) -> gpui::SharedString {
+    if text.contains(['\r', '\n', '\u{2028}', '\u{2029}']) {
+        text.replace("\r\n", " ")
+            .replace(['\r', '\n', '\u{2028}', '\u{2029}'], " ")
+            .into()
+    } else {
+        text
+    }
+}
+
 /// Paints a single line of text at `origin`, returning its width.
 ///
 /// The caller gets the width back so labels can be laid out left to right without a second
@@ -190,7 +201,7 @@ pub fn label(
     font_size: Pixels,
     color: Hsla,
 ) -> Pixels {
-    let text = text.into();
+    let text = single_line_text(text.into());
     if text.is_empty() {
         return px(0.0);
     }
@@ -215,7 +226,7 @@ pub fn measure_label(
     text: impl Into<gpui::SharedString>,
     font_size: Pixels,
 ) -> Pixels {
-    let text = text.into();
+    let text = single_line_text(text.into());
     if text.is_empty() {
         return px(0.0);
     }
@@ -240,7 +251,7 @@ pub fn label_right(
     font_size: Pixels,
     color: Hsla,
 ) -> Pixels {
-    let text = text.into();
+    let text = single_line_text(text.into());
     if text.is_empty() {
         return px(0.0);
     }
@@ -1153,6 +1164,39 @@ pub fn keyboard(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[gpui::test]
+    fn multiline_singer_clip_names_paint_without_changing_the_lyrics(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (app, cx) = crate::harness::open(cx);
+        let name = "雨のしずくが 傘を離れ\n水たまりには 空が揺れる";
+        let clip = app.update(cx, |this, _| {
+            let track = this.session.add_singer_track("Voice");
+            let clip = this
+                .session
+                .add_midi_clip(track, name, Ticks::ZERO, Ticks::QUARTER * 32)
+                .unwrap();
+            this.session
+                .replace_notes(
+                    clip,
+                    vec![Note {
+                        lyric: name.into(),
+                        ..Note::new(60, Ticks::ZERO, Ticks::QUARTER)
+                    }],
+                )
+                .unwrap();
+            clip
+        });
+        crate::harness::paint(&app, cx);
+        app.read_with(cx, |this, _| {
+            assert_eq!(this.session.project().midi_clip(clip).unwrap().1.name, name);
+            assert_eq!(
+                this.session.project().midi_clip(clip).unwrap().1.notes[0].lyric,
+                name
+            );
+        });
+    }
 
     #[test]
     fn only_the_stretches_on_screen_are_walked_and_they_stop_at_the_edge() {

@@ -239,7 +239,7 @@ impl Session {
             selection: None,
             owner: self.listening.owner.clone(),
             revision: self.revision(),
-            render: self.render_job(),
+            render: self.render_job_at(Some(48_000.0)),
             range,
             previous,
             focus: focus.into(),

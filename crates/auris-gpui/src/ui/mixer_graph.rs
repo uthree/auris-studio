@@ -16,9 +16,7 @@ use crate::app::AurisApp;
 use crate::theme::{Metrics, Theme};
 use crate::ui::context_menu::{ContextMenu, MenuCommand};
 use crate::ui::plugin_window::PluginSubject;
-use crate::ui::widgets::{
-    ButtonState, ButtonStyle, button, button_enabled, db_to_meter_position, level_meter,
-};
+use crate::ui::widgets::{ButtonState, ButtonStyle, button, button_enabled, channel_meter};
 
 #[derive(Clone, Debug, PartialEq, gpui::Action)]
 #[action(namespace = auris_mixer_connections, no_json)]
@@ -150,7 +148,7 @@ fn wire_style(kind: MixerEdgeKind, theme: &Theme) -> (gpui::Hsla, EdgeStroke) {
         MixerEdgeKind::Output => (theme.mixer_output_color(), EdgeStroke::Solid),
         MixerEdgeKind::Send { .. } => (theme.mixer_send_color(), EdgeStroke::Dashed),
         MixerEdgeKind::Sidechain => (theme.mixer_sidechain_color(), EdgeStroke::Dotted),
-        MixerEdgeKind::Chain => (theme.text_faint, EdgeStroke::Solid),
+        MixerEdgeKind::Chain => (theme.mixer_output_color(), EdgeStroke::Solid),
     }
 }
 
@@ -211,7 +209,6 @@ fn wire_legend(label: &'static str, color: gpui::Hsla, stroke: EdgeStroke) -> An
         .flex()
         .items_center()
         .gap_1()
-        .text_xs()
         .child(
             gpui::canvas(
                 |_, _, _| (),
@@ -253,7 +250,18 @@ where
     L: Into<SharedString>,
     F: Fn(&gpui::ClickEvent, &mut gpui::Window, &mut gpui::App) + 'static,
 {
-    button(id, label, style, active, color, theme, click).h(Metrics::CONTROL_HEIGHT * zoom)
+    // The canvas scales rem-based children; Atelier tokens are Pixels and need the same
+    // graph zoom explicitly. Interface zoom clamps would break Fit graph at very small scales.
+    button(id, label, style, active, color, theme, click)
+        .h(theme.atelier.density.control_sm * zoom)
+        .px(theme.atelier.density.control_padding * 0.75 * zoom)
+        .rounded(
+            theme
+                .atelier
+                .control_radius(theme.atelier.density.control_sm)
+                * zoom,
+        )
+        .text_size(theme.atelier.typography.size_sm * zoom)
 }
 
 fn node_id(node: MixerNode) -> SharedString {
@@ -733,17 +741,17 @@ impl AurisApp {
             .flex_1()
             .min_h_0()
             .min_w_0()
-            .bg(theme.surface_sunken)
+            .bg(theme.background)
             .child(
                 div()
                     .flex()
                     .flex_wrap()
                     .items_center()
-                    .gap_1()
-                    .px_2()
+                    .gap(theme.atelier.spacing.xs)
+                    .px(theme.atelier.spacing.sm)
                     .min_h(Metrics::PANEL_HEADER_HEIGHT)
-                    .py_1()
-                    .bg(theme.surface_raised)
+                    .py(theme.atelier.spacing.xs)
+                    .bg(theme.surface)
                     .border_b_1()
                     .border_color(theme.border)
                     .child(
@@ -958,15 +966,16 @@ impl AurisApp {
             )
             .child(
                 div()
-                    .px_2()
-                    .py_1()
-                    .text_xs()
+                    .px(theme.atelier.spacing.sm)
+                    .py(theme.atelier.spacing.xs)
+                    .text_size(theme.atelier.typography.size_xs)
                     .text_color(theme.text_muted)
                     .child(
                         div()
                             .flex()
                             .flex_wrap()
-                            .gap_3()
+                            .gap(theme.atelier.spacing.md)
+                            .child(self.t(Key::PipelineAudioDomain))
                             .child(wire_legend(
                                 self.t(Key::OutputShort),
                                 theme.mixer_output_color(),
@@ -1139,7 +1148,7 @@ impl AurisApp {
         };
         canvas.view.update(cx, |view, cx| {
             view.set_colors(
-                theme.surface_sunken,
+                theme.background,
                 theme.border_subtle,
                 theme.accent,
                 theme.text_muted,
@@ -1207,7 +1216,15 @@ impl AurisApp {
                     };
                     let mut flow = FlowNode::new(id, position.x, position.y)
                         .size(NODE_WIDTH, 136.0)
-                        .handles(handles);
+                        .handles(
+                            handles
+                                .into_iter()
+                                .map(|handle| {
+                                    handle
+                                        .color(u32::from(theme.mixer_output_color().to_rgb()) >> 8)
+                                })
+                                .collect(),
+                        );
                     flow.deletable = false;
                     if let Some(existing) = existing {
                         flow.measured_width = existing.measured_width;
@@ -1437,15 +1454,15 @@ impl AurisApp {
         let mut card = div()
             .w(px(NODE_WIDTH * zoom))
             .min_h(px(96.0 * zoom))
-            .p_2()
+            .p(theme.atelier.spacing.sm * zoom)
             .flex()
             .flex_col()
-            .gap_1()
+            .gap(theme.atelier.spacing.xs * zoom)
             .bg(theme.surface)
             .border_1()
             .border_color(if selected { theme.accent } else { theme.border })
-            .rounded(Metrics::RADIUS_MD)
-            .text_xs()
+            .rounded(theme.atelier.shape.radius_md * zoom)
+            .text_size(theme.atelier.typography.size_xs * zoom)
             .text_color(theme.text)
             .on_mouse_down(
                 MouseButton::Left,
@@ -1456,7 +1473,19 @@ impl AurisApp {
                     cx.notify();
                 }),
             )
-            .child(div().truncate().text_color(theme.text_muted).child(name));
+            .child(
+                div()
+                    .debug_selector({
+                        let id = id.clone();
+                        move || format!("graph-node-title-{id}")
+                    })
+                    .min_w_0()
+                    .truncate()
+                    .rounded(theme.atelier.shape.radius_xs * zoom)
+                    .when(selected, |header| header.bg(theme.atelier.colors.selected))
+                    .text_color(theme.text_muted)
+                    .child(name),
+            );
         match node {
             MixerNode::Effect(_, slot) => {
                 let effect = owner
@@ -1562,7 +1591,7 @@ impl AurisApp {
                         .flat_map(|track| &track.sends)
                         .cloned()
                         .collect();
-                    let level_db = gain_to_db(self.track_level(index));
+                    let meter = self.track_meter(index);
                     card = card
                         .child(
                             div()
@@ -1601,12 +1630,10 @@ impl AurisApp {
                                     .tooltip(self.tip(Key::CmdToggleTrackSolo, "track.solo")),
                                 ),
                         )
-                        .child(div().h(px(6.0 * zoom)).child(level_meter(
-                            db_to_meter_position(level_db),
-                            db_to_meter_position(level_db),
+                        .child(div().h(px(6.0 * zoom)).child(channel_meter(
+                            meter,
                             self.session.meters().track_clipped(index),
                             Axis::Horizontal,
-                            theme.meter_color(level_db),
                             &theme,
                         )))
                         .child(node_button(
@@ -1645,13 +1672,11 @@ impl AurisApp {
                         ));
                     }
                 } else {
-                    let level_db = gain_to_db(self.master_level());
-                    card = card.child(div().h(px(6.0 * zoom)).child(level_meter(
-                        db_to_meter_position(level_db),
-                        db_to_meter_position(level_db),
+                    let meter = self.master_meter();
+                    card = card.child(div().h(px(6.0 * zoom)).child(channel_meter(
+                        meter,
                         self.session.meters().master_clipped(),
                         Axis::Horizontal,
-                        theme.meter_color(level_db),
                         &theme,
                     )));
                 }

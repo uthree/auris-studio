@@ -48,7 +48,7 @@ impl AurisApp {
                         .flex()
                         .flex_wrap()
                         .min_w_0()
-                        .gap_1()
+                        .gap(self.theme.atelier.spacing.xs)
                         .child(bounded_button_enabled(
                             SharedString::from(format!("pipeline-parameters-{slot}")),
                             self.t(Key::PluginParameters),

@@ -1005,6 +1005,8 @@ mod tests {
         use serde_json::{Value, json};
         let (app, cx) = crate::harness::open(cx);
         app.update(cx, |this, cx| {
+            // This fixture owns its permission policy, independently of concurrent settings tests.
+            this.settings.agent.policy = Default::default();
             this.session.execution_trace(TraceOperation::Start).unwrap();
             let dispatch = |this: &mut AurisApp, value: Value| {
                 let event = parse_event(&value.to_string()).unwrap();

@@ -1056,7 +1056,7 @@ mod tests {
         });
         let handle = app.read_with(cx, |this, _| this.settings_window.unwrap());
         let cx = &mut VisualTestContext::from_window(handle.into(), cx);
-        cx.simulate_resize(gpui::size(px(800.0), px(1600.0)));
+        cx.simulate_resize(gpui::size(px(1020.0), px(1600.0)));
         cx.run_until_parked();
         crate::harness::click("tab-agent", cx);
         let bounds = cx.debug_bounds("agent-system-prompt").unwrap();
@@ -1107,7 +1107,7 @@ mod tests {
         });
         let handle = app.read_with(cx, |this, _| this.settings_window.unwrap());
         let cx = &mut VisualTestContext::from_window(handle.into(), cx);
-        cx.simulate_resize(gpui::size(px(800.0), px(1600.0)));
+        cx.simulate_resize(gpui::size(px(1020.0), px(1600.0)));
         cx.run_until_parked();
         crate::harness::click("tab-agent", cx);
         crate::harness::click("agent-system-prompt", cx);

@@ -89,7 +89,7 @@ pub enum Command {
         /// Explicit foreground clips and musical intent for one short phrase.
         request: harmony_suggestions::Request,
     },
-    /// Generate backing parts on existing tracks, or change harmony and regenerate only explicit backing clips, while preserving protected melody clips and every other clip. Uses Auris writers, not model-authored note arrays. Read inspect_project for expected_revision. Operations run on a worker and apply atomically as one Undo; stale/cancelled work and hand-edited regeneration targets are refused. Returns compact recipe summaries, not notes. Split targets at meter/section boundaries first; read tool_help for limits.
+    /// Generate or regenerate backing clips. Preserves all other clips. Protected clips only reserve tracks; foreground requires notes on non-drum tracks. Uses Auris writers. Read inspect_project for expected_revision. Runs on a worker and applies atomically as one Undo; stale/cancelled work and hand-edited regeneration targets are refused. Returns recipes, not notes. Split at meter/section boundaries; see tool_help for limits.
     Accompaniment {
         /// Content revision from inspect_project or read_notes.
         expected_revision: String,
@@ -231,7 +231,7 @@ pub enum Command {
         /// Explicit one-based bar range within the arrangement.
         range: file_jobs::BarRange,
     },
-    /// Export the current unsaved instrumental score to a new MIDI file without saving the project. Existing files are refused.
+    /// Export instrumental MIDI with trailing rests. Uses the unsaved score. Never overwrites or saves the project. Returns note count, duration in ticks/seconds and PPQ.
     ExportMidi {
         /// Absolute new local MIDI file path.
         output: String,
@@ -310,9 +310,11 @@ pub enum Command {
         /// Duration in bars, 1..4096. Charts repeat to fill this range.
         #[schemars(range(min = 1, max = 4096))]
         bars: u32,
-        /// Optional key such as D major or A minor; restored to the prior key after the range.
+        /// Optional key such as D major or A minor; replaces internal key changes and restores the prior key after the range.
         key: Option<String>,
-        /// Roman chart, e.g. | I | vi | IV | V |; interpreted in the supplied or current key.
+        /// Prefer an array of bars, e.g. ["I","IV V","vi","ii V"]. Each entry spans one bar, with one or more chords sharing it equally; two chords in 4/4 start on beats 1 and 3. Choose harmonic rhythm per bar; there is no one-chord limit. Alternatively use an explicit pipe-delimited chart "| I | IV V | vi | ii V |", a single chord, or @catalogue. Unbarred multi-chord strings are rejected to prevent squeezing the whole progression into each bar. Placement follows meter changes, ignores the editing grid, and preserves outside harmony. Notes are unchanged.
+        #[serde(default, deserialize_with = "harmony::deserialize_chords")]
+        #[schemars(with = "Option<harmony::ChordChartInput>")]
         chords: Option<String>,
         /// Optional section name for this range, e.g. Intro or Chorus. Replaces internal section changes and restores the previous section after the range. Supply section alone to write structure without changing harmony.
         section: Option<String>,
@@ -430,7 +432,7 @@ pub enum Command {
         #[schemars(range(min = 1, max = 16))]
         limit: usize,
     },
-    /// Inspect actual rendered audio and score without saving: mel image, levels and piano roll. Start within the arrangement and request 1..8 bars fitting in 30 seconds. Visual interpretation is not listening. Use the same range before and after editing.
+    /// Inspect actual rendered audio and score without saving: mel image, levels, piano roll and up to 128 harmony_events including within-bar chord/key changes. Event tick is absolute (960 per quarter); bar/beat are 1-based, tick_in_beat uses the meter's beat, start_seconds is relative to the inspected range. Check harmony_events_truncated; inspect_project retains the full harmony maps. Start within the arrangement and request 1..8 bars fitting in 30 seconds. Visual interpretation is not listening. Use the same range before and after editing.
     InspectAudio {
         /// First bar, starting at 1.
         #[schemars(range(min = 1))]

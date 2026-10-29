@@ -1,11 +1,13 @@
 //! Live mechanical projections beside the physical instrument's parameter editor.
 
-use super::{
-    paint,
-    plugin_window::PluginSubject,
-    widgets::{ButtonState, ButtonStyle, button, button_enabled},
-};
+use super::{paint, plugin_window::PluginSubject};
 use crate::{app::AurisApp, theme::Theme};
+use atelier::plot::{LinePlot, Series};
+use atelier::viz::{Heatmap, StringLane, Waveform};
+use atelier::{
+    Badge, Button, Card, ControlSize, IconName, Label, SectionHeader, Segment, SegmentedControl,
+    TextColor, TextSize,
+};
 use auris_i18n::{Key, Language, messages};
 use auris_session::{MotionFrame, MotionGeometry, MotionVoice, prelude::*};
 use gpui::{AnyElement, Bounds, Context, Pixels, Window, canvas, div, point, prelude::*, px, size};
@@ -28,6 +30,7 @@ pub(crate) struct PhysicalView {
     drum_preview: bool,
     gain: f32,
     effects_disabled: bool,
+    voice_details: bool,
     /// Recent captured frames used for short, bounded motion trails.
     history: Vec<MotionFrame>,
 }
@@ -42,6 +45,7 @@ impl Default for PhysicalView {
             drum_preview: false,
             gain: 24.0,
             effects_disabled: false,
+            voice_details: false,
             history: Vec::new(),
         }
     }
@@ -149,7 +153,11 @@ impl AurisApp {
             self.toggle_physical_preview(cx);
         }
     }
-    pub(crate) fn physical_model_display(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
+    pub(crate) fn physical_model_display(
+        &mut self,
+        wide: bool,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
         self.poll_physical_view();
         let (track, id) = self.physical_view.source.as_ref()?;
         let bowed = id == "auris.physical.violin";
@@ -210,182 +218,396 @@ impl AurisApp {
                 piano.then_some(frame.pedal),
             )
         };
-        Some(
+        let tokens = &theme.atelier;
+        let spacing = tokens.spacing;
+        let voices = self.physical_view.voice_details;
+        let motion_height = gpui::rems(if piano || drums { 18. } else { 14. });
+        let visual = if voices {
+            voice_lanes(&idle, &history, gain, effects_disabled, language, &theme)
+        } else {
             div()
+                .id("physical-motion-canvas")
+                .debug_selector(|| "physical-motion-canvas".into())
+                .h(motion_height)
+                .flex_shrink_0()
+                .when(wide, |view| view.flex_1().min_h(motion_height))
+                .w_full()
+                .rounded(tokens.shape.radius_sm)
+                .bg(tokens.colors.sunken)
+                .overflow_hidden()
+                .child(
+                    canvas(
+                        move |bounds, _, _| bounds,
+                        move |bounds, _, window, cx| {
+                            draw_motion(
+                                bounds,
+                                &MotionDrawing {
+                                    frame: &idle,
+                                    history: &history,
+                                    gain,
+                                    theme: &drawing_theme,
+                                    held,
+                                    released,
+                                    language,
+                                    drums,
+                                    piano,
+                                    layout: string_layout,
+                                    effects: !effects_disabled,
+                                },
+                                window,
+                                cx,
+                            );
+                        },
+                    )
+                    .size_full(),
+                )
+                .into_any_element()
+        };
+        Some(
+            Card::new()
                 .id("physical-model")
+                .key_context("AurisVisualizationControls")
+                .on_action(|_: &super::widgets::ClaimVisualizationActivation, _, _| {})
                 .debug_selector(|| "physical-model".into())
                 .w_full()
                 .flex_shrink_0()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .pb_2()
-                .border_b_1()
-                .border_color(theme.border)
+                .when(wide && !voices, |panel| panel.h_full())
+                .p(spacing.lg)
+                .gap(spacing.md)
+                .child(
+                    SectionHeader::new(self.t(Key::PhysicalMotion))
+                        .description(self.t(Key::PhysicalObserved))
+                        .action(Badge::new(self.t(if frozen {
+                            Key::PhysicalFrozen
+                        } else if frame.active > 0 {
+                            Key::PhysicalLive
+                        } else {
+                            Key::VisualizerWaiting
+                        }))),
+                )
                 .child(
                     div()
                         .flex()
                         .flex_wrap()
                         .items_center()
-                        .gap_2()
+                        .gap(spacing.sm)
                         .child(
-                            div()
-                                .flex_1()
-                                .text_sm()
-                                .text_color(theme.text)
-                                .child(self.t(Key::PhysicalMotion)),
+                            SegmentedControl::new(
+                                "physical-views",
+                                [
+                                    Segment::label(self.t(Key::PhysicalInstrumentView)),
+                                    Segment::label(self.t(Key::PhysicalVoicesView)),
+                                ],
+                                usize::from(voices),
+                            )
+                            .size(ControlSize::Small)
+                            .on_select(cx.listener(
+                                |this, index: &usize, _, cx| {
+                                    this.physical_view.voice_details = *index == 1;
+                                    cx.notify();
+                                },
+                            )),
                         )
-                        .child(button(
-                            "physical-gain",
-                            format!("{}: {gain:.0}×", self.t(Key::VisualizerDisplayGain)),
-                            ButtonStyle::Ghost,
-                            false,
-                            theme.accent,
-                            &theme,
-                            cx.listener(|this, _, _, cx| {
+                        .child(
+                            Button::new(
+                                "physical-gain",
+                                format!("{}: {gain:.0}×", self.t(Key::VisualizerDisplayGain)),
+                            )
+                            .ghost()
+                            .size(ControlSize::Small)
+                            .on_click(cx.listener(|this, _, _, cx| {
                                 this.physical_view.gain = match this.physical_view.gain as u32 {
                                     6 => 24.,
                                     24 => 96.,
                                     _ => 6.,
                                 };
                                 cx.notify();
-                            }),
-                        ))
-                        .child(button(
-                            "physical-effects",
-                            self.t(Key::VisualizerEffects),
-                            ButtonStyle::Ghost,
-                            !effects_disabled,
-                            theme.accent,
-                            &theme,
-                            cx.listener(|this, _, _, cx| {
-                                this.physical_view.effects_disabled =
-                                    !this.physical_view.effects_disabled;
-                                cx.notify();
-                            }),
-                        ))
-                        .child(button_enabled(
-                            "physical-freeze",
-                            self.t(if frozen {
-                                Key::PhysicalResume
-                            } else {
-                                Key::VisualizerFreeze
-                            }),
-                            ButtonStyle::Normal,
-                            ButtonState::available(frozen, frame.active > 0),
-                            theme.accent,
-                            &theme,
-                            cx.listener(|this, _, window, cx| {
-                                this.toggle_physical_freeze();
-                                // Resuming an ended hit disables this button. Keep keyboard
-                                // input on the window instead of a removed focus target.
-                                if this
-                                    .physical_view
-                                    .frame
-                                    .is_none_or(|frame| frame.active == 0)
-                                {
-                                    window.focus(&this.focus);
-                                }
-                                cx.notify();
-                            }),
-                        )),
+                            })),
+                        )
+                        .child(
+                            Button::new("physical-effects", self.t(Key::VisualizerEffects))
+                                .ghost()
+                                .size(ControlSize::Small)
+                                .selected(!effects_disabled)
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.physical_view.effects_disabled =
+                                        !this.physical_view.effects_disabled;
+                                    cx.notify();
+                                })),
+                        )
+                        .child(
+                            Button::new(
+                                "physical-freeze",
+                                self.t(if frozen {
+                                    Key::PhysicalResume
+                                } else {
+                                    Key::VisualizerFreeze
+                                }),
+                            )
+                            .size(ControlSize::Small)
+                            .selected(frozen)
+                            .disabled(frame.active == 0)
+                            .on_click(cx.listener(
+                                |this, _, window, cx| {
+                                    this.toggle_physical_freeze();
+                                    if this
+                                        .physical_view
+                                        .frame
+                                        .is_none_or(|frame| frame.active == 0)
+                                    {
+                                        window.focus(&this.focus);
+                                    }
+                                    cx.notify();
+                                },
+                            )),
+                        ),
                 )
                 .child(
                     div()
                         .flex()
                         .flex_wrap()
                         .items_center()
-                        .gap_2()
-                        .child(button(
-                            "physical-octave-down",
-                            self.t(if drums {
-                                Key::PhysicalPreviousPad
-                            } else {
-                                Key::PhysicalLower
-                            }),
-                            ButtonStyle::Ghost,
-                            false,
-                            theme.accent,
-                            &theme,
-                            cx.listener(|this, _, _, cx| {
+                        .gap(spacing.sm)
+                        .pt(spacing.sm)
+                        .border_t_1()
+                        .border_color(tokens.colors.separator)
+                        .child(
+                            Button::new(
+                                "physical-octave-down",
+                                self.t(if drums {
+                                    Key::PhysicalPreviousPad
+                                } else {
+                                    Key::PhysicalLower
+                                }),
+                            )
+                            .ghost()
+                            .size(ControlSize::Small)
+                            .on_click(cx.listener(|this, _, _, cx| {
                                 this.transpose_physical_preview(-12, cx);
                                 cx.notify();
-                            }),
-                        ))
-                        .child(button(
-                            "physical-play",
-                            messages::physical_preview(self.language, &note, playing),
-                            ButtonStyle::Normal,
-                            playing,
-                            theme.accent,
-                            &theme,
-                            cx.listener(|this, _, _, cx| {
+                            })),
+                        )
+                        .child(
+                            Button::new(
+                                "physical-play",
+                                messages::physical_preview(self.language, &note, playing),
+                            )
+                            .icon(if playing {
+                                IconName::Pause
+                            } else {
+                                IconName::Play
+                            })
+                            .size(ControlSize::Small)
+                            .selected(playing)
+                            .on_click(cx.listener(|this, _, _, cx| {
                                 this.toggle_physical_preview(cx);
                                 cx.notify();
-                            }),
-                        ))
-                        .child(button(
-                            "physical-octave-up",
-                            self.t(if drums {
-                                Key::PhysicalNextPad
-                            } else {
-                                Key::PhysicalHigher
-                            }),
-                            ButtonStyle::Ghost,
-                            false,
-                            theme.accent,
-                            &theme,
-                            cx.listener(|this, _, _, cx| {
+                            })),
+                        )
+                        .child(
+                            Button::new(
+                                "physical-octave-up",
+                                self.t(if drums {
+                                    Key::PhysicalNextPad
+                                } else {
+                                    Key::PhysicalHigher
+                                }),
+                            )
+                            .ghost()
+                            .size(ControlSize::Small)
+                            .on_click(cx.listener(|this, _, _, cx| {
                                 this.transpose_physical_preview(12, cx);
                                 cx.notify();
-                            }),
-                        )),
-                )
-                .child(
-                    div()
-                        .id("physical-motion-canvas")
-                        .debug_selector(|| "physical-motion-canvas".into())
-                        .h(gpui::rems(if piano || drums { 18. } else { 12. }))
-                        .flex_shrink_0()
-                        .w_full()
-                        .bg(theme.surface_sunken)
-                        .child(
-                            canvas(
-                                move |bounds, _, _| bounds,
-                                move |bounds, _, window, cx| {
-                                    draw_motion(
-                                        bounds,
-                                        &MotionDrawing {
-                                            frame: &idle,
-                                            history: &history,
-                                            gain,
-                                            theme: &drawing_theme,
-                                            held,
-                                            released,
-                                            language,
-                                            drums,
-                                            piano,
-                                            layout: string_layout,
-                                            effects: !effects_disabled,
-                                        },
-                                        window,
-                                        cx,
-                                    )
-                                },
-                            )
-                            .size_full(),
+                            })),
                         ),
                 )
-                .child(div().text_xs().text_color(theme.text_muted).child(caption))
+                .child(visual)
+                .children((!voices).then(|| {
+                    Label::new(projection)
+                        .size(TextSize::XSmall)
+                        .color(TextColor::Muted)
+                }))
                 .child(
-                    div()
-                        .text_xs()
-                        .text_color(theme.text_faint)
-                        .child(projection),
+                    Label::new(caption)
+                        .size(TextSize::Small)
+                        .color(TextColor::Muted),
                 )
                 .into_any_element(),
         )
     }
+}
+
+fn voice_lanes(
+    frame: &MotionFrame,
+    history: &[MotionFrame],
+    gain: f32,
+    effects_disabled: bool,
+    language: Language,
+    theme: &Theme,
+) -> AnyElement {
+    let tokens = &theme.atelier;
+    let spacing = tokens.spacing;
+    let mut lanes = div()
+        .id("physical-voice-lanes")
+        .debug_selector(|| "physical-voice-lanes".into())
+        .flex()
+        .flex_col()
+        .gap(spacing.sm);
+    for (slot, voice) in frame.voices.iter().enumerate() {
+        let active = voice.level > 0. && voice.pitch.is_finite();
+        let color = theme.visualizer_color(voice.pitch.round().clamp(0., 127.) as usize);
+        let geometry = voice.geometry.unwrap_or(frame.geometry);
+        let displacement = if matches!(geometry, MotionGeometry::Plate | MotionGeometry::Membrane) {
+            Heatmap::new(
+                8,
+                8,
+                voice
+                    .points
+                    .iter()
+                    .map(|v| displayed_motion(*v, gain))
+                    .collect(),
+            )
+            .signed()
+            .circular()
+            .into_any_element()
+        } else if geometry == MotionGeometry::String {
+            let mut lane = StringLane::new(
+                body_points(voice, geometry, gain)
+                    .into_iter()
+                    .map(|(_, y)| y)
+                    .collect(),
+            )
+            .color(color)
+            .contact(voice.contact);
+            if !effects_disabled {
+                let trails = history
+                    .iter()
+                    .rev()
+                    .skip(1)
+                    .take(5)
+                    .rev()
+                    .filter_map(|past| {
+                        let index = match_history(frame, past)[slot]?;
+                        Some(
+                            body_points(&past.voices[index], geometry, gain)
+                                .into_iter()
+                                .map(|(_, y)| y)
+                                .collect(),
+                        )
+                    })
+                    .collect();
+                lane = lane.trails(trails);
+            }
+            if !active {
+                lane = lane.inactive();
+            }
+            lane.into_any_element()
+        } else {
+            Waveform::new(
+                voice
+                    .points
+                    .iter()
+                    .map(|v| displayed_motion(*v, gain))
+                    .collect(),
+            )
+            .color(color)
+            .into_any_element()
+        };
+        let modes = LinePlot::new()
+            .series(
+                Series::stems(
+                    voice
+                        .modes
+                        .iter()
+                        .enumerate()
+                        .map(|(i, v)| (i as f32 + 1., displayed_motion(*v, gain).abs()))
+                        .collect(),
+                )
+                .color(color),
+            )
+            .x_range(1., 8.)
+            .y_range(0., 1.);
+        lanes = lanes.child(
+            div()
+                .flex()
+                .gap(spacing.md)
+                .items_center()
+                .min_w_0()
+                .child(
+                    div()
+                        .w(gpui::rems(5.))
+                        .flex_shrink_0()
+                        .flex()
+                        .flex_col()
+                        .gap(spacing.xs)
+                        .child(
+                            Label::new(if active {
+                                midi_name(voice.pitch.round().clamp(0., 127.) as i32)
+                            } else {
+                                "—".to_owned()
+                            })
+                            .mono(),
+                        )
+                        .child(
+                            Label::new(if active {
+                                if voice.held {
+                                    Key::PhysicalHeld
+                                } else {
+                                    Key::PhysicalReleased
+                                }
+                                .get(language)
+                            } else {
+                                ""
+                            })
+                            .size(TextSize::XSmall)
+                            .color(TextColor::Muted),
+                        ),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .flex()
+                        .flex_col()
+                        .gap(spacing.xs)
+                        .child(
+                            Label::new(Key::PhysicalDisplacement.get(language))
+                                .size(TextSize::XSmall)
+                                .color(TextColor::Muted),
+                        )
+                        .child(
+                            div()
+                                .h(gpui::rems(4.))
+                                .bg(tokens.colors.sunken)
+                                .rounded(tokens.shape.radius_sm)
+                                .overflow_hidden()
+                                .child(displacement),
+                        ),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .flex()
+                        .flex_col()
+                        .gap(spacing.xs)
+                        .child(
+                            Label::new(Key::PhysicalModes.get(language))
+                                .size(TextSize::XSmall)
+                                .color(TextColor::Muted),
+                        )
+                        .child(
+                            div()
+                                .h(gpui::rems(4.))
+                                .bg(tokens.colors.sunken)
+                                .rounded(tokens.shape.radius_sm)
+                                .overflow_hidden()
+                                .child(modes),
+                        ),
+                ),
+        );
+    }
+    lanes.into_any_element()
 }
 
 fn is_drum_model(id: &str) -> bool {
@@ -760,6 +982,76 @@ mod tests {
         assert!(!view.accept_frame(view.frame.unwrap()));
     }
 
+    #[gpui::test]
+    fn voice_inspection_preserves_capture_and_reaches_model_controls_by_keyboard(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use crate::{auxiliary_window::Surface, harness};
+        let (app, cx) = harness::open(cx);
+        let (before, history_len) = app.update(cx, |app, cx| {
+            let track = app
+                .session
+                .add_instrument_track("Guitar", "auris.physical.guitar")
+                .unwrap();
+            app.open_plugin_window(PluginSubject::Instrument(track));
+            app.poll_physical_view();
+            let mut frame = MotionFrame {
+                active: 1,
+                ..Default::default()
+            };
+            frame.voices[0].pitch = 60.;
+            frame.voices[0].level = 0.4;
+            frame.voices[0].points[15] = 0.02;
+            frame.voices[0].modes[0] = 0.01;
+            app.physical_view.accept_frame(frame);
+            app.physical_view.frozen = true;
+            cx.notify();
+            (app.project().clone(), app.physical_view.history.len())
+        });
+        harness::paint(&app, cx);
+        let handle = app.read_with(cx, |app, _| app.auxiliary_windows[&Surface::Plugin]);
+        let mut utility = gpui::VisualTestContext::from_window(handle.into(), cx);
+        harness::click("physical-views-1", &mut utility);
+        harness::paint(&app, &mut utility);
+        assert!(utility.debug_bounds("physical-voice-lanes").is_some());
+        app.read_with(&utility, |app, _| {
+            assert!(app.physical_view.voice_details);
+            assert!(app.physical_view.frozen);
+            assert_eq!(app.physical_view.history.len(), history_len);
+            assert_eq!(app.project(), &before);
+        });
+        utility.update(|window, cx| window.focus(&app.read(cx).focus));
+        utility.simulate_keystrokes("tab tab tab tab");
+        utility.update(|_, cx| assert!(atelier::focus_visible(cx)));
+        let gain = app.read_with(&utility, |app, _| app.physical_view.gain);
+        utility.simulate_keystrokes("space");
+        utility.simulate_event(gpui::KeyUpEvent {
+            keystroke: gpui::Keystroke::parse("space").unwrap(),
+        });
+        app.read_with(&utility, |app, _| assert_ne!(app.physical_view.gain, gain));
+        for direction in [
+            atelier::Direction::Studio,
+            atelier::Direction::Glass,
+            atelier::Direction::Mono,
+        ] {
+            for appearance in [atelier::Appearance::Light, atelier::Appearance::Dark] {
+                app.update(&mut utility, |app, cx| {
+                    app.theme.atelier = atelier::Theme::new(direction, appearance);
+                    app.theme.install(cx);
+                    assert!(
+                        atelier::focus_visible(cx),
+                        "theme changes retain keyboard focus visibility"
+                    );
+                    cx.notify();
+                });
+                harness::resize(&app, &mut utility, size(px(1080.), px(760.)));
+                assert!(utility.debug_bounds("physical-voice-lanes").is_some());
+                harness::resize(&app, &mut utility, size(px(520.), px(480.)));
+                assert!(utility.debug_bounds("physical-voice-lanes").is_some());
+            }
+        }
+    }
+
     #[test]
     fn frozen_view_does_not_accept_new_frames_or_advance_trails() {
         let mut view = PhysicalView::default();
@@ -1014,10 +1306,9 @@ mod tests {
         harness::click("physical-gain", &mut utility);
         app.read_with(&utility, |app, _| assert_eq!(app.physical_view.gain, 96.));
         // Mouse activation need not leave keyboard focus on the button. Walk the real
-        // tab order from the window root: Close, then display gain.
+        // tab order from the window root: Close, both view segments, then display gain.
         utility.update(|window, cx| window.focus(&app.read(cx).focus));
-        utility.simulate_keystrokes("tab");
-        utility.simulate_keystrokes("tab");
+        utility.simulate_keystrokes("tab tab tab tab");
         utility.simulate_keystrokes("enter");
         utility.simulate_event(gpui::KeyUpEvent {
             keystroke: gpui::Keystroke::parse("enter").unwrap(),

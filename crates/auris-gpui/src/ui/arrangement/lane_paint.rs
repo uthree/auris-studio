@@ -14,7 +14,7 @@ use auris_session::prelude::loop_passes;
 
 use gpui::{Bounds, Corners, Pixels, Window, point, px, size};
 
-use crate::theme::{Metrics, Theme};
+use crate::theme::Theme;
 use crate::ui::paint;
 
 use super::geometry::{
@@ -154,7 +154,12 @@ pub(super) fn paint_lane(
         } else {
             Theme::translucent(lane.color, 0.30)
         };
-        let radius = Metrics::RADIUS_MD;
+        let radius = theme
+            .atelier
+            .shape
+            .radius_md
+            .min(clip_bounds.size.width / 2.0)
+            .min(clip_bounds.size.height / 2.0);
         if lane.rendered_spectrum.is_none() {
             paint::rounded_rect(window, clip_bounds, radius, body);
         }
@@ -179,6 +184,14 @@ pub(super) fn paint_lane(
         // at a glance on a lane packed with clips.
         if selected {
             paint::rounded_outline(window, clip_bounds, radius, px(1.5), theme.selection);
+        } else if lane.rendered_spectrum.is_none() {
+            paint::rounded_outline(
+                window,
+                clip_bounds,
+                radius,
+                px(1.0),
+                Theme::translucent(lane.color, if clip.muted { 0.3 } else { 0.7 }),
+            );
         }
 
         // A clip the composer wrote says so on its own face, because what can be done to it

@@ -26,8 +26,9 @@ fn open_appearance_settings(
     cx.run_until_parked();
     let handle = app.read_with(cx, |this, _| this.settings_window.unwrap());
     let cx = VisualTestContext::from_window(handle.into(), cx);
-    // Keep the draft and its actions in view; text metrics on the test platform are synthetic.
-    cx.simulate_resize(size(px(760.0), px(1800.0)));
+    // Keep the draft and its actions in view beside the navigation column; text metrics on the
+    // test platform are synthetic.
+    cx.simulate_resize(size(px(980.0), px(1800.0)));
     cx.run_until_parked();
     (app, handle, cx)
 }

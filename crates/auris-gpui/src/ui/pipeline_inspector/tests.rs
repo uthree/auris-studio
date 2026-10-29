@@ -302,6 +302,8 @@ fn pipeline_details_fit_the_inspector_across_the_ui_matrix(cx: &mut TestAppConte
         this.panels.show(Panel::Inspector);
     });
     for (scheme, language, font_size) in [
+        ("glass-light", auris_i18n::Language::English, 13.0),
+        ("glass-dark", auris_i18n::Language::Japanese, 16.0),
         ("daylight", auris_i18n::Language::English, 13.0),
         ("midnight", auris_i18n::Language::English, 16.0),
         ("daylight", auris_i18n::Language::Japanese, 13.0),
@@ -324,6 +326,11 @@ fn pipeline_details_fit_the_inspector_across_the_ui_matrix(cx: &mut TestAppConte
             .unwrap();
         assert!(row.left() >= body.left());
         assert!(row.right() <= body.right());
+        assert_eq!(
+            row.left(),
+            disclosure.left(),
+            "the section shares one leading spine"
+        );
         app.read_with(cx, |this, _| assert!(this.pipeline_inspector.expanded));
         click("pipeline-disclosure", cx);
         paint(&app, cx);

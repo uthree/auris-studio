@@ -341,7 +341,10 @@ impl Session {
                     owner_revision: self.revision(),
                     scope: self.candidate_scope(),
                     round_id,
-                    jobs: projects.into_iter().map(|p| self.job_for(p)).collect(),
+                    jobs: projects
+                        .into_iter()
+                        .map(|p| self.job_for_at(p, Some(24_000.0)))
+                        .collect(),
                     range,
                 })))
             }

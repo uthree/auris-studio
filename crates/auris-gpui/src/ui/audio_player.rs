@@ -194,6 +194,12 @@ impl AurisApp {
             _ => format!("{prefix}-play").into(),
         };
         let playing = player.playing();
+        // Draft auditions can update while the captured buffer keeps playing.
+        let duration = player
+            .status
+            .as_ref()
+            .filter(|s| s.is_active())
+            .map_or(duration, OutputPreviewStatus::duration_seconds);
         let position = player.position().min(duration);
         let fraction = if duration > 0.0 {
             (position / duration) as f32

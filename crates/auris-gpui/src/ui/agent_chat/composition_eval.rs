@@ -9,6 +9,14 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use std::fs;
 
+#[test]
+#[ignore = "writes a frozen prompt; requires AURIS_COMPOSITION_PROMPT_SNAPSHOT"]
+fn snapshot_composition_prompt() {
+    let path = std::env::var_os("AURIS_COMPOSITION_PROMPT_SNAPSHOT")
+        .expect("explicit prompt snapshot destination");
+    fs::write(path, auris_agent::default_system_prompt()).expect("write prompt snapshot");
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Evaluation {

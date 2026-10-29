@@ -47,19 +47,19 @@ impl AurisApp {
             .flex()
             .flex_col()
             .min_w_0()
-            .gap_2()
-            .py_2()
+            .gap(self.theme.atelier.spacing.sm)
+            .py(self.theme.atelier.spacing.sm)
             .border_b_1()
             .border_color(self.theme.border_subtle)
             .child(
                 div()
-                    .text_sm()
+                    .text_size(self.theme.atelier.typography.size_sm)
                     .text_color(self.theme.text)
                     .child(self.t(Key::PipelineConnection)),
             )
             .child(
                 div()
-                    .text_xs()
+                    .text_size(self.theme.atelier.typography.size_xs)
                     .text_color(self.theme.text_muted)
                     .child(kind),
             );
@@ -86,10 +86,10 @@ impl AurisApp {
                     .flex()
                     .flex_col()
                     .min_w_0()
-                    .gap_1()
+                    .gap(self.theme.atelier.spacing.xs)
                     .child(
                         div()
-                            .text_xs()
+                            .text_size(self.theme.atelier.typography.size_xs)
                             .text_color(self.theme.text_muted)
                             .child(self.t(key)),
                     )
@@ -97,7 +97,7 @@ impl AurisApp {
                         div()
                             .id(SharedString::from(selector.clone()))
                             .debug_selector(move || selector.clone())
-                            .text_sm()
+                            .text_size(self.theme.atelier.typography.size_sm)
                             .text_color(self.theme.text)
                             .child(label),
                     )
@@ -138,13 +138,11 @@ impl AurisApp {
         } else {
             self.t(Key::PipelinePlaybackStopped).into()
         };
-        card.child(
-            div()
-                .text_xs()
-                .text_color(self.theme.text_muted)
-                .child(self.t(Key::PipelineMonitorLevel)),
-        )
-        .child(div().text_sm().text_color(self.theme.text).child(level))
+        card.child(super::inspection::value_row(
+            self.t(Key::PipelineMonitorLevel),
+            level,
+            &self.theme,
+        ))
         .into_any_element()
     }
 }

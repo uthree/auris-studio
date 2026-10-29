@@ -104,7 +104,18 @@ fn open_surface(app: WeakEntity<AurisApp>, surface: Surface, cx: &mut App) {
     let dimensions = match surface {
         Surface::Panel(Panel::PianoRoll | Panel::Mixer) => size(px(1000.), px(540.)),
         Surface::Panel(_) => size(px(560.), px(640.)),
-        Surface::Plugin => size(px(500.), px(650.)),
+        Surface::Plugin => {
+            let physical = main.read(cx).plugin_window.is_some_and(|editor| {
+                matches!(editor.subject,
+                    crate::ui::plugin_window::PluginSubject::Instrument(track)
+                    if main.read(cx).session.has_instrument_motion(track))
+            });
+            if physical {
+                size(px(1080.), px(760.))
+            } else {
+                size(px(500.), px(650.))
+            }
+        }
         Surface::Typing => size(px(680.), px(340.)),
         Surface::Analysis => size(px(540.), px(650.)),
         Surface::TimbreMap => size(px(900.), px(700.)),
@@ -122,6 +133,7 @@ fn open_surface(app: WeakEntity<AurisApp>, surface: Surface, cx: &mut App) {
             window_min_size: Some(match surface {
                 Surface::Typing => size(px(640.), px(340.)),
                 Surface::Visualizer => size(px(480.), px(520.)),
+                Surface::TimbreMap => size(px(640.), px(540.)),
                 _ => size(px(320.), px(240.)),
             }),
             focus: true,
@@ -332,14 +344,11 @@ impl Render for AuxiliaryWindow {
             let theme = app.theme.clone();
             let title = surface.title(app);
             window.set_window_title(&title);
-            let chrome = titlebar::titlebar(window, &theme)
-                .child(
-                    titlebar::drag_region("utility-title")
-                        .flex_1()
-                        .px_3()
-                        .child(div().min_w_0().truncate().text_xs().child(title)),
-                )
-                .child(titlebar::controls(
+            let chrome = titlebar::composed(
+                window,
+                &theme,
+                titlebar::Parts::new("utility-title", title),
+                titlebar::controls(
                     window,
                     &theme,
                     cx.listener(move |app, _, window, cx| {
@@ -351,7 +360,8 @@ impl Render for AuxiliaryWindow {
                         window.remove_window();
                         cx.notify();
                     }),
-                ));
+                ),
+            );
             let content = match surface {
                 Surface::Panel(panel) => {
                     let content = app.render_panel(panel, window, cx);
@@ -364,7 +374,7 @@ impl Render for AuxiliaryWindow {
                         .into_any_element()
                 }
                 Surface::Plugin => app
-                    .render_plugin_window(cx)
+                    .render_plugin_window(window, cx)
                     .unwrap_or_else(|| div().into_any_element()),
                 Surface::Typing => app
                     .render_typing_panel(cx)
@@ -374,7 +384,7 @@ impl Render for AuxiliaryWindow {
                     .unwrap_or_else(|| div().into_any_element()),
                 Surface::Visualizer => app.render_visualizer(window, cx),
                 Surface::TimbreMap => app
-                    .render_timbre_map(cx)
+                    .render_timbre_map(window, cx)
                     .unwrap_or_else(|| div().into_any_element()),
             };
             let overlays = app.render_document_overlays(window, cx);

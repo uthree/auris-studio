@@ -484,6 +484,53 @@ mod tests {
             .find(|b| b["properties"]["kind"]["const"] == "patch")
             .unwrap();
         let settings = &patch["properties"]["settings"]["properties"];
+        for name in [
+            "density",
+            "intensity",
+            "gate",
+            "dynamics",
+            "syncopation",
+            "fill",
+        ] {
+            assert_eq!(
+                settings[name]["minimum"], 0.0,
+                "missing lower bound for {name}"
+            );
+            assert_eq!(
+                settings[name]["maximum"], 1.0,
+                "missing upper bound for {name}"
+            );
+        }
+        assert_eq!(settings["octave"]["minimum"], -2);
+        assert_eq!(settings["octave"]["maximum"], 2);
+        assert_eq!(settings["swing"]["minimum"], 50);
+        assert_eq!(settings["swing"]["maximum"], 75);
+        let mut grooves = auris_session::prelude::groove_catalog()
+            .iter()
+            .map(|groove| serde_json::Value::String(groove.name.to_owned()))
+            .collect::<Vec<_>>();
+        grooves.push(serde_json::Value::Null);
+        assert_eq!(
+            settings["groove"]["enum"],
+            serde_json::Value::Array(grooves.clone())
+        );
+
+        let accompaniment = definitions()
+            .into_iter()
+            .find(|t| t.name == "accompaniment")
+            .unwrap();
+        let generate = accompaniment.parameters["properties"]["operation"]["oneOf"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|branch| branch["properties"]["kind"]["const"] == "generate")
+            .unwrap();
+        let accompaniment_settings =
+            &generate["properties"]["parts"]["items"]["properties"]["settings"]["properties"];
+        assert_eq!(
+            accompaniment_settings["groove"]["enum"],
+            serde_json::Value::Array(grooves)
+        );
         assert_eq!(
             settings["subdivision"]["enum"],
             serde_json::json!([
@@ -599,6 +646,10 @@ mod tests {
             (
                 "edit_harmony",
                 serde_json::json!({"start_bar":1,"bars":4,"key":"D major","chords":"| I | IV | V | I |"}),
+            ),
+            (
+                "edit_harmony",
+                serde_json::json!({"start_bar":1,"bars":8,"chords":["I","vi","IV","V"]}),
             ),
             (
                 "edit_harmony",
