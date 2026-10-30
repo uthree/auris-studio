@@ -69,6 +69,7 @@ mod generated;
 mod groove;
 mod harmony;
 mod hosted;
+mod layers;
 mod levels;
 pub mod lyric_harness;
 mod lyrics;

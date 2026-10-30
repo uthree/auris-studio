@@ -1115,6 +1115,31 @@ pub mod architecture {
     //! listens to, and only where the effect in the slot answers
     //! [`Effect::wants_sidechain`](auris_core::plugin::Effect::wants_sidechain) — so a project
     //! with no key in it carries no extra buffer and copies nothing.
+    //!
+    //! # Notes are an edge too: layers
+    //!
+    //! A **layer** is an instrument track that plays another track's clips instead of its own —
+    //! [`NoteSource`](auris_core::NoteSource) on the track, made by
+    //! [`Session::add_layer_track`](crate::Session::add_layer_track). It is the cheapest way to put
+    //! one part through several instruments: each layer is a whole track, so its own fader,
+    //! chain, outputs, sends and automation are the ones every track already has, and a filter
+    //! shared by the source and its layers is a bus they all feed. Nothing about routing changed.
+    //!
+    //! **The source is always a track with notes of its own.** A layer is never followed and a drum
+    //! track never is either, so there is no chain to walk and no cycle to refuse; a file that says
+    //! otherwise opens with that one layer silent.
+    //!
+    //! **The shape applies to what the source sounds.** A [`LayerShape`](auris_core::LayerShape)
+    //! — key range, top or bottom voice, transpose, velocity, length, offset — runs after the
+    //! source clip's own performance stack, and
+    //! [`Project::played_clips`](auris_core::Project::played_clips) is the one answer the renderer
+    //! and the MIDI writer share.
+    //!
+    //! **A layer holds no clips.** [`TrackKind::holds_notes`](auris_core::TrackKind::holds_notes)
+    //! is `false` for one, which is what keeps every command that writes, pastes or moves notes off
+    //! it. Removing the source detaches its layers in the same step:
+    //! [`Session::detach_layer`](crate::Session::detach_layer) copies the source's clips and writes
+    //! the shape into them, so a layer goes on sounding as it did.
 }
 
 pub mod realtime {

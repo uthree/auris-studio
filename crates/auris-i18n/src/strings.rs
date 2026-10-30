@@ -1523,6 +1523,9 @@ strings! {
     EditAddBusTrack { en: "adding a bus", ja: "バスの追加" }
     EditDeleteTrack { en: "deleting a track", ja: "トラックの削除" }
     EditDuplicateTrack { en: "duplicating a track", ja: "トラックの複製" }
+    EditAddLayerTrack { en: "adding a layer", ja: "レイヤーの追加" }
+    EditSetLayerShape { en: "shaping a layer", ja: "レイヤーの変形" }
+    EditDetachLayer { en: "detaching a layer", ja: "レイヤーの切り離し" }
     EditMoveTrack { en: "moving a track", ja: "トラックの並べ替え" }
     EditMoveMixerNodes { en: "moving mixer nodes", ja: "ミキサーノードの移動" }
     EditArrangeMixerNodes { en: "arranging mixer nodes", ja: "ミキサーノードの自動配置" }
