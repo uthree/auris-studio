@@ -597,22 +597,32 @@ fn open_output(settings: &AudioSettings) -> Result<DeviceSetup, EngineError> {
     };
     // A named device that has since been unplugged falls back to the default rather than
     // refusing to start: losing the interface should not also lose the session.
-    let device = settings
-        .device
-        .as_deref()
-        .and_then(|wanted| {
-            let found = host
-                .output_devices()
-                .ok()?
-                .find(|device| device_name(device).is_ok_and(|name| name == wanted));
-            if found.is_none() {
-                log::warn!("output device `{wanted}` is not available; using the default");
-            }
-            found
-        })
+    let named = settings.device.as_deref().and_then(|wanted| {
+        let found = host
+            .output_devices()
+            .ok()?
+            .find(|device| device_name(device).is_ok_and(|name| name == wanted));
+        if found.is_none() {
+            log::warn!("output device `{wanted}` is not available; using the default");
+        }
+        found
+    });
+    let is_default = named.is_none();
+    let device = named
         .or_else(|| host.default_output_device())
         .ok_or(EngineError::NoOutputDevice)?;
-    let supported = device.default_output_config()?;
+    let (device, supported) = match device.default_output_config() {
+        Ok(supported) => (device, supported),
+        Err(error) if is_default => {
+            let Some(endpoint) = concrete_default(&host, &device) else {
+                return Err(error.into());
+            };
+            log::warn!("the default output would not open ({error}); opening the device it is");
+            let supported = endpoint.default_output_config()?;
+            (endpoint, supported)
+        }
+        Err(error) => return Err(error.into()),
+    };
     let sample_format = supported.sample_format();
     let mut config = supported.config();
 
@@ -649,6 +659,23 @@ fn open_output(settings: &AudioSettings) -> Result<DeviceSetup, EngineError> {
         sample_format,
         max_block: max_block.max(1),
     })
+}
+
+/// The endpoint `default` currently points at, as a device of its own rather than "the default".
+///
+/// On Windows cpal opens "the default" through `ActivateAudioInterfaceAsync`, which completes on
+/// the system's thread pool, and its device-change notifications run on that pool too — where
+/// cpal joins whichever thread they land on to a single-threaded apartment for the rest of the
+/// thread's life. After a device change or a wake from sleep, an activation that reaches such a
+/// thread fails with `RPC_E_CHANGED_MODE`, whatever the thread that asked had joined, which is
+/// why opening on the opener thread did not cure it. A concrete endpoint is activated
+/// synchronously on the thread that asks. What it gives up is following a later change of
+/// default, until the next time the output is reopened.
+fn concrete_default(host: &cpal::Host, default: &cpal::Device) -> Option<cpal::Device> {
+    let id = default.id().ok()?;
+    host.output_devices()
+        .ok()?
+        .find(|device| device.id().is_ok_and(|candidate| candidate == id))
 }
 
 fn preferred_block_size(frames: u32, min_buffer: u32, max_buffer: u32) -> u32 {
@@ -1560,6 +1587,19 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_default_output_is_found_among_the_devices() {
+        // A machine with no output (CI) has nothing to find; one with an output must find the
+        // same endpoint, and as a device that is not itself the default handle.
+        let host = cpal::default_host();
+        let Some(default) = host.default_output_device() else {
+            return;
+        };
+        let endpoint = concrete_default(&host, &default).expect("the default is listed");
+        assert_eq!(endpoint.id().unwrap(), default.id().unwrap());
+        assert!(endpoint.default_output_config().is_ok());
+    }
 
     #[test]
     fn continuous_device_ranges_include_standard_sample_rates() {
