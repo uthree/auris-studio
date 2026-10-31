@@ -196,6 +196,11 @@ fn render_segment(
         // than a few milliseconds afterwards. Every copy the track goes on to produce is taken
         // after this, because this part of the delay belongs to all of them.
         track.delay.process(&mut track.scratch);
+        // A mono channel becomes one signal again before anything leaves it, so the sends and
+        // the pan are handed a voice rather than a pair of sides.
+        if track.mono {
+            fold_to_mono(&mut track.scratch);
+        }
 
         let RenderTrack {
             scratch,
@@ -600,6 +605,32 @@ fn mix_clip(clip: &RenderAudioClip, out: &mut AudioBuffer, position: u64, frames
         for (index, (sample, input)) in destination.iter_mut().zip(source).enumerate() {
             *sample += *input * clip.gain * clip.fade_gain(into_clip + index as u64);
         }
+    }
+}
+
+/// Replaces every channel with the average of them all, leaving one signal on each.
+///
+/// The average rather than the left side alone, so that material that does differ — a stereo
+/// take, a chorus insert — keeps both halves, and so that a source already copied to every
+/// channel comes through sample for sample. No allocation: it runs on the audio thread.
+pub(crate) fn fold_to_mono(buffer: &mut AudioBuffer) {
+    let channels = buffer.channels_mut();
+    let Some((first, rest)) = channels.split_first_mut() else {
+        return;
+    };
+    if rest.is_empty() {
+        return;
+    }
+    let scale = 1.0 / (rest.len() + 1) as f32;
+    for (frame, sample) in first.iter_mut().enumerate() {
+        let sum = rest.iter().fold(*sample, |sum, channel| {
+            sum + channel.get(frame).copied().unwrap_or(0.0)
+        });
+        *sample = sum * scale;
+    }
+    for channel in rest {
+        let frames = channel.len().min(first.len());
+        channel[..frames].copy_from_slice(&first[..frames]);
     }
 }
 
@@ -1505,6 +1536,132 @@ mod tests {
             Transport::new(),
             AudioBuffer::new(RENDER_CHANNELS, 512, SAMPLE_RATE),
         )
+    }
+
+    /// A singer track whose take is `sides`, panned to `pan`.
+    fn singer_with_take(sides: Vec<Vec<f32>>, pan: f32) -> RenderGraph {
+        let mut project = Project::new("Mono singer", SAMPLE_RATE);
+        let track = project.add_singer_track("Voice", testkit::TONE_ID);
+        let source = project.add_audio_source(
+            "Take",
+            auris_core::AssetPath::external("take.wav"),
+            sides[0].len() as u64,
+            SAMPLE_RATE,
+            sides.len(),
+        );
+        let singer = project
+            .track_mut(track)
+            .and_then(|track| track.kind.as_singer_mut())
+            .expect("a singer track");
+        singer.take = Some(auris_core::SingerTake {
+            provenance: None,
+            backend_pitch: None,
+            source,
+            fingerprint: 1,
+            seed: 0,
+        });
+        project.tracks[0].mixer.pan = pan;
+        let mut bank = AudioSourceBank::new();
+        bank.insert(
+            source,
+            Arc::new(AudioBuffer::from_planar(sides, SAMPLE_RATE).expect("planar")),
+        );
+        RenderGraph::build(&project, &bank, &testkit::registry(), 512)
+    }
+
+    fn sine(hz: f32, frames: usize) -> Vec<f32> {
+        (0..frames)
+            .map(|i| 0.5 * (std::f32::consts::TAU * hz * i as f32 / SAMPLE_RATE as f32).sin())
+            .collect()
+    }
+
+    #[test]
+    fn a_singer_is_one_signal_even_when_its_take_has_two_sides() {
+        let (left, right) = (sine(440.0, 4_800), sine(660.0, 4_800));
+        let mut graph = singer_with_take(vec![left.clone(), right.clone()], 0.0);
+        assert!(graph.tracks()[0].is_mono());
+        let mut transport = Transport::playing_from(0);
+        let mut out = AudioBuffer::new(RENDER_CHANNELS, 512, SAMPLE_RATE);
+        render_block(&mut graph, &mut transport, &mut out, false);
+
+        assert!(!graph.track_sides_differ(0), "the singer metered as stereo");
+        for frame in 0..512 {
+            let folded = 0.5 * (left[frame] + right[frame]);
+            assert!(
+                (out.channel(0)[frame] - folded).abs() < 1e-6,
+                "frame {frame}"
+            );
+            assert_eq!(
+                out.channel(0)[frame],
+                out.channel(1)[frame],
+                "frame {frame}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_mono_take_passes_through_the_fold_unchanged() {
+        let voice = sine(440.0, 4_800);
+        let mut graph = singer_with_take(vec![voice.clone()], 0.0);
+        let mut transport = Transport::playing_from(0);
+        let mut out = AudioBuffer::new(RENDER_CHANNELS, 512, SAMPLE_RATE);
+        render_block(&mut graph, &mut transport, &mut out, false);
+        // Within the centred pan law's rounding: `sqrt(2) * (1 / sqrt(2))` is not quite 1.
+        for channel in 0..RENDER_CHANNELS {
+            for (frame, (played, sung)) in out.channel(channel).iter().zip(&voice).enumerate() {
+                assert!(
+                    (played - sung).abs() < 1e-6,
+                    "channel {channel}, frame {frame}"
+                );
+            }
+        }
+        assert_eq!(out.channel(0), out.channel(1));
+    }
+
+    #[test]
+    fn the_pan_alone_places_the_singer() {
+        // A stereo take panned hard left: were the sides kept, the right one would be dropped
+        // and half the voice with it. Folded first, the whole voice lands on the left.
+        let (left, right) = (sine(440.0, 4_800), sine(660.0, 4_800));
+        let mut graph = singer_with_take(vec![left.clone(), right.clone()], -1.0);
+        let mut transport = Transport::playing_from(0);
+        let mut out = AudioBuffer::new(RENDER_CHANNELS, 512, SAMPLE_RATE);
+        render_block(&mut graph, &mut transport, &mut out, false);
+
+        assert_eq!(out.channel_peak(1), 0.0, "a hard-left singer leaked right");
+        let (left_gain, _) = auris_core::param::pan_gains(-1.0);
+        let gain = left_gain * std::f32::consts::SQRT_2;
+        for frame in 0..512 {
+            let folded = 0.5 * (left[frame] + right[frame]) * gain;
+            assert!(
+                (out.channel(0)[frame] - folded).abs() < 1e-5,
+                "frame {frame}"
+            );
+        }
+    }
+
+    #[test]
+    fn note_tracks_keep_their_stereo_image() {
+        // The fold belongs to singers alone: an instrument that places its notes across the
+        // field — every physical model — must reach the mix with its sides apart.
+        let mut project = Project::new("Stereo", SAMPLE_RATE);
+        project.add_instrument_track("Piano", testkit::TONE_ID);
+        project.add_audio_track("Pad");
+        let graph =
+            RenderGraph::build(&project, &AudioSourceBank::new(), &testkit::registry(), 512);
+        assert!(graph.tracks().iter().all(|track| !track.is_mono()));
+    }
+
+    #[test]
+    fn folding_averages_the_sides_into_both() {
+        let mut buffer =
+            AudioBuffer::from_planar(vec![vec![1.0, 0.5], vec![0.0, -0.5]], SAMPLE_RATE).unwrap();
+        fold_to_mono(&mut buffer);
+        assert_eq!(buffer.channel(0), &[0.5, 0.0]);
+        assert_eq!(buffer.channel(1), &[0.5, 0.0]);
+        let mut mono = AudioBuffer::from_planar(vec![vec![0.25, -0.75]], SAMPLE_RATE).unwrap();
+        fold_to_mono(&mut mono);
+        assert_eq!(mono.channel(0), &[0.25, -0.75]);
     }
 
     #[test]

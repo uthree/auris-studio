@@ -109,6 +109,15 @@ pub struct RenderTrack {
     /// Track name, kept for logging and for the meter tooltips.
     pub name: String,
     pub(crate) source: RenderSource,
+    /// Whether the track is a mono channel: one signal through its chain, placed in the stereo
+    /// field by its pan alone.
+    ///
+    /// A singer track is one, because a voice is one point in the room. The graph still carries
+    /// two channels — the pan has to put the voice somewhere — so the strip folds the sides back
+    /// into one signal after the chain and before the sends and the pan. A stereo take, or an
+    /// insert that widens, therefore cannot spread the voice; width comes from a send to a
+    /// stereo bus, the way it would on a mono channel in any mixer.
+    pub(crate) mono: bool,
     pub(crate) strip: RenderStrip,
     /// Every post-fader unity output branch.
     pub(crate) outputs: Vec<RenderOutput>,
@@ -173,6 +182,11 @@ impl RenderTrack {
     /// The track's mixer strip, mutably.
     pub fn strip_mut(&mut self) -> &mut RenderStrip {
         &mut self.strip
+    }
+
+    /// Whether the track is a mono channel, placed in the stereo field by its pan alone.
+    pub fn is_mono(&self) -> bool {
+        self.mono
     }
 
     /// What the track plays.
