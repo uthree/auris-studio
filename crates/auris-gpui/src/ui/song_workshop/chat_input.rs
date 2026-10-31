@@ -27,9 +27,6 @@ impl AurisApp {
             id: "workshop-effort",
             theme: self.theme.clone(),
             language: self.language(),
-            model: selected
-                .map(|m| m.label())
-                .unwrap_or_else(|| s.preferences.model.clone()),
             choices,
             effort: s.preferences.effort,
             fast: s.preferences.fast_mode,

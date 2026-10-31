@@ -658,61 +658,20 @@ impl AurisApp {
     fn render_timbre_keyboard(&self, cx: &mut Context<Self>) -> AnyElement {
         let spacing = self.theme.atelier.spacing;
         let enabled = self.timbre_map.selected.is_some();
-        let note = |pitch, label: &'static str, cx: &mut Context<Self>| {
-            Button::new(SharedString::from(format!("timbre-key-{pitch}")), label)
-                .size(ControlSize::Small)
-                .full_width()
-                .selected(self.timbre_map.preview.pitch == Some(pitch))
-                .disabled(!enabled)
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.preview_timbre_note(pitch, cx);
-                    cx.notify();
-                }))
-        };
+        let keyboard = atelier::PianoKeyboard::octave("timbre-key")
+            .pressed(self.timbre_map.preview.pitch)
+            .disabled(!enabled)
+            .on_press(cx.listener(|this, pitch: &u8, _, cx| {
+                this.preview_timbre_note(*pitch, cx);
+                cx.notify();
+            }));
         div()
             .flex()
             .flex_col()
             .gap(spacing.sm)
             .flex_shrink_0()
             .child(Label::new(self.t(Key::TimbreMapKeyboard)).size(TextSize::Small))
-            .child(
-                div()
-                    .relative()
-                    .h(ControlSize::Small.height(&self.theme.atelier))
-                    .children(
-                        [
-                            (61, "C♯", 1.),
-                            (63, "D♯", 2.),
-                            (66, "F♯", 4.),
-                            (68, "G♯", 5.),
-                            (70, "A♯", 6.),
-                        ]
-                        .into_iter()
-                        .map(|(pitch, label, seam)| {
-                            div()
-                                .absolute()
-                                .left(gpui::relative((seam - 0.4) / 8.))
-                                .w(gpui::relative(0.8 / 8.))
-                                .child(note(pitch, label, cx))
-                        }),
-                    ),
-            )
-            .child(
-                div().flex().gap(spacing.xxs).children(
-                    [
-                        (60, "C4"),
-                        (62, "D"),
-                        (64, "E"),
-                        (65, "F"),
-                        (67, "G"),
-                        (69, "A"),
-                        (71, "B"),
-                        (72, "C5"),
-                    ]
-                    .into_iter()
-                    .map(|(pitch, label)| div().flex_1().min_w_0().child(note(pitch, label, cx))),
-                ),
-            )
+            .child(keyboard)
             .child(
                 div()
                     .flex()

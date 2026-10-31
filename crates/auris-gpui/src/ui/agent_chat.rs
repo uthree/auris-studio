@@ -4494,7 +4494,6 @@ impl AurisApp {
             id: "agent-effort-menu",
             theme: self.theme.clone(),
             language: self.language(),
-            model: current.clone(),
             choices: self.agent_chat.effort_choices(),
             effort: self.agent_chat.effort,
             fast: self.agent_chat.fast_mode,
@@ -7931,11 +7930,14 @@ mod tests {
             crate::harness::paint(&app, cx);
             crate::harness::click("agent-effort-menu", cx);
             crate::harness::paint(&app, cx);
-            assert_eq!(cx.debug_bounds("reasoning-fast-mode").is_some(), supported);
+            assert_eq!(
+                cx.debug_bounds("agent-effort-menu-picker-fast").is_some(),
+                supported
+            );
             app.update(cx, |this, _| this.agent_chat.busy = true);
             crate::harness::paint(&app, cx);
             if supported {
-                crate::harness::click("reasoning-fast-mode", cx);
+                crate::harness::click("agent-effort-menu-picker-fast", cx);
                 app.read_with(cx, |this, _| assert!(this.agent_chat.fast_mode));
             }
         }
