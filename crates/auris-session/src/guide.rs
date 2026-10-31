@@ -2103,6 +2103,14 @@ pub mod singing {
     //! [`SingerTake`](auris_core::SingerTake). Frame import and export run through the same
     //! cached models as the editor, with ONNX inference split into bounded phrases.
     //!
+    //! A singer track is a mono channel. A voice is one point in the room, so the graph folds
+    //! the track's two sides back into one signal after its insert chain and before its sends
+    //! and its pan ([`RenderTrack::is_mono`](auris_engine::RenderTrack::is_mono)): the pan
+    //! alone places the singer, a stereo take or a widening insert cannot spread it, and the
+    //! meter shows one bar. Width belongs on a send to a stereo bus, such as a reverb. Note
+    //! tracks are not folded, so the physical instruments keep the stereo image they place
+    //! their notes in.
+    //!
     //! # The voice, and the take
     //!
     //! A voice enters through one path. For DiffSinger it is

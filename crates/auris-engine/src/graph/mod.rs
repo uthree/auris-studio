@@ -549,6 +549,7 @@ impl RenderGraph {
                 id: track.id,
                 name: track.name.clone(),
                 source,
+                mono: matches!(track.kind, TrackKind::Singer(_)),
                 strip,
                 outputs,
                 sends,
