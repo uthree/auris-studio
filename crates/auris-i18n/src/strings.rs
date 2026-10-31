@@ -934,6 +934,8 @@ strings! {
     VideoRoundness { en: "Rounding", ja: "角の丸み" }
     VideoPlayedOpacity { en: "Played notes", ja: "再生済みの濃さ" }
     VideoFlash { en: "Flash when struck", ja: "鳴った瞬間に光らせる" }
+    VideoParticles { en: "Sparks at the playhead", ja: "再生線のパーティクル" }
+    VideoParticlesOff { en: "Off", ja: "なし" }
     VideoDrums { en: "Include drums", ja: "ドラムも描く" }
     VideoPreviewHint { en: "The preview shows the moment under the playhead. Move the playhead to see another.", ja: "プレビューは再生位置の瞬間です。再生位置を動かすと別の場面を確認できます。" }
     VideoFfmpegChecking { en: "Looking for ffmpeg…", ja: "ffmpeg を探しています…" }
@@ -1954,6 +1956,7 @@ VIDEO OPTIONS (default: the look last chosen in the desktop application)
                                   How notes are coloured
         --background <image>      A PNG, JPEG or WebP behind the notes
         --seconds <n>             Seconds of music across the frame
+        --particles <amount>      Sparks where notes meet the playhead: 0 is none, 1 the usual
         --drums                   Draw drum tracks too
 
 NEW OPTIONS
@@ -2041,6 +2044,7 @@ video のオプション（既定: デスクトップ版で最後に選んだ見
                                   ノートの色の付け方
         --background <image>      ノートの背後に敷く PNG・JPEG・WebP
         --seconds <n>             画面の幅に収める曲の秒数
+        --particles <amount>      再生線でノートが散らす火花の量（0 でなし、1 が標準）
         --drums                   ドラムトラックも描く
 
 new のオプション

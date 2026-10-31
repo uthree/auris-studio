@@ -924,6 +924,21 @@ impl AurisApp {
                         |style| style.flash = !style.flash,
                     )),
             )
+            .child(self.stepper(
+                "video-particles",
+                Key::VideoParticles,
+                if style.particles <= 0.0 {
+                    self.t(Key::VideoParticlesOff).to_string()
+                } else {
+                    format!("{:.0}%", style.particles * 100.0)
+                },
+                theme,
+                cx,
+                |style, direction| {
+                    style.particles = (style.particles + 0.25 * direction)
+                        .clamp(0.0, NoteRollStyle::MAX_PARTICLES);
+                },
+            ))
             .child(
                 div()
                     .text_xs()

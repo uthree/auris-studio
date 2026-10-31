@@ -1407,6 +1407,12 @@ fn video(args: &[String]) -> Result<(), String> {
                     .parse()
                     .map_err(|_| messages::unknown_option(LANGUAGE, &format!("{option} {text}")))?;
             }
+            "--particles" => {
+                let text = value(&mut index, option, Key::CliNeedsValue)?;
+                style.particles = text
+                    .parse()
+                    .map_err(|_| messages::unknown_option(LANGUAGE, &format!("{option} {text}")))?;
+            }
             "--colors" => {
                 let text = value(&mut index, option, Key::CliNeedsValue)?;
                 style.coloring = match text.as_str() {

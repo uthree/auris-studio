@@ -3,10 +3,10 @@
 use std::path::Path;
 
 use auris_core::Color;
-use tiny_skia::{FillRule, Paint, Path as SkPath, PathBuilder, Pixmap, Rect, Transform};
+use tiny_skia::{BlendMode, FillRule, Paint, Path as SkPath, PathBuilder, Pixmap, Rect, Transform};
 
 use crate::style::{NoteColoring, NoteRollStyle};
-use crate::{Ffmpeg, NoteScore, VideoError, VideoWriter};
+use crate::{Ffmpeg, NoteScore, ScoreNote, VideoError, VideoWriter};
 
 /// How long the flash on a struck note takes to fade, in seconds.
 const FLASH_SECONDS: f64 = 0.3;
@@ -17,6 +17,15 @@ const PITCH_MARGIN: f64 = 2.0;
 /// The fewest semitones the frame is divided into, so a melody of three notes does not fill the
 /// screen with bars a fifth of its height each.
 const MIN_PITCH_SPAN: f64 = 24.0;
+/// How long the longest-lived spark of a struck note lasts, in seconds.
+const SPARK_SECONDS: f64 = 0.75;
+/// Sparks a note struck at full strength throws, at a particle amount of 1.
+const SPARKS_PER_NOTE: f64 = 20.0;
+/// How quickly a spark slows down: the time constant of its drag, in seconds.
+const SPARK_DRAG: f64 = 0.22;
+/// How much of the scroll a spark is carried along with, so the burst trails off with its note
+/// instead of hanging at the playhead.
+const SPARK_DRIFT: f64 = 0.5;
 
 /// A background picture, decoded once and scaled to the frame when a renderer is made.
 #[derive(Clone, Debug)]
@@ -182,6 +191,98 @@ impl FrameRenderer {
                 frame.fill_rect(line, &paint, Transform::identity(), None);
             }
         }
+
+        if self.style.particles > 0.0 {
+            let struck = self
+                .score
+                .notes
+                .partition_point(|note| note.start < seconds - SPARK_SECONDS);
+            for note in &self.score.notes[struck..] {
+                if note.start > seconds {
+                    break;
+                }
+                self.sparks(note, seconds - note.start, playhead_x, per_second, frame);
+            }
+        }
+    }
+
+    /// The burst of a note struck `age` seconds ago: a flare where it met the playhead and a
+    /// spray of sparks that slow, shrink and fade as they are carried off with the music.
+    ///
+    /// Every spark is a function of the note and the time alone, seeded by the note, so any
+    /// frame can be drawn on its own — the preview jumps about, and the export never has to
+    /// simulate the frames before the one it is drawing.
+    fn sparks(
+        &self,
+        note: &ScoreNote,
+        age: f64,
+        playhead_x: f64,
+        per_second: f64,
+        frame: &mut Pixmap,
+    ) {
+        let (r, g, b) = self.color_of(note.track, note.pitch);
+        let lift = |channel: f32| channel + (1.0 - channel) * 0.4;
+        let (r, g, b) = (unit_byte(lift(r)), unit_byte(lift(g)), unit_byte(lift(b)));
+        let mut paint = Paint {
+            anti_alias: true,
+            blend_mode: BlendMode::Plus,
+            ..Paint::default()
+        };
+        let height = f64::from(self.style.size.height);
+        let centre = (self.high - f64::from(note.pitch) + 0.5) * self.lane;
+        let strength = 0.35 + 0.65 * f64::from(note.velocity);
+        let drift = per_second * SPARK_DRIFT * age;
+
+        // The flare: a disc that swells and fades in the first third of the burst.
+        let flare = age / (SPARK_SECONDS / 3.0);
+        if flare < 1.0 {
+            let radius = self.lane * f64::from(self.style.note_thickness) * (0.8 + 2.4 * flare);
+            let alpha = 0.7 * strength * (1.0 - flare).powi(2);
+            paint.set_color_rgba8(r, g, b, unit_byte(alpha as f32));
+            if let Some(disc) = PathBuilder::from_circle(
+                (playhead_x - drift) as f32,
+                centre as f32,
+                radius.max(1.0) as f32,
+            ) {
+                frame.fill_path(
+                    &disc,
+                    &paint,
+                    FillRule::Winding,
+                    Transform::identity(),
+                    None,
+                );
+            }
+        }
+
+        let count = (SPARKS_PER_NOTE * f64::from(self.style.particles) * strength).round() as u32;
+        let mut seed =
+            note.start.to_bits() ^ (u64::from(note.pitch) << 56) ^ ((note.track as u64) << 48);
+        let size = (self.lane * 0.3).min(height * 0.008).max(1.5);
+        for _ in 0..count {
+            let mut next = || (splitmix(&mut seed) >> 11) as f64 / (1u64 << 53) as f64;
+            let life = SPARK_SECONDS * (0.45 + 0.55 * next());
+            let along = age / life;
+            let angle = next() * std::f64::consts::TAU;
+            let speed = height * (0.25 + 0.75 * next()) * strength;
+            let grain = 0.5 + next();
+            if along >= 1.0 {
+                continue;
+            }
+            let travel = speed * SPARK_DRAG * (1.0 - (-age / SPARK_DRAG).exp());
+            let x = playhead_x - drift + angle.cos() * travel;
+            let y = centre + angle.sin() * travel;
+            let radius = (size * grain * (1.0 - along)).max(0.6);
+            let alpha = (1.0 - along).powf(1.5);
+            // A soft halo under a bright core, which is what reads as light rather than as dots.
+            for (scale, strength) in [(2.6, 0.22), (1.0, 1.0)] {
+                paint.set_color_rgba8(r, g, b, unit_byte((alpha * strength) as f32));
+                if let Some(dot) =
+                    PathBuilder::from_circle(x as f32, y as f32, (radius * scale) as f32)
+                {
+                    frame.fill_path(&dot, &paint, FillRule::Winding, Transform::identity(), None);
+                }
+            }
+        }
     }
 
     /// The colour of a note on `track` at `pitch`, each channel from 0 to 1.
@@ -203,6 +304,15 @@ impl FrameRenderer {
         };
         unit_rgb(color)
     }
+}
+
+/// The next number of a SplitMix64 sequence: cheap, and the same on every platform.
+fn splitmix(state: &mut u64) -> u64 {
+    *state = state.wrapping_add(0x9e37_79b9_7f4a_7c15);
+    let mut z = *state;
+    z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    z ^ (z >> 31)
 }
 
 /// The background colour, with the picture scaled to cover the frame and faded towards it.
@@ -345,7 +455,7 @@ pub fn render_video(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ScoreNote, ScoreTrack, VideoSize};
+    use crate::{ScoreTrack, VideoSize};
 
     fn score() -> NoteScore {
         NoteScore {
@@ -380,6 +490,7 @@ mod tests {
             playhead: 0.5,
             playhead_line: false,
             flash: false,
+            particles: 0.0,
             upcoming_opacity: 1.0,
             played_opacity: 1.0,
             background: Color(0x000000),
@@ -439,6 +550,54 @@ mod tests {
         assert!(
             struck[1] > 100,
             "lifted towards white at the strike: {struck:?}"
+        );
+    }
+
+    #[test]
+    fn a_struck_note_throws_sparks_that_die_away() {
+        let style = NoteRollStyle {
+            particles: 1.0,
+            ..style()
+        };
+        let lit_away_from_the_note = |style: &NoteRollStyle, seconds: f64| {
+            let renderer = FrameRenderer::with_background(&score(), style, None);
+            let row = i64::from(row_of(&renderer, 60));
+            let band = (renderer.lane * 0.5).ceil() as i64;
+            let mut frame = renderer.canvas();
+            renderer.draw(seconds, &mut frame);
+            let lit = (0..frame.height())
+                .filter(|&y| (i64::from(y) - row).abs() > band)
+                // Left of where the next note, a twelfth higher, comes into view.
+                .flat_map(|y| (0..150).map(move |x| (x, y)))
+                .filter(|&(x, y)| pixel(&frame, x, y)[..3] != [0, 0, 0])
+                .count();
+            (lit, frame)
+        };
+        assert_eq!(
+            lit_away_from_the_note(&style, 0.99).0,
+            0,
+            "nothing before the strike"
+        );
+        let (burst, first) = lit_away_from_the_note(&style, 1.1);
+        assert!(burst > 10, "a burst just after the strike: {burst} pixels");
+        assert_eq!(
+            first.data(),
+            lit_away_from_the_note(&style, 1.1).1.data(),
+            "a frame is the same however often it is drawn"
+        );
+        assert_eq!(
+            lit_away_from_the_note(&style, 1.0 + SPARK_SECONDS + 0.01).0,
+            0,
+            "gone once spent"
+        );
+        let off = NoteRollStyle {
+            particles: 0.0,
+            ..style
+        };
+        assert_eq!(
+            lit_away_from_the_note(&off, 1.1).0,
+            0,
+            "and none when turned off"
         );
     }
 

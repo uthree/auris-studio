@@ -103,6 +103,9 @@ pub struct NoteRollStyle {
     pub played_opacity: f32,
     /// Flash a note towards white when it is struck.
     pub flash: bool,
+    /// How many sparks burst from the playhead when a note reaches it, as a multiple of the usual
+    /// amount: 0 turns them off, 2 is twice as many.
+    pub particles: f32,
     /// Draw drum tracks as well as pitched ones.
     pub include_drums: bool,
 }
@@ -138,6 +141,7 @@ impl Default for NoteRollStyle {
             upcoming_opacity: 0.85,
             played_opacity: 0.45,
             flash: true,
+            particles: 1.0,
             include_drums: false,
         }
     }
@@ -146,6 +150,8 @@ impl Default for NoteRollStyle {
 impl NoteRollStyle {
     /// Frame rates offered in a menu.
     pub const FPS_CHOICES: [u32; 3] = [24, 30, 60];
+    /// The most [`Self::particles`] can be turned up to.
+    pub const MAX_PARTICLES: f32 = 3.0;
 
     /// The same style with every number in a range a renderer and an encoder can use.
     ///
@@ -174,6 +180,11 @@ impl NoteRollStyle {
             note_roundness: unit(self.note_roundness, defaults.note_roundness).min(0.5),
             upcoming_opacity: unit(self.upcoming_opacity, defaults.upcoming_opacity),
             played_opacity: unit(self.played_opacity, defaults.played_opacity),
+            particles: if self.particles.is_finite() {
+                self.particles.clamp(0.0, Self::MAX_PARTICLES)
+            } else {
+                defaults.particles
+            },
             low_hue: finite_or(self.low_hue, defaults.low_hue),
             high_hue: finite_or(self.high_hue, defaults.high_hue),
             palette: if self.palette.is_empty() {
