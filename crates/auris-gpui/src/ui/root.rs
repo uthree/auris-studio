@@ -2002,6 +2002,15 @@ impl AurisApp {
                 let delta = f32::from(event.position.x - start_x);
                 self.drag_perform_dial(clip, dial, start_fraction, delta);
             }
+            Drag::LayerDial {
+                track,
+                dial,
+                start_fraction,
+                start_x,
+            } => {
+                let delta = f32::from(event.position.x - start_x);
+                self.drag_layer_dial(track, dial, start_fraction, delta);
+            }
             Drag::VolumeContourPoint {
                 clip,
                 index,

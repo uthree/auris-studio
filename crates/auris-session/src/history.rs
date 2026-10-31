@@ -65,6 +65,12 @@ pub enum Edit {
     DeleteTrack,
     /// A track was copied.
     DuplicateTrack,
+    /// A layer was added on another track's notes.
+    AddLayerTrack,
+    /// How a layer shapes its source's notes was changed.
+    SetLayerShape,
+    /// A layer was given notes of its own.
+    DetachLayer,
     /// A note track was rendered and replaced with audio.
     ConvertTrackToAudio,
     /// A track was moved up or down the list.

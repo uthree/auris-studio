@@ -293,6 +293,18 @@ messages! {
         ja: "トラック {number}"
     }
 
+    /// Name given to a layer added on a track.
+    fn layer_track_name(source: &str) {
+        en: "{source} Layer",
+        ja: "{source} レイヤー"
+    }
+
+    /// The lowest or highest note a layer keeps, with its pitch name.
+    fn layer_note_bound(name: &str, pitch: u8) {
+        en: "{name} ({pitch})",
+        ja: "{name}（{pitch}）"
+    }
+
     /// Name given to a drum track the user just created.
     fn new_drum_track_name(number: usize) {
         en: "Drums {number}",

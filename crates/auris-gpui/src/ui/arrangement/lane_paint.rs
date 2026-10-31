@@ -147,7 +147,9 @@ pub(super) fn paint_lane(
             origin: point(x, bounds.origin.y + CLIP_INSET),
             size: size(width.max(px(3.0)), bounds.size.height - CLIP_INSET * 2.0),
         };
-        let selected = lane.selected.contains(&clip.id);
+        // A layer's lane shows its source's clips under the same ids, and lighting them up there
+        // would say the layer holds something it does not.
+        let selected = !lane.borrowed && lane.selected.contains(&clip.id);
         let (title_fill, title_ink) = clip_title_colors(theme, lane.color, selected, clip.muted);
         let body = if clip.muted {
             Theme::translucent(lane.color, 0.08)

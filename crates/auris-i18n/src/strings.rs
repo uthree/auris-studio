@@ -1478,6 +1478,27 @@ strings! {
         ja: "バスにクリップは置けません — 音は他のトラックからのルーティングで届きます"
     }
     DuplicatedTrack { en: "Duplicated track", ja: "トラックを複製しました" }
+    AddedLayer { en: "Added a layer", ja: "レイヤーを追加しました" }
+    DetachedLayer { en: "Detached the layer", ja: "レイヤーを切り離しました" }
+    MenuAddLayer { en: "Add Layer", ja: "レイヤーを追加" }
+    MenuDetachLayer { en: "Detach Layer", ja: "レイヤーを切り離す" }
+    InspectorLayer { en: "Layer", ja: "レイヤー" }
+    MixerNotesWire { en: "Notes", ja: "音符" }
+    LayerFollows { en: "Plays notes of", ja: "音符の参照元" }
+    LayerSourceMissing { en: "Missing track", ja: "見つからないトラック" }
+    LayerUnshaped { en: "As played", ja: "そのまま" }
+    LayerShaped { en: "Shaped", ja: "変形あり" }
+    LayerLowest { en: "Lowest Note", ja: "最低音" }
+    LayerHighest { en: "Highest Note", ja: "最高音" }
+    LayerVoice { en: "Notes Kept", ja: "残す音" }
+    LayerVoiceAll { en: "Every Note", ja: "すべての音" }
+    LayerVoiceTop { en: "Top Note Only", ja: "最高音のみ" }
+    LayerVoiceBottom { en: "Bottom Note Only", ja: "最低音のみ" }
+    LayerTranspose { en: "Transpose", ja: "トランスポーズ" }
+    LayerVelocity { en: "Velocity", ja: "ベロシティ" }
+    LayerLength { en: "Length", ja: "長さ" }
+    LayerOffset { en: "Timing", ja: "タイミング" }
+    LayerReset { en: "Reset Shape", ja: "変形をリセット" }
     DuplicatedClip { en: "Duplicated clip", ja: "クリップを複製しました" }
     SplitClipStatus { en: "Split clip", ja: "クリップを分割しました" }
     CopiedToClipboard { en: "Copied", ja: "コピーしました" }
@@ -1523,6 +1544,9 @@ strings! {
     EditAddBusTrack { en: "adding a bus", ja: "バスの追加" }
     EditDeleteTrack { en: "deleting a track", ja: "トラックの削除" }
     EditDuplicateTrack { en: "duplicating a track", ja: "トラックの複製" }
+    EditAddLayerTrack { en: "adding a layer", ja: "レイヤーの追加" }
+    EditSetLayerShape { en: "shaping a layer", ja: "レイヤーの変形" }
+    EditDetachLayer { en: "detaching a layer", ja: "レイヤーの切り離し" }
     EditMoveTrack { en: "moving a track", ja: "トラックの並べ替え" }
     EditMoveMixerNodes { en: "moving mixer nodes", ja: "ミキサーノードの移動" }
     EditArrangeMixerNodes { en: "arranging mixer nodes", ja: "ミキサーノードの自動配置" }

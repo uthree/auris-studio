@@ -39,6 +39,11 @@ pub enum MixerEdgeKind {
     },
     /// A key signal arriving at an effect's second input.
     Sidechain,
+    /// A layer playing its source's notes: from the source's strip to the layer's.
+    ///
+    /// Notes rather than audio, so it carries no level and no meter; disconnecting it detaches
+    /// the layer.
+    Notes,
 }
 
 /// One directed signal connection.
@@ -100,6 +105,11 @@ impl Session {
                             self.set_effect_sidechain(owner, slot, None)?;
                         }
                     }
+                    MixerEdgeKind::Notes => {
+                        if let MixerNode::Strip(Some(layer)) = edge.target {
+                            self.detach_layer(layer)?;
+                        }
+                    }
                     MixerEdgeKind::Chain => unreachable!(),
                 }
             }
@@ -156,6 +166,15 @@ impl Session {
                 previous = node;
             }
             if let Some(track) = owner.and_then(|id| self.project().track(id)) {
+                if let Some(source) = track.kind.layer()
+                    && self.project().track(source.track).is_some()
+                {
+                    graph.edges.push(MixerEdge {
+                        source: MixerNode::Strip(Some(source.track)),
+                        target: input,
+                        kind: MixerEdgeKind::Notes,
+                    });
+                }
                 for output in &track.outputs {
                     graph.edges.push(MixerEdge {
                         source: previous,

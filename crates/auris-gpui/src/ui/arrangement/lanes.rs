@@ -341,7 +341,7 @@ impl AurisApp {
     /// half hanging past the edge is a zone no press can ever land in.
     fn clip_edge_zones(&self, lanes: &[LanePaint]) -> Vec<Bounds<Pixels>> {
         let mut zones = Vec::new();
-        for lane in lanes {
+        for lane in lanes.iter().filter(|lane| !lane.borrowed) {
             let lane_top = lane.top - self.lane_scroll;
             let height = px(lane.height);
             for clip in &lane.clips {
@@ -420,7 +420,34 @@ impl AurisApp {
             .zip(tops)
             .map(|(track, top)| {
                 let color = self.theme.track_color(track.color.0);
+                // A layer has no clips of its own; its lane shows its source's, shaped the way
+                // the layer plays them, as a ghost nothing can grab.
+                let borrowed = track.kind.layer().is_some();
                 let clips = match &track.kind {
+                    TrackKind::Instrument(_) if borrowed => self
+                        .project()
+                        .played_clips(track)
+                        .map(|played| {
+                            played
+                                .clips
+                                .iter()
+                                .map(|clip| ClipPaint {
+                                    id: clip.id,
+                                    name: clip.name.clone(),
+                                    start: clip.start,
+                                    length: clip.length,
+                                    loop_end: clip.loop_end,
+                                    muted: true,
+                                    generated: false,
+                                    follows: None,
+                                    content: ClipContent::Notes(match played.shape {
+                                        Some(shape) => shape.apply(clip.notes.clone()),
+                                        None => clip.notes.clone(),
+                                    }),
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default(),
                     TrackKind::Instrument(_) | TrackKind::Drum(_) | TrackKind::Singer(_) => track
                         .kind
                         .note_clips()
@@ -488,6 +515,7 @@ impl AurisApp {
                     .then(|| self.rendered_spectrum_paint(Some(track.id))),
                     color,
                     clips,
+                    borrowed,
                     selected: self.selected_clip_ids(),
                 }
             })
@@ -517,6 +545,8 @@ pub(super) struct LanePaint {
     pub(super) spectrogram: bool,
     pub(super) rendered_spectrum: Option<crate::ui::spectrogram::RenderedSpectrumPaint>,
     pub(super) clips: Vec<ClipPaint>,
+    /// The clips are a layer's source's, drawn as a ghost: never selected, never grabbed.
+    pub(super) borrowed: bool,
     /// Every selected clip, so a rubber band can light up more than one at a time.
     pub(super) selected: std::collections::BTreeSet<ClipId>,
 }

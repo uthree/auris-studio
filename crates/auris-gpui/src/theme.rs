@@ -938,6 +938,11 @@ impl Theme {
         readable_indicator(self.track_palette[4], self)
     }
 
+    /// Color for a layer's note wire, which carries notes rather than audio.
+    pub fn mixer_notes_color(&self) -> Hsla {
+        readable_indicator(self.track_palette[2], self)
+    }
+
     /// The palette a scheme describes.
     ///
     /// The lightness steps below are the whole layout of the interface, written down once. Reading

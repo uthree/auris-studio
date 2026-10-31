@@ -320,15 +320,16 @@ impl RenderGraph {
             // until a voice model exists, its `instrument_id` names the preview voice — so the
             // two kinds meet the same arm below, differing only in where the id, the state and
             // the clips are kept.
+            // A layer plays its source's clips through its own shape, which is the project's
+            // answer rather than this file's: the MIDI writer asks the same question.
             let instrument_parts = match &track.kind {
                 TrackKind::Instrument(inner) | TrackKind::Drum(inner) => {
-                    Some((&inner.instrument_id, &inner.instrument_state, &inner.clips))
+                    Some((&inner.instrument_id, &inner.instrument_state))
                 }
-                TrackKind::Singer(inner) => {
-                    Some((&inner.instrument_id, &inner.instrument_state, &inner.clips))
-                }
+                TrackKind::Singer(inner) => Some((&inner.instrument_id, &inner.instrument_state)),
                 _ => None,
-            };
+            }
+            .zip(project.played_clips(track));
             // A singer track that has a rendered take plays the take — the audio source its
             // document entry names, laid from the beginning of the timeline — and keeps its
             // preview instrument only for auditioned notes. No take, and it plays through the
@@ -391,7 +392,7 @@ impl RenderGraph {
                     }
                 }
                 TrackKind::Instrument(_) | TrackKind::Drum(_) | TrackKind::Singer(_) => {
-                    let (instrument_id, instrument_state, clips) =
+                    let ((instrument_id, instrument_state), played) =
                         instrument_parts.expect("the arm holds an instrument");
                     // The caller's own instrument first, and it is *taken*: what is left in the
                     // map afterwards names tracks the project no longer plays that way.
@@ -403,9 +404,10 @@ impl RenderGraph {
                         Ok(mut instrument) => {
                             instrument.load_state(instrument_state);
                             let mut events = Vec::new();
-                            let schedule_error = clips.iter().find_map(|clip| {
+                            let schedule_error = played.clips.iter().find_map(|clip| {
                                 schedule_clip(
                                     clip,
+                                    played.shape,
                                     &project.tempo_map,
                                     &project.signatures,
                                     sample_rate,

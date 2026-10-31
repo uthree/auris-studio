@@ -171,6 +171,19 @@ pub enum MenuCommand {
     },
     /// Copy a track, its clips and its effects.
     DuplicateTrack(TrackId),
+    /// Add a layer playing this track's notes on another instrument.
+    AddLayer(TrackId),
+    /// Give a layer notes of its own, written as it sounds.
+    DetachLayer(TrackId),
+    /// Put a layer's shape back to playing its source as written.
+    ResetLayerShape(TrackId),
+    /// Choose which voice of a chord a layer keeps.
+    SetLayerVoice {
+        /// The layer.
+        track: TrackId,
+        /// The voice it keeps.
+        voice: LayerVoice,
+    },
     /// Render the source and replace this track with audio in one undo step.
     ConvertTrackToAudio(TrackId),
     /// Rename a track.
@@ -891,6 +904,17 @@ impl AurisApp {
                 }
                 Err(error) => self.set_failed_status(self.failure(Key::MenuDuplicate, &error)),
             },
+            MenuCommand::AddLayer(track) => self.add_layer_on(track),
+            MenuCommand::DetachLayer(track) => match self.session.detach_layer(track) {
+                Ok(()) => self.set_status(self.t(Key::DetachedLayer)),
+                Err(error) => self.set_failed_status(self.failure(Key::MenuDetachLayer, &error)),
+            },
+            MenuCommand::ResetLayerShape(track) => {
+                if let Err(error) = self.session.set_layer_shape(track, LayerShape::default()) {
+                    self.set_failed_status(self.failure(Key::LayerReset, &error));
+                }
+            }
+            MenuCommand::SetLayerVoice { track, voice } => self.set_layer_voice(track, voice),
             MenuCommand::RenameTrack(track) => self.prompt_to_rename_track(track),
             MenuCommand::OverwriteSound { sound, track } => {
                 if let Some(track) = track {
