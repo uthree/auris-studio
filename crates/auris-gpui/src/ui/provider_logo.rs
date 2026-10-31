@@ -6,6 +6,42 @@ use gpui::{AssetSource, Hsla, IntoElement, SharedString, div, prelude::*, svg};
 
 const MARKS: &[(&str, &[u8])] = &[
     (
+        "sounds/keys.svg",
+        include_bytes!("../../assets/sounds/keys.svg"),
+    ),
+    (
+        "sounds/synth.svg",
+        include_bytes!("../../assets/sounds/synth.svg"),
+    ),
+    (
+        "sounds/strings.svg",
+        include_bytes!("../../assets/sounds/strings.svg"),
+    ),
+    (
+        "sounds/wind.svg",
+        include_bytes!("../../assets/sounds/wind.svg"),
+    ),
+    (
+        "sounds/drums.svg",
+        include_bytes!("../../assets/sounds/drums.svg"),
+    ),
+    (
+        "sounds/voice.svg",
+        include_bytes!("../../assets/sounds/voice.svg"),
+    ),
+    (
+        "sounds/wave.svg",
+        include_bytes!("../../assets/sounds/wave.svg"),
+    ),
+    (
+        "sounds/bell.svg",
+        include_bytes!("../../assets/sounds/bell.svg"),
+    ),
+    (
+        "sounds/mallet.svg",
+        include_bytes!("../../assets/sounds/mallet.svg"),
+    ),
+    (
         "icons/menu.svg",
         include_bytes!("../../assets/icons/menu.svg"),
     ),

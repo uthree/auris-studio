@@ -467,6 +467,22 @@ pub(crate) fn drag_with(
     cx.simulate_mouse_up(to, MouseButton::Left, modifiers);
 }
 
+/// The independent score owner behind a visible conversational piano roll.
+pub(crate) fn reference_editor(app: &Entity<AurisApp>, cx: &VisualTestContext) -> Entity<AurisApp> {
+    app.read_with(cx, |app, cx| {
+        app.music_references()
+            .midi_draft
+            .as_ref()
+            .unwrap()
+            .editor
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .app
+            .clone()
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

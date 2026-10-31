@@ -7,6 +7,34 @@ a migration path. The version number is the promise, and `0` is the promise that
 The release workflow reads the section whose heading matches the tag, so the headings are the
 format rather than a convention: `## <version> — <date>`.
 
+## 0.17.0 — 2026-10-31
+
+### AI workshop
+
+* **Rename “Create with AI” to “AI workshop”** and ask for one to three song candidates
+  instead of always three.
+* Continue from the latest song when a round produced a single candidate, without choosing it
+  first. Failed revisions keep the earlier baseline, including after reopening, and successive
+  edits of a selected song build on the previous revision.
+* Keep written lyrics separate from their kana pronunciation, so song cards show the lyrics as
+  written. An explicit reading works without the Japanese dictionary.
+* **Edit attached MIDI references in the normal piano roll**, with the same note editing,
+  snapping, zoom and Undo/Redo as the song editor, and lyrics entered through the usual prompt.
+
+### Sound library
+
+* Focus the library on one section and return to the full tree from the library button.
+* Show instrument-family artwork in the inspector, chosen from the shared sound classification
+  and any manual corrections.
+
+### Development
+
+* Reduce development build storage by keeping limited debug information and disabling
+  incremental compilation by default; `docs/build-performance.md` shows how to opt back in.
+
+Projects continue to use format 32. Minimum platform requirements are unchanged from v0.16.0.
+
+
 ## 0.16.0 — 2026-10-30
 
 ### Editor and project windows

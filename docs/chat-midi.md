@@ -15,12 +15,12 @@ the conversation, so later changes to the source file do not change earlier
 requests. Back keeps attached drafts; after reopening, activate **Reattach**
 to explicitly include a saved local reference in the next message.
 
-The inline piano roll edits a conversation copy. Choose a part with the track
-arrows. The beat arrows page through eight quarter-note beats; octave controls
-change the visible pitch range. Click an empty grid cell to add an eighth note,
-or use **Add note**. Select a note to change its pitch, start, or length, delete
-it, and enter the word or syllable sung on that note. The text field supports
-the platform IME. Imported notes keep their original timing until edited.
+The inline editor uses the normal piano roll on an independent conversation
+copy. Choose a part with the track arrows. Use the same note creation, movement,
+resizing, selection, snapping, scrolling and zoom controls as in the song editor.
+Undo and Redo affect only this copy. Double-click a note to enter its word or
+syllable in the normal lyric prompt, including platform IME input. Imported notes
+keep their original timing until edited.
 
 **Attach score** keeps the edited copy with the message. **Cancel** discards
 the editor's changes. Sending or switching conversations commits an open draft
@@ -28,9 +28,10 @@ first; a validation or storage error keeps it open. The source clip and MIDI
 file are unchanged. Opening a sent MIDI attachment starts a new editable copy;
 attaching that copy never changes the earlier message.
 
-Tab reaches the editor commands and note buttons. Enter in the lyrics field
-attaches the score; Escape cancels the editor and returns to the message field.
-The panel remains scrollable when the editor exceeds its available space.
+Enter confirms a lyric prompt; Escape dismisses it without attaching the score.
+Use **Attach score** to keep the edited reference or **Cancel** to return to the
+message field. The panel remains scrollable when the editor exceeds its available
+space.
 
 Each attachment contains up to 2,048 notes across 64 parts and at most 256 KiB
 of encoded score data. Longer references should be shortened before attaching.

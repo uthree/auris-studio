@@ -714,8 +714,6 @@ pub(crate) enum AgentField {
     Chat,
     /// Title search in the conversation browser.
     ConversationSearch,
-    /// Lyrics of the selected note in the inline score editor.
-    MidiLyric,
 }
 
 /// One model a provider reported serving.
@@ -1399,9 +1397,7 @@ impl AgentChat {
 
     /// The message editor's actual focus target, once the panel has been painted.
     pub(crate) fn input_focus(&self) -> Option<&gpui::FocusHandle> {
-        if self.focused == Some(AgentField::MidiLyric) {
-            self.references.midi_lyric_focus.as_ref()
-        } else if self.focused == Some(AgentField::ConversationSearch) {
+        if self.focused == Some(AgentField::ConversationSearch) {
             self.conversations.focus.as_ref()
         } else {
             self.input_focus.as_ref()
@@ -1417,7 +1413,6 @@ impl AgentChat {
         }
         Some(match self.focused? {
             AgentField::Chat => &mut self.input,
-            AgentField::MidiLyric => &mut self.references.midi_draft.as_mut()?.lyric,
             AgentField::ConversationSearch => &mut self.conversations.search,
         })
     }
@@ -1429,7 +1424,6 @@ impl AgentChat {
         }
         Some(match self.focused? {
             AgentField::Chat => &self.input,
-            AgentField::MidiLyric => &self.references.midi_draft.as_ref()?.lyric,
             AgentField::ConversationSearch => &self.conversations.search,
         })
     }
@@ -3331,16 +3325,6 @@ impl AurisApp {
             // dispatch the window's focus-navigation binding and strand the candidate session.
             return true;
         }
-        if !composing && focused == AgentField::MidiLyric && key == "escape" {
-            self.close_midi_editor(window);
-            return true;
-        }
-        if !composing && focused == AgentField::MidiLyric && key == "enter" {
-            if self.commit_midi_draft() {
-                self.close_midi_editor(window);
-            }
-            return true;
-        }
         if !composing && focused == AgentField::Chat && self.agent_chat.controls.pending.is_some() {
             if key == "escape" {
                 self.agent_approval(controls::Approval::Deny);
@@ -3501,17 +3485,7 @@ impl AurisApp {
             })
             .clone()
             .tab_stop(cancelable);
-        if !composer_locked
-            && self
-                .agent_chat
-                .references
-                .midi_lyric_focus
-                .as_ref()
-                .is_some_and(|f| f.is_focused(window))
-            && self.agent_chat.references.midi_draft.is_some()
-        {
-            self.focus_agent_field(AgentField::MidiLyric);
-        } else if !composer_locked && input_focus.is_focused(window) {
+        if !composer_locked && input_focus.is_focused(window) {
             self.focus_agent_field(AgentField::Chat);
         } else if !composer_locked
             && self.agent_chat.focused == Some(AgentField::Chat)
@@ -5064,6 +5038,9 @@ impl AurisApp {
             .to_owned();
         let bypass = controls::mode_warns(self.settings.agent.policy.mode);
         agent_components::composer_frame("agent-composer", &theme, focused && !locked, bypass)
+            .when(self.agent_chat.references.midi_draft.is_some(), |frame| {
+                frame.flex_shrink().min_h_0()
+            })
             .debug_selector(|| "agent-composer".to_owned())
             .when(!self.agent_chat.queued.is_empty(), |this| {
                 this.child(self.agent_queue_view(cx))
@@ -5407,12 +5384,6 @@ impl AurisApp {
         cx: &mut gpui::Context<Self>,
     ) -> AnyElement {
         let value = match field {
-            AgentField::MidiLyric => {
-                let Some(draft) = &self.music_references().midi_draft else {
-                    return div().into_any_element();
-                };
-                &draft.lyric
-            }
             AgentField::Chat => &self.agent_chat.input,
             AgentField::ConversationSearch => &self.agent_chat.conversations.search,
         };
@@ -5507,11 +5478,7 @@ impl AurisApp {
                                 value.place_caret(offset, event.modifiers.shift);
                             }
                         }
-                        if field == AgentField::MidiLyric {
-                            this.focus_music_lyric();
-                        } else {
-                            this.focus_agent_field(field);
-                        }
+                        this.focus_agent_field(field);
                         window.focus(&pointer_focus);
                         cx.notify();
                     }),

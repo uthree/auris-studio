@@ -13,7 +13,6 @@ pub(crate) struct MusicReferences {
     pub(crate) attachment_error: Option<String>,
     pub(crate) midi_draft: Option<super::midi::MidiDraft>,
     pub(crate) midi_loading: bool,
-    pub(crate) midi_lyric_focus: Option<gpui::FocusHandle>,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -92,21 +91,6 @@ impl AurisApp {
             },
             |s| s.busy(),
         )
-    }
-
-    pub(crate) fn music_lyric_focused(&self) -> bool {
-        self.song_workshop.as_ref().map_or(
-            self.agent_chat.focused == Some(AgentField::MidiLyric),
-            |s| s.active_field == Some(1),
-        )
-    }
-
-    pub(crate) fn focus_music_lyric(&mut self) {
-        if let Some(s) = &mut self.song_workshop {
-            s.active_field = Some(1);
-        } else {
-            self.focus_agent_field(AgentField::MidiLyric);
-        }
     }
 
     pub(crate) fn can_attach_agent_music(&self) -> bool {

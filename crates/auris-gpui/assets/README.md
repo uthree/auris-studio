@@ -20,3 +20,10 @@ action. The redistributed canonical files are covered by the upstream Apache-2.0
 The original `icons/sound-*.svg` library presets share Atelier's 24×24 grid, two-pixel stroke,
 rounded caps and monochrome masks. Their semantic identifiers live in `auris_session::SoundIcon`;
 the executable embeds every preset for both automatic classifications and manual corrections.
+
+## Sound artwork
+
+`sounds/` contains original monochrome SVG illustrations for instrument families in the
+inspector. These are embedded alongside the UI icons and tinted by the active theme. The shared sound
+classification and manual corrections select the artwork, with explicit built-in fallbacks and
+a waveform for unrecognised sounds.

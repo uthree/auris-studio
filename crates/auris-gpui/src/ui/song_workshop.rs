@@ -238,7 +238,6 @@ impl SongWorkshop {
             return None;
         }
         match self.active_field {
-            Some(1) => self.references.midi_draft.as_ref().map(|d| &d.lyric),
             Some(_) => Some(&self.brief),
             None => None,
         }
@@ -248,7 +247,6 @@ impl SongWorkshop {
             return None;
         }
         match self.active_field {
-            Some(1) => self.references.midi_draft.as_mut().map(|d| &mut d.lyric),
             Some(_) => Some(&mut self.brief),
             None => None,
         }
@@ -866,18 +864,6 @@ impl AurisApp {
                 window.focus(&s.foci[0]);
             }
             s.chord_prompt_open = chord_prompt;
-            if s.references
-                .midi_lyric_focus
-                .as_ref()
-                .is_some_and(|f| f.is_focused(window))
-            {
-                if s.references.midi_draft.is_some() {
-                    s.active_field = Some(1);
-                } else {
-                    s.active_field = Some(0);
-                    window.focus(&s.foci[0]);
-                }
-            }
         }
         let input = self.render_workshop_input(window, cx);
         let prompt = chord_prompt
@@ -1194,8 +1180,8 @@ impl AurisApp {
             .key_context(
                 if chord_prompt
                     || s.input_focused
-                    || self.music_lyric_focused()
                     || self.menu.is_some()
+                    || self.reference_score_claims_keys()
                 {
                     crate::actions::context::PROMPT
                 } else {
@@ -1933,6 +1919,9 @@ mod tests {
             app.update(cx, |this, cx| {
                 this.show_project_chooser(window, cx);
                 this.open_song_workshop(window, cx);
+                this.pointer = crate::gestures::PointerGestures::default();
+                this.settings.piano_roll_grid = auris_session::PianoRollGrid::Sixteenth;
+                this.settings.relative_note_snap = false;
                 this.agent_chat
                     .references
                     .attachments
@@ -1950,11 +1939,25 @@ mod tests {
             &crate::ui::context_menu::MenuCommand::ComposerMelody(false),
         );
         paint(&app, cx);
-        click("agent-midi-add", cx);
+        let editor = crate::harness::reference_editor(&app, cx);
+        crate::harness::show_pitch(&editor, cx, 60);
+        let at = crate::harness::roll_point(&editor, cx, auris_session::prelude::Ticks(240), 60);
+        crate::harness::click_at(cx, at, crate::harness::creating());
         paint(&app, cx);
-        click("agent-midi-lyric", cx);
+        let at = editor.read_with(cx, |app, _| {
+            let note = &app.selected_midi_clip().unwrap().notes[0];
+            (
+                note.start + auris_session::prelude::Ticks(note.length.0 / 2),
+                note.pitch,
+            )
+        });
+        let at = crate::harness::roll_point(&editor, cx, at.0, at.1);
+        crate::harness::double_click(cx, at);
+        paint(&app, cx);
         cx.simulate_input("きみ");
         cx.simulate_keystrokes("enter");
+        paint(&app, cx);
+        click("agent-midi-apply", cx);
         app.read_with(cx, |this, _| {
             let paths = &this.song_workshop.as_ref().unwrap().references.attachments;
             assert_eq!(paths.len(), 1);

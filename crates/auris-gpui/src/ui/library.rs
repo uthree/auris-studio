@@ -1,5 +1,7 @@
 //! The left-hand library: every instrument, sound and effect the session can reach, as a tree.
 //!
+//! Selecting a section focuses its shelf; the library button returns to the full tree.
+//! Navigation never edits the document.
 //! Sections open into groups rather than into a list. Instruments and
 //! effects group by [`PluginCategory`]; a SoundFont groups by the MIDI banks the file itself
 //! declares. The reason is the same in both cases and it is a matter of scale: eleven built-in
@@ -147,6 +149,8 @@ impl Branch {
 pub(crate) struct LibraryTree {
     /// Branches whose state has been chosen, and what was chosen.
     chosen: HashMap<Branch, bool>,
+    /// Top-level shelf currently being explored; None shows the complete library.
+    shelf: Option<Branch>,
     /// First installed-plugin file in the bounded page currently shown by this browser.
     plugin_page_start: usize,
 }
@@ -549,6 +553,19 @@ impl AurisApp {
     }
 
     fn set_library_branch(&mut self, branch: Branch, open: bool) {
+        let section = matches!(
+            branch,
+            Branch::Instruments
+                | Branch::SoundFonts
+                | Branch::Effects
+                | Branch::Voices
+                | Branch::Plugins
+                | Branch::UserSounds
+        );
+        let open = open || (section && self.library.shelf.is_none());
+        if section {
+            self.library.shelf = open.then_some(branch);
+        }
         self.library.set_open(branch, open)
     }
 
@@ -748,22 +765,58 @@ impl AurisApp {
             return self.search_rows(&query, cx);
         }
         let theme = self.theme.clone();
-        let mut rows = self.instrument_rows(cx);
-
-        rows.extend(self.user_sound_rows(cx));
-
-        rows.push(divider(&theme).into_any_element());
+        let shelf = self.library.shelf;
+        let mut rows = Vec::new();
+        if shelf.is_some() {
+            rows.push(
+                button(
+                    "library-root",
+                    format!("‹ {}", self.t(Key::Library)),
+                    ButtonStyle::Normal,
+                    false,
+                    theme.accent,
+                    &theme,
+                    cx.listener(|this, _, _, cx| {
+                        this.library.shelf = None;
+                        cx.notify();
+                    }),
+                )
+                .into_any_element(),
+            );
+        }
+        if shelf.is_none_or(|s| s == Branch::Instruments) {
+            rows.extend(self.instrument_rows(cx));
+        }
+        if shelf.is_none_or(|s| s == Branch::UserSounds) {
+            rows.extend(self.user_sound_rows(cx));
+        }
+        if shelf.is_none() {
+            rows.push(divider(&theme).into_any_element());
+        }
         let font_row_offset = rows.len();
-        rows.extend(self.soundfont_rows(font_row_offset, cx));
-        rows.push(divider(&theme).into_any_element());
-
-        rows.extend(self.voice_rows(cx));
-        rows.push(divider(&theme).into_any_element());
-        rows.extend(self.effect_rows(cx));
-        rows.push(divider(&theme).into_any_element());
-
+        if shelf.is_none_or(|s| s == Branch::SoundFonts) {
+            rows.extend(self.soundfont_rows(font_row_offset, cx));
+        }
+        if shelf.is_none() {
+            rows.push(divider(&theme).into_any_element());
+        }
+        if shelf.is_none_or(|s| s == Branch::Voices) {
+            rows.extend(self.voice_rows(cx));
+        }
+        if shelf.is_none() {
+            rows.push(divider(&theme).into_any_element());
+        }
+        if shelf.is_none_or(|s| s == Branch::Effects) {
+            rows.extend(self.effect_rows(cx));
+        }
+        if shelf.is_none() {
+            rows.push(divider(&theme).into_any_element());
+        }
         let plugin_row_offset = rows.len();
-        rows.extend(self.installed_plugin_rows(plugin_row_offset, cx));
+        if shelf.is_none_or(|s| s == Branch::Plugins) {
+            rows.extend(self.installed_plugin_rows(plugin_row_offset, cx));
+        }
+
         rows
     }
 

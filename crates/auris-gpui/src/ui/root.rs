@@ -300,7 +300,10 @@ impl Render for AurisApp {
 
 impl AurisApp {
     pub(crate) fn modal_blocks_document_actions(&self) -> bool {
-        self.export_dialog.is_some() || self.export.is_some() || self.prompt.is_some()
+        self.reference_score_claims_keys()
+            || self.export_dialog.is_some()
+            || self.export.is_some()
+            || self.prompt.is_some()
     }
 
     /// Transient editors stay in the window that opened them.
@@ -372,6 +375,46 @@ impl AurisApp {
         overlays
     }
 
+    /// Note commands shared by docked and independent score editors.
+    pub(crate) fn note_editor_actions(&self, root: gpui::Div, cx: &mut Context<Self>) -> gpui::Div {
+        root.on_action(Self::window_listener(cx, Self::on_nudge_notes_left))
+            .on_action(Self::window_listener(cx, Self::on_nudge_notes_right))
+            .on_action(Self::window_listener(cx, Self::on_delete_selection))
+            .on_action(Self::window_listener(cx, Self::on_select_all_notes))
+            .on_action(Self::window_listener(cx, Self::on_duplicate_notes))
+            .on_action(Self::window_listener(cx, Self::on_cut_notes))
+            .on_action(Self::window_listener(cx, Self::on_copy_notes))
+            .on_action(Self::window_listener(cx, Self::on_paste_notes))
+            .on_action(Self::window_listener(cx, Self::on_transpose_up))
+            .on_action(Self::window_listener(cx, Self::on_transpose_down))
+            .on_action(Self::window_listener(cx, Self::on_octave_up))
+            .on_action(Self::window_listener(cx, Self::on_octave_down))
+            .on_action(Self::window_listener(cx, Self::on_quantize_starts))
+            .on_action(Self::window_listener(cx, Self::on_note_snap))
+            .on_action(Self::window_listener(cx, Self::on_quantize_lengths))
+            .on_action(Self::window_listener(cx, Self::on_quantize_notes))
+            .on_action(Self::window_listener(cx, Self::on_next_tool))
+            .on_action(Self::window_listener(cx, Self::on_undo))
+            .on_action(Self::window_listener(cx, Self::on_redo))
+            .on_action(Self::window_listener(cx, Self::on_zoom_in))
+            .on_action(Self::window_listener(cx, Self::on_zoom_out))
+            .on_action(Self::window_listener(cx, Self::on_panic_stop))
+    }
+
+    /// Gesture and keyboard routing for an independent reference score.
+    pub(crate) fn reference_editor_input(&self, cx: &mut Context<Self>) -> gpui::Div {
+        let root = div();
+        let root = if self.keys_are_claimed() {
+            root
+        } else {
+            self.note_editor_actions(root, cx)
+        };
+        root.on_mouse_move(cx.listener(Self::on_mouse_move))
+            .on_mouse_up(gpui::MouseButton::Left, cx.listener(Self::on_mouse_up))
+            .on_mouse_up_out(gpui::MouseButton::Left, cx.listener(Self::on_mouse_up))
+            .on_key_down(cx.listener(Self::on_key_down))
+    }
+
     /// Shared action and gesture routing for every document window.
     pub(crate) fn input_root(&self, cx: &mut Context<Self>) -> gpui::Div {
         let modal_blocks_document_actions = self.modal_blocks_document_actions();
@@ -409,7 +452,8 @@ impl AurisApp {
             // document actions while a modal owns the window, including prompts and export
             // sheets whose keyboard context already shields them from ordinary shortcuts.
             .when(!modal_blocks_document_actions, |this| {
-                this.on_action(Self::window_listener(cx, Self::on_toggle_play))
+                self.note_editor_actions(this, cx)
+                    .on_action(Self::window_listener(cx, Self::on_toggle_play))
                     .on_action(Self::window_listener(cx, Self::on_return_to_zero))
                     .on_action(Self::window_listener(cx, Self::on_toggle_loop))
                     .on_action(Self::window_listener(cx, Self::on_toggle_metronome))
@@ -451,43 +495,21 @@ impl AurisApp {
                     .on_action(Self::window_listener(cx, Self::on_select_next_track))
                     .on_action(Self::window_listener(cx, Self::on_step_back))
                     .on_action(Self::window_listener(cx, Self::on_step_forward))
-                    .on_action(Self::window_listener(cx, Self::on_nudge_notes_left))
-                    .on_action(Self::window_listener(cx, Self::on_nudge_notes_right))
                     .on_action(Self::window_listener(cx, Self::on_nudge_clips_left))
                     .on_action(Self::window_listener(cx, Self::on_nudge_clips_right))
                     .on_action(Self::window_listener(cx, Self::on_delete_track))
-                    .on_action(Self::window_listener(cx, Self::on_delete_selection))
-                    .on_action(Self::window_listener(cx, Self::on_select_all_notes))
-                    .on_action(Self::window_listener(cx, Self::on_duplicate_notes))
-                    .on_action(Self::window_listener(cx, Self::on_cut_notes))
-                    .on_action(Self::window_listener(cx, Self::on_copy_notes))
-                    .on_action(Self::window_listener(cx, Self::on_paste_notes))
                     .on_action(Self::window_listener(cx, Self::on_cut_clips))
                     .on_action(Self::window_listener(cx, Self::on_copy_clips))
                     .on_action(Self::window_listener(cx, Self::on_paste_clips))
-                    .on_action(Self::window_listener(cx, Self::on_transpose_up))
-                    .on_action(Self::window_listener(cx, Self::on_transpose_down))
-                    .on_action(Self::window_listener(cx, Self::on_octave_up))
-                    .on_action(Self::window_listener(cx, Self::on_octave_down))
                     .on_action(Self::window_listener(cx, Self::on_select_all_clips))
                     .on_action(Self::window_listener(cx, Self::on_duplicate_clip))
                     .on_action(Self::window_listener(cx, Self::on_split_clip))
                     .on_action(Self::window_listener(cx, Self::on_toggle_clip_mute))
                     .on_action(Self::window_listener(cx, Self::on_toggle_clip_loop))
-                    .on_action(Self::window_listener(cx, Self::on_quantize_starts))
-                    .on_action(Self::window_listener(cx, Self::on_note_snap))
-                    .on_action(Self::window_listener(cx, Self::on_quantize_lengths))
-                    .on_action(Self::window_listener(cx, Self::on_quantize_notes))
-                    .on_action(Self::window_listener(cx, Self::on_next_tool))
                     .on_action(Self::window_listener(cx, Self::on_set_tempo))
                     .on_action(Self::window_listener(cx, Self::on_set_time_signature))
                     .on_action(Self::window_listener(cx, Self::on_cycle_grid))
                     .on_action(Self::window_listener(cx, Self::on_go_to_position))
-                    .on_action(Self::window_listener(cx, Self::on_undo))
-                    .on_action(Self::window_listener(cx, Self::on_redo))
-                    .on_action(Self::window_listener(cx, Self::on_panic_stop))
-                    .on_action(Self::window_listener(cx, Self::on_zoom_in))
-                    .on_action(Self::window_listener(cx, Self::on_zoom_out))
                     .on_action(Self::window_listener(cx, Self::on_increase_track_height))
                     .on_action(Self::window_listener(cx, Self::on_decrease_track_height))
                     .on_action(Self::window_listener(cx, Self::on_toggle_library))

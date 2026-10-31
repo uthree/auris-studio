@@ -684,7 +684,9 @@ impl AurisApp {
         let division = self.project().grid;
         // Built before the chain rather than inside it: each one needs `&mut self`, and the
         // builder below is already holding a borrow of it.
-        let curve_lanes = if editable {
+        let curve_lanes = if self.reference_editor {
+            Vec::new()
+        } else if editable {
             self.panels.curve_lanes()
         } else {
             self.selected_midi_clip()
@@ -696,6 +698,7 @@ impl AurisApp {
             .map(|which| self.render_curve_lane(which, cx))
             .collect();
 
+        let layer_tabs = (!self.reference_editor).then(|| self.score_layer_tabs(cx));
         div()
             .flex()
             .flex_col()
@@ -709,7 +712,7 @@ impl AurisApp {
             // the controls were simply gone.
             .min_w_0()
             .bg(theme.surface_sunken)
-            .child(self.score_layer_tabs(cx))
+            .children(layer_tabs)
             .child(
                 div()
                     .flex()
@@ -810,7 +813,7 @@ impl AurisApp {
                             )),
                         )
                     })
-                    .when(editable, |row| {
+                    .when(editable && !self.reference_editor, |row| {
                         row.child(button(
                             "roll-lanes",
                             self.t(Key::CurveLanes),

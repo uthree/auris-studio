@@ -263,7 +263,7 @@ impl AurisApp {
         ))
         .children(inline_previews)
         .when(self.music_references().midi_draft.is_some(), |body| {
-            body.child(self.midi_editor(window.viewport_size().height * 0.3, cx))
+            body.child(self.midi_editor(window.viewport_size().height * 0.4, cx))
         })
         .when_some(attachment_error, |body, error| {
             body.child(agent_components::error_notice(error))
@@ -377,43 +377,6 @@ impl AurisApp {
                 cx.stop_propagation();
                 cx.notify();
             }
-            return;
-        }
-        if self.music_lyric_focused() {
-            let composing = self
-                .music_references()
-                .midi_draft
-                .as_ref()
-                .is_some_and(|d| d.lyric.marked().is_some());
-            if composing {
-                return;
-            }
-            match event.keystroke.key.as_str() {
-                "escape" => self.close_midi_editor(window),
-                "enter" => {
-                    if self.commit_midi_draft() {
-                        self.close_midi_editor(window);
-                    }
-                }
-                _ => {
-                    if let Some(draft) = &mut self.music_references_mut().midi_draft {
-                        if draft.lyric.apply_key_with_clipboard(
-                            &event.keystroke.key,
-                            event.keystroke.modifiers.shift,
-                            event.keystroke.modifiers.secondary(),
-                            false,
-                            cx,
-                        ) == KeyEffect::Ignored
-                        {
-                            return;
-                        }
-                    } else {
-                        return;
-                    }
-                }
-            }
-            cx.stop_propagation();
-            cx.notify();
             return;
         }
         if self.menu_key(event, window, cx) {

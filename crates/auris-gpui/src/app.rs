@@ -1370,6 +1370,8 @@ pub(crate) struct DiskWatchTaskState {
 
 /// One project tab, its session and its editing state.
 pub struct AurisApp {
+    /// Whether this owner edits a conversational note reference rather than a song.
+    pub(crate) reference_editor: bool,
     pub(crate) project_tabs: Option<gpui::WeakEntity<crate::project_tabs::ProjectTabs>>,
     pub(crate) tab_bar_height: Pixels,
     pub(crate) pending_audition: Option<crate::project_windows::AuditionRequest>,
@@ -1798,70 +1800,92 @@ impl Drop for AurisApp {
 impl AurisApp {
     /// Builds an empty project window with realtime audio initially suspended.
     pub fn new(cx: &mut Context<Self>) -> Self {
-        cx.on_release(|this, cx| {
-            let windows: Vec<gpui::AnyWindowHandle> = [
-                this.settings_window.map(Into::into),
-                this.voice_setup_window.map(Into::into),
-                this.rhythm_window.map(Into::into),
-            ]
-            .into_iter()
-            .flatten()
-            .collect();
-            cx.defer(move |cx| {
-                for handle in windows {
-                    let _ = handle.update(cx, |_, window, _| window.remove_window());
-                }
-            });
-        })
-        .detach();
-        cx.on_app_quit(|this, cx| {
-            if let crate::ui::updates::UpdatePhase::Ready(update) = &this.update_phase {
-                // Restart and Update marks only the window it was chosen in, and this callback may
-                // be another window's, so the choice is read from every window.
-                let restart = this.restart_after_update
-                    || crate::project_windows::restart_requested_elsewhere(this.project_window, cx);
-                if let Err(error) = crate::update_check::spawn_update_helper(update, restart) {
-                    log::error!("could not start update helper: {error}");
-                    crate::update_check::record_update_launch_failure(&error);
-                }
-            }
-            let complete = this.flush_conversation_storage();
-            cx.background_executor().spawn(async move {
-                if let Some(complete) = complete {
-                    let _ = complete.recv_timeout(std::time::Duration::from_millis(95));
-                }
+        Self::new_editor_state(cx, false)
+    }
+
+    /// Builds an isolated, device-free owner for the shared reference piano roll.
+    pub(crate) fn new_reference_editor(cx: &mut Context<Self>) -> Self {
+        Self::new_editor_state(cx, true)
+    }
+
+    fn new_editor_state(cx: &mut Context<Self>, reference: bool) -> Self {
+        if !reference {
+            cx.on_release(|this, cx| {
+                let windows: Vec<gpui::AnyWindowHandle> = [
+                    this.settings_window.map(Into::into),
+                    this.voice_setup_window.map(Into::into),
+                    this.rhythm_window.map(Into::into),
+                ]
+                .into_iter()
+                .flatten()
+                .collect();
+                cx.defer(move |cx| {
+                    for handle in windows {
+                        let _ = handle.update(cx, |_, window, _| window.remove_window());
+                    }
+                });
             })
-        })
-        .detach();
+            .detach();
+            cx.on_app_quit(|this, cx| {
+                if let crate::ui::updates::UpdatePhase::Ready(update) = &this.update_phase {
+                    // Restart and Update marks only the window it was chosen in, and this callback may
+                    // be another window's, so the choice is read from every window.
+                    let restart = this.restart_after_update
+                        || crate::project_windows::restart_requested_elsewhere(
+                            this.project_window,
+                            cx,
+                        );
+                    if let Err(error) = crate::update_check::spawn_update_helper(update, restart) {
+                        log::error!("could not start update helper: {error}");
+                        crate::update_check::record_update_launch_failure(&error);
+                    }
+                }
+                let complete = this.flush_conversation_storage();
+                cx.background_executor().spawn(async move {
+                    if let Some(complete) = complete {
+                        let _ = complete.recv_timeout(std::time::Duration::from_millis(95));
+                    }
+                })
+            })
+            .detach();
+        }
         let settings = Settings::load();
         let language = settings.language();
         let input = InputSettings::load();
         let keymap = input.keys.clone();
-        keymap.apply(cx);
-        // GPUI resolves shortcuts on key-down but implicitly clicks focused controls on key-up.
-        // Observe the action that actually ran, preserving local controls and unbound Space.
-        cx.observe_keystrokes(|this, event, window, _| {
-            if event.keystroke.key == "space" {
-                this.transport_space_window = event
-                    .action
-                    .as_ref()
-                    .is_some_and(|action| {
-                        action.as_any().is::<actions::TogglePlay>()
-                            || action.as_any().is::<actions::ReturnToZero>()
-                    })
-                    .then(|| window.window_handle().window_id());
-            }
-        })
-        .detach();
+        if !reference {
+            keymap.apply(cx);
+            // GPUI resolves shortcuts on key-down but implicitly clicks focused controls on key-up.
+            // Observe the action that actually ran, preserving local controls and unbound Space.
+            cx.observe_keystrokes(|this, event, window, _| {
+                if event.keystroke.key == "space" {
+                    this.transport_space_window = event
+                        .action
+                        .as_ref()
+                        .is_some_and(|action| {
+                            action.as_any().is::<actions::TogglePlay>()
+                                || action.as_any().is::<actions::ReturnToZero>()
+                        })
+                        .then(|| window.window_handle().window_id());
+                }
+            })
+            .detach();
+        }
         let appearance = Appearance::load();
         let theme = appearance.theme();
-        theme.install(cx);
+        if !reference {
+            theme.install(cx);
+        }
 
         // List before creating this session's private workspace. An empty current workspace has
         // no snapshot and would not be offered, but taking the inventory first keeps "previous
         // session" a structural fact rather than a convention the registry must infer.
-        let recovery_queue = startup_recoveries();
-        if !cfg!(test) {
+        let recovery_queue = if reference {
+            VecDeque::new()
+        } else {
+            startup_recoveries()
+        };
+        if !reference && !cfg!(test) {
             let cleanup = Session::begin_recovery_quarantine_cleanup();
             cx.background_executor()
                 .spawn(async move {
@@ -1871,8 +1895,15 @@ impl AurisApp {
                 })
                 .detach();
         }
-        let mut session =
-            Session::new(session_options(&settings)).expect("a session opens even without audio");
+        let mut session = Session::new(if reference {
+            SessionOptions {
+                shipped_dictionary: !cfg!(test),
+                ..SessionOptions::headless()
+            }
+        } else {
+            session_options(&settings)
+        })
+        .expect("a session opens even without audio");
         // The same empty document File → New gives, rather than a separate idea of what a fresh
         // start looks like. Launching used to leave a two-bar arpeggio and a bass line lying
         // around, which was useful while there was nothing else to hear and is now just
@@ -1897,6 +1928,9 @@ impl AurisApp {
         // Repaint on a timer rather than per audio block: the playhead and meters live in
         // atomics written by the audio thread, and 30 fps is plenty to read them at.
         let repaint = cx.spawn(async move |this, cx| {
+            if reference {
+                return;
+            }
             loop {
                 cx.background_executor().timer(REPAINT_INTERVAL).await;
                 if this
@@ -1963,6 +1997,7 @@ impl AurisApp {
                 Err(error) => (Default::default(), Some(error.to_string())),
             };
         let mut app = Self {
+            reference_editor: reference,
             pending_audition: None,
             opening_project: None,
             project_chooser: None,
@@ -2109,7 +2144,9 @@ impl AurisApp {
             clicked_key: None,
             _repaint: repaint,
         };
-        app.offer_next_recovery();
+        if !reference {
+            app.offer_next_recovery();
+        }
         app
     }
 
@@ -2146,7 +2183,8 @@ impl AurisApp {
     /// it. Each overlay handles Escape itself, since the binding that used to close them is one of
     /// the ones now out of reach.
     pub(crate) fn keys_are_claimed(&self) -> bool {
-        self.export_dialog.is_some()
+        self.reference_score_claims_keys()
+            || self.export_dialog.is_some()
             || self.export.is_some()
             || self.taking_text_input()
             || self.menu.is_some()
