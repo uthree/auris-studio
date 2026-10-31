@@ -4,8 +4,7 @@
 > rebuilt in a smaller, format-compatible form on `main` ("layers": instrument tracks that
 > follow another track's notes, uthree/auris-studio#55). Do not base new work on this branch
 > and do not open files it saved with `main` builds: its format 33 is a different format from
-> `main`'s format 33. The branch is kept for reference only, and the tag
-> `archive/render-pipeline-design` marks its final state.
+> `main`'s format 33. The branch is kept for reference only; its last development commit is `ff4bbe7`.
 
 [日本語](README.ja.md)
 
