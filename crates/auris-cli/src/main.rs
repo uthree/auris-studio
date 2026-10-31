@@ -1407,6 +1407,12 @@ fn video(args: &[String]) -> Result<(), String> {
                     .parse()
                     .map_err(|_| messages::unknown_option(LANGUAGE, &format!("{option} {text}")))?;
             }
+            "--sink" => {
+                let text = value(&mut index, option, Key::CliNeedsValue)?;
+                style.sink = text
+                    .parse()
+                    .map_err(|_| messages::unknown_option(LANGUAGE, &format!("{option} {text}")))?;
+            }
             "--particles" => {
                 let text = value(&mut index, option, Key::CliNeedsValue)?;
                 style.particles = text

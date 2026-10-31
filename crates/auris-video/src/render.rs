@@ -26,6 +26,18 @@ const SPARK_DRAG: f64 = 0.22;
 /// How much of the scroll a spark is carried along with, so the burst trails off with its note
 /// instead of hanging at the playhead.
 const SPARK_DRIFT: f64 = 0.5;
+/// How far a struck note sinks at a sink amount of 1, as a fraction of one semitone's lane.
+const SINK_DEPTH: f64 = 0.3;
+/// Time constant of the press, in seconds: quick, like a key going down.
+const SINK_PRESS: f64 = 0.025;
+/// Time constant of the bounce that the press overshoots by and settles from.
+const SINK_SETTLE: f64 = 0.12;
+/// How far past its resting depth the press overshoots at first.
+const SINK_OVERSHOOT: f64 = 0.6;
+/// Time constant of the rise back to rest once the note is released.
+const SINK_RELEASE: f64 = 0.07;
+/// How much a fully pressed note is squashed, as a fraction of its height.
+const SINK_SQUASH: f64 = 0.15;
 
 /// A background picture, decoded once and scaled to the frame when a renderer is made.
 #[derive(Clone, Debug)]
@@ -151,7 +163,9 @@ impl FrameRenderer {
             }
             let x0 = playhead_x + (note.start - seconds) * per_second;
             let x1 = (playhead_x + (note.end - seconds) * per_second).max(x0 + 2.0);
-            let centre = (self.high - f64::from(note.pitch) + 0.5) * self.lane;
+            let press = self.press(note, seconds);
+            let centre = self.centre(note, press);
+            let thickness = thickness * (1.0 - SINK_SQUASH * press.min(1.0));
             let y0 = centre - thickness / 2.0;
 
             let (mut r, mut g, mut b) = self.color_of(note.track, note.pitch);
@@ -206,6 +220,28 @@ impl FrameRenderer {
         }
     }
 
+    /// How far down a note is pressed at `seconds`: 0 at rest, 1 held, briefly more just after
+    /// the strike as the press overshoots and settles, and falling back to 0 on release.
+    fn press(&self, note: &ScoreNote, seconds: f64) -> f64 {
+        if self.style.sink <= 0.0 || seconds < note.start {
+            return 0.0;
+        }
+        let held = |age: f64| {
+            (1.0 - (-age / SINK_PRESS).exp()) * (1.0 + SINK_OVERSHOOT * (-age / SINK_SETTLE).exp())
+        };
+        if seconds < note.end {
+            held(seconds - note.start)
+        } else {
+            held(note.end - note.start) * (-(seconds - note.end) / SINK_RELEASE).exp()
+        }
+    }
+
+    /// Where a note's bar is centred, lowered by `press`.
+    fn centre(&self, note: &ScoreNote, press: f64) -> f64 {
+        let rest = (self.high - f64::from(note.pitch) + 0.5) * self.lane;
+        rest + press * SINK_DEPTH * f64::from(self.style.sink) * self.lane
+    }
+
     /// The burst of a note struck `age` seconds ago: a flare where it met the playhead and a
     /// spray of sparks that slow, shrink and fade as they are carried off with the music.
     ///
@@ -229,7 +265,7 @@ impl FrameRenderer {
             ..Paint::default()
         };
         let height = f64::from(self.style.size.height);
-        let centre = (self.high - f64::from(note.pitch) + 0.5) * self.lane;
+        let centre = self.centre(note, self.press(note, note.start + age));
         let strength = 0.35 + 0.65 * f64::from(note.velocity);
         let drift = per_second * SPARK_DRIFT * age;
 
@@ -491,6 +527,7 @@ mod tests {
             playhead_line: false,
             flash: false,
             particles: 0.0,
+            sink: 0.0,
             upcoming_opacity: 1.0,
             played_opacity: 1.0,
             background: Color(0x000000),
@@ -598,6 +635,46 @@ mod tests {
             lit_away_from_the_note(&off, 1.1).0,
             0,
             "and none when turned off"
+        );
+    }
+
+    #[test]
+    fn a_sounding_note_sinks_and_rises_again_when_released() {
+        let style = NoteRollStyle {
+            size: VideoSize::new(200, 400),
+            sink: 1.0,
+            ..style()
+        };
+        let renderer = FrameRenderer::with_background(&score(), &style, None);
+        // The lowest lit row in the note's column, which moves down as it is pressed.
+        let bottom = |seconds: f64| {
+            let mut frame = renderer.canvas();
+            renderer.draw(seconds, &mut frame);
+            let x = (100.0 + (1.5 - seconds) * 50.0) as u32;
+            (0..frame.height())
+                .rev()
+                .find(|&y| pixel(&frame, x, y)[0] > 0 && (y as f64) < renderer.lane * 20.0)
+                .unwrap()
+        };
+        let rest = bottom(0.9);
+        let held = bottom(1.5);
+        let lane = renderer.lane;
+        assert!(
+            f64::from(held - rest) > lane * 0.15,
+            "pressed down while it sounds: {rest} -> {held}, lane {lane}"
+        );
+        let bounce = bottom(1.04);
+        assert!(
+            bounce > held,
+            "overshoots just after the strike: {bounce} vs {held}"
+        );
+        assert_eq!(bottom(2.6), rest, "back at rest once released");
+        let still =
+            FrameRenderer::with_background(&score(), &NoteRollStyle { sink: 0.0, ..style }, None);
+        assert_eq!(
+            still.press(&score().notes[0], 1.5),
+            0.0,
+            "and still when turned off"
         );
     }
 

@@ -106,6 +106,9 @@ pub struct NoteRollStyle {
     /// How many sparks burst from the playhead when a note reaches it, as a multiple of the usual
     /// amount: 0 turns them off, 2 is twice as many.
     pub particles: f32,
+    /// How far a sounding note sinks, as if pressed like a key, as a multiple of the usual
+    /// depth: 0 keeps notes still.
+    pub sink: f32,
     /// Draw drum tracks as well as pitched ones.
     pub include_drums: bool,
 }
@@ -142,6 +145,7 @@ impl Default for NoteRollStyle {
             played_opacity: 0.45,
             flash: true,
             particles: 1.0,
+            sink: 1.0,
             include_drums: false,
         }
     }
@@ -152,6 +156,8 @@ impl NoteRollStyle {
     pub const FPS_CHOICES: [u32; 3] = [24, 30, 60];
     /// The most [`Self::particles`] can be turned up to.
     pub const MAX_PARTICLES: f32 = 3.0;
+    /// The most [`Self::sink`] can be turned up to.
+    pub const MAX_SINK: f32 = 3.0;
 
     /// The same style with every number in a range a renderer and an encoder can use.
     ///
@@ -184,6 +190,11 @@ impl NoteRollStyle {
                 self.particles.clamp(0.0, Self::MAX_PARTICLES)
             } else {
                 defaults.particles
+            },
+            sink: if self.sink.is_finite() {
+                self.sink.clamp(0.0, Self::MAX_SINK)
+            } else {
+                defaults.sink
             },
             low_hue: finite_or(self.low_hue, defaults.low_hue),
             high_hue: finite_or(self.high_hue, defaults.high_hue),

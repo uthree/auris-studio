@@ -925,6 +925,21 @@ impl AurisApp {
                     )),
             )
             .child(self.stepper(
+                "video-sink",
+                Key::VideoSink,
+                if style.sink <= 0.0 {
+                    self.t(Key::VideoParticlesOff).to_string()
+                } else {
+                    format!("{:.0}%", style.sink * 100.0)
+                },
+                theme,
+                cx,
+                |style, direction| {
+                    style.sink =
+                        (style.sink + 0.25 * direction).clamp(0.0, NoteRollStyle::MAX_SINK);
+                },
+            ))
+            .child(self.stepper(
                 "video-particles",
                 Key::VideoParticles,
                 if style.particles <= 0.0 {
