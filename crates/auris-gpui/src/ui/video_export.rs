@@ -244,7 +244,7 @@ impl AurisApp {
         let (width, height) = (canvas.width(), canvas.height());
         let mut bytes = canvas.take();
         // RenderImage keeps RgbaImage storage but uploads it as BGRA.
-        for pixel in bytes.chunks_exact_mut(4) {
+        for pixel in bytes.as_chunks_mut::<4>().0 {
             pixel.swap(0, 2);
         }
         let pixels = RgbaImage::from_raw(width, height, bytes)?;
