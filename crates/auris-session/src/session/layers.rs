@@ -22,6 +22,7 @@ impl Session {
     pub fn add_layer_track(
         &mut self,
         source: TrackId,
+        name: impl Into<String>,
         instrument_id: &str,
     ) -> Result<TrackId, SessionError> {
         let index = self.require_track(source)?;
@@ -40,7 +41,6 @@ impl Session {
         if !self.registry.has_instrument(instrument_id) {
             return Err(SessionError::UnknownPlugin(instrument_id.to_string()));
         }
-        let name = format!("{} layer", self.project.tracks[index].name);
         self.record(Edit::AddLayerTrack);
         let id = self
             .project
@@ -48,6 +48,20 @@ impl Session {
             .ok_or(SessionError::UnknownTrack(source.0))?;
         self.invalidate_graph();
         Ok(id)
+    }
+
+    /// Adds a layer on `source` playing whatever the registry nominates as its default instrument.
+    pub fn add_default_layer_track(
+        &mut self,
+        source: TrackId,
+        name: impl Into<String>,
+    ) -> Result<TrackId, SessionError> {
+        let instrument = self
+            .registry
+            .default_instrument_id()
+            .ok_or_else(|| SessionError::UnknownPlugin("<any instrument>".into()))?
+            .to_string();
+        self.add_layer_track(source, name, &instrument)
     }
 
     /// The shape a layer plays its source's notes through, or `None` when `track` is no layer.
@@ -147,7 +161,7 @@ mod tests {
             .default_instrument_id()
             .unwrap()
             .to_string();
-        let layer = session.add_layer_track(lead, &instrument).unwrap();
+        let layer = session.add_layer_track(lead, "Layer", &instrument).unwrap();
         session.forget_history();
         (session, lead, layer)
     }
@@ -206,14 +220,14 @@ mod tests {
             .unwrap()
             .to_string();
         assert!(matches!(
-            session.add_layer_track(layer, &instrument),
+            session.add_layer_track(layer, "Again", &instrument),
             Err(SessionError::WrongTrackKind {
                 actual: "a layer",
                 ..
             })
         ));
         let drums = session.add_default_drum_track("Drums").unwrap();
-        assert!(session.add_layer_track(drums, &instrument).is_err());
+        assert!(session.add_layer_track(drums, "Kit", &instrument).is_err());
         assert!(
             session
                 .set_layer_shape(drums, LayerShape::default())
@@ -267,5 +281,32 @@ mod tests {
         session.undo().unwrap();
         assert_eq!(session.layer_source(layer), Some(lead));
         assert_eq!(undo_depth(&mut session), 0);
+    }
+
+    #[test]
+    fn the_mixer_graph_draws_a_notes_wire_and_cutting_it_detaches() {
+        use crate::mixer_graph::{MixerEdgeKind, MixerNode};
+
+        let (mut session, lead, layer) = session_with_layer();
+        let wire = session
+            .mixer_graph()
+            .edges
+            .into_iter()
+            .find(|edge| edge.kind == MixerEdgeKind::Notes)
+            .expect("a layer is drawn as a wire from its source");
+        assert_eq!(wire.source, MixerNode::Strip(Some(lead)));
+        assert_eq!(wire.target, MixerNode::Strip(Some(layer)));
+
+        assert!(session.disconnect_mixer_edges(&[wire]).unwrap());
+        assert_eq!(session.layer_source(layer), None);
+        assert!(
+            !session
+                .mixer_graph()
+                .edges
+                .iter()
+                .any(|edge| edge.kind == MixerEdgeKind::Notes)
+        );
+        session.undo().unwrap();
+        assert_eq!(session.layer_source(layer), Some(lead));
     }
 }

@@ -94,6 +94,7 @@ fn wire_style(kind: MixerEdgeKind, theme: &Theme) -> (gpui::Hsla, EdgeStroke) {
         MixerEdgeKind::Output => (theme.mixer_output_color(), EdgeStroke::Solid),
         MixerEdgeKind::Send { .. } => (theme.mixer_send_color(), EdgeStroke::Dashed),
         MixerEdgeKind::Sidechain => (theme.mixer_sidechain_color(), EdgeStroke::Dotted),
+        MixerEdgeKind::Notes => (theme.mixer_notes_color(), EdgeStroke::Dashed),
         MixerEdgeKind::Chain => (theme.text_faint, EdgeStroke::Solid),
     }
 }
@@ -141,6 +142,7 @@ fn wire_lanes(graph: &MixerGraph) -> HashMap<SharedString, f32> {
                 MixerEdgeKind::Send { send, .. } => (1, send.0),
                 MixerEdgeKind::Sidechain => (2, 0),
                 MixerEdgeKind::Chain => (3, 0),
+                MixerEdgeKind::Notes => (4, 0),
             });
             let center = (edges.len() - 1) as f32 / 2.0;
             edges.into_iter().enumerate().map(move |(index, edge)| {
@@ -218,6 +220,7 @@ fn edge_id(edge: &MixerEdge) -> SharedString {
         MixerEdgeKind::Send { send, .. } => format!("mix-send-{}", send.0),
         MixerEdgeKind::Output => format!("mix-output-{source}-{}", edge.target.key()),
         MixerEdgeKind::Sidechain => format!("mix-key-{source}-{}", edge.target.key()),
+        MixerEdgeKind::Notes => format!("mix-notes-{source}-{}", edge.target.key()),
         MixerEdgeKind::Chain => format!("mix-chain-{}-{}", edge.source.key(), edge.target.key()),
     }
     .into()
@@ -623,6 +626,11 @@ impl AurisApp {
                                 self.t(Key::MenuSidechain),
                                 theme.mixer_sidechain_color(),
                                 EdgeStroke::Dotted,
+                            ))
+                            .child(wire_legend(
+                                self.t(Key::MixerNotesWire),
+                                theme.mixer_notes_color(),
+                                EdgeStroke::Dashed,
                             )),
                     )
                     .child(self.t(Key::MixerGraphHelp)),
@@ -904,6 +912,7 @@ impl AurisApp {
                                 .target_handle("sidechain");
                         }
                         MixerEdgeKind::Output => flow = flow.label(self.t(Key::OutputShort)),
+                        MixerEdgeKind::Notes => flow = flow.label(self.t(Key::MixerNotesWire)),
                         _ => {}
                     }
                     flow

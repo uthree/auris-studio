@@ -29,6 +29,7 @@ pub mod envelope;
 pub(crate) mod expression;
 pub mod icons;
 pub mod inspector;
+pub mod layer;
 pub mod library;
 pub mod log_panel;
 pub mod menu_bar;
