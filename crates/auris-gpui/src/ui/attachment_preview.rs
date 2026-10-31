@@ -87,45 +87,30 @@ fn read_bounded(path: &std::path::Path, limit: u64) -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
+/// A MIDI reference at a glance: Atelier's `NoteRoll`, a part per track in its categorical
+/// colour, on the sunken surface every visualisation sits on.
 fn midi_preview(
     score: &auris_session::midi_reference::MidiReference,
     theme: &crate::theme::Theme,
 ) -> gpui::AnyElement {
-    let notes = || score.tracks.iter().flat_map(|track| &track.notes);
-    let low = notes()
-        .map(|note| note.pitch)
-        .min()
-        .unwrap_or(60)
-        .saturating_sub(1);
-    let high = notes()
-        .map(|note| note.pitch)
-        .max()
-        .unwrap_or(72)
-        .saturating_add(1);
-    let rows = f32::from(high) - f32::from(low) + 1.0;
-    let duration = notes()
-        .map(|note| note.start.0.saturating_add(note.length.0))
-        .max()
-        .unwrap_or(1)
-        .max(1) as f32;
+    let notes = score
+        .tracks
+        .iter()
+        .enumerate()
+        .flat_map(|(part, track)| {
+            track.notes.iter().map(move |note| {
+                atelier::viz::RollNote::new(note.pitch, note.start.0 as f32, note.length.0 as f32)
+                    .part(part)
+            })
+        })
+        .collect();
     div()
-        .relative()
         .w_full()
         .h(gpui::px(120.0))
         .overflow_hidden()
         .rounded(theme.atelier.shape.radius_md)
-        .bg(theme.atelier.colors.elevated)
-        .children(score.tracks.iter().enumerate().flat_map(|(index, track)| {
-            track.notes.iter().map(move |note| {
-                div()
-                    .absolute()
-                    .left(gpui::relative(note.start.0 as f32 / duration))
-                    .top(gpui::relative(f32::from(high - note.pitch) / rows))
-                    .w(gpui::relative(note.length.0 as f32 / duration))
-                    .h(gpui::relative(1.0 / rows))
-                    .bg(theme.atelier.categorical(index))
-            })
-        }))
+        .bg(theme.atelier.colors.sunken)
+        .child(atelier::viz::NoteRoll::new(notes))
         .into_any_element()
 }
 

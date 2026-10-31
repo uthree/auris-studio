@@ -639,26 +639,19 @@ impl AurisApp {
                     .gap_2()
                     .children(editing),
             );
+        // Atelier's `ReadoutStrip`: the buttons and the readouts on one sunken surface, a
+        // hairline between each. The readouts stay Auris's own, since each opens its own editor.
+        let primary = readouts.into_iter().fold(
+            atelier::ReadoutStrip::new()
+                .height(Metrics::TRANSPORT_HEIGHT - theme.atelier.spacing.xs * 2.0)
+                .controls(self.render_transport_buttons(cx)),
+            |strip, readout| strip.readout(readout),
+        );
         let primary = div()
-            .debug_selector(|| "transport-primary".into())
+            .debug_selector(|| "transport-primary".into()) // atelier: allow — ReadoutStrip takes no id.
             .flex()
-            .items_center()
             .flex_shrink_0()
-            .h(Metrics::TRANSPORT_HEIGHT - theme.atelier.spacing.xs * 2.0)
-            .rounded(Metrics::RADIUS_MD)
-            .overflow_hidden()
-            .bg(theme.surface_sunken)
-            .border_1()
-            .border_color(theme.border_subtle)
-            .child(div().px_1().child(self.render_transport_buttons(cx)))
-            .children(readouts.into_iter().map(|readout| {
-                div()
-                    .flex()
-                    .h_full()
-                    .border_l_1()
-                    .border_color(theme.border_subtle)
-                    .child(readout)
-            }));
+            .child(primary);
         let meters = div()
             .flex()
             .id("transport-meters")
