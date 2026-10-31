@@ -561,7 +561,7 @@ dependencies = [
 [[package]]
 name = "atelier"
 version = "0.2.0"
-source = "git+https://github.com/uthree/design-language?rev=b584b128658858fdd7917e003271dd35dadfd279#b584b128658858fdd7917e003271dd35dadfd279"
+source = "git+https://github.com/uthree/design-language?rev=331aa75561264716729b587d1f6c90a3d0f286b8#331aa75561264716729b587d1f6c90a3d0f286b8"
 dependencies = [
  "gpui",
  "image",
@@ -1150,7 +1150,7 @@ dependencies = [
  "bitflags 2.13.2",
  "cexpr",
  "clang-sys",
- "itertools 0.13.0",
+ "itertools 0.11.0",
  "log",
  "prettyplease",
  "proc-macro2",
@@ -1170,7 +1170,7 @@ dependencies = [
  "bitflags 2.13.2",
  "cexpr",
  "clang-sys",
- "itertools 0.13.0",
+ "itertools 0.11.0",
  "log",
  "prettyplease",
  "proc-macro2",
@@ -2538,7 +2538,7 @@ version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ab8ecd87370524b461f8557c119c405552c396ed91fc0a8eec68679eab26f94a"
 dependencies = [
- "libloading 0.8.9",
+ "libloading 0.7.4",
 ]
 
 [[package]]

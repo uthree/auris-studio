@@ -312,12 +312,16 @@ where
         (_, Latch::On) => (active_color, theme.text_on(active_color), active_color),
         // The outline carries the colour and the surface stays where it was, so a ready button
         // reads as the same button rather than as a second latched one in a row of them.
-        (_, Latch::Ready) => (theme.surface_raised, active_color, active_color),
+        (_, Latch::Ready) => (theme.atelier.colors.control, active_color, active_color),
         (ButtonStyle::Primary, Latch::Off) => (theme.accent, theme.text_on_accent, theme.accent),
         (ButtonStyle::Danger, Latch::Off) => {
             (theme.danger, theme.text_on(theme.danger), theme.danger)
         }
-        (ButtonStyle::Normal, Latch::Off) => (theme.surface_raised, theme.text, theme.border),
+        // Atelier's secondary `Button` fill: see-through under Glass's translucent material, so
+        // the glass shows through as it does behind Liquid Glass's buttons, and lying flat.
+        (ButtonStyle::Normal, Latch::Off) => {
+            (theme.atelier.colors.control, theme.text, theme.border)
+        }
         (ButtonStyle::Ghost, Latch::Off) => (
             gpui::transparent_black(),
             theme.text_muted,
@@ -329,6 +333,10 @@ where
     // instrument editor in the whole application looked exactly like the label beside it.
     let hover = if matches!((style, active), (ButtonStyle::Ghost, Latch::Off)) {
         theme.surface_hover
+    } else if background == theme.atelier.colors.control {
+        // A see-through fill lightens into more see-through; step it toward the text instead,
+        // as Atelier's own secondary button does.
+        atelier::mix(background, text_color, 0.06)
     } else {
         theme.hovered(background, 0.12)
     };

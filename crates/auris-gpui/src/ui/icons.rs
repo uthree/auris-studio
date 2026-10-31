@@ -119,7 +119,7 @@ impl Icon {
     pub fn source(self) -> IconSource {
         let name = match self {
             Self::Sound(family) => return IconSource::svg(sound_icon_path(family)),
-            Self::Menu => return IconSource::svg("icons/menu.svg"),
+            Self::Menu => AtelierIconName::Menu,
             Self::Punch => AtelierIconName::Punch,
             Self::Notes => AtelierIconName::Notes,
             Self::ToStart => AtelierIconName::SkipBack,
