@@ -289,6 +289,11 @@ pub fn model(language: Language, panels: &PanelLayout, state: MenuState) -> Vec<
             actions::ExportSingerFrames,
             "file.export_frames",
         ),
+        command(
+            t(Key::CmdExportVideo),
+            actions::ExportVideo,
+            "file.export_video",
+        ),
     ];
     // Under Open rather than at the bottom, which is where every application on both platforms
     // puts it. A row rather than a submenu: gpui's menu rows carry an action and nothing else,

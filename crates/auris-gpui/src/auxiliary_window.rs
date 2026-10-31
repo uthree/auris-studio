@@ -19,6 +19,7 @@ pub(crate) enum Surface {
     Analysis,
     TimbreMap,
     Visualizer,
+    VideoExport,
 }
 
 /// Toggles a panel between its dock and a native window.
@@ -37,6 +38,7 @@ impl Surface {
             Self::Analysis => app.analysis_panel,
             Self::TimbreMap => app.timbre_map.open,
             Self::Visualizer => app.visualizer.open,
+            Self::VideoExport => app.video_export.open,
         }
     }
 
@@ -61,6 +63,7 @@ impl Surface {
             Self::Analysis => app.t(Key::AnalysisTitle).to_owned(),
             Self::TimbreMap => app.t(Key::TimbreMap).to_owned(),
             Self::Visualizer => app.t(Key::VisualizerTitle).to_owned(),
+            Self::VideoExport => app.t(Key::VideoExportTitle).to_owned(),
         }
     }
 
@@ -77,6 +80,7 @@ impl Surface {
             Self::Analysis => app.analysis_panel = false,
             Self::TimbreMap => app.close_timbre_map(),
             Self::Visualizer => app.close_visualizer(),
+            Self::VideoExport => app.video_export.open = false,
         }
     }
 }
@@ -125,6 +129,12 @@ fn open_surface(app: WeakEntity<AurisApp>, surface: Surface, cx: &mut App) {
                 crate::fitted_size(preferred, display.bounds().size)
             })
         }
+        Surface::VideoExport => {
+            let preferred = size(px(980.), px(660.));
+            cx.primary_display().map_or(preferred, |display| {
+                crate::fitted_size(preferred, display.bounds().size)
+            })
+        }
     };
     let bounds = Bounds::centered(None, dimensions, cx);
     let opened = crate::native_window::open(
@@ -134,6 +144,7 @@ fn open_surface(app: WeakEntity<AurisApp>, surface: Surface, cx: &mut App) {
             window_min_size: Some(match surface {
                 Surface::Typing => size(px(640.), px(340.)),
                 Surface::Visualizer => size(px(480.), px(520.)),
+                Surface::VideoExport => size(px(640.), px(480.)),
                 Surface::TimbreMap => size(px(640.), px(540.)),
                 _ => size(px(320.), px(240.)),
             }),
@@ -250,6 +261,7 @@ impl AurisApp {
             Surface::Analysis,
             Surface::TimbreMap,
             Surface::Visualizer,
+            Surface::VideoExport,
         ]);
         let mut handles = std::mem::take(&mut self.auxiliary_windows);
         let mut kept = BTreeMap::new();
@@ -304,7 +316,8 @@ impl AurisApp {
             | Surface::Typing
             | Surface::Analysis
             | Surface::TimbreMap
-            | Surface::Visualizer),
+            | Surface::Visualizer
+            | Surface::VideoExport),
         ) = current
         {
             surface.close(self);
@@ -375,6 +388,7 @@ impl Render for AuxiliaryWindow {
                     .render_analysis_panel(cx)
                     .unwrap_or_else(|| div().into_any_element()),
                 Surface::Visualizer => app.render_visualizer(window, cx),
+                Surface::VideoExport => app.render_video_export(window, cx),
                 Surface::TimbreMap => app
                     .render_timbre_map(window, cx)
                     .unwrap_or_else(|| div().into_any_element()),

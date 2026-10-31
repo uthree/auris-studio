@@ -548,6 +548,11 @@ pub struct Settings {
     pub toolbar: ToolbarPreferences,
     /// How a bounce is written.
     pub export: ExportPreferences,
+    /// How a note-roll video looks.
+    ///
+    /// A person's taste rather than a song's property, like [`Self::export`]: the next project's
+    /// video starts from the look the last one ended with.
+    pub video: auris_video::NoteRollStyle,
     /// Where the window was when it was last put away. `None` on a first run.
     pub window: Option<WindowPlacement>,
     /// Projects opened lately, most recent first.
@@ -608,6 +613,7 @@ impl Default for Settings {
             relative_note_snap: false,
             toolbar: ToolbarPreferences::default(),
             export: ExportPreferences::default(),
+            video: auris_video::NoteRollStyle::default(),
             window: None,
             recent: Vec::new(),
             plugin_paths: Vec::new(),

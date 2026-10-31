@@ -12,7 +12,7 @@ use std::process::ExitCode;
 
 use auris_i18n::{Key, Language, messages};
 use auris_session::prelude::*;
-use auris_session::{Session, SessionOptions};
+use auris_session::{Ffmpeg, NoteColoring, Session, SessionOptions, VideoError, VideoSize};
 
 /// The language every message is printed in.
 ///
@@ -58,6 +58,7 @@ fn main() -> ExitCode {
         "compose" => compose(&args),
         "info" => with_path(&args, info),
         "render" => render(&args),
+        "video" => video(&args),
         "convert-track-to-audio" => convert_track_to_audio(&args),
         "analyze-drums" => analyze_drums(&args),
         "analyze-chords" | "analyze-audio" | "analyze-instruments" => music_analysis::run(&args),
@@ -1348,6 +1349,130 @@ fn render(args: &[String]) -> Result<(), String> {
             summary.channels,
             settings.bit_depth.bits(),
             summary.peak_db,
+        )
+    ))?;
+    Ok(())
+}
+
+/// Renders a note-roll video through an installed ffmpeg.
+///
+/// Starts from the look last chosen in the desktop application, so a style worked out with a
+/// preview can be reused from a script; each option overrides one part of it.
+fn video(args: &[String]) -> Result<(), String> {
+    let source = args
+        .get(1)
+        .filter(|arg| !arg.starts_with('-'))
+        .ok_or_else(|| Key::CliExpectedProjectPath.get(LANGUAGE).to_string())?;
+    let source = PathBuf::from(source);
+    let mut output = source.with_extension("mp4");
+    let mut style = auris_session::Settings::load().video;
+
+    let mut index = 2;
+    let value = |index: &mut usize, option: &str, what: Key| {
+        *index += 1;
+        args.get(*index)
+            .cloned()
+            .ok_or_else(|| messages::option_needs_value(LANGUAGE, option, what.get(LANGUAGE)))
+    };
+    while index < args.len() {
+        let option = args[index].as_str();
+        match option {
+            "-o" | "--output" => {
+                output = PathBuf::from(value(&mut index, option, Key::CliNeedsPath)?)
+            }
+            "--background" => {
+                style.background_image =
+                    Some(PathBuf::from(value(&mut index, option, Key::CliNeedsPath)?));
+            }
+            "--drums" => style.include_drums = true,
+            "--size" => {
+                let text = value(&mut index, option, Key::CliNeedsValue)?;
+                let (width, height) = text
+                    .split_once(['x', 'X'])
+                    .and_then(|(w, h)| Some((w.trim().parse().ok()?, h.trim().parse().ok()?)))
+                    .ok_or_else(|| {
+                        messages::unknown_option(LANGUAGE, &format!("{option} {text}"))
+                    })?;
+                style.size = VideoSize::new(width, height);
+            }
+            "--fps" => {
+                let text = value(&mut index, option, Key::CliNeedsValue)?;
+                style.fps = text
+                    .parse()
+                    .map_err(|_| messages::unknown_option(LANGUAGE, &format!("{option} {text}")))?;
+            }
+            "--seconds" => {
+                let text = value(&mut index, option, Key::CliNeedsValue)?;
+                style.seconds_visible = text
+                    .parse()
+                    .map_err(|_| messages::unknown_option(LANGUAGE, &format!("{option} {text}")))?;
+            }
+            "--colors" => {
+                let text = value(&mut index, option, Key::CliNeedsValue)?;
+                style.coloring = match text.as_str() {
+                    "track" => NoteColoring::Track,
+                    "palette" => NoteColoring::Palette,
+                    "pitch" => NoteColoring::Pitch,
+                    "single" => NoteColoring::Single,
+                    _ => {
+                        return Err(messages::unknown_option(
+                            LANGUAGE,
+                            &format!("{option} {text}"),
+                        ));
+                    }
+                };
+            }
+            other => return Err(messages::unknown_option(LANGUAGE, other)),
+        }
+        index += 1;
+    }
+
+    // Asked before the project is opened, so a machine without ffmpeg hears so at once.
+    let ffmpeg = Ffmpeg::detect().map_err(|error| match error {
+        VideoError::FfmpegMissing(_) => messages::ffmpeg_missing(
+            LANGUAGE,
+            auris_session::ffmpeg_install_command(),
+            auris_session::ffmpeg_install_page(),
+        ),
+        other => other.to_string(),
+    })?;
+    let mut session = headless()?;
+    for path in session.open(&source).map_err(|error| error.to_string())? {
+        warned(messages::warning_missing_audio(
+            LANGUAGE,
+            &path.display().to_string(),
+        ));
+    }
+    warn_foreign_build(&session);
+
+    let mut job = session.video_job(style);
+    let mut last_percent = -1i32;
+    let summary = job
+        .render(
+            &ffmpeg,
+            &output,
+            &mut RenderProgress::reporting(&mut |fraction| {
+                let percent = (fraction * 100.0) as i32;
+                if percent != last_percent {
+                    last_percent = percent;
+                    warned_partial(format!(
+                        "\r{}",
+                        messages::render_progress(LANGUAGE, percent)
+                    ));
+                }
+            }),
+        )
+        .map_err(|error| error.to_string())?;
+    warned("");
+    printed(writeln!(
+        std::io::stdout(),
+        "{}",
+        messages::wrote_video(
+            LANGUAGE,
+            &output.display().to_string(),
+            &Seconds(summary.seconds).format_clock(),
+            summary.frames,
+            summary.codec.encoder(),
         )
     ))?;
     Ok(())

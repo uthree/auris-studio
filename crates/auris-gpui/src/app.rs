@@ -1494,6 +1494,8 @@ pub struct AurisApp {
     /// CPU music-analysis jobs and their unapplied draft.
     pub(crate) music_analysis: crate::ui::music_analysis::MusicAnalysisState,
     pub(crate) visualizer: crate::ui::visualizer::VisualizerState,
+    /// The note-roll video window: whether it is open, its preview and what ffmpeg was found.
+    pub(crate) video_export: crate::ui::video_export::VideoExportState,
     pub(crate) physical_view: crate::ui::physical_model::PhysicalView,
     pub(crate) track_grid: crate::ui::track_grid::TrackGrid,
     pub(crate) timbre_map: crate::ui::timbre_map::TimbreMapState,
@@ -2053,6 +2055,7 @@ impl AurisApp {
             analysis_panel: false,
             music_analysis: Default::default(),
             visualizer: Default::default(),
+            video_export: Default::default(),
             physical_view: Default::default(),
             track_grid: Default::default(),
             timbre_map: Default::default(),

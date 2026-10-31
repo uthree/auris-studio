@@ -69,6 +69,8 @@ crates/auris-clap        hosting of third-party CLAP plugins; depends on auris-c
 crates/auris-vst3        hosting of third-party VST3 plugins; depends on auris-core only
 crates/auris-engine      render graph, transport, cpal in and out, offline renderer
 crates/auris-io          audio file import/export, project save/load
+crates/auris-video       note-roll videos: frames drawn in software, encoded by an installed
+                         ffmpeg (never bundled); depends on auris-core only
 crates/auris-gpu         optional wgpu compute for offline analysis
 crates/auris-analysis    offline music recognition: DSP and local model inference
 crates/auris-compose     score-based automatic composition; depends on auris-core only
