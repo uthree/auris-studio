@@ -1,3 +1,12 @@
+> [!WARNING]
+> **このブランチは非推奨で、マージされません。** `codex/render-pipeline-design`
+> （型付きレンダーパイプライン、独自の format 33）は 2026-10-30 に開発を打ち切りました。
+> 同じ発想は `main` 上で、形式互換の小さな形（別トラックの音符に追従する「レイヤー」、
+> uthree/auris-studio#55）として作り直しています。このブランチを新しい作業の土台にしないでください。
+> また、このブランチで保存したファイルを `main` のビルドで開かないでください。ここでの format 33 は
+> `main` の format 33 とは別物です。参照用に残しているだけで、最終状態はタグ
+> `archive/render-pipeline-design` に記録しています。
+
 <a id="auris-studio"></a>
 # Auris Studio
 

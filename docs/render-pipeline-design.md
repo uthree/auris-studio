@@ -1,3 +1,12 @@
+> [!WARNING]
+> **This branch is deprecated and will not be merged.** `codex/render-pipeline-design`
+> (typed render pipeline, native format 33) was shelved on 2026-10-30. Its idea is being
+> rebuilt in a smaller, format-compatible form on `main` ("layers": instrument tracks that
+> follow another track's notes, uthree/auris-studio#55). Do not base new work on this branch
+> and do not open files it saved with `main` builds: its format 33 is a different format from
+> `main`'s format 33. The branch is kept for reference only, and the tag
+> `archive/render-pipeline-design` marks its final state.
+
 # Typed rendering pipeline
 
 Status: proposed design, 2026-10-27. No pipeline behavior is implemented by this
