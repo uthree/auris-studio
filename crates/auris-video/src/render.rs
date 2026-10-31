@@ -383,6 +383,7 @@ mod tests {
             upcoming_opacity: 1.0,
             played_opacity: 1.0,
             background: Color(0x000000),
+            coloring: NoteColoring::Track,
             ..NoteRollStyle::default()
         }
     }
