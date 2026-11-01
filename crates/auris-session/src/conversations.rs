@@ -609,7 +609,7 @@ fn write_json(path: &Path, value: &impl Serialize) -> Result<(), String> {
     if bytes.len() as u64 > READ_LIMIT {
         return Err("Conversation file is too large".into());
     }
-    crate::settings::write_config_bytes(path, &bytes).map_err(|e| e.to_string())
+    crate::settings::write_file_atomic(path, &bytes).map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
@@ -658,6 +658,26 @@ mod tests {
         )
         .unwrap();
         assert!(!stored.contains(&dir.path().to_string_lossy().replace('\\', "\\\\")));
+    }
+
+    #[test]
+    fn transcripts_between_the_preference_ceiling_and_the_read_limit_still_save() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = ConversationStore::for_project(dir.path());
+        let conversation = store.create().unwrap();
+        let mut transcript = conversation.transcript;
+        transcript.messages.push(ConversationMessage {
+            id: 0,
+            model: String::new(),
+            content: ConversationContent::Assistant {
+                text: "音".repeat(3 * 1024 * 1024),
+            },
+        });
+        let saved = store.save(&conversation.info.id, &transcript).unwrap();
+        assert_eq!(
+            store.load(&conversation.info.id).unwrap().transcript,
+            saved.transcript
+        );
     }
 
     #[test]

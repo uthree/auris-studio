@@ -66,9 +66,8 @@ pub fn read_config_text(path: &Path) -> std::io::Result<String> {
 
 /// Writes configuration bytes through a private sibling and atomically replaces `path`.
 ///
-/// The temporary file is exclusively created and synchronised before the short publication step,
-/// so a crash cannot leave a partially truncated settings or conversation file. The caller must
-/// create the parent directory before calling this function.
+/// The eight-megabyte ceiling is for hand-editable preferences. Machine-managed files with
+/// their own budgets — agent transcripts allow 64 MiB — use [`write_file_atomic`] directly.
 pub fn write_config_bytes(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     if bytes.len() as u64 > CONFIG_TEXT_MAX_BYTES {
         return Err(std::io::Error::new(
@@ -76,6 +75,15 @@ pub fn write_config_bytes(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
             "configuration file is larger than 8 MiB",
         ));
     }
+    write_file_atomic(path, bytes)
+}
+
+/// Writes bytes through a private sibling and atomically replaces `path`, with no size ceiling.
+///
+/// The temporary file is exclusively created and synchronised before the short publication step,
+/// so a crash cannot leave a partially truncated settings or conversation file. The caller must
+/// create the parent directory and enforce its own budget before calling this function.
+pub fn write_file_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let parent = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
