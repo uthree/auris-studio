@@ -1283,6 +1283,7 @@ mod tests {
     }
     fn chat(user: bool, text: &str) -> Message {
         Message {
+            choices: None,
             attachments: Vec::new(),
             user,
             text: text.into(),
