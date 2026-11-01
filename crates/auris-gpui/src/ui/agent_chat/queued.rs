@@ -48,7 +48,89 @@ impl QueuedTarget {
     }
 }
 
+impl AgentChat {
+    /// Whether the card at `index` still takes a pick: not answered, and not passed over by
+    /// something the person typed after it.
+    pub(super) fn choices_open(&self, index: usize) -> bool {
+        matches!(
+            self.entries.get(index),
+            Some(ChatEntry::Choices {
+                answered: false,
+                ..
+            })
+        ) && !self.entries[index + 1..]
+            .iter()
+            .any(|entry| matches!(entry, ChatEntry::You { .. }))
+    }
+
+    /// Tick or untick one option of an open multiple-choice card.
+    pub(super) fn toggle_choice(&mut self, index: usize, option: usize) {
+        if !self.choices_open(index) {
+            return;
+        }
+        if let Some(ChatEntry::Choices { card, picked, .. }) = self.entries.get_mut(index)
+            && card.multiple
+            && option < card.options.len()
+        {
+            if let Some(at) = picked.iter().position(|&ticked| ticked == option) {
+                picked.remove(at);
+            } else {
+                picked.push(option);
+            }
+        }
+    }
+}
+
 impl AurisApp {
+    /// Send a card's pick as the person's next message.
+    ///
+    /// The pick goes through the queue rather than the composer, so a half-written draft, its
+    /// attachments and its IME pre-edit stay where they are, and a pick made while the agent is
+    /// still finishing its turn waits for the turn to end, ahead of anything queued before it:
+    /// the agent asked, and is waiting for exactly this.
+    pub(super) fn answer_agent_choices(
+        &mut self,
+        index: usize,
+        picked: Vec<usize>,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if !self.agent_chat.choices_open(index)
+            || !self.agent_queue_available()
+            || self.agent_chat.interrupting
+        {
+            return;
+        }
+        let Some(ChatEntry::Choices { card, .. }) = self.agent_chat.entries.get(index) else {
+            return;
+        };
+        let Some(text) = card.answer(&picked) else {
+            return;
+        };
+        if self.agent_chat.queued.is_empty() {
+            self.agent_chat.queue_paused = false;
+        }
+        let selection_context = self.agent_selection_context().to_string();
+        self.agent_chat.queued.push_front(
+            QueuedMessage {
+                text,
+                attachments: Vec::new(),
+                selection_context,
+            }
+            .into(),
+        );
+        if let Some(ChatEntry::Choices {
+            picked: sent,
+            answered,
+            ..
+        }) = self.agent_chat.entries.get_mut(index)
+        {
+            *sent = picked;
+            *answered = true;
+        }
+        self.dispatch_queued_agent_message(cx);
+        cx.notify();
+    }
+
     fn agent_queue_available(&self) -> bool {
         !self.agent_chat.conversations.unavailable()
             && self.agent_chat.pending_send.is_none()

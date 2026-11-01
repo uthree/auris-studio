@@ -17,6 +17,9 @@ pub struct Message {
     /// Exact symbolic references captured on submission, independent of later file edits.
     #[serde(default)]
     pub references: Vec<Reference>,
+    /// Fixed answers the director offered with this reply, drawn as a card under it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub choices: Option<crate::choices::ChoiceCard>,
 }
 
 /// One readable attachment and its bounded model-facing snapshot.
@@ -1092,6 +1095,7 @@ mod tests {
             .unwrap();
         let mut document = Document::default();
         document.messages.push(Message {
+            choices: None,
             user: true,
             text: "Use these lyrics".into(),
             references: vec![Reference {
@@ -1265,6 +1269,7 @@ mod tests {
         let store = Store::new(dir.path().into());
         let mut document = Document::default();
         document.messages.push(Message {
+            choices: None,
             references: vec![],
             attachments: Vec::new(),
             user: true,

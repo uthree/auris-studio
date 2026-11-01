@@ -393,6 +393,35 @@ mod tests {
     use super::*;
 
     #[test]
+    fn offer_choices_is_a_flat_read_only_question_for_the_window_only() {
+        let definition = definitions()
+            .into_iter()
+            .find(|d| d.name == "offer_choices")
+            .expect("offer_choices is offered to live agents");
+        for field in ["question", "options", "multiple"] {
+            assert!(
+                definition.parameters["properties"].get(field).is_some(),
+                "{field}"
+            );
+        }
+        let args = serde_json::json!({"question":"Which?","options":[{"label":"A"},{"label":"B"}],"multiple":true});
+        let command = command("offer_choices", &args).unwrap().unwrap();
+        assert!(!command.is_mutating() && !command.needs_worker());
+        let operation = auris_session::agent_policy::Operation::parse(
+            "edit_project",
+            &serde_json::json!({"command":{"action":"offer_choices","question":"Which?","options":[{"label":"A"},{"label":"B"}]}}),
+        )
+        .unwrap();
+        assert_eq!(operation.name, "edit_project.offer_choices");
+        assert!(
+            crate::session_tools::definitions()
+                .iter()
+                .all(|tool| tool.name != "offer_choices"),
+            "a saved-project client has no window to draw the card"
+        );
+    }
+
+    #[test]
     fn arrangement_catalog_is_opt_in_and_keeps_typed_bounded_operations() {
         assert!(
             !definitions_with_arrangement(false)

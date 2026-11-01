@@ -93,6 +93,17 @@ pub enum ConversationContent {
         /// Complete textual result.
         detail: String,
     },
+    /// A question the agent asked with fixed answers, and what was picked.
+    Choices {
+        /// The question and its options.
+        card: crate::choices::ChoiceCard,
+        /// Indices picked, in the order ticked; the ones sent once answered.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        picked: Vec<usize>,
+        /// Whether the pick went to the agent.
+        #[serde(default)]
+        answered: bool,
+    },
     /// A provider or host failure.
     Error {
         /// Error text.
