@@ -149,6 +149,7 @@ class Scorer:
             "--bit-depth",
             "32",
             "--no-tail",
+            "--force",
             "-o",
             str(wav),
         )

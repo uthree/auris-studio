@@ -2026,6 +2026,7 @@ RENDER OPTIONS
         --no-tail                 Stop at the last clip instead of letting effect tails ring
         --loop                    Render only the project's cycle region
         --stems <folder>          Write one file per track into a folder instead of a mix
+        --force                   Replace the output file if it already exists
 
 SING OPTIONS
         --track <name>            Which singer track (default: the project's only one)
@@ -2115,6 +2116,7 @@ render のオプション
         --no-tail                 エフェクトの残響を待たず最後のクリップで終える
         --loop                    サイクル範囲のみを書き出す
         --stems <folder>          ミックスの代わりにトラックごとのファイルをフォルダに書き出す
+        --force                   出力ファイルが既にあれば置き換える
 
 sing のオプション
         --track <name>            歌わせるシンガートラック（既定: プロジェクト唯一の 1 本）

@@ -573,7 +573,7 @@ auris compose --preset city-pop                # …and one written without a fi
 auris soundfonts                               # optional libraries and whether they are installed
 auris new song.auris --bpm 128
 auris info song.auris                          # tracks, clips, duration
-auris render song.auris -o song.wav --bit-depth 24
+auris render song.auris -o song.wav --bit-depth 24   # 既存の song.wav を置き換えるには --force
 auris collect song.auris                       # gather every file it uses into its folder
 ```
 

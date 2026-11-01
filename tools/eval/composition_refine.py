@@ -436,6 +436,7 @@ def render(
                 "--bit-depth",
                 "32",
                 "--no-tail",
+                "--force",
             ],
             destination / f"render-{mode}.log",
             args.timeout,

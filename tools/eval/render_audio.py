@@ -60,6 +60,7 @@ def render_presets(presets: list[str], seeds: int, workdir: Path) -> list[Path]:
                 "--bit-depth",
                 "32",
                 "--no-tail",
+                "--force",
                 "-o",
                 str(wav),
             )
