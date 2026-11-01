@@ -796,6 +796,21 @@ fn entry_text(entry: &ChatEntry, language: auris_i18n::Language) -> String {
             crate::i18n::agent_error_text(message, language, false)
         ),
         ChatEntry::Note(key) => t(*key).to_string(),
+        ChatEntry::Choices { card, picked, .. } => {
+            let mut out = headed(Key::AgentTranscriptAgent, &card.question);
+            for (index, option) in card.options.iter().enumerate() {
+                let mark = if picked.contains(&index) {
+                    "[x]"
+                } else {
+                    "[ ]"
+                };
+                out.push_str(&format!("\n- {mark} {}", option.label));
+                if let Some(detail) = &option.detail {
+                    out.push_str(&format!(" — {detail}"));
+                }
+            }
+            out
+        }
     }
 }
 
