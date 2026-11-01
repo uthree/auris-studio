@@ -44,8 +44,13 @@ playing through a filter nothing ever opened — twenty decibels down, and *fall
 struck harder. `vendor/rustysynth/README.md` is the account: what was added, what was deliberately
 left out, and the measurement.
 
-Its own tests run from its own directory. Two of the upstream ones fail there, because they want
-SoundFont files the published crate does not ship.
+Its own tests run from its own directory, and CI runs them there too, on both platforms — the
+fork's changes are not reachable from `--workspace`, so nothing else would. Two of the upstream
+ones are `#[ignore]`d: they want SoundFont files the published crate does not ship, and a suite
+with two permanent failures cannot gate anything.
+
+The same holds for `vendor/vst3-host`, whose single-owner realtime path is the reason that fork
+exists and is covered by its own tests rather than by anything in `crates/`.
 
 ## Layout
 

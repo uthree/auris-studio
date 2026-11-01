@@ -137,6 +137,11 @@ mod tests {
             .join("samples")
     }
 
+    // Ignored by the Auris fork: `samples_dir_path` looks for a `samples` directory beside the
+    // crate, which exists in upstream's repository and not in the published crate this fork was
+    // taken from. Left in place rather than deleted, so a future upstream merge is a no-op here;
+    // ignored rather than failing, so `cargo test` from this directory can gate CI.
+    #[ignore = "wants a SoundFont the published crate does not ship"]
     #[test]
     fn test_load_reject_sf3() {
         let path = samples_dir_path().join("dummy.sf3");
@@ -148,6 +153,8 @@ mod tests {
     }
 
     // smpl sub-chunk exists, but is zero-length.
+    // Ignored by the Auris fork, for the reason above.
+    #[ignore = "wants a SoundFont the published crate does not ship"]
     #[test]
     fn test_load_empty_samples() {
         let path = samples_dir_path().join("test_empty_samples.sf2");
