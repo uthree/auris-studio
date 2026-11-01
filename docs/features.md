@@ -279,7 +279,12 @@ Either shape can be chosen by hand — *Fade-In Shape* and *Fade-Out Shape* on t
 which appear once that edge has a fade on it. That is for the joins made another way: a fade
 dragged out by its handle over a neighbour, or a clip trimmed back until it met one.
 
-The middle of the transport bar holds three readouts: the position, the tempo and the time
+The transport — the playback buttons, the readouts, the grid and zoom, and the meters — sits in
+the title bar when the window is at least 1280 points wide, so the window has one bar as Atelier
+asks; a narrower window gives it a row of its own under the title bar. In the title bar each
+readout is one line and names itself in a tooltip.
+
+The transport's readouts are the position, the tempo and the time
 signature. The first two are typeable — double-click either and the number can be entered
 directly. A wheel is for finding a tempo by feel and a drag for nudging it, but neither is any
 way to reach 174 from 120, or bar 97 from bar 1. The position takes as much of

@@ -12,6 +12,7 @@ use crate::theme::Metrics;
 use crate::ui::context_menu::count_in_label;
 use crate::ui::icons::Icon;
 use crate::ui::prompt::{Prompt, PromptTarget};
+use crate::ui::tooltip::keyed_tip;
 use crate::ui::widgets::{ButtonStyle, MeterReading, button, channel_meter, icon_button, readout};
 
 /// Grid divisions offered in the transport bar, as a fraction of a quarter note.
@@ -31,9 +32,41 @@ pub(crate) const GRID_CHOICES: [(&str, i64); 7] = [
     (GRID_OFF_LABEL, 1),
 ];
 
-/// Secondary controls move below playback before the main controls would crowd each other.
+/// The narrowest window whose title bar holds the transport as well.
+///
+/// Atelier gives a window one bar, the title bar doubling as the main toolbar. The transport
+/// needs about 800 px of it beside the navigation, the title and the window's own buttons, so
+/// below this width it keeps a row of its own rather than squeezing the title to nothing.
+pub(crate) const ONE_BAR_FROM: Pixels = px(1280.0);
+
+/// What the transport takes of the title bar with every default item showing, held back from
+/// the menu titles there so that they give way to it rather than push it off the bar.
+pub(crate) const TITLE_BAR_TRANSPORT_WIDTH: Pixels = px(820.0);
+
+/// How wide each meter is drawn in the title bar, where there is no side column to share out.
+const COMPACT_METER_WIDTH: Pixels = px(104.0);
+
+/// Whether a window `width` wide carries the transport in its title bar.
+pub(crate) fn transport_in_title_bar(width: Pixels) -> bool {
+    width >= ONE_BAR_FROM
+}
+
+/// The transport's three groups, laid out by whichever bar is carrying them.
+pub(crate) struct TransportParts {
+    /// The grid and zoom: how finely the timeline reads.
+    pub editing: Vec<gpui::AnyElement>,
+    /// The playback buttons and the readouts, on one sunken surface.
+    pub primary: gpui::AnyElement,
+    /// The take, the input, the master and the spectrum.
+    pub meters: Vec<gpui::AnyElement>,
+}
+
+/// The height of the transport's own row: none while the title bar carries it, and two rows
+/// once secondary controls move below playback before the main controls would crowd each other.
 pub(crate) fn transport_height(width: Pixels) -> Pixels {
-    if width < px(1100.0) {
+    if transport_in_title_bar(width) {
+        px(0.0)
+    } else if width < px(1100.0) {
         Metrics::TRANSPORT_HEIGHT + Metrics::TRANSPORT_AUX_HEIGHT
     } else {
         Metrics::TRANSPORT_HEIGHT
@@ -410,17 +443,116 @@ impl AurisApp {
             .children(items)
     }
 
-    /// Renders the transport readouts, timeline controls and meters.
+    /// The transport as a row of its own under the title bar, for a window too narrow to hold it
+    /// in the title bar. `None` when the title bar carries it; see [`transport_in_title_bar`].
     pub(crate) fn render_transport(
         &mut self,
         window: &mut Window,
         cx: &mut gpui::Context<Self>,
-    ) -> impl IntoElement + use<> {
+    ) -> Option<gpui::AnyElement> {
+        let width = window.viewport_size().width;
+        if transport_in_title_bar(width) {
+            return None;
+        }
+        let theme = self.theme.clone();
+        let parts = self.transport_parts(window, false, cx);
+        let editing = div()
+            .flex()
+            .id("transport-edit-controls")
+            .debug_selector(|| "transport-edit-controls".into())
+            .flex_1()
+            .min_w_0()
+            .overflow_x_scroll()
+            .child(
+                div()
+                    .flex()
+                    .flex_shrink_0()
+                    .whitespace_nowrap()
+                    .items_center()
+                    .gap_2()
+                    .children(parts.editing),
+            );
+        let meters = div()
+            .flex()
+            .id("transport-meters")
+            .debug_selector(|| "transport-meters".into())
+            .flex_1()
+            .min_w_0()
+            .overflow_x_scroll()
+            .child(
+                div()
+                    .flex()
+                    .flex_shrink_0()
+                    .min_w_full()
+                    .items_center()
+                    .justify_end()
+                    .gap_3()
+                    .children(parts.meters),
+            );
+        let bar = div()
+            .debug_selector(|| "transport-bar".into())
+            .flex()
+            .flex_shrink_0()
+            .h(transport_height(width))
+            .bg(theme.surface)
+            .border_b_1()
+            .border_color(theme.border_subtle);
+        Some(if transport_height(width) > Metrics::TRANSPORT_HEIGHT {
+            bar.flex_col()
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .flex_shrink_0()
+                        .h(Metrics::TRANSPORT_HEIGHT)
+                        .px_3()
+                        .child(parts.primary),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_3()
+                        .px_3()
+                        .flex_1()
+                        .min_h_0()
+                        .child(editing)
+                        .child(meters),
+                )
+                .into_any_element()
+        } else {
+            bar.items_center()
+                .gap_3()
+                .px_3()
+                .h(Metrics::TRANSPORT_HEIGHT)
+                .child(editing)
+                .child(parts.primary)
+                .child(meters)
+                .into_any_element()
+        })
+    }
+
+    /// The transport's three groups, drawn for a row of its own or, `compact`, for the title bar.
+    ///
+    /// Compact is one line: each readout shows its value alone and names itself in a tooltip,
+    /// and the grid and zoom lose their captions the same way. Everything a person can do with
+    /// a readout — drag the tempo, double-click the position, drop the list of meters — is the
+    /// same in both, because it is the same element with a shorter face.
+    pub(crate) fn transport_parts(
+        &mut self,
+        window: &mut Window,
+        compact: bool,
+        cx: &mut gpui::Context<Self>,
+    ) -> TransportParts {
         let theme = self.theme.clone();
         // The LCD fields occupy 380 px, with another 24 px of bar padding. A single
         // meter must still fit its side column at the main window's 640 px minimum.
-        let meter_width =
-            px(((f32::from(window.viewport_size().width) - 404.0) / 2.0).clamp(96.0, 124.0));
+        let meter_width = if compact {
+            COMPACT_METER_WIDTH
+        } else {
+            px(((f32::from(window.viewport_size().width) - 404.0) / 2.0).clamp(96.0, 124.0))
+        };
         let counting_in = self.session.count_in_beats_left();
         let playhead = self.playhead_ticks();
         let position = format_position(playhead, &self.project().signatures);
@@ -468,6 +600,10 @@ impl AurisApp {
             0 => take,
             beats => Some((beats.to_string(), None)),
         };
+        // A caption above the control, or, in the title bar, the same words in a tooltip.
+        let caption = |text: &'static str| {
+            (!compact).then(|| div().text_xs().text_color(theme.text_faint).child(text))
+        };
 
         let mut editing = Vec::new();
         for item in self.settings.toolbar.visible_in(1) {
@@ -476,39 +612,38 @@ impl AurisApp {
                     .flex()
                     .items_center()
                     .gap_1()
+                    .children(caption(self.t(Key::Grid)))
                     .child(
-                        div()
-                            .text_xs()
-                            .text_color(theme.text_faint)
-                            .child(self.t(Key::Grid)),
-                    )
-                    .child(button(
-                        "grid",
-                        grid_label,
-                        ButtonStyle::Normal,
-                        false,
-                        theme.accent,
-                        &theme,
-                        cx.listener(|this, _, _, cx| {
-                            this.cycle_grid();
-                            cx.notify();
+                        button(
+                            "grid",
+                            grid_label,
+                            ButtonStyle::Normal,
+                            false,
+                            theme.accent,
+                            &theme,
+                            cx.listener(|this, _, _, cx| {
+                                this.cycle_grid();
+                                cx.notify();
+                            }),
+                        )
+                        .when(compact, |button| {
+                            button.tooltip(keyed_tip(self.t(Key::Grid), "", &theme))
                         }),
-                    )))
+                    ))
                 .into_any_element(),
                 ToolbarItem::Zoom => (
                     // The arrangement's own zoom, next to the grid because both are about
                     // how finely the timeline reads rather than about what it contains.
                     div()
+                        .id("timeline-zoom-slot")
                         .flex()
                         .items_center()
                         .gap_1()
-                        .child(
-                            div()
-                                .text_xs()
-                                .text_color(theme.text_faint)
-                                .child(self.t(Key::Zoom)),
-                        )
+                        .children(caption(self.t(Key::Zoom)))
                         .child(self.zoom_slider("timeline-zoom", cx))
+                        .when(compact, |slot| {
+                            slot.tooltip(keyed_tip(self.t(Key::Zoom), "", &theme))
+                        })
                 )
                 .into_any_element(),
                 _ => continue,
@@ -535,25 +670,31 @@ impl AurisApp {
                                 cx.notify();
                             }),
                         )
+                        .when(compact, |field| {
+                            field.tooltip(keyed_tip(self.t(Key::Position), "", &theme))
+                        })
                         .child(readout(
-                            self.t(Key::Position),
+                            (!compact).then(|| self.t(Key::Position)),
                             position.clone(),
                             Some(seconds.format_clock().into()),
-                            px(118.0),
+                            px(if compact { 150.0 } else { 118.0 }),
                             &theme,
                         ))
                 )
                 .into_any_element(),
-                ToolbarItem::Tempo => (self.render_tempo_control(bpm, cx)).into_any_element(),
+                ToolbarItem::Tempo => {
+                    (self.render_tempo_control(bpm, compact, cx)).into_any_element()
+                }
                 ToolbarItem::Signature => {
-                    (self.render_signature_control(signature, cx)).into_any_element()
+                    (self.render_signature_control(signature, compact, cx)).into_any_element()
                 }
                 ToolbarItem::Chord => (self.lcd_field(
                     "current-chord",
                     self.t(Key::CurrentChord),
                     chord.clone(),
-                    px(82.0),
+                    px(if compact { 56.0 } else { 82.0 }),
                     chord_color,
+                    compact,
                 ))
                 .into_any_element(),
                 _ => continue,
@@ -617,31 +758,28 @@ impl AurisApp {
                             }))
                     }))
                 .into_any_element(),
-                ToolbarItem::Visualizer => self.render_toolbar_visualizer(cx).into_any_element(),
+                ToolbarItem::Visualizer => {
+                    let height = if compact {
+                        theme.atelier.density.title_bar - theme.atelier.spacing.xs * 2.0
+                    } else {
+                        Metrics::TRANSPORT_HEIGHT - px(8.)
+                    };
+                    self.render_toolbar_visualizer(height, cx)
+                        .into_any_element()
+                }
                 _ => continue,
             });
         }
-        let editing = div()
-            .flex()
-            .id("transport-edit-controls")
-            .debug_selector(|| "transport-edit-controls".into())
-            .flex_1()
-            .min_w_0()
-            .overflow_x_scroll()
-            .child(
-                div()
-                    .flex()
-                    .flex_shrink_0()
-                    .whitespace_nowrap()
-                    .items_center()
-                    .gap_2()
-                    .children(editing),
-            );
         // Atelier's `ReadoutStrip`: the buttons and the readouts on one sunken surface, a
         // hairline between each. The readouts stay Auris's own, since each opens its own editor.
+        let strip_height = if compact {
+            theme.atelier.density.title_bar - theme.atelier.spacing.xs * 2.0
+        } else {
+            Metrics::TRANSPORT_HEIGHT - theme.atelier.spacing.xs * 2.0
+        };
         let primary = readouts.into_iter().fold(
             atelier::ReadoutStrip::new()
-                .height(Metrics::TRANSPORT_HEIGHT - theme.atelier.spacing.xs * 2.0)
+                .height(strip_height)
                 .controls(self.render_transport_buttons(cx)),
             |strip, readout| strip.readout(readout),
         );
@@ -649,67 +787,15 @@ impl AurisApp {
             .debug_selector(|| "transport-primary".into()) // atelier: allow — ReadoutStrip takes no id.
             .flex()
             .flex_shrink_0()
-            .child(primary);
-        let meters = div()
-            .flex()
-            .id("transport-meters")
-            .debug_selector(|| "transport-meters".into())
-            .flex_1()
-            .min_w_0()
-            .overflow_x_scroll()
-            .child(
-                div()
-                    .flex()
-                    .flex_shrink_0()
-                    .min_w_full()
-                    .items_center()
-                    .justify_end()
-                    .gap_3()
-                    .children(meters),
-            );
-        let bar = div()
-            .debug_selector(|| "transport-bar".into())
-            .flex()
-            .flex_shrink_0()
-            .h(transport_height(window.viewport_size().width))
-            .bg(theme.surface)
-            .border_b_1()
-            .border_color(theme.border_subtle);
-        if transport_height(window.viewport_size().width) > Metrics::TRANSPORT_HEIGHT {
-            bar.flex_col()
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .flex_shrink_0()
-                        .h(Metrics::TRANSPORT_HEIGHT)
-                        .px_3()
-                        .child(primary),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap_3()
-                        .px_3()
-                        .flex_1()
-                        .min_h_0()
-                        .child(editing)
-                        .child(meters),
-                )
-                .into_any_element()
-        } else {
-            bar.items_center()
-                .gap_3()
-                .px_3()
-                .h(Metrics::TRANSPORT_HEIGHT)
-                .child(editing)
-                .child(primary)
-                .child(meters)
-                .into_any_element()
+            .child(primary)
+            .into_any_element();
+        TransportParts {
+            editing,
+            primary,
+            meters,
         }
     }
+
     /// One captioned field inside the shared playback and readout surface.
     fn lcd_field(
         &self,
@@ -718,6 +804,7 @@ impl AurisApp {
         value: String,
         width: Pixels,
         color: gpui::Hsla,
+        compact: bool,
     ) -> gpui::Stateful<gpui::Div> {
         let theme = &self.theme;
         div()
@@ -732,13 +819,18 @@ impl AurisApp {
             .whitespace_nowrap()
             .px_2()
             .hover(|this| this.bg(theme.surface_hover))
-            .child(
-                div()
-                    .truncate()
-                    .text_xs()
-                    .text_color(theme.text_faint)
-                    .child(caption),
-            )
+            .when(!compact, |field| {
+                field.child(
+                    div()
+                        .truncate()
+                        .text_xs()
+                        .text_color(theme.text_faint)
+                        .child(caption),
+                )
+            })
+            .when(compact, |field| {
+                field.tooltip(keyed_tip(caption, "", theme))
+            })
             .child(div().text_sm().text_color(color).child(value))
     }
 
@@ -746,14 +838,16 @@ impl AurisApp {
     fn render_tempo_control(
         &self,
         bpm: f64,
+        compact: bool,
         cx: &mut gpui::Context<Self>,
     ) -> impl IntoElement + use<> {
         self.lcd_field(
             "tempo",
             self.t(Key::Tempo),
             format!("{bpm:.2}"),
-            px(84.0),
+            px(if compact { 56.0 } else { 84.0 }),
             self.theme.text,
+            compact,
         )
         .on_mouse_down(
             gpui::MouseButton::Left,
@@ -797,14 +891,16 @@ impl AurisApp {
     fn render_signature_control(
         &self,
         signature: TimeSignature,
+        compact: bool,
         cx: &mut gpui::Context<Self>,
     ) -> impl IntoElement + use<> {
         self.lcd_field(
             "signature",
             self.t(Key::Signature),
             signature.to_string(),
-            px(84.0),
+            px(if compact { 40.0 } else { 84.0 }),
             self.theme.text,
+            compact,
         )
         // Either button, because either is a way somebody might ask a control for its list, and
         // there is nothing else here for the right one to mean.
@@ -1180,6 +1276,8 @@ mod tests {
         use crate::harness::{open, resize};
         use gpui::size;
         let (app, cx) = open(cx);
+        // The transport's own row: a wider window carries it in the title bar instead.
+        resize(&app, cx, size(px(1100.), px(700.)));
         let original_transport_width = cx.debug_bounds("transport-buttons").unwrap().size.width;
         let record_slot =
             cx.debug_bounds("punch").unwrap().left() - cx.debug_bounds("record").unwrap().left();
@@ -1208,7 +1306,7 @@ mod tests {
                 .visible = false;
             cx.notify();
         });
-        for width in [640., 1360.] {
+        for width in [640., 1100.] {
             resize(&app, cx, size(px(width), px(700.)));
             // GPUI retains old debug selectors across frames; measure the current layout
             // rather than treating a cached selector as evidence that a removed control exists.
@@ -1243,7 +1341,7 @@ mod tests {
             (640.0, Language::English),
             (640.0, Language::Japanese),
             (800.0, Language::Japanese),
-            (1360.0, Language::Japanese),
+            (1150.0, Language::Japanese),
         ] {
             app.update(cx, |app, _| app.language = language);
             resize(&app, cx, size(px(width), px(700.0)));
