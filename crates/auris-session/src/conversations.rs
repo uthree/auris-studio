@@ -533,8 +533,6 @@ impl ConversationStore {
             write_json(&target.join("meta.json"), &info)?;
             crate::conversation_attachments::copy_to(&source, &target)?;
         }
-        crate::workshop::Store::new(self.root.clone())
-            .copy_to(&crate::workshop::Store::new(destination.root.clone()))?;
         Ok(())
     }
 }

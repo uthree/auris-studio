@@ -80,10 +80,13 @@
 //! Comparisons, cancelled jobs and recovery of older rounds do not change the selection.
 //! Descendants open that candidate's saved score; selection never regenerates the music.
 //! The session's `workshop` store retains transcripts, comparison rounds, parent identities,
-//! documents and audition assets. Each project can keep multiple named workshop conversations,
-//! including their drafts, attachments and candidate feedback. Archiving is reversible; opening
-//! another conversation waits until production has stopped. The legacy workshop remains the
-//! default conversation. Save As copies every workshop conversation and its assets.
+//! documents and audition assets. The application keeps one library of named workshop
+//! conversations, [`crate::workshop::Store::library`], in the configuration directory, including
+//! their drafts, attachments and candidate feedback. It belongs to no project because the workshop
+//! opens before one exists: a store keyed by the open document would be a fresh, empty recovery
+//! folder on every launch. A window that finds the last conversation open elsewhere starts a new
+//! one. Archiving is reversible; opening another conversation waits until production has stopped.
+//! Opening a candidate in the editor copies its history into that project's editor conversation.
 //! Explicit one-to-five-star ratings and comments belong to the exact candidate and inform
 //! subsequent requests in that conversation; they never change the score or start production.
 //! The frontend owns presentation, provider selection, audition and explicit editor handoff.

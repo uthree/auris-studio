@@ -100,8 +100,10 @@ pub struct Workshop {
 }
 
 impl Workshop {
-    /// Start or restore a project-scoped conversation off the UI thread.
-    pub fn start(folder: PathBuf, unsaved: bool, settings: Settings) -> Result<Self, String> {
+    /// Restore the library's last conversation off the UI thread, normally from
+    /// [`Store::library`]. When another window already has that conversation open, this window
+    /// starts a new one rather than failing, so a second window still reaches the history.
+    pub fn start(library: Store, settings: Settings) -> Result<Self, String> {
         let (sender, commands) = mpsc::channel();
         let (events, receiver) = mpsc::channel();
         let stopped = Arc::new(AtomicBool::new(false));
@@ -110,15 +112,14 @@ impl Workshop {
             .name("auris-workshop".into())
             .spawn(move || {
                 let result = (|| {
-                    let conversations = if unsaved {
-                        auris_session::conversations::ConversationStore::for_unsaved_document(
-                            &folder,
-                        )?
-                    } else {
-                        auris_session::conversations::ConversationStore::for_project(&folder)
+                    let mut store = library.active_thread()?;
+                    let lease = match store.lease() {
+                        Ok(lease) => lease,
+                        Err(_) => {
+                            store = library.create_thread()?;
+                            store.lease()?
+                        }
                     };
-                    let store = Store::new(conversations.root().into()).active_thread()?;
-                    let lease = store.lease()?;
                     // Do not overwrite an unreadable history with a fresh default.
                     store.load()?;
                     let mut owner = Owner::new(store, settings, events.clone());
@@ -181,6 +182,7 @@ impl Drop for Workshop {
 pub fn handoff(
     folder: PathBuf,
     unsaved: bool,
+    library: Store,
     document: Document,
 ) -> Result<(auris_session::conversations::ConversationStore, String), String> {
     use auris_session::conversations::{
@@ -211,7 +213,7 @@ pub fn handoff(
                     text: message.text.clone(),
                     attachments: store.capture_attachments(
                         &conversation.info.id,
-                        &Store::new(store.root().into())
+                        &library
                             .thread(if document.thread_id.is_empty() {
                                 "default"
                             } else {
@@ -1587,6 +1589,60 @@ fn execute(
 
 #[cfg(test)]
 mod tests {
+    /// The first snapshot a freshly started workshop publishes.
+    fn first_snapshot(workshop: &super::Workshop) -> super::Snapshot {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            if let Some(snapshot) = workshop.poll() {
+                return snapshot;
+            }
+            assert!(std::time::Instant::now() < deadline, "no snapshot");
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
+
+    #[test]
+    fn a_reopened_workshop_lists_every_earlier_conversation() {
+        use super::*;
+        let directory = tempfile::tempdir().unwrap();
+        let library = Store::new(directory.path().into());
+        let mut earlier = Document::default();
+        earlier.rename("Earlier song").unwrap();
+        library.save(&earlier).unwrap();
+        let second = library.create_thread().unwrap();
+        let mut latest = second.load().unwrap();
+        latest.rename("Latest song").unwrap();
+        second.save(&latest).unwrap();
+        second.set_active_thread().unwrap();
+
+        // A later launch opens the same library, whatever document is behind the window.
+        let workshop = Workshop::start(library.clone(), Settings::default()).unwrap();
+        let snapshot = first_snapshot(&workshop);
+        assert_eq!(snapshot.error, None);
+        assert_eq!(snapshot.document.title, "Latest song");
+        let mut titles: Vec<_> = snapshot.threads.iter().map(|t| t.title.as_str()).collect();
+        titles.sort();
+        assert_eq!(titles, ["Earlier song", "Latest song"]);
+    }
+
+    #[test]
+    fn a_second_window_starts_a_new_conversation_instead_of_failing() {
+        use super::*;
+        let directory = tempfile::tempdir().unwrap();
+        let library = Store::new(directory.path().into());
+        let mut earlier = Document::default();
+        earlier.rename("Earlier song").unwrap();
+        library.save(&earlier).unwrap();
+        let _first_window = library.active_thread().unwrap().lease().unwrap();
+
+        let workshop = Workshop::start(library.clone(), Settings::default()).unwrap();
+        let snapshot = first_snapshot(&workshop);
+        assert_eq!(snapshot.error, None);
+        assert_ne!(snapshot.document.thread_id, "default");
+        assert!(snapshot.threads.iter().any(|t| t.title == "Earlier song"));
+        assert_eq!(library.load().unwrap().title, "Earlier song");
+    }
+
     #[test]
     fn loading_another_round_keeps_earlier_auditions_and_errors() {
         use super::*;
@@ -2103,7 +2159,13 @@ mod tests {
             draft: "Make the chorus brighter".into(),
             ..Default::default()
         };
-        let (store, id) = handoff(dir.path().into(), false, document).unwrap();
+        let (store, id) = handoff(
+            dir.path().into(),
+            false,
+            Store::new(dir.path().join("library")),
+            document,
+        )
+        .unwrap();
         let conversation = store.load(&id).unwrap();
         assert_eq!(conversation.transcript.messages.len(), 2);
         assert_eq!(conversation.transcript.draft, "Make the chorus brighter");
@@ -2147,9 +2209,8 @@ mod tests {
         };
         let (events, _) = mpsc::channel();
         let editor_folder = dir.path().join("editor");
-        let conversation_store =
-            auris_session::conversations::ConversationStore::for_project(&editor_folder);
-        let store = Store::new(conversation_store.root().into());
+        // The library lives apart from the editor's project, as `Store::library` does.
+        let store = Store::new(dir.path().join("library"));
         let mut owner = Owner::new(store.clone(), Settings::default(), events);
         owner.command(Command::Send(
             "Use these references".into(),
@@ -2182,7 +2243,7 @@ mod tests {
                 .text
                 .contains("\"pitch\":61")
         );
-        let (editor, id) = handoff(editor_folder, false, restored).unwrap();
+        let (editor, id) = handoff(editor_folder, false, store.clone(), restored).unwrap();
         let conversation = editor.load(&id).unwrap();
         let auris_session::conversations::ConversationContent::User { attachments, .. } =
             &conversation.transcript.messages[0].content
