@@ -299,6 +299,15 @@ impl EngineHandle {
         self.count_in.load(Ordering::Relaxed)
     }
 
+    /// The virtual frame being heard at this instant, in engine frames, if the transport is moving.
+    ///
+    /// Virtual in the sense [`crate::clock`] means: the playhead less whatever count-in is still
+    /// to play, so it keeps moving through a count. What a key pressed now was pressed against.
+    /// `None` without a running output, where nothing is being heard.
+    pub fn heard_frame_now(&self) -> Option<f64> {
+        self.clock.heard_now()
+    }
+
     /// Declares a count-in that has been asked for but has not reached the audio thread yet.
     ///
     /// Sent commands are applied at the top of the next callback, and an input stream can hand

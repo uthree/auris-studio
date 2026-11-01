@@ -680,6 +680,40 @@ strings! {
         ja: "要求するサイズです。デバイスが別のサイズを採用する場合があります。msはバッファ1つ分の時間で、全体の遅延ではありません。"
     }
     ActualBufferUnknown { en: "Applied buffer size: unavailable", ja: "適用されたバッファサイズ: 取得できません" }
+    InputLatency { en: "Input latency", ja: "入力遅延" }
+    InputLatencyNote {
+        en: "Measures how late recordings arrive beyond what the devices report. Connect the output to the input with a cable, or let the microphone hear the speakers (not headphones), then measure. Kept for these devices and this buffer size.",
+        ja: "デバイスが報告する遅延を超えて、録音がどれだけ遅れて届くかを測ります。出力を入力にケーブルでつなぐか、マイクにスピーカーの音を聞かせて（ヘッドホン不可）から計測してください。このデバイスとバッファサイズの組み合わせごとに保存されます。"
+    }
+    MeasureInputLatency { en: "Measure", ja: "計測" }
+    MeasuringInputLatency { en: "Measuring… keep quiet", ja: "計測中… お静かに" }
+    ResetInputLatency { en: "Reset", ja: "リセット" }
+    InputLatencyUncalibrated {
+        en: "Not measured: recordings use the devices' reported latency",
+        ja: "未計測: デバイスが報告する遅延で録音位置を補正しています"
+    }
+    TypingLatency { en: "Musical typing latency", ja: "ミュージカルタイピングの遅延" }
+    TypingLatencyNote {
+        en: "Measures how late notes played on the computer keyboard arrive. Press Measure, listen to the first bar of clicks, then tap any key on every click of the next two.",
+        ja: "PC キーボードで弾いたノートがどれだけ遅れて届くかを測ります。「計測」を押し、最初の1小節はクリックを聞き、続く2小節はクリックごとに好きなキーを叩いてください。"
+    }
+    TappingAlong { en: "Listen for one bar, then tap any key on each click…", ja: "1小節聞いてから、クリックごとにキーを叩いてください…" }
+    TypingLatencyUncalibrated {
+        en: "Not measured: notes are placed where the key reached the application",
+        ja: "未計測: キーがアプリに届いた時点の位置にノートを置きます"
+    }
+    ErrorCalibrationBusy {
+        en: "stop playback and recording before measuring the input latency",
+        ja: "入力遅延を計測する前に、再生と録音を止めてください"
+    }
+    ErrorCalibrationHeardNothing {
+        en: "no clicks reached the input; let it hear the output and measure again",
+        ja: "クリック音が入力に届きませんでした。入力に出力の音が届くようにして、もう一度計測してください"
+    }
+    ErrorCalibrationStalled {
+        en: "the audio output did not play the measurement",
+        ja: "オーディオ出力が計測音を再生しませんでした"
+    }
     InputDevice { en: "Input Device", ja: "入力デバイス" }
     InputDeviceNote {
         en: "Opened only while recording, so changing it does not interrupt playback.",

@@ -392,6 +392,14 @@ pub fn error_text(error: &SessionError, language: Language) -> String {
         SessionError::WouldReplace(path) => {
             messages::would_replace(language, &path.display().to_string())
         }
+        SessionError::CalibrationBusy => Key::ErrorCalibrationBusy.get(language).to_string(),
+        SessionError::CalibrationHeardNothing => {
+            Key::ErrorCalibrationHeardNothing.get(language).to_string()
+        }
+        SessionError::CalibrationUnsteady { spread_ms } => {
+            messages::calibration_unsteady(language, *spread_ms)
+        }
+        SessionError::CalibrationStalled => Key::ErrorCalibrationStalled.get(language).to_string(),
     }
 }
 

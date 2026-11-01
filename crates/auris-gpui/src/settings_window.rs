@@ -353,6 +353,183 @@ impl SettingsWindow {
         cx.notify();
     }
 
+    /// The measured input latency for the devices chosen, and the button that measures it.
+    fn render_input_latency(
+        &mut self,
+        audio: &AudioPreferences,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let measuring = self
+            .app
+            .read_with(cx, |app, _| app.session.calibrating_input())
+            .unwrap_or(false);
+        let calibration = audio.input_calibration();
+        let note = if measuring {
+            self.t(Key::MeasuringInputLatency).to_owned()
+        } else {
+            calibration.map_or_else(
+                || self.t(Key::InputLatencyUncalibrated).to_owned(),
+                |found| {
+                    messages::input_latency_measured(
+                        self.language,
+                        found.offset_ms,
+                        found.spread_ms,
+                    )
+                },
+            )
+        };
+        let mut buttons = div().flex().gap_2().child(
+            Button::new("measure-input-latency", self.t(Key::MeasureInputLatency))
+                .size(ControlSize::Small)
+                .disabled(measuring)
+                .on_click(cx.listener(|this, _, _, cx| this.measure_input_latency(cx))),
+        );
+        if calibration.is_some() && !measuring {
+            buttons = buttons.child(
+                Button::new("reset-input-latency", self.t(Key::ResetInputLatency))
+                    .ghost()
+                    .size(ControlSize::Small)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        let _ = this.app.update(cx, |app, _| app.clear_input_calibration());
+                        this.refresh_audio(cx);
+                    })),
+            );
+        }
+        FormField::new(self.t(Key::InputLatency))
+            .description(self.t(Key::InputLatencyNote))
+            .note(note)
+            .child(buttons)
+            .into_any_element()
+    }
+
+    /// The measured typing latency, and the button that starts a tap-along.
+    fn render_typing_latency(
+        &mut self,
+        audio: &AudioPreferences,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let tapping = self.tapping(cx);
+        let note = if tapping {
+            self.t(Key::TappingAlong).to_owned()
+        } else {
+            audio.typing_calibration.map_or_else(
+                || self.t(Key::TypingLatencyUncalibrated).to_owned(),
+                |found| {
+                    messages::typing_latency_measured(
+                        self.language,
+                        found.offset_ms,
+                        found.spread_ms,
+                    )
+                },
+            )
+        };
+        let mut buttons = div().flex().gap_2().child(
+            Button::new("measure-typing-latency", self.t(Key::MeasureInputLatency))
+                .size(ControlSize::Small)
+                .disabled(tapping)
+                .on_click(cx.listener(|this, _, _, cx| this.measure_typing_latency(cx))),
+        );
+        if audio.typing_calibration.is_some() && !tapping {
+            buttons = buttons.child(
+                Button::new("reset-typing-latency", self.t(Key::ResetInputLatency))
+                    .ghost()
+                    .size(ControlSize::Small)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        let _ = this.app.update(cx, |app, _| app.clear_typing_calibration());
+                        this.refresh_audio(cx);
+                    })),
+            );
+        }
+        FormField::new(self.t(Key::TypingLatency))
+            .description(self.t(Key::TypingLatencyNote))
+            .note(note)
+            .child(buttons)
+            .into_any_element()
+    }
+
+    /// `true` while a tap-along is listening for keys in this window.
+    fn tapping(&self, cx: &App) -> bool {
+        self.app
+            .read_with(cx, |app, _| app.session.calibrating_typing())
+            .unwrap_or(false)
+    }
+
+    /// Starts a tap-along and watches it until it has finished.
+    ///
+    /// The taps are keys pressed in *this* window, which is where focus is after the button was
+    /// clicked; [`Self::on_key`] hands them on while it runs.
+    fn measure_typing_latency(&mut self, cx: &mut Context<Self>) {
+        let Ok(started) = self.app.update(cx, |app, _| app.start_typing_calibration()) else {
+            return;
+        };
+        if let Err(error) = started {
+            self.status = crate::i18n::error_text(&error, self.language);
+            cx.notify();
+            return;
+        }
+        self.status = self.t(Key::TappingAlong).to_owned();
+        cx.notify();
+        self.watch_measurement(|app| app.session.calibrating_typing(), cx);
+    }
+
+    /// Looks every fifth of a second until `running` says a measurement is over, then shows
+    /// what it found.
+    fn watch_measurement(&mut self, running: fn(&AurisApp) -> bool, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(200))
+                    .await;
+                let Ok(done) = this.update(cx, |this, cx| {
+                    let (measuring, status) = this
+                        .app
+                        .read_with(cx, |app, _| (running(app), app.status.clone()))
+                        .unwrap_or((false, String::new()));
+                    if !measuring {
+                        this.status = status;
+                        this.refresh_audio(cx);
+                    }
+                    !measuring
+                }) else {
+                    break;
+                };
+                if done {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
+    /// Starts a latency measurement and watches it until it has finished.
+    ///
+    /// The window has no clock of its own, and the measurement ends when its clicks have played,
+    /// so it looks every fifth of a second until the session says it is over.
+    fn measure_input_latency(&mut self, cx: &mut Context<Self>) {
+        let Ok(started) = self.app.update(cx, |app, _| app.start_input_calibration()) else {
+            return;
+        };
+        if let Err(error) = started {
+            self.status = crate::i18n::error_text(&error, self.language);
+            cx.notify();
+            return;
+        }
+        self.status = self.t(Key::MeasuringInputLatency).to_owned();
+        cx.notify();
+        self.watch_measurement(|app| app.session.calibrating_input(), cx);
+    }
+
+    /// Reads the audio preferences back from the session, which owns them.
+    fn refresh_audio(&mut self, cx: &mut Context<Self>) {
+        if let Ok(audio) = self
+            .app
+            .read_with(cx, |app, _| app.session.audio_preferences().clone())
+        {
+            self.audio = audio;
+        }
+        cx.notify();
+    }
+
     /// Hands the edited keymap to the application, which installs and saves it.
     fn apply_keymap(&mut self, cx: &mut Context<Self>) {
         let keymap = self.keymap.clone();
@@ -1003,6 +1180,8 @@ impl SettingsWindow {
                     .description(self.t(Key::InputDeviceNote))
                     .child(self.device_dropdown(DeviceSlot::Input, cx))
             });
+            devices = devices.child(self.render_input_latency(&audio, cx));
+            devices = devices.child(self.render_typing_latency(&audio, cx));
         }
 
         let mut playback = FormGroup::new(self.t(Key::AudioPlaybackGroup));
@@ -1769,6 +1948,20 @@ impl SettingsWindow {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
+        // A tap-along takes every key while it runs: the keys are the measurement, and one that
+        // also moved focus or typed into the search box would be a tap and a surprise at once.
+        if self.tapping(cx) {
+            if event.keystroke.key == "escape" {
+                let _ = self
+                    .app
+                    .update(cx, |app, _| app.session.cancel_typing_calibration());
+            } else if !event.is_held {
+                let _ = self
+                    .app
+                    .update(cx, |app, _| app.session.tap_typing_calibration());
+            }
+            return true;
+        }
         if self.dropdown_menu.is_some() && self.dropdown_key(event, cx) {
             return true;
         }

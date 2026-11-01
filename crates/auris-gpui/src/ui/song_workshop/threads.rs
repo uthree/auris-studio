@@ -3,6 +3,7 @@
 use super::*;
 use crate::ui::context_menu::{ContextMenu, MenuCommand};
 use crate::ui::prompt::{Prompt, PromptTarget};
+use atelier::{Edge, Sidebar};
 
 impl SongWorkshop {
     /// Reject a rename sheet that belongs to a conversation view which has since changed.
@@ -177,19 +178,14 @@ impl AurisApp {
                 });
             }
         }
-        div()
+        // Atelier's `Sidebar` is chrome: under Glass it is the translucent tint over the blurred
+        // window, with its own trailing hairline, so it must not get a background of its own.
+        Sidebar::new(Edge::Left)
             .id("workshop-sidebar")
-            .debug_selector(|| "workshop-sidebar".into())
             .w_56()
-            .flex_shrink_0()
             .h_full()
-            .flex()
-            .flex_col()
             .gap(spacing.sm)
             .p(spacing.md)
-            .bg(self.theme.surface)
-            .border_r_1()
-            .border_color(self.theme.border_subtle)
             .child(SectionHeader::new(self.t(Key::WorkshopThreads)))
             .child(
                 Button::new("workshop-new-thread", self.t(Key::WorkshopNewThread))

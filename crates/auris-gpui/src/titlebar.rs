@@ -161,6 +161,7 @@ pub struct Parts {
     id: &'static str,
     title: SharedString,
     leading: Vec<AnyElement>,
+    trailing: Vec<AnyElement>,
 }
 
 impl Parts {
@@ -170,12 +171,19 @@ impl Parts {
             id,
             title: title.into(),
             leading: Vec::new(),
+            trailing: Vec::new(),
         }
     }
 
     /// A control at the leading edge, such as Back.
     pub fn leading(mut self, element: impl IntoElement) -> Self {
         self.leading.push(element.into_any_element());
+        self
+    }
+
+    /// A control at the trailing end, before the window's own buttons.
+    pub fn trailing(mut self, element: impl IntoElement) -> Self {
+        self.trailing.push(element.into_any_element());
         self
     }
 }
@@ -191,6 +199,9 @@ pub fn bar(window: &Window, _theme: &Theme, parts: Parts, controls: Div) -> Titl
         .window_controls(controls_width(window), controls);
     for leading in parts.leading {
         bar = bar.leading(leading);
+    }
+    for trailing in parts.trailing {
+        bar = bar.trailing(trailing);
     }
     bar
 }
