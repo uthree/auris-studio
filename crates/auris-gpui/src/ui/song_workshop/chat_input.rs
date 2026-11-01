@@ -182,7 +182,12 @@ impl AurisApp {
             .iter()
             .enumerate()
             .map(|(index, path)| {
-                self.inline_attachment(path, format!("song-inline-draft-{index}"), window, cx)
+                self.inline_attachment(
+                    path,
+                    format!("song-inline-draft-{index}"),
+                    crate::ui::attachment_preview::InlinePlace::Composer,
+                    cx,
+                )
             })
             .collect();
         let mut body = crate::ui::agent_components::composer_frame(
@@ -261,7 +266,19 @@ impl AurisApp {
                     )
             }),
         ))
-        .children(inline_previews)
+        // Thumbnails sit side by side, as in any message composer; an excerpt or a player
+        // takes the row to itself.
+        .when(!inline_previews.is_empty(), |body| {
+            body.child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .items_end()
+                    .min_w_0()
+                    .gap(theme.atelier.spacing.sm)
+                    .children(inline_previews),
+            )
+        })
         .when(self.music_references().midi_draft.is_some(), |body| {
             body.child(self.midi_editor(window.viewport_size().height * 0.4, cx))
         })
