@@ -262,6 +262,11 @@ fn policy_distinguishes_discovery_processing_and_network_import() {
     use crate::agent_policy::{Decision, Mode, Operation as Permission, Policy};
     for (operation, mutating, confirm) in [
         (json!({"kind":"search","query":"wind"}), false, false),
+        (
+            json!({"kind":"search","root":"/home/someone","query":""}),
+            false,
+            true,
+        ),
         (json!({"kind":"search_online","query":"wind"}), false, true),
         (
             json!({"kind":"process","clip":1,"expected_revision":"x","reverse":true}),
