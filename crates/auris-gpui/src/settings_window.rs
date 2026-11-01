@@ -353,6 +353,109 @@ impl SettingsWindow {
         cx.notify();
     }
 
+    /// The measured input latency for the devices chosen, and the button that measures it.
+    fn render_input_latency(
+        &mut self,
+        audio: &AudioPreferences,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let measuring = self
+            .app
+            .read_with(cx, |app, _| app.session.calibrating_input())
+            .unwrap_or(false);
+        let calibration = audio.input_calibration();
+        let note = if measuring {
+            self.t(Key::MeasuringInputLatency).to_owned()
+        } else {
+            calibration.map_or_else(
+                || self.t(Key::InputLatencyUncalibrated).to_owned(),
+                |found| {
+                    messages::input_latency_measured(
+                        self.language,
+                        found.offset_ms,
+                        found.spread_ms,
+                    )
+                },
+            )
+        };
+        let mut buttons = div().flex().gap_2().child(
+            Button::new("measure-input-latency", self.t(Key::MeasureInputLatency))
+                .size(ControlSize::Small)
+                .disabled(measuring)
+                .on_click(cx.listener(|this, _, _, cx| this.measure_input_latency(cx))),
+        );
+        if calibration.is_some() && !measuring {
+            buttons = buttons.child(
+                Button::new("reset-input-latency", self.t(Key::ResetInputLatency))
+                    .ghost()
+                    .size(ControlSize::Small)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        let _ = this.app.update(cx, |app, _| app.clear_input_calibration());
+                        this.refresh_audio(cx);
+                    })),
+            );
+        }
+        FormField::new(self.t(Key::InputLatency))
+            .description(self.t(Key::InputLatencyNote))
+            .note(note)
+            .child(buttons)
+            .into_any_element()
+    }
+
+    /// Starts a latency measurement and watches it until it has finished.
+    ///
+    /// The window has no clock of its own, and the measurement ends when its clicks have played,
+    /// so it looks every fifth of a second until the session says it is over.
+    fn measure_input_latency(&mut self, cx: &mut Context<Self>) {
+        let Ok(started) = self.app.update(cx, |app, _| app.start_input_calibration()) else {
+            return;
+        };
+        if let Err(error) = started {
+            self.status = crate::i18n::error_text(&error, self.language);
+            cx.notify();
+            return;
+        }
+        self.status = self.t(Key::MeasuringInputLatency).to_owned();
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(200))
+                    .await;
+                let Ok(done) = this.update(cx, |this, cx| {
+                    let (measuring, status) = this
+                        .app
+                        .read_with(cx, |app, _| {
+                            (app.session.calibrating_input(), app.status.clone())
+                        })
+                        .unwrap_or((false, String::new()));
+                    if !measuring {
+                        this.status = status;
+                        this.refresh_audio(cx);
+                    }
+                    !measuring
+                }) else {
+                    break;
+                };
+                if done {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
+    /// Reads the audio preferences back from the session, which owns them.
+    fn refresh_audio(&mut self, cx: &mut Context<Self>) {
+        if let Ok(audio) = self
+            .app
+            .read_with(cx, |app, _| app.session.audio_preferences().clone())
+        {
+            self.audio = audio;
+        }
+        cx.notify();
+    }
+
     /// Hands the edited keymap to the application, which installs and saves it.
     fn apply_keymap(&mut self, cx: &mut Context<Self>) {
         let keymap = self.keymap.clone();
@@ -1003,6 +1106,7 @@ impl SettingsWindow {
                     .description(self.t(Key::InputDeviceNote))
                     .child(self.device_dropdown(DeviceSlot::Input, cx))
             });
+            devices = devices.child(self.render_input_latency(&audio, cx));
         }
 
         let mut playback = FormGroup::new(self.t(Key::AudioPlaybackGroup));

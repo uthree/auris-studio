@@ -185,7 +185,13 @@ impl Section {
                 Key::GroupHelp,
             ],
             Self::Output => &[Key::OutputDevice],
-            Self::Input => &[Key::InputDevice, Key::InputDeviceNote, Key::AsioInputNote],
+            Self::Input => &[
+                Key::InputDevice,
+                Key::InputDeviceNote,
+                Key::AsioInputNote,
+                Key::InputLatency,
+                Key::InputLatencyNote,
+            ],
             Self::Rate => &[Key::SampleRate, Key::DeviceDefaultRate],
             Self::Buffer => &[Key::BufferSize, Key::RequestedBufferNote],
             Self::Export => &[

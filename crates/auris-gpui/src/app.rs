@@ -1972,6 +1972,7 @@ impl AurisApp {
                         // The punch-out is a position the playhead crosses rather than a thing
                         // anybody does, so this is the only place that could notice it.
                         this.finish_punch();
+                        this.finish_input_calibration();
                         this.poll_singer_portrait(cx);
                         this.poll_spectrograms(cx);
                         this.report_graph_resource_error();
@@ -3090,6 +3091,43 @@ impl AurisApp {
         let line = audio_line(&self.session.audio_status(), self.language);
         self.set_status(line.clone());
         Ok(line)
+    }
+
+    /// Starts measuring the input latency, saying so in the status line.
+    pub(crate) fn start_input_calibration(&mut self) -> Result<(), SessionError> {
+        self.session.start_input_calibration()?;
+        self.set_status(Key::MeasuringInputLatency.get(self.language).to_owned());
+        Ok(())
+    }
+
+    /// Forgets the measured input latency for the devices open now, and saves that.
+    pub(crate) fn clear_input_calibration(&mut self) {
+        self.session.clear_input_calibration();
+        self.settings.audio = self.session.audio_preferences().clone();
+        if let Err(error) = self.save_settings() {
+            log::warn!("could not save settings: {error}");
+        }
+    }
+
+    /// Keeps the result of a latency measurement that has just finished, and reports it.
+    ///
+    /// Polled, because the measurement ends when its clicks have played rather than when anybody
+    /// does anything.
+    fn finish_input_calibration(&mut self) {
+        let Some(result) = self.session.take_input_calibration() else {
+            return;
+        };
+        let line = match result {
+            Ok(found) => {
+                self.settings.audio = self.session.audio_preferences().clone();
+                if let Err(error) = self.save_settings() {
+                    log::warn!("could not save settings: {error}");
+                }
+                messages::input_latency_measured(self.language, found.offset_ms, found.spread_ms)
+            }
+            Err(error) => crate::i18n::error_text(&error, self.language),
+        };
+        self.set_status(line);
     }
 
     /// Switches the interface language and remembers the choice.
