@@ -5,6 +5,8 @@
 //! affordable, and it removes a whole class of bugs that command-based undo suffers from, where
 //! one edit path forgets to record its inverse.
 
+use std::collections::VecDeque;
+
 use auris_core::Project;
 use auris_core::project::{ClipCurve, ClipId, SourceId};
 use auris_core::time::Ticks;
@@ -304,10 +306,27 @@ impl Edit {
     }
 }
 
+/// Notes the whole history may hold before the oldest step is dropped.
+///
+/// A step limit alone bounds the *count* and not the size, and the module's "a few kilobytes"
+/// is right about audio and not about documents in general: a `pop-band` preset — eleven tracks,
+/// 1 841 notes — is a 566 KB document, which is about 300 bytes a note, and a long arrangement
+/// with a sung part carries lyrics and per-note phonemes on top of that. Sixty-four of those is
+/// the number nothing was watching.
+///
+/// Two million notes is roughly half a gigabyte by that measure, and more than a thousand steps
+/// on a document the size of that preset — so the step limit is still what a session of ordinary
+/// edits runs into, and this only catches the documents that would have been a problem.
+///
+/// Notes rather than bytes because counting them is a walk over the clips with nothing
+/// allocated, while measuring the snapshot would mean serialising a whole document on every
+/// edit. It is a proxy, and named as one.
+const NOTE_BUDGET: usize = 2_000_000;
+
 /// A bounded undo/redo stack of project snapshots.
 pub struct History {
-    past: Vec<Snapshot>,
-    future: Vec<Snapshot>,
+    past: VecDeque<Snapshot>,
+    future: VecDeque<Snapshot>,
     limit: usize,
     pub(crate) recording_agent: Option<AgentGroup>,
 }
@@ -330,6 +349,24 @@ impl Default for History {
     }
 }
 
+/// Notes one snapshot is holding, the proxy [`NOTE_BUDGET`] is measured in.
+fn snapshot_notes(project: &Project) -> usize {
+    project
+        .tracks
+        .iter()
+        .map(|track| {
+            let note_clips: usize = track
+                .kind
+                .note_clips()
+                .into_iter()
+                .flatten()
+                .map(|clip| clip.notes.len())
+                .sum();
+            note_clips
+        })
+        .sum()
+}
+
 impl History {
     pub(crate) fn references_source(&self, id: SourceId) -> bool {
         self.past
@@ -341,8 +378,8 @@ impl History {
     /// A history holding at most `limit` undo steps.
     pub fn new(limit: usize) -> Self {
         Self {
-            past: Vec::new(),
-            future: Vec::new(),
+            past: VecDeque::new(),
+            future: VecDeque::new(),
             limit: limit.max(1),
             recording_agent: None,
         }
@@ -355,13 +392,13 @@ impl History {
     pub fn push(&mut self, edit: Edit, project: &Project) {
         self.future.clear();
         if let Some(group) = self.recording_agent
-            && let Some(last) = self.past.last_mut()
+            && let Some(last) = self.past.back_mut()
             && last.agent.is_some_and(|held| held.id == group.id)
         {
             last.agent = Some(group);
             return;
         }
-        self.past.push(Snapshot {
+        self.past.push_back(Snapshot {
             edit: if self.recording_agent.is_some() {
                 Edit::ExternalChanges
             } else {
@@ -370,9 +407,25 @@ impl History {
             project: project.clone(),
             agent: self.recording_agent,
         });
-        if self.past.len() > self.limit {
-            self.past.remove(0);
+        // A deque, so dropping the oldest step is not a move of every other whole document.
+        while self.past.len() > self.limit {
+            self.past.pop_front();
         }
+        // And a second bound, on how much those steps hold rather than how many there are. The
+        // newest step is never dropped: an undo that could not go back one step would be worse
+        // than the memory.
+        while self.past.len() > 1 && self.held_notes() > NOTE_BUDGET {
+            self.past.pop_front();
+        }
+    }
+
+    /// Notes every snapshot on both branches is holding, which is what [`NOTE_BUDGET`] bounds.
+    fn held_notes(&self) -> usize {
+        self.past
+            .iter()
+            .chain(&self.future)
+            .map(|snapshot| snapshot_notes(&snapshot.project))
+            .sum()
     }
 
     /// Applies an unrecorded state change to both branches without discarding history.
@@ -425,8 +478,8 @@ impl History {
     ///
     /// `current` is the live project, which moves onto the redo stack.
     pub fn undo(&mut self, current: &Project) -> Option<Project> {
-        let snapshot = self.past.pop()?;
-        self.future.push(Snapshot {
+        let snapshot = self.past.pop_back()?;
+        self.future.push_back(Snapshot {
             edit: snapshot.edit,
             project: current.clone(),
             agent: snapshot.agent,
@@ -436,8 +489,8 @@ impl History {
 
     /// Steps forward, returning the project state to restore.
     pub fn redo(&mut self, current: &Project) -> Option<Project> {
-        let snapshot = self.future.pop()?;
-        self.past.push(Snapshot {
+        let snapshot = self.future.pop_back()?;
+        self.past.push_back(Snapshot {
             edit: snapshot.edit,
             project: current.clone(),
             agent: snapshot.agent,
@@ -447,12 +500,12 @@ impl History {
 
     /// The edit that [`Self::undo`] would reverse.
     pub fn undo_edit(&self) -> Option<Edit> {
-        self.past.last().map(|s| s.edit)
+        self.past.back().map(|s| s.edit)
     }
 
     /// The edit that [`Self::redo`] would reapply.
     pub fn redo_edit(&self) -> Option<Edit> {
-        self.future.last().map(|s| s.edit)
+        self.future.back().map(|s| s.edit)
     }
 
     /// `true` when there is something to undo.
@@ -468,7 +521,7 @@ impl History {
     pub(crate) fn agent_target(&self, redo: bool) -> Option<u64> {
         let stack = if redo { &self.future } else { &self.past };
         stack
-            .last()?
+            .back()?
             .agent
             .filter(|group| !group.interrupted)
             .map(|group| group.id)
@@ -497,6 +550,67 @@ mod tests {
 
     fn project_named(name: &str) -> Project {
         Project::new(name, 48_000.0)
+    }
+
+    /// A project carrying `notes` notes on one clip, for measuring what a snapshot holds.
+    fn project_with_notes(name: &str, notes: usize) -> Project {
+        use auris_core::project::{ClipId, MidiClip, Note};
+        use auris_core::time::Ticks;
+
+        let mut project = Project::new(name, 48_000.0);
+        let track = project.add_instrument_track(name, "auris.synth.chiptune");
+        let clips = project
+            .track_mut(track)
+            .and_then(|track| track.kind.note_clips_mut())
+            .expect("an instrument track holds note clips");
+        let mut clip = MidiClip::new(ClipId(1), "notes", Ticks::ZERO, Ticks(1920));
+        clip.notes = (0..notes)
+            .map(|index| Note::new(60, Ticks(index as i64 * 120), Ticks(120)))
+            .collect();
+        clips.push(clip);
+        project
+    }
+
+    #[test]
+    fn a_document_too_large_to_keep_sixty_four_of_loses_the_oldest_steps() {
+        // The step limit bounds the count and not the size. Sixty-four snapshots of a document
+        // with enough notes in it is the case nothing was watching, so the note budget drops the
+        // oldest steps rather than the whole history growing with the document.
+        let mut history = History::default();
+        let big = project_with_notes("big", NOTE_BUDGET / 4);
+        for _ in 0..8 {
+            history.push(Edit::AddNote, &big);
+        }
+
+        assert!(
+            history.held_notes() <= NOTE_BUDGET,
+            "the budget was exceeded: {} notes",
+            history.held_notes()
+        );
+        assert!(history.can_undo(), "the newest step was dropped");
+    }
+
+    #[test]
+    fn the_newest_step_survives_a_document_larger_than_the_whole_budget() {
+        // One snapshot over budget on its own: undo must still go back one step. Losing the
+        // ability to undo at all would be worse than holding the memory.
+        let mut history = History::default();
+        let enormous = project_with_notes("enormous", NOTE_BUDGET + 1);
+        history.push(Edit::AddNote, &enormous);
+
+        assert!(history.can_undo(), "the only step was dropped");
+        assert_eq!(history.undo_edit(), Some(Edit::AddNote));
+    }
+
+    #[test]
+    fn an_ordinary_session_is_still_bounded_by_the_step_limit() {
+        // The budget must not change what a session of ordinary edits does: sixty-four steps of
+        // a small document, and the sixty-fifth drops the first.
+        let mut history = History::default();
+        for index in 0..80 {
+            history.push(Edit::AddNote, &project_named(&format!("step {index}")));
+        }
+        assert_eq!(history.past.len(), 64);
     }
 
     #[test]
