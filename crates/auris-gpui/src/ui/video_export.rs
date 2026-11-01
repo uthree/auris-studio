@@ -27,12 +27,13 @@ use image::{Frame, RgbaImage};
 use crate::app::{AurisApp, ExportState};
 use crate::auxiliary_window::Surface;
 use crate::theme::{Metrics, Theme};
+use crate::ui::context_menu::{ContextMenu, MenuCommand};
 use crate::ui::widgets::{ButtonState, ButtonStyle, button, button_enabled};
 
 /// Width of the preview image; a portrait video is previewed at this height instead.
 const PREVIEW_EDGE: u32 = 640;
 
-/// Colours a palette or single-colour swatch steps through when clicked: bright enough to read
+/// Colours a palette or single-colour swatch offers when clicked: bright enough to read
 /// on a dark background, and different enough from their neighbours to tell parts apart.
 const VIVID: [Color; 16] = [
     Color(0x3d7bff),
@@ -57,10 +58,12 @@ const VIVID: [Color; 16] = [
 /// paper white for the people who want the opposite.
 const BACKGROUNDS: [Color; 6] = [
     Color(0x000000),
-    Color(0x0b1020),
-    Color(0x14181f),
-    Color(0x1a1028),
-    Color(0x0e1a14),
+    // Dark, but each far enough from black and from the others to be told apart as a swatch:
+    // the first set were all within a few steps of black and read as five black squares.
+    Color(0x101c3a),
+    Color(0x262c36),
+    Color(0x2a1640),
+    Color(0x10301f),
     Color(0xf4f1ea),
 ];
 
@@ -109,10 +112,9 @@ pub(crate) fn preview_size(size: VideoSize) -> VideoSize {
     .encodable()
 }
 
-/// The next colour after `color` in [`VIVID`], or the first when it is not one of them.
-pub(crate) fn next_vivid(color: Color) -> Color {
-    let at = VIVID.iter().position(|candidate| *candidate == color);
-    VIVID[at.map_or(0, |index| (index + 1) % VIVID.len())]
+/// How a frame size is named: width by height, in pixels.
+fn size_label(size: VideoSize) -> String {
+    format!("{}×{}", size.width, size.height)
 }
 
 fn hsla(color: Color) -> gpui::Hsla {
@@ -394,13 +396,18 @@ impl AurisApp {
             .as_ref()
             .is_some_and(|(_, score)| score.notes.is_empty());
 
+        // Two columns while there is room for both, one scrolling column below the split
+        // width, as Atelier lays out any two panes that share a region.
+        let stacked = window.viewport_size().width < theme.atelier.density.split_width;
+
         let mut picture = div()
             .id("video-preview")
             .flex()
+            .flex_none()
             .items_center()
             .justify_center()
             .w_full()
-            .h(px(300.))
+            .h(px(if stacked { 220. } else { 300. }))
             .rounded(Metrics::RADIUS_MD)
             .overflow_hidden()
             .bg(gpui::black());
@@ -411,7 +418,6 @@ impl AurisApp {
             .flex()
             .flex_col()
             .gap_2()
-            .flex_1()
             .min_w_0()
             .child(picture)
             .child(self.note(self.t(Key::VideoPreviewHint), &theme));
@@ -430,29 +436,90 @@ impl AurisApp {
         }
         left = left.child(self.ffmpeg_status(&theme, cx));
 
-        let right = div()
-            .id("video-settings")
+        let settings = div()
             .flex()
             .flex_col()
-            .gap_3()
-            .w(px(330.))
             .flex_none()
-            .h_full()
-            .overflow_y_scroll()
-            .pr_1()
+            .gap_3()
             .child(self.video_format_section(&style, &theme, cx))
             .child(self.video_color_section(&style, &theme, cx))
             .child(self.video_background_section(&style, &theme, cx))
             .child(self.video_motion_section(&style, &theme, cx));
 
+        let body = if stacked {
+            div()
+                .id("video-body")
+                .flex()
+                .flex_col()
+                .gap_4()
+                .p_4()
+                .flex_1()
+                .min_h_0()
+                .overflow_y_scroll()
+                .child(left.flex_none())
+                .child(settings.w_full())
+                .into_any_element()
+        } else {
+            div()
+                .flex()
+                .gap_4()
+                .p_4()
+                .flex_1()
+                .min_h_0()
+                .child(
+                    div()
+                        .id("video-preview-column")
+                        .flex_1()
+                        .min_w_0()
+                        .h_full()
+                        .overflow_y_scroll()
+                        .child(left),
+                )
+                .child(
+                    div()
+                        .id("video-settings")
+                        .w(px(330.))
+                        .flex_none()
+                        .h_full()
+                        .overflow_y_scroll()
+                        .pr_1()
+                        .child(settings),
+                )
+                .into_any_element()
+        };
+
+        // The window's one commit, at the trailing end of a foot of its own, where every other
+        // dialog in the application keeps it. It used to float under the notes in the left
+        // column, wherever they happened to end.
+        let exporting =
+            self.choosing_export || self.export.as_ref().is_some_and(|e| e.result.is_none());
+        let ready =
+            matches!(self.video_export.ffmpeg, FfmpegProbe::Found(_)) && !exporting && !empty;
+        let footer = div()
+            .flex()
+            .flex_none()
+            .justify_end()
+            .px_4()
+            .py_3()
+            .border_t_1()
+            .border_color(theme.border_subtle)
+            .child(button_enabled(
+                "video-export",
+                self.t(Key::VideoExportButton),
+                ButtonStyle::Primary,
+                ButtonState::available(false, ready),
+                theme.accent,
+                &theme,
+                cx.listener(|this, _, _, cx| this.start_video_export(cx)),
+            ));
+
         div()
             .flex()
-            .gap_4()
-            .p_4()
+            .flex_col()
             .size_full()
             .min_h_0()
-            .child(left)
-            .child(right)
+            .child(body)
+            .child(footer)
             .into_any_element()
     }
 
@@ -464,8 +531,6 @@ impl AurisApp {
     }
 
     fn ffmpeg_status(&self, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
-        let exporting =
-            self.choosing_export || self.export.as_ref().is_some_and(|e| e.result.is_none());
         let mut status = div().flex().flex_col().gap_2();
         match &self.video_export.ffmpeg {
             FfmpegProbe::Unchecked | FfmpegProbe::Checking => {
@@ -531,18 +596,7 @@ impl AurisApp {
                     );
             }
         }
-        let ready = matches!(self.video_export.ffmpeg, FfmpegProbe::Found(_)) && !exporting;
-        status
-            .child(div().flex().justify_end().child(button_enabled(
-                "video-export",
-                self.t(Key::VideoExportButton),
-                ButtonStyle::Primary,
-                ButtonState::available(false, ready),
-                theme.accent,
-                theme,
-                cx.listener(|this, _, _, cx| this.start_video_export(cx)),
-            )))
-            .into_any_element()
+        status.into_any_element()
     }
 
     fn section(&self, title: Key, theme: &Theme) -> gpui::Div {
@@ -553,34 +607,6 @@ impl AurisApp {
                 .text_color(theme.text)
                 .child(self.t(title).to_string()),
         )
-    }
-
-    /// A row of mutually exclusive choices.
-    fn choices<T: Copy + PartialEq + 'static>(
-        &self,
-        id: &'static str,
-        options: Vec<(T, String)>,
-        current: T,
-        theme: &Theme,
-        cx: &mut Context<Self>,
-        apply: fn(&mut NoteRollStyle, T),
-    ) -> gpui::Div {
-        let mut row = div().flex().flex_wrap().gap_1();
-        for (index, (value, caption)) in options.into_iter().enumerate() {
-            row = row.child(button(
-                ElementId::NamedInteger(id.into(), index as u64),
-                caption,
-                ButtonStyle::Normal,
-                value == current,
-                theme.accent,
-                theme,
-                cx.listener(move |this, _, _, cx| {
-                    this.edit_video_style(|style| apply(style, value));
-                    cx.notify();
-                }),
-            ));
-        }
-        row
     }
 
     /// A labelled value with buttons either side that step it.
@@ -633,28 +659,22 @@ impl AurisApp {
             .child(side("up", "+", 1.0))
     }
 
-    /// A latched on/off button.
+    /// An on/off setting, applied at once: a switch with its label beside it.
     fn toggle(
         &self,
         id: &'static str,
         label: Key,
         on: bool,
-        theme: &Theme,
+        _theme: &Theme,
         cx: &mut Context<Self>,
         flip: fn(&mut NoteRollStyle),
-    ) -> gpui::Stateful<gpui::Div> {
-        button(
-            id,
-            self.t(label),
-            ButtonStyle::Normal,
-            on,
-            theme.accent,
-            theme,
-            cx.listener(move |this, _, _, cx| {
+    ) -> atelier::Switch {
+        atelier::Switch::new(id, on)
+            .label(self.t(label))
+            .on_change(cx.listener(move |this, _: &bool, _, cx| {
                 this.edit_video_style(flip);
                 cx.notify();
-            }),
-        )
+            }))
     }
 
     fn swatch(
@@ -667,13 +687,15 @@ impl AurisApp {
         let selector = id.to_string();
         div()
             .id(id)
-            .debug_selector(move || selector.clone())
+            .debug_selector(move || selector.clone()) // atelier: allow — a colour swatch has no component.
+            .tab_index(0)
+            .key_context(atelier::CONTROL_CONTEXT)
             .size(px(22.))
             .rounded(Metrics::RADIUS_SM)
             .bg(hsla(color))
             .border_2()
             .border_color(if selected { theme.accent } else { theme.border })
-            .cursor_pointer()
+            .focus(|this| this.border_color(theme.selection))
             .on_click(on_click)
     }
 
@@ -683,26 +705,75 @@ impl AurisApp {
         theme: &Theme,
         cx: &mut Context<Self>,
     ) -> gpui::Div {
-        let sizes = VideoSize::CHOICES
-            .into_iter()
-            .map(|size| (size, format!("{}×{}", size.width, size.height)))
-            .collect();
-        let rates = NoteRollStyle::FPS_CHOICES
-            .into_iter()
-            .map(|fps| (fps, format!("{fps} fps")))
-            .collect();
+        let size = style.size;
+        let fps = NoteRollStyle::FPS_CHOICES
+            .iter()
+            .position(|choice| *choice == style.fps)
+            .unwrap_or(usize::MAX);
         self.section(Key::VideoSize, theme)
+            // Five sizes with long names: a menu, which the choosing guide gives anything past a
+            // handful, rather than a row of buttons that wrapped onto two lines.
             .child(
-                self.choices("video-size", sizes, style.size, theme, cx, |style, size| {
-                    style.size = size
-                }),
+                crate::ui::widgets::menu_picker(
+                    "video-size",
+                    div().text_xs().child(size_label(size)),
+                    theme,
+                    Self::opens_menu(cx, move |this, at| this.video_size_menu(at, size)),
+                )
+                .w(px(180.)),
             )
             .child(self.note(self.t(Key::VideoFps), theme))
             .child(
-                self.choices("video-fps", rates, style.fps, theme, cx, |style, fps| {
-                    style.fps = fps
-                }),
+                div().flex().child(
+                    atelier::SegmentedControl::new(
+                        "video-fps",
+                        NoteRollStyle::FPS_CHOICES
+                            .map(|fps| atelier::Segment::label(format!("{fps} fps"))),
+                        fps,
+                    )
+                    .size(atelier::ControlSize::Small)
+                    .on_select(cx.listener(|this, index: &usize, _, cx| {
+                        if let Some(fps) = NoteRollStyle::FPS_CHOICES.get(*index).copied() {
+                            this.edit_video_style(|style| style.fps = fps);
+                        }
+                        cx.notify();
+                    })),
+                ),
             )
+    }
+
+    /// The frame sizes on offer, the current one ticked.
+    fn video_size_menu(&self, at: gpui::Point<gpui::Pixels>, current: VideoSize) -> ContextMenu {
+        VideoSize::CHOICES.into_iter().fold(
+            ContextMenu::new(at, self.t(Key::VideoSize)),
+            |menu, size| {
+                menu.toggle(
+                    size_label(size),
+                    MenuCommand::VideoSize(size),
+                    size == current,
+                )
+            },
+        )
+    }
+
+    /// Every colour a swatch can take, the one it has ticked.
+    fn video_color_menu(
+        &self,
+        at: gpui::Point<gpui::Pixels>,
+        slot: Option<usize>,
+        current: Color,
+    ) -> ContextMenu {
+        VIVID.into_iter().enumerate().fold(
+            ContextMenu::new(at, self.t(Key::VideoColors)),
+            |menu, (index, color)| {
+                menu.colour(
+                    format!("{}", index + 1),
+                    MenuCommand::VideoColor { slot, color },
+                    hsla(color),
+                    color == current,
+                )
+            },
+        )
     }
 
     fn video_color_section(
@@ -729,14 +800,29 @@ impl AurisApp {
                 self.t(Key::VideoColorSingle).to_string(),
             ),
         ];
-        let mut section = self.section(Key::VideoColors, theme).child(self.choices(
-            "video-coloring",
-            modes,
-            style.coloring,
-            theme,
-            cx,
-            |style, coloring| style.coloring = coloring,
-        ));
+        let selected = modes
+            .iter()
+            .position(|(mode, _)| *mode == style.coloring)
+            .unwrap_or(usize::MAX);
+        let order: Vec<NoteColoring> = modes.iter().map(|(mode, _)| *mode).collect();
+        let mut section = self.section(Key::VideoColors, theme).child(
+            div().flex().child(
+                atelier::SegmentedControl::new(
+                    "video-coloring",
+                    modes
+                        .into_iter()
+                        .map(|(_, caption)| atelier::Segment::label(caption)),
+                    selected,
+                )
+                .size(atelier::ControlSize::Small)
+                .on_select(cx.listener(move |this, index: &usize, _, cx| {
+                    if let Some(coloring) = order.get(*index).copied() {
+                        this.edit_video_style(|style| style.coloring = coloring);
+                    }
+                    cx.notify();
+                })),
+            ),
+        );
         match style.coloring {
             NoteColoring::Palette => {
                 let mut row = div().flex().flex_wrap().gap_1();
@@ -746,13 +832,8 @@ impl AurisApp {
                         color,
                         false,
                         theme,
-                        cx.listener(move |this, _, _, cx| {
-                            this.edit_video_style(|style| {
-                                if let Some(slot) = style.palette.get_mut(index) {
-                                    *slot = next_vivid(*slot);
-                                }
-                            });
-                            cx.notify();
+                        Self::opens_menu(cx, move |this, at| {
+                            this.video_color_menu(at, Some(index), color)
                         }),
                     ));
                 }
@@ -761,17 +842,13 @@ impl AurisApp {
                     .child(self.note(self.t(Key::VideoPaletteHint), theme));
             }
             NoteColoring::Single => {
+                let current = style.single_color;
                 section = section.child(div().flex().child(Self::swatch(
                     "video-single".into(),
-                    style.single_color,
+                    current,
                     false,
                     theme,
-                    cx.listener(|this, _, _, cx| {
-                        this.edit_video_style(|style| {
-                            style.single_color = next_vivid(style.single_color);
-                        });
-                        cx.notify();
-                    }),
+                    Self::opens_menu(cx, move |this, at| this.video_color_menu(at, None, current)),
                 )));
             }
             NoteColoring::Pitch => {
@@ -905,8 +982,8 @@ impl AurisApp {
             .child(
                 div()
                     .flex()
-                    .flex_wrap()
-                    .gap_1()
+                    .flex_col()
+                    .gap_2()
                     .child(self.toggle(
                         "video-playhead-line",
                         Key::VideoPlayheadLine,
@@ -1018,11 +1095,39 @@ mod tests {
         );
     }
 
-    #[test]
-    fn swatches_step_through_the_vivid_colours_and_wrap() {
-        assert_eq!(next_vivid(VIVID[0]), VIVID[1]);
-        assert_eq!(next_vivid(VIVID[15]), VIVID[0]);
-        assert_eq!(next_vivid(Color(0x123456)), VIVID[0]);
+    #[gpui::test]
+    fn a_swatch_offers_every_colour_and_choosing_one_sets_it(cx: &mut TestAppContext) {
+        let (app, cx) = harness::open(cx);
+        app.update(cx, |app, cx| {
+            let current = app.settings.video.palette[0];
+            let menu = app.video_color_menu(gpui::point(px(0.), px(0.)), Some(0), current);
+            let rows: Vec<_> = menu
+                .entries
+                .iter()
+                .filter_map(|entry| match entry {
+                    crate::ui::context_menu::MenuEntry::Item(item) => Some(item),
+                    crate::ui::context_menu::MenuEntry::Separator => None,
+                })
+                .collect();
+            assert_eq!(rows.len(), VIVID.len(), "every colour is one choice away");
+            let pick = VIVID.into_iter().find(|color| *color != current).unwrap();
+            app.run_menu_command(
+                MenuCommand::VideoColor {
+                    slot: Some(0),
+                    color: pick,
+                },
+                cx,
+            );
+            assert_eq!(app.settings.video.palette[0], pick);
+            app.run_menu_command(
+                MenuCommand::VideoColor {
+                    slot: None,
+                    color: pick,
+                },
+                cx,
+            );
+            assert_eq!(app.settings.video.single_color, pick);
+        });
     }
 
     #[gpui::test]

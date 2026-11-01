@@ -194,9 +194,10 @@ messages! {
     }
 
     /// The line under the piano roll's heading, naming the gestures that are actually bound.
-    fn piano_roll_hint(create: &str, delete: &str) {
-        en: "{create}: add note · drag: move · Alt/Option-drag: copy · right edge: resize · {delete}: delete · right-click: menu",
-        ja: "{create}: ノート追加 · ドラッグ: 移動 · Alt/Optionドラッグ: 複製 · 右端: 長さ変更 · {delete}: 削除 · 右クリック: メニュー"
+    /// `alt` is the platform's own name for the key: Option on a Mac, Alt elsewhere.
+    fn piano_roll_hint(create: &str, delete: &str, alt: &str) {
+        en: "{create}: add note · drag: move · {alt}-drag: copy · right edge: resize · {delete}: delete · right-click: menu",
+        ja: "{create}: ノート追加 · ドラッグ: 移動 · {alt}+ドラッグ: 複製 · 右端: 長さ変更 · {delete}: 削除 · 右クリック: メニュー"
     }
 
     /// Pitch and selection size beside a moved or resized note.

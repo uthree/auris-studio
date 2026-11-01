@@ -92,7 +92,6 @@ impl AurisApp {
                             .id("ruler")
                             .h(Metrics::RULER_HEIGHT)
                             .w_full()
-                            .cursor_pointer()
                             .child({
                                 let theme = theme.clone();
                                 let view = view.clone();

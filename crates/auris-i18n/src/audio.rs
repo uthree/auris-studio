@@ -53,6 +53,50 @@ pub fn theory_name(name: &str, language: Language) -> &str {
         })
 }
 
+/// A key as a reader would name it: `C major` in English, `C メジャー` in Japanese.
+///
+/// Takes the text format's own spelling — `C major`, `F# dorian` — because that is what
+/// `auris-core` writes and this crate may not name it. Anything not in that shape comes back
+/// as it was.
+pub fn key_name(text: &str, language: Language) -> String {
+    let Some((tonic, scale)) = text.split_once(' ') else {
+        return text.to_owned();
+    };
+    let Some((_, english, japanese)) = SCALE_NAMES.iter().find(|(key, _, _)| *key == scale) else {
+        return text.to_owned();
+    };
+    let name = match language {
+        Language::English => english,
+        Language::Japanese => japanese,
+    };
+    format!("{tonic} {name}")
+}
+
+/// The text format's scale names, and what each language calls them.
+const SCALE_NAMES: &[(&str, &str, &str)] = &[
+    ("major", "major", "メジャー"),
+    ("minor", "minor", "マイナー"),
+    ("harmonic-minor", "harmonic minor", "ハーモニック・マイナー"),
+    ("melodic-minor", "melodic minor", "メロディック・マイナー"),
+    ("dorian", "dorian", "ドリアン"),
+    ("phrygian", "phrygian", "フリジアン"),
+    ("lydian", "lydian", "リディアン"),
+    ("mixolydian", "mixolydian", "ミクソリディアン"),
+    ("locrian", "locrian", "ロクリアン"),
+    (
+        "major-pentatonic",
+        "major pentatonic",
+        "メジャー・ペンタトニック",
+    ),
+    (
+        "minor-pentatonic",
+        "minor pentatonic",
+        "マイナー・ペンタトニック",
+    ),
+    ("blues", "blues", "ブルース"),
+    ("whole-tone", "whole tone", "ホールトーン"),
+];
+
 /// Translation of a song preset's one-line description.
 ///
 /// Same shape and the same reason as [`theory_description`]: the catalogue is a set of `.asong`
@@ -645,6 +689,21 @@ mod tests {
             parameter("Warp Factor", Language::Japanese),
             "Warp Factor",
             "a plugin we have never heard of must still show its own label"
+        );
+    }
+
+    #[test]
+    fn a_key_is_named_in_the_readers_language() {
+        assert_eq!(key_name("C major", Language::Japanese), "C メジャー");
+        assert_eq!(key_name("F# dorian", Language::Japanese), "F# ドリアン");
+        assert_eq!(
+            key_name("A harmonic-minor", Language::English),
+            "A harmonic minor"
+        );
+        assert_eq!(
+            key_name("C weird", Language::Japanese),
+            "C weird",
+            "a scale nobody told this table about is shown as it came"
         );
     }
 

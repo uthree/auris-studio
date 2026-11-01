@@ -29,6 +29,11 @@ const RESIZE_BAND: Pixels = px(4.0);
 /// Below the ordinary saved height there is not room for the header's three content rows.
 const COMPACT_TRACK_HEADER_BELOW: f32 = 72.0;
 
+/// From this height the pan fader has a row of its own under the volume; below it the two share
+/// one. The ordinary saved height is one row short of three: stacked there, the pan row ran out
+/// of the bottom of the header and its label and fader were cut off.
+const STACKED_TRACK_HEADER_FROM: f32 = 96.0;
+
 /// How a track's arm button is latched.
 ///
 /// Three answers rather than two, because the button has two jobs: it says this track was armed
@@ -245,6 +250,7 @@ impl AurisApp {
 
                 let is_selected = selected == Some(id);
                 let is_dragging = dragging == Some(id);
+                let stacked = height >= STACKED_TRACK_HEADER_FROM;
 
                 if height < COMPACT_TRACK_HEADER_BELOW {
                     let status = [
@@ -664,10 +670,23 @@ impl AurisApp {
                                         div()
                                             .flex_1()
                                             .min_w_0()
-                                            .child(self.gain_control(id, gain_db, cx)),
-                                    ),
+                                            .child(self.gain_control(id, gain_db, stacked, cx)),
+                                    )
+                                    // Sharing the row, the two drop their captions — the value
+                                    // says which is which, and the tooltip names it — so that
+                                    // neither reading is cut down to its unit.
+                                    .when(!stacked, |row| {
+                                        row.child(
+                                            div()
+                                                .w(px(44.0))
+                                                .flex_shrink_0()
+                                                .child(self.pan_control(id, pan, false, cx)),
+                                        )
+                                    }),
                             )
-                            .child(self.pan_control(id, pan, cx)),
+                            .when(stacked, |column| {
+                                column.child(self.pan_control(id, pan, true, cx))
+                            }),
                     )
                     // The input, left of what the track puts out, which is the order the signal
                     // travels in — narrower, and set a little apart, so it reads as a different
@@ -772,11 +791,12 @@ impl AurisApp {
         &self,
         track: TrackId,
         gain_db: f32,
+        labelled: bool,
         cx: &mut gpui::Context<Self>,
     ) -> impl IntoElement + use<> {
         self.fader(
             ("gain", track.0 as usize),
-            self.t(Key::Volume),
+            if labelled { self.t(Key::Volume) } else { "" },
             ParamTarget::TrackGain(track),
             gain_db,
             cx,
@@ -787,11 +807,12 @@ impl AurisApp {
         &self,
         track: TrackId,
         pan: f32,
+        labelled: bool,
         cx: &mut gpui::Context<Self>,
     ) -> impl IntoElement + use<> {
         self.fader(
             ("pan", track.0 as usize),
-            self.t(Key::Pan),
+            if labelled { self.t(Key::Pan) } else { "" },
             ParamTarget::TrackPan(track),
             pan,
             cx,

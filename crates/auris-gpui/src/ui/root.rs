@@ -3397,6 +3397,20 @@ impl AurisApp {
             cx.notify();
             return;
         }
+        // A selection is the last thing to give back before the engine. Escape is what every
+        // editor deselects with, and a hand that pressed it to let go of some notes got a panic
+        // and a status line instead. The clip the roll is showing stays: dropping it would empty
+        // the editor rather than the selection inside it.
+        if !self.selected_notes.is_empty() {
+            self.selected_notes.clear();
+            cx.notify();
+            return;
+        }
+        if self.selected_clips.len() > 1 {
+            self.selected_clips = self.selected_clip.into_iter().collect();
+            cx.notify();
+            return;
+        }
         // Before the panic rather than after: the engine silences its voices, and a keyboard that
         // still believed it was holding three of them would send their releases into the quiet
         // and then refuse to strike those notes again.

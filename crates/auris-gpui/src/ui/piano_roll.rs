@@ -733,10 +733,13 @@ impl AurisApp {
                     // the text be the part that goes; without it the row's smallest width is the
                     // sum of every word in it, and the slider was the first thing over the side.
                     .min_w_0()
+                    // Kept whole up to a width and only then truncated: shrinking alongside the
+                    // hint, it lost its last letters first and read "Piano Ro" beside a hint that
+                    // still had room to give.
                     .child(
                         div()
-                            .flex_shrink()
-                            .min_w_0()
+                            .flex_shrink_0()
+                            .max_w(px(220.0))
                             .truncate()
                             .child(messages::piano_roll_title(self.language(), &clip_name)),
                     )
@@ -783,6 +786,11 @@ impl AurisApp {
                                         self.language(),
                                         self.t(self.pointer.create.label()),
                                         self.t(self.pointer.delete.label()),
+                                        if cfg!(target_os = "macos") {
+                                            "Option"
+                                        } else {
+                                            "Alt"
+                                        },
                                     ),
                                     RollTool::Velocity => {
                                         messages::piano_roll_velocity_hint(self.language())
@@ -803,9 +811,10 @@ impl AurisApp {
                                 &theme,
                                 Self::opens_menu(cx, |this, at| this.note_snap_menu(at)),
                             )
-                            .w_24()
-                            .min_w_0()
-                            .truncate()
+                            // Its own width and never less: a fixed width cut "Smart (1/16)" at
+                            // both ends and let the label spill over the hint beside it.
+                            .flex_shrink_0()
+                            .whitespace_nowrap()
                             .tooltip(crate::ui::tooltip::keyed_tip(
                                 self.note_snap_tip(),
                                 "",
@@ -1216,36 +1225,35 @@ impl AurisApp {
                         .size_full()
                     })
                     .when(editable, |lane| {
-                        lane.cursor_pointer()
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(move |this, event: &MouseDownEvent, _, cx| {
-                                    this.press_curve_lane(which, event, cx);
-                                }),
-                            )
-                            .on_mouse_down(
-                                MouseButton::Right,
-                                Self::opens_menu(cx, move |this, at| {
-                                    // Taking points off one at a time is the ⌥-click; this is the
-                                    // way back from a curve that got away from somebody. With
-                                    // nothing selected there is nothing to straighten, and an
-                                    // empty menu is a menu `open_menu` declines to show.
-                                    let menu = crate::ui::context_menu::ContextMenu::new(
-                                        at,
-                                        curve_label(which, this.language()),
-                                    );
-                                    match this.selected_clip {
-                                        Some(clip) => menu.item(
-                                            this.t(Key::StraightenCurve),
-                                            crate::ui::context_menu::MenuCommand::ClearCurve {
-                                                clip,
-                                                which,
-                                            },
-                                        ),
-                                        None => menu,
-                                    }
-                                }),
-                            )
+                        lane.on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                                this.press_curve_lane(which, event, cx);
+                            }),
+                        )
+                        .on_mouse_down(
+                            MouseButton::Right,
+                            Self::opens_menu(cx, move |this, at| {
+                                // Taking points off one at a time is the ⌥-click; this is the
+                                // way back from a curve that got away from somebody. With
+                                // nothing selected there is nothing to straighten, and an
+                                // empty menu is a menu `open_menu` declines to show.
+                                let menu = crate::ui::context_menu::ContextMenu::new(
+                                    at,
+                                    curve_label(which, this.language()),
+                                );
+                                match this.selected_clip {
+                                    Some(clip) => menu.item(
+                                        this.t(Key::StraightenCurve),
+                                        crate::ui::context_menu::MenuCommand::ClearCurve {
+                                            clip,
+                                            which,
+                                        },
+                                    ),
+                                    None => menu,
+                                }
+                            }),
+                        )
                     })
                     .on_scroll_wheel(cx.listener(|this, event: &gpui::ScrollWheelEvent, _, cx| {
                         this.scroll_roll(event, cx);

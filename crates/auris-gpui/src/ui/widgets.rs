@@ -744,7 +744,11 @@ pub fn readout<C: Into<SharedString>, V: Into<SharedString>>(
         .flex_col()
         .justify_center()
         .h_full()
-        .w(width)
+        // A floor rather than a width: the value and its sub-reading are drawn in whatever font
+        // the system supplies, and a fixed width let a wide one run into the next readout.
+        .min_w(width)
+        .flex_shrink_0()
+        .whitespace_nowrap()
         .px_2()
         .child(
             div()
@@ -1051,6 +1055,7 @@ where
     D: Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
     K: Fn(&SliderKeyboardEvent, &mut Window, &mut App) + 'static,
 {
+    let label: SharedString = label.into();
     let fraction = fraction.clamp(0.0, 1.0);
     let (fill_start, fill_width) = match origin {
         SliderFill::FromStart => (0.0, fraction),
@@ -1076,16 +1081,18 @@ where
         .rounded(Metrics::RADIUS_SM)
         .border_1()
         .border_color(gpui::transparent_black())
-        .cursor_pointer()
-        .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .text_xs()
-                .text_color(theme.text_muted)
-                .truncate()
-                .child(label.into()),
-        )
+        // No caption at all rather than an empty one: an empty caption still took half the row.
+        .when(!label.is_empty(), |row| {
+            row.child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .text_xs()
+                    .text_color(theme.text_muted)
+                    .truncate()
+                    .child(label),
+            )
+        })
         .child(
             div()
                 .relative()
@@ -1210,7 +1217,6 @@ where
         .rounded(Metrics::RADIUS_SM)
         .border_1()
         .border_color(gpui::transparent_black())
-        .cursor_pointer()
         .child(
             div()
                 .relative()

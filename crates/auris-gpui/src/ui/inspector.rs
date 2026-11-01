@@ -234,7 +234,23 @@ impl AurisApp {
                     .gap_2()
                     .text_xs()
                     .text_color(theme.text_muted)
-                    .child(div().flex_shrink_0().child(self.t(Key::InspectorClip)))
+                    // A mark rather than the word: the default name already says "Clip 1", and
+                    // the word in front of it read "Clip Clip 1".
+                    .child(
+                        div()
+                            .id("inspector-clip-mark")
+                            .flex_shrink_0()
+                            .tooltip(crate::ui::tooltip::keyed_tip(
+                                self.t(Key::InspectorClip),
+                                "",
+                                theme,
+                            ))
+                            .child(crate::ui::icons::icon(
+                                Icon::Notes,
+                                gpui::px(12.0),
+                                theme.text_muted,
+                            )),
+                    )
                     .child(
                         div()
                             .id("inspector-clip-name")
@@ -464,6 +480,14 @@ impl AurisApp {
 
         if let Some(instrument_id) = instrument_id {
             let name = self.instrument_label(track_id, &instrument_id);
+            // The artwork above already names the sound, and for a built-in instrument with no
+            // preset the sound and the instrument are the same word: the row keeps its buttons
+            // and drops the third "Piano".
+            let shown = if name == sound_summary {
+                String::new()
+            } else {
+                name.clone()
+            };
             let subject = PluginSubject::Instrument(track_id);
             sound_rows.push(
                 div()
@@ -479,7 +503,7 @@ impl AurisApp {
                             .min_w_0()
                             .truncate()
                             .text_xs()
-                            .child(name.clone())
+                            .child(shown)
                             .tooltip(crate::ui::tooltip::keyed_tip(name.clone(), "", &theme)),
                     )
                     .child(self.plugin_editor_button("inst-open", subject, cx))

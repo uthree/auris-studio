@@ -1260,6 +1260,14 @@ impl Session {
             })
     }
 
+    /// Whether the document still carries the placeholder name it was created with, and no file.
+    ///
+    /// A frontend shows the placeholder in its reader's language; the stored word is English
+    /// because a document is not written in any one interface language.
+    pub fn is_untitled(&self) -> bool {
+        self.path.is_none() && matches!(self.project.name.trim(), "" | Project::UNTITLED)
+    }
+
     /// Names the document, as one undoable step. Surrounding whitespace is dropped.
     ///
     /// Returns `false`, recording nothing, for a blank name or the name it already has.

@@ -696,7 +696,6 @@ impl AurisApp {
                     .border_1()
                     .border_color(theme.border)
                     .rounded(Metrics::RADIUS_SM)
-                    .cursor_pointer()
                     .child(
                         canvas(
                             move |bounds, _, _| recorded.set(Some(bounds)),

@@ -339,7 +339,6 @@ impl SettingsWindow {
                                             .h(px(if detail.is_empty() { 28.0 } else { 44.0 }))
                                             .flex_shrink_0()
                                             .rounded(Metrics::RADIUS_XS)
-                                            .cursor_pointer()
                                             .when(menu.highlighted == index, |this| {
                                                 this.bg(theme.accent_soft)
                                             })
