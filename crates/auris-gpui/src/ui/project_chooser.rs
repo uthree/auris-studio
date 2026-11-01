@@ -389,7 +389,26 @@ impl AurisApp {
                 ChooserPage::Recent,
             ))
             .child(div().flex_1())
-            // Setup is help, not a way to start: it lives with navigation, not with the commit.
+            // Settings and setup are help, not ways to start: they live at the sidebar's foot
+            // with navigation, not with the commit. Settings is the same window the editor opens.
+            // Atelier's button tooltip is plain text; the wrapper carries the keyed card, so the
+            // shortcut shown is whatever the keymap currently says.
+            .child(
+                div()
+                    .id("chooser-settings-tip")
+                    .w_full()
+                    .tooltip(self.tip(Key::Settings, "view.settings"))
+                    .child(
+                        Button::new("chooser-settings", self.t(Key::MenuSettingsItem))
+                            .ghost()
+                            .icon(IconName::Settings)
+                            .full_width()
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.open_settings(cx);
+                                cx.notify();
+                            })),
+                    ),
+            )
             .child(
                 Button::new("chooser-setup", self.t(Key::SetupGuide))
                     .ghost()
@@ -771,6 +790,12 @@ impl AurisApp {
                     this.pick_and_open_project(cx);
                 }
             }))
+            .on_action(
+                cx.listener(|this, _: &crate::actions::OpenSettings, _, cx| {
+                    this.open_settings(cx);
+                    cx.notify();
+                }),
+            )
             .on_action(cx.listener(|this, _: &crate::actions::Quit, window, cx| {
                 this.quit_asking(window, cx)
             }))
@@ -916,6 +941,38 @@ mod tests {
             assert!(app.project_chooser.is_none());
             assert!(app.session.audio_suspended());
             assert!(!app.session.is_dirty());
+        });
+    }
+
+    #[gpui::test]
+    fn the_chooser_sidebar_opens_settings(cx: &mut gpui::TestAppContext) {
+        let (app, cx) = crate::harness::open(cx);
+        cx.update(|window, cx| {
+            app.update(cx, |app, cx| app.show_project_chooser(window, cx));
+        });
+        crate::harness::paint(&app, cx);
+        app.read_with(cx, |app, _| assert!(app.settings_window.is_none()));
+        crate::harness::click("chooser-settings", cx);
+        app.read_with(cx, |app, _| {
+            assert!(app.settings_window.is_some(), "the button opens Settings");
+            assert!(app.project_chooser.is_some(), "and the chooser stays");
+        });
+    }
+
+    #[gpui::test]
+    fn the_settings_shortcut_works_on_the_chooser(cx: &mut gpui::TestAppContext) {
+        let (app, cx) = crate::harness::open(cx);
+        cx.update(|window, cx| {
+            app.update(cx, |app, cx| app.show_project_chooser(window, cx));
+        });
+        crate::harness::paint(&app, cx);
+        cx.update(|window, cx| {
+            app.read_with(cx, |app, _| window.focus(&app.focus));
+        });
+        cx.simulate_keystrokes("secondary-,");
+        app.read_with(cx, |app, _| {
+            assert!(app.settings_window.is_some(), "the shortcut opens Settings");
+            assert!(app.project_chooser.is_some());
         });
     }
 
