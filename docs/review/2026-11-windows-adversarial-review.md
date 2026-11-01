@@ -46,16 +46,17 @@ heading, so the fixes can land in any order.
 
 ## Findings
 
-### AN-01 — Applied installers and helper copies are never deleted (open)
+### AN-01 — Applied installers and helper copies are never deleted (fixed)
 
 `download_update` keeps the installer in `<config>/updates`, and `spawn_update_helper` copies the
 helper there as `auris-update-helper-<pid>.exe`. Nothing ever removes either. On the review
 machine the folder held **540 MB**: eight installers from v0.11.0 to v0.17.0, about 70 MB each, and
 nine helper copies. It grows by one installer per release.
 
-**Direction.** Once per process, delete installers for versions no newer than the running one and
-helper copies belonging to other processes. Keep a newer, not yet applied installer, because
-`download_update` reuses one that still verifies.
+**Fix.** `prune_update_folder`, run once per process when a window starts its update checks, deletes
+installers for versions no newer than the running one and helper copies belonging to other
+processes. A newer, not yet applied installer is kept. A helper that is still running cannot be
+deleted on Windows; the error is ignored and the file goes on the next launch.
 
 ### AN-02 — An approved audio URL can redirect to loopback, the LAN or plain HTTP (open)
 
