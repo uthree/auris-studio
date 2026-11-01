@@ -229,7 +229,7 @@ strings! {
     ChooseNew { en: "New project", ja: "新規プロジェクト" }
     ChooseRecent { en: "Recent projects", ja: "最近使った項目" }
     ChooseEmpty { en: "Empty project", ja: "空のプロジェクト" }
-    ChooseEmptyHelp { en: "Start with an instrument track and build your arrangement.", ja: "音源トラックから、自由に曲を作り始めます。" }
+    ChooseEmptyHelp { en: "Start with an instrument track and build your arrangement", ja: "音源トラックから自由に曲を作り始める" }
     ChooseStartHelp { en: "Choose how to begin your song.", ja: "曲の始め方を選んでください。" }
     ChooseAiHelp { en: "Create music through conversation with an AI agent.", ja: "AIエージェントと話しながら曲を作る" }
     ChooseStartAi { en: "Start with AI…", ja: "AIで作り始める…" }
@@ -918,7 +918,7 @@ strings! {
     VideoColorPalette { en: "Palette", ja: "パレット" }
     VideoColorPitch { en: "By pitch", ja: "音の高さ" }
     VideoColorSingle { en: "One colour", ja: "単色" }
-    VideoPaletteHint { en: "Click a colour to change it. Tracks take them in order.", ja: "色をクリックすると変わります。トラックの並び順に割り当てます。" }
+    VideoPaletteHint { en: "Click a colour to choose another. Tracks take them in order.", ja: "色をクリックして選び直せます。トラックの並び順に割り当てます。" }
     VideoHueLow { en: "Low notes", ja: "低い音" }
     VideoHueHigh { en: "High notes", ja: "高い音" }
     VideoBackground { en: "Background", ja: "背景" }
@@ -1025,6 +1025,11 @@ strings! {
     MenuSettingsItem { en: "Settings…", ja: "設定…" }
     MenuServices { en: "Services", ja: "サービス" }
     MenuQuitApp { en: "Quit Auris Studio", ja: "Auris Studio を終了" }
+    MenuHideApp { en: "Hide Auris Studio", ja: "Auris Studio を隠す" }
+    MenuHideOthers { en: "Hide Others", ja: "ほかを隠す" }
+    MenuShowAll { en: "Show All", ja: "すべてを表示" }
+    MenuMinimize { en: "Minimize", ja: "しまう" }
+    MenuZoom { en: "Zoom", ja: "拡大/縮小" }
     MenuOpenProjectItem { en: "Open Project…", ja: "プロジェクトを開く…" }
     MenuSaveAsItem { en: "Save As…", ja: "名前を付けて保存…" }
     MenuImportAudioItem { en: "Import Audio…", ja: "オーディオを読み込む…" }
@@ -1400,6 +1405,7 @@ strings! {
     Recover { en: "Recover", ja: "復旧" }
     DiscardRecovery { en: "Discard recovery", ja: "復旧データを破棄" }
     RecoveryUntitled { en: "Unsaved project", ja: "未保存のプロジェクト" }
+    DocumentUntitled { en: "Untitled", ja: "無題" }
     RecoveryKeyboardHint {
         en: "Enter: recover · Delete: discard recovery · Esc: not now",
         ja: "Enter: 復旧 · Delete: 復旧データを破棄 · Esc: 今回はしない"
@@ -2062,7 +2068,7 @@ new のオプション
     AgentPanel { en: "Agent", ja: "エージェント" }
     CmdShowAgent { en: "Agent", ja: "エージェント" }
     AgentPlaceholder { en: "Ask about this song…", ja: "この曲について話しかける…" }
-    AgentIntro { en: "Discuss the arrangement, instruments or a change you want to make.", ja: "アレンジや音色の相談、変えたい箇所を伝えてください。" }
+    AgentIntro { en: "Discuss the arrangement, instruments or a change you want to make", ja: "アレンジや音色の相談、変えたい箇所を伝えてください" }
     AgentNotConfigured { en: "Name a model to talk to.", ja: "話しかけるモデルを設定してください。" }
     AgentConfigure { en: "Settings", ja: "設定" }
     AgentApply { en: "Apply", ja: "適用" }

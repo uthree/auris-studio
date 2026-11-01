@@ -525,7 +525,6 @@ impl AurisApp {
                         .id("position")
                         .debug_selector(|| "position".into())
                         .h_full()
-                        .cursor_pointer()
                         .on_mouse_down(
                             gpui::MouseButton::Left,
                             cx.listener(|this, event: &gpui::MouseDownEvent, _, cx| {
@@ -608,11 +607,10 @@ impl AurisApp {
                     // Only while there is something to put out, and asked of the whole
                     // bank rather than of this meter: a track scrolled out of sight has
                     // clipped just as loudly as the master, and clearing has to be
-                    // offered while *any* of them is lit. A pointer and a tooltip over
+                    // offered while *any* of them is lit. A tooltip over
                     // a block that would do nothing is an invitation to press it.
                     .when(anything_clipped, |this| {
-                        this.cursor_pointer()
-                            .tooltip(self.tip(Key::ClearClipping, ""))
+                        this.tooltip(self.tip(Key::ClearClipping, ""))
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.clear_clipping();
                                 cx.notify();
@@ -729,9 +727,10 @@ impl AurisApp {
             .flex_col()
             .justify_center()
             .h_full()
-            .w(width)
+            .min_w(width)
+            .flex_shrink_0()
+            .whitespace_nowrap()
             .px_2()
-            .cursor_pointer()
             .hover(|this| this.bg(theme.surface_hover))
             .child(
                 div()

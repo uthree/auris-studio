@@ -516,21 +516,30 @@ impl AurisApp {
             .size_full()
             .bg(theme.surface)
             .child(panel_header(self.t(Key::Library), &theme))
-            .child(crate::ui::widgets::button(
-                "open-timbre-map",
-                self.t(Key::TimbreMap),
-                crate::ui::widgets::ButtonStyle::Normal,
-                false,
-                theme.accent,
-                &theme,
-                cx.listener(|this, _, _, cx| {
-                    this.timbre_map.open = true;
-                    if this.timbre_map.map.is_none() && this.timbre_map.control.is_none() {
-                        this.scan_timbre_map(cx);
-                    }
-                    cx.notify();
-                }),
-            ))
+            // Inset like the search field under it, so the two share one left and right edge
+            // instead of the button running into the panel's sides.
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .mx_1()
+                    .my_1()
+                    .child(crate::ui::widgets::button(
+                        "open-timbre-map",
+                        self.t(Key::TimbreMap),
+                        crate::ui::widgets::ButtonStyle::Normal,
+                        false,
+                        theme.accent,
+                        &theme,
+                        cx.listener(|this, _, _, cx| {
+                            this.timbre_map.open = true;
+                            if this.timbre_map.map.is_none() && this.timbre_map.control.is_none() {
+                                this.scan_timbre_map(cx);
+                            }
+                            cx.notify();
+                        }),
+                    )),
+            )
             .child(self.library_search_field(cx))
             .child(
                 self.scrolling(
@@ -683,7 +692,11 @@ impl AurisApp {
                 false => theme.border_subtle,
             })
             .cursor_text()
-            .child(icon(Icon::Library, px(13.0), theme.text_muted))
+            .child(
+                atelier::Icon::new(atelier::IconName::Search)
+                    .size(px(13.0))
+                    .color(theme.text_muted),
+            )
             .child(
                 div()
                     .relative()
@@ -730,7 +743,6 @@ impl AurisApp {
                         .flex()
                         .items_center()
                         .justify_center()
-                        .cursor_pointer()
                         .child(icon(Icon::Cross, px(10.0), theme.text_muted))
                         .on_mouse_down(
                             MouseButton::Left,
@@ -1104,8 +1116,7 @@ impl AurisApp {
             .rounded(Metrics::RADIUS_SM)
             .when(selected, |this| this.bg(theme.surface_raised))
             .when(enabled, |this| {
-                this.cursor_pointer()
-                    .hover(|this| this.bg(theme.surface_hover))
+                this.hover(|this| this.bg(theme.surface_hover))
             })
             .tooltip(tooltip)
             .child(
@@ -2386,11 +2397,10 @@ impl AurisApp {
             .when(depth == 0, |this| this.bg(theme.surface_raised).mt_1())
             .tooltip(tooltip)
             // A branch with nothing to open — a font whose file has gone — must not offer the
-            // pointer and the hover fill of a row that would answer a click. It looked exactly
+            // hover fill of a row that would answer a click. It looked exactly
             // like a font that works, and clicking it did nothing for ever.
             .when(enabled, |this| {
-                this.cursor_pointer()
-                    .hover(|this| this.bg(theme.surface_hover))
+                this.hover(|this| this.bg(theme.surface_hover))
             })
             .child(div().flex_shrink_0().child(crate::ui::icons::icon(
                 // A shut branch points at what opening it would reveal, an open one down at what
@@ -2550,8 +2560,7 @@ impl AurisApp {
             .rounded(Metrics::RADIUS_SM)
             .when(selected, |this| this.bg(theme.surface_raised))
             .when(enabled, |this| {
-                this.cursor_pointer()
-                    .hover(|this| this.bg(theme.surface_hover))
+                this.hover(|this| this.bg(theme.surface_hover))
             })
             .tooltip(tooltip)
             .child(div().flex_shrink_0().child(icon(
@@ -2685,8 +2694,7 @@ impl AurisApp {
             .rounded(Metrics::RADIUS_SM)
             .when(selected, |this| this.bg(theme.surface_raised))
             .when(enabled, |this| {
-                this.cursor_pointer()
-                    .hover(|this| this.bg(theme.surface_hover))
+                this.hover(|this| this.bg(theme.surface_hover))
             })
             .tooltip(tooltip)
             .child(div().flex_shrink_0().child(icon(

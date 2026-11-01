@@ -365,7 +365,6 @@ impl AurisApp {
                         div()
                             .id("close-project-spectrogram")
                             .debug_selector(|| "close-project-spectrogram".to_string())
-                            .cursor_pointer()
                             .child("×")
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.set_project_spectrogram(false, cx)

@@ -1910,7 +1910,7 @@ impl AurisApp {
         // start looks like. Launching used to leave a two-bar arpeggio and a bass line lying
         // around, which was useful while there was nothing else to hear and is now just
         // somebody else's music to delete before starting.
-        session.new_project();
+        session.new_project_with_track(&auris_i18n::messages::new_track_name(language, 1));
 
         // The dictionary the settings name, loaded once for the session's lifetime. A folder
         // that fails to load is logged and left in the settings — deleting the setting over a
@@ -3058,6 +3058,9 @@ impl AurisApp {
     /// Window chrome owns the product name and save marker separately; keeping this value
     /// document-only lets Atelier centre the title without duplicating application branding.
     pub(crate) fn document_title(&self) -> String {
+        if self.session.is_untitled() {
+            return self.t(Key::DocumentUntitled).to_owned();
+        }
         self.session.document_title()
     }
 

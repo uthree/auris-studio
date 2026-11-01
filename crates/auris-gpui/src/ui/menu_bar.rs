@@ -30,11 +30,14 @@ const SEPARATOR_HEIGHT: Pixels = px(7.0);
 /// Padding and border above and below the scrolling rows.
 const MENU_FRAME_HEIGHT: Pixels = px(10.0);
 
-/// Width of an open menu.
+/// The narrowest an open menu is drawn.
 ///
-/// Fixed rather than measured: every label here is short, and a menu that changes width between
-/// languages looks like a bug. Long labels truncate.
+/// A floor rather than a width. It was fixed, on the reasoning that every label is short, and the
+/// Japanese File menu's longer rows were cut off against their keystrokes.
 const MENU_WIDTH: Pixels = px(260.0);
+
+/// The widest a dropdown grows to fit its longest row; past this a label truncates.
+const MENU_MAX_WIDTH: Pixels = px(440.0);
 
 /// The mark beside a switched-on row.
 ///
@@ -359,19 +362,16 @@ impl AurisApp {
                                 cx,
                             );
                         }))
-                        // Neither the pointer's fill nor the keyboard's lands on a dead row, and
-                        // neither does the pointer itself: a hand cursor over something that will
-                        // not answer is the row promising twice over.
+                        // Neither the pointer's fill nor the keyboard's lands on a dead row.
                         .when(enabled, |this| {
-                            this.cursor_pointer()
-                                .hover(|this| {
-                                    this.bg(theme.accent).text_color(theme.text_on_accent)
-                                })
-                                // The same fill the pointer gives it, because it means the same
-                                // thing: this is the row Return would run.
-                                .when(highlighted == Some(index), |this| {
-                                    this.bg(theme.accent).text_color(theme.text_on_accent)
-                                })
+                            this.hover(|this| {
+                                this.bg(theme.accent).text_color(theme.text_on_accent)
+                            })
+                            // The same fill the pointer gives it, because it means the same
+                            // thing: this is the row Return would run.
+                            .when(highlighted == Some(index), |this| {
+                                this.bg(theme.accent).text_color(theme.text_on_accent)
+                            })
                         })
                         // A fixed column whether this row ticks or not, so every label in the
                         // menu starts in the same place. A tick that pushed its own row along
@@ -429,7 +429,11 @@ impl AurisApp {
         let needs_scroll = natural_height > available_height;
 
         div()
-            .w(MENU_WIDTH)
+            // At least the usual width, and as wide as the longest label beside its keystroke
+            // beyond that: a fixed width cut a translated label short against its shortcut.
+            .min_w(MENU_WIDTH)
+            .max_w(MENU_MAX_WIDTH)
+            .flex_none()
             .h(height)
             .flex()
             .flex_col()

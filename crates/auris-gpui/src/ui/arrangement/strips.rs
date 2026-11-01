@@ -63,7 +63,6 @@ impl AurisApp {
             .id("structure-lane")
             .h(Metrics::STRUCTURE_LANE_HEIGHT)
             .w_full()
-            .cursor_pointer()
             .child({
                 let recorded = self.canvas.structure.clone();
                 canvas(
@@ -151,13 +150,13 @@ impl AurisApp {
                 Some(Drag::HarmonyChord { at, .. }) => Some(at),
                 _ => None,
             },
+            language: self.language(),
         };
 
         div()
             .id("harmony-lane")
             .h(Metrics::HARMONY_LANE_HEIGHT)
             .w_full()
-            .cursor_pointer()
             .child({
                 let recorded = self.canvas.harmony.clone();
                 canvas(

@@ -455,7 +455,6 @@ impl AurisApp {
             .bg(background)
             .border_1()
             .border_color(theme.border)
-            .cursor_pointer()
             .when(!lit, |this| this.hover(|this| this.bg(hover)))
             // The caption above the letter, the way it is printed above the number on a
             // synthesiser's own wheels. An empty one still takes its line, so the letters along

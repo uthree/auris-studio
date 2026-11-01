@@ -16,6 +16,35 @@ use crate::ui::prompt::{Prompt, PromptTarget};
 
 use super::timeline::progression_target;
 
+impl MenuCommand {
+    /// The rebindable command that does the same thing from the keyboard, so a menu row can show
+    /// its keystroke beside it the way the menu bar does.
+    pub(crate) fn binding(&self) -> Option<&'static str> {
+        Some(match self {
+            Self::DuplicateClip(_) => "clip.duplicate",
+            Self::CutClips(_) => "clip.cut",
+            Self::CopyClips(_) => "clip.copy",
+            Self::PasteClips { .. } => "clip.paste",
+            Self::DeleteClip(_) | Self::DeleteNotes => "edit.delete",
+            Self::ToggleClipMute(_) => "clip.mute",
+            Self::SplitClipAtPlayhead(_) => "clip.split",
+            Self::ToggleClipLoop(_) => "clip.loop",
+            Self::DuplicateNotes => "edit.duplicate",
+            Self::CutNotes => "edit.cut",
+            Self::CopyNotes => "edit.copy",
+            Self::PasteNotes => "edit.paste",
+            Self::SelectAllNotes => "edit.select_all",
+            Self::DuplicateTrack(_) => "track.duplicate",
+            Self::DeleteTrack(_) => "track.delete",
+            Self::ToggleTrackMute(_) => "track.mute",
+            Self::ToggleTrackSolo(_) => "track.solo",
+            Self::ToggleLoop => "transport.loop",
+            Self::TogglePunch => "transport.punch",
+            _ => return None,
+        })
+    }
+}
+
 /// What choosing a menu item does.
 #[derive(Clone, Debug, PartialEq)]
 pub enum MenuCommand {
@@ -48,6 +77,16 @@ pub enum MenuCommand {
     PianoRollGrid(auris_session::PianoRollGrid),
     /// Selects relative or absolute positioning for note drags.
     RelativeNoteSnap(bool),
+    /// Sets the note-roll video's frame size.
+    VideoSize(auris_session::VideoSize),
+    /// Sets one of the note-roll video's colours: a palette slot, or the single colour when
+    /// `slot` is `None`.
+    VideoColor {
+        /// Which palette entry, or `None` for the single colour.
+        slot: Option<usize>,
+        /// The colour chosen.
+        color: Color,
+    },
     /// Enables or disables grid snapping for note ends.
     SnapNoteEnds(bool),
     /// Captures a track before asking to replace a saved user sound.
@@ -777,6 +816,15 @@ impl AurisApp {
                 self.remember_note_snap();
             }
             MenuCommand::SnapNoteEnds(enabled) => self.apply_snap_note_lengths(enabled),
+            MenuCommand::VideoSize(size) => self.edit_video_style(|style| style.size = size),
+            MenuCommand::VideoColor { slot, color } => self.edit_video_style(|style| match slot {
+                Some(index) => {
+                    if let Some(entry) = style.palette.get_mut(index) {
+                        *entry = color;
+                    }
+                }
+                None => style.single_color = color,
+            }),
             MenuCommand::SetExpressionSettings { clip, settings } => {
                 if let Ok(stack) = self.session.clip_transforms(clip) {
                     let next = crate::ui::expression::with_expression_settings(stack, settings);

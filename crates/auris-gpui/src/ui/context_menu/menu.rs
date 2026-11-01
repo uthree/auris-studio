@@ -33,6 +33,8 @@ const PADDING: Pixels = px(4.0);
 const BORDER: Pixels = px(1.0);
 /// Width of the column holding the tick on a latched item.
 const MARK_WIDTH: f32 = 18.0;
+/// Space between a label and its keystroke.
+const SHORTCUT_GAP: f32 = 16.0;
 /// Narrowest a menu may be.
 const MIN_WIDTH: f32 = 168.0;
 /// Widest a menu may be.
@@ -81,6 +83,10 @@ pub struct MenuItem {
     /// alternative was naming eight palette entries twice over, in a set where two of them are
     /// both fairly called orange.
     pub swatch: Option<gpui::Hsla>,
+    /// The keystroke that runs the same command, shown at the end of the row the way the menu
+    /// bar shows one. Filled in by [`AurisApp::open_menu`], which knows the keymap; a menu is
+    /// built without it.
+    pub shortcut: Option<SharedString>,
 }
 
 /// A row in a menu.
@@ -283,6 +289,7 @@ impl ContextMenu {
             enabled,
             checked,
             swatch: None,
+            shortcut: None,
         }));
         self
     }
@@ -301,6 +308,7 @@ impl ContextMenu {
             enabled: true,
             checked,
             swatch: Some(swatch),
+            shortcut: None,
         }));
         self
     }
@@ -319,7 +327,13 @@ impl ContextMenu {
             .entries
             .iter()
             .filter_map(|entry| match entry {
-                MenuEntry::Item(item) => Some(estimated_label_width(&item.label)),
+                MenuEntry::Item(item) => Some(
+                    estimated_label_width(&item.label)
+                        + item
+                            .shortcut
+                            .as_ref()
+                            .map_or(0.0, |keys| SHORTCUT_GAP + estimated_label_width(keys)),
+                ),
                 MenuEntry::Separator => None,
             })
             .reduce(f32::max)
@@ -400,7 +414,17 @@ impl MenuAt for MouseDownEvent {
 
 impl AurisApp {
     /// Shows a menu, unless it has nothing to offer.
-    pub(crate) fn open_menu(&mut self, menu: ContextMenu) {
+    pub(crate) fn open_menu(&mut self, mut menu: ContextMenu) {
+        for entry in &mut menu.entries {
+            if let MenuEntry::Item(item) = entry {
+                item.shortcut = item
+                    .command
+                    .binding()
+                    .map(|id| self.keystroke_for(id))
+                    .filter(|keys| !keys.is_empty())
+                    .map(SharedString::from);
+            }
+        }
         if !menu.is_empty() {
             self.menu = Some(menu);
         }
@@ -501,7 +525,7 @@ impl AurisApp {
                             theme.text_faint
                         })
                         .when(enabled, |this| {
-                            this.cursor_pointer().hover(|this| {
+                            this.hover(|this| {
                                 this.bg(theme.accent).text_color(theme.text_on_accent)
                             })
                         })
@@ -530,6 +554,15 @@ impl AurisApp {
                                 .truncate()
                                 .child(item.label.clone()),
                         )
+                        .children(item.shortcut.clone().map(|keys| {
+                            div()
+                                .flex_shrink_0()
+                                .ml(px(SHORTCUT_GAP))
+                                // Not the faintest text: a highlighted row is filled with the
+                                // accent, and the dimmest colour would vanish into it.
+                                .text_color(theme.text_muted)
+                                .child(keys)
+                        }))
                         .children(item.swatch.map(|colour| {
                             div()
                                 .flex_shrink_0()
@@ -810,6 +843,7 @@ mod tests {
                     enabled: true,
                     checked: false,
                     swatch: None,
+                    shortcut: None,
                 }),
                 MenuEntry::Separator,
                 MenuEntry::Item(MenuItem {
@@ -818,6 +852,7 @@ mod tests {
                     enabled: true,
                     checked: false,
                     swatch: None,
+                    shortcut: None,
                 }),
             ]
         );
