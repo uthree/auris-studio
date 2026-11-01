@@ -297,17 +297,33 @@ mod tests {
         assert_eq!(log_text(&[]), "");
     }
 
+    /// The log book is one per process, and the test threads share it. A test that writes entries
+    /// and then reads them back holds this for its whole length, starting and ending with an
+    /// empty book, or another such test clears its entries out from under it.
+    struct ExclusiveLog {
+        _held: std::sync::MutexGuard<'static, ()>,
+    }
+
+    impl ExclusiveLog {
+        fn take() -> Self {
+            static LOG: std::sync::Mutex<()> = std::sync::Mutex::new(());
+            let guard = LOG
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            book().clear();
+            Self { _held: guard }
+        }
+    }
+
+    impl Drop for ExclusiveLog {
+        fn drop(&mut self) {
+            book().clear();
+        }
+    }
+
     #[gpui::test]
     fn the_log_can_be_copied_whole_and_line_by_line(cx: &mut TestAppContext) {
-        struct ClearLog;
-        impl Drop for ClearLog {
-            fn drop(&mut self) {
-                book().clear();
-            }
-        }
-
-        book().clear();
-        let _clear = ClearLog;
+        let _log = ExclusiveLog::take();
         let (app, cx) = harness::open(cx);
         book().push(Level::Warn, "auris_session::session", "a font moved".into());
         book().push(
@@ -348,15 +364,7 @@ mod tests {
 
     #[gpui::test]
     fn a_narrow_log_keeps_severity_source_and_message_readable(cx: &mut TestAppContext) {
-        struct ClearLog;
-        impl Drop for ClearLog {
-            fn drop(&mut self) {
-                book().clear();
-            }
-        }
-
-        book().clear();
-        let _clear = ClearLog;
+        let _log = ExclusiveLog::take();
         let (app, cx) = harness::open(cx);
         book().push(
             Level::Error,
