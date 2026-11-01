@@ -438,6 +438,11 @@ pub mod architecture {
     //!   auris-cli       the command line tool    (binary: auris)
     //!   auris-mcp       the Model Context Protocol server (binary: auris-mcp)
     //!   auris-agent     the model client — Ollama or OpenAI-compatible (library: background model worker)
+    //!
+    //! ALONGSIDE THE APPLICATION
+    //!   auris-update-helper  replaces the installed binary once the application has exited,
+    //!                        which is the one thing the application cannot do to itself
+    //!                        (binary: auris-update-helper)
     //! ```
     //!
     //! Three rules carry most of the weight.

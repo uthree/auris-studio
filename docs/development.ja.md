@@ -26,12 +26,17 @@ BACKEND — UI 依存なし
   crates/auris-i18n     全言語の UI テキスト、それ以外は持たない
   crates/auris-session  ドキュメント、エンジン、フロントエンドが必要とする全コマンド
   crates/auris-toolbox  言語モデル用ツールとしてのコマンド、両モデル接続で共有
+  crates/auris-video    ノートロール動画: フレームをソフトウェア描画し、導入済み ffmpeg でエンコード
 
 FRONTEND
   crates/auris-gpui     デスクトップアプリケーション（バイナリ: auris-studio）
   crates/auris-cli      コマンドラインツール（バイナリ: auris）
   crates/auris-mcp      Model Context Protocol サーバー（バイナリ: auris-mcp）
   crates/auris-agent    モデルクライアント: Ollama / OpenAI 互換（ライブラリ: バックグラウンドモデルワーカー）
+
+アプリケーションと並ぶもの
+  crates/auris-update-helper  アプリ終了後に導入済みバイナリを置き換える
+                              （バイナリ: auris-update-helper）
 
 ワークスペース外
   vendor/rustysynth     他者の crate、fork — 専用 README を参照
