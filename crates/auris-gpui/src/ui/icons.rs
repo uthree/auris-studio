@@ -155,21 +155,33 @@ impl Icon {
 
 /// Embedded monochrome SVG shared by library rows, map rows and the manual picker.
 pub(crate) fn sound_icon_path(family: auris_session::SoundIcon) -> &'static str {
+    sound_paths(family).0
+}
+
+/// The same drawing as [`sound_icon_path`], at the light weight the inspector shows it large.
+///
+/// The two files differ in `stroke-width` alone (2 on the icon, 1 on the artwork), so the
+/// library row and the inspector show one instrument in one style; a test keeps them so.
+pub(crate) fn sound_artwork_path(family: auris_session::SoundIcon) -> &'static str {
+    sound_paths(family).1
+}
+
+fn sound_paths(family: auris_session::SoundIcon) -> (&'static str, &'static str) {
     use auris_session::SoundIcon;
     match family {
-        SoundIcon::Sound => "icons/sound-sound.svg",
-        SoundIcon::Piano => "icons/sound-piano.svg",
-        SoundIcon::Organ => "icons/sound-organ.svg",
-        SoundIcon::Guitar => "icons/sound-guitar.svg",
-        SoundIcon::Bass => "icons/sound-bass.svg",
-        SoundIcon::Strings => "icons/sound-strings.svg",
-        SoundIcon::Brass => "icons/sound-brass.svg",
-        SoundIcon::Wind => "icons/sound-wind.svg",
-        SoundIcon::Drum => "icons/sound-drum.svg",
-        SoundIcon::Bell => "icons/sound-bell.svg",
-        SoundIcon::Voice => "icons/sound-voice.svg",
-        SoundIcon::Synth => "icons/sound-synth.svg",
-        SoundIcon::Pad => "icons/sound-pad.svg",
-        SoundIcon::Pluck => "icons/sound-pluck.svg",
+        SoundIcon::Sound => ("icons/sound-sound.svg", "sounds/sound-sound.svg"),
+        SoundIcon::Piano => ("icons/sound-piano.svg", "sounds/sound-piano.svg"),
+        SoundIcon::Organ => ("icons/sound-organ.svg", "sounds/sound-organ.svg"),
+        SoundIcon::Guitar => ("icons/sound-guitar.svg", "sounds/sound-guitar.svg"),
+        SoundIcon::Bass => ("icons/sound-bass.svg", "sounds/sound-bass.svg"),
+        SoundIcon::Strings => ("icons/sound-strings.svg", "sounds/sound-strings.svg"),
+        SoundIcon::Brass => ("icons/sound-brass.svg", "sounds/sound-brass.svg"),
+        SoundIcon::Wind => ("icons/sound-wind.svg", "sounds/sound-wind.svg"),
+        SoundIcon::Drum => ("icons/sound-drum.svg", "sounds/sound-drum.svg"),
+        SoundIcon::Bell => ("icons/sound-bell.svg", "sounds/sound-bell.svg"),
+        SoundIcon::Voice => ("icons/sound-voice.svg", "sounds/sound-voice.svg"),
+        SoundIcon::Synth => ("icons/sound-synth.svg", "sounds/sound-synth.svg"),
+        SoundIcon::Pad => ("icons/sound-pad.svg", "sounds/sound-pad.svg"),
+        SoundIcon::Pluck => ("icons/sound-pluck.svg", "sounds/sound-pluck.svg"),
     }
 }
