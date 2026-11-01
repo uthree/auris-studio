@@ -1,0 +1,357 @@
+/*
+ * The layout of the introduction page only. The components and every colour, radius and size
+ * come from the Atelier web kit (atelier/atelier.css), so the page follows the application's
+ * Glass themes; nothing here names a colour.
+ */
+
+html {
+  scroll-behavior: smooth;
+  scroll-padding-top: 72px;
+}
+
+body.at-root {
+  /* The backdrop shows through; sections that hold reading sit on cards. */
+  background: transparent;
+  font-size: var(--at-size-lg);
+  line-height: 1.6;
+}
+
+a {
+  color: var(--at-accent-text);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+a.at-button:hover {
+  text-decoration: none;
+}
+
+code {
+  font-family: var(--at-font-mono);
+  font-size: 0.9em;
+}
+
+/* One language at a time; `data-lang` on <html> decides which. */
+html[data-lang="en"] [data-l="ja"],
+html[data-lang="ja"] [data-l="en"] {
+  display: none !important;
+}
+
+/* ---------------------------------------------------------------- navigation */
+
+.nav {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: var(--at-space-lg);
+  height: 56px;
+  padding: 0 var(--at-space-xl);
+  border-bottom: 1px solid var(--at-border);
+  font-size: var(--at-size-md);
+}
+
+.nav__brand {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--at-space-sm);
+  color: var(--at-text);
+  font-weight: var(--at-heading-weight);
+  font-size: var(--at-size-lg);
+}
+
+.nav__brand:hover {
+  text-decoration: none;
+}
+
+.nav__brand img {
+  border-radius: 6px;
+}
+
+.nav__links {
+  display: flex;
+  gap: var(--at-space-lg);
+  margin-left: var(--at-space-lg);
+}
+
+.nav__links a {
+  color: var(--at-text-muted);
+}
+
+.nav__links a:hover {
+  color: var(--at-text);
+  text-decoration: none;
+}
+
+.nav__tools {
+  display: flex;
+  align-items: center;
+  gap: var(--at-space-sm);
+  margin-left: auto;
+}
+
+/* ---------------------------------------------------------------- hero */
+
+main {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 0 var(--at-space-xl);
+}
+
+.hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 96px 0 56px;
+  text-align: center;
+}
+
+.hero__badge {
+  height: 26px;
+  padding: 0 10px;
+  font-size: var(--at-size-sm);
+}
+
+.hero__title {
+  margin: var(--at-space-xl) 0 var(--at-space-lg);
+  font-size: clamp(36px, 6vw, 64px);
+  font-weight: 700;
+  line-height: 1.12;
+  letter-spacing: -0.02em;
+}
+
+.hero__lead {
+  max-width: 680px;
+  margin: 0;
+  color: var(--at-text-muted);
+  font-size: clamp(16px, 2vw, 19px);
+}
+
+.hero__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--at-space-md);
+  margin-top: var(--at-space-xxl);
+}
+
+.hero__note {
+  margin: var(--at-space-lg) 0 0;
+  font-size: var(--at-size-sm);
+}
+
+.icon-down {
+  transform: rotate(180deg);
+}
+
+/* ---------------------------------------------------------------- screenshots */
+
+.shot {
+  margin: 0;
+  overflow: hidden;
+  border: 1px solid var(--at-border-strong);
+  border-radius: var(--at-radius-lg);
+  background: var(--at-background);
+  line-height: 0;
+}
+
+.shot img {
+  width: 100%;
+  height: auto;
+}
+
+.shot--hero {
+  box-shadow: var(--at-shadow-high);
+}
+
+/* ---------------------------------------------------------------- sections */
+
+.section {
+  padding: 96px 0 0;
+}
+
+.section__head {
+  max-width: 720px;
+  margin: 0 auto var(--at-space-xxl);
+  text-align: center;
+}
+
+.section__title {
+  margin: 0 0 var(--at-space-md);
+  font-size: clamp(26px, 4vw, 36px);
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+}
+
+.section__lead {
+  margin: 0;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: var(--at-space-lg);
+}
+
+.grid > *,
+.section--pair > * {
+  /* A grid item is as wide as its longest line by default; let the code blocks scroll instead. */
+  min-width: 0;
+}
+
+.grid--two {
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+}
+
+.grid--three {
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+
+.at-card {
+  background: color-mix(in srgb, var(--at-elevated) 82%, transparent);
+  backdrop-filter: blur(var(--at-chrome-blur));
+  -webkit-backdrop-filter: blur(var(--at-chrome-blur));
+}
+
+.at-card p {
+  margin: 0;
+  font-size: var(--at-size-md);
+}
+
+.feature__icon {
+  display: inline-flex;
+  width: 36px;
+  height: 36px;
+  padding: 8px;
+  border-radius: var(--at-radius-sm);
+  background: var(--at-accent-wash);
+  color: var(--at-accent-text);
+}
+
+.feature__icon--agent {
+  background: var(--at-agent-wash);
+  color: var(--at-agent);
+}
+
+.door > .at-icon {
+  width: 22px;
+  height: 22px;
+  color: var(--at-text-muted);
+}
+
+.section--pair {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  gap: var(--at-space-lg);
+}
+
+.pair {
+  margin: 0;
+  overflow: hidden;
+}
+
+.pair .shot {
+  border: none;
+  border-bottom: 1px solid var(--at-border);
+  border-radius: 0;
+}
+
+.pair figcaption {
+  display: flex;
+  flex-direction: column;
+  gap: var(--at-space-xs);
+  padding: var(--at-panel-padding);
+}
+
+/* ---------------------------------------------------------------- install */
+
+.code {
+  position: relative;
+}
+
+.code .at-code {
+  padding-right: 44px;
+  white-space: pre;
+}
+
+.code__copy {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+}
+
+/* ---------------------------------------------------------------- docs */
+
+.links {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  padding: var(--at-space-xs);
+}
+
+.link {
+  display: flex;
+  align-items: center;
+  gap: var(--at-space-md);
+  padding: var(--at-space-md);
+  border-radius: var(--at-radius-sm);
+  color: var(--at-text);
+  font-size: var(--at-size-md);
+}
+
+.link:hover {
+  background: var(--at-hover);
+  text-decoration: none;
+}
+
+.link > .at-icon {
+  width: 16px;
+  height: 16px;
+  color: var(--at-text-muted);
+}
+
+.link__chevron {
+  margin-left: auto;
+}
+
+/* ---------------------------------------------------------------- footer */
+
+.footer {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--at-space-md);
+  max-width: 1120px;
+  margin: 96px auto 0;
+  padding: var(--at-space-xl);
+  border-top: 1px solid var(--at-separator);
+  font-size: var(--at-size-sm);
+}
+
+@media (max-width: 720px) {
+  .nav {
+    padding: 0 var(--at-space-lg);
+  }
+  .nav__links {
+    display: none;
+  }
+  main {
+    padding: 0 var(--at-space-lg);
+  }
+  .hero {
+    padding-top: 56px;
+  }
+  .section {
+    padding-top: 64px;
+  }
+  .grid,
+  .grid--two,
+  .section--pair,
+  .links {
+    grid-template-columns: 1fr;
+  }
+}
