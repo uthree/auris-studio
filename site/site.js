@@ -23,6 +23,10 @@ function setLanguage(lang) {
   for (const button of document.querySelectorAll("#lang > button")) {
     button.setAttribute("aria-pressed", String(button.value === lang));
   }
+  // Each of these already points at the English page in the markup, for the same reason the
+  // download buttons already point at the releases page: a link that only exists once a script
+  // has run is a link a crawler and a reader without JavaScript never see. This upgrades the
+  // five that have a translation.
   for (const link of document.querySelectorAll("[data-doc]")) {
     const name = link.dataset.doc;
     const file = lang === "ja" && TRANSLATED.has(name) ? `${name}.ja.md` : `${name}.md`;
