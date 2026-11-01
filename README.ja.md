@@ -5,6 +5,12 @@
 
 Auris Studio は Rust で開発されたデジタル・オーディオ・ワークステーションです。macOS と Windows に対応し、[gpui](https://crates.io/crates/gpui) を使った GPU 描画の UI を備えています。楽曲の編曲・編集、テキストで指定した条件に基づく作曲、録音、CLAP・VST3 プラグインの利用、歌声のレンダリングができます。CLI、MCP、エージェント用の各フロントエンドは、デスクトップ版と同じ編集コマンドを使います。
 
+![エディタ：アレンジ、ピアノロール、エージェントパネル](docs/screenshots/readme/editor-ja.png)
+
+| プロジェクトを始める | AIワークショップで作曲する |
+| --- | --- |
+| ![プロジェクトの選択画面](docs/screenshots/readme/chooser-ja.png) | ![AIワークショップ](docs/screenshots/readme/workshop-ja.png) |
+
 <a id="install"></a>
 ## インストール
 
