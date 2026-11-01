@@ -2269,7 +2269,6 @@ new のオプション
     AgentAttachedFiles { en: "Attached files", ja: "添付ファイル" }
     AttachFiles { en: "Attach files", ja: "ファイルを添付" }
     AttachmentClosePreview { en: "Close preview", ja: "プレビューを閉じる" }
-    AttachmentLoading { en: "Loading preview…", ja: "プレビューを読み込み中…" }
     AgentOpenAttachment {
         en: "Preview attachment: {path}",
         ja: "添付ファイルをプレビュー：{path}"

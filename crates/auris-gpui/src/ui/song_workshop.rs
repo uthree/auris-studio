@@ -917,7 +917,7 @@ impl AurisApp {
                                 let preview = self.inline_attachment(
                                     path,
                                     format!("song-inline-attachment-{i}-{file_index}"),
-                                    window,
+                                    crate::ui::attachment_preview::InlinePlace::Message,
                                     cx,
                                 );
                                 let path = path.clone();
@@ -926,19 +926,21 @@ impl AurisApp {
                                     .unwrap_or_default()
                                     .to_string_lossy()
                                     .into_owned();
+                                // The person's attachments sit under their bubble, on its edge.
                                 div()
                                     .flex()
                                     .flex_col()
                                     .min_w_0()
+                                    .gap(spacing.xs)
+                                    .when(message.user, |column| column.items_end())
                                     .child(
-                                        Button::new(
+                                        atelier::agent::ContextChip::new(
                                             gpui::ElementId::Name(
                                                 format!("song-attachment-{i}-{file_index}").into(),
                                             ),
+                                            IconName::File,
                                             name,
                                         )
-                                        .ghost()
-                                        .icon(IconName::File)
                                         .on_click(
                                             cx.listener(move |this, _, _, cx| {
                                                 this.open_agent_attachment(path.clone(), cx)
@@ -2360,6 +2362,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let image = dir.path().join("cover.png");
         image::DynamicImage::new_rgb8(40, 20).save(&image).unwrap();
+        let screenshot = dir.path().join("screenshot.png");
+        image::DynamicImage::new_rgb8(1920, 1080)
+            .save(&screenshot)
+            .unwrap();
         let (app, cx) = crate::harness::open(cx);
         cx.update(|window, cx| {
             app.update(cx, |this, cx| {
@@ -2369,26 +2375,36 @@ mod tests {
         });
         make_ready(&app, cx);
         app.update(cx, |this, cx| {
-            this.workshop_attach_files(std::slice::from_ref(&image), cx)
+            this.workshop_attach_files(&[image.clone(), screenshot.clone()], cx)
         });
         crate::harness::paint(&app, cx);
         cx.run_until_parked();
         crate::harness::paint(&app, cx);
-        assert!(cx.debug_bounds("song-inline-draft-0-image").is_some());
+        // In the composer a picture is a thumbnail, and two of them share a row.
+        let small = cx.debug_bounds("song-inline-draft-0-image").unwrap();
+        let large = cx.debug_bounds("song-inline-draft-1-image").unwrap();
+        assert!(small.size.width <= gpui::px(44.) && small.size.height <= gpui::px(24.));
+        assert!(large.size.width <= gpui::px(124.) && large.size.height <= gpui::px(84.));
+        assert!((large.origin.y - small.origin.y).abs() < gpui::px(80.));
         app.update(cx, |this, _| {
             let s = this.song_workshop.as_mut().unwrap();
             s.references.attachments.clear();
             let mut snapshot = conversation_snapshot(&["Use this cover"], false);
             snapshot.document.messages[0].attachments.push(image);
+            snapshot.document.messages[0].attachments.push(screenshot);
             s.snapshot = Some(snapshot);
             assert!(this.attachment_preview.is_none());
         });
-        crate::harness::resize(&app, cx, gpui::size(gpui::px(800.), gpui::px(1000.)));
-        assert!(
-            cx.debug_bounds("song-inline-attachment-0-0-image")
-                .is_some()
-        );
-        app.read_with(cx, |this, _| assert_eq!(this.inline_attachments.len(), 1));
+        crate::harness::resize(&app, cx, gpui::size(gpui::px(1400.), gpui::px(1000.)));
+        // Under a message a picture is drawn at its own size, or shrunk to fit — never
+        // stretched across the transcript column.
+        let small = cx.debug_bounds("song-inline-attachment-0-0-image").unwrap();
+        let large = cx.debug_bounds("song-inline-attachment-0-1-image").unwrap();
+        assert!(small.size.width <= gpui::px(44.), "{small:?}");
+        assert!(large.size.width <= gpui::px(324.), "{large:?}");
+        assert!(large.size.height <= gpui::px(244.), "{large:?}");
+        assert!(large.size.width >= gpui::px(300.), "{large:?}");
+        app.read_with(cx, |this, _| assert_eq!(this.inline_attachments.len(), 2));
     }
 
     #[gpui::test]
