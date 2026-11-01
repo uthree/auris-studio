@@ -1596,7 +1596,13 @@ mod tests {
         let Some(default) = host.default_output_device() else {
             return;
         };
-        let endpoint = concrete_default(&host, &default).expect("the default is listed");
+        // ALSA's default is a PCM plugin route rather than one of the cards it enumerates, so on
+        // Linux there may be nothing to find; the endpoint this exists for is WASAPI's.
+        let endpoint = concrete_default(&host, &default);
+        if cfg!(target_os = "linux") && endpoint.is_none() {
+            return;
+        }
+        let endpoint = endpoint.expect("the default is listed");
         assert_eq!(endpoint.id().unwrap(), default.id().unwrap());
         assert!(endpoint.default_output_config().is_ok());
     }
