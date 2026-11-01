@@ -58,7 +58,7 @@ installers for versions no newer than the running one and helper copies belongin
 processes. A newer, not yet applied installer is kept. A helper that is still running cannot be
 deleted on Windows; the error is ignored and the file goes on the next launch.
 
-### AN-02 — An approved audio URL can redirect to loopback, the LAN or plain HTTP (open)
+### AN-02 — An approved audio URL can redirect to loopback, the LAN or plain HTTP (fixed)
 
 `audio_assets` `import_url` asks for approval of one URL, then `download` follows up to five
 redirects with no check beyond `audio_url`'s scheme and credential rules. A public HTTPS address
@@ -68,9 +68,11 @@ only lands in the project if it decodes as audio, so this is a blind request rat
 but the VOICEVOX client and the audio reviewer already refuse to reach non-loopback services
 automatically, and this was the one path that let a remote server pick the destination.
 
-**Direction.** Follow a redirect within the approved origin; to another origin, only over HTTPS
-and only to a host that is not `localhost` or a loopback, private, link-local, CGNAT or
-unspecified address.
+**Fix.** `redirect_allowed`: a redirect within the approved origin is followed as before; one to
+another origin must be HTTPS and must not name `localhost` or a loopback, private, link-local,
+CGNAT or unspecified address. The address the person typed is still trusted, so a local server
+they chose works. A hostname that *resolves* to a private address is not caught; that would need
+the resolver's answer, and is left.
 
 ### AN-03 — Every window opens saying there is no audio output (open)
 

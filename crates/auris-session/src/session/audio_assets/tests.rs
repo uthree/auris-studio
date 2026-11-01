@@ -628,3 +628,40 @@ fn processed_wav_preserves_nondefault_sample_rate_after_reopening() {
     let source = reopened.project.audio_clip(ClipId(clip)).unwrap().source;
     assert_eq!(reopened.bank.get(source).unwrap().channel(0), expected);
 }
+
+#[test]
+fn a_redirect_leaves_the_approved_origin_only_for_a_public_https_host() {
+    let approved = url::Url::parse("https://commons.example.test/a.wav").unwrap();
+    let to = |value: &str| url::Url::parse(value).unwrap();
+    assert!(redirect_allowed(
+        &approved,
+        &to("https://commons.example.test/b.wav")
+    ));
+    assert!(redirect_allowed(
+        &approved,
+        &to("https://upload.example.test/b.wav")
+    ));
+    for refused in [
+        "http://upload.example.test/b.wav",
+        "https://localhost/b.wav",
+        "https://media.localhost./b.wav",
+        "https://127.0.0.1/b.wav",
+        "https://192.168.1.1/admin.wav",
+        "https://10.0.0.5/b.wav",
+        "https://169.254.169.254/latest/meta-data",
+        "https://100.100.100.100/b.wav",
+        "https://[::1]/b.wav",
+        "https://[fd00::1]/b.wav",
+        "https://[fe80::1]/b.wav",
+        "https://[::ffff:127.0.0.1]/b.wav",
+    ] {
+        assert!(!redirect_allowed(&approved, &to(refused)), "{refused}");
+    }
+    // A server on this machine that the person chose themselves may redirect within itself.
+    let local = to("http://127.0.0.1:8000/a.wav");
+    assert!(redirect_allowed(&local, &to("http://127.0.0.1:8000/b.wav")));
+    assert!(!redirect_allowed(
+        &local,
+        &to("http://127.0.0.1:9000/b.wav")
+    ));
+}
