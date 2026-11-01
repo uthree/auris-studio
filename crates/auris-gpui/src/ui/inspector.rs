@@ -273,10 +273,13 @@ impl AurisApp {
         cx: &mut gpui::Context<Self>,
     ) -> AnyElement {
         let expanded = !self.inspector_collapsed[section as usize];
+        // Neither the section nor its rows may shrink: the body scrolls, and a column that
+        // squeezes its children to the viewport flattens buttons and stacks text on text.
         div()
             .debug_selector(move || format!("{}-section", section.id()))
             .flex()
             .flex_col()
+            .flex_shrink_0()
             .gap_1()
             .min_w_0()
             .child(
@@ -311,13 +314,22 @@ impl AurisApp {
                 ),
             )
             .when(expanded, |this| {
-                this.child(div().flex().flex_col().gap_1().min_w_0().children(rows))
+                this.child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .flex_shrink_0()
+                        .gap_1()
+                        .min_w_0()
+                        .children(rows),
+                )
             })
             .into_any_element()
     }
 
     fn inspector_scope(&self, title: Key) -> impl IntoElement + use<> {
         div()
+            .flex_shrink_0()
             .pt_3()
             .pb_1()
             .text_xs()
@@ -461,11 +473,18 @@ impl AurisApp {
                     .bg(theme.surface_raised)
                     .rounded(crate::theme::Metrics::RADIUS_SM)
                     .child(
-                        gpui::svg()
-                            .path(artwork)
-                            .w(gpui::px(150.0))
-                            .h(gpui::px(140.0))
-                            .text_color(theme.accent),
+                        match is_singer
+                            .then(|| self.singer_portrait_card(track_id))
+                            .flatten()
+                        {
+                            Some(portrait) => portrait,
+                            None => gpui::svg()
+                                .path(artwork)
+                                .w(gpui::px(150.0))
+                                .h(gpui::px(140.0))
+                                .text_color(theme.accent)
+                                .into_any_element(),
+                        },
                     )
                     .child(
                         div()

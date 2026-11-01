@@ -13,6 +13,8 @@ use crate::ui::portrait_image::{decode_icon, decode_portrait};
 use crate::ui::widgets::{ButtonStyle, button};
 
 const CACHE_LIMIT: usize = 8;
+/// The sound card's artwork height: the singer mark's 140 px plus the card's own padding.
+const PORTRAIT_HEIGHT: f32 = 180.0;
 /// A whole shelf of VOICEVOX styles; each decoded icon is 4 KiB.
 const ICON_CACHE_LIMIT: usize = 256;
 type PortraitResult = Result<Option<Arc<RenderImage>>, String>;
@@ -146,7 +148,7 @@ impl AurisApp {
         let Some(source) = self
             .voice_list()
             .into_iter()
-            .map(|(_, path, speaker)| SingerPortraitSource::for_library_voice(path, speaker))
+            .map(|(_, path)| SingerPortraitSource::for_library_voice(path, None))
             .filter(|source| source.backend() == Some(auris_session::BackendKind::Voicevox))
             .find(|source| self.singer_icons.get(source).is_none())
         else {
@@ -175,65 +177,59 @@ impl AurisApp {
         .detach();
     }
 
-    /// A library row's speaker face, when its Engine supplied one.
-    pub(crate) fn singer_icon(
-        &self,
-        path: &std::path::Path,
-        speaker: Option<&str>,
-    ) -> Option<Arc<RenderImage>> {
-        let source =
-            SingerPortraitSource::for_library_voice(path.to_path_buf(), speaker.map(Into::into));
+    /// A library row's face, its first style's icon, when its Engine supplied one.
+    pub(crate) fn singer_icon(&self, path: &std::path::Path) -> Option<Arc<RenderImage>> {
+        let source = SingerPortraitSource::for_library_voice(path.to_path_buf(), None);
         match self.singer_icons.get(&source)? {
             Ok(Some(image)) => Some(Arc::clone(image)),
             _ => None,
         }
     }
 
-    /// Transparent artwork fits within the inspector without cropping the figure.
+    /// The singer's figure, standing in the sound card where other tracks show their mark.
+    ///
+    /// Transparent artwork fits the card without cropping the figure. `None` until the image
+    /// has arrived, and for a voice without one, so the card keeps its mark meanwhile.
+    pub(crate) fn singer_portrait_card(&self, track: TrackId) -> Option<AnyElement> {
+        let source = self.session.singer_portrait_source(track).ok()??;
+        let Ok(Some(image)) = self.singer_portraits.get(&source)? else {
+            return None;
+        };
+        Some(
+            div()
+                .debug_selector(|| "singer-portrait".into())
+                .w_full()
+                .h(px(PORTRAIT_HEIGHT))
+                .flex_shrink_0()
+                .min_w_0()
+                .overflow_hidden()
+                .child(
+                    // GPUI assigns the image's intrinsic aspect ratio during layout. A block
+                    // can grow from its width even with a requested height, so cap the image
+                    // itself before Contain fits the complete figure inside it.
+                    img(Arc::clone(image))
+                        .debug_selector(|| "singer-portrait-image".into())
+                        .w_full()
+                        .h(px(PORTRAIT_HEIGHT))
+                        .max_h(px(PORTRAIT_HEIGHT))
+                        .min_w_0()
+                        .min_h_0()
+                        .object_fit(ObjectFit::Contain),
+                )
+                .into_any_element(),
+        )
+    }
+
+    /// A failed artwork request offers its retry below the synthesis controls.
     pub(crate) fn singer_portrait_row(
         &self,
         track: TrackId,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         let source = self.session.singer_portrait_source(track).ok()??;
-        self.portrait_row(source, cx)
-    }
-
-    fn portrait_row(
-        &self,
-        source: SingerPortraitSource,
-        cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
-        let (frame_id, image_id, retry_id) = (
-            "singer-portrait",
-            "singer-portrait-image",
-            "singer-portrait-retry",
-        );
+        let retry_id = "singer-portrait-retry";
         match self.singer_portraits.get(&source)? {
-            Ok(Some(image)) => Some(
-                div()
-                    .debug_selector(move || frame_id.into())
-                    .w_full()
-                    .h(px(180.0))
-                    .flex_shrink_0()
-                    .min_w_0()
-                    .overflow_hidden()
-                    .child(
-                        // GPUI assigns the image's intrinsic aspect ratio during layout. A
-                        // block can grow from its width even with a requested height, so cap
-                        // the image itself before Contain fits the complete figure inside it.
-                        img(Arc::clone(image))
-                            .debug_selector(move || image_id.into())
-                            .w_full()
-                            .h(px(180.0))
-                            .max_h(px(180.0))
-                            .min_w_0()
-                            .min_h_0()
-                            .object_fit(ObjectFit::Contain),
-                    )
-                    .into_any_element(),
-            ),
-            Ok(None) => None,
+            Ok(_) => None,
             Err(_) => Some(
                 button(
                     retry_id,
@@ -307,7 +303,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn portrait_image_stays_inside_its_row_and_above_the_insert_controls(cx: &mut TestAppContext) {
+    fn portrait_takes_the_sound_card_and_never_squeezes_the_controls(cx: &mut TestAppContext) {
         let file = VoiceFile::new();
         let (app, cx, track, _) = with_a_singer_clip(cx);
         app.update(cx, |this, _| {
@@ -326,8 +322,9 @@ mod tests {
                     )])))),
                 );
             });
-            for window_width in [640.0, 960.0, 1600.0] {
-                resize(&app, cx, size(px(window_width), px(1200.0)));
+            for (window_width, window_height) in [(640.0, 1200.0), (960.0, 480.0), (1600.0, 720.0)]
+            {
+                resize(&app, cx, size(px(window_width), px(window_height)));
                 let row = cx.debug_bounds("singer-portrait").unwrap();
                 let image = cx.debug_bounds("singer-portrait-image").unwrap();
                 let insert = cx.debug_bounds("inspector-insert-add").unwrap();
@@ -342,6 +339,24 @@ mod tests {
                 assert!(
                     image.bottom() <= insert.top(),
                     "artwork cannot overlap the insert controls"
+                );
+                let voice = cx.debug_bounds("singer-voice").unwrap();
+                let retry = cx.debug_bounds("singer-retry").unwrap();
+                let hint = cx.debug_bounds("singer-phoneme-limits").unwrap();
+                let status = cx.debug_bounds("singer-status").unwrap();
+                assert!(row.bottom() <= voice.top(), "the figure heads the section");
+                assert_eq!(
+                    voice.size.height, retry.size.height,
+                    "{window_height}: a short window scrolls instead of flattening buttons"
+                );
+                assert!(voice.size.height >= px(20.0), "{voice:?}");
+                assert!(
+                    hint.bottom() <= status.top(),
+                    "{hint:?} overlaps {status:?}"
+                );
+                assert!(
+                    status.size.height <= px(24.0),
+                    "the status reads across: {status:?}"
                 );
             }
         }
@@ -372,6 +387,7 @@ mod tests {
                 .unwrap();
             // GPUI 0.2 retains old debug bounds after elements disappear. Ask the current
             // view construction about absence; the bounds above still verify the layout.
+            assert!(this.singer_portrait_card(track).is_none());
             assert!(this.singer_portrait_row(track, cx).is_none());
         });
         paint(&app, cx);
@@ -379,12 +395,13 @@ mod tests {
             let source = this.session.singer_portrait_source(track).unwrap().unwrap();
             assert_ne!(source, first);
             supply(this, source, Ok(None));
+            assert!(this.singer_portrait_card(track).is_none());
             assert!(this.singer_portrait_row(track, cx).is_none());
         });
         paint(&app, cx);
-        app.update(cx, |this, cx| {
+        app.update(cx, |this, _| {
             this.session.undo();
-            assert!(this.singer_portrait_row(track, cx).is_some());
+            assert!(this.singer_portrait_card(track).is_some());
         });
         paint(&app, cx);
         assert!(cx.debug_bounds("singer-portrait").is_some());
@@ -402,7 +419,7 @@ mod tests {
             let source = this.session.singer_portrait_source(track).unwrap().unwrap();
             let generation = this.singer_portraits.generation;
             this.singer_portraits.pending = Some((source.clone(), generation));
-            this.invalidate_sung_previews();
+            this.forget_voice_shelf();
             this.singer_portraits
                 .finish(source.clone(), generation, Ok(Some(image())));
             assert!(this.singer_portraits.pending.is_none());
@@ -416,48 +433,45 @@ mod tests {
         assert!(cx.debug_bounds("singer-portrait").is_none());
     }
 
+    fn supply_icon(app: &mut AurisApp, path: &std::path::Path, result: PortraitResult) {
+        let source = SingerPortraitSource::for_library_voice(path.to_path_buf(), None);
+        let generation = app.singer_icons.generation;
+        app.singer_icons.pending = Some((source.clone(), generation));
+        app.singer_icons.finish(source, generation, result);
+    }
+
+    fn leak(text: String) -> &'static str {
+        Box::leak(text.into_boxed_str())
+    }
+
     #[gpui::test]
     fn a_library_row_wears_its_speaker_face_and_keeps_the_mark_without_one(
         cx: &mut TestAppContext,
     ) {
-        let file = VoiceFile::new();
+        let (faced, offline) = (VoiceFile::new(), VoiceFile::new());
         let (app, cx, _, _) = with_a_singer_clip(cx);
-        let row = |speaker: &str, suffix: &str| -> &'static str {
-            Box::leak(format!("lib-voice-{}-{speaker}{suffix}", file.0.display()).into_boxed_str())
-        };
         app.update(cx, |this, _| {
             this.panels = Default::default();
             this.voices = Some(vec![
-                (
-                    "Artwork test · First".into(),
-                    file.0.clone(),
-                    Some("First".into()),
-                ),
-                (
-                    "Artwork test · Second".into(),
-                    file.0.clone(),
-                    Some("Second".into()),
-                ),
+                ("Artwork test A".into(), faced.0.clone()),
+                ("Artwork test B".into(), offline.0.clone()),
             ]);
-            let first =
-                SingerPortraitSource::for_library_voice(file.0.clone(), Some("First".into()));
-            let generation = this.singer_icons.generation;
-            this.singer_icons.pending = Some((first.clone(), generation));
-            this.singer_icons
-                .finish(first, generation, Ok(Some(image())));
-            let second =
-                SingerPortraitSource::for_library_voice(file.0.clone(), Some("Second".into()));
-            this.singer_icons.pending = Some((second.clone(), generation));
-            this.singer_icons
-                .finish(second, generation, Err("Engine is offline".into()));
+            supply_icon(this, &faced.0, Ok(Some(image())));
+            supply_icon(this, &offline.0, Err("Engine is offline".into()));
             this.library_search = crate::ui::text_field::TextField::new("Artwork test");
         });
         paint(&app, cx);
-        let face = cx.debug_bounds(row("First", "-icon")).unwrap();
+        let face = cx
+            .debug_bounds(leak(format!("lib-voice-{}-icon", faced.0.display())))
+            .unwrap();
         assert_eq!(face.size, size(px(16.0), px(16.0)));
-        assert!(cx.debug_bounds(row("Second", "")).is_some());
         assert!(
-            cx.debug_bounds(row("Second", "-icon")).is_none(),
+            cx.debug_bounds(leak(format!("lib-voice-{}", offline.0.display())))
+                .is_some()
+        );
+        assert!(
+            cx.debug_bounds(leak(format!("lib-voice-{}-icon", offline.0.display())))
+                .is_none(),
             "a failed request leaves the microphone mark"
         );
         app.update(cx, |this, cx| {
@@ -467,6 +481,37 @@ mod tests {
                 "every row has an answer, so nothing is requested again"
             );
             assert!(!this.status_failed, "artwork never reports a failure");
+        });
+    }
+
+    #[gpui::test]
+    fn choosing_voices_and_styles_keeps_artwork_that_was_already_fetched(cx: &mut TestAppContext) {
+        let file = VoiceFile::new();
+        let (app, cx, track, _) = with_a_singer_clip(cx);
+        app.update(cx, |this, _| {
+            this.panels = Default::default();
+            this.select_track(track);
+            this.session.set_singer_voice(track, Some(&file.0)).unwrap();
+            this.set_singer_speaker_for(track, "First".into());
+            supply_icon(this, &file.0, Ok(Some(image())));
+            let source = this.session.singer_portrait_source(track).unwrap().unwrap();
+            supply(this, source, Ok(Some(image())));
+            // What a library click and the inspector's style picker each do afterwards.
+            this.invalidate_sung_previews();
+            this.set_singer_speaker_for(track, "Second".into());
+            this.set_singer_speaker_for(track, "First".into());
+            let source = this.session.singer_portrait_source(track).unwrap().unwrap();
+            assert!(matches!(
+                this.singer_portraits.get(&source),
+                Some(Ok(Some(_)))
+            ));
+            assert!(this.singer_icon(&file.0).is_some());
+            this.forget_voice_shelf();
+            assert!(this.singer_portraits.get(&source).is_none());
+            assert!(
+                this.singer_icon(&file.0).is_none(),
+                "a rescan may find changed files"
+            );
         });
     }
 

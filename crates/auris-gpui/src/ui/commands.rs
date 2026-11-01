@@ -1669,25 +1669,22 @@ impl AurisApp {
     ///
     /// The browser interface a voice shares with the instruments: one row, one click. Like the
     /// picker, this prepares the model on a cancellable worker before the short document edit.
-    pub(crate) fn set_track_voice(
-        &mut self,
-        path: PathBuf,
-        speaker: Option<String>,
-        cx: &mut Context<Self>,
-    ) {
+    pub(crate) fn set_track_voice(&mut self, path: PathBuf, cx: &mut Context<Self>) {
         let Some(track) = self.singer_target() else {
             self.set_failed_status(self.t(Key::ErrorNoSingerTrack).to_string());
             return;
         };
-        self.apply_singer_voice_selection(track, path, speaker, cx);
+        self.apply_singer_voice_selection(track, path, None, cx);
     }
 
     /// Drops cached and pending auditions when the voice behind them changes.
+    ///
+    /// Artwork is not among them: it is keyed by voice file and speaker, so choosing another
+    /// voice or style simply asks for another key, and switching back is free. Only a change to
+    /// the files themselves can make a cached image wrong, which is [`Self::forget_voice_shelf`].
     pub(crate) fn invalidate_sung_previews(&mut self) {
         self.stop_audition();
         self.voicevox_catalogs.clear();
-        self.singer_portraits.invalidate();
-        self.singer_icons.invalidate();
         self.sung_previews.clear();
         self.sung_preview_generation = self.sung_preview_generation.wrapping_add(1);
     }
@@ -1698,9 +1695,16 @@ impl AurisApp {
         self.sung_preview_generation = self.sung_preview_generation.wrapping_add(1);
     }
 
+    /// Rescans the voice shelf and forgets artwork, because a voice file may have changed.
+    pub(crate) fn forget_voice_shelf(&mut self) {
+        self.voices = None;
+        self.singer_portraits.invalidate();
+        self.singer_icons.invalidate();
+    }
+
     /// Refreshes the shelf and re-sings tracks using a connection that was just saved.
     pub(crate) fn singer_configuration_changed(&mut self, path: &Path, cx: &mut Context<Self>) {
-        self.voices = None;
+        self.forget_voice_shelf();
         self.invalidate_sung_previews();
         let tracks: Vec<_> = self
             .project()
@@ -1784,7 +1788,7 @@ impl AurisApp {
 
     /// Writes the voice folders out and makes the shelf look again.
     fn save_voice_paths(&mut self) {
-        self.voices = None;
+        self.forget_voice_shelf();
         if let Err(error) = self.save_settings() {
             log::warn!("could not save settings: {error}");
         }

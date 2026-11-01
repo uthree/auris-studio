@@ -2173,7 +2173,9 @@ pub mod singing {
     //! portrait or its character fallback. The frontend bounds decoded image dimensions, caches
     //! missing artwork and failures too, and only displays results for the current saved source
     //! and view generation. Neither an absent image nor a disconnected Engine changes a singer's take.
-    //! The library's voice rows take the smaller image the same way:
+    //! The library lists one row per voice — a VOICEVOX connection's styles are the
+    //! inspector's speaker choice, not shelf entries — and its rows take the smaller image
+    //! the same way, for the first style:
     //! [`load_singer_icon`](crate::load_singer_icon) downloads the decoding style's square
     //! `icon` — never the standing figure cropped — for a
     //! [`SingerPortraitSource::for_library_voice`](crate::SingerPortraitSource::for_library_voice),
