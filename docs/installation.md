@@ -28,10 +28,12 @@ administrator account. It creates a Start Menu shortcut and offers a desktop sho
 command-line tools are added to the **user** `PATH` by default; open a new terminal after
 installation to use `auris` and `auris-mcp` by name. The installer places the dictionary beside
 the executables, where both tools find it. The update helper is installed beside
-`auris-studio.exe` and is used by the desktop application's updater.
+`auris-studio.exe` and is used by the desktop application's updater. `.auris` project files open
+in Auris Studio when double-clicked.
 
 Run a newer setup file to upgrade the same installation manually. Use Windows **Installed apps** to
-uninstall it. Uninstall removes the files and the `PATH` entry added by the installer; projects
+uninstall it. Uninstall removes the files, the `.auris` association and the `PATH` entry added by
+the installer; projects
 and user settings are not installation files and remain available. The portable ZIP still runs
 without installation when its folder is kept intact.
 
