@@ -335,7 +335,10 @@ mod tests {
             this.appearance.top_bar_layout = TopBarLayout::Compact
         });
         app.read_with(cx, |this, _| {
-            assert_eq!(this.document_title(), "Untitled");
+            assert_eq!(
+                this.document_title(),
+                auris_i18n::Key::DocumentUntitled.get(this.language())
+            );
             assert!(this.window_title().contains("Auris Studio"));
         });
         // Every menu category pinned, so the menu titles want as much of the bar as they can
