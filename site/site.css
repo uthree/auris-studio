@@ -103,11 +103,36 @@ main {
 }
 
 .hero {
+  position: relative;
+  isolation: isolate;
   display: flex;
   flex-direction: column;
   align-items: center;
   padding: 96px 0 56px;
   text-align: center;
+}
+
+/* The aurora is brightest exactly where the smaller text sits, so a soft pool of the page's own
+   background is laid under the hero. It fades out well before the edges, leaving the scene
+   visible around the words rather than boxing them in. */
+.hero::before {
+  content: "";
+  position: absolute;
+  inset: 0 -8%;
+  z-index: -1;
+  background: radial-gradient(
+    ellipse 60% 55% at 50% 62%,
+    color-mix(in srgb, var(--at-background) 62%, transparent),
+    transparent 100%
+  );
+  pointer-events: none;
+}
+
+.hero__lead,
+.hero__platforms,
+.hero__note {
+  text-shadow: 0 1px 10px color-mix(in srgb, var(--at-background) 85%, transparent),
+    0 0 2px color-mix(in srgb, var(--at-background) 70%, transparent);
 }
 
 .hero__badge {
@@ -127,7 +152,8 @@ main {
 .hero__lead {
   max-width: 680px;
   margin: 0;
-  color: var(--at-text-muted);
+  /* Not --at-text-muted: grey on the aurora read as faded rather than secondary. */
+  color: color-mix(in srgb, var(--at-text) 88%, transparent);
   font-size: clamp(16px, 2vw, 19px);
 }
 
@@ -139,8 +165,24 @@ main {
   margin-top: var(--at-space-xxl);
 }
 
-.hero__note {
+.hero__platforms {
   margin: var(--at-space-lg) 0 0;
+  color: color-mix(in srgb, var(--at-text) 85%, transparent);
+  font-size: var(--at-size-md);
+}
+
+.hero__platforms a {
+  font-weight: 600;
+}
+
+.hero__version {
+  margin-left: var(--at-space-xs);
+  color: color-mix(in srgb, var(--at-text) 70%, transparent);
+}
+
+.hero__note {
+  margin: var(--at-space-sm) 0 0;
+  color: color-mix(in srgb, var(--at-text) 75%, transparent);
   font-size: var(--at-size-sm);
 }
 
@@ -269,6 +311,44 @@ main {
 }
 
 /* ---------------------------------------------------------------- install */
+
+.download {
+  display: flex;
+  flex-direction: column;
+  gap: var(--at-space-md);
+}
+
+.download > p {
+  margin: 0;
+}
+
+.download__button {
+  align-self: flex-start;
+}
+
+.download__meta:not(:empty) {
+  opacity: 0.8;
+  font-weight: 400;
+}
+
+.steps {
+  margin: 0;
+  padding-left: 1.4em;
+  color: var(--at-text-muted);
+  line-height: 1.6;
+}
+
+.steps li + li {
+  margin-top: var(--at-space-xs);
+}
+
+.steps strong {
+  color: var(--at-text);
+}
+
+.downloads__more {
+  margin: var(--at-space-lg) 0 var(--at-space-xxl);
+}
 
 .code {
   position: relative;
