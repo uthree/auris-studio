@@ -7,6 +7,12 @@ A digital audio workstation written in Rust with a GPU-rendered
 music, compose from text specifications, record audio, host CLAP and VST3 plugins,
 and render singing voices. CLI, MCP and agent frontends share the desktop's editing commands.
 
+![The editor: arrangement, piano roll and the agent panel](docs/screenshots/readme/editor-en.png)
+
+| Start a project | Compose with the AI workshop |
+| --- | --- |
+| ![The project chooser](docs/screenshots/readme/chooser-en.png) | ![The AI workshop](docs/screenshots/readme/workshop-en.png) |
+
 ## Install
 
 Download the Windows installer or macOS disk image from the
