@@ -173,6 +173,14 @@ impl SongRequest {
         )
         .map_err(|e| e.to_string())?;
         let mut project = Project::new(&idea.title, session.project.sample_rate);
+        // The agent writes the notes and the mix here, but a master it can lean on is the
+        // document's, not the agent's to remember: without one, normalising stops at the first
+        // drum hit that reaches the ceiling.
+        super::levels::install_master_limiter(
+            &session.registry,
+            &mut project,
+            super::levels::NEW_DOCUMENT_CEILING_DB,
+        );
         let mut hosted = Vec::new();
         for choice in &self.sources {
             let source = session

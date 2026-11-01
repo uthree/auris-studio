@@ -131,10 +131,11 @@ pub use files::{
     SaveResult, decode_audio, read_soundfont,
 };
 pub use hosted::PluginWindow;
+pub(crate) use levels::NEW_DOCUMENT_CEILING_DB;
 pub use levels::{
     BalanceReport, CEILING_DB, ComposeBalanceJob, ComposeBalancePhase, ComposeBalanceProgress,
-    ComposeBalanceResult, ComposeBalanceStep, LIMITER_ALLOWANCE_DB, NormalizeMixReport,
-    TARGET_LUFS, TrackLevel, fader_for, faders_lift_db, master_gain_db,
+    ComposeBalanceResult, ComposeBalanceStep, LIMITER_ALLOWANCE_DB, NORMALIZE_LIMITER_ALLOWANCE_DB,
+    NormalizeMixReport, TARGET_LUFS, TrackLevel, fader_for, faders_lift_db, master_gain_db,
 };
 pub use lyrics::LyricsMeasure;
 pub use monitor::MonitorStatus;
@@ -680,7 +681,8 @@ impl Session {
         let work_dir = autosave::create_session_workspace(options.autosave)?;
         let fonts = SoundFontBank::shared();
         let registry = default_registry(Arc::clone(&fonts));
-        let project = Project::new(Project::UNTITLED, options.sample_rate);
+        let mut project = Project::new(Project::UNTITLED, options.sample_rate);
+        levels::install_master_limiter(&registry, &mut project, levels::NEW_DOCUMENT_CEILING_DB);
         let mut audio = options.audio_preferences.clone();
         if audio.uses_asio() {
             audio.input_device = audio.device.clone();

@@ -517,11 +517,11 @@ pub enum Command {
         instrument: String,
     },
 
-    /// Measure the whole mix, move every source fader by the same amount toward target_lufs under a true-peak ceiling, and measure again. Keeps relative balance and master gain; refuses automated source gain. The measured result may fall short at fader or peak limits. Persistence follows the host.
+    /// Measure the whole mix, move every source fader by the same amount toward target_lufs under a true-peak ceiling, and measure again. Finish every song with this after the last sound, note or fader change. Keeps relative balance and master gain; refuses automated source gain. When the master chain ends in auris.fx.limiter (new projects have one), its ceiling is set to ceiling_db and peaks may be pushed up to 6 dB into it; without one the loudest moment alone limits the result, which leaves drum-heavy mixes several dB short. The measured result may fall short at fader or peak limits. Persistence follows the host.
     NormalizeMix {
-        /// Desired integrated loudness, -60 to -6 LUFS.
+        /// Desired integrated loudness, -60 to -6 LUFS; defaults to -14, the streaming level a finished song is delivered at.
         #[schemars(range(min = -60, max = -6))]
-        target_lufs: f32,
+        target_lufs: Option<f32>,
         /// Maximum reconstructed peak, -12 to 0 dBTP; defaults to -1.
         #[schemars(range(min = -12, max = 0))]
         ceiling_db: Option<f32>,
@@ -1135,13 +1135,22 @@ impl Session {
                 target_lufs,
                 ceiling_db,
             } => {
-                let ceiling_db = ceiling_db.unwrap_or(-1.0);
+                let target_lufs = target_lufs.unwrap_or(crate::TARGET_LUFS);
+                let ceiling_db = ceiling_db.unwrap_or(crate::session::NEW_DOCUMENT_CEILING_DB);
                 let report = self.normalize_mix(target_lufs, ceiling_db).map_err(error)?;
+                let reached = report.after.lufs.unwrap_or(f32::NEG_INFINITY);
+                let stage = match (report.limited, target_lufs - reached > 1.0) {
+                    (true, _) => " The master limiter holds the ceiling.",
+                    (false, true) => {
+                        " The master chain has no limiter, so the loudest peak stopped the lift; insert auris.fx.limiter last on the master with mixer_graph and normalize again."
+                    }
+                    (false, false) => "",
+                };
                 Ok(format!(
-                    "Moved source faders {:+.2} dB. Mix {:.1} -> {:.1} LUFS; true peak {:.1} -> {:.1} dBTP. Target {:.1} LUFS, ceiling {:.1} dBTP. Inspect_audio again before judging the sound.",
+                    "Moved source faders {:+.2} dB. Mix {:.1} -> {:.1} LUFS; true peak {:.1} -> {:.1} dBTP. Target {:.1} LUFS, ceiling {:.1} dBTP.{stage} Inspect_audio again before judging the sound.",
                     report.offset_db,
                     report.before.lufs.unwrap_or(f32::NEG_INFINITY),
-                    report.after.lufs.unwrap_or(f32::NEG_INFINITY),
+                    reached,
                     report.before.true_peak_db,
                     report.after.true_peak_db,
                     target_lufs,
