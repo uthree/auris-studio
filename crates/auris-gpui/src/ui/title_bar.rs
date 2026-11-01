@@ -347,7 +347,10 @@ mod tests {
                     "{width} {title:?} {trailing:?} {primary:?}"
                 );
                 assert!(trailing.right() <= px(width), "{width} {trailing:?}");
-                assert!(cx.debug_bounds("application-menu").unwrap().left() >= px(0.0));
+                // The application menu is drawn only where there is no system menu bar.
+                if crate::app::AurisApp::wants_menu_bar() {
+                    assert!(cx.debug_bounds("application-menu").unwrap().left() >= px(0.0));
+                }
                 // The arrangement starts right under it.
                 let workspace = app.read_with(cx, |this, _| this.chrome_height());
                 assert_eq!(
