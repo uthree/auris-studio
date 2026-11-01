@@ -1,6 +1,7 @@
 //! Visibility and ordering controls for the top toolbar.
 
 use super::*;
+use crate::appearance::TopBarLayout;
 use crate::ui::widgets::{ButtonState, button_enabled};
 
 /// Localized name of a toolbar control.
@@ -25,6 +26,39 @@ fn label(item: ToolbarItem) -> Key {
 }
 
 impl SettingsWindow {
+    /// The choice between the roomy two-row top of the window and the single compact bar.
+    fn top_bar_layout_picker(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let choices = [
+            (
+                TopBarLayout::Spacious,
+                Key::TopBarSpacious,
+                Key::TopBarSpaciousNote,
+            ),
+            (
+                TopBarLayout::Compact,
+                Key::TopBarCompact,
+                Key::TopBarCompactNote,
+            ),
+        ]
+        .into_iter()
+        .map(|(layout, label, detail)| {
+            (layout, self.t(label).to_owned(), self.t(detail).to_owned())
+        })
+        .collect();
+        let current = self.appearance.top_bar_layout;
+        self.dropdown(
+            "top-bar-layout",
+            choices,
+            &current,
+            |this, layout, cx| {
+                let mut appearance = this.appearance.clone();
+                appearance.top_bar_layout = layout;
+                this.apply_appearance_preferences(appearance, cx);
+            },
+            cx,
+        )
+    }
+
     fn apply_toolbar(&mut self, mut toolbar: ToolbarPreferences, cx: &mut Context<Self>) {
         toolbar.normalize();
         self.toolbar = toolbar.clone();
@@ -39,10 +73,15 @@ impl SettingsWindow {
         cx.notify();
     }
 
-    pub(super) fn render_toolbar_settings(&self, cx: &mut Context<Self>) -> AnyElement {
-        let theme = &self.theme;
+    pub(super) fn render_toolbar_settings(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let layout = self.top_bar_layout_picker(cx);
+        let theme = &self.theme.clone();
         let mut rows = vec![
             section_title(self.t(Key::ToolbarHeading), theme),
+            FormField::new(self.t(Key::TopBarLayout))
+                .description(self.t(Key::TopBarLayoutNote))
+                .child(layout)
+                .into_any_element(),
             note(self.t(Key::ToolbarNote), theme),
         ];
         for (lane, title) in [
@@ -151,6 +190,35 @@ impl SettingsWindow {
 mod tests {
     use super::*;
     use gpui::{TestAppContext, VisualTestContext, size};
+
+    #[gpui::test]
+    fn the_top_bar_layout_is_chosen_from_the_toolbar_settings_and_saved(cx: &mut TestAppContext) {
+        let _appearance = crate::harness::AppearanceTestGuard::new();
+        let (app, main_cx) = crate::harness::open(cx);
+        app.update(main_cx, |app, cx| {
+            app.appearance.top_bar_layout = TopBarLayout::Spacious;
+            app.open_settings(cx)
+        });
+        let handle = app.read_with(main_cx, |app, _| app.settings_window.unwrap());
+        let cx = &mut VisualTestContext::from_window(handle.into(), main_cx);
+        handle
+            .update(cx, |settings, _, cx| {
+                settings.search = TextField::new("Top toolbar");
+                cx.notify();
+            })
+            .unwrap();
+        cx.simulate_resize(size(px(760.), px(1100.)));
+        cx.run_until_parked();
+        crate::harness::click("top-bar-layout", cx);
+        crate::harness::click("top-bar-layout-option-1", cx);
+        app.read_with(cx, |app, _| {
+            assert_eq!(app.appearance.top_bar_layout, TopBarLayout::Compact)
+        });
+        assert_eq!(Appearance::load().top_bar_layout, TopBarLayout::Compact);
+        crate::harness::click("top-bar-layout", cx);
+        crate::harness::click("top-bar-layout-option-0", cx);
+        assert_eq!(Appearance::load().top_bar_layout, TopBarLayout::Spacious);
+    }
 
     #[gpui::test]
     fn toolbar_settings_apply_toggle_order_and_reset_through_buttons(cx: &mut TestAppContext) {
