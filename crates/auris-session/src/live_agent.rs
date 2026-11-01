@@ -6,6 +6,7 @@ pub mod document_editing;
 pub mod file_jobs;
 pub mod harmony_suggestions;
 mod jobs;
+pub mod layers;
 pub mod recipes;
 pub mod vocal_editing;
 pub use jobs::{AgentJob, AgentResult, AgentStep};
@@ -475,7 +476,12 @@ pub enum Command {
         #[schemars(length(min = 1))]
         name: String,
     },
-    /// Remove one track and its clips.
+    /// Add a layer (an instrument track playing another melodic or singer track's notes, for doubling or splitting a part), read or reshape it, or detach it into notes of its own. Shape filters by source key range and top/bottom voice, then transposes and scales velocity/length and shifts by quarter notes; omitted fields keep their values. A layer has no clips of its own: edit the source's notes. Drums cannot be followed.
+    Layer {
+        /// Add, read, shape or detach.
+        operation: layers::Operation,
+    },
+    /// Remove one track and its clips. Layers following it are detached first, keeping their sound.
     RemoveTrack {
         /// Stable track ID.
         track: u64,
@@ -561,6 +567,7 @@ impl Command {
             Self::MixerGraph { operation } => !operation.is_read_only(),
             Self::EditClipCurve { operation, .. } => !operation.is_read_only(),
             Self::EditTimeline { operation } => !operation.is_read_only(),
+            Self::Layer { operation } => !operation.is_read_only(),
             Self::Inspect {}
             | Self::SuggestIssueReport { .. }
             | Self::ExecutionTrace { .. }
@@ -995,6 +1002,7 @@ impl Session {
                         serde_json::json!({"track":track.id.0, "name":track.name,
                         "kind":track.kind.label(), "mixer":mixer_summary(&track.mixer), "clips":clips,"drum_assignments":self.drum_assignments(track.id),
                         "instrument":track.kind.as_instrument().map(|inner| &inner.instrument_id),
+                        "layer":track.kind.layer().map(|source| serde_json::json!({"follows":source.track.0,"shape":layers::shape_json(&source.shape)})),
                         "soundfont_preset":self.track_preset(track.id)})
                     })
                     .collect();
@@ -1087,6 +1095,7 @@ impl Session {
                 self.rename_track(TrackId(track), name).map_err(error)?;
                 Ok("Renamed track".into())
             }
+            Command::Layer { operation } => self.agent_layer(operation),
             Command::RemoveTrack { track } => {
                 self.remove_track(TrackId(track)).map_err(error)?;
                 Ok("Removed track".into())
