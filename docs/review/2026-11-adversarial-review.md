@@ -30,7 +30,7 @@ misdescribes the codebase.
 
 | ID | Severity | Area | Finding |
 |----|----------|------|---------|
-| MR-01 | High | Tests | Three window tests fail on a non-English macOS, and CI cannot catch it |
+| MR-01 | High | Tests | Two window tests fail on a non-English macOS, and CI cannot catch it |
 | MR-02 | High | CI | ~250 tests guarding the vendored forks are never run; VST3 hosting has no coverage at all |
 | MR-03 | High | Build | A vendored crate's tests cannot run from a git worktree |
 | MR-04 | Medium | DSP | The bowed string emits DC that reaches the master unguarded |
@@ -43,6 +43,7 @@ misdescribes the codebase.
 | MR-11 | Low | Docs | Two crates are in no documented layout; the CLI never localises |
 | MR-12 | Low | Interface | The dictionary warning fires on commands that have no lyrics |
 | MR-13 | Low | Build | `block 0.1.6` is future-incompatible and reaches the build six ways |
+| MR-14 | High | Tests | The log panel tests race each other over a process-global logbook |
 
 ## Findings
 
@@ -59,22 +60,33 @@ ui::log_panel::tests::a_narrow_log_keeps_severity_source_and_message_readable
   crates/auris-gpui/src/ui/log_panel.rs:374   `log-level-0` is visible
 ```
 
-All three pass under `LANG=en_US.UTF-8` and fail with the locale variables unset, so the cause is
-established rather than guessed: `harness::open` pins no language, the session resolves one from
-the system, and `Language::from_system_locale` answers Japanese — the very behaviour CLAUDE.md
-calls load-bearing. GitHub's `macos-latest` runner is English, so CI is green while the suite is
-red for the author of the project, on the platform development happens on. The October review's
-Windows run (4 253 passed) agrees: that machine was English too.
+**Two of the three are the locale; the third is not, and finding that out took a second
+experiment.** All three pass under `LANG=en_US.UTF-8`, which is what the first run showed — but
+that run also happened to be a filtered one, so it changed two things at once. Run *alone* under
+the Japanese locale, `ui::layer` and `ui::title_bar` still fail and `ui::log_panel` **passes**:
 
-Two of the three are plainly the tests' fault — the other ~1 240 window tests compare against
-`Key::…get(this.language())` and these three hold English literals. The third is not obviously a
-test bug: `log-level-0` has a fixed `w(px(44.0))` and `flex_shrink_0()`, and its content
-(`level_word`) takes no language, so nothing about that element should move with the locale. It
-may be a real Japanese layout fault in the log panel at 640×480 that the English run hides.
+| Test | alone, `ja-JP` | alone, `en_US` | in the full suite, `ja-JP` |
+|------|----------------|----------------|----------------------------|
+| `ui::layer::…` | fail | pass | fail |
+| `ui::title_bar::…` | fail | pass | fail |
+| `ui::log_panel::…` | **pass** | pass | fail |
+
+So there are two separate faults behind one red suite:
+
+* **The locale, for two of them.** `harness::open` pins no language, the session resolves one
+  from the system, and `Language::from_system_locale` answers Japanese — the very behaviour
+  CLAUDE.md calls load-bearing. These two tests hold English literals where the other ~1 240
+  window tests compare against `Key::…get(this.language())`. GitHub's `macos-latest` runner is
+  English, so CI is green while the suite is red for the author of the project, on the platform
+  development happens on; the October review's Windows run (4 253 passed) agrees, since that
+  machine was English too.
+* **Shared global state, for the third.** That one is MR-14, and it is a flake rather than a
+  locale fault: it only fails when the rest of the suite runs beside it.
 
 **Direction.** Pin the language in `harness::open` so the suite is about the interface rather than
-about the developer's Mac, and give the tests that want a language an explicit one. Then look at
-`log_panel` in a Japanese window on purpose, because pinning the language would otherwise bury it.
+about the developer's Mac, and give these two tests the language explicitly the way their
+neighbours do. Note that pinning the language alone would have hidden MR-14 instead of fixing it,
+which is why the second experiment was worth running.
 
 ### MR-02 — ~250 tests guarding the vendored forks are never run; VST3 hosting has no coverage at all
 
@@ -316,6 +328,31 @@ through `gpui`, `metal`, `wgpu-hal`, `cocoa`, `coremidi`, `core-video` and `scre
 the macOS build stops compiling until those crates move to `objc2`. Worth a tracking note rather
 than an attempt: the one lever is upgrading `gpui` and `wgpu` when they do.
 
+### MR-14 — The log panel tests race each other over a process-global logbook
+
+**(measured)** `ui::log_panel::tests::a_narrow_log_keeps_severity_source_and_message_readable`
+fails in the full suite and passes when run alone, under either locale. It is a flake, and the
+shared thing it flakes on is named: `BOOK` is a single
+`OnceLock<Arc<Logbook>>` for the whole process (`crates/auris-gpui/src/logbook.rs:163`), and
+`cargo test` runs this file's tests on several threads inside that one process.
+
+Both log panel tests do `book().clear()`, then `book().push(…)`, then assert on what is in the
+book — so a `clear` in one lands in the middle of the other. The second one is worse than a wrong
+assertion: `the_log_can_be_copied_whole_and_line_by_line` reads `book().entries()[1].number`
+(`log_panel.rs:340`), which panics on an index out of bounds if the other test cleared the book
+first. The leak runs the other way too: entries one test pushes are visible to any test that
+reads `book().problems()` for the status bar badge (`ui/status_bar.rs:236`) or collects log lines
+for the issue report (`issue_report_window.rs:95`).
+
+The author saw the shape of this — there is a `ClearLog` drop guard, and a comment reading "The
+seconds are since the book was created, which another test may have done" — but clearing on the
+way in and out cannot help: the races are *inside* the bodies, between the clear and the assert.
+
+**Direction.** One mutex that every test touching the book holds for its whole body, so they
+serialise against each other rather than against nothing. `auris-io`'s `publish_ready_staged_file`
+already shows the idiom for not letting a panicking test poison it:
+`lock().unwrap_or_else(PoisonError::into_inner)`.
+
 ## Covered without findings
 
 Attacked with intent and held up.
@@ -425,8 +462,9 @@ On macOS 27.0.1, Apple M1, rustc 1.99.1, at `864d2ba6`:
 
 | Command | Result |
 |---------|--------|
-| `cargo test --workspace` | **1226 passed, 3 failed, 14 ignored** — the three are MR-01 |
-| `cargo test --workspace` with `LANG=en_US.UTF-8` | the three pass |
+| `cargo test --workspace` | **1226 passed, 3 failed, 14 ignored** — MR-01 (two) and MR-14 (one) |
+| same, with `LANG=en_US.UTF-8` | the three pass |
+| the three, run alone, under `ja-JP` | MR-01's two fail; MR-14's passes |
 | `cargo clippy --workspace --all-targets --locked` | clean; no warning from any workspace crate |
 | `cargo fmt --all --check` | clean |
 | `cargo test` in `vendor/vst3-host` | 240 passed, 0 failed |
@@ -439,6 +477,12 @@ End to end on the machine, with every output measured rather than trusted: `auri
 stems, each measured for DC and peak, which is where MR-04 comes from. The desktop application was
 launched on the composed project; see "Not covered" for how far that went.
 
-MR-01, MR-02, MR-03, MR-04, MR-05, MR-06, MR-08 and MR-13 exist only because something was run,
-measured or listed on disk. Nothing in this review was caught by the existing suite, and the suite
-passing on Windows in October while failing here in November is MR-01 rather than a regression.
+MR-01, MR-02, MR-03, MR-04, MR-05, MR-06, MR-08, MR-13 and MR-14 exist only because something was
+run, measured or listed on disk. Nothing else in this review was caught by the existing suite, and
+the suite passing on Windows in October while failing here in November is MR-01 and MR-14 rather
+than a regression — one needs an English machine to pass, the other needs to be the only test
+running.
+
+MR-14 is also a note on method: the first run changed the locale *and* filtered the suite down to
+three tests, and all three went green, which looked like one cause. It was two. A second run that
+changed only one thing at a time is what separated them.
