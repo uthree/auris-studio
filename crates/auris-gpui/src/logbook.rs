@@ -188,6 +188,48 @@ pub fn book() -> &'static Arc<Logbook> {
     BOOK.get_or_init(|| Arc::new(Logbook::new()))
 }
 
+/// Exclusive use of [`book`], for a test that writes to it.
+///
+/// There is one book per process, which is right for a logger and awkward for a suite: `cargo
+/// test` runs a crate's tests on several threads inside that one process, so a `clear` in one
+/// lands in the middle of another's assertions. Clearing on the way in and on the way out — which
+/// is what the log panel tests used to do — cannot help, because the race is *between* the clear
+/// and the assert. One of them failed in the full suite and passed when run alone, for exactly
+/// that reason.
+///
+/// So a test that touches the book takes this first and holds it for its whole body. The book is
+/// emptied when the guard is taken and again when it is dropped, so a test neither inherits
+/// records nor leaves any behind for whatever reads `problems()` next.
+///
+/// Poisoning is folded away rather than propagated, as `auris_io` does when it publishes a staged
+/// file: one failing test should report its own assertion, not turn every test after it into a
+/// panic about a poisoned lock.
+#[cfg(test)]
+pub(crate) fn exclusive_book() -> ExclusiveBook {
+    static SERIAL: Mutex<()> = Mutex::new(());
+    let guard = SERIAL
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    book().clear();
+    ExclusiveBook { _guard: guard }
+}
+
+/// Held for the body of a test that writes to the global book; see [`exclusive_book`].
+///
+/// The guard is never read — holding it *is* the exclusion — so it is named for the lint rather
+/// than exempted from it.
+#[cfg(test)]
+pub(crate) struct ExclusiveBook {
+    _guard: std::sync::MutexGuard<'static, ()>,
+}
+
+#[cfg(test)]
+impl Drop for ExclusiveBook {
+    fn drop(&mut self) {
+        book().clear();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

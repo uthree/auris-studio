@@ -299,15 +299,7 @@ mod tests {
 
     #[gpui::test]
     fn the_log_can_be_copied_whole_and_line_by_line(cx: &mut TestAppContext) {
-        struct ClearLog;
-        impl Drop for ClearLog {
-            fn drop(&mut self) {
-                book().clear();
-            }
-        }
-
-        book().clear();
-        let _clear = ClearLog;
+        let _book = crate::logbook::exclusive_book();
         let (app, cx) = harness::open(cx);
         book().push(Level::Warn, "auris_session::session", "a font moved".into());
         book().push(
@@ -348,15 +340,7 @@ mod tests {
 
     #[gpui::test]
     fn a_narrow_log_keeps_severity_source_and_message_readable(cx: &mut TestAppContext) {
-        struct ClearLog;
-        impl Drop for ClearLog {
-            fn drop(&mut self) {
-                book().clear();
-            }
-        }
-
-        book().clear();
-        let _clear = ClearLog;
+        let _book = crate::logbook::exclusive_book();
         let (app, cx) = harness::open(cx);
         book().push(
             Level::Error,
