@@ -18,6 +18,74 @@ pub const FETCH_SOUNDFONTS_VAR: &str = "AURIS_FETCH_SOUNDFONTS";
 
 const NOTICE_LIMIT: u64 = 1024 * 1024;
 
+/// Prefix every staging file in the library carries, so a sweep can recognise its own work.
+const STAGING_PREFIX: &str = ".auris-download-";
+
+/// `tempfile`'s own default prefix, which earlier builds staged under.
+///
+/// Swept as well as [`STAGING_PREFIX`], because the files already on disk carry this one. The
+/// library directory is Auris' own and nothing else writes there, so a stale `.tmp…` in it came
+/// from here.
+const LEGACY_STAGING_PREFIX: &str = ".tmp";
+
+/// How old a staging file has to be before it counts as abandoned.
+///
+/// [`NamedTempFile`] removes itself on drop, so one only survives when the process did not
+/// unwind — a force quit during a two-hundred-megabyte download, which is a window of minutes
+/// the user has every reason to interrupt. One installation had four of them, 396 MB in all,
+/// sitting beside the 215 MB font that eventually arrived.
+///
+/// Half an hour cannot be an active download: `timeout_global` below gives one ten minutes. The
+/// margin is what keeps a concurrent installer's staging file from being taken out from under
+/// it, which the publish path already goes to some trouble to tolerate.
+const ABANDONED_STAGING_AGE: Duration = Duration::from_secs(30 * 60);
+
+/// Removes staging files an interrupted download left behind in `directory`.
+///
+/// Best effort throughout: a directory that is not there yet, an entry that cannot be read and a
+/// file that will not delete are all ordinary, and none of them is a reason to fail the download
+/// or the enumeration that called this.
+fn sweep_abandoned_staging(directory: &Path) {
+    let Ok(entries) = fs::read_dir(directory) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        if !name.starts_with(STAGING_PREFIX) && !name.starts_with(LEGACY_STAGING_PREFIX) {
+            continue;
+        }
+        let abandoned = entry
+            .metadata()
+            .ok()
+            .filter(fs::Metadata::is_file)
+            .and_then(|meta| meta.modified().ok())
+            .and_then(|modified| modified.elapsed().ok())
+            .is_some_and(|age| age > ABANDONED_STAGING_AGE);
+        if abandoned {
+            let path = entry.path();
+            match fs::remove_file(&path) {
+                Ok(()) => log::info!(
+                    "removed an abandoned SoundFont download: {}",
+                    path.display()
+                ),
+                Err(error) => {
+                    log::debug!("could not remove {}: {error}", path.display());
+                }
+            }
+        }
+    }
+}
+
+/// A staging file in `directory`, named so [`sweep_abandoned_staging`] can tell it apart.
+fn staging_file(directory: &Path) -> io::Result<NamedTempFile> {
+    tempfile::Builder::new()
+        .prefix(STAGING_PREFIX)
+        .tempfile_in(directory)
+}
+
 /// A missing shipped font and the writable library directory to install it in.
 #[derive(Clone, Debug)]
 pub struct FontDownload {
@@ -52,6 +120,11 @@ fn downloads_from(
     let directory = override_directory
         .filter(|value| !value.as_os_str().is_empty())
         .unwrap_or_else(|| configuration.join(LIBRARY_FOLDER));
+    // Here rather than only in `download_font`: a library whose fonts are all present never
+    // reaches that function, and the files left over from the download that installed them would
+    // then sit there for ever. This runs when the window asks what is missing, which is once at
+    // start-up.
+    sweep_abandoned_staging(&directory);
     SHIPPED
         .iter()
         .filter(|font| installed_in(font, search_roots).is_none())
@@ -109,6 +182,7 @@ pub fn download_font(
         return Ok(target);
     }
     fs::create_dir_all(directory)?;
+    sweep_abandoned_staging(directory);
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .timeout_connect(Some(Duration::from_secs(15)))
         .timeout_recv_response(Some(Duration::from_secs(30)))
@@ -123,7 +197,7 @@ pub fn download_font(
         .unwrap_or_default()
         .to_string_lossy();
     let notice = directory.join(format!("{stem}_License.md"));
-    let mut notice_file = NamedTempFile::new_in(directory)?;
+    let mut notice_file = staging_file(directory)?;
     let received = io::copy(
         &mut response(&agent, font.license_url)?.take(NOTICE_LIMIT + 1),
         &mut notice_file,
@@ -137,7 +211,7 @@ pub fn download_font(
     if target.is_file() {
         return Ok(target);
     }
-    let mut file = NamedTempFile::new_in(directory)?;
+    let mut file = staging_file(directory)?;
     let mut reader = response(&agent, font.url)?.take(font.bytes.saturating_add(1));
     let mut digest = Sha256::new();
     let mut received = 0_u64;
@@ -210,6 +284,62 @@ fn publish(mut file: NamedTempFile, target: &Path) -> Result<(), FontDownloadErr
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_sweep_takes_abandoned_staging_and_leaves_everything_else() {
+        use super::*;
+        use std::time::SystemTime;
+
+        let directory = tempfile::tempdir().expect("a temp directory");
+        let root = directory.path();
+
+        // Two shapes of leftover: one this build would write, and one an earlier build did —
+        // the four found on a real installation carried `tempfile`'s default prefix.
+        let abandoned = [
+            root.join(format!("{STAGING_PREFIX}abc123")),
+            root.join(format!("{LEGACY_STAGING_PREFIX}28slFz")),
+        ];
+        // And three things it must not touch: the font, its notice, and a staging file young
+        // enough to belong to a download running right now in another process.
+        let kept = [
+            root.join("MuseScore_General.sf2"),
+            root.join("MuseScore_General_License.md"),
+            root.join(format!("{STAGING_PREFIX}inflight")),
+        ];
+        for path in abandoned.iter().chain(&kept) {
+            std::fs::write(path, b"contents").expect("the fixture writes");
+        }
+
+        // Backdate only the two: `filetime` is not a dependency here, so the age is set by
+        // setting the file's own modified time through the standard library's `File::set_times`.
+        let long_ago = SystemTime::now() - ABANDONED_STAGING_AGE - Duration::from_secs(60);
+        for path in &abandoned {
+            let file = std::fs::File::options()
+                .write(true)
+                .open(path)
+                .expect("the fixture opens");
+            file.set_times(std::fs::FileTimes::new().set_modified(long_ago))
+                .expect("the fixture can be backdated");
+        }
+
+        sweep_abandoned_staging(root);
+
+        for path in &abandoned {
+            assert!(!path.exists(), "{} survived the sweep", path.display());
+        }
+        for path in &kept {
+            assert!(path.exists(), "{} was swept away", path.display());
+        }
+    }
+
+    #[test]
+    fn the_sweep_is_quiet_about_a_directory_that_is_not_there() {
+        use super::*;
+
+        // `font_downloads` runs this before anything has created the library, and an
+        // installation that never downloads a font never creates it at all.
+        sweep_abandoned_staging(Path::new("/auris-no-such-directory/SoundFonts"));
+    }
+
     use std::net::TcpListener;
     use std::thread::{self, JoinHandle};
     use std::time::Instant;
