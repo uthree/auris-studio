@@ -20,9 +20,9 @@ use auris_sampler::{SAMPLER_ID, store_preset};
 use crate::error::SessionError;
 use crate::history::Edit;
 
-use super::levels::MASTER_LIMITER;
 #[cfg(test)]
 use super::levels::LIMITER_CEILING;
+use super::levels::MASTER_LIMITER;
 use super::{ComposeReport, Session};
 
 #[path = "compose_sources.rs"]

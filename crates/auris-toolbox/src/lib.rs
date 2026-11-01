@@ -1018,6 +1018,8 @@ fn headless() -> Result<Session, String> {
         .with_shipped_fonts(true)
         .with_soundfont_library(auris_session::config_dir().join("soundfonts.json"))
         .with_shipped_dictionary(true)
+        // A new project made here is the window's new project, limiter and all.
+        .with_master_limiter(true)
         // The plugin folders the window uses, so a project opened here loads the same
         // plugins and no others.
         .with_plugin_paths(auris_session::Settings::load().plugin_paths);

@@ -666,11 +666,9 @@ mod tests {
         let q = Ticks::QUARTER.0;
         let bars = 4;
         let length = Ticks(q * 4 * bars);
-        let mut session = Session::new(SessionOptions::headless()).expect("a headless session");
-        if strip_master {
-            session.project.master.effects.clear();
-            session.invalidate_graph();
-        }
+        let mut session =
+            Session::new(SessionOptions::headless().with_master_limiter(!strip_master))
+                .expect("a headless session");
         let note = |pitch, at, held, velocity| {
             let mut note = Note::new(pitch, Ticks(at), Ticks(held));
             note.velocity = velocity;
@@ -723,7 +721,8 @@ mod tests {
     #[test]
     fn a_new_document_ends_its_master_in_a_limiter_at_the_delivery_ceiling() {
         use super::super::SessionOptions;
-        let mut session = Session::new(SessionOptions::headless()).expect("a headless session");
+        let mut session = Session::new(SessionOptions::headless().with_master_limiter(true))
+            .expect("a headless session");
         for project in [session.project().clone(), {
             session.new_project();
             session.project().clone()
