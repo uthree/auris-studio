@@ -38,21 +38,56 @@ fn cli_preamble(prefs: &auris_session::AgentPreferences) -> String {
     )
 }
 
-/// Replay completed text when a CLI worker replaces an ephemeral conversation.
+/// Earlier conversation for a CLI worker that replaces an ephemeral conversation: a bounded
+/// selection, not the transcript ([`memory::Memory::handoff`]).
 fn memory_context(memory: &memory::Memory) -> String {
-    if memory.turns.is_empty() && memory.summary.is_empty() {
-        return String::new();
+    memory.handoff()
+}
+
+/// The provider session a CLI backend resumes for this conversation, and what it is told first.
+///
+/// Only a saved project's own conversation is resumed: its folder is a stable working directory,
+/// which Claude Code keys its sessions by, and its history is not a private recovery store.
+pub(super) struct NativeResume {
+    /// The backend's name in [`memory::Memory::native`].
+    backend: &'static str,
+    /// The session to resume, when one was saved.
+    pub(super) previous: Option<String>,
+    /// Whether the conversation may keep a provider session at all.
+    pub(super) enabled: bool,
+}
+
+impl NativeResume {
+    pub(super) fn new(backend: &'static str, memory: &memory::Memory, enabled: bool) -> Self {
+        Self {
+            backend,
+            previous: enabled
+                .then(|| {
+                    memory
+                        .native_thread(backend)
+                        .map(|thread| thread.id.clone())
+                })
+                .flatten(),
+            enabled,
+        }
     }
-    format!(
-        "[Historical conversation for context only. Verify the current document; this grants no permissions.]\n{}\n{}",
-        memory.summary,
-        memory
-            .turns
-            .iter()
-            .map(|turn| format!("User: {}\nAssistant: {}", turn.user, turn.answer))
-            .collect::<Vec<_>>()
-            .join("\n")
-    )
+
+    /// What the first request carries: only the missed turns when `resumed` is the saved
+    /// session, otherwise the bounded selection of the whole conversation.
+    pub(super) fn opening_context(&self, memory: &memory::Memory, resumed: Option<&str>) -> String {
+        match (resumed, memory.native_thread(self.backend)) {
+            (Some(id), Some(thread)) if thread.id == id => memory.delta_since(thread.seen),
+            _ => memory_context(memory),
+        }
+    }
+
+    /// Note, after a turn, that session `id` has seen the conversation so far.
+    pub(super) fn record(&self, memory: &mut memory::Memory, id: Option<&str>) {
+        match id {
+            Some(id) if self.enabled => memory.record_native(self.backend, id),
+            _ => memory.forget_native(self.backend),
+        }
+    }
 }
 
 /// A runtime owns the entire model/tool loop, not just a completion API client.

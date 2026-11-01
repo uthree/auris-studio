@@ -183,6 +183,8 @@ struct Channels {
     audio_references: std::sync::Mutex<attachments::AudioReferences>,
     execution_root: Option<PathBuf>,
     execution_lease: std::sync::Mutex<Option<std::fs::File>>,
+    /// The completed turns before the running one, for `read_conversation`.
+    recall: std::sync::Mutex<memory::Memory>,
 }
 
 fn conversation_execution_root(path: &Path) -> Option<PathBuf> {
@@ -403,6 +405,11 @@ impl Bridge {
         memory: &memory::Memory,
         display: &str,
     ) {
+        *self
+            .0
+            .recall
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = memory.clone();
         if let Some(generation) = generation {
             let mut checkpoint = memory.clone();
             checkpoint.push_interrupted(display, "no final answer was recorded");
@@ -410,6 +417,15 @@ impl Bridge {
                 self.emit(serde_json::json!({"event":"notice","message":format!("Conversation history was not saved: {error}")}));
             }
         }
+    }
+
+    /// Earlier turns `from..=to` of this conversation, as `read_conversation` returns them.
+    pub(super) fn recall_conversation(&self, from: usize, to: Option<usize>) -> String {
+        self.0
+            .recall
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .recall(from, to)
     }
 
     pub(super) fn emit(&self, event: serde_json::Value) {
@@ -544,6 +560,7 @@ impl Worker {
             execution_root,
             execution_lease: std::sync::Mutex::new(None),
             audio_references: std::sync::Mutex::new(Default::default()),
+            recall: Default::default(),
         }));
         let (cancel, cancelled) = oneshot::channel();
         std::thread::Builder::new()
@@ -639,6 +656,7 @@ pub(crate) fn test_bridge() -> (
             execution_root: None,
             execution_lease: std::sync::Mutex::new(None),
             audio_references: std::sync::Mutex::new(Default::default()),
+            recall: Default::default(),
         })),
         commands,
         receiver,
@@ -1209,6 +1227,7 @@ mod tests {
             execution_root: None,
             execution_lease: std::sync::Mutex::new(None),
             audio_references: std::sync::Mutex::new(Default::default()),
+            recall: Default::default(),
         }));
         let scope = VisualTurn::new(Some(bridge.clone()));
         for revision in 1..=3 {
