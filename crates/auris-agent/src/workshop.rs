@@ -327,6 +327,8 @@ fn feedback_context(document: &Document) -> Vec<serde_json::Value> {
 struct Decision {
     reply: String,
     directions: Vec<Direction>,
+    #[serde(default)]
+    choices: Option<auris_session::choices::ChoiceCard>,
 }
 
 fn decision(text: &str) -> Result<Decision, String> {
@@ -354,6 +356,11 @@ fn decision(text: &str) -> Result<Decision, String> {
         })
     {
         return Err("Invalid or oversized composition assignments".into());
+    }
+    if let Some(choices) = &value.choices {
+        choices
+            .validate()
+            .map_err(|e| format!("Invalid director choices: {e}"))?;
     }
     Ok(value)
 }
@@ -529,6 +536,7 @@ impl Owner {
                     Err(e) => self.snapshot.error = Some(e),
                     Ok(answer) => {
                         self.snapshot.document.messages.push(Message {
+                            choices: answer.choices,
                             references: vec![],
                             attachments: Vec::new(),
                             user: false,
@@ -828,6 +836,7 @@ impl Owner {
                 self.snapshot.document.draft.clear();
                 self.snapshot.document.draft_attachments.clear();
                 self.snapshot.document.messages.push(Message {
+                    choices: None,
                     user: true,
                     text,
                     references,
@@ -919,6 +928,7 @@ impl Owner {
                 self.selection_followup = true;
                 self.planned_parent = Some(id);
                 self.snapshot.document.messages.push(Message {
+                    choices: None,
                     references: vec![],
                     attachments: Vec::new(),
                     user: true,
@@ -939,7 +949,7 @@ impl Owner {
                     "selected_score":self.snapshot.candidates[&id].workshop_outline(),
                     "user_feedback":feedback_context(&self.snapshot.document),
                     "preference_recorded":recorded,
-                    "instruction":"Acknowledge the selected song and propose 3 to 5 concrete, distinct arrangement or improvement options in a numbered list in reply, grounded in this song and the conversation. Ask which option to pursue and invite a custom request. Mention preference recording only if preference_recorded is true. Return an empty directions array; selection requests suggestions, not another production batch. Do not claim to have listened."
+                    "instruction":"Acknowledge the selected song and propose 3 to 5 concrete, distinct arrangement or improvement options as a choices card (multiple true when they combine), grounded in this song and the conversation. Ask which to pursue and invite a custom request. Mention preference recording only if preference_recorded is true. Return an empty directions array; selection requests suggestions, not another production batch. Do not claim to have listened."
                 }).to_string();
                 match crate::song_ideas::SongPlanner::conversation(self.prefs.clone(), prompt) {
                     Ok(planner) => self.planner = Some(planner),
@@ -2144,12 +2154,14 @@ mod tests {
         let document = Document {
             messages: vec![
                 Message {
+                    choices: None,
                     references: vec![],
                     attachments: Vec::new(),
                     user: true,
                     text: "Keep the melody".into(),
                 },
                 Message {
+                    choices: None,
                     references: vec![],
                     attachments: Vec::new(),
                     user: false,
@@ -2843,6 +2855,21 @@ mod tests {
                 .is_empty()
         );
     }
+    #[test]
+    fn a_question_can_come_with_a_choice_card_and_an_unanswerable_one_is_refused() {
+        let answer = decision(r#"{"reply":"まず雰囲気を。","directions":[],"choices":{"question":"どんな雰囲気？","options":[{"label":"明るい"},{"label":"切ない","detail":"短調寄り"}],"multiple":false}}"#).unwrap();
+        let card = answer.choices.unwrap();
+        assert_eq!(card.options[1].detail.as_deref(), Some("短調寄り"));
+        assert!(
+            decision(r#"{"reply":"ok","directions":[],"choices":null}"#)
+                .unwrap()
+                .choices
+                .is_none()
+        );
+        let single = r#"{"reply":"?","directions":[],"choices":{"question":"Which?","options":[{"label":"Only"}]}}"#;
+        assert!(decision(single).err().unwrap().contains("choices"));
+    }
+
     #[test]
     fn single_direction_is_accepted() {
         let answer = decision(r#"{"reply":"作ります","directions":[{"title":"A","description":"Piano","instructions":"Compose"}]}"#).unwrap();

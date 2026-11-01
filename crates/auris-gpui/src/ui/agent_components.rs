@@ -325,3 +325,130 @@ pub(crate) fn composer_action(
         .flex_none()
         .child(command)
 }
+
+/// What the person sees on a choice card, besides the card itself: the words the card needs.
+pub(crate) struct ChoiceCardText {
+    /// The commit of a multiple-choice card.
+    pub(crate) send: SharedString,
+    /// The caption that says several answers may be picked.
+    pub(crate) multiple: SharedString,
+}
+
+/// Draws a question the agent asked with fixed answers, in either conversation.
+///
+/// A card is not a tool row folded into the log: it is the turn's whole point, and the agent
+/// is waiting on it. An exclusive card answers on the first click, the way a person answers a
+/// question out loud, so each option is an Atelier `ListItem` — a tab stop that Enter and Space
+/// also choose. A multiple-choice card holds its picks in `Checkbox`es until Send. Once answered,
+/// or once the person typed something else, the card stays readable but takes no more input:
+/// `picked` then shows what was chosen.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn choice_card(
+    id: impl Into<SharedString>,
+    card: &auris_session::choices::ChoiceCard,
+    picked: &[usize],
+    active: bool,
+    text: ChoiceCardText,
+    theme: &Theme,
+    on_option: impl Fn(usize, &mut gpui::Window, &mut gpui::App) + 'static,
+    on_send: impl Fn(&mut gpui::Window, &mut gpui::App) + 'static,
+) -> AnyElement {
+    let id: SharedString = id.into();
+    let on_option = std::rc::Rc::new(on_option);
+    let options = card.options.iter().enumerate().map(|(index, option)| {
+        let chosen = picked.contains(&index);
+        let option_id = SharedString::from(format!("{id}-option-{index}"));
+        let on_option = on_option.clone();
+        if card.multiple {
+            let mut checkbox = atelier::Checkbox::new(ElementId::Name(option_id.clone()), chosen)
+                .label(option.label.clone())
+                .disabled(!active);
+            if active {
+                checkbox = checkbox.on_click(move |_, window, cx| on_option(index, window, cx));
+            }
+            div()
+                .flex()
+                .flex_col()
+                .gap(theme.atelier.spacing.xxs)
+                .px(theme.atelier.spacing.sm)
+                .py(theme.atelier.spacing.xs)
+                .min_w_0()
+                .child(checkbox)
+                .children(option.detail.clone().map(|detail| {
+                    // Under the label, past the box and its gap, so the two read as one option.
+                    div().pl(gpui::px(16.0) + theme.atelier.spacing.sm).child(
+                        atelier::Label::new(detail)
+                            .size(atelier::TextSize::Small)
+                            .color(atelier::TextColor::Muted),
+                    )
+                }))
+                .into_any_element()
+        } else {
+            let mut row = atelier::ListItem::new(ElementId::Name(option_id), option.label.clone())
+                .icon(if chosen {
+                    atelier::IconName::Check
+                } else {
+                    atelier::IconName::ChevronRight
+                })
+                .selected(chosen)
+                .disabled(!active && !chosen);
+            if let Some(detail) = option.detail.clone() {
+                row = row.description(detail).description_lines(2);
+            }
+            if active {
+                row = row.on_click(move |_, window, cx| on_option(index, window, cx));
+            }
+            row.into_any_element()
+        }
+    });
+    let send = (card.multiple && active).then(|| {
+        div()
+            .flex()
+            .justify_end()
+            .pt(theme.atelier.spacing.xs)
+            .child(
+                atelier::Button::new(ElementId::Name(format!("{id}-send").into()), text.send)
+                    .icon(atelier::IconName::ArrowUp)
+                    .size(atelier::ControlSize::Small)
+                    .variant(atelier::ButtonVariant::Primary)
+                    .disabled(picked.is_empty())
+                    .on_click(move |_, window, cx| on_send(window, cx)),
+            )
+    });
+    let selector = id.clone();
+    div()
+        .id(ElementId::Name(id.clone()))
+        .debug_selector(move || selector.to_string())
+        .w_full()
+        .min_w_0()
+        .flex_shrink_0()
+        .child(
+            atelier::Card::new()
+                .p(theme.atelier.spacing.sm)
+                .gap(theme.atelier.spacing.xxs)
+                .min_w_0()
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(theme.atelier.spacing.xxs)
+                        .px(theme.atelier.spacing.sm)
+                        .pt(theme.atelier.spacing.xs)
+                        .pb(theme.atelier.spacing.xs)
+                        .child(
+                            atelier::Label::new(card.question.clone())
+                                .weight(theme.atelier.typography.label_weight),
+                        )
+                        .when(card.multiple, |header| {
+                            header.child(
+                                atelier::Label::new(text.multiple)
+                                    .size(atelier::TextSize::XSmall)
+                                    .color(atelier::TextColor::Faint),
+                            )
+                        }),
+                )
+                .children(options)
+                .children(send),
+        )
+        .into_any_element()
+}

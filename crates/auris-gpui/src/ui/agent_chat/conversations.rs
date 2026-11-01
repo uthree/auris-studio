@@ -139,6 +139,15 @@ impl ChatEntry {
             Self::Note(key) => Content::Status {
                 text: key.get(language).into(),
             },
+            Self::Choices {
+                card,
+                picked,
+                answered,
+            } => Content::Choices {
+                card: card.clone(),
+                picked: picked.clone(),
+                answered: *answered,
+            },
             Self::Tool {
                 name,
                 args,
@@ -166,6 +175,15 @@ impl ChatEntry {
             Content::Status { text } => Self::Status(text.clone()),
             Content::Context { text } => Self::RestoredContext(text.clone()),
             Content::Error { text } => Self::Error(text.clone()),
+            Content::Choices {
+                card,
+                picked,
+                answered,
+            } => Self::Choices {
+                card: card.clone(),
+                picked: picked.clone(),
+                answered: *answered,
+            },
             Content::Tool {
                 name,
                 args,

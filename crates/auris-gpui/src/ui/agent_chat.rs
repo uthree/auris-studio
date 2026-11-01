@@ -78,6 +78,101 @@ mod issue_reporting_tests {
     }
 }
 
+#[cfg(test)]
+mod choice_card_tests {
+    use super::*;
+
+    fn offer(
+        app: &gpui::Entity<AurisApp>,
+        cx: &mut gpui::VisualTestContext,
+        multiple: bool,
+    ) -> usize {
+        app.update(cx, |this, cx| {
+            this.panels.show(crate::dock::Panel::Agent);
+            this.agent_chat.bound_project = this.session.path().map(Path::to_path_buf);
+            this.agent_chat.policy.mode = auris_session::agent_policy::Mode::ReadOnly;
+            this.agent_chat.input = TextField::new("half a thought");
+            let revision = this.session.revision();
+            let result = this
+                .agent_edit(serde_json::json!({"action":"offer_choices",
+                    "question":"Which instrument leads?", "multiple":multiple,
+                    "options":[{"label":"Piano"},{"label":"Strings","detail":"Warmer"},{"label":"Synth"}]}))
+                .unwrap();
+            assert!(result.contains("End your turn"));
+            assert_eq!(this.session.revision(), revision, "a question edits nothing");
+            cx.notify();
+            this.agent_chat.entries.len() - 1
+        })
+    }
+
+    fn queued(app: &gpui::Entity<AurisApp>, cx: &mut gpui::VisualTestContext) -> Vec<String> {
+        app.read_with(cx, |this, _| {
+            this.agent_chat
+                .queued
+                .iter()
+                .map(|message| message.text.clone())
+                .collect()
+        })
+    }
+
+    #[gpui::test]
+    fn an_exclusive_card_answers_on_one_click_without_touching_the_draft(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (app, cx) = crate::harness::open(cx);
+        let index = offer(&app, cx, false);
+        cx.run_until_parked();
+        let option: &'static str = format!("agent-choices-{index}-option-1").leak();
+        crate::harness::click(option, cx);
+        assert_eq!(queued(&app, cx), ["Strings"]);
+        app.read_with(cx, |this, _| {
+            assert_eq!(this.agent_chat.input.content(), "half a thought");
+            assert!(!this.agent_chat.choices_open(index));
+            assert!(matches!(
+                &this.agent_chat.entries[index],
+                ChatEntry::Choices { picked, answered: true, .. } if picked == &[1]
+            ));
+        });
+        crate::harness::paint(&app, cx);
+        let other: &'static str = format!("agent-choices-{index}-option-2").leak();
+        crate::harness::click(other, cx);
+        assert_eq!(
+            queued(&app, cx),
+            ["Strings"],
+            "an answered card takes no more picks"
+        );
+    }
+
+    #[gpui::test]
+    fn a_multiple_choice_card_waits_for_send_and_sends_in_display_order(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (app, cx) = crate::harness::open(cx);
+        let index = offer(&app, cx, true);
+        cx.run_until_parked();
+        for option in [2, 0] {
+            let id: &'static str = format!("agent-choices-{index}-option-{option}").leak();
+            crate::harness::click(id, cx);
+            crate::harness::paint(&app, cx);
+        }
+        assert!(queued(&app, cx).is_empty(), "ticking is not answering");
+        let send: &'static str = format!("agent-choices-{index}-send").leak();
+        crate::harness::click(send, cx);
+        assert_eq!(queued(&app, cx), ["- Piano\n- Synth"]);
+    }
+
+    #[gpui::test]
+    fn typing_past_a_card_closes_it(cx: &mut gpui::TestAppContext) {
+        let (app, cx) = crate::harness::open(cx);
+        let index = offer(&app, cx, false);
+        app.update(cx, |this, _| {
+            this.agent_chat
+                .push_entry(ChatEntry::user("Something else".into()));
+            assert!(!this.agent_chat.choices_open(index));
+        });
+    }
+}
+
 /// Maximum transcript rows retained in the panel.
 const CHAT_CAPACITY: usize = 500;
 
@@ -250,6 +345,15 @@ pub(crate) enum ChatEntry {
     Error(String),
     /// A note from the panel itself, translated when drawn.
     Note(Key),
+    /// A question the agent asked with `offer_choices`, waiting on the person's pick.
+    Choices {
+        /// The question and its answers, as validated by the session.
+        card: auris_session::choices::ChoiceCard,
+        /// The options ticked so far, or the ones sent once answered.
+        picked: Vec<usize>,
+        /// Whether the pick has gone to the agent.
+        answered: bool,
+    },
 }
 
 impl ChatEntry {
@@ -2583,11 +2687,23 @@ impl AurisApp {
             } else {
                 None
             };
+        let choices = if let auris_session::live_agent::Command::OfferChoices { card } = &command {
+            Some(card.clone())
+        } else {
+            None
+        };
         let result = self
             .session
             .agent_command_with_plugin_paths(command, &self.settings.plugin_paths)?;
         if let Some(suggestion) = suggestion {
             self.agent_chat.issue_suggestion = Some(suggestion);
+        }
+        if let Some(card) = choices {
+            self.agent_chat.push_entry(ChatEntry::Choices {
+                card,
+                picked: Vec::new(),
+                answered: false,
+            });
         }
         Ok(result)
     }
@@ -4085,6 +4201,7 @@ impl AurisApp {
                 crate::i18n::agent_error_text(message, self.language(), false),
             ),
             ChatEntry::Note(key) => (note_colour(*key, theme), self.t(*key).to_string()),
+            ChatEntry::Choices { card, .. } => (theme.text, card.question.clone()),
         };
         let details = match entry {
             ChatEntry::Reasoning(text) if opened => vec![(None, text.clone())],
@@ -4167,6 +4284,39 @@ impl AurisApp {
                 }),
             )
             .into_any_element(),
+            ChatEntry::Choices { card, picked, .. } => {
+                let active = !self.agent_chat.conversations.previewing()
+                    && self.agent_chat.choices_open(index);
+                let multiple = card.multiple;
+                let option = cx.listener(move |this, option: &usize, _, cx| {
+                    if multiple {
+                        this.agent_chat.toggle_choice(index, *option);
+                        cx.notify();
+                    } else {
+                        this.answer_agent_choices(index, vec![*option], cx);
+                    }
+                });
+                let send = cx.listener(move |this, _: &(), _, cx| {
+                    let picked = match this.agent_chat.entries.get(index) {
+                        Some(ChatEntry::Choices { picked, .. }) => picked.clone(),
+                        _ => return,
+                    };
+                    this.answer_agent_choices(index, picked, cx);
+                });
+                agent_components::choice_card(
+                    format!("agent-choices-{index}"),
+                    card,
+                    picked,
+                    active,
+                    agent_components::ChoiceCardText {
+                        send: self.t(Key::ChoicesSend).into(),
+                        multiple: self.t(Key::ChoicesMultiple).into(),
+                    },
+                    theme,
+                    move |picked, window, cx| option(&picked, window, cx),
+                    move |window, cx| send(&(), window, cx),
+                )
+            }
             ChatEntry::Error(_) => agent_components::error_notice(text.clone()),
             ChatEntry::Status(_) | ChatEntry::Note(_) => {
                 agent_components::status_notice(text.clone())

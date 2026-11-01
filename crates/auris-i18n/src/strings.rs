@@ -72,6 +72,8 @@ strings! {
     IssueNoContext { en: "No recorded context is available in this scope.", ja: "この範囲には記録された情報がありません。" }
     IssueInvitation { en: "A limitation or possible defect was found. You can prepare an Issue draft and choose what context to include.", ja: "機能の制約または不具合の可能性があります。補助情報を含めるか選んで、Issueの下書きを作れます。" }
     IssueOpenSuggestion { en: "Prepare Issue draft…", ja: "Issueの下書きを作成…" }
+    ChoicesSend { en: "Send", ja: "送信" }
+    ChoicesMultiple { en: "Choose any that apply", ja: "複数選べます" }
     WorkshopTitle { en: "AI workshop…", ja: "AIワークショップ…" }
     WorkshopChatHint { en: "Describe the music you want. Ask for one to three candidates, request more ideas, or keep developing your favourite.", ja: "作りたい曲を自由に伝えてください。候補は1〜3案で指定でき、追加の案を頼んだり、気に入った曲を育てたりできます。" }
     WorkshopMessage { en: "Message", ja: "メッセージ" }
