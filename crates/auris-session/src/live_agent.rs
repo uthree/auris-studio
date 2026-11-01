@@ -41,6 +41,22 @@ fn sound_search_limit() -> usize {
     10
 }
 
+/// Adds `loop_end_tick` to a clip summary when the clip repeats past its own end.
+///
+/// Left off an unlooped clip so the common case costs a model nothing to read; present, it is the
+/// absolute tick where the repeats stop, which is the value `edit_clip`'s `loop` takes back.
+fn with_loop_end(
+    mut summary: serde_json::Value,
+    start: Ticks,
+    content: Ticks,
+    sounding: Ticks,
+) -> serde_json::Value {
+    if sounding > content {
+        summary["loop_end_tick"] = (start + sounding).raw().into();
+    }
+    summary
+}
+
 fn mixer_summary(mixer: &auris_core::project::MixerStrip) -> serde_json::Value {
     serde_json::json!({
         "gain_db":mixer.gain_db, "pan":mixer.pan,
@@ -247,7 +263,7 @@ pub enum Command {
         /// Explicit read, set or removal operation with absolute ticks.
         operation: document_editing::TimelineOperation,
     },
-    /// Move/copy/split/resize/remove MIDI or audio clips by stable ID. Preserves contents, recipes and performance unless explicitly frozen or baked. One atomic Undo step.
+    /// Move/copy/split/resize/loop/remove MIDI or audio clips by stable ID. Preserves contents, recipes and performance unless explicitly frozen or baked. A looped clip stores one pass (length_ticks) and repeats it to loop_end_tick, so edit the one pass rather than writing the repeats out. One atomic Undo step.
     EditClip {
         /// Stable clip ID from inspect_project.
         clip: u64,
@@ -988,9 +1004,9 @@ impl Session {
                     .iter()
                     .map(|track| {
                         let clips: Vec<_> = if let Some(clips)=track.kind.note_clips() {
-                            clips.iter().map(|clip|serde_json::json!({"clip":clip.id.0,"name":clip.name,"start_tick":clip.start.raw(),"length_ticks":clip.length.raw(),"note_count":clip.notes.len()})).collect()
+                            clips.iter().map(|clip|with_loop_end(serde_json::json!({"clip":clip.id.0,"name":clip.name,"start_tick":clip.start.raw(),"length_ticks":clip.length.raw(),"note_count":clip.notes.len()}), clip.start, clip.length, clip.sounding_length())).collect()
                         } else if let Some(audio)=track.kind.as_audio() {
-                            audio.clips.iter().map(|clip|serde_json::json!({"clip":clip.id.0,"name":clip.name,"start_tick":clip.start.raw(),"length_ticks":project.audio_clip_length_ticks(clip).raw(),"gain_db":clip.gain_db,"source_bpm":clip.source_bpm,"follows_tempo":clip.follows_tempo,"fade_in_frames":clip.fade_in_frames,"fade_out_frames":clip.fade_out_frames,"source_frames":clip.length_frames,"source_sample_rate":project.audio_sources.get(&clip.source).map(|source|source.sample_rate),"fade_in_curve":clip.fade_in_curve,"fade_out_curve":clip.fade_out_curve})).collect()
+                            audio.clips.iter().map(|clip|with_loop_end(serde_json::json!({"clip":clip.id.0,"name":clip.name,"start_tick":clip.start.raw(),"length_ticks":project.audio_clip_length_ticks(clip).raw(),"gain_db":clip.gain_db,"source_bpm":clip.source_bpm,"follows_tempo":clip.follows_tempo,"fade_in_frames":clip.fade_in_frames,"fade_out_frames":clip.fade_out_frames,"source_frames":clip.length_frames,"source_sample_rate":project.audio_sources.get(&clip.source).map(|source|source.sample_rate),"fade_in_curve":clip.fade_in_curve,"fade_out_curve":clip.fade_out_curve}), clip.start, project.audio_clip_length_ticks(clip), project.audio_clip_sounding_ticks(clip))).collect()
                         } else { Vec::new() };
                         serde_json::json!({"track":track.id.0, "name":track.name,
                         "kind":track.kind.label(), "mixer":mixer_summary(&track.mixer), "clips":clips,"drum_assignments":self.drum_assignments(track.id),

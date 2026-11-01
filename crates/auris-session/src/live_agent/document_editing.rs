@@ -33,6 +33,17 @@ pub enum ClipOperation {
         /// Absolute exclusive end tick.
         end_tick: i64,
     },
+    /// Repeat the clip's content out to an absolute end tick, the way a looped region does in a
+    /// DAW. The stored notes or audio stay one pass; every repeat plays them again, and editing
+    /// that pass changes every repeat. A partial last pass is cut off at end_tick.
+    Loop {
+        /// Absolute exclusive end of the repeats. Omit to loop up to the next clip on the track,
+        /// or one extra pass when there is none. A value at or before the clip's own end turns
+        /// looping off.
+        end_tick: Option<i64>,
+    },
+    /// Stop the clip repeating; its content is unchanged.
+    Unloop,
     /// Delete the clip.
     Remove,
     /// Remove a generation recipe while retaining the stored score.
@@ -320,6 +331,22 @@ impl Session {
                     self.resize_clip_window(clip, tick(end_tick)?)
                         .map_err(error)?;
                 }
+                ClipOperation::Loop { end_tick } => match end_tick {
+                    Some(end_tick) => {
+                        let start = self.clip_start(clip).ok_or("Unknown clip ID")?;
+                        let end = tick(end_tick)?;
+                        self.set_clip_loop(clip, Ticks((end - start).raw().max(0)))
+                            .map_err(error)?;
+                    }
+                    None => {
+                        if !self.clip_is_looped(clip) {
+                            self.toggle_clip_loop(clip).map_err(error)?;
+                        }
+                    }
+                },
+                ClipOperation::Unloop => {
+                    self.set_clip_loop(clip, Ticks::ZERO).map_err(error)?;
+                }
                 ClipOperation::Remove => {
                     self.remove_clip(clip).map_err(error)?;
                 }
@@ -388,7 +415,16 @@ impl Session {
                     self.crossfade_clips(clip, ClipId(other)).map_err(error)?;
                 }
             }
-            Ok(serde_json::json!({"clip":result_clip.0}))
+            let mut result = serde_json::json!({"clip":result_clip.0});
+            if let (Some(start), Some(content), Some(sounding)) = (
+                self.clip_start(result_clip),
+                self.clip_content_length(result_clip),
+                self.clip_sounding_length(result_clip),
+            ) && sounding > content
+            {
+                result["loop_end_tick"] = (start + sounding).raw().into();
+            }
+            Ok(result)
         })();
         match applied {
             Ok(value) => {
@@ -534,6 +570,112 @@ mod tests {
                 .is_err()
         );
         assert_eq!(session.project(), &before);
+    }
+
+    #[test]
+    fn a_loop_repeats_one_pass_out_to_the_tick_asked_for_and_is_one_undo_step() {
+        let (mut session, track, clip) = fixture();
+        let before = session.project().clone();
+        // Two and a half passes of a one-bar clip: the last one is cut off, not squeezed.
+        let reply: serde_json::Value = serde_json::from_str(
+            &session
+                .agent_edit_clip(
+                    clip.0,
+                    ClipOperation::Loop {
+                        end_tick: Some(9600),
+                    },
+                )
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(reply["loop_end_tick"], 9600);
+        let looped = session.project().midi_clip(clip).unwrap().1;
+        assert_eq!(looped.length.raw(), 3840, "the content stays one pass");
+        assert_eq!(looped.notes, before.midi_clip(clip).unwrap().1.notes);
+        assert_eq!(looped.sounding_length().raw(), 9600);
+
+        // inspect_project says where the repeats stop, so a model can read the loop back.
+        let inspected: serde_json::Value = serde_json::from_str(
+            &session
+                .agent_command(super::super::Command::Inspect {})
+                .unwrap(),
+        )
+        .unwrap();
+        let summary = inspected["tracks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["track"] == track.0)
+            .unwrap()["clips"][0]
+            .clone();
+        assert_eq!(summary["loop_end_tick"], 9600);
+        assert_eq!(summary["length_ticks"], 3840);
+
+        session.undo();
+        assert_eq!(session.project(), &before);
+    }
+
+    #[test]
+    fn a_loop_without_an_end_fills_to_the_next_clip_and_unloop_stops_it() {
+        let (mut session, track, clip) = fixture();
+        session
+            .add_midi_clip(track, "Next", Ticks(3840 * 4), Ticks(3840))
+            .unwrap();
+        session
+            .agent_edit_clip(clip.0, ClipOperation::Loop { end_tick: None })
+            .unwrap();
+        assert_eq!(session.clip_sounding_length(clip), Some(Ticks(3840 * 4)));
+        // Asking again for a clip that already repeats keeps the length it has rather than
+        // toggling it off.
+        session
+            .agent_edit_clip(clip.0, ClipOperation::Loop { end_tick: None })
+            .unwrap();
+        assert!(session.clip_is_looped(clip));
+
+        let reply: serde_json::Value = serde_json::from_str(
+            &session
+                .agent_edit_clip(clip.0, ClipOperation::Unloop)
+                .unwrap(),
+        )
+        .unwrap();
+        assert!(reply.get("loop_end_tick").is_none());
+        assert!(!session.clip_is_looped(clip));
+        // An end at or before the clip's own end is the same as turning it off.
+        session
+            .agent_edit_clip(
+                clip.0,
+                ClipOperation::Loop {
+                    end_tick: Some(7680),
+                },
+            )
+            .unwrap();
+        session
+            .agent_edit_clip(
+                clip.0,
+                ClipOperation::Loop {
+                    end_tick: Some(2000),
+                },
+            )
+            .unwrap();
+        assert!(!session.clip_is_looped(clip));
+    }
+
+    #[test]
+    fn the_loop_operation_parses_from_the_wire_shape() {
+        let parsed: ClipOperation =
+            serde_json::from_value(serde_json::json!({"kind":"loop","end_tick":7680})).unwrap();
+        assert!(matches!(
+            parsed,
+            ClipOperation::Loop {
+                end_tick: Some(7680)
+            }
+        ));
+        let parsed: ClipOperation =
+            serde_json::from_value(serde_json::json!({"kind":"loop"})).unwrap();
+        assert!(matches!(parsed, ClipOperation::Loop { end_tick: None }));
+        let parsed: ClipOperation =
+            serde_json::from_value(serde_json::json!({"kind":"unloop"})).unwrap();
+        assert!(matches!(parsed, ClipOperation::Unloop));
     }
 
     #[test]

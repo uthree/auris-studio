@@ -420,6 +420,9 @@ strings! {
     MixerConnectionRejected { en: "Cannot connect these nodes. Choose a bus input or sidechain that does not create a cycle.", ja: "このノードには接続できません。循環しないバス入力かサイドチェインを選んでください。" }
     Inspector { en: "Inspector", ja: "インスペクタ" }
     InspectorClip { en: "Clip", ja: "クリップ" }
+    // The region inspector's loop switch. The value beside it says how many times the content
+    // plays, which is what a looped clip is for; the word alone would only say that it repeats.
+    InspectorLoop { en: "Loop", ja: "ループ" }
     InspectorGeneration { en: "Generation", ja: "生成" }
     InspectorSound { en: "Sound", ja: "音源" }
     InspectorUnmodified { en: "Unmodified", ja: "未調整" }

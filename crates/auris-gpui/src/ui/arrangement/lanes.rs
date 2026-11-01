@@ -24,9 +24,7 @@ use crate::ui::automation;
 use crate::ui::paint;
 use crate::ui::scrollbars::ScrollPanel;
 
-use super::geometry::{
-    CLIP_INSET, FADE_HANDLE_MIN_WIDTH, TITLE_HEIGHT, edge_zone_rows, resize_grab,
-};
+use super::geometry::{CLIP_INSET, FADE_HANDLE_MIN_WIDTH, edge_zone_rows, loop_band, resize_grab};
 use super::lane_paint::{paint_automation, paint_lane};
 
 impl AurisApp {
@@ -183,25 +181,34 @@ impl AurisApp {
                                     edge_zones
                                         .iter()
                                         .map(|zone| {
-                                            window.insert_hitbox(
+                                            let hitbox = window.insert_hitbox(
                                                 Bounds {
-                                                    origin: bounds.origin + zone.origin,
-                                                    size: zone.size,
+                                                    origin: bounds.origin + zone.bounds.origin,
+                                                    size: zone.bounds.size,
                                                 },
                                                 gpui::HitboxBehavior::Normal,
-                                            )
+                                            );
+                                            (hitbox, zone.looping)
                                         })
                                         .collect::<Vec<_>>()
                                 },
-                                move |bounds, edges: Vec<gpui::Hitbox>, window, cx| {
+                                move |bounds, edges: Vec<(gpui::Hitbox, bool)>, window, cx| {
                                     // Nothing on screen said the edges could be taken hold of, so the
                                     // only way to find out was to try. The arrow says it now.
-                                    for edge in &edges {
+                                    for (edge, _) in &edges {
                                         window.set_cursor_style(
                                             gpui::CursorStyle::ResizeLeftRight,
                                             edge,
                                         );
                                     }
+                                    // The platform has no loop cursor, and both halves of a clip's
+                                    // end show the same arrow — so the half that repeats says so
+                                    // beside the pointer with the loop mark the transport's cycle
+                                    // button wears.
+                                    let loop_hover = edges
+                                        .iter()
+                                        .find(|(edge, looping)| *looping && edge.is_hovered(window))
+                                        .map(|(edge, _)| edge.bounds);
                                     paint::clipped(window, bounds, |window| {
                                         paint::rect(window, bounds, theme.surface_sunken);
                                         paint::time_grid(
@@ -281,6 +288,9 @@ impl AurisApp {
                                         if let Some(band) = band {
                                             paint::selection_band(window, band, &theme);
                                         }
+                                        if let Some(zone) = loop_hover {
+                                            paint::loop_handle_mark(window, cx, zone, &theme);
+                                        }
                                     });
                                 },
                             )
@@ -338,7 +348,7 @@ impl AurisApp {
     /// Only the *inner* half of each grab zone is offered. [`Self::begin_lane_drag`] reaches the
     /// resize check only once [`Self::clip_at`] has found a clip under the pointer's tick, so the
     /// half hanging past the edge is a zone no press can ever land in.
-    fn clip_edge_zones(&self, lanes: &[LanePaint]) -> Vec<Bounds<Pixels>> {
+    fn clip_edge_zones(&self, lanes: &[LanePaint]) -> Vec<EdgeZone> {
         let mut zones = Vec::new();
         for lane in lanes {
             let lane_top = lane.top - self.lane_scroll;
@@ -357,17 +367,34 @@ impl AurisApp {
                 // its name bar, and a press there takes a fade rather than the edge.
                 let fades = matches!(clip.content, ClipContent::Waveform { .. })
                     && f32::from(right - left) > FADE_HANDLE_MIN_WIDTH;
-                for x in [left, right - grab] {
-                    zones.extend(edge_zone_rows(x, grab, top, bottom, fades));
-                }
-                // The loop edge is the name bar's own, at the far end of the repeats. On an
-                // unlooped clip that is the same place the resize edge is, and the name bar is
-                // the strip the loop takes there too — which is what makes a clip that has never
-                // been looped offer the gesture that starts one.
-                zones.push(Bounds {
-                    origin: point(looped - grab, top),
-                    size: size(grab, TITLE_HEIGHT.min(bottom - top)),
-                });
+                let band = top + loop_band(bottom - top);
+                let resize = |bounds| EdgeZone {
+                    bounds,
+                    looping: false,
+                };
+                zones.extend(
+                    edge_zone_rows(left, grab, top, bottom, fades)
+                        .into_iter()
+                        .map(resize),
+                );
+                // The loop edge is the upper half of the far end of the repeats. On an unlooped
+                // clip that is the same place the resize edge is, which then keeps only the lower
+                // half — the split that lets a clip nobody has looped yet offer both gestures.
+                let unlooped = looped == right;
+                let resize_top = if unlooped { band } else { top };
+                zones.extend(
+                    edge_zone_rows(right - grab, grab, resize_top, bottom, fades && !unlooped)
+                        .into_iter()
+                        .map(resize),
+                );
+                zones.extend(
+                    edge_zone_rows(looped - grab, grab, top, band, fades && unlooped)
+                        .into_iter()
+                        .map(|bounds| EdgeZone {
+                            bounds,
+                            looping: true,
+                        }),
+                );
             }
         }
         zones
@@ -581,6 +608,14 @@ pub(super) enum ClipContent {
         fade_in_curve: FadeCurve,
         fade_out_curve: FadeCurve,
     },
+}
+
+/// One rectangle of a clip's edge that the pointer can take hold of, and which gesture it is.
+pub(super) struct EdgeZone {
+    /// Where, relative to the lanes canvas.
+    pub(super) bounds: Bounds<Pixels>,
+    /// `true` for the upper half of the far end, which repeats the clip rather than resizing it.
+    pub(super) looping: bool,
 }
 
 #[cfg(test)]

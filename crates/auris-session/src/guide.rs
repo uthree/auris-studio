@@ -1234,6 +1234,14 @@ pub mod realtime {
     //! case falls out of the general one. And a loop is a *length* rather than a count, which is
     //! what lets its edge be dragged continuously and its last pass be cut half way through.
     //!
+    //! Every door says the same length. The name bar's loop edge, the L key, the inspector's
+    //! switch and a model's `edit_clip` `loop` all end in
+    //! [`Session::set_clip_loop`](crate::Session::set_clip_loop), and the three that are not
+    //! dragging start a fresh loop where [`default_loop_end`](auris_core::default_loop_end) says —
+    //! up to the next clip on the lane. A model reads the loop back as `loop_end_tick` from
+    //! `inspect_project` and `repeats_through_bar` from `read_notes`, because a model that cannot
+    //! see a loop writes its second pass out by hand on top of it.
+    //!
     //! # A stretch is prepared, not performed
     //!
     //! An audio clip may [`follow the tempo`](auris_core::AudioClip::follows_tempo): it is
