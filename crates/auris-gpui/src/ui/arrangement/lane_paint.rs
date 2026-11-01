@@ -231,7 +231,7 @@ pub(super) fn paint_lane(
                 window,
                 Bounds {
                     origin: point(
-                        clip_bounds.origin.x + clip_bounds.size.width - dot - px(4.0),
+                        clip_bounds.origin.x + clip_bounds.size.width - dot - name_inset(radius),
                         clip_bounds.origin.y + (TITLE_HEIGHT - dot) / 2.0,
                     ),
                     size: size(dot, dot),
@@ -396,7 +396,7 @@ pub(super) fn paint_lane(
                 window,
                 cx,
                 point(
-                    clip_bounds.origin.x + px(5.0),
+                    clip_bounds.origin.x + name_inset(radius),
                     clip_bounds.origin.y + px(1.5),
                 ),
                 name,
@@ -423,7 +423,10 @@ pub(super) fn paint_lane(
             let width = paint::measure_label(window, text.clone(), px(9.0));
             let pill = Bounds {
                 origin: point(
-                    clip_bounds.origin.x + clip_bounds.size.width - width - padding * 3.0,
+                    clip_bounds.origin.x + clip_bounds.size.width
+                        - width
+                        - padding * 2.0
+                        - name_inset(radius),
                     clip_bounds.origin.y + inset / 2.0,
                 ),
                 size: size(width + padding * 2.0, height),
@@ -444,6 +447,16 @@ pub(super) fn paint_lane(
     }
 }
 
+/// How far in from a clip's side its name (and the composer's dot, on the other side) sits.
+///
+/// Five pixels was enough while the name bar's corners were clamped small; under the clip's full
+/// radius the curve reaches into the strip, and the name started inside it. Half the radius plus
+/// a little clears the arc at the height the text is drawn, and a square-cornered theme keeps the
+/// old five.
+fn name_inset(radius: Pixels) -> Pixels {
+    px(5.0).max(radius * 0.5 + px(3.0))
+}
+
 /// The body strengths of a looped clip: its repeats, and what the written pass lays over them so
 /// that the two layers together come to exactly `body` — the strength an unlooped clip has.
 ///
@@ -459,6 +472,22 @@ fn repeat_body_alphas(body: f32) -> (f32, f32) {
 #[cfg(test)]
 mod tests {
     use super::clip_title_colors;
+
+    #[test]
+    fn a_clips_name_clears_its_rounded_corner() {
+        // At the text's height (a few pixels below the top) the corner's arc reaches in by
+        // r - sqrt(r^2 - (r - y)^2); the name has to start past it.
+        for radius in [0.0_f32, 7.0, 14.0] {
+            let y = 3.0_f32.min(radius);
+            let arc = radius - (radius * radius - (radius - y).powi(2)).max(0.0).sqrt();
+            let inset = f32::from(super::name_inset(gpui::px(radius)));
+            assert!(
+                inset >= arc + 2.0,
+                "radius {radius}: inset {inset} vs arc {arc}"
+            );
+            assert!(inset >= 5.0);
+        }
+    }
 
     #[test]
     fn a_looped_clips_written_pass_is_as_strong_as_the_same_clip_unlooped() {
