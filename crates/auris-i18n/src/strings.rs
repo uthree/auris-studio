@@ -2063,6 +2063,7 @@ new のオプション
     }
     LogPanel { en: "Log", ja: "ログ" }
     LogClear { en: "Clear", ja: "消去" }
+    LogCopyAll { en: "Copy all", ja: "すべてコピー" }
     LogEmpty { en: "Nothing has been logged.", ja: "ログはまだありません。" }
     CmdShowLog { en: "Log", ja: "ログ" }
     AgentPanel { en: "Agent", ja: "エージェント" }
@@ -2308,6 +2309,12 @@ new のオプション
     AgentInterrupting { en: "Stopping the current turn…", ja: "現在の処理を中断中…" }
     AgentQueueReattach { en: "Attach the reference files again before sending this saved message.", ja: "保存されたメッセージを送るには、参照ファイルをもう一度添付してください。" }
     AgentCopyMarkdown { en: "Copy Markdown", ja: "Markdownをコピー" }
+    AgentCopyText { en: "Copy", ja: "コピー" }
+    AgentCopyConversation { en: "Copy conversation", ja: "会話をコピー" }
+    AgentTranscriptYou { en: "You", ja: "あなた" }
+    AgentTranscriptAgent { en: "Agent", ja: "エージェント" }
+    AgentTranscriptTool { en: "Tool", ja: "ツール" }
+    AgentTranscriptError { en: "Error", ja: "エラー" }
     AgentDropFiles { en: "Drop MIDI, images, text or audio here", ja: "MIDI・画像・テキスト・音声をここにドロップ" }
     AgentComposerPlaceholder { en: "Ask about this song, or drop reference files…", ja: "この曲について相談、または参考ファイルをドロップ…" }
     AgentEffortDefaultShort { en: "Auto", ja: "既定" }
