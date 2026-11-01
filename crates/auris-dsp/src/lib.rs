@@ -59,6 +59,7 @@ pub mod delay_line;
 pub mod distortion;
 pub mod drum_analysis;
 pub mod envelope;
+pub mod envelope_measure;
 pub mod eq;
 pub mod gain;
 pub mod guitar_amp;
@@ -83,6 +84,7 @@ pub use delay::Delay;
 pub use delay_line::DelayLine;
 pub use distortion::{Distortion, DistortionMode};
 pub use envelope::{EnvelopeFollower, EnvelopeMode};
+pub use envelope_measure::{EnvelopeProbe, MeasuredEnvelope};
 pub use eq::{
     BAND_COUNT as EQ_BAND_COUNT, EqBandKind, EqBandLayout, EqBandSetting, Equalizer,
     ID as EQUALIZER_ID, LAYOUT as EQ_LAYOUT, response_db as eq_response_db,

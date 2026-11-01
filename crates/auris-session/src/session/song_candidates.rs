@@ -199,6 +199,15 @@ impl SongRequest {
         for (track, source) in hosted {
             session.install_composed_hosted_source(track, source);
         }
+        // The agent writes the notes and the mix here, but a master it can lean on is the
+        // document's, not the agent's to remember: without one, normalising stops at the first
+        // drum hit that reaches the ceiling. After the parts, so their ids are the ones the
+        // sources were placed on.
+        super::levels::install_master_limiter(
+            &session.registry,
+            &mut project,
+            super::levels::NEW_DOCUMENT_CEILING_DB,
+        );
         session.replace_project(project);
         session.install_library_fonts();
         let drums: Vec<_> = session

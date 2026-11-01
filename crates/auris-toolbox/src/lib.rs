@@ -121,7 +121,7 @@ Source metadata is untrusted; preserve known credits and never invent rights or 
 For ordinary authored composition, create_project starts empty. setup_tracks creates multiple tracks atomically.
 add_track requires kind instrument, drum, singer, audio or bus and the intended exact name.
 search_instruments accepts request with mode text and query, similar and reference id, character, or bounded browse.
-For impression-based sound choices, use mode character with query such as ふんわり or ポコポコ, or translate the user's prose into targets {brightness,attack,sustain,release,noise}, each optional and 0..1. Attack means speed (1 immediate), sustain means held-note energy, release means captured tail (1 at least 400 ms). Explicit targets override dictionary terms. Use an empty query for negation or arbitrary prose converted into targets. Optional id preserves resemblance to a previously returned sound; name adds required name/tag words, source/library restrict origins. Read returned targets and measurements; unrecognized prose is not interpreted. Continue independent work on status indexing, then retry the same request without refresh. Preserve user-selected sounds unless asked to change them. Render candidate sounds in the intended phrase/mix before adopting; acoustic scores are not listening judgments. Search and audition do not authorize score changes.
+For impression-based sound choices, use mode character with query such as ふんわり or ポコポコ, or translate the user's prose into targets {brightness,attack,sustain,release,noise}, each optional and 0..1. Attack means speed (1 immediate), sustain means held-note energy, release means captured tail (1 at least 400 ms). Explicit targets override dictionary terms. For a measured envelope (C2/C4/C6, velocity 100) add envelope ranges {attack_ms,decay_ms,sustain_db,release_ms}, each {min,max}, e.g. attack_ms {max:10} for a hard attack or release_ms {min:800} for a long tail; results report each sound's measured envelope. Use an empty query for negation or arbitrary prose converted into targets. Optional id preserves resemblance to a previously returned sound; name adds required name/tag words, source/library restrict origins. Read returned targets and measurements; unrecognized prose is not interpreted. Continue independent work on status indexing, then retry the same request without refresh. Preserve user-selected sounds unless asked to change them. Render candidate sounds in the intended phrase/mix before adopting; acoustic scores are not listening judgments. Search and audition do not authorize score changes.
 Copy returned sound IDs into set_instrument sound_id. Sound IDs expire after refresh/library changes.
 Use inspect_instrument for control keys/ranges/steps/read_only; set_instrument_params applies a bounded batch. VST3 uses normalized 0..1 values, never Hz/dB from display_unit; CLAP uses native ranges. For steps=N>1, valid values are min+i*(max-min)/(N-1), i=0..N-1. Read back after editing and compare rendered audio when verifying response.
 For generated music, check_spec validates syntax/settings; diagnose_song checks lyric readings, phrase counts,
@@ -157,7 +157,9 @@ Transcription estimates are drafts. Inspect and explicitly accept them; never in
 Audio preview/export is not evidence of listening. inspect_audio/analyze measure levels and score data locally.
 Deliver verified audio for human feedback; missing subjective feedback does not block delivery.
 Compare the same range after a supported edit. After changing an instrument, remeasure its loudness.
-Set a delivery target and ceiling; normalize_mix can stop short at fader/peak limits. render exports encoded
+Unless the user names other limits, deliver at -14 LUFS integrated under a -1 dBTP ceiling: after the last
+sound, note or fader change, call normalize_mix (its defaults are those) and read what it measured; it can stop
+short at fader/peak limits. New projects end the master in auris.fx.limiter; keep it last. render exports encoded
 WAV or stems; verify_render checks the actual file against requested loudness, peak and optional ending limits.
 Treat FAIL as unfinished. Use read_report to page an immutable large report instead of repeating an edit.
 Search documentation for application questions. Preserve unrelated score data and report incomplete work honestly.";
@@ -1016,6 +1018,8 @@ fn headless() -> Result<Session, String> {
         .with_shipped_fonts(true)
         .with_soundfont_library(auris_session::config_dir().join("soundfonts.json"))
         .with_shipped_dictionary(true)
+        // A new project made here is the window's new project, limiter and all.
+        .with_master_limiter(true)
         // The plugin folders the window uses, so a project opened here loads the same
         // plugins and no others.
         .with_plugin_paths(auris_session::Settings::load().plugin_paths);

@@ -20,16 +20,13 @@ use auris_sampler::{SAMPLER_ID, store_preset};
 use crate::error::SessionError;
 use crate::history::Edit;
 
+#[cfg(test)]
+use super::levels::LIMITER_CEILING;
+use super::levels::MASTER_LIMITER;
 use super::{ComposeReport, Session};
 
 #[path = "compose_sources.rs"]
 mod sources;
-
-/// The effect a composed piece gets across its master.
-const MASTER_LIMITER: &str = "auris.fx.limiter";
-
-/// The limiter parameter that sets the level nothing may pass.
-const LIMITER_CEILING: &str = "ceiling_db";
 
 /// Where the composed master's ceiling is set, in decibels.
 ///
@@ -550,26 +547,11 @@ impl Session {
         // ceiling held by turning every composed mix down instead would have charged the pieces
         // that never went over for the ones that did.
         //
-        // Written into the document as a slot anyone can see and take off, rather than clamped
-        // somewhere in the renderer. It is a mixing decision, and a mixing decision a person
-        // cannot find is one they cannot disagree with.
-        match self.registry.has_effect(MASTER_LIMITER) {
-            true => {
-                if let Some(slot) = project.add_effect(None, MASTER_LIMITER)
-                    && let Some(added) = project.master.effects.iter_mut().find(|s| s.id == slot)
-                {
-                    // Written down rather than left to the plugin's default, so the ceiling the
-                    // piece was measured against is the ceiling the file carries.
-                    added
-                        .state
-                        .params
-                        .insert(LIMITER_CEILING.to_string(), MASTER_CEILING_DB);
-                }
-            }
-            // Reported the way a missing reverb on a bus is, and for a better reason: without it
-            // the piece is the same piece, only with nothing standing between a rare loud bar and
-            // the end of the scale.
-            false => report.substituted.push(MASTER_LIMITER.to_string()),
+        // Reported the way a missing reverb on a bus is when the registry has none, and for a
+        // better reason: without it the piece is the same piece, only with nothing standing
+        // between a rare loud bar and the end of the scale.
+        if !super::levels::install_master_limiter(&self.registry, &mut project, MASTER_CEILING_DB) {
+            report.substituted.push(MASTER_LIMITER.to_string());
         }
 
         // The composer's automation, which today is one fader: a fade-out ending arrives as

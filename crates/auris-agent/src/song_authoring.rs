@@ -326,14 +326,22 @@ mod tests {
             })
             .unwrap();
         let revision = expected.agent_document_revision().unwrap();
-        let edits = json!([{"kind":"replace","clip":2,"notes":[
+        // Read back rather than assumed: the new document's master limiter takes an id too.
+        let clip = expected.project().tracks[0]
+            .kind
+            .as_instrument()
+            .unwrap()
+            .clips[0]
+            .id
+            .0;
+        let edits = json!([{"kind":"replace","clip":clip,"notes":[
             {"pitch":64,"bar":1,"beat":1,"length_beats":0.5,"velocity":0.7},
             {"pitch":67,"bar":1,"beat":1.75,"length_beats":0.25,"velocity":0.6},
             {"pitch":69,"bar":1,"beat":2,"length_beats":1,"velocity":0.8}
         ]}]);
         let (url, seen) = crate::tests::mock_server(vec![
             call("add_clip", clip_args),
-            call("read_notes", json!({"clips":[{"clip":2}]})),
+            call("read_notes", json!({"clips":[{"clip":clip}]})),
             call(
                 "edit_notes",
                 json!({"expected_revision":revision,"input":{"kind":"inline","edits":edits}}),

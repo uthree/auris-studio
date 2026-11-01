@@ -165,9 +165,13 @@ uses the returned send ID. `set_sidechain` replaces or clears a detector source.
 Insert actions add/remove/move/enable effects and read/set native parameters.
 All connections must form a DAG. See [Mixer signal flow](mixer-graph.md).
 
-Use numeric audio inspection for measurements, then normalize_mix if a common
-source-fader move is appropriate. It preserves relative balance and can stop short
-at fader or peak limits. Sound replacement preserves faders but can change output
+Use numeric audio inspection for measurements, then finish every song with
+normalize_mix. It defaults to -14 LUFS under a -1 dBTP ceiling, preserves relative
+balance and can stop short at fader or peak limits. New projects end their master in
+`auris.fx.limiter`; while it stays last in the chain, normalize_mix sets its ceiling to
+the requested one and lets the loudest moment go up to 6 dB into it. Without it the
+first drum hit to reach the ceiling stops the whole lift, which leaves a song written
+note by note several decibels quiet. Sound replacement preserves faders but can change output
 level substantially, so remeasure. Audio file delivery never establishes listening.
 
 `automation` selects a typed target (`track_gain`, `track_pan`, `master_gain`,

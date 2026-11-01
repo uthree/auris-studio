@@ -607,6 +607,13 @@ impl Session {
         if let Some(instrument) = self.registry.default_instrument_id() {
             project.add_instrument_track(track, instrument);
         }
+        if self.master_limiter {
+            super::levels::install_master_limiter(
+                &self.registry,
+                &mut project,
+                super::levels::NEW_DOCUMENT_CEILING_DB,
+            );
+        }
         self.history.clear();
         self.path = None;
         self.dirty = false;

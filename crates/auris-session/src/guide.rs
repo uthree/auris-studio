@@ -284,6 +284,14 @@
 //! 400 ms tail and explicitly marks censored lower bounds. Desktop browsing keeps PCA and semantic
 //! coordinates separate; searching changes the result order/highlights without moving points.
 //!
+//! The measured envelope ([`crate::SoundEnvelope`]) is a separate render: C2, C4 and C6 at velocity
+//! 100, held until the level settles or dies and recorded until the tail falls 60 dB, each phase
+//! capped at four seconds. It reports attack, decay and release in milliseconds and sustain in dB
+//! below the peak, so [`crate::EnvelopeTargets`] can be ranges a person or a model states in those
+//! units. Both the map and the agent's index rank with the same distance. Those renders dominate a
+//! scan, so results for sounds that live in files are cached under the configuration directory,
+//! keyed by file stamp and measurement version; built-ins are code and are always measured.
+//!
 //! The live agent queries the owning session for built-in instruments, loaded SoundFont
 //! presets and installed CLAP/VST3 instruments. The frontend supplies its configured plugin
 //! search folders. Discovery caches plugin descriptors and issues opaque, session-local

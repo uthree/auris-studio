@@ -1,8 +1,8 @@
 //! Bounded text discovery and reusable acoustic search over exact library preset addresses.
 
-use super::{Session, TimbreMapControl, TimbreSound};
+use super::{Session, SoundEnvelope, TimbreMapControl, TimbreSound};
 use crate::prelude::*;
-use crate::{TimbreCharacter, TimbreTargets};
+use crate::{EnvelopeTargets, TimbreCharacter, TimbreTargets};
 use auris_core::plugin::{Instrument, PluginState, PrepareContext};
 use auris_dsp::timbre::{standardize_timbres, timbre_character, timbre_features};
 use base64::Engine;
@@ -20,7 +20,8 @@ pub(super) use arrangement_sound::SoundPreparation;
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, schemars::JsonSchema)]
 #[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
 pub enum SoundSearch {
-    /// Rank measured sounds by Japanese/English impressions or explicit acoustic targets.
+    /// Rank measured sounds by Japanese/English impressions, explicit acoustic targets, or ranges on
+    /// the attack/decay/sustain/release measured from real notes (C2, C4, C6 at velocity 100).
     Character {
         /// Supported impressions, e.g. `ふんわり`, `ポコポコ`, `soft bright`. Use targets for arbitrary prose/negation.
         #[serde(default)]
@@ -28,6 +29,9 @@ pub enum SoundSearch {
         /// Explicit 0..1 targets override dictionary interpretations.
         #[serde(default)]
         targets: TimbreTargets,
+        /// Measured envelope ranges in ms and dB, e.g. `{"attack_ms":{"max":10},"release_ms":{"min":800}}`.
+        #[serde(default)]
+        envelope: Box<EnvelopeTargets>,
         /// Optional previously returned sound ID to retain acoustic resemblance.
         id: Option<String>,
         /// Optional name/tag words, all required. Use this for instrument families.
@@ -253,6 +257,7 @@ struct AcousticIndex {
     sounds: Vec<usize>,
     rows: Vec<Vec<f64>>,
     characters: Vec<TimbreCharacter>,
+    envelopes: Vec<Option<SoundEnvelope>>,
     skipped: Vec<String>,
     limited: bool,
 }
@@ -986,7 +991,7 @@ pub struct SoundLibraryJob {
     sounds: Vec<Sound>,
     sound_bytes: usize,
     base_truncated: bool,
-    font_paths: Vec<PathBuf>,
+    font_paths: Vec<(SoundFontId, PathBuf)>,
     extra_paths: Vec<PathBuf>,
     scan_plugins: bool,
     isolated_plugin_discovery: bool,
@@ -1088,7 +1093,7 @@ impl Session {
             if let Some(font) = self.fonts.get(reference.id) {
                 fonts.insert(reference.id, font);
                 if let Some(path) = reference.path.resolve(self.project_folder()) {
-                    font_paths.push(path);
+                    font_paths.push((reference.id, path));
                 }
                 if budget.sounds_truncated {
                     continue;
@@ -1342,8 +1347,14 @@ impl SoundLibraryJob {
         if !(1..=50).contains(&limit) {
             return Err("limit must be between 1 and 50".into());
         }
-        if let SoundSearch::Character { query, targets, .. } = &request {
-            TimbreTargets::interpret(query, targets)?;
+        if let SoundSearch::Character {
+            query,
+            targets,
+            envelope,
+            ..
+        } = &request
+        {
+            character_targets(query, targets, envelope)?;
         }
         if refresh && matches!(&request, SoundSearch::Browse { offset, .. } if *offset != 0) {
             return Err("Refresh only with offset 0".into());
@@ -1382,6 +1393,7 @@ impl SoundLibraryJob {
             SoundSearch::Character {
                 query,
                 targets,
+                envelope,
                 id,
                 name,
                 filter,
@@ -1390,6 +1402,7 @@ impl SoundLibraryJob {
                 catalog,
                 &query,
                 &targets,
+                &envelope,
                 id.as_deref(),
                 name.as_deref(),
                 &filter,
@@ -1540,12 +1553,13 @@ impl SoundLibraryJob {
         catalog: Arc<Catalog>,
         query: &str,
         targets: &TimbreTargets,
+        envelope: &EnvelopeTargets,
         id: Option<&str>,
         name: Option<&str>,
         filter: &SoundFilter,
         limit: usize,
     ) -> Result<String, String> {
-        let (targets, recognized) = TimbreTargets::interpret(query, targets)?;
+        let (targets, recognized) = character_targets(query, targets, envelope)?;
         let reference = id
             .map(|id| {
                 catalog
@@ -1597,7 +1611,15 @@ impl SoundLibraryJob {
                         && catalog.sounds[index.sounds[*i]].matches(&words)
                 })
                 .map(|(i, character)| {
-                    let target_distance = targets.distance(*character);
+                    let target_distance = targets.distance(*character)
+                        + if envelope.is_empty() {
+                            0.
+                        } else {
+                            // An unmeasured envelope ranks after every measured one.
+                            index.envelopes[i]
+                                .as_ref()
+                                .map_or(1., |e| envelope.distance(&e.summary))
+                        };
                     let distance = reference_row.map_or(target_distance, |row| {
                         let d = index.rows[i]
                             .iter()
@@ -1626,6 +1648,9 @@ impl SoundLibraryJob {
                     let mut value = catalog.sounds[index.sounds[i]].value();
                     value["distance"] = distance.into();
                     value["character"] = serde_json::json!(index.characters[i]);
+                    if let Some(measured) = &index.envelopes[i] {
+                        value["envelope"] = measured.value();
+                    }
                     value["target_error"] = ["brightness", "attack", "sustain", "release", "noise"]
                         .into_iter()
                         .zip(
@@ -1647,12 +1672,12 @@ impl SoundLibraryJob {
                 .collect();
             return Ok(sound_page(with_native_status(
                 serde_json::json!({
-                    "status":"ready", "sounds":sounds, "total":total, "targets":targets, "recognized":recognized,
+                    "status":"ready", "sounds":sounds, "total":total, "targets":targets, "envelope_targets":envelope, "recognized":recognized,
                     "indexed":index.sounds.len(), "skipped_count":index.skipped.len(), "limited":index.limited,
                     "reference_character":reference_row.and_then(|row| index.characters.get(row)),
                     "unmeasurable_count":catalog.sounds.iter().filter(|s| !measurable(s)).count(),
                     "interpretation":"Local impression dictionary with explicit overrides. Unrecognized prose is not interpreted; targets show exactly what was used.",
-                    "measurement":"Six matched notes; fixed-scale acoustic proxies. Release capture is 400 ms; release_censored marks a lower bound. Distance is relative mismatch, not probability or listening assessment. Render a musical phrase before adopting."
+                    "measurement":"Character: six matched notes, fixed-scale acoustic proxies; release capture is 400 ms and release_censored marks a lower bound. Envelope: C2/C4/C6 at velocity 100, held until settled (max 4 s), tail to -60 dB (max 4 s); attack to peak -1 dB, decay to sustain (or to -60 dB when decaying), sustain dB below peak, release RT60; *_estimated values are extrapolated. Distance is relative mismatch, not probability or listening assessment. Render a musical phrase before adopting."
                 }),
                 &catalog,
             )));
@@ -1775,7 +1800,7 @@ impl SoundLibraryJob {
         let mut stamps = self
             .font_paths
             .iter()
-            .map(|path| stamp(path))
+            .map(|(_, path)| stamp(path))
             .collect::<Vec<_>>();
         let mut native_status = None;
         if self.scan_plugins && self.isolated_plugin_discovery {
@@ -1917,6 +1942,7 @@ impl SoundLibraryJob {
         let mut sounds = Vec::new();
         let mut rows = Vec::new();
         let mut characters = Vec::new();
+        let mut envelopes = Vec::new();
         let mut skipped = Vec::new();
         let mut skipped_truncated = false;
         let measurable_count = catalog
@@ -1936,8 +1962,15 @@ impl SoundLibraryJob {
         let mut index_bytes_limited = false;
         for index in candidates {
             let sound = &catalog.sounds[index];
-            match measure_sound(sound, &self.registry, self.sample_rate, &catalog.control) {
-                Ok((row, character)) => {
+            let key = envelope_key(sound, &self.font_paths);
+            match measure_sound(
+                sound,
+                &self.registry,
+                self.sample_rate,
+                &catalog.control,
+                key.as_deref(),
+            ) {
+                Ok((row, character, envelope)) => {
                     let bytes = row
                         .len()
                         .saturating_mul(std::mem::size_of::<f64>())
@@ -1955,6 +1988,7 @@ impl SoundLibraryJob {
                     sounds.push(index);
                     rows.push(row);
                     characters.push(character);
+                    envelopes.push(envelope);
                 }
                 Err(error) => {
                     if Some(index) == reference {
@@ -1981,15 +2015,32 @@ impl SoundLibraryJob {
             catalog.completed.fetch_add(1, Ordering::Relaxed);
             catalog.control.check().map_err(|e| e.to_string())?;
         }
+        super::envelope::save();
         Ok(AcousticIndex {
             sounds,
             rows: standardize_timbres(&rows).map_err(str::to_string)?,
             characters,
+            envelopes,
             skipped,
             limited: measurable_count > ACOUSTIC_SOUND_LIMIT
                 || index_bytes_limited
                 || skipped_truncated,
         })
+    }
+}
+
+/// Interprets a character request: impressions and explicit targets, plus envelope ranges.
+/// At least one of them must say something.
+fn character_targets(
+    query: &str,
+    targets: &TimbreTargets,
+    envelope: &EnvelopeTargets,
+) -> Result<(TimbreTargets, Vec<String>), String> {
+    envelope.validate()?;
+    if envelope.is_empty() {
+        TimbreTargets::interpret(query, targets)
+    } else {
+        TimbreTargets::interpret_partial(query, targets)
     }
 }
 
@@ -2288,67 +2339,79 @@ fn discover_isolated_plugin(
     }
 }
 
+/// Makes a fresh, prepared instance of `sound` and hands it to `play`, tearing it down after.
+fn with_instrument<T>(
+    sound: &Sound,
+    registry: &PluginRegistry,
+    prepare: &PrepareContext,
+    play: impl FnOnce(&mut dyn Instrument) -> Result<T, String>,
+) -> Result<T, String> {
+    match &sound.source {
+        Source::Builtin(id) => {
+            let mut i = registry.create_instrument(id).map_err(|e| e.to_string())?;
+            i.prepare(prepare);
+            play(i.as_mut())
+        }
+        Source::Font(preset) => {
+            let mut i = registry
+                .create_instrument(SAMPLER_ID)
+                .map_err(|e| e.to_string())?;
+            let mut state = PluginState::default();
+            auris_sampler::store_preset(&mut state, *preset);
+            i.load_state(&state);
+            i.prepare(prepare);
+            play(i.as_mut())
+        }
+        Source::Clap {
+            file, id, preset, ..
+        } => {
+            // SAFETY: file came from the user's configured plugin library.
+            let library =
+                unsafe { auris_clap::ClapLibrary::load(file) }.map_err(|e| e.to_string())?;
+            let mut plugin = library.instantiate(id).map_err(|e| e.to_string())?;
+            if let Some(preset) = preset {
+                plugin.load_preset(preset)?;
+            }
+            let mut instrument = plugin
+                .activate_instrument(prepare)
+                .map_err(|e| e.to_string())?;
+            let result = play(&mut instrument);
+            plugin.deactivate_instrument(instrument);
+            result
+        }
+        Source::Vst3 {
+            file, id, preset, ..
+        } => {
+            let plugin =
+                auris_vst3::Vst3Plugin::load(file, id, prepare).map_err(|e| e.to_string())?;
+            if let Some(preset) = preset {
+                plugin.load_preset(preset).map_err(|e| e.to_string())?;
+            }
+            let mut instrument = plugin.offline_instrument().map_err(|e| e.to_string())?;
+            play(&mut instrument)
+        }
+    }
+}
+
+/// Six reference notes for the timbre features, then the three envelope notes — the latter
+/// from the disk cache when `envelope_key` names an entry.
 fn measure_sound(
     sound: &Sound,
     registry: &PluginRegistry,
     rate: f64,
     control: &TimbreMapControl,
-) -> Result<(Vec<f64>, TimbreCharacter), String> {
+    envelope_key: Option<&str>,
+) -> Result<(Vec<f64>, TimbreCharacter, Option<SoundEnvelope>), String> {
     let prepare = PrepareContext::new(rate, 512, 2);
     let mut features = Vec::new();
     let mut characters = Vec::new();
     for pitch in [48, 60, 72] {
         for velocity in [0.45, 0.85] {
             control.check().map_err(|e| e.to_string())?;
-            let render = |instrument: &mut dyn Instrument| {
+            let audio = with_instrument(sound, registry, &prepare, |instrument| {
                 super::timbre::render_reference(instrument, rate, pitch, velocity, control)
                     .map_err(|e| e.to_string())
-            };
-            let audio = match &sound.source {
-                Source::Builtin(id) => {
-                    let mut i = registry.create_instrument(id).map_err(|e| e.to_string())?;
-                    i.prepare(&prepare);
-                    render(i.as_mut())?
-                }
-                Source::Font(preset) => {
-                    let mut i = registry
-                        .create_instrument(SAMPLER_ID)
-                        .map_err(|e| e.to_string())?;
-                    let mut state = PluginState::default();
-                    auris_sampler::store_preset(&mut state, *preset);
-                    i.load_state(&state);
-                    i.prepare(&prepare);
-                    render(i.as_mut())?
-                }
-                Source::Clap {
-                    file, id, preset, ..
-                } => {
-                    // SAFETY: file came from the user's configured plugin library.
-                    let library = unsafe { auris_clap::ClapLibrary::load(file) }
-                        .map_err(|e| e.to_string())?;
-                    let mut plugin = library.instantiate(id).map_err(|e| e.to_string())?;
-                    if let Some(preset) = preset {
-                        plugin.load_preset(preset)?;
-                    }
-                    let mut instrument = plugin
-                        .activate_instrument(&prepare)
-                        .map_err(|e| e.to_string())?;
-                    let result = render(&mut instrument);
-                    plugin.deactivate_instrument(instrument);
-                    result?
-                }
-                Source::Vst3 {
-                    file, id, preset, ..
-                } => {
-                    let plugin = auris_vst3::Vst3Plugin::load(file, id, &prepare)
-                        .map_err(|e| e.to_string())?;
-                    if let Some(preset) = preset {
-                        plugin.load_preset(preset).map_err(|e| e.to_string())?;
-                    }
-                    let mut instrument = plugin.offline_instrument().map_err(|e| e.to_string())?;
-                    render(&mut instrument)?
-                }
-            };
+            })?;
             let values = timbre_features(&audio, 0.6)
                 .map_err(str::to_string)?
                 .ok_or("Silent reference trigger")?;
@@ -2356,7 +2419,42 @@ fn measure_sound(
             features.extend(values);
         }
     }
-    Ok((features, TimbreCharacter::mean(&characters)))
+    let envelope = match envelope_key.and_then(super::envelope::cached) {
+        Some(cached) => Some(cached),
+        None => {
+            let measured = super::envelope::measure_sound(|pitch| {
+                with_instrument(sound, registry, &prepare, |instrument| {
+                    super::envelope::measure_note(instrument, rate, pitch, control)
+                        .map_err(|e| e.to_string())
+                })
+            })?;
+            if let (Some(key), Some(envelope)) = (envelope_key, &measured) {
+                super::envelope::remember(key.to_owned(), envelope.clone());
+            }
+            measured
+        }
+    };
+    Ok((features, TimbreCharacter::mean(&characters), envelope))
+}
+
+/// The envelope cache key for a sound that lives in a file; built-ins are code and are never
+/// cached. Reads file metadata, so call it from a worker.
+fn envelope_key(sound: &Sound, fonts: &[(SoundFontId, PathBuf)]) -> Option<String> {
+    let identity = match &sound.source {
+        Source::Builtin(_) => return None,
+        Source::Font(preset) => {
+            let (_, path) = fonts.iter().find(|(id, _)| *id == preset.font)?;
+            return Some(font_envelope_key(path, preset.bank, preset.patch));
+        }
+        // Their discovery stamps already carry the plugin and preset files' metadata.
+        Source::Clap { .. } | Source::Vst3 { .. } => format!("{:?}", sound.source),
+    };
+    Some(super::envelope::cache_key(&identity))
+}
+
+/// A SoundFont preset's envelope cache key, shared by the agent's index and the timbre map.
+pub(super) fn font_envelope_key(path: &Path, bank: i32, patch: i32) -> String {
+    super::envelope::cache_key(&format!("font|{}|{bank}|{patch}", stamp(path)))
 }
 
 fn discover_clap(
@@ -3265,6 +3363,7 @@ mod tests {
             reference: Some(0),
             result: Some(Ok(AcousticIndex {
                 characters: Vec::new(),
+                envelopes: Vec::new(),
                 sounds: (0..ACOUSTIC_SOUND_LIMIT).collect(),
                 rows: Vec::new(),
                 skipped: Vec::new(),
@@ -3592,6 +3691,7 @@ mod tests {
         );
         catalog.index.lock().unwrap().result = Some(Ok(AcousticIndex {
             characters: vec![],
+            envelopes: vec![],
             sounds: indices.clone(),
             rows: vec![
                 vec![0.0, 0.0, 0.0],
@@ -3634,11 +3734,13 @@ mod tests {
         let job = isolated_job(&session);
         let source = job.sounds.iter().find(|s| measurable(s)).unwrap();
         let control = TimbreMapControl::default();
-        let (row, _) = measure_sound(source, &job.registry, job.sample_rate, &control).unwrap();
+        let (row, _, envelope) =
+            measure_sound(source, &job.registry, job.sample_rate, &control, None).unwrap();
         assert!(!row.is_empty() && row.iter().all(|v| v.is_finite()));
+        assert!(envelope.is_some_and(|e| e.summary.attack_ms.is_finite()));
         control.cancel();
         assert!(
-            measure_sound(source, &job.registry, job.sample_rate, &control)
+            measure_sound(source, &job.registry, job.sample_rate, &control, None)
                 .unwrap_err()
                 .contains("cancelled")
         );
@@ -3655,6 +3757,7 @@ mod tests {
         let request = SoundSearch::Character {
             query: "ポコポコ".into(),
             targets: Default::default(),
+            envelope: Default::default(),
             id: None,
             name: Some("auris".into()),
             limit: 3,
@@ -3678,6 +3781,57 @@ mod tests {
                 .iter()
                 .all(|s| s["target_error"]["brightness"].as_f64().is_some())
         );
+        assert!(sounds.iter().all(|s| {
+            s["envelope"]["by_pitch"]
+                .as_array()
+                .is_some_and(|p| !p.is_empty())
+        }));
+        // The same index answers ranges on the measured envelope alone, slowest attack first.
+        let swell: serde_json::Value = serde_json::from_str(
+            &isolated_job(&session)
+                .run(
+                    SoundSearch::Character {
+                        query: String::new(),
+                        targets: Default::default(),
+                        envelope: Box::new(crate::EnvelopeTargets {
+                            attack_ms: Some(crate::Bounds {
+                                min: Some(150.),
+                                max: None,
+                            }),
+                            ..Default::default()
+                        }),
+                        id: None,
+                        name: None,
+                        limit: 50,
+                        filter: SoundFilter {
+                            source: Some(SoundSource::Builtin),
+                            library: None,
+                        },
+                    },
+                    false,
+                )
+                .unwrap(),
+        )
+        .unwrap();
+        let attacks: Vec<f64> = swell["sounds"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s["envelope"]["attack_ms"].as_f64().unwrap())
+            .collect();
+        assert!(attacks.len() > 2, "{swell}");
+        let first_short = attacks
+            .iter()
+            .position(|a| *a < 150.)
+            .unwrap_or(attacks.len());
+        assert!(
+            attacks[..first_short].iter().all(|a| *a >= 150.),
+            "{attacks:?}"
+        );
+        assert!(
+            attacks[first_short..].windows(2).all(|w| w[0] >= w[1]),
+            "{attacks:?}"
+        );
         assert_eq!(session.project(), &before);
         let id = sounds[0]["id"].as_str().unwrap().to_owned();
         let reference_request = SoundSearch::Character {
@@ -3686,6 +3840,7 @@ mod tests {
                 brightness: Some(0.2),
                 ..Default::default()
             },
+            envelope: Default::default(),
             id: Some(id.clone()),
             name: None,
             limit: 2,
@@ -3762,6 +3917,7 @@ mod tests {
                 release: Some(0.1),
                 ..Default::default()
             },
+            envelope: Default::default(),
             id: None,
             name: None,
             limit: 2,
@@ -3815,9 +3971,15 @@ mod tests {
         let rows = sources
             .iter()
             .map(|sound| {
-                measure_sound(sound, &job.registry, job.sample_rate, &catalog.control)
-                    .unwrap()
-                    .0
+                measure_sound(
+                    sound,
+                    &job.registry,
+                    job.sample_rate,
+                    &catalog.control,
+                    None,
+                )
+                .unwrap()
+                .0
             })
             .collect::<Vec<_>>();
         assert_eq!(rows[0].len(), rows[1].len());

@@ -152,15 +152,16 @@ pub use session::{
     DEFAULT_VELOCITY, DiscardRecoveryJob, DiskWatchJob, DiskWatchResult, InputChannels, LAYOUT,
     LIMITER_ALLOWANCE_DB, LoadedFont, MIN_PHONEME_SECONDS, MidiExportJob, MidiExportReport,
     MidiExportResult, MidiImportJob, MidiImportResult, MixAnalysis, MusicalTyping,
-    NormalizeMixReport, OCTAVE_RANGE, OpenProjectJob, OpenProjectResult, Played, PluginWindow,
-    Quantize, RECOVERY_DIR_VAR, RecordingReport, RecordingStatus, RecoveryCleanupJob, RecoveryJob,
-    RecoveryQuarantineCleanupJob, RecoveryResult, RecoverySnapshot, Release, SaveJob, SaveReport,
-    SaveResult, SectionLoudness, Session, SessionOptions, SingPlan, SingerFramesExportJob,
-    SingerFramesExportResult, SingerLandingJob, SingerLandingResult, SingerTakeState,
-    SingerVoiceInfo, SingerVoiceLoadJob, SingerVoiceLoadResult, Struck, SungFrames, TARGET_LUFS,
-    TYPING_BEND, TakeReport, TrackLevel, TrackLoudness, TypingRole, VELOCITY_STEP, WHEEL_STEPS,
-    decode_audio, fader_for, faders_lift_db, input_level_of, master_gain_db, quantized,
-    read_soundfont, recovery_dir, shadows_musical_typing, take_fingerprint,
+    NORMALIZE_LIMITER_ALLOWANCE_DB, NormalizeMixReport, OCTAVE_RANGE, OpenProjectJob,
+    OpenProjectResult, Played, PluginWindow, Quantize, RECOVERY_DIR_VAR, RecordingReport,
+    RecordingStatus, RecoveryCleanupJob, RecoveryJob, RecoveryQuarantineCleanupJob, RecoveryResult,
+    RecoverySnapshot, Release, SaveJob, SaveReport, SaveResult, SectionLoudness, Session,
+    SessionOptions, SingPlan, SingerFramesExportJob, SingerFramesExportResult, SingerLandingJob,
+    SingerLandingResult, SingerTakeState, SingerVoiceInfo, SingerVoiceLoadJob,
+    SingerVoiceLoadResult, Struck, SungFrames, TARGET_LUFS, TYPING_BEND, TakeReport, TrackLevel,
+    TrackLoudness, TypingRole, VELOCITY_STEP, WHEEL_STEPS, decode_audio, fader_for, faders_lift_db,
+    input_level_of, master_gain_db, quantized, read_soundfont, recovery_dir,
+    shadows_musical_typing, take_fingerprint,
 };
 pub use session::{
     AudioAnalysisJob, ChordAnalysisJob, ChordAnalysisReport, ClipAudioAnalysis,
@@ -168,6 +169,7 @@ pub use session::{
 };
 pub use session::{CheckpointJob, CheckpointOperation, CheckpointResult};
 pub use session::{CompositionPreview, CompositionTrackPreview};
+pub use session::{ENVELOPE_PITCHES, SoundEnvelope};
 pub mod workshop;
 pub use session::{
     DrumKitAnalysis, DrumProbeFont, DrumProbeRequest, DrumProbeSample, DrumScanOptions,
@@ -194,7 +196,9 @@ pub use settings::{
 pub use singer_portrait::{
     SingerPortraitError, SingerPortraitSource, load_singer_icon, load_singer_portrait,
 };
-pub use sound_character::{TimbreCharacter, TimbreTargets};
+pub use sound_character::{
+    Bounds, EnvelopeTargets, MeasuredEnvelope, TimbreCharacter, TimbreTargets,
+};
 pub use sound_icons::SoundIcon;
 pub use transcription::{read_external_transcription_file, read_transcription_file};
 pub use transcription_draft::{
