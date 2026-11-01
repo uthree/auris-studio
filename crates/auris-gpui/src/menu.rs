@@ -219,6 +219,10 @@ pub fn model(language: Language, panels: &PanelLayout, state: MenuState) -> Vec<
                     menu: SystemMenuType::Services,
                 },
                 MenuRow::Separator,
+                command(t(Key::MenuHideApp), actions::HideApplication, ""),
+                command(t(Key::MenuHideOthers), actions::HideOtherApplications, ""),
+                command(t(Key::MenuShowAll), actions::ShowAllApplications, ""),
+                MenuRow::Separator,
                 command(t(Key::MenuQuitApp), actions::Quit, "file.quit"),
             ],
         });
@@ -288,6 +292,11 @@ pub fn model(language: Language, panels: &PanelLayout, state: MenuState) -> Vec<
             t(Key::CmdExportSingerFrames),
             actions::ExportSingerFrames,
             "file.export_frames",
+        ),
+        command(
+            t(Key::CmdExportVideo),
+            actions::ExportVideo,
+            "file.export_video",
         ),
     ];
     // Under Open rather than at the bottom, which is where every application on both platforms
@@ -706,30 +715,43 @@ pub fn model(language: Language, panels: &PanelLayout, state: MenuState) -> Vec<
     sections.push(MenuSection {
         category: Some(MenuCategory::Window),
         name: t(Key::MenuWindow),
-        rows: Panel::ALL
-            .into_iter()
-            .map(|panel| {
-                toggle(
-                    t(panel.label()),
-                    crate::auxiliary_window::TogglePanelWindow { panel },
-                    "",
-                    panels.is_detached(panel),
-                )
+        // A Mac's Window menu opens with the window itself, whatever else the application adds.
+        rows: cfg!(target_os = "macos")
+            .then(|| {
+                [
+                    command(t(Key::MenuMinimize), actions::MinimizeWindow, ""),
+                    command(t(Key::MenuZoom), actions::ZoomWindow, ""),
+                    MenuRow::Separator,
+                ]
             })
-            .chain([
-                command(
-                    t(Key::VisualizerTitle),
-                    actions::ToggleVisualizer,
-                    "visualizer.toggle",
-                ),
-                MenuRow::Separator,
-                command(t(Key::CmdNextTab), actions::NextProjectTab, "view.next_tab"),
-                command(
-                    t(Key::CmdPreviousTab),
-                    actions::PreviousProjectTab,
-                    "view.previous_tab",
-                ),
-            ])
+            .into_iter()
+            .flatten()
+            .chain(
+                Panel::ALL
+                    .into_iter()
+                    .map(|panel| {
+                        toggle(
+                            t(panel.label()),
+                            crate::auxiliary_window::TogglePanelWindow { panel },
+                            "",
+                            panels.is_detached(panel),
+                        )
+                    })
+                    .chain([
+                        command(
+                            t(Key::VisualizerTitle),
+                            actions::ToggleVisualizer,
+                            "visualizer.toggle",
+                        ),
+                        MenuRow::Separator,
+                        command(t(Key::CmdNextTab), actions::NextProjectTab, "view.next_tab"),
+                        command(
+                            t(Key::CmdPreviousTab),
+                            actions::PreviousProjectTab,
+                            "view.previous_tab",
+                        ),
+                    ]),
+            )
             .collect(),
     });
 

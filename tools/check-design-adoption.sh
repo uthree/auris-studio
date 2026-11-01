@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
-# Derived from uthree/design-language, revision b584b128658858fdd7917e003271dd35dadfd279.
-# Source: https://github.com/uthree/design-language/blob/b584b128658858fdd7917e003271dd35dadfd279/skills/atelier-gpui/tools/check-adoption.sh
+# Derived from uthree/design-language, revision 331aa75561264716729b587d1f6c90a3d0f286b8.
+# Source: https://github.com/uthree/design-language/blob/331aa75561264716729b587d1f6c90a3d0f286b8/skills/atelier-gpui/tools/check-adoption.sh
 # Find workarounds an application no longer needs once it builds on Atelier, so new code does
 # not copy old code that predates a feature. Run it from the application's repository, or in
 # its CI:
@@ -11,7 +11,8 @@
 # Each finding names the file and line and what replaces the workaround; CHANGELOG.md in the
 # Atelier repository lists the release each replacement arrived in. Errors fail the run;
 # warnings fail it only with --strict. To keep a line on purpose, end it with the comment
-# `// atelier: allow` and say why on the line above.
+# `// atelier: allow` (or put it on the next line, where rustfmt moves a comment written after
+# `fn name(`) and say why on the line above.
 
 set -u
 
@@ -21,7 +22,7 @@ for arg in "$@"; do
     case "$arg" in
         --strict) strict=1 ;;
         -h | --help)
-            sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
+            sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'
             exit 0
             ;;
         *) dirs+=("$arg") ;;
@@ -36,23 +37,16 @@ warnings=0
 check() {
     local level=$1 pattern=$2 message=$3
     local hits
-    # Keep an allow marker on the immediately following line as well as on the match itself.
-    # Rustfmt moves comments attached to a multi-line function signature onto its first parameter.
     hits=$(grep -rnE --include='*.rs' -e "$pattern" "${dirs[@]}" 2>/dev/null || true)
     [ -z "$hits" ] && return
     while IFS= read -r hit; do
         local place=${hit%%:*}
         local rest=${hit#*:}
         local line=${rest%%:*}
-        if grep -q 'atelier: allow' "$place" 2>/dev/null; then
-            local next=$((line + 1))
-            if sed -n "${next}p" "$place" | grep -q 'atelier: allow'; then
-                continue
-            fi
-        fi
-        if [[ "$hit" == *'atelier: allow'* ]]; then
-            continue
-        fi
+        [[ "$hit" == *'atelier: allow'* ]] && continue
+        # rustfmt moves a comment after `fn name(` onto the first parameter's line, so a marker
+        # on the line straight after the match counts as well.
+        sed -n "$((line + 1))p" "$place" | grep -q 'atelier: allow' && continue
         echo "$level: $place:$line: $message"
         if [ "$level" = error ]; then
             errors=$((errors + 1))
@@ -108,7 +102,7 @@ check error 'fn [a-z_]*copy_button\b' \
     "use CopyButton: it copies, says Copied for a moment and moves the label to its tooltip."
 
 check error 'fn [a-z_]*composer_frame\b' \
-    "use Composer: .tone(..) for a warning frame with its mark, .notice(..) for a row inside the frame, .attach_disabled(..), .control(..)."
+    "use Composer: .tone(..) for a warning frame with its mark, .notice(..) for a row inside the frame, .attach_disabled(..), .control(..), and .busy(..).queue(true) for Stop beside a queueing Send."
 check error '(punch|notes)\.svg' \
     "use IconName::Punch / IconName::Notes."
 check warn 'motion\.enabled *= *false' \
@@ -129,6 +123,8 @@ check warn 'Theme::new\(Direction::(Studio|Glass|Mono), Appearance::(Light|Dark)
     "if this is a test looping over every theme, use Theme::all()."
 check warn '\bselection\b.*gpui_component|gpui_component.*\bselection\b' \
     "selected text uses theme.colors.selection."
+check warn 'colors\.highlight *= *' \
+    "Button no longer reads colors.highlight to decide on a bezel; theme.shape.bezel_controls does, and only Studio sets it. Drop the override, or set bezel_controls instead."
 
 # Plots and media.
 check error 'scatter_batches|fn [a-z_]*project[a-z_]*\(.*azimuth' \

@@ -323,6 +323,10 @@ pub fn error_text(error: &SessionError, language: Language) -> String {
         }
         SessionError::Vocal(inner) => with(Key::ErrorLyric, inner.to_string()),
         SessionError::Sing(inner) => with(Key::ErrorSing, inner.to_string()),
+        SessionError::Video(auris_session::VideoError::FfmpegMissing(command)) => {
+            messages::ffmpeg_missing(language, command, auris_session::ffmpeg_install_page())
+        }
+        SessionError::Video(inner) => with(Key::ErrorVideo, inner.to_string()),
         SessionError::SingerFramesFileTooLarge { .. } | SessionError::SingerFramesLimit { .. } => {
             with(Key::ErrorSing, error.to_string())
         }

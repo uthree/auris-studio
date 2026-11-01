@@ -357,11 +357,21 @@ impl AurisApp {
     }
 
     /// The graph is rebuilt from the document, preserving the positions of surviving identities.
-    pub(crate) fn render_mixer_graph(&mut self, cx: &mut gpui::Context<Self>) -> AnyElement {
+    pub(crate) fn render_mixer_graph(
+        &mut self,
+        window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) -> AnyElement {
         self.poll_mixer_signals();
         let document = self.session.mixer_graph();
         if self.mixer_canvas.is_none() {
             let saved = self.project().mixer_graph_view.clone().sanitized();
+            // A project nobody has arranged the graph of opens framed on the whole of it. The
+            // default camera showed the first track and a wire running off the bottom towards a
+            // master that was out of sight.
+            if saved == MixerGraphView::default() {
+                cx.on_next_frame(window, |this, window, cx| this.fit_mixer_view(window, cx));
+            }
             let state = cx.new(|_| {
                 let mut state = FlowState::new(Vec::new(), Vec::new());
                 state.externally_managed = true;
@@ -631,9 +641,28 @@ impl AurisApp {
                                 self.t(Key::MixerNotesWire),
                                 theme.mixer_notes_color(),
                                 EdgeStroke::Dashed,
-                            )),
-                    )
-                    .child(self.t(Key::MixerGraphHelp)),
+                            ))
+                            // The how-to, behind a mark rather than under the graph: two lines
+                            // of instructions were drawn on every frame, over the wires, and the
+                            // graph is what the panel is for.
+                            .child(
+                                div()
+                                    .id("mixer-graph-help")
+                                    .debug_selector(|| "mixer-graph-help".into())
+                                    .flex()
+                                    .items_center()
+                                    .tooltip(crate::ui::tooltip::keyed_tip(
+                                        self.t(Key::MixerGraphHelp),
+                                        "",
+                                        &theme,
+                                    ))
+                                    .child(
+                                        atelier::Icon::new(atelier::IconName::Info)
+                                            .size(gpui::px(12.))
+                                            .color(theme.text_muted),
+                                    ),
+                            ),
+                    ),
             )
             .into_any_element()
     }

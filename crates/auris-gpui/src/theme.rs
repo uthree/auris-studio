@@ -1196,12 +1196,12 @@ impl Theme {
         colors.meter = [self.meter_low, self.meter_mid, self.meter_high];
         colors.agent = self.accent_text;
         colors.agent_wash = Self::translucent(colors.agent, 0.10);
-        // No bezel. Atelier lifts a secondary `Button` with a top-lit gradient and a drop shadow
-        // whenever this is visible, and the Glass direction leaves it visible, so those buttons
-        // stood out from the hairlined `widgets::button` beside them. Liquid Glass controls sit
-        // flat in the glass they belong to; a shadow is for layers that float above it.
-        colors.highlight = gpui::transparent_white();
+        // A secondary `Button` lies flat under Glass (only Studio sets `shape.bezel_controls`),
+        // and under the translucent material its fill is Atelier's see-through `control` tone so
+        // the glass shows through. An opaque window has no glass to show: there it is the raised
+        // surface, as `widgets::button` is.
         if self.atelier.material == atelier::Material::Opaque {
+            colors.control = self.surface_raised;
             colors.chrome = self.surface_raised;
             colors.overlay = self.surface_raised;
         } else if !self.is_glass {
@@ -1540,7 +1540,16 @@ mod tests {
     fn no_scheme_bezels_its_buttons() {
         for scheme in SCHEMES {
             let theme = Theme::from_scheme(scheme);
-            assert_eq!(theme.atelier.colors.highlight.a, 0.0, "{}", scheme.id);
+            assert!(!theme.atelier.shape.bezel_controls, "{}", scheme.id);
+            if theme.atelier.material == atelier::Material::Opaque {
+                assert_eq!(
+                    theme.atelier.colors.control, theme.surface_raised,
+                    "{}",
+                    scheme.id
+                );
+            } else {
+                assert!(theme.atelier.colors.control.a < 0.2, "{}", scheme.id);
+            }
         }
     }
 

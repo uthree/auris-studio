@@ -42,10 +42,6 @@ const MARKS: &[(&str, &[u8])] = &[
         include_bytes!("../../assets/sounds/mallet.svg"),
     ),
     (
-        "icons/menu.svg",
-        include_bytes!("../../assets/icons/menu.svg"),
-    ),
-    (
         "icons/sound-sound.svg",
         include_bytes!("../../assets/icons/sound-sound.svg"),
     ),

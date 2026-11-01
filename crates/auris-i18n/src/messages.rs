@@ -194,9 +194,10 @@ messages! {
     }
 
     /// The line under the piano roll's heading, naming the gestures that are actually bound.
-    fn piano_roll_hint(create: &str, delete: &str) {
-        en: "{create}: add note · drag: move · Alt/Option-drag: copy · right edge: resize · {delete}: delete · right-click: menu",
-        ja: "{create}: ノート追加 · ドラッグ: 移動 · Alt/Optionドラッグ: 複製 · 右端: 長さ変更 · {delete}: 削除 · 右クリック: メニュー"
+    /// `alt` is the platform's own name for the key: Option on a Mac, Alt elsewhere.
+    fn piano_roll_hint(create: &str, delete: &str, alt: &str) {
+        en: "{create}: add note · drag: move · {alt}-drag: copy · right edge: resize · {delete}: delete · right-click: menu",
+        ja: "{create}: ノート追加 · ドラッグ: 移動 · {alt}+ドラッグ: 複製 · 右端: 長さ変更 · {delete}: 削除 · 右クリック: メニュー"
     }
 
     /// Pitch and selection size beside a moved or resized note.
@@ -929,6 +930,18 @@ messages! {
         ja: "{path} を書き出しました · {duration} · {channels} ch · {bits} bit · ピーク {peak_db:.1} dBFS"
     }
 
+    /// Confirmation that a note-roll video was written.
+    fn wrote_video(path: &str, duration: &str, frames: u64, encoder: &str) {
+        en: "wrote {path} · {duration} · {frames} frames · {encoder}",
+        ja: "{path} を書き出しました · {duration} · {frames} フレーム · {encoder}"
+    }
+
+    /// No ffmpeg was found, with the command that installs one.
+    fn ffmpeg_missing(command: &str, page: &str) {
+        en: "Video export needs ffmpeg, which is not installed. Install it with `{command}`, or download it from {page}, then try again.",
+        ja: "動画の書き出しには ffmpeg が必要ですが、見つかりませんでした。`{command}` でインストールするか、{page} から入手してから、もう一度お試しください。"
+    }
+
     /// Confirmation that the command line tool created a project.
     fn created_project(path: &str, bpm: f64, rate: f64) {
         en: "created {path} · {bpm:.2} BPM · {rate:.0} Hz",
@@ -961,6 +974,18 @@ messages! {
     fn count_in_set(length: &str) {
         en: "takes are counted in for {length}",
         ja: "録音の前に {length} カウントします"
+    }
+
+    /// A note-roll video was written.
+    fn exported_video(path: &str, duration: &str) {
+        en: "Exported {path} · {duration}",
+        ja: "{path} を書き出しました · {duration}"
+    }
+
+    /// The ffmpeg a video will be encoded with.
+    fn ffmpeg_found(version: &str, encoder: &str) {
+        en: "Encoding with ffmpeg {version} ({encoder})",
+        ja: "ffmpeg {version}（{encoder}）で書き出します"
     }
 
     /// How many stems were written, and where they went.

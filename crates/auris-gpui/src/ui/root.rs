@@ -473,6 +473,7 @@ impl AurisApp {
                     .on_action(Self::window_listener(cx, Self::on_import_midi))
                     .on_action(Self::window_listener(cx, Self::on_export_midi))
                     .on_action(Self::window_listener(cx, Self::on_export_singer_frames))
+                    .on_action(Self::window_listener(cx, Self::on_export_video))
                     .on_action(Self::window_listener(cx, Self::on_choose_singer_voice))
                     .on_action(Self::window_listener(cx, Self::on_next_singer_speaker))
                     .on_action(Self::window_listener(cx, Self::on_sing))
@@ -2787,6 +2788,15 @@ impl AurisApp {
         self.export_singer_frames(window, cx);
     }
 
+    fn on_export_video(
+        &mut self,
+        _: &actions::ExportVideo,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_video_export(cx);
+    }
+
     fn on_choose_singer_voice(
         &mut self,
         _: &actions::ChooseSingerVoice,
@@ -3393,6 +3403,20 @@ impl AurisApp {
             .is_some_and(|export| export.result.is_some())
         {
             self.export = None;
+            cx.notify();
+            return;
+        }
+        // A selection is the last thing to give back before the engine. Escape is what every
+        // editor deselects with, and a hand that pressed it to let go of some notes got a panic
+        // and a status line instead. The clip the roll is showing stays: dropping it would empty
+        // the editor rather than the selection inside it.
+        if !self.selected_notes.is_empty() {
+            self.selected_notes.clear();
+            cx.notify();
+            return;
+        }
+        if self.selected_clips.len() > 1 {
+            self.selected_clips = self.selected_clip.into_iter().collect();
             cx.notify();
             return;
         }

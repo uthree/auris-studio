@@ -307,7 +307,9 @@ impl Preferences {
     }
 }
 
-/// Storage under the existing conversation root, so Save As copies it with conversations.
+/// Song-conversation storage. The application keeps one library, [`Store::library`], because the
+/// workshop starts songs rather than editing one: it opens before any project exists, so a store
+/// keyed by the open document would begin empty on every launch.
 #[derive(Clone)]
 pub struct Store {
     root: PathBuf,
@@ -315,7 +317,7 @@ pub struct Store {
     thread_id: String,
 }
 
-/// A project-local song conversation shown in the workshop sidebar.
+/// A song conversation shown in the workshop sidebar.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ThreadInfo {
     /// Opaque host-assigned directory identity.
@@ -344,7 +346,7 @@ impl Store {
         Ok(file)
     }
 
-    /// Copy closed workshop history and exact artifacts during Save As.
+    /// Copy closed workshop history and exact artifacts to another, absent, location.
     pub fn copy_to(&self, destination: &Self) -> Result<(), String> {
         if self.root == destination.root || !self.root.exists() {
             return Ok(());
@@ -404,6 +406,13 @@ impl Store {
         let a: Option<String> = read_or_default(&self.library_root.join("active-thread.json"))?;
         let b: Option<String> = read_or_default(&other.library_root.join("active-thread.json"))?;
         Ok(a == b)
+    }
+    /// The application's song-conversation library, in the configuration directory.
+    ///
+    /// Every workshop window opens this one library, whichever document is open behind it, so
+    /// the sidebar lists every earlier conversation.
+    pub fn library() -> Self {
+        Self::new(crate::config_dir())
     }
     /// Use a host-resolved conversation directory, never a model-provided path.
     pub fn new(root: PathBuf) -> Self {

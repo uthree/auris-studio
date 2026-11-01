@@ -322,17 +322,10 @@ impl AurisApp {
             }
             cx.notify();
         });
-        let runtime = self
-            .session
-            .project_folder()
-            .ok_or_else(|| "No project workspace".to_string())
-            .and_then(|folder| {
-                Workshop::start(
-                    folder.into(),
-                    self.session.path().is_none(),
-                    self.settings.clone(),
-                )
-            });
+        let runtime = Workshop::start(
+            auris_session::workshop::Store::library(),
+            self.settings.clone(),
+        );
         let (runtime, error) = match runtime {
             Ok(runtime) => (Some(runtime), None),
             Err(e) => (None, Some(e)),
@@ -693,7 +686,14 @@ impl AurisApp {
             .spawn(cx, async move |cx| {
                 let result = cx
                     .background_executor()
-                    .spawn(async move { auris_agent::workshop::handoff(folder, unsaved, document) })
+                    .spawn(async move {
+                        auris_agent::workshop::handoff(
+                            folder,
+                            unsaved,
+                            auris_session::workshop::Store::library(),
+                            document,
+                        )
+                    })
                     .await;
                 let _ = view.update_in(cx, |this, window, cx| {
                     let Some(s) = &mut this.song_workshop else {
@@ -3142,7 +3142,7 @@ mod tests {
                 auris_session::ReasoningEffort::High
             )
         });
-        let slider = cx.debug_bounds("workshop-effort-slider").unwrap();
+        let slider = cx.debug_bounds("workshop-effort-picker-steps").unwrap();
         crate::harness::press(cx, slider.center());
         crate::harness::release(cx, slider.center());
         crate::harness::paint(&app, cx);
@@ -3152,12 +3152,12 @@ mod tests {
                 auris_session::ReasoningEffort::Low
             )
         });
-        crate::harness::click("reasoning-fast-mode", cx);
+        crate::harness::click("workshop-effort-picker-fast", cx);
         crate::harness::paint(&app, cx);
         app.read_with(cx, |this, _| {
             assert!(this.song_workshop.as_ref().unwrap().preferences.fast_mode)
         });
-        crate::harness::click("reasoning-reset", cx);
+        crate::harness::click("workshop-effort-picker-reset", cx);
         crate::harness::paint(&app, cx);
         app.read_with(cx, |this, _| {
             let prefs = &this.song_workshop.as_ref().unwrap().preferences;

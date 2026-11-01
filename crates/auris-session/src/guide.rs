@@ -80,10 +80,13 @@
 //! Comparisons, cancelled jobs and recovery of older rounds do not change the selection.
 //! Descendants open that candidate's saved score; selection never regenerates the music.
 //! The session's `workshop` store retains transcripts, comparison rounds, parent identities,
-//! documents and audition assets. Each project can keep multiple named workshop conversations,
-//! including their drafts, attachments and candidate feedback. Archiving is reversible; opening
-//! another conversation waits until production has stopped. The legacy workshop remains the
-//! default conversation. Save As copies every workshop conversation and its assets.
+//! documents and audition assets. The application keeps one library of named workshop
+//! conversations, [`crate::workshop::Store::library`], in the configuration directory, including
+//! their drafts, attachments and candidate feedback. It belongs to no project because the workshop
+//! opens before one exists: a store keyed by the open document would be a fresh, empty recovery
+//! folder on every launch. A window that finds the last conversation open elsewhere starts a new
+//! one. Archiving is reversible; opening another conversation waits until production has stopped.
+//! Opening a candidate in the editor copies its history into that project's editor conversation.
 //! Explicit one-to-five-star ratings and comments belong to the exact candidate and inform
 //! subsequent requests in that conversation; they never change the score or start production.
 //! The frontend owns presentation, provider selection, audition and explicit editor handoff.
@@ -193,8 +196,10 @@
 //! [`crate::Session::replace_notes`] validates a complete note sequence before replacing
 //! only the authored notes of one clip. Clip timing, curves, transforms and recipe survive.
 //! The operation records one Undo step; identical sequences are no-ops, including an empty
-//! sequence on an empty clip. Agent `edit_notes` uses clip-relative integer ticks, numeric
-//! MIDI pitches and original storage indices checked against a content revision. Patches and
+//! sequence on an empty clip. Agent `edit_notes` places notes by song bar and fractional
+//! beat, never by tick: the session does the multiplication a model kept getting wrong, and
+//! refuses an attack between subdivisions instead of writing it. Pitches are numeric MIDI and
+//! notes are addressed by original storage indices checked against a content revision. Patches and
 //! replacements share an atomic batch across up to sixteen clips. Large batches can be read
 //! once from bounded JSON input before authorizing the exact draft. The source is not an asset.
 //! Saved MCP checkpoints changed documents; live execution creates one unsaved Undo step.
@@ -383,6 +388,8 @@ pub mod architecture {
     //!   auris-vst3      hosting of third-party VST3 plugins        → auris-core only
     //!   auris-engine    render graph, transport, cpal in and out, offline renderer
     //!   auris-io        audio file import/export, project save/load
+    //!   auris-video     note-roll videos: frames in software, encoded by an installed ffmpeg
+    //!                   → auris-core only
     //!   auris-gpu       optional wgpu compute for offline analysis
     //!   auris-compose   score-based automatic composition
     //!   auris-vocal     lyrics to phonemes, notes to voice-model frames → auris-core only
@@ -415,6 +422,13 @@ pub mod architecture {
     //! [`auris_dsp::Adsr`] is the one that matters: the built-in voices and the sampler's
     //! per-note fade are the same generator, so an attack of five milliseconds means the same
     //! thing on both, and it will go on meaning the same thing after the next correction.
+    //!
+    //! [`auris_video`] draws a note-roll video in software and never carries an encoder: it looks
+    //! for an `ffmpeg` already installed and pipes raw frames into it. A bundled ffmpeg would be
+    //! tens of megabytes on every platform and an H.264 encoder inside it either GPL or the
+    //! platform's own; the installed one brings whichever its owner chose. The desktop's preview is
+    //! a frame from the same renderer the export uses, which is why the frames are drawn with
+    //! `tiny-skia` below the session rather than by the window's toolkit above it.
     //!
     //! **[`auris_engine`] does not depend on [`auris_dsp`] or [`auris_synth`].** It drives plugins
     //! purely through the `auris-core` traits. That is what keeps the plugin system honest: if the
@@ -2127,6 +2141,14 @@ pub mod singing {
     //! become audio through DiffSinger, LeapSinger or VOICEVOX. Playback uses the saved
     //! [`SingerTake`](auris_core::SingerTake). Frame import and export run through the same
     //! cached models as the editor, with ONNX inference split into bounded phrases.
+    //!
+    //! A singer track is a mono channel. A voice is one point in the room, so the graph folds
+    //! the track's two sides back into one signal after its insert chain and before its sends
+    //! and its pan ([`RenderTrack::is_mono`](auris_engine::RenderTrack::is_mono)): the pan
+    //! alone places the singer, a stereo take or a widening insert cannot spread it, and the
+    //! meter shows one bar. Width belongs on a send to a stereo bus, such as a reverb. Note
+    //! tracks are not folded, so the physical instruments keep the stereo image they place
+    //! their notes in.
     //!
     //! # The voice, and the take
     //!

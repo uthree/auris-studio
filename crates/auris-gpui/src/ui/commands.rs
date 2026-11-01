@@ -518,6 +518,7 @@ impl AurisApp {
             Ok(id) => {
                 self.select_clip(Some(id));
                 self.selected_notes.clear();
+                self.center_roll_on_selection();
             }
             // Which of the two kinds refused says which sentence is true: an audio track has
             // clips and they arrive by import, and a bus has none at all.
@@ -752,7 +753,8 @@ impl AurisApp {
         self.cancel_disk_watch();
         self.reset_drum_analysis();
         self.agent_reset_conversation();
-        self.session.new_project();
+        self.session
+            .new_project_with_track(&messages::new_track_name(self.language(), 1));
         self.resync_selection();
         self.reset_view();
         self.set_status(self.t(Key::NewProjectStatus));
@@ -3657,13 +3659,14 @@ impl AurisApp {
         if self.editing_a_drum_clip() {
             return;
         }
-        let Some(range) = self
-            .selected_midi_clip()
-            .and_then(|clip| clip.pitch_range())
-        else {
+        let Some(clip) = self.selected_midi_clip() else {
             return;
         };
-        let middle = ((range.0 as u16 + range.1 as u16) / 2) as u8;
+        // A clip with nothing in it yet opens on middle C, where most parts begin. It used to
+        // keep the roll wherever it was parked, which for a new clip was the octave above C6.
+        let middle = clip
+            .pitch_range()
+            .map_or(60, |range| ((range.0 as u16 + range.1 as u16) / 2) as u8);
         let body_height =
             crate::theme::Metrics::BOTTOM_DOCK_HEIGHT - crate::theme::Metrics::PANEL_HEADER_HEIGHT;
         self.pitch.center_on(middle, body_height);

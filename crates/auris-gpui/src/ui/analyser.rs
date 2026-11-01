@@ -350,7 +350,6 @@ impl AurisApp {
             .bg(theme.surface_sunken)
             .border_b_1()
             .border_color(theme.border)
-            .cursor_pointer()
             .child(
                 canvas(
                     move |bounds, _, _| recorded.set(Some(plot_of(bounds))),

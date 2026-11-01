@@ -1507,6 +1507,8 @@ pub struct AurisApp {
     /// CPU music-analysis jobs and their unapplied draft.
     pub(crate) music_analysis: crate::ui::music_analysis::MusicAnalysisState,
     pub(crate) visualizer: crate::ui::visualizer::VisualizerState,
+    /// The note-roll video window: whether it is open, its preview and what ffmpeg was found.
+    pub(crate) video_export: crate::ui::video_export::VideoExportState,
     pub(crate) physical_view: crate::ui::physical_model::PhysicalView,
     pub(crate) track_grid: crate::ui::track_grid::TrackGrid,
     pub(crate) timbre_map: crate::ui::timbre_map::TimbreMapState,
@@ -1921,7 +1923,7 @@ impl AurisApp {
         // start looks like. Launching used to leave a two-bar arpeggio and a bass line lying
         // around, which was useful while there was nothing else to hear and is now just
         // somebody else's music to delete before starting.
-        session.new_project();
+        session.new_project_with_track(&auris_i18n::messages::new_track_name(language, 1));
 
         // The dictionary the settings name, loaded once for the session's lifetime. A folder
         // that fails to load is logged and left in the settings — deleting the setting over a
@@ -2066,6 +2068,7 @@ impl AurisApp {
             analysis_panel: false,
             music_analysis: Default::default(),
             visualizer: Default::default(),
+            video_export: Default::default(),
             physical_view: Default::default(),
             track_grid: Default::default(),
             timbre_map: Default::default(),
@@ -3068,6 +3071,9 @@ impl AurisApp {
     /// Window chrome owns the product name and save marker separately; keeping this value
     /// document-only lets Atelier centre the title without duplicating application branding.
     pub(crate) fn document_title(&self) -> String {
+        if self.session.is_untitled() {
+            return self.t(Key::DocumentUntitled).to_owned();
+        }
         self.session.document_title()
     }
 

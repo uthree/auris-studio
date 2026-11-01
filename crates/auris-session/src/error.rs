@@ -241,6 +241,10 @@ pub enum SessionError {
     #[error(transparent)]
     Sing(#[from] auris_singer::SingError),
 
+    /// A note-roll video could not be drawn or encoded, or no ffmpeg was found to encode it.
+    #[error(transparent)]
+    Video(#[from] auris_video::VideoError),
+
     /// A singer-frame JSON file exceeds the bounded source-buffer size.
     #[error(
         "singer-frame file is too large: {} is at least {observed} bytes; the limit is {limit} bytes",
@@ -414,6 +418,7 @@ impl SessionError {
             SessionError::Engine(auris_engine::EngineError::RenderCancelled)
                 | SessionError::Sing(auris_singer::SingError::Cancelled)
                 | SessionError::Io(auris_io::IoError::ExportCancelled)
+                | SessionError::Video(auris_video::VideoError::Cancelled)
         )
     }
 }

@@ -623,6 +623,8 @@ pub struct HarmonyPaint {
     pub handles: Vec<Ticks>,
     /// The chord being dragged, drawn lit so it can be followed while it moves.
     pub held: Option<Ticks>,
+    /// The reader's language, which the key names are written in.
+    pub language: auris_i18n::Language,
 }
 
 /// Draws the chords, and the key changes, across `bounds`.
@@ -703,7 +705,7 @@ pub fn harmony_lane(
     // bar 40 would otherwise show no key at all everywhere except bar 40. Anything at or after
     // the left edge is drawn where it belongs by the loop below.
     if let Some(current) = harmony.keys.iter().rev().find(|change| change.tick < start) {
-        let text = current.key.to_text();
+        let text = auris_i18n::audio::key_name(&current.key.to_text(), harmony.language);
         key_badge(
             window,
             cx,
@@ -730,7 +732,7 @@ pub fn harmony_lane(
             cx,
             key_row,
             x,
-            &change.key.to_text(),
+            &auris_i18n::audio::key_name(&change.key.to_text(), harmony.language),
             theme.selection,
         );
     }

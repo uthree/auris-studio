@@ -229,7 +229,7 @@ strings! {
     ChooseNew { en: "New project", ja: "新規プロジェクト" }
     ChooseRecent { en: "Recent projects", ja: "最近使った項目" }
     ChooseEmpty { en: "Empty project", ja: "空のプロジェクト" }
-    ChooseEmptyHelp { en: "Start with an instrument track and build your arrangement.", ja: "音源トラックから、自由に曲を作り始めます。" }
+    ChooseEmptyHelp { en: "Start with an instrument track and build your arrangement", ja: "音源トラックから自由に曲を作り始める" }
     ChooseStartHelp { en: "Choose how to begin your song.", ja: "曲の始め方を選んでください。" }
     ChooseAiHelp { en: "Create music through conversation with an AI agent.", ja: "AIエージェントと話しながら曲を作る" }
     ChooseStartAi { en: "Start with AI…", ja: "AIで作り始める…" }
@@ -907,6 +907,45 @@ strings! {
     CmdImportSoundFont { en: "Import SoundFont", ja: "サウンドフォントを読み込む" }
     CmdImportMidi { en: "Import MIDI File…", ja: "MIDI ファイルを読み込む…" }
     CmdExportMidi { en: "Export MIDI File…", ja: "MIDI ファイルを書き出す…" }
+    CmdExportVideo { en: "Export Video…", ja: "動画を書き出す…" }
+    VideoExportTitle { en: "Export Video", ja: "動画の書き出し" }
+    DialogExportVideo { en: "Export Video", ja: "動画を書き出す" }
+    FilterMp4 { en: "MP4 video", ja: "MP4 動画" }
+    VideoSize { en: "Size", ja: "サイズ" }
+    VideoFps { en: "Frame rate", ja: "フレームレート" }
+    VideoColors { en: "Note colours", ja: "ノートの色" }
+    VideoColorTrack { en: "Track colours", ja: "トラックの色" }
+    VideoColorPalette { en: "Palette", ja: "パレット" }
+    VideoColorPitch { en: "By pitch", ja: "音の高さ" }
+    VideoColorSingle { en: "One colour", ja: "単色" }
+    VideoPaletteHint { en: "Click a colour to choose another. Tracks take them in order.", ja: "色をクリックして選び直せます。トラックの並び順に割り当てます。" }
+    VideoHueLow { en: "Low notes", ja: "低い音" }
+    VideoHueHigh { en: "High notes", ja: "高い音" }
+    VideoBackground { en: "Background", ja: "背景" }
+    VideoChooseImage { en: "Choose Image…", ja: "画像を選ぶ…" }
+    VideoClearImage { en: "Remove Image", ja: "画像を外す" }
+    VideoDim { en: "Image dimming", ja: "画像の暗さ" }
+    VideoMotion { en: "Motion", ja: "動き" }
+    VideoSpeed { en: "Seconds across", ja: "画面の秒数" }
+    VideoPlayhead { en: "Playhead position", ja: "再生位置" }
+    VideoPlayheadLine { en: "Playhead line", ja: "再生位置の線" }
+    VideoNotes { en: "Notes", ja: "ノート" }
+    VideoThickness { en: "Height", ja: "太さ" }
+    VideoRoundness { en: "Rounding", ja: "角の丸み" }
+    VideoPlayedOpacity { en: "Played notes", ja: "再生済みの濃さ" }
+    VideoFlash { en: "Flash when struck", ja: "鳴った瞬間に光らせる" }
+    VideoParticles { en: "Sparks at the playhead", ja: "再生線のパーティクル" }
+    VideoParticlesOff { en: "Off", ja: "なし" }
+    VideoSink { en: "Sink while sounding", ja: "演奏中の沈み込み" }
+    VideoDrums { en: "Include drums", ja: "ドラムも描く" }
+    VideoPreviewHint { en: "The preview shows the moment under the playhead. Move the playhead to see another.", ja: "プレビューは再生位置の瞬間です。再生位置を動かすと別の場面を確認できます。" }
+    VideoFfmpegChecking { en: "Looking for ffmpeg…", ja: "ffmpeg を探しています…" }
+    VideoFfmpegCopy { en: "Copy Command", ja: "コマンドをコピー" }
+    VideoFfmpegDownload { en: "Download Page", ja: "ダウンロードページ" }
+    VideoFfmpegRecheck { en: "Check Again", ja: "もう一度探す" }
+    VideoExportButton { en: "Export…", ja: "書き出す…" }
+    ErrorVideo { en: "the video could not be made", ja: "動画を作れませんでした" }
+    VideoNoNotes { en: "This song has no notes to draw.", ja: "この曲には描くノートがありません。" }
     CmdCollectAssets { en: "Collect Assets", ja: "アセットを集める" }
     CmdExportWav { en: "Export Audio", ja: "オーディオを書き出す" }
     CmdExportCycle { en: "Export Cycle", ja: "サイクル範囲を書き出す" }
@@ -986,6 +1025,11 @@ strings! {
     MenuSettingsItem { en: "Settings…", ja: "設定…" }
     MenuServices { en: "Services", ja: "サービス" }
     MenuQuitApp { en: "Quit Auris Studio", ja: "Auris Studio を終了" }
+    MenuHideApp { en: "Hide Auris Studio", ja: "Auris Studio を隠す" }
+    MenuHideOthers { en: "Hide Others", ja: "ほかを隠す" }
+    MenuShowAll { en: "Show All", ja: "すべてを表示" }
+    MenuMinimize { en: "Minimize", ja: "しまう" }
+    MenuZoom { en: "Zoom", ja: "拡大/縮小" }
     MenuOpenProjectItem { en: "Open Project…", ja: "プロジェクトを開く…" }
     MenuSaveAsItem { en: "Save As…", ja: "名前を付けて保存…" }
     MenuImportAudioItem { en: "Import Audio…", ja: "オーディオを読み込む…" }
@@ -1361,6 +1405,7 @@ strings! {
     Recover { en: "Recover", ja: "復旧" }
     DiscardRecovery { en: "Discard recovery", ja: "復旧データを破棄" }
     RecoveryUntitled { en: "Unsaved project", ja: "未保存のプロジェクト" }
+    DocumentUntitled { en: "Untitled", ja: "無題" }
     RecoveryKeyboardHint {
         en: "Enter: recover · Delete: discard recovery · Esc: not now",
         ja: "Enter: 復旧 · Delete: 復旧データを破棄 · Esc: 今回はしない"
@@ -1878,6 +1923,7 @@ COMMANDS
     analyze-audio <audio-file>    Estimate BPM and major/minor chords on the CPU
     analyze-instruments <audio-file> --model <yamnet.onnx> [--threshold 0.2]
     render <project.auris> [opts] Render a project to a WAV file
+    video <project.auris> [opts]  Render a video of the notes flowing past, through ffmpeg
     convert-track-to-audio <project.auris> --track <name|id:number>
                                   Replace an instrument, drum or singer track with audio
     analyze-drums <project.auris> --track <name|id:number> [--apply] [--remap-clips]
@@ -1933,6 +1979,18 @@ SING-FRAMES OPTIONS
     -o, --output <file.wav>       Where to write (default: alongside the frames)
         --report <file.json>      Also write the take's facts and timings as JSON
 
+VIDEO OPTIONS (default: the look last chosen in the desktop application)
+    -o, --output <file.mp4>       Where to write (default: alongside the project)
+        --size <width>x<height>   Frame size, as in 1920x1080
+        --fps <n>                 Frames per second
+        --colors <track|palette|pitch|single>
+                                  How notes are coloured
+        --background <image>      A PNG, JPEG or WebP behind the notes
+        --seconds <n>             Seconds of music across the frame
+        --particles <amount>      Sparks where notes meet the playhead: 0 is none, 1 the usual
+        --sink <amount>           How far sounding notes sink: 0 is still, 1 the usual
+        --drums                   Draw drum tracks too
+
 NEW OPTIONS
         --bpm <tempo>             Tempo of the new project (default: 120)
         --sample-rate <hz>        Rate of the new project (default: 48000)
@@ -1956,6 +2014,7 @@ auris — コマンドラインから使う Auris Studio
     analyze-audio <audio-file>    音声のBPMとメジャー・マイナーコードをCPUで推定
     analyze-instruments <audio-file> --model <yamnet.onnx> [--threshold 0.2]
     render <project.auris> [opts] プロジェクトを WAV に書き出す
+    video <project.auris> [opts]  ノートが流れる動画を ffmpeg で書き出す
     sing <project.auris> [opts]   シンガートラックを声のモデルで歌わせる
     frames <project.auris> [opts] シンガートラックが声のモデルに渡すフレームを書き出す
     sing-frames <frames.json> [opts]
@@ -2009,6 +2068,18 @@ sing-frames のオプション
     -o, --output <file.wav>       出力先（既定: フレームファイルと同じ場所）
         --report <file.json>      テイクの情報と所要時間を JSON でも書き出す
 
+video のオプション（既定: デスクトップ版で最後に選んだ見た目）
+    -o, --output <file.mp4>       出力先（既定: プロジェクトと同じ場所）
+        --size <width>x<height>   画面サイズ（例: 1920x1080）
+        --fps <n>                 1 秒あたりのフレーム数
+        --colors <track|palette|pitch|single>
+                                  ノートの色の付け方
+        --background <image>      ノートの背後に敷く PNG・JPEG・WebP
+        --seconds <n>             画面の幅に収める曲の秒数
+        --particles <amount>      再生線でノートが散らす火花の量（0 でなし、1 が標準）
+        --sink <amount>           演奏中のノートが沈み込む深さ（0 で動かない、1 が標準）
+        --drums                   ドラムトラックも描く
+
 new のオプション
         --bpm <tempo>             新規プロジェクトのテンポ（既定: 120）
         --sample-rate <hz>        新規プロジェクトのサンプルレート（既定: 48000）
@@ -2021,7 +2092,7 @@ new のオプション
     AgentPanel { en: "Agent", ja: "エージェント" }
     CmdShowAgent { en: "Agent", ja: "エージェント" }
     AgentPlaceholder { en: "Ask about this song…", ja: "この曲について話しかける…" }
-    AgentIntro { en: "Discuss the arrangement, instruments or a change you want to make.", ja: "アレンジや音色の相談、変えたい箇所を伝えてください。" }
+    AgentIntro { en: "Discuss the arrangement, instruments or a change you want to make", ja: "アレンジや音色の相談、変えたい箇所を伝えてください" }
     AgentNotConfigured { en: "Name a model to talk to.", ja: "話しかけるモデルを設定してください。" }
     AgentConfigure { en: "Settings", ja: "設定" }
     AgentApply { en: "Apply", ja: "適用" }

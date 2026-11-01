@@ -525,7 +525,6 @@ impl AurisApp {
                         .id("position")
                         .debug_selector(|| "position".into())
                         .h_full()
-                        .cursor_pointer()
                         .on_mouse_down(
                             gpui::MouseButton::Left,
                             cx.listener(|this, event: &gpui::MouseDownEvent, _, cx| {
@@ -608,11 +607,10 @@ impl AurisApp {
                     // Only while there is something to put out, and asked of the whole
                     // bank rather than of this meter: a track scrolled out of sight has
                     // clipped just as loudly as the master, and clearing has to be
-                    // offered while *any* of them is lit. A pointer and a tooltip over
+                    // offered while *any* of them is lit. A tooltip over
                     // a block that would do nothing is an invitation to press it.
                     .when(anything_clipped, |this| {
-                        this.cursor_pointer()
-                            .tooltip(self.tip(Key::ClearClipping, ""))
+                        this.tooltip(self.tip(Key::ClearClipping, ""))
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.clear_clipping();
                                 cx.notify();
@@ -639,26 +637,19 @@ impl AurisApp {
                     .gap_2()
                     .children(editing),
             );
+        // Atelier's `ReadoutStrip`: the buttons and the readouts on one sunken surface, a
+        // hairline between each. The readouts stay Auris's own, since each opens its own editor.
+        let primary = readouts.into_iter().fold(
+            atelier::ReadoutStrip::new()
+                .height(Metrics::TRANSPORT_HEIGHT - theme.atelier.spacing.xs * 2.0)
+                .controls(self.render_transport_buttons(cx)),
+            |strip, readout| strip.readout(readout),
+        );
         let primary = div()
-            .debug_selector(|| "transport-primary".into())
+            .debug_selector(|| "transport-primary".into()) // atelier: allow — ReadoutStrip takes no id.
             .flex()
-            .items_center()
             .flex_shrink_0()
-            .h(Metrics::TRANSPORT_HEIGHT - theme.atelier.spacing.xs * 2.0)
-            .rounded(Metrics::RADIUS_MD)
-            .overflow_hidden()
-            .bg(theme.surface_sunken)
-            .border_1()
-            .border_color(theme.border_subtle)
-            .child(div().px_1().child(self.render_transport_buttons(cx)))
-            .children(readouts.into_iter().map(|readout| {
-                div()
-                    .flex()
-                    .h_full()
-                    .border_l_1()
-                    .border_color(theme.border_subtle)
-                    .child(readout)
-            }));
+            .child(primary);
         let meters = div()
             .flex()
             .id("transport-meters")
@@ -736,9 +727,10 @@ impl AurisApp {
             .flex_col()
             .justify_center()
             .h_full()
-            .w(width)
+            .min_w(width)
+            .flex_shrink_0()
+            .whitespace_nowrap()
             .px_2()
-            .cursor_pointer()
             .hover(|this| this.bg(theme.surface_hover))
             .child(
                 div()

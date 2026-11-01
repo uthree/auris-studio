@@ -95,6 +95,11 @@ pub use sounds::{
 };
 pub mod singer_portrait;
 pub mod transient_id;
+pub mod video;
+pub use video::{
+    BackgroundImage, Ffmpeg, FrameRenderer, NoteColoring, NoteRollStyle, NoteScore, VideoCodec,
+    VideoError, VideoJob, VideoSize, VideoSummary, ffmpeg_install_command, ffmpeg_install_page,
+};
 pub mod voice_setup;
 
 pub use auris_analysis::audio::{AudioAnalysis, AudioChordSegment, TempoAnalysis, TempoCandidate};

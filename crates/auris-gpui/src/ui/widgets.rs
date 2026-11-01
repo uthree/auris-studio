@@ -312,12 +312,16 @@ where
         (_, Latch::On) => (active_color, theme.text_on(active_color), active_color),
         // The outline carries the colour and the surface stays where it was, so a ready button
         // reads as the same button rather than as a second latched one in a row of them.
-        (_, Latch::Ready) => (theme.surface_raised, active_color, active_color),
+        (_, Latch::Ready) => (theme.atelier.colors.control, active_color, active_color),
         (ButtonStyle::Primary, Latch::Off) => (theme.accent, theme.text_on_accent, theme.accent),
         (ButtonStyle::Danger, Latch::Off) => {
             (theme.danger, theme.text_on(theme.danger), theme.danger)
         }
-        (ButtonStyle::Normal, Latch::Off) => (theme.surface_raised, theme.text, theme.border),
+        // Atelier's secondary `Button` fill: see-through under Glass's translucent material, so
+        // the glass shows through as it does behind Liquid Glass's buttons, and lying flat.
+        (ButtonStyle::Normal, Latch::Off) => {
+            (theme.atelier.colors.control, theme.text, theme.border)
+        }
         (ButtonStyle::Ghost, Latch::Off) => (
             gpui::transparent_black(),
             theme.text_muted,
@@ -329,6 +333,10 @@ where
     // instrument editor in the whole application looked exactly like the label beside it.
     let hover = if matches!((style, active), (ButtonStyle::Ghost, Latch::Off)) {
         theme.surface_hover
+    } else if background == theme.atelier.colors.control {
+        // A see-through fill lightens into more see-through; step it toward the text instead,
+        // as Atelier's own secondary button does.
+        atelier::mix(background, text_color, 0.06)
     } else {
         theme.hovered(background, 0.12)
     };
@@ -736,7 +744,11 @@ pub fn readout<C: Into<SharedString>, V: Into<SharedString>>(
         .flex_col()
         .justify_center()
         .h_full()
-        .w(width)
+        // A floor rather than a width: the value and its sub-reading are drawn in whatever font
+        // the system supplies, and a fixed width let a wide one run into the next readout.
+        .min_w(width)
+        .flex_shrink_0()
+        .whitespace_nowrap()
         .px_2()
         .child(
             div()
@@ -1043,6 +1055,7 @@ where
     D: Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
     K: Fn(&SliderKeyboardEvent, &mut Window, &mut App) + 'static,
 {
+    let label: SharedString = label.into();
     let fraction = fraction.clamp(0.0, 1.0);
     let (fill_start, fill_width) = match origin {
         SliderFill::FromStart => (0.0, fraction),
@@ -1068,16 +1081,18 @@ where
         .rounded(Metrics::RADIUS_SM)
         .border_1()
         .border_color(gpui::transparent_black())
-        .cursor_pointer()
-        .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .text_xs()
-                .text_color(theme.text_muted)
-                .truncate()
-                .child(label.into()),
-        )
+        // No caption at all rather than an empty one: an empty caption still took half the row.
+        .when(!label.is_empty(), |row| {
+            row.child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .text_xs()
+                    .text_color(theme.text_muted)
+                    .truncate()
+                    .child(label),
+            )
+        })
         .child(
             div()
                 .relative()
@@ -1202,7 +1217,6 @@ where
         .rounded(Metrics::RADIUS_SM)
         .border_1()
         .border_color(gpui::transparent_black())
-        .cursor_pointer()
         .child(
             div()
                 .relative()

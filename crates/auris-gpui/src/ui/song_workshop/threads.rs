@@ -262,7 +262,11 @@ mod tests {
         cx: &mut gpui::TestAppContext,
     ) {
         let directory = tempfile::tempdir().unwrap();
-        let runtime = Workshop::start(directory.path().into(), false, Default::default()).unwrap();
+        let runtime = Workshop::start(
+            auris_session::workshop::Store::new(directory.path().into()),
+            Default::default(),
+        )
+        .unwrap();
         let (app, cx) = crate::harness::open(cx);
         cx.update(|window, cx| {
             app.update(cx, |this, cx| {

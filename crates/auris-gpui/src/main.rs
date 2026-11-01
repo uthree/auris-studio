@@ -101,6 +101,21 @@ fn main() {
             })
             .ok();
         cx.on_action(|_: &actions::Quit, cx| project_windows::request_quit(cx));
+        cx.on_action(|_: &actions::HideApplication, cx| cx.hide());
+        cx.on_action(|_: &actions::HideOtherApplications, cx| cx.hide_other_apps());
+        cx.on_action(|_: &actions::ShowAllApplications, cx| cx.unhide_other_apps());
+        cx.on_action(|_: &actions::MinimizeWindow, cx| {
+            if let Some(window) = cx.active_window() {
+                window
+                    .update(cx, |_, window, _| window.minimize_window())
+                    .ok();
+            }
+        });
+        cx.on_action(|_: &actions::ZoomWindow, cx| {
+            if let Some(window) = cx.active_window() {
+                window.update(cx, |_, window, _| window.zoom_window()).ok();
+            }
+        });
         if let Some(path) = project_argument(std::env::args_os()) {
             window
                 .update(cx, |tabs, _, cx| {

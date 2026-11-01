@@ -596,10 +596,16 @@ impl Session {
 
     /// Replaces the document with an empty project holding one instrument track.
     pub fn new_project(&mut self) {
+        self.new_project_with_track("Track 1");
+    }
+
+    /// [`Self::new_project`], naming its one track `track` — a frontend passes the name in its
+    /// reader's language, the way it names every track it adds afterwards.
+    pub fn new_project_with_track(&mut self, track: &str) {
         self.sound_scope = crate::transient_id::transient_id("session");
         let mut project = Project::new(Project::UNTITLED, self.project.sample_rate);
         if let Some(instrument) = self.registry.default_instrument_id() {
-            project.add_instrument_track("Track 1", instrument);
+            project.add_instrument_track(track, instrument);
         }
         self.history.clear();
         self.path = None;

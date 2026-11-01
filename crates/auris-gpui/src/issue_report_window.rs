@@ -37,8 +37,6 @@ pub(crate) struct IssueReportWindow {
     context_rx: Option<(ContextKind, mpsc::Receiver<Result<String, String>>)>,
     private_paths: Vec<String>,
     prompt_snapshot: String,
-    project: Option<std::path::PathBuf>,
-    unsaved: bool,
     preview: bool,
     ai_confirmation: Option<String>,
     diagnosis: Option<auris_agent::issue_diagnosis::DiagnosisJob>,
@@ -85,7 +83,6 @@ impl AurisApp {
             .session
             .project_folder()
             .map(std::path::Path::to_path_buf);
-        let unsaved = self.session.path().is_none();
         let private_paths = [
             std::env::var("USERPROFILE").ok(),
             std::env::var("HOME").ok(),
@@ -147,8 +144,6 @@ impl AurisApp {
                         context_rx: None,
                         private_paths,
                         prompt_snapshot: prompts,
-                        project,
-                        unsaved,
                         preview: false,
                         ai_confirmation: None,
                         diagnosis: None,
@@ -189,32 +184,32 @@ impl IssueReportWindow {
             return;
         }
         let prompts = self.prompt_snapshot.clone();
-        let folder = self.project.clone();
-        let unsaved = self.unsaved;
         let paths = self.private_paths.clone();
         let (sender, receiver) = mpsc::channel();
         self.context_rx = Some((kind, receiver));
-        let spawned = std::thread::Builder::new().name("auris-report-context".into()).spawn(move || {
-            let result = match kind {
-                ContextKind::MusicPreferences => auris_session::issue_report::preference_preview(),
-                ContextKind::CompositionPrompts => (|| {
-                    let mut result = prompts;
-                    if let Some(folder) = folder {
-                        let conversations = if unsaved {
-                            auris_session::conversations::ConversationStore::for_unsaved_document(&folder)?
-                        } else { auris_session::conversations::ConversationStore::for_project(&folder) };
-                        let document = auris_session::workshop::Store::new(conversations.root().into()).active_thread()?.load()?;
+        let spawned = std::thread::Builder::new()
+            .name("auris-report-context".into())
+            .spawn(move || {
+                let result = match kind {
+                    ContextKind::MusicPreferences => {
+                        auris_session::issue_report::preference_preview()
+                    }
+                    ContextKind::CompositionPrompts => (|| {
+                        let mut result = prompts;
+                        let document = auris_session::workshop::Store::library()
+                            .active_thread()?
+                            .load()?;
                         for message in document.messages.iter().filter(|m| m.user).rev().take(12) {
                             result.push_str("\n\nSong request:\n");
                             result.push_str(&bounded(&message.text, 1500));
                         }
-                    }
-                    Ok(result)
-                })(),
-                ContextKind::UsageLogs => Ok(String::new()),
-            }.map(|text| redact(&text, &paths));
-            let _ = sender.send(result);
-        });
+                        Ok(result)
+                    })(),
+                    ContextKind::UsageLogs => Ok(String::new()),
+                }
+                .map(|text| redact(&text, &paths));
+                let _ = sender.send(result);
+            });
         if let Err(error) = spawned {
             self.context_rx = None;
             self.status = error.to_string();
