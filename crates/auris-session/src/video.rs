@@ -11,9 +11,13 @@
 use std::path::Path;
 
 pub use auris_video::{
-    BackgroundImage, Ffmpeg, FrameRenderer, NoteColoring, NoteRollStyle, NoteScore, VideoCodec,
-    VideoError, VideoSize,
+    BackgroundImage, Ffmpeg, FrameRenderer, NoteColoring, NoteRollStyle, NoteScore, ScoreChord,
+    VideoCodec, VideoError, VideoSize,
 };
+
+use auris_analysis::AnalysisControl;
+use auris_analysis::chords::{ChordOptions, ChordState};
+use auris_core::theory::chord::Chord;
 
 use crate::prelude::*;
 use crate::{RenderJob, Session, SessionError};
@@ -49,9 +53,69 @@ pub struct VideoJob {
 }
 
 impl Session {
-    /// The notes a video of the open document would draw.
+    /// The notes a video of the open document would draw, and the chords to caption them with.
+    ///
+    /// The chords are the ones written into the harmony. A song with none written gets the
+    /// chords its pitched notes spell instead, read beat by beat by the same recogniser as
+    /// *Detect Chords*, so the overlay works on a song nobody has charted — and a chart, once
+    /// written, always wins over a guess.
     pub fn note_score(&self) -> NoteScore {
-        NoteScore::from_project(self.project())
+        let mut score = NoteScore::from_project(self.project());
+        if score.chords.is_empty() && !score.notes.is_empty() {
+            let spans = self.recognised_chords();
+            score.set_chords(self.project(), spans);
+        }
+        score
+    }
+
+    /// The chords the pitched notes spell, as spans in ticks named for the key in force.
+    ///
+    /// A beat the recogniser cannot decide carries the chord before it on, as applying an
+    /// analysis does; a beat with no notes ends it. Anything that stops the analysis — a song
+    /// too long for its grid, too many notes — shows no chords rather than failing the video.
+    fn recognised_chords(&self) -> Vec<(Ticks, Ticks, String)> {
+        let project = self.project();
+        let end = project.end_tick();
+        if end <= Ticks::ZERO {
+            return Vec::new();
+        }
+        let report = match self
+            .chord_analysis_job(&[], Ticks::ZERO, end, ChordOptions::default())
+            .and_then(|job| job.run(&AnalysisControl::default()))
+        {
+            Ok(report) => report,
+            Err(error) => {
+                log::debug!("no chords recognised for the video: {error}");
+                return Vec::new();
+            }
+        };
+        let mut spans: Vec<(Ticks, Ticks, String)> = Vec::new();
+        let mut open = false;
+        for segment in &report.segments {
+            match segment.reading.state {
+                ChordState::Recognized => {
+                    let Some(chord) = segment
+                        .reading
+                        .candidates
+                        .first()
+                        .and_then(|candidate| Chord::parse(&candidate.symbol))
+                    else {
+                        open = false;
+                        continue;
+                    };
+                    let name = chord.name_in(project.harmony.key_at(segment.start));
+                    spans.push((segment.start, segment.end, name));
+                    open = true;
+                }
+                ChordState::Unknown if open => {
+                    if let Some(last) = spans.last_mut() {
+                        last.1 = segment.end;
+                    }
+                }
+                ChordState::Unknown | ChordState::NoChord => open = false,
+            }
+        }
+        spans
     }
 
     /// Captures the document for a video export in `style`.
@@ -139,6 +203,10 @@ mod tests {
             .add_note(clip, Note::new(60, Ticks::ZERO, Ticks(TICKS_PER_QUARTER)))
             .unwrap();
         assert_eq!(session.note_score().notes.len(), 1);
+        assert!(
+            session.note_score().chords.is_empty(),
+            "one note spells no chord"
+        );
 
         let style = NoteRollStyle {
             size: VideoSize::new(320, 180),
@@ -158,6 +226,46 @@ mod tests {
         assert!(last > 0.99, "progress reached the end: {last}");
         let bytes = std::fs::read(&path).unwrap();
         assert_eq!(&bytes[4..8], b"ftyp");
+    }
+
+    #[test]
+    fn a_song_with_no_chart_is_captioned_with_the_chords_its_notes_spell() {
+        let mut session = Session::new(SessionOptions::headless()).unwrap();
+        let track = session
+            .add_instrument_track("Keys", crate::DEFAULT_INSTRUMENT)
+            .unwrap();
+        let bar = TICKS_PER_QUARTER * 4;
+        let clip = session
+            .add_midi_clip(track, "Keys", Ticks::ZERO, Ticks(bar * 2))
+            .unwrap();
+        // A bar of C major, then a bar of A minor.
+        for (pitches, start) in [([60, 64, 67], 0), ([57, 60, 64], bar)] {
+            for pitch in pitches {
+                session
+                    .add_note(clip, Note::new(pitch, Ticks(start), Ticks(bar)))
+                    .unwrap();
+            }
+        }
+        let score = session.note_score();
+        let names: Vec<_> = score
+            .chords
+            .iter()
+            .map(|chord| chord.name.as_str())
+            .collect();
+        assert_eq!(names, ["C", "Am"]);
+        let seconds_per_bar = 4.0 * 60.0 / session.project().tempo_map.bpm_at(Ticks::ZERO);
+        assert!((score.chords[0].end - seconds_per_bar).abs() < 1e-6);
+        assert!((score.chords[1].end - 2.0 * seconds_per_bar).abs() < 1e-6);
+
+        // A written chart wins over the guess.
+        session.set_chord(Ticks::ZERO, Numeral::parse("IV").unwrap());
+        let names: Vec<_> = session
+            .note_score()
+            .chords
+            .iter()
+            .map(|chord| chord.name.clone())
+            .collect();
+        assert_eq!(names, ["F"]);
     }
 
     #[test]

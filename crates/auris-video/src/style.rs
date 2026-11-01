@@ -111,6 +111,12 @@ pub struct NoteRollStyle {
     pub sink: f32,
     /// Draw drum tracks as well as pitched ones.
     pub include_drums: bool,
+    /// Show the chord sounding now in the top corner, with the next one beside it.
+    ///
+    /// The chords are the ones written into the project, or — where none are written — the
+    /// ones recognised from its pitched notes. Drawn in [`Self::playhead_color`], which is the
+    /// colour of everything in the frame that is not a note.
+    pub chords: bool,
 }
 
 impl Default for NoteRollStyle {
@@ -147,6 +153,7 @@ impl Default for NoteRollStyle {
             particles: 1.0,
             sink: 1.0,
             include_drums: false,
+            chords: true,
         }
     }
 }

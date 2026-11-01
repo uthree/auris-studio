@@ -5,6 +5,7 @@ use std::path::Path;
 use auris_core::Color;
 use tiny_skia::{BlendMode, FillRule, Paint, Path as SkPath, PathBuilder, Pixmap, Rect, Transform};
 
+use crate::chords::ChordOverlay;
 use crate::style::{NoteColoring, NoteRollStyle};
 use crate::{Ffmpeg, NoteScore, ScoreNote, VideoError, VideoWriter};
 
@@ -68,6 +69,8 @@ pub struct FrameRenderer {
     style: NoteRollStyle,
     score: NoteScore,
     backdrop: Pixmap,
+    /// The chord names, outlined, when the style shows them and there are any.
+    chords: Option<ChordOverlay>,
     /// Top and bottom of the drawn pitch range, with the margins.
     high: f64,
     lane: f64,
@@ -112,7 +115,13 @@ impl FrameRenderer {
         }
         let lane = f64::from(style.size.height) / (high - low + 1.0);
         let backdrop = backdrop(&style, background);
+        let chords = if style.chords {
+            ChordOverlay::new(&score)
+        } else {
+            None
+        };
         Self {
+            chords,
             longest: score.longest(),
             low_pitch: low + PITCH_MARGIN,
             pitch_span: (high - low - 2.0 * PITCH_MARGIN).max(1.0),
@@ -217,6 +226,10 @@ impl FrameRenderer {
                 }
                 self.sparks(note, seconds - note.start, playhead_x, per_second, frame);
             }
+        }
+
+        if let Some(chords) = &self.chords {
+            chords.draw(&self.score, &self.style, seconds, frame);
         }
     }
 
@@ -516,6 +529,7 @@ mod tests {
                     track: 0,
                 },
             ],
+            chords: Vec::new(),
         }
     }
 
@@ -532,6 +546,7 @@ mod tests {
             played_opacity: 1.0,
             background: Color(0x000000),
             coloring: NoteColoring::Track,
+            chords: false,
             ..NoteRollStyle::default()
         }
     }

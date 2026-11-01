@@ -1,6 +1,6 @@
 //! The notes a video draws, taken from the document once and kept in seconds.
 
-use auris_core::{Color, Project, TrackKind};
+use auris_core::{Color, Project, Ticks, TrackKind};
 
 /// One sounding note, placed in time.
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -28,13 +28,30 @@ pub struct ScoreTrack {
     pub drum: bool,
 }
 
-/// Every note a video draws, sorted by start.
+/// A chord sounding over a stretch of the song, named for the key it sits in.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ScoreChord {
+    /// When the chord starts, in seconds from the start of the song.
+    pub start: f64,
+    /// When the next chord, or silence, takes over.
+    pub end: f64,
+    /// The chord symbol as it is shown, such as `Am7` or `Eb/G`.
+    pub name: String,
+}
+
+/// Every note a video draws, sorted by start, and the chords they make.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct NoteScore {
     /// The tracks, in arrangement order.
     pub tracks: Vec<ScoreTrack>,
     /// The notes, sorted by [`ScoreNote::start`].
     pub notes: Vec<ScoreNote>,
+    /// The chord progression, sorted and never overlapping, with gaps where nothing is in force.
+    ///
+    /// [`Self::from_project`] fills it from the chords written into the project's harmony. A
+    /// project with none written leaves it empty, and the session — which owns the recognition
+    /// of chords from notes — may fill it with [`Self::set_chords`] instead.
+    pub chords: Vec<ScoreChord>,
 }
 
 impl NoteScore {
@@ -85,7 +102,57 @@ impl NoteScore {
             }
         }
         score.notes.sort_by(|a, b| a.start.total_cmp(&b.start));
+
+        // The written harmony, from the start of the song until the last clip ends — or until
+        // the last chord change, when the chart runs on past the music.
+        let until = project.end_tick().max(project.harmony.chords.end());
+        let events = project
+            .harmony
+            .events_in(Ticks::ZERO, until, &project.signatures);
+        score.set_chords(
+            project,
+            events.iter().map(|event| {
+                (
+                    event.start,
+                    event.start + event.length,
+                    event.chord.name_in(event.key),
+                )
+            }),
+        );
         score
+    }
+
+    /// Replaces the chord progression with `spans` — start and end in ticks, and the name to
+    /// show — placed in seconds at the project's tempo.
+    ///
+    /// Spans out of order, empty or overlapping an earlier one are dropped, and neighbours with
+    /// the same name are joined: a key change inside one chord, or a recogniser reading the same
+    /// chord beat after beat, is still one chord to somebody watching.
+    pub fn set_chords(
+        &mut self,
+        project: &Project,
+        spans: impl IntoIterator<Item = (Ticks, Ticks, String)>,
+    ) {
+        self.chords.clear();
+        for (start, end, name) in spans {
+            let start = project.tempo_map.ticks_to_seconds(start.max_zero()).0;
+            let end = project.tempo_map.ticks_to_seconds(end.max_zero()).0;
+            if !(start.is_finite() && end.is_finite()) || end <= start || name.is_empty() {
+                continue;
+            }
+            match self.chords.last_mut() {
+                Some(last) if start < last.end - 1e-9 => continue,
+                Some(last) if last.name == name && start - last.end < 1e-6 => last.end = end,
+                _ => self.chords.push(ScoreChord { start, end, name }),
+            }
+        }
+    }
+
+    /// The index into [`Self::chords`] of the chord in force at `seconds`, if any.
+    pub fn chord_at(&self, seconds: f64) -> Option<usize> {
+        let after = self.chords.partition_point(|chord| chord.start <= seconds);
+        let index = after.checked_sub(1)?;
+        (seconds < self.chords[index].end).then_some(index)
     }
 
     /// The same score without its drum tracks.
@@ -105,6 +172,7 @@ impl NoteScore {
                 .iter()
                 .filter_map(|note| remap[note.track].map(|track| ScoreNote { track, ..*note }))
                 .collect(),
+            chords: self.chords.clone(),
         }
     }
 
@@ -197,5 +265,82 @@ mod tests {
         assert_eq!(score.notes.len(), 1);
         assert_eq!(score.notes[0].pitch, 36);
         assert_eq!(score.notes[0].track, 0, "indices follow the kept tracks");
+    }
+
+    #[test]
+    fn written_chords_are_placed_in_seconds_and_spelled_for_the_key() {
+        use auris_core::theory::key::Key;
+        use auris_core::theory::numeral::Numeral;
+        let q = TICKS_PER_QUARTER;
+        let mut project = project_with(vec![note(60, 0, q * 8)], vec![]);
+        assert!(
+            NoteScore::from_project(&project).chords.is_empty(),
+            "no chords written, none shown"
+        );
+        project.harmony.keys.set_initial(Key::parse("Eb").unwrap());
+        let numeral = |text: &str| Numeral::parse(text).unwrap();
+        project
+            .harmony
+            .chords
+            .set_point(Ticks::ZERO, Some(numeral("I")));
+        project
+            .harmony
+            .chords
+            .set_point(Ticks(q * 2), Some(numeral("IV")));
+        project.harmony.chords.set_point(Ticks(q * 4), None);
+        project
+            .harmony
+            .chords
+            .set_point(Ticks(q * 6), Some(numeral("V7")));
+        let score = NoteScore::from_project(&project);
+        let beat = 60.0 / project.tempo_map.bpm_at(Ticks::ZERO);
+        let names: Vec<_> = score
+            .chords
+            .iter()
+            .map(|chord| chord.name.as_str())
+            .collect();
+        assert_eq!(
+            names,
+            ["Eb", "Ab", "Bb7"],
+            "flats, as E flat major spells them"
+        );
+        assert!((score.chords[1].start - 2.0 * beat).abs() < 1e-9);
+        assert!(
+            (score.chords[1].end - 4.0 * beat).abs() < 1e-9,
+            "cleared at beat 4"
+        );
+        assert!(
+            (score.chords[2].end - 8.0 * beat).abs() < 1e-9,
+            "the last chord lasts until the music ends"
+        );
+        assert_eq!(score.chord_at(beat), Some(0));
+        assert_eq!(score.chord_at(5.0 * beat), None, "the gap shows no chord");
+        assert_eq!(score.chord_at(7.0 * beat), Some(2));
+        assert_eq!(score.without_drums().chords, score.chords);
+    }
+
+    #[test]
+    fn neighbouring_spans_of_one_chord_are_joined() {
+        let project = Project::default();
+        let q = TICKS_PER_QUARTER;
+        let mut score = NoteScore::default();
+        score.set_chords(
+            &project,
+            [
+                (Ticks(0), Ticks(q), "C".to_string()),
+                (Ticks(q), Ticks(q * 2), "C".to_string()),
+                (Ticks(q), Ticks(q * 3), "Dm".to_string()),
+                (Ticks(q * 2), Ticks(q * 3), "G".to_string()),
+                (Ticks(q * 4), Ticks(q * 4), "F".to_string()),
+            ],
+        );
+        let names: Vec<_> = score
+            .chords
+            .iter()
+            .map(|chord| chord.name.as_str())
+            .collect();
+        assert_eq!(names, ["C", "G"], "overlapping and empty spans are dropped");
+        let beat = 60.0 / project.tempo_map.bpm_at(Ticks::ZERO);
+        assert!((score.chords[0].end - 2.0 * beat).abs() < 1e-9);
     }
 }
