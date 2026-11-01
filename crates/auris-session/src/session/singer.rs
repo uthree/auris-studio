@@ -272,8 +272,14 @@ impl Session {
                 Err(error) => log::warn!("the shipped dictionary did not load: {error}"),
             }
         } else {
-            log::warn!(
-                "the shipped Japanese dictionary was not found; kanji lyrics need an installed NAIST dictionary or a dictionary selected in Settings. Searched: {:?}",
+            // `debug`, not `warn`: a missing dictionary is not a problem until something asks
+            // for a reading it cannot give, and at that moment `lyric_phonemes` returns
+            // `VocalError::NeedsDictionary` naming the text it could not read — which is the
+            // report a person can act on, where they can act on it. As a warning this fired on
+            // every start-up and on `auris new`, three lines about a feature the user may never
+            // touch, and it was the first thing the command line printed.
+            log::debug!(
+                "no Japanese dictionary is installed; kanji lyrics will ask for one. Searched: {:?}",
                 crate::library::dictionary_roots()
             );
         }
