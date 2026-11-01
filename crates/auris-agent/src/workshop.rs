@@ -365,6 +365,87 @@ fn decision(text: &str) -> Result<Decision, String> {
     Ok(value)
 }
 
+/// Lift the first run of two to eight numbered lines out of a reply into a multiple-choice card.
+///
+/// Returns the reply without those lines, and the card; the question is the reply's last
+/// remaining line that asks one, or else its last line. `None` when there is no such list, or
+/// the list would not make a card a person could answer.
+fn numbered_choices(reply: &str) -> Option<(String, auris_session::choices::ChoiceCard)> {
+    use auris_session::choices::{ChoiceCard, ChoiceOption, MAX_OPTIONS};
+    fn item(line: &str) -> Option<&str> {
+        let line = line.trim_start();
+        let digits = line
+            .char_indices()
+            .take_while(|(_, c)| c.is_ascii_digit() || ('０'..='９').contains(c))
+            .last()
+            .map(|(at, c)| at + c.len_utf8())?;
+        let rest = &line[digits..];
+        let mark = rest.chars().next()?;
+        ['.', ')', '．', '）', '、']
+            .contains(&mark)
+            .then(|| rest[mark.len_utf8()..].trim())
+            .filter(|text| !text.is_empty())
+    }
+    fn clip(text: &str, limit: usize) -> String {
+        text.chars()
+            .take(limit)
+            .collect::<String>()
+            .trim()
+            .to_owned()
+    }
+    let lines: Vec<&str> = reply.lines().collect();
+    let start = lines.iter().position(|line| item(line).is_some())?;
+    let end = start
+        + lines[start..]
+            .iter()
+            .take_while(|line| item(line).is_some())
+            .count();
+    if !(2..=MAX_OPTIONS).contains(&(end - start)) {
+        return None;
+    }
+    let options = lines[start..end]
+        .iter()
+        .filter_map(|line| item(line))
+        .map(|text| {
+            let text = text.replace("**", "");
+            let split = ["：", ": ", " — ", " - "]
+                .iter()
+                .filter_map(|separator| text.find(separator).map(|at| (at, separator.len())))
+                .min();
+            let (label, detail) = match split {
+                Some((at, width)) if at > 0 => (&text[..at], Some(text[at + width..].trim())),
+                _ => (text.as_str(), None),
+            };
+            ChoiceOption {
+                label: clip(label, 80),
+                detail: detail.filter(|d| !d.is_empty()).map(|d| clip(d, 200)),
+            }
+        })
+        .collect();
+    let rest: Vec<&str> = lines[..start]
+        .iter()
+        .chain(&lines[end..])
+        .copied()
+        .collect();
+    let spoken: Vec<&str> = rest
+        .iter()
+        .map(|line| line.trim())
+        .filter(|line| !line.is_empty())
+        .collect();
+    let question = spoken
+        .iter()
+        .rev()
+        .find(|line| line.ends_with('?') || line.ends_with('？'))
+        .or(spoken.last())?;
+    let card = ChoiceCard {
+        question: clip(question, 200),
+        options,
+        multiple: true,
+    };
+    card.validate().ok()?;
+    Some((rest.join("\n").trim().to_owned(), card))
+}
+
 enum JobEvent {
     Tool(u64, String, Option<bool>),
     Progress(u64, String),
@@ -534,7 +615,16 @@ impl Owner {
                 self.planner = None;
                 match answer.and_then(|text| decision(&text)) {
                     Err(e) => self.snapshot.error = Some(e),
-                    Ok(answer) => {
+                    Ok(mut answer) => {
+                        // After "Continue with this song" the suggestions are always a card,
+                        // even from a model that wrote them as a numbered list anyway.
+                        if self.selection_followup
+                            && answer.choices.is_none()
+                            && let Some((reply, card)) = numbered_choices(&answer.reply)
+                        {
+                            answer.reply = reply;
+                            answer.choices = Some(card);
+                        }
                         self.snapshot.document.messages.push(Message {
                             choices: answer.choices,
                             references: vec![],
@@ -949,7 +1039,7 @@ impl Owner {
                     "selected_score":self.snapshot.candidates[&id].workshop_outline(),
                     "user_feedback":feedback_context(&self.snapshot.document),
                     "preference_recorded":recorded,
-                    "instruction":"Acknowledge the selected song and propose 3 to 5 concrete, distinct arrangement or improvement options as a choices card (multiple true when they combine), grounded in this song and the conversation. Ask which to pursue and invite a custom request. Mention preference recording only if preference_recorded is true. Return an empty directions array; selection requests suggestions, not another production batch. Do not claim to have listened."
+                    "instruction":"Acknowledge the selected song and propose 3 to 5 concrete, distinct arrangement or improvement options as a choices card with multiple true, so several can be combined, grounded in this song and the conversation. Ask which to pursue in its question and invite a custom request in reply; do not list the options in reply. Mention preference recording only if preference_recorded is true. Return an empty directions array; selection requests suggestions, not another production batch. Do not claim to have listened."
                 }).to_string();
                 match crate::song_ideas::SongPlanner::conversation(self.prefs.clone(), prompt) {
                     Ok(planner) => self.planner = Some(planner),
@@ -2353,7 +2443,7 @@ mod tests {
                 ..assignment().direction
             })
             .collect();
-        let reply = "Selected. 1. Add bass. 2. Vary the drums. 3. Build a chorus. Which next?";
+        let reply = "Selected.\n1. **Add bass**: a walking line\n2. Vary the drums\n3. Build a chorus\nWhich next?";
         let answer = json!({"role":"assistant","content":json!({"reply":reply,"directions":directions}).to_string()}).to_string();
         let (url, requests) =
             crate::tests::mock_server(vec![crate::tests::completion(&answer, "stop")]);
@@ -2395,12 +2485,16 @@ mod tests {
             let snapshot = snapshots
                 .recv_timeout(deadline.saturating_duration_since(Instant::now()))
                 .unwrap();
-            if snapshot
-                .document
-                .messages
-                .last()
-                .is_some_and(|m| !m.user && m.text == reply)
-            {
+            if snapshot.document.messages.last().is_some_and(|m| !m.user) {
+                let message = snapshot.document.messages.last().unwrap();
+                // The numbered list became the card; the reply keeps only its prose.
+                assert_eq!(message.text, "Selected.\nWhich next?");
+                let card = message.choices.as_ref().expect("suggestions as a card");
+                assert!(card.multiple);
+                assert_eq!(card.question, "Which next?");
+                assert_eq!(card.options[0].label, "Add bass");
+                assert_eq!(card.options[0].detail.as_deref(), Some("a walking line"));
+                assert_eq!(card.options.len(), 3);
                 assert_eq!(snapshot.document.selected, Some(1));
                 assert_eq!(snapshot.document.rounds.len(), 1);
                 assert!(snapshot.progress.is_empty());
@@ -2868,6 +2962,19 @@ mod tests {
         );
         let single = r#"{"reply":"?","directions":[],"choices":{"question":"Which?","options":[{"label":"Only"}]}}"#;
         assert!(decision(single).err().unwrap().contains("choices"));
+    }
+
+    #[test]
+    fn a_numbered_list_becomes_a_card_only_when_it_could_be_answered() {
+        let (reply, card) =
+            numbered_choices("いいですね。\n１．サビを足す\n２．ベースを動かす\nどれにしますか？")
+                .unwrap();
+        assert_eq!(reply, "いいですね。\nどれにしますか？");
+        assert_eq!(card.question, "どれにしますか？");
+        assert_eq!(card.options[1].label, "ベースを動かす");
+        assert!(numbered_choices("1. Only one\nWhich?").is_none());
+        assert!(numbered_choices("No list here.").is_none());
+        assert!(numbered_choices("1. Same\n2. Same\nWhich?").is_none());
     }
 
     #[test]
