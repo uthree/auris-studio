@@ -32,6 +32,10 @@ const MAX_ZOOM: f32 = 2.0;
 #[path = "mixer_graph_tooltip.rs"]
 mod wire_tooltip;
 
+#[path = "mixer_graph_menu.rs"]
+mod menu;
+pub use menu::NewMixerTrack;
+
 #[cfg(test)]
 #[path = "mixer_graph_wires_tests.rs"]
 mod wire_tests;
@@ -610,7 +614,18 @@ impl AurisApp {
                         }),
                     )),
             )
-            .child(div().flex_1().min_h_0().min_w_0().children(view))
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .min_w_0()
+                    // A right click that no node and no wire claimed landed on the canvas itself.
+                    .on_mouse_down(
+                        MouseButton::Right,
+                        Self::opens_menu(cx, |this, at| this.mixer_canvas_menu(at)),
+                    )
+                    .children(view),
+            )
             .child(
                 div()
                     .px_2()
@@ -982,7 +997,7 @@ impl AurisApp {
         }
     }
 
-    fn arrange_mixer_nodes(&mut self, cx: &mut gpui::Context<Self>) {
+    pub(crate) fn arrange_mixer_nodes(&mut self, cx: &mut gpui::Context<Self>) {
         let layout = positions(&self.session.mixer_graph());
         if let Some(canvas) = &mut self.mixer_canvas {
             let before = canvas.presentation(cx);
@@ -1135,6 +1150,10 @@ impl AurisApp {
                     }
                     cx.notify();
                 }),
+            )
+            .on_mouse_down(
+                MouseButton::Right,
+                Self::opens_menu(cx, move |this, at| this.mixer_node_menu(at, node)),
             )
             .child(div().truncate().text_color(theme.text_muted).child(name));
         match node {

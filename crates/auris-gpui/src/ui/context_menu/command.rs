@@ -368,6 +368,15 @@ pub enum MenuCommand {
     ToggleTrackOutput(TrackId, Output),
     /// Disconnect selected graph edges in one undoable document edit.
     DeleteMixerConnections(Vec<auris_session::mixer_graph::MixerEdge>),
+    /// Add a track from the mixer graph's canvas, its strip placed where the menu opened.
+    NewMixerTrack {
+        /// Which kind of track.
+        kind: crate::ui::mixer_graph::NewMixerTrack,
+        /// The window position the canvas was right-clicked at.
+        at: Point<Pixels>,
+    },
+    /// Lay the mixer graph out again from its routing.
+    ArrangeMixerGraph,
     /// Open the list of buses a track could send to.
     ShowSendPicker {
         /// Track the send would come from.
@@ -1107,6 +1116,8 @@ impl AurisApp {
                 self.open_menu(menu);
             }
             MenuCommand::DeleteMixerConnections(edges) => self.delete_mixer_connections(&edges),
+            MenuCommand::NewMixerTrack { kind, at } => self.add_mixer_track(kind, at, cx),
+            MenuCommand::ArrangeMixerGraph => self.arrange_mixer_nodes(cx),
             MenuCommand::ToggleTrackOutput(track, output) => {
                 let remove = self
                     .project()
