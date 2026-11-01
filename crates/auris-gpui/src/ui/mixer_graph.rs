@@ -203,7 +203,24 @@ where
     L: Into<SharedString>,
     F: Fn(&gpui::ClickEvent, &mut gpui::Window, &mut gpui::App) + 'static,
 {
-    button(id, label, style, active, color, theme, click).h(Metrics::CONTROL_HEIGHT * zoom)
+    // The card sits in the canvas's rem scope, so rem-sized text shrinks with the zoom. A
+    // button's own caption is sized in pixels by the design language and would stay full size in
+    // a card a third as wide; the caption is given in rems instead, and truncates if the padding,
+    // which does not scale, still leaves too little room.
+    let label: SharedString = label.into();
+    crate::ui::widgets::button_with_content(
+        id,
+        div().min_w_0().truncate().text_sm().child(label),
+        style,
+        ButtonState::Enabled(active.into()),
+        color,
+        theme,
+        click,
+    )
+    .h(Metrics::CONTROL_HEIGHT * zoom)
+    .max_w_full()
+    .min_w_0()
+    .overflow_hidden()
 }
 
 fn node_id(node: MixerNode) -> SharedString {
