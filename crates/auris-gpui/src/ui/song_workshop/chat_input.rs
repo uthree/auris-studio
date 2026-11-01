@@ -60,6 +60,9 @@ impl AurisApp {
                     }
                     Change::Fast => {}
                 }
+                if !matches!(change, Change::Opened) {
+                    this.remember_workshop_choice();
+                }
                 cx.notify();
             }
         });
@@ -555,6 +558,7 @@ impl AurisApp {
             .get(language)
             .to_owned()),
         };
+        let remember = command == "/effort" && result.is_ok();
         if let Some(s) = &mut self.song_workshop {
             match result {
                 Ok(feedback) => {
@@ -565,7 +569,23 @@ impl AurisApp {
             }
             s.completions.reset();
         }
+        if remember {
+            self.remember_workshop_choice();
+        }
         true
+    }
+
+    /// Saves the workshop's model and reasoning as the ones both chats open with next time.
+    pub(crate) fn remember_workshop_choice(&mut self) {
+        let Some(choice) = self.song_workshop.as_ref().map(|s| s.preferences.clone()) else {
+            return;
+        };
+        if let Err(error) = self.remember_agent_choice(&choice) {
+            let message = crate::i18n::error_text(&error, self.language());
+            if let Some(s) = &mut self.song_workshop {
+                s.command_feedback = Some(Err(message));
+            }
+        }
     }
 
     pub(crate) fn choose_workshop_model(&mut self, index: usize) {
@@ -575,19 +595,22 @@ impl AurisApp {
         if s.busy() {
             return;
         }
-        if let Some(model) = s.models.get(index) {
-            if let Some(route) = &model.connection {
-                route.apply_to(&mut s.preferences);
-            }
-            s.preferences.model.clone_from(&model.name);
-            if model
-                .efforts
-                .as_ref()
-                .is_some_and(|levels| !levels.contains(&s.preferences.effort))
-            {
-                s.preferences.effort = Default::default();
-            }
+        let Some(model) = s.models.get(index) else {
+            return;
+        };
+        if model.connection.is_some() {
+            // As in the editor's menu: a discovered route replaces the API fields, and the
+            // configured endpoint has to survive for the next discovery to find it again.
+            let prefs = &s.preferences;
+            let endpoint = auris_session::AgentEndpoint {
+                provider: prefs.provider.clone(),
+                url: prefs.url.clone(),
+                api_key_env: prefs.api_key_env.clone(),
+            };
+            s.preferences.discovery_endpoint.get_or_insert(endpoint);
         }
+        model.apply_to(&mut s.preferences);
+        self.remember_workshop_choice();
     }
 
     fn workshop_model_menu(&mut self, at: gpui::Point<gpui::Pixels>) {

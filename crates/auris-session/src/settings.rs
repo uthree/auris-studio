@@ -432,6 +432,81 @@ impl AgentPreferences {
     pub fn is_configured(&self) -> bool {
         !self.model.trim().is_empty()
     }
+
+    /// Take over another surface's model choice: the route, the model and its reasoning.
+    ///
+    /// The choice is what the editor's agent and the song workshop share, so that whichever was
+    /// used last is what both open with next time. Everything else — paths, permissions,
+    /// limits, the system prompt — stays as this side has it.
+    pub fn adopt_choice(&mut self, from: &AgentPreferences) {
+        self.backend.clone_from(&from.backend);
+        self.provider.clone_from(&from.provider);
+        self.url.clone_from(&from.url);
+        self.api_key_env.clone_from(&from.api_key_env);
+        if from.discovery_endpoint.is_some() {
+            self.discovery_endpoint.clone_from(&from.discovery_endpoint);
+        }
+        self.model.clone_from(&from.model);
+        self.effort = from.effort;
+        self.thinking = from.thinking;
+        self.fast_mode = from.fast_mode;
+    }
+}
+
+#[cfg(test)]
+mod agent_choice_tests {
+    use super::{AgentEndpoint, AgentPreferences, ReasoningEffort};
+
+    #[test]
+    fn adopting_a_choice_moves_the_route_and_reasoning_but_nothing_else() {
+        let mut saved = AgentPreferences {
+            backend: "rig".into(),
+            provider: "openai".into(),
+            url: "https://example.invalid/v1".into(),
+            api_key_env: "MY_KEY".into(),
+            model: "old".into(),
+            codex_path: "C:/Tools/codex.exe".into(),
+            system_prompt: "custom".into(),
+            max_tool_calls: Some(200),
+            ..Default::default()
+        };
+        let chosen = AgentPreferences {
+            backend: "codex".into(),
+            provider: "openai".into(),
+            url: "https://example.invalid/v1".into(),
+            api_key_env: "MY_KEY".into(),
+            model: "gpt-fixture".into(),
+            effort: ReasoningEffort::High,
+            fast_mode: true,
+            ..Default::default()
+        };
+        saved.adopt_choice(&chosen);
+        assert_eq!(saved.backend, "codex");
+        assert_eq!(saved.model, "gpt-fixture");
+        assert_eq!(saved.effort, ReasoningEffort::High);
+        assert!(saved.fast_mode);
+        assert_eq!(saved.codex_path, "C:/Tools/codex.exe");
+        assert_eq!(saved.system_prompt, "custom");
+        assert_eq!(saved.max_tool_calls, Some(200));
+    }
+
+    #[test]
+    fn a_choice_without_a_discovery_endpoint_keeps_the_saved_one() {
+        let endpoint = AgentEndpoint {
+            provider: "openai".into(),
+            url: "https://example.invalid/v1".into(),
+            api_key_env: "MY_KEY".into(),
+        };
+        let mut saved = AgentPreferences {
+            discovery_endpoint: Some(endpoint.clone()),
+            ..Default::default()
+        };
+        saved.adopt_choice(&AgentPreferences {
+            model: "m".into(),
+            ..Default::default()
+        });
+        assert_eq!(saved.discovery_endpoint, Some(endpoint));
+    }
 }
 
 #[cfg(test)]

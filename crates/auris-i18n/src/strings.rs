@@ -2102,6 +2102,7 @@ new のオプション
     AgentCodexPathLabel { en: "Codex executable path (optional)", ja: "Codex実行ファイルのパス（任意）" }
     AgentCodexHelp { en: "Sign in with codex login. Leave the path empty to detect the installed CLI.", ja: "codex loginでログインしてください。パスが空欄ならインストール済みのCLIを探します。" }
     AgentOpenCodePathLabel { en: "OpenCode executable path (optional)", ja: "OpenCode実行ファイルのパス（任意）" }
+    AgentModelFallback { en: "The model used last is not available now, so another one has been chosen. Pick one from the model menu to keep it.", ja: "前回使ったモデルが現在利用できないため、別のモデルを選びました。使い続けるモデルはモデルメニューから選んでください。" }
     AgentOpenCodeVariantHelp { en: "Choose an OpenCode model variant in the model menu to change reasoning effort.", ja: "推論の強度を変更するには、モデルメニューでOpenCodeのモデルバリアントを選択してください。" }
     AgentOpenCodeHelp { en: "Install OpenCode and run opencode auth login. Leave the path empty to detect the CLI, then choose an OpenCode model in the Agent panel. Custom provider configuration and user plugins are not inherited.", ja: "OpenCodeをインストールし、opencode auth loginで認証してください。パスが空欄ならCLIを検出します。エージェントパネルでOpenCodeのモデルを選択してください。独自プロバイダー設定とユーザープラグインは引き継ぎません。" }
     AgentDiscoveryHelp { en: "Available Codex, Claude Code, OpenCode, Antigravity CLI, Ollama and configured API models appear together in the Agent panel.", ja: "利用可能なCodex・Claude Code・OpenCode・Antigravity CLI・Ollama・設定済みAPIのモデルを、エージェントパネルにまとめて表示します。" }
