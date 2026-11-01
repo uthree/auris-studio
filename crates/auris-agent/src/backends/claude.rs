@@ -1447,7 +1447,12 @@ mod tests {
     fn a_saved_conversation_starts_or_resumes_its_own_session_and_others_save_none() {
         let cwd = tempfile::tempdir().unwrap();
         let prefs = auris_session::AgentPreferences {
-            claude_path: "claude".into(),
+            claude_path: if cfg!(windows) {
+                "C:/Tools/claude.exe"
+            } else {
+                "/usr/local/bin/claude"
+            }
+            .into(),
             ..prefs()
         };
         let args = |session| -> Vec<String> {

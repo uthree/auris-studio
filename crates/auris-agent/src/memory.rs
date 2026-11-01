@@ -520,9 +520,11 @@ mod tests {
         assert_eq!(memory.total_turns(), 2);
         assert!(memory.delta_since(1).contains("Turn 2\n"));
         assert!(memory.recall(1, None).starts_with("Turn 2\n"));
-        let path = tempfile::NamedTempFile::new().unwrap();
-        memory.save(path.path()).unwrap();
-        assert_eq!(Memory::load(path.path()).unwrap(), memory);
+        // A directory, not an open temporary file: Windows refuses to replace an open file.
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("memory.json");
+        memory.save(&path).unwrap();
+        assert_eq!(Memory::load(&path).unwrap(), memory);
         memory.forget_native("claude");
         assert!(memory.native_thread("claude").is_none());
     }
