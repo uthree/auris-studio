@@ -64,6 +64,8 @@ mod clips;
 mod compose;
 mod convert;
 mod drum_analysis;
+mod envelope;
+pub use envelope::{ENVELOPE_PITCHES, SoundEnvelope};
 mod drum_assignments;
 mod files;
 mod generated;

@@ -1532,6 +1532,9 @@ mod tests {
                 "sustain",
                 "release",
                 "noise",
+                "envelope",
+                "attack_ms",
+                "release_ms",
             ] {
                 assert!(schema.contains(field), "Missing {field}");
             }

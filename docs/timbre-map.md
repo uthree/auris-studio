@@ -2,15 +2,28 @@
 
 [日本語](timbre-map.ja.md)
 
-Open **Timbre Map** at the top of the library. Auris measures the built-in melodic instruments
-and melodic presets of loaded SoundFonts in the background. The counter shows completed sounds;
-Cancel, Close and Escape stop a running scan. Use **Rescan Library** after loading another font.
-The prototype accepts up to 512 sounds per scan and keeps the results in memory until the
-document is replaced or a new scan starts.
+Open **Find Sounds** at the top of the library, or type in the library's search and choose
+**Search by how it sounds…** to carry the words across. Auris measures the built-in melodic
+instruments and melodic presets of loaded SoundFonts in the background; the status bar counts
+completed sounds, and Cancel, Close and Escape stop a running scan. Use **Rescan Library** after
+loading another font. The prototype accepts up to 512 sounds per scan and keeps the results in
+memory until the document is replaced or a new scan starts.
 
-Each point is a sound. Hover for its name or click to hear its reference note. The **All Sounds**
-list also reaches coincident points. Selecting a sound highlights its eight nearest neighbors
-and lists them under **Similar Sounds**, ordered by feature-space distance (smaller is closer).
+The window has three columns with one job each, stacked in the same order in a narrow window:
+
+* **The map.** Each point is a sound; hover for its name or click to hear it. Arrange it by
+  **Similarity**, **Sound character** or **Envelope**, and turn it by dragging, with the view
+  presets, or with the rotation buttons from the keyboard. The legend under it names the colour
+  groups, and **Name and classify with AI** sits with the legend it names.
+* **Sounds.** One search field takes names and impressions together (below), **Filter by
+  envelope** adds measured ranges, and every condition in force — an envelope range, or "Similar
+  Sounds" for a chosen sound — is a chip that comes off on its own. The list reaches coincident
+  points the map cannot separate.
+* **The selected sound.** Its group, audition keyboard, **Use on Selected Track**, **Find Similar
+  Sounds**, **Attach to conversation**, category correction, and its measured envelope.
+
+Selecting a sound highlights its eight nearest neighbours on the map; **Find Similar Sounds**
+narrows the list to its twelve nearest, ordered by feature-space distance (smaller is closer).
 Color denotes an acoustic k-means group, not a named instrument class. **Use on Selected Track**
 adopts that sound as one undoable edit; browsing and audition do not change the document.
 Adopting a built-in sound restores its default patch and clears its instrument automation,
@@ -79,13 +92,14 @@ it sends those synthetic names and counts to the configured backend.
 
 ### Sound character and impression search
 
-Switch **Similarity / Sound character** to display either PCA or fixed-scale brightness,
+Switch the arrangement to **Similarity** or **Sound character** to display either PCA or fixed-scale brightness,
 attack speed and held sustain. Character coordinates run from -1 (dark, slow, decaying) to
 +1 (bright, immediate, sustained); adding a library does not renormalize existing character
 coordinates. Cluster colors and full-feature nearest neighbors keep their original meaning.
 
-Use **Search…** to focus the map's Japanese IME-compatible field. Search sound names or supported
-Japanese/English impressions, including `ふんわり`, `ポコポコ`, `キラキラ`, `ザラザラ`, `soft`,
+The search field (the magnifier focuses it from the keyboard) is Japanese IME-compatible. A word
+that is a supported impression ranks the list; every other word must occur in the sound's name, so
+`ふんわり pad` means soft-sounding pads. Supported Japanese/English impressions include `ふんわり`, `ポコポコ`, `キラキラ`, `ザラザラ`, `soft`,
 `plucky`, `bright`, `dark`, `short`, and `sustained`. The interpreted terms are shown explicitly;
 other prose is not interpreted. Up to fifty ranked results remain available in the list and the
 first eight are highlighted on the map without moving its points. Enter leaves the query in
@@ -107,12 +121,51 @@ and retries the same request without refresh. Returned exact IDs work with exist
 selection and Undo. Agents should render candidates in their intended musical phrase before
 adopting them and preserve existing sound choices unless asked to change them.
 
+### Measured envelope
+
+Every sound also gets an attack/decay/sustain/release measured from real notes: C2, C4 and C6,
+one at a time, at velocity 100. The key is held until the level settles (within 1 dB for 300 ms),
+dies (60 dB below the peak) or four seconds pass, and the tail is recorded until it falls 60 dB or
+four more seconds pass. The level is channel power in 5 ms windows, median-smoothed over 25 ms.
+
+| Value | Meaning |
+| --- | --- |
+| Attack (ms) | From audible (peak − 40 dB) to peak − 1 dB |
+| Decay (ms) | Peak to within 1 dB of the sustain; for a sound that never settles, peak to −60 dB |
+| Sustain (dB) | Median of the last 300 ms held, relative to the peak |
+| Release (ms) | Note-off to 60 dB below the level at note-off (RT60) |
+
+A decay or release that outlasts the capture is extrapolated from its slope and shown with `≈`;
+a sound with no decay at all reports more than 30 s. The summary is the per-value median of the
+three pitches, and the inspector draws all three. All values are relative to the note's own peak,
+so they do not depend on the instrument's level.
+
+**Filter by envelope** offers named ranges per stage — attack fast ≤ 15 ms / medium / slow ≥ 150
+ms; decay and release short / medium / long (decay 300 ms and 2 s, release 200 ms and 1 s); sustain
+holds ≥ −6 dB / dips / fades ≤ −30 dB. A sound outside a range is ranked by how far outside (times
+on a log scale), never dropped, so a strict filter still answers with the nearest sounds. The
+**Envelope** arrangement places sounds by log attack, sustain level and log release.
+
+The agent passes the same ranges through `search_instruments`, and every result carries the
+measured values and the three pitches:
+
+```json
+{"request":{"mode":"character","envelope":{"attack_ms":{"max":10},"release_ms":{"min":800}},"limit":5}}
+```
+
+The three envelope notes are the expensive part of a scan, so their results for SoundFont presets
+and hosted plugins are cached in `<config dir>/cache/sound-envelopes.json`, keyed by the file's
+path, size and modification time and by the measurement's version. Built-in instruments are code
+and are measured on every scan.
+
+### Character descriptors
+
 Descriptors average the same six triggers used for similarity. Brightness uses log body centroid
 between 100 Hz and 8 kHz; noise uses mean regional spectral flatness. A 10 ms power envelope
 measures time to 90% peak RMS and held sustain. Release measures the last captured window above
 -40 dB relative to the held peak; `release_censored` marks a lower bound when the tail remains
-audible at capture end. The current 600 ms hold and 400 ms tail limit measurement of slow pads
-and long releases. Impression mappings are acoustic hypotheses, not listening judgments;
+audible at capture end. The 600 ms hold and 400 ms tail limit these descriptors for slow pads
+and long releases; the measured envelope above has no such limit. Impression mappings are acoustic hypotheses, not listening judgments;
 distance is relative mismatch, not probability. Rhythm-dependent impressions such as `ポコポコ`
 also depend on how the instrument is played.
 
