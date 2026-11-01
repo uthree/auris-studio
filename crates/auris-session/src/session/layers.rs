@@ -284,6 +284,116 @@ mod tests {
     }
 
     #[test]
+    fn detaching_or_removing_a_performed_source_keeps_the_heard_part_and_undo() {
+        for remove_source in [false, true] {
+            let (mut session, lead, layer) = session_with_layer();
+            let clip = session
+                .project()
+                .track(lead)
+                .unwrap()
+                .kind
+                .note_clips()
+                .unwrap()[0]
+                .id;
+            session
+                .set_clip_transforms(
+                    clip,
+                    vec![auris_core::NoteTransform::Transpose { semitones: 12 }],
+                )
+                .unwrap();
+            session
+                .set_layer_shape(
+                    layer,
+                    LayerShape {
+                        lowest: 72,
+                        highest: 84,
+                        ..LayerShape::default()
+                    },
+                )
+                .unwrap();
+            session.set_track_mute(lead, true).unwrap();
+            session.forget_history();
+            let before = session.project().clone();
+            let heard = session
+                .render_job()
+                .render(
+                    &OfflineOptions::whole_project(),
+                    &mut RenderProgress::default(),
+                )
+                .unwrap();
+            assert!(heard.peak() > 0.01);
+
+            if remove_source {
+                session.remove_track(lead).unwrap();
+            } else {
+                session.detach_layer(layer).unwrap();
+            }
+            let clips = session
+                .project()
+                .track(layer)
+                .unwrap()
+                .kind
+                .note_clips()
+                .unwrap();
+            assert_eq!(
+                clips[0]
+                    .notes
+                    .iter()
+                    .map(|note| note.pitch)
+                    .collect::<Vec<_>>(),
+                vec![72, 76, 79]
+            );
+            let detached = session
+                .render_job()
+                .render(
+                    &OfflineOptions::whole_project(),
+                    &mut RenderProgress::default(),
+                )
+                .unwrap();
+            assert_eq!(detached.frame_count(), heard.frame_count());
+            for (before, after) in heard.channels().iter().zip(detached.channels()) {
+                assert!(
+                    before
+                        .iter()
+                        .zip(after)
+                        .all(|(before, after)| (before - after).abs() < 1e-6)
+                );
+            }
+            session.undo().unwrap();
+            assert_eq!(session.project(), &before);
+            assert_eq!(undo_depth(&mut session), 0);
+        }
+    }
+
+    #[test]
+    fn extreme_layer_transposition_builds_and_renders_at_the_midi_edges() {
+        for (transpose, expected) in [(i32::MAX, 127), (i32::MIN, 0)] {
+            let (mut session, lead, layer) = session_with_layer();
+            session.set_track_mute(lead, true).unwrap();
+            session
+                .set_layer_shape(
+                    layer,
+                    LayerShape {
+                        transpose,
+                        ..LayerShape::default()
+                    },
+                )
+                .unwrap();
+            session.detach_layer(layer).unwrap();
+            let notes = &session
+                .project()
+                .track(layer)
+                .unwrap()
+                .kind
+                .note_clips()
+                .unwrap()[0]
+                .notes;
+            assert!(notes.iter().all(|note| note.pitch == expected));
+            assert!(peak(&mut session).is_finite());
+        }
+    }
+
+    #[test]
     fn the_mixer_graph_draws_a_notes_wire_and_cutting_it_detaches() {
         use crate::mixer_graph::{MixerEdgeKind, MixerNode};
 
