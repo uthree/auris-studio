@@ -209,10 +209,50 @@ pub(crate) fn publish_staged_file_noclobber(mut staged: NamedTempFile, path: &Pa
     publish_ready_staged_file_noclobber(staged, path)
 }
 
+/// Gives a file about to be published the permissions an ordinary create would have produced.
+///
+/// A staged file comes from [`NamedTempFile`], which creates at `0600` — right for a private
+/// sibling nobody else should read while it is half-written, and wrong for what it becomes.
+/// `persist` is a rename, so the mode survives: a saved project, a rendered WAV and an exported
+/// MIDI file were all owner-only, while the `.auris-write.lock` beside the document, created
+/// through `OpenOptions`, honoured the umask. A deliverable readable only by the account that
+/// wrote it is a surprise on a shared drive and on any machine with a second account.
+///
+/// The mode comes from the directory the file lands in, not from the process umask, which `std`
+/// cannot read without changing it — and changing it is not thread-safe. A folder made by
+/// `create_dir_all`, which is how a project folder is made, carries `0777 & ~umask`, so dropping
+/// its execute bits gives exactly the `0666 & ~umask` that `File::create` would have used. A
+/// folder somebody deliberately tightened gives something tighter, which is the right answer
+/// there: a document should not be more open than the folder holding it.
+///
+/// Best effort on purpose: a filesystem that carries no Unix modes, or a directory that cannot be
+/// read, is not a reason to fail a save. Does nothing on Windows, where the inherited ACL is
+/// already what a created file would have.
+pub fn match_folder_permissions(file: &std::fs::File, destination: &Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let Some(folder) = destination.parent() else {
+            return;
+        };
+        let Ok(metadata) = std::fs::metadata(folder) else {
+            return;
+        };
+        let mode = metadata.permissions().mode() & 0o666;
+        let _ = file.set_permissions(std::fs::Permissions::from_mode(mode));
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (file, destination);
+    }
+}
+
 pub(crate) fn publish_ready_staged_file_noclobber(
     staged: NamedTempFile,
     path: &Path,
 ) -> Result<()> {
+    match_folder_permissions(staged.as_file(), path);
     match staged.persist_noclobber(path) {
         Ok(_) => Ok(()),
         Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => {
@@ -226,6 +266,7 @@ pub(crate) fn publish_ready_staged_file(staged: NamedTempFile, path: &Path) -> R
     let _publish = PUBLISH_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
+    match_folder_permissions(staged.as_file(), path);
     staged
         .persist(path)
         .map(drop)
@@ -365,6 +406,86 @@ fn project_too_large(path: &Path, limit: usize, observed: u64) -> IoError {
         path: path.to_path_buf(),
         observed,
         limit: limit as u64,
+    }
+}
+
+#[cfg(all(test, unix))]
+mod permissions_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    fn mode_of(path: &Path) -> u32 {
+        std::fs::metadata(path)
+            .expect("the file exists")
+            .permissions()
+            .mode()
+            & 0o777
+    }
+
+    /// What `File::create` produces in `folder`, which is `0666 & ~umask` whatever the umask is.
+    fn ordinary_mode(folder: &Path) -> u32 {
+        let probe = folder.join(".probe");
+        std::fs::File::create(&probe).expect("an ordinary file can be created");
+        let mode = mode_of(&probe);
+        std::fs::remove_file(&probe).expect("the probe can be removed");
+        mode
+    }
+
+    #[test]
+    fn a_published_document_is_as_readable_as_anything_else_in_its_folder() {
+        // The staging file is 0600 and `persist` is a rename, so without
+        // `match_folder_permissions` a saved project came out owner-only while the
+        // `.auris-write.lock` beside it honoured the umask. Compared against a file created the
+        // ordinary way in the same folder rather than against a literal mode, so the assertion
+        // holds under any umask the developer or the runner happens to have.
+        let root = tempfile::tempdir().expect("a temp directory");
+        let folder = root.path().join("Song");
+        std::fs::create_dir_all(&folder).expect("the project folder can be made");
+        let expected = ordinary_mode(&folder);
+
+        let document = folder.join("Song.auris");
+        let mut project = Project::new("Song", 48_000.0);
+        save_project(&document, &mut project).expect("the project saves");
+
+        assert_eq!(
+            mode_of(&document),
+            expected,
+            "a saved project is not as readable as its neighbours"
+        );
+    }
+
+    #[test]
+    fn publishing_bytes_is_as_readable_too() {
+        // The same path for the small artifacts: an exported MIDI file, a report.
+        let root = tempfile::tempdir().expect("a temp directory");
+        let folder = root.path().join("Export");
+        std::fs::create_dir_all(&folder).expect("the folder can be made");
+        let expected = ordinary_mode(&folder);
+
+        let target = folder.join("notes.mid");
+        stage_file_bytes(&target, b"not really a MIDI file")
+            .expect("the bytes stage")
+            .publish()
+            .expect("the bytes publish");
+
+        assert_eq!(mode_of(&target), expected, "a published file is owner-only");
+    }
+
+    #[test]
+    fn a_tightened_folder_is_not_widened_by_a_save() {
+        // A folder somebody made private keeps its documents private: the mode comes from the
+        // folder, so this is tighter than `File::create` would have been, on purpose.
+        let root = tempfile::tempdir().expect("a temp directory");
+        let folder = root.path().join("Private");
+        std::fs::create_dir_all(&folder).expect("the folder can be made");
+        std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o700))
+            .expect("the folder can be tightened");
+
+        let document = folder.join("Private.auris");
+        let mut project = Project::new("Private", 48_000.0);
+        save_project(&document, &mut project).expect("the project saves");
+
+        assert_eq!(mode_of(&document), 0o600, "a private folder was widened");
     }
 }
 

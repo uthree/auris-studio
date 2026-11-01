@@ -195,6 +195,10 @@ fn response(
 
 fn publish(mut file: NamedTempFile, target: &Path) -> Result<(), FontDownloadError> {
     file.flush()?;
+    // A font is a library every project on the machine shares, and a notice is a licence someone
+    // may well need to read. `NamedTempFile` creates at `0600` and `persist` keeps the mode, so
+    // without this they arrive readable only by the account that downloaded them.
+    auris_io::match_folder_permissions(file.as_file(), target);
     match file.persist_noclobber(target) {
         Ok(_) => Ok(()),
         Err(error) if error.error.kind() == io::ErrorKind::AlreadyExists && target.is_file() => {
