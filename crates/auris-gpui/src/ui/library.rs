@@ -476,7 +476,7 @@ enum Found {
     /// A `.vst3` bundle, represented without loading its executable code.
     Vst3File(usize),
     /// A singer voice on the shelf: its name, and the file it is.
-    Voice(String, std::path::PathBuf, Option<String>),
+    Voice(String, std::path::PathBuf),
 }
 
 /// How a branch row is drawn.
@@ -901,9 +901,9 @@ impl AurisApp {
             entries.consider(name, || Found::Vst3File(vst_offset + index));
         }
 
-        for (name, path, speaker) in self.voice_list() {
+        for (name, path) in self.voice_list() {
             let search_name = name.clone();
-            entries.consider(&search_name, || Found::Voice(name, path, speaker));
+            entries.consider(&search_name, || Found::Voice(name, path));
         }
 
         let mut found = entries.finish();
@@ -1009,7 +1009,7 @@ impl AurisApp {
                         }),
                     )
                 }
-                Found::Voice(name, path, speaker) => self.voice_row(&name, path, speaker, cx),
+                Found::Voice(name, path) => self.voice_row(&name, path, cx),
             })
             .collect();
         if limited {
@@ -1045,11 +1045,12 @@ impl AurisApp {
     }
 
     /// The singer voices this machine can offer, scanned once and kept.
-    pub(crate) fn voice_list(&mut self) -> Vec<(String, std::path::PathBuf, Option<String>)> {
+    ///
+    /// One row per voice: a VOICEVOX connection's styles are the inspector's speaker picker,
+    /// the way a DiffSinger bank's speakers are, not separate shelf entries.
+    pub(crate) fn voice_list(&mut self) -> Vec<(String, std::path::PathBuf)> {
         self.voices
-            .get_or_insert_with(|| {
-                auris_session::library::voice_shelf_entries_with_settings(&self.settings)
-            })
+            .get_or_insert_with(|| auris_session::library::voices_with_settings(&self.settings))
             .clone()
     }
 
@@ -1082,8 +1083,8 @@ impl AurisApp {
         if voices.is_empty() {
             rows.push(self.note_row(1, self.t(Key::BrowserNoVoices)));
         }
-        for (name, path, speaker) in voices {
-            rows.push(self.voice_row(&name, path, speaker, cx));
+        for (name, path) in voices {
+            rows.push(self.voice_row(&name, path, cx));
         }
         rows
     }
@@ -1093,7 +1094,6 @@ impl AurisApp {
         &self,
         name: &str,
         path: std::path::PathBuf,
-        speaker: Option<String>,
         cx: &mut gpui::Context<Self>,
     ) -> AnyElement {
         let theme = self.theme.clone();
@@ -1103,12 +1103,7 @@ impl AurisApp {
         let enabled = target.is_some();
         let selected = target
             .and_then(|track| self.session.singer_voice_info(track).ok().flatten())
-            .is_some_and(|info| {
-                info.path == path
-                    && speaker
-                        .as_ref()
-                        .is_none_or(|speaker| info.speaker.as_ref() == Some(speaker))
-            });
+            .is_some_and(|info| info.path == path);
         let target_label = target
             .and_then(|track| self.project().track(track))
             .map(|track| auris_i18n::messages::voice_target(self.language(), &track.name))
@@ -1121,10 +1116,8 @@ impl AurisApp {
             Some(auris_session::VoiceSourceKind::LeapSinger) => Some(Key::VoiceBackendLeapSinger),
             None => None,
         };
-        let row_id = match speaker.as_deref() {
-            Some(speaker) => format!("lib-voice-{shown}-{speaker}"),
-            None => format!("lib-voice-{shown}"),
-        };
+        let row_id = format!("lib-voice-{shown}");
+        let icon_id = format!("{row_id}-icon");
         div()
             .id(gpui::SharedString::from(row_id.clone()))
             .debug_selector(move || row_id.clone())
@@ -1152,11 +1145,29 @@ impl AurisApp {
                     .gap_1p5()
                     .w_full()
                     .min_w_0()
-                    .child(
-                        div()
+                    .child(match self.singer_icon(&path) {
+                        // A speaker's face is its identity mark, so it takes the round shape
+                        // the design language gives a person's avatar, with the same ring.
+                        Some(face) => div()
+                            .debug_selector(move || icon_id.clone())
                             .flex_shrink_0()
-                            .child(icon(Icon::Microphone, px(14.0), accent)),
-                    )
+                            .size(px(16.0))
+                            .rounded_full()
+                            .overflow_hidden()
+                            .border_1()
+                            .border_color(theme.border)
+                            .child(
+                                gpui::img(face)
+                                    .size_full()
+                                    .rounded_full()
+                                    .object_fit(gpui::ObjectFit::Cover),
+                            ),
+                        None => {
+                            div()
+                                .flex_shrink_0()
+                                .child(icon(Icon::Microphone, px(14.0), accent))
+                        }
+                    })
                     .child(
                         div()
                             .flex_1()
@@ -1184,7 +1195,7 @@ impl AurisApp {
                 this.on_mouse_down(
                     MouseButton::Left,
                     cx.listener(move |this, _: &MouseDownEvent, _, cx| {
-                        this.set_track_voice(path.clone(), speaker.clone(), cx);
+                        this.set_track_voice(path.clone(), cx);
                         this.leave_library_search();
                         cx.notify();
                     }),

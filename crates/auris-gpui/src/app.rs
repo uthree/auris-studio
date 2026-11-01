@@ -1483,6 +1483,8 @@ pub struct AurisApp {
     pub(crate) voicevox_menu_generation: u64,
     /// Bounded artwork cache and the current background image request.
     pub(crate) singer_portraits: crate::ui::singer_portrait::SingerPortraits,
+    /// The library's speaker faces, keyed by shelf entry.
+    pub(crate) singer_icons: crate::ui::singer_portrait::SingerIcons,
     /// Preview notes the voice has already sung, at the engine's rate.
     ///
     /// What makes dragging a note across pitches instant the second time it passes one.
@@ -1633,7 +1635,7 @@ pub struct AurisApp {
     pub(crate) plugin_discovery_error: Option<String>,
     /// The singer voices found on this machine, scanned once and kept — the
     /// [`Self::clap_files`] arrangement, cleared when a voice folder is added or forgotten.
-    pub(crate) voices: Option<Vec<(String, std::path::PathBuf, Option<String>)>>,
+    pub(crate) voices: Option<Vec<(String, std::path::PathBuf)>>,
     /// Bounded metadata returned after an opened `.clap` file is inspected in a child process.
     /// Empty results are cached too, so a broken plugin is not retried on every repaint.
     pub(crate) clap_contents:
@@ -1988,6 +1990,7 @@ impl AurisApp {
                         this.finish_input_calibration();
                         this.finish_typing_calibration();
                         this.poll_singer_portrait(cx);
+                        this.poll_singer_icons(cx);
                         this.poll_spectrograms(cx);
                         this.report_graph_resource_error();
                         cx.notify();
@@ -2062,6 +2065,7 @@ impl AurisApp {
             sung_retry: BTreeSet::new(),
             voicevox_catalogs: std::collections::HashMap::new(),
             singer_portraits: Default::default(),
+            singer_icons: Default::default(),
             voicevox_menu_generation: 0,
             sung_previews: std::collections::HashMap::new(),
             sung_preview_wish: None,
