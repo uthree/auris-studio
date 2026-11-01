@@ -1006,6 +1006,9 @@ strings! {
     VideoParticlesOff { en: "Off", ja: "なし" }
     VideoSink { en: "Sink while sounding", ja: "演奏中の沈み込み" }
     VideoDrums { en: "Include drums", ja: "ドラムも描く" }
+    VideoChordSection { en: "Chords", ja: "コード" }
+    VideoChords { en: "Show chords", ja: "コード進行を表示" }
+    VideoChordsHint { en: "The chord sounding now and the next one, in the top corner. Uses the chords written in the song, or reads them from the notes when none are written.", ja: "今鳴っているコードと次のコードを左上に表示します。曲に入力したコードを使い、未入力なら音符から読み取ります。" }
     VideoPreviewHint { en: "The preview shows the moment under the playhead. Move the playhead to see another.", ja: "プレビューは再生位置の瞬間です。再生位置を動かすと別の場面を確認できます。" }
     VideoFfmpegChecking { en: "Looking for ffmpeg…", ja: "ffmpeg を探しています…" }
     VideoFfmpegCopy { en: "Copy Command", ja: "コマンドをコピー" }
@@ -2058,6 +2061,7 @@ VIDEO OPTIONS (default: the look last chosen in the desktop application)
         --particles <amount>      Sparks where notes meet the playhead: 0 is none, 1 the usual
         --sink <amount>           How far sounding notes sink: 0 is still, 1 the usual
         --drums                   Draw drum tracks too
+        --no-chords               Leave out the chord names in the corner
 
 NEW OPTIONS
         --bpm <tempo>             Tempo of the new project (default: 120)
@@ -2147,6 +2151,7 @@ video のオプション（既定: デスクトップ版で最後に選んだ見
         --particles <amount>      再生線でノートが散らす火花の量（0 でなし、1 が標準）
         --sink <amount>           演奏中のノートが沈み込む深さ（0 で動かない、1 が標準）
         --drums                   ドラムトラックも描く
+        --no-chords               左上のコード名を表示しない
 
 new のオプション
         --bpm <tempo>             新規プロジェクトのテンポ（既定: 120）

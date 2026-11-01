@@ -444,7 +444,8 @@ impl AurisApp {
             .child(self.video_format_section(&style, &theme, cx))
             .child(self.video_color_section(&style, &theme, cx))
             .child(self.video_background_section(&style, &theme, cx))
-            .child(self.video_motion_section(&style, &theme, cx));
+            .child(self.video_motion_section(&style, &theme, cx))
+            .child(self.video_chords_section(&style, &theme, cx));
 
         let body = if stacked {
             div()
@@ -884,6 +885,24 @@ impl AurisApp {
             cx,
             |style| style.include_drums = !style.include_drums,
         ))
+    }
+
+    fn video_chords_section(
+        &self,
+        style: &NoteRollStyle,
+        theme: &Theme,
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
+        self.section(Key::VideoChordSection, theme)
+            .child(self.toggle(
+                "video-chords",
+                Key::VideoChords,
+                style.chords,
+                theme,
+                cx,
+                |style| style.chords = !style.chords,
+            ))
+            .child(self.note(self.t(Key::VideoChordsHint), theme))
     }
 
     fn video_background_section(

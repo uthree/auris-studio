@@ -1385,6 +1385,7 @@ fn video(args: &[String]) -> Result<(), String> {
                     Some(PathBuf::from(value(&mut index, option, Key::CliNeedsPath)?));
             }
             "--drums" => style.include_drums = true,
+            "--no-chords" => style.chords = false,
             "--size" => {
                 let text = value(&mut index, option, Key::CliNeedsValue)?;
                 let (width, height) = text

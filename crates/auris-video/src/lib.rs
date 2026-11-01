@@ -5,7 +5,8 @@
 //! * [`NoteScore`] is what is drawn — every sounding note of the project in seconds, with the
 //!   track it belongs to. It is taken from the document once, so a render never has to look at
 //!   ticks or tempo again.
-//! * [`FrameRenderer`] draws one frame of a [`NoteScore`] in a [`NoteRollStyle`], in software.
+//! * [`FrameRenderer`] draws one frame of a [`NoteScore`] in a [`NoteRollStyle`], in software,
+//!   with the chord progression captioned in the corner when the score has one.
 //!   The desktop shows a frame of it as the preview, so what is previewed and what is encoded
 //!   are the same pixels rather than two drawings that are meant to agree.
 //! * [`Ffmpeg`] finds an `ffmpeg` that is already installed and [`VideoWriter`] pipes frames into
@@ -17,6 +18,7 @@
 
 #![warn(missing_docs)]
 
+mod chords;
 mod error;
 mod ffmpeg;
 mod render;
@@ -26,5 +28,5 @@ mod style;
 pub use error::VideoError;
 pub use ffmpeg::{Ffmpeg, VideoCodec, VideoWriter, install_command, install_page};
 pub use render::{BackgroundImage, FrameRenderer, render_video};
-pub use score::{NoteScore, ScoreNote, ScoreTrack};
+pub use score::{NoteScore, ScoreChord, ScoreNote, ScoreTrack};
 pub use style::{NoteColoring, NoteRollStyle, VideoSize};

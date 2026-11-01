@@ -15,6 +15,11 @@ tiny-skia = { version = "0.11", default-features = false, features = ["std", "si
 # Decoding the background picture. The same version and formats the desktop already decodes
 # voice artwork with.
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
+# Chord names are drawn from a font already on the machine, found the way the SVG renderer
+# finds one and outlined straight into tiny-skia paths. Both are already in the lock file through
+# gpui's SVG renderer; nothing is bundled.
+fontdb = "0.23"
+ttf-parser = "0.25"
 serde.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true

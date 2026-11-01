@@ -464,6 +464,10 @@ pub mod architecture {
     //! platform's own; the installed one brings whichever its owner chose. The desktop's preview is
     //! a frame from the same renderer the export uses, which is why the frames are drawn with
     //! `tiny-skia` below the session rather than by the window's toolkit above it.
+    //! The chord caption follows the same rule: its names are outlined from an installed font
+    //! rather than bundled, and the chords come from the written harmony or, when there is none,
+    //! from the session's recogniser — which [`auris_video`] cannot name, so
+    //! [`crate::Session::note_score`] fills them in.
     //!
     //! **[`auris_engine`] does not depend on [`auris_dsp`] or [`auris_synth`].** It drives plugins
     //! purely through the `auris-core` traits. That is what keeps the plugin system honest: if the
