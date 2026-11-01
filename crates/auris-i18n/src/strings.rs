@@ -2279,6 +2279,9 @@ new のオプション
     WorkshopRenameThread { en: "Rename conversation…", ja: "名前を変更…" }
     WorkshopArchiveThread { en: "Archive", ja: "保管する" }
     WorkshopRestoreThread { en: "Restore", ja: "戻す" }
+    WorkshopDeleteThread { en: "Delete…", ja: "削除…" }
+    WorkshopDeleteThreadTitle { en: "Delete “{name}”?", ja: "「{name}」を削除しますか？" }
+    WorkshopDeleteThreadBody { en: "This conversation, its attachments and every song it produced will be permanently deleted. Songs already opened in the editor and your learned preferences will remain.", ja: "この会話と添付ファイル、制作したすべての曲を完全に削除します。エディタで開いた曲と学習した好みは残ります。" }
     WorkshopArchivedThreads { en: "Archived conversations", ja: "保管済みの会話" }
     WorkshopThreadBusy { en: "Stop production before switching conversations", ja: "制作を停止すると会話を切り替えられます" }
     WorkshopThreadNameInvalid { en: "Use 1 to 80 characters for the conversation name.", ja: "会話の名前は1〜80文字で入力してください。" }

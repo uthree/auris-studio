@@ -544,6 +544,13 @@ pub enum Question {
     DeleteSound(std::sync::Arc<auris_session::SoundPreset>),
     /// Permanently remove one explicitly selected conversation.
     DeleteAgentConversation(String, std::path::PathBuf),
+    /// Permanently remove one song conversation from the workshop that asked.
+    DeleteWorkshopThread {
+        /// The conversation's identity in the workshop library.
+        id: String,
+        /// The workshop view that asked; a later one does not act on this answer.
+        workshop: u64,
+    },
     /// Replace a stale transcript with disk history while keeping its unsent draft.
     ReloadAgentConversation(String, std::path::PathBuf),
     /// Something is about to destroy unsaved work.
@@ -1379,6 +1386,10 @@ impl AurisApp {
                 }
             }
             (Question::DeleteAgentConversation(..), Answer::Deny) => {}
+            (Question::DeleteWorkshopThread { id, workshop }, Answer::Confirm) => {
+                self.delete_workshop_thread(id, workshop, cx);
+            }
+            (Question::DeleteWorkshopThread { .. }, Answer::Deny) => {}
             (Question::ReloadAgentConversation(id, root), Answer::Confirm) => {
                 if self.agent_conversation_store_is(&root) {
                     self.reload_agent_conversation(id, cx);
@@ -1722,6 +1733,7 @@ impl AurisApp {
                     | Question::DeleteSound(_)
                     | Question::RemovePluginPath(_)
                     | Question::DeleteAgentConversation(..)
+                    | Question::DeleteWorkshopThread { .. }
             )
         );
         let (body, buttons) = match &prompt.body {
@@ -1820,6 +1832,7 @@ impl AurisApp {
                             question,
                             Question::RemovePluginPath(_)
                                 | Question::DeleteAgentConversation(..)
+                                | Question::DeleteWorkshopThread { .. }
                                 | Question::OverwriteSound { .. }
                                 | Question::DeleteSound(_)
                         ) {
@@ -2273,6 +2286,11 @@ impl AurisApp {
             ),
             Question::DeleteAgentConversation(..) => (
                 self.t(Key::AgentDeleteConversationBody).into(),
+                self.t(Key::MenuDelete).into(),
+                None,
+            ),
+            Question::DeleteWorkshopThread { .. } => (
+                self.t(Key::WorkshopDeleteThreadBody).into(),
                 self.t(Key::MenuDelete).into(),
                 None,
             ),

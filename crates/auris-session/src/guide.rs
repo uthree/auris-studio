@@ -96,7 +96,11 @@
 //! their drafts, attachments and candidate feedback. It belongs to no project because the workshop
 //! opens before one exists: a store keyed by the open document would be a fresh, empty recovery
 //! folder on every launch. A window that finds the last conversation open elsewhere starts a new
-//! one. Archiving is reversible; opening another conversation waits until production has stopped.
+//! one. Archiving is reversible; deleting, after a confirmation, removes the conversation's folder
+//! with its attachments and generated songs, and leaves the learned preferences alone. Opening or
+//! deleting another conversation waits until production has stopped. Decoded score references
+//! longer than a few kilobytes are kept beside the transcript, named by their content, so the
+//! transcript itself stays small enough to rewrite on every turn.
 //! Opening a candidate in the editor copies its history into that project's editor conversation.
 //! Explicit one-to-five-star ratings and comments belong to the exact candidate and inform
 //! subsequent requests in that conversation; they never change the score or start production.

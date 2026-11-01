@@ -52,6 +52,8 @@ pub enum MenuCommand {
     WorkshopThreadRename(String),
     /// Archive or restore an exact project-local song conversation.
     WorkshopThreadArchive(String, bool),
+    /// Ask before permanently deleting an exact song conversation.
+    WorkshopThreadDelete(String),
     /// Opens a reference score draft, optionally from the selected MIDI clip.
     ComposerMelody(bool),
     /// Attaches a MIDI file to the current conversation.
@@ -1079,6 +1081,7 @@ impl AurisApp {
             MenuCommand::WorkshopThreadArchive(id, archived) => {
                 self.archive_workshop_thread(id, archived, cx)
             }
+            MenuCommand::WorkshopThreadDelete(id) => self.ask_delete_workshop_thread(id, cx),
             MenuCommand::WorkshopRefreshModels => self.refresh_workshop_models(),
             MenuCommand::ComposerMelody(selection) => self.start_midi_draft(selection),
             MenuCommand::ComposerMidi => self.choose_midi_attachment(cx),
