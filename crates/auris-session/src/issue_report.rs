@@ -156,6 +156,11 @@ pub fn bounded(text: &str, limit: usize) -> String {
 }
 
 /// Best-effort local redaction before review; users must still inspect every included excerpt.
+///
+/// Paths are matched without regard to ASCII case, because the file systems Auris ships for do
+/// not regard it either: `c:\users\alice` is the same folder as `C:\Users\Alice`, and so is
+/// `/users/alice` on a default macOS volume. Other spellings of the same folder, such as a
+/// Windows 8.3 short name, are the caller's to add to `private_paths`.
 pub fn redact(text: &str, private_paths: &[String]) -> String {
     let mut text = bounded(text, 12_000);
     for path in private_paths.iter().filter(|path| !path.is_empty()) {
@@ -164,7 +169,7 @@ pub fn redact(text: &str, private_paths: &[String]) -> String {
             path.replace('\\', "/"),
             path.replace('\\', "\\\\"),
         ] {
-            text = text.replace(&spelling, "[local path]");
+            text = replace_ignoring_ascii_case(&text, &spelling, "[local path]");
         }
     }
     text.lines()
@@ -189,6 +194,31 @@ pub fn redact(text: &str, private_paths: &[String]) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// Every occurrence of `needle` in `text`, compared without regard to ASCII case, replaced.
+///
+/// Only ASCII letters are folded, so a match is byte for byte as long as `needle` and starts and
+/// ends on character boundaries: every byte that is not ASCII has to match exactly.
+fn replace_ignoring_ascii_case(text: &str, needle: &str, replacement: &str) -> String {
+    let (haystack, wanted) = (text.as_bytes(), needle.as_bytes());
+    if wanted.is_empty() || wanted.len() > haystack.len() {
+        return text.to_owned();
+    }
+    let mut result = String::with_capacity(text.len());
+    let (mut copied, mut at) = (0, 0);
+    while at + wanted.len() <= haystack.len() {
+        if haystack[at..at + wanted.len()].eq_ignore_ascii_case(wanted) {
+            result.push_str(&text[copied..at]);
+            result.push_str(replacement);
+            at += wanted.len();
+            copied = at;
+        } else {
+            at += 1;
+        }
+    }
+    result.push_str(&text[copied..]);
+    result
 }
 
 /// Read only local music-choice evidence, away from the UI thread. No model request is made.
@@ -289,6 +319,15 @@ mod tests {
         );
         assert!(!preview.contains("Alice"));
         assert!(!preview.contains("secret"));
+        let preview = redact(
+            "c:\\users\\alice\\song\nC:/USERS/ALICE/x\n/Users/alice/Music",
+            &["C:\\Users\\Alice".into(), "/Users/Alice".into()],
+        );
+        assert!(!preview.to_ascii_lowercase().contains("alice"), "{preview}");
+        assert_eq!(
+            replace_ignoring_ascii_case("年 ÄBc äbc abc ABC", "abc", "_"),
+            "年 ÄBc äbc _ _"
+        );
         assert_eq!(
             bounded("あいうえ", 3),
             "あいう\n[Additional content omitted]"

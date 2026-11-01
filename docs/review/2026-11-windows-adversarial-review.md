@@ -82,7 +82,7 @@ speakers. It was in the log of the run above, which is how it was found.
 **Direction.** Pass `audio_line` whether the session is suspended, and say that output opens on
 Play in that case.
 
-### AN-04 — Issue-report redaction misses other spellings of a Windows path (open)
+### AN-04 — Issue-report redaction misses other spellings of a Windows path (fixed)
 
 `issue_report::redact` replaces `USERPROFILE`, `HOME`, the project folder and the configuration
 folder as typed, with `/` and doubled `\\` variants. Windows paths have more spellings than that.
@@ -92,8 +92,10 @@ message then carry a spelling that does not match. Paths are also case-insensiti
 `c:\users\alice` survives redaction. The review machine's user name is short, so this was
 reasoned rather than reproduced.
 
-**Direction.** On Windows, compare case-insensitively and add each private path's
-`GetShortPathNameW` spelling to the list.
+**Fix.** `redact` matches every spelling without regard to ASCII case, on every platform (a default macOS
+volume ignores case too). The desktop adds the temporary folder to the private paths, and on
+Windows each private path's `GetShortPathNameW` spelling. On the review machine the volume keeps
+8.3 names, and the new test checks an added short spelling against the folder it names.
 
 ### AN-05 — The audio-file search lists any folder without asking (open)
 
