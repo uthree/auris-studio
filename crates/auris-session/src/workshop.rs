@@ -29,6 +29,11 @@ pub struct Reference {
     pub path: PathBuf,
     /// Decoded note, chord or instrument data; never an audio-listening claim.
     pub text: String,
+    /// Storage only: the file in the conversation folder that holds [`Reference::text`] when it
+    /// was too long to keep inline. [`Store::load`] reads it back and clears this, so it is
+    /// always `None` in memory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snapshot: Option<String>,
 }
 
 /// One independent candidate assignment.
@@ -604,8 +609,14 @@ impl Store {
             Err(e) => return Err(e.to_string()),
         }
         let mut threads = Vec::new();
+        let others = ids.len() > 1;
         for id in ids {
             let store = self.thread(&id)?;
+            // The first conversation always exists in memory; once deleted, or never written,
+            // it is not listed beside conversations that do exist.
+            if id == "default" && others && !store.root.join("conversation.json").is_file() {
+                continue;
+            }
             let document = store.load()?;
             let updated = std::fs::metadata(store.root.join("conversation.json"))
                 .and_then(|m| m.modified())
@@ -644,6 +655,12 @@ impl Store {
             for reference in &mut message.references {
                 reference.path =
                     crate::conversation_attachments::resolve(&self.root, &reference.path);
+                if let Some(name) = reference.snapshot.take() {
+                    match self.read_snapshot(&name) {
+                        Ok(text) => reference.text = text,
+                        Err(e) => log::warn!("song conversation reference {name} is missing: {e}"),
+                    }
+                }
             }
         }
         Ok(document)
@@ -659,9 +676,77 @@ impl Store {
             for reference in &mut message.references {
                 reference.path =
                     crate::conversation_attachments::portable(&self.root, &reference.path);
+                if reference.text.len() > REFERENCE_INLINE_BYTES {
+                    reference.snapshot = Some(self.write_snapshot(&reference.text)?);
+                    reference.text.clear();
+                }
             }
         }
         write(&self.root.join("conversation.json"), &document)
+    }
+    /// Keep a long decoded reference beside the transcript, named by its content, so that the
+    /// transcript stays small enough to rewrite on every turn however many scores are attached.
+    fn write_snapshot(&self, text: &str) -> Result<String, String> {
+        use sha2::{Digest, Sha256};
+        let name = format!("{}.txt", hex::encode(Sha256::digest(text.as_bytes())));
+        let directory = self.root.join(REFERENCE_DIR);
+        let path = directory.join(&name);
+        if path.is_file() {
+            return Ok(name);
+        }
+        std::fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
+        let mut staging = tempfile::NamedTempFile::new_in(&directory).map_err(|e| e.to_string())?;
+        std::io::Write::write_all(&mut staging, text.as_bytes()).map_err(|e| e.to_string())?;
+        match staging.persist_noclobber(&path) {
+            Ok(_) => Ok(name),
+            Err(e) if e.error.kind() == std::io::ErrorKind::AlreadyExists => Ok(name),
+            Err(e) => Err(e.error.to_string()),
+        }
+    }
+    /// Read a reference written by [`Store::write_snapshot`]; the stored name is never a path.
+    fn read_snapshot(&self, name: &str) -> Result<String, String> {
+        let valid = name
+            .strip_suffix(".txt")
+            .is_some_and(|hash| hash.len() == 64 && hash.bytes().all(|c| c.is_ascii_hexdigit()));
+        if !valid {
+            return Err("invalid reference name".into());
+        }
+        std::fs::read_to_string(self.root.join(REFERENCE_DIR).join(name)).map_err(|e| e.to_string())
+    }
+    /// Permanently remove one conversation: its transcript, attachments and generated songs.
+    ///
+    /// The conversation must not be open in any window, which its lease enforces; the workshop
+    /// owner switches away first when it is the open one. Learned song preferences are a
+    /// separate memory with their own reset, and are left as they are.
+    pub fn delete_thread(&self, id: &str) -> Result<(), String> {
+        let store = self.thread(id)?;
+        if !store.root.exists() {
+            return Ok(());
+        }
+        // Hold the lease only to prove nobody has it; Windows cannot remove an open file.
+        drop(store.lease()?);
+        if id != "default" {
+            return std::fs::remove_dir_all(&store.root).map_err(|e| e.to_string());
+        }
+        // The first conversation lives at the library root, beside every other one.
+        for entry in std::fs::read_dir(&store.root).map_err(|e| e.to_string())? {
+            let entry = entry.map_err(|e| e.to_string())?;
+            let name = entry.file_name();
+            if ["threads", "active-thread.json", "workshop.lock"]
+                .iter()
+                .any(|kept| name == *kept)
+            {
+                continue;
+            }
+            let path = entry.path();
+            if entry.file_type().map_err(|e| e.to_string())?.is_dir() {
+                std::fs::remove_dir_all(&path)
+            } else {
+                std::fs::remove_file(&path)
+            }
+            .map_err(|e| e.to_string())?;
+        }
+        Ok(())
     }
     /// Preserve explicitly attached files before passing them to the director.
     pub fn capture_attachments(&self, paths: &[PathBuf]) -> Result<Vec<PathBuf>, String> {
@@ -750,6 +835,12 @@ fn forget_preferences_at(root: &Path) -> Result<Preferences, String> {
 
 /// Every choice a summary has replaced, one JSON object per line, oldest first.
 const PREFERENCE_ARCHIVE: &str = "song-preferences-archive.jsonl";
+
+/// Decoded references longer than this are kept beside the transcript rather than inside it.
+const REFERENCE_INLINE_BYTES: usize = 4 * 1024;
+
+/// The folder, inside a conversation, holding its long decoded references.
+const REFERENCE_DIR: &str = "references";
 
 /// Atomically correct or remove an existing preference without overwriting concurrent changes.
 pub fn revise_preference(
@@ -1101,6 +1192,7 @@ mod tests {
             references: vec![Reference {
                 path: attachments[0].clone(),
                 text: "夜の雨".into(),
+                snapshot: None,
             }],
             attachments,
         });
@@ -1281,6 +1373,96 @@ mod tests {
         assert_eq!(restored.messages[0].text, "歌詞\n二行目");
         assert_eq!(restored.selected, Some(7));
     }
+    #[test]
+    fn long_references_live_beside_the_transcript_and_read_back_whole() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path().into());
+        let score = "C4 0 480 100\n".repeat(200_000);
+        let mut document = Document::default();
+        for _ in 0..3 {
+            let mut message = chat(true, "Use this melody");
+            message.references.push(Reference {
+                path: "melody.mid".into(),
+                text: score.clone(),
+                snapshot: None,
+            });
+            message.references.push(Reference {
+                path: "short.txt".into(),
+                text: "Am F C G".into(),
+                snapshot: None,
+            });
+            document.messages.push(message);
+        }
+        // Three copies of a 2.6 MB score would pass the 8 MiB transcript limit if inlined.
+        store.save(&document).unwrap();
+        let transcript = std::fs::metadata(dir.path().join("workshop/conversation.json")).unwrap();
+        assert!(transcript.len() < 4096, "{} bytes", transcript.len());
+        let files = std::fs::read_dir(dir.path().join("workshop").join(REFERENCE_DIR))
+            .unwrap()
+            .count();
+        assert_eq!(files, 1, "identical scores are stored once");
+        let restored = store.load().unwrap();
+        for message in &restored.messages {
+            assert_eq!(message.references[0].text, score);
+            assert_eq!(message.references[0].snapshot, None);
+            assert_eq!(message.references[1].text, "Am F C G");
+        }
+        // A saved snapshot name is never trusted as a path.
+        let raw = std::fs::read_to_string(dir.path().join("workshop/conversation.json")).unwrap();
+        let mut forged: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        forged["messages"][0]["references"][0]["snapshot"] = "../conversation.json".into();
+        std::fs::write(
+            dir.path().join("workshop/conversation.json"),
+            forged.to_string(),
+        )
+        .unwrap();
+        let reopened = store.load().unwrap();
+        assert!(reopened.messages[0].references[0].text.is_empty());
+    }
+
+    #[test]
+    fn deleting_a_conversation_removes_its_songs_and_leaves_the_others() {
+        let dir = tempfile::tempdir().unwrap();
+        let library = Store::new(dir.path().into());
+        let mut first = Document::default();
+        first.messages.push(chat(true, "First song"));
+        library.save(&first).unwrap();
+        std::fs::create_dir_all(library.candidate_path(1)).unwrap();
+        std::fs::write(library.candidate_path(1).join("song.auris"), "first").unwrap();
+        let second = library.create_thread().unwrap();
+        let mut document = Document::default();
+        document.messages.push(chat(true, "Second song"));
+        second.save(&document).unwrap();
+        std::fs::create_dir_all(second.candidate_path(1)).unwrap();
+        let third = library.create_thread().unwrap();
+        third.set_active_thread().unwrap();
+        let held = third.lease().unwrap();
+        assert!(
+            library.delete_thread(&third.thread_id).is_err(),
+            "an open one is refused"
+        );
+        drop(held);
+
+        library.delete_thread(&second.thread_id).unwrap();
+        assert!(!second.root.exists());
+        let ids: Vec<_> = library
+            .threads()
+            .unwrap()
+            .into_iter()
+            .map(|t| t.id)
+            .collect();
+        assert_eq!(ids.len(), 2);
+        assert!(ids.contains(&"default".to_owned()));
+
+        // The first conversation shares the library root with every other one.
+        library.delete_thread("default").unwrap();
+        assert!(!library.candidate_path(1).exists());
+        assert!(!dir.path().join("workshop/conversation.json").exists());
+        let threads = library.threads().unwrap();
+        assert_eq!(threads.len(), 1);
+        assert_eq!(threads[0].id, third.thread_id);
+        assert_eq!(library.active_thread().unwrap().thread_id, third.thread_id);
+    }
     fn chat(user: bool, text: &str) -> Message {
         Message {
             choices: None,
@@ -1334,6 +1516,7 @@ mod tests {
         long.references.push(Reference {
             path: "song.mid".into(),
             text: "n".repeat(digest_policy::CONVERSATION_CHARS),
+            snapshot: None,
         });
         document.messages.push(long);
         assert_eq!(document.digest_due(), Some(1));

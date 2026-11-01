@@ -45,6 +45,8 @@ pub enum Command {
     RenameThread(String, String),
     /// Archive or restore an exact conversation without deleting its artifacts.
     ArchiveThread(String, bool),
+    /// Permanently delete an exact conversation and its generated songs.
+    DeleteThread(String),
     /// Record explicit human feedback for one finished candidate without starting model work.
     Feedback(String, u64, auris_session::workshop::Feedback),
     /// Submit one natural-language message with model settings captured at submission.
@@ -292,6 +294,7 @@ fn capture_references(
             crate::attachments::Reference::Text(text) => Ok(auris_session::workshop::Reference {
                 path: (*path).clone(),
                 text,
+                snapshot: None,
             }),
             _ => Err("Expected a symbolic music reference".into()),
         })
@@ -821,6 +824,7 @@ impl Owner {
                     | Command::OpenThread(_)
                     | Command::RenameThread(..)
                     | Command::ArchiveThread(..)
+                    | Command::DeleteThread(_)
             ) {
                 self.command(command);
             }
@@ -888,6 +892,32 @@ impl Owner {
                     if let Err(error) = next.and_then(|store| self.change_thread(store)) {
                         self.snapshot.error = Some(error);
                     }
+                }
+            }
+            Command::DeleteThread(id) => {
+                if !self.can_change_thread() {
+                    return;
+                }
+                if id == self.snapshot.document.thread_id {
+                    let next = self
+                        .snapshot
+                        .threads
+                        .iter()
+                        .find(|t| !t.archived && t.id != id)
+                        .map(|t| self.store.thread(&t.id))
+                        .unwrap_or_else(|| self.store.create_thread());
+                    if let Err(error) = next.and_then(|store| self.change_thread(store)) {
+                        self.snapshot.error = Some(error);
+                        return;
+                    }
+                }
+                let deleted = self
+                    .store
+                    .delete_thread(&id)
+                    .and_then(|()| self.store.threads());
+                match deleted {
+                    Ok(threads) => self.snapshot.threads = threads,
+                    Err(error) => self.snapshot.error = Some(error),
                 }
             }
             Command::ThreadDraft(thread, text, attachments) => {
@@ -1952,6 +1982,44 @@ mod tests {
         assert_eq!(
             store.active_thread().unwrap().load().unwrap().title,
             "Second song"
+        );
+    }
+    #[test]
+    fn deleting_the_open_conversation_moves_to_another_and_removes_it_from_disk() {
+        use super::*;
+        let directory = tempfile::tempdir().unwrap();
+        let store = Store::new(directory.path().into());
+        let (sender, _) = mpsc::channel();
+        let mut owner = Owner::new(store.clone(), Settings::default(), sender);
+        owner.command(Command::ThreadDraft(
+            "default".into(),
+            "Keep me".into(),
+            vec![],
+        ));
+        owner.command(Command::NewThread);
+        let second = owner.snapshot.document.thread_id.clone();
+        owner.command(Command::DeleteThread(second.clone()));
+        assert_eq!(owner.snapshot.error, None);
+        assert_eq!(owner.snapshot.document.thread_id, "default");
+        assert_eq!(owner.snapshot.document.draft, "Keep me");
+        assert!(owner.snapshot.threads.iter().all(|t| t.id != second));
+        assert!(
+            !directory
+                .path()
+                .join("workshop/threads")
+                .join(&second)
+                .exists()
+        );
+
+        // Deleting the last one leaves a fresh, empty conversation open.
+        owner.command(Command::DeleteThread("default".into()));
+        assert_eq!(owner.snapshot.error, None);
+        assert_ne!(owner.snapshot.document.thread_id, "default");
+        assert!(owner.snapshot.document.draft.is_empty());
+        assert_eq!(owner.snapshot.threads.len(), 1);
+        assert_eq!(
+            store.active_thread().unwrap().identity(),
+            owner.store.identity()
         );
     }
     #[test]
