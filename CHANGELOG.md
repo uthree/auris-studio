@@ -7,6 +7,71 @@ a migration path. The version number is the promise, and `0` is the promise that
 The release workflow reads the section whose heading matches the tag, so the headings are the
 format rather than a convention: `## <version> — <date>`.
 
+## 0.18.0 — 2026-11-01
+
+### Arranging
+
+* **Add layers: instrument tracks that follow another track's notes.** A layer plays a melodic
+  or singer track's clips through its own instrument, strip, sends and automation, and can
+  reshape what it borrows by key range, top or bottom voice, transposition, velocity and timing.
+* **Loop clips from the agent and the inspector.** The clip inspector has a Loop switch that
+  shows how many times the content plays, and, as in Logic, dragging the upper half of a clip's
+  far end loops it while the lower half lengthens it. Repeats are drawn paler.
+* Treat singer tracks as mono channels placed by their pan; width comes from sends to a stereo
+  bus.
+* Calibrate input latency for recorded vocals and musical typing from Settings → Audio, by
+  measuring count-in clicks through a loopback or a microphone.
+
+### Agent and AI workshop
+
+* **Let the agent ask with choice cards**, exclusive or multiple, in the editor's agent panel and
+  in the workshop.
+* **Make agent-written songs loud enough.** New documents end their master in a limiter at
+  -1 dBTP, and `normalize_mix` leans on it, so a song the agent writes note by note no longer
+  comes out around -24 LUFS.
+* Place agent notes by bar and beat instead of raw ticks, and report positions the same way when
+  notes are read back.
+* Keep AI workshop conversations in one application-wide library, so earlier conversations are
+  listed again after a restart.
+* Summarize long workshop conversations and preference histories automatically; older
+  preferences are archived, not deleted.
+* Remember the last model and reasoning choice across the editor's agent and the workshop, with a
+  fallback when the remembered model is no longer offered.
+* Draw attached pictures at their own size and keep inline previews in proportion.
+* Copy the whole log, or the whole agent conversation as Markdown, and select text in either.
+
+### Sounds and singing voices
+
+* **Measure each sound's ADSR envelope** and search the sound finder by attack, decay, sustain and
+  release; the agent's instrument search takes the same ranges.
+* Redraw the broken sound-family icons and draw each family once, in Atelier's geometry.
+* Show VOICEVOX speakers' faces in the library, list one row per voice with its styles in the
+  inspector's speaker picker, and keep the inspector's controls from being squeezed in a short
+  window.
+
+### Video export
+
+* **Export a note-roll video** with the mix as the soundtrack. Auris uses an installed ffmpeg and
+  never bundles one; `AURIS_FFMPEG` overrides the search.
+
+### Interface
+
+* Carry the transport in the title bar when the window is at least 1280 pt wide.
+* Fix the UI/UX audit findings: overlapping readouts, cut-off menu and snap labels, cramped track
+  headers, the mixer graph's first view and the video-export dialog's layout.
+* Follow Atelier 331aa75 (flat Glass buttons, the effort picker, readout strip, piano keyboard
+  and note roll), draw the workshop sidebar as Glass chrome, and lay out the personalization
+  history as Atelier groups.
+* Open Settings from the start screen, by its button or the usual shortcut.
+
+### Project
+
+* Add screenshots to the README and an introduction page on GitHub Pages.
+
+Projects are now saved as format 33, which adds layers; earlier builds cannot open them. Files
+from format 27 onwards still open. Minimum platform requirements are unchanged from v0.17.0.
+
+
 ## 0.17.0 — 2026-10-31
 
 ### AI workshop
