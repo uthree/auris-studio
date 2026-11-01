@@ -473,7 +473,7 @@ mod tests {
                 assert_eq!(this.session.layer_source(layer), Some(track));
                 assert_eq!(
                     this.project().track(layer).unwrap().name,
-                    "Test Layer",
+                    auris_i18n::messages::layer_track_name(this.language(), "Test"),
                     "named after its source"
                 );
                 layer
