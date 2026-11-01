@@ -632,6 +632,81 @@ fn tool_mark(ok: bool, line: &str) -> &'static str {
     }
 }
 
+/// The whole conversation as Markdown, for pasting into a report or an issue.
+///
+/// Everything the panel can show is written out — folded reasoning and tool calls opened, their
+/// arguments and results in full — because whoever pastes this is investigating, and the part
+/// left folded is the part that would have been asked for next.
+fn transcript_text(entries: &[ChatEntry], language: auris_i18n::Language) -> String {
+    entries
+        .iter()
+        .map(|entry| entry_text(entry, language))
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+/// One entry of [`transcript_text`], headed by who or what said it.
+fn entry_text(entry: &ChatEntry, language: auris_i18n::Language) -> String {
+    let t = |key: Key| key.get(language);
+    let headed = |key: Key, body: &str| format!("**{}:**\n{body}", t(key));
+    match entry {
+        ChatEntry::You { text, attachments } => {
+            let mut out = headed(Key::AgentTranscriptYou, text);
+            if !attachments.is_empty() {
+                out.push_str(&format!("\n\n{}:", t(Key::AgentAttachedFiles)));
+                for path in attachments {
+                    out.push_str(&format!("\n- {}", path.display()));
+                }
+            }
+            out
+        }
+        ChatEntry::Agent(text) => headed(Key::AgentTranscriptAgent, text),
+        ChatEntry::Reasoning(text) => headed(Key::AgentReasoningLog, text),
+        ChatEntry::Status(text) => text.clone(),
+        ChatEntry::RestoredContext(detail) => headed(Key::AgentRestoredContext, detail),
+        ChatEntry::Tool {
+            name,
+            args,
+            ok,
+            line,
+            detail,
+        } => {
+            let mut out = format!(
+                "**{}:** {} {name}  {line}",
+                t(Key::AgentTranscriptTool),
+                tool_mark(*ok, line)
+            );
+            for (key, body) in [
+                (Key::AgentToolArguments, args),
+                (Key::AgentToolResult, detail),
+            ] {
+                if !body.is_empty() {
+                    out.push_str(&format!("\n\n{}:\n{}", t(key), fenced(body)));
+                }
+            }
+            out
+        }
+        ChatEntry::Error(message) => format!(
+            "**{}:** {}",
+            t(Key::AgentTranscriptError),
+            crate::i18n::agent_error_text(message, language, false)
+        ),
+        ChatEntry::Note(key) => t(*key).to_string(),
+    }
+}
+
+/// `body` in a fenced code block whose fence no backtick run inside it can close.
+fn fenced(body: &str) -> String {
+    let mut longest = 0;
+    let mut run = 0;
+    for c in body.chars() {
+        run = if c == '`' { run + 1 } else { 0 };
+        longest = longest.max(run);
+    }
+    let fence = "`".repeat(longest.max(2) + 1);
+    format!("{fence}\n{}\n{fence}", body.trim_end_matches('\n'))
+}
+
 /// What the window should do after one event has been absorbed.
 #[derive(Debug, PartialEq)]
 pub(crate) enum Absorbed {
@@ -3682,6 +3757,33 @@ impl AurisApp {
                             })
                             .child(
                                 button_enabled(
+                                    "agent-copy-conversation",
+                                    "",
+                                    ButtonStyle::Ghost,
+                                    ButtonState::available(
+                                        false,
+                                        !self.agent_chat.entries.is_empty(),
+                                    ),
+                                    theme.accent,
+                                    &theme,
+                                    cx.listener(|this, _, _, cx| {
+                                        let text = transcript_text(
+                                            &this.agent_chat.entries,
+                                            this.language(),
+                                        );
+                                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+                                            text,
+                                        ));
+                                    }),
+                                )
+                                .w(theme.atelier.density.control_sm)
+                                .px_0()
+                                .flex_shrink_0()
+                                .child(atelier::Icon::new(atelier::IconName::Copy))
+                                .tooltip(self.tip(Key::AgentCopyConversation, "")),
+                            )
+                            .child(
+                                button_enabled(
                                     "agent-new-conversation",
                                     "",
                                     ButtonStyle::Ghost,
@@ -4268,23 +4370,23 @@ impl AurisApp {
                     )
                 },
             )
-            .when_some(
-                match entry {
-                    ChatEntry::Agent(text) | ChatEntry::You { text, .. } => Some(text.clone()),
-                    _ => None,
-                },
-                |this, text| {
-                    this.on_mouse_down(
-                        MouseButton::Right,
-                        Self::opens_menu(cx, move |this, at| {
-                            ContextMenu::new(at, this.t(Key::AgentPanel)).item(
-                                this.t(Key::AgentCopyMarkdown),
-                                MenuCommand::CopyAgentMarkdown(text.clone()),
-                            )
-                        }),
-                    )
-                },
-            )
+            .map(|this| {
+                // A message is copied as it was written; anything else as the conversation
+                // copy writes it, which for a tool call includes its arguments and result.
+                let (label, text) = match entry {
+                    ChatEntry::Agent(text) | ChatEntry::You { text, .. } => {
+                        (Key::AgentCopyMarkdown, text.clone())
+                    }
+                    other => (Key::AgentCopyText, entry_text(other, self.language())),
+                };
+                this.on_mouse_down(
+                    MouseButton::Right,
+                    Self::opens_menu(cx, move |this, at| {
+                        ContextMenu::new(at, this.t(Key::AgentPanel))
+                            .item(this.t(label), MenuCommand::CopyAgentMarkdown(text.clone()))
+                    }),
+                )
+            })
             .when(!details.is_empty(), |this| {
                 // Keep authored line breaks and allow selections across the entire log section.
                 this.child(
@@ -6078,6 +6180,78 @@ mod tests {
             });
             crate::harness::paint(&app, cx);
         }
+    }
+
+    #[test]
+    fn the_copied_conversation_opens_everything_the_panel_folds() {
+        use auris_i18n::Language;
+        let entries = [
+            ChatEntry::You {
+                text: "make it **brighter**".into(),
+                attachments: vec![PathBuf::from("/music/ref.mid")],
+            },
+            ChatEntry::Reasoning("raise the cutoff".into()),
+            ChatEntry::Tool {
+                name: "set_parameter".into(),
+                args: "{\"cutoff\": 0.8}".into(),
+                ok: true,
+                line: "cutoff = 0.8".into(),
+                detail: "a ``` fence\n".into(),
+            },
+            ChatEntry::Agent("Done.".into()),
+            ChatEntry::Status("Stopped".into()),
+        ];
+        assert_eq!(
+            transcript_text(&entries, Language::English),
+            "**You:**\nmake it **brighter**\n\nAttached files:\n- /music/ref.mid\n\n\
+             **Reasoning:**\nraise the cutoff\n\n\
+             **Tool:** ✓ set_parameter  cutoff = 0.8\n\n\
+             Arguments:\n```\n{\"cutoff\": 0.8}\n```\n\n\
+             Result:\n````\na ``` fence\n````\n\n\
+             **Agent:**\nDone.\n\n\
+             Stopped"
+        );
+        assert_eq!(transcript_text(&[], Language::English), "");
+    }
+
+    #[gpui::test]
+    fn the_whole_conversation_and_any_line_of_it_can_be_copied(cx: &mut gpui::TestAppContext) {
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, _| {
+            this.panels.show(crate::dock::Panel::Agent);
+            this.settings.agent.model = "test-model".into();
+            this.agent_chat.push_entry(ChatEntry::user("hello".into()));
+            this.agent_chat.push_entry(ChatEntry::Agent("hi".into()));
+            this.agent_chat
+                .push_entry(ChatEntry::Error("the provider went away".into()));
+        });
+        crate::harness::resize(&app, cx, gpui::size(px(1200.), px(800.)));
+        crate::harness::click("agent-copy-conversation", cx);
+        let expected = app.read_with(cx, |this, _| {
+            transcript_text(&this.agent_chat.entries, this.language())
+        });
+        assert!(expected.contains("hello") && expected.contains("the provider went away"));
+        cx.update(|_, cx| {
+            assert_eq!(
+                cx.read_from_clipboard().and_then(|item| item.text()),
+                Some(expected)
+            );
+        });
+
+        // An error is drawn as a notice nobody can drag across; the menu copies it instead.
+        let error = cx.debug_bounds("agent-line-2").unwrap();
+        crate::harness::right_press(cx, error.center());
+        crate::harness::paint(&app, cx);
+        crate::harness::click("menu-item-0", cx);
+        let expected = app.read_with(cx, |this, _| {
+            entry_text(&this.agent_chat.entries[2], this.language())
+        });
+        cx.update(|_, cx| {
+            assert_eq!(
+                cx.read_from_clipboard().and_then(|item| item.text()),
+                Some(expected)
+            );
+        });
     }
 
     #[gpui::test]
