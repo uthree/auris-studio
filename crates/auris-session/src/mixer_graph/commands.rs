@@ -743,6 +743,7 @@ impl Session {
                     MixerEdgeKind::Chain => row["kind"] = "chain".into(),
                     MixerEdgeKind::Output => row["kind"] = "output".into(),
                     MixerEdgeKind::Sidechain => row["kind"] = "sidechain".into(),
+                    MixerEdgeKind::Notes => row["kind"] = "notes".into(),
                     MixerEdgeKind::Send {
                         track,
                         send,

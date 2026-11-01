@@ -210,6 +210,19 @@ pub enum MenuCommand {
     },
     /// Copy a track, its clips and its effects.
     DuplicateTrack(TrackId),
+    /// Add a layer playing this track's notes on another instrument.
+    AddLayer(TrackId),
+    /// Give a layer notes of its own, written as it sounds.
+    DetachLayer(TrackId),
+    /// Put a layer's shape back to playing its source as written.
+    ResetLayerShape(TrackId),
+    /// Choose which voice of a chord a layer keeps.
+    SetLayerVoice {
+        /// The layer.
+        track: TrackId,
+        /// The voice it keeps.
+        voice: LayerVoice,
+    },
     /// Render the source and replace this track with audio in one undo step.
     ConvertTrackToAudio(TrackId),
     /// Rename a track.
@@ -355,6 +368,15 @@ pub enum MenuCommand {
     ToggleTrackOutput(TrackId, Output),
     /// Disconnect selected graph edges in one undoable document edit.
     DeleteMixerConnections(Vec<auris_session::mixer_graph::MixerEdge>),
+    /// Add a track from the mixer graph's canvas, its strip placed where the menu opened.
+    NewMixerTrack {
+        /// Which kind of track.
+        kind: crate::ui::mixer_graph::NewMixerTrack,
+        /// The window position the canvas was right-clicked at.
+        at: Point<Pixels>,
+    },
+    /// Lay the mixer graph out again from its routing.
+    ArrangeMixerGraph,
     /// Open the list of buses a track could send to.
     ShowSendPicker {
         /// Track the send would come from.
@@ -939,6 +961,17 @@ impl AurisApp {
                 }
                 Err(error) => self.set_failed_status(self.failure(Key::MenuDuplicate, &error)),
             },
+            MenuCommand::AddLayer(track) => self.add_layer_on(track),
+            MenuCommand::DetachLayer(track) => match self.session.detach_layer(track) {
+                Ok(()) => self.set_status(self.t(Key::DetachedLayer)),
+                Err(error) => self.set_failed_status(self.failure(Key::MenuDetachLayer, &error)),
+            },
+            MenuCommand::ResetLayerShape(track) => {
+                if let Err(error) = self.session.set_layer_shape(track, LayerShape::default()) {
+                    self.set_failed_status(self.failure(Key::LayerReset, &error));
+                }
+            }
+            MenuCommand::SetLayerVoice { track, voice } => self.set_layer_voice(track, voice),
             MenuCommand::RenameTrack(track) => self.prompt_to_rename_track(track),
             MenuCommand::OverwriteSound { sound, track } => {
                 if let Some(track) = track {
@@ -1083,6 +1116,8 @@ impl AurisApp {
                 self.open_menu(menu);
             }
             MenuCommand::DeleteMixerConnections(edges) => self.delete_mixer_connections(&edges),
+            MenuCommand::NewMixerTrack { kind, at } => self.add_mixer_track(kind, at, cx),
+            MenuCommand::ArrangeMixerGraph => self.arrange_mixer_nodes(cx),
             MenuCommand::ToggleTrackOutput(track, output) => {
                 let remove = self
                     .project()

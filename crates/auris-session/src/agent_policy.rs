@@ -249,6 +249,7 @@ pub const OPERATIONS: &[&str] = &[
     "edit_project.rename_project",
     "edit_project.rename_track",
     "edit_project.remove_track",
+    "edit_project.layer",
     "edit_project.set_instrument",
     "edit_project.inspect_instrument",
     "edit_project.set_instrument_params",

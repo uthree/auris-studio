@@ -51,6 +51,16 @@ impl AurisApp {
                 self.t(Key::MenuDuplicateTrack),
                 MenuCommand::DuplicateTrack(track),
             )
+            .item_if(
+                entry.kind.can_be_followed(),
+                self.t(Key::MenuAddLayer),
+                MenuCommand::AddLayer(track),
+            )
+            .item_if(
+                entry.kind.layer().is_some(),
+                self.t(Key::MenuDetachLayer),
+                MenuCommand::DetachLayer(track),
+            )
             .item(self.t(Key::MenuRename), MenuCommand::RenameTrack(track))
             .item_if(
                 entry.kind.holds_notes()
