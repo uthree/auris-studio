@@ -383,6 +383,8 @@ pub mod architecture {
     //!   auris-vst3      hosting of third-party VST3 plugins        → auris-core only
     //!   auris-engine    render graph, transport, cpal in and out, offline renderer
     //!   auris-io        audio file import/export, project save/load
+    //!   auris-video     note-roll videos: frames in software, encoded by an installed ffmpeg
+    //!                   → auris-core only
     //!   auris-gpu       optional wgpu compute for offline analysis
     //!   auris-compose   score-based automatic composition
     //!   auris-vocal     lyrics to phonemes, notes to voice-model frames → auris-core only
@@ -415,6 +417,13 @@ pub mod architecture {
     //! [`auris_dsp::Adsr`] is the one that matters: the built-in voices and the sampler's
     //! per-note fade are the same generator, so an attack of five milliseconds means the same
     //! thing on both, and it will go on meaning the same thing after the next correction.
+    //!
+    //! [`auris_video`] draws a note-roll video in software and never carries an encoder: it looks
+    //! for an `ffmpeg` already installed and pipes raw frames into it. A bundled ffmpeg would be
+    //! tens of megabytes on every platform and an H.264 encoder inside it either GPL or the
+    //! platform's own; the installed one brings whichever its owner chose. The desktop's preview is
+    //! a frame from the same renderer the export uses, which is why the frames are drawn with
+    //! `tiny-skia` below the session rather than by the window's toolkit above it.
     //!
     //! **[`auris_engine`] does not depend on [`auris_dsp`] or [`auris_synth`].** It drives plugins
     //! purely through the `auris-core` traits. That is what keeps the plugin system honest: if the

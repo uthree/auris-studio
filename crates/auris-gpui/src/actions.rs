@@ -45,6 +45,8 @@ actions!(
         ExportStems,
         /// Write the selected singer track's frame features to a JSON file.
         ExportSingerFrames,
+        /// Open the window that previews and exports a note-roll video.
+        ExportVideo,
         /// Show the list of projects opened lately, to open one again.
         OpenRecent,
         /// Show what this build is.
@@ -482,6 +484,8 @@ bindable! {
         "file.export_stems",    GroupFile,      CmdExportStems,        "secondary-alt-e" => ExportStems;
         // No keystroke: an export somebody runs a handful of times per song, from the menu.
         "file.export_frames",   GroupFile,      CmdExportSingerFrames, ""            => ExportSingerFrames;
+        // No keystroke, for the reason the frames export has none: it opens a window of choices.
+        "file.export_video",    GroupFile,      CmdExportVideo,        ""            => ExportVideo;
         // No keystroke: the list it opens is the point, and every letter worth spending is
         // already spent. It is on the File menu, which is where anybody looks for it.
         "file.recent",          GroupFile,      CmdOpenRecent,         "" => OpenRecent;

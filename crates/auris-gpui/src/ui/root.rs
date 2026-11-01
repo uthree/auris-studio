@@ -473,6 +473,7 @@ impl AurisApp {
                     .on_action(Self::window_listener(cx, Self::on_import_midi))
                     .on_action(Self::window_listener(cx, Self::on_export_midi))
                     .on_action(Self::window_listener(cx, Self::on_export_singer_frames))
+                    .on_action(Self::window_listener(cx, Self::on_export_video))
                     .on_action(Self::window_listener(cx, Self::on_choose_singer_voice))
                     .on_action(Self::window_listener(cx, Self::on_next_singer_speaker))
                     .on_action(Self::window_listener(cx, Self::on_sing))
@@ -2776,6 +2777,15 @@ impl AurisApp {
         cx: &mut Context<Self>,
     ) {
         self.export_singer_frames(window, cx);
+    }
+
+    fn on_export_video(
+        &mut self,
+        _: &actions::ExportVideo,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_video_export(cx);
     }
 
     fn on_choose_singer_voice(
