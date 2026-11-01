@@ -138,9 +138,15 @@ checkout's workspace. None of the four vendored manifests has a `[workspace]` ta
 project's own workflow puts sessions in `.claude/worktrees`, the documented way to test a fork is
 broken wherever the work actually happens — which is a plausible part of why MR-02 went unnoticed.
 
+It is worse than the forks' own tests, found while verifying MR-01: `cargo fmt --all` and
+`cargo clippy --workspace` resolve the workspace's *path dependencies*, and `vendor/midir` is one
+of them, so **both of those fail outright in a worktree too**, with the same error. Two of the
+three commands CI gates on cannot be run locally where this project's own sessions live.
+
 **Fixed in this change**, with cargo's own suggested remedy: a `[workspace]` table in each of the
 four vendored manifests (`rustysynth`, `vst3-host`, `midir`, `gpui-flow`), +4 lines each. The 248
-tests reported in MR-02 were run through that fix.
+tests reported in MR-02 were run through that fix, and so was every `fmt` and `clippy` run in this
+review.
 
 ### MR-04 — The bowed string emits DC that reaches the master unguarded
 
