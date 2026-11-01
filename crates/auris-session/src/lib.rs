@@ -190,7 +190,9 @@ pub use settings::{
     PianoRollGrid, ReasoningEffort, Settings, ToolbarEntry, ToolbarItem, ToolbarPreferences,
     WindowPlacement, config_dir,
 };
-pub use singer_portrait::{SingerPortraitError, SingerPortraitSource, load_singer_portrait};
+pub use singer_portrait::{
+    SingerPortraitError, SingerPortraitSource, load_singer_icon, load_singer_portrait,
+};
 pub use sound_character::{TimbreCharacter, TimbreTargets};
 pub use sound_icons::SoundIcon;
 pub use transcription::{read_external_transcription_file, read_transcription_file};

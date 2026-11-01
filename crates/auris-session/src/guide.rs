@@ -2173,6 +2173,12 @@ pub mod singing {
     //! portrait or its character fallback. The frontend bounds decoded image dimensions, caches
     //! missing artwork and failures too, and only displays results for the current saved source
     //! and view generation. Neither an absent image nor a disconnected Engine changes a singer's take.
+    //! The library's voice rows take the smaller image the same way:
+    //! [`load_singer_icon`](crate::load_singer_icon) downloads the decoding style's square
+    //! `icon` — never the standing figure cropped — for a
+    //! [`SingerPortraitSource::for_library_voice`](crate::SingerPortraitSource::for_library_voice),
+    //! which is automatic, so only a loopback Engine is contacted merely because a connection
+    //! file is on the shelf. A row without a face keeps the singer mark.
     //!
     //! Where a model runs its inference is the settings' choice, applied through
     //! [`Session::set_singer_acceleration`](crate::Session::set_singer_acceleration) — a

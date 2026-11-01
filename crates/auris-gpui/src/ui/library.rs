@@ -1099,6 +1099,7 @@ impl AurisApp {
             Some(speaker) => format!("lib-voice-{shown}-{speaker}"),
             None => format!("lib-voice-{shown}"),
         };
+        let icon_id = format!("{row_id}-icon");
         div()
             .id(gpui::SharedString::from(row_id.clone()))
             .debug_selector(move || row_id.clone())
@@ -1126,11 +1127,29 @@ impl AurisApp {
                     .gap_1p5()
                     .w_full()
                     .min_w_0()
-                    .child(
-                        div()
+                    .child(match self.singer_icon(&path, speaker.as_deref()) {
+                        // A speaker's face is its identity mark, so it takes the round shape
+                        // the design language gives a person's avatar, with the same ring.
+                        Some(face) => div()
+                            .debug_selector(move || icon_id.clone())
                             .flex_shrink_0()
-                            .child(icon(Icon::Microphone, px(14.0), accent)),
-                    )
+                            .size(px(16.0))
+                            .rounded_full()
+                            .overflow_hidden()
+                            .border_1()
+                            .border_color(theme.border)
+                            .child(
+                                gpui::img(face)
+                                    .size_full()
+                                    .rounded_full()
+                                    .object_fit(gpui::ObjectFit::Cover),
+                            ),
+                        None => {
+                            div()
+                                .flex_shrink_0()
+                                .child(icon(Icon::Microphone, px(14.0), accent))
+                        }
+                    })
                     .child(
                         div()
                             .flex_1()

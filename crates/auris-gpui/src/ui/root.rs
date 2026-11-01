@@ -121,6 +121,7 @@ impl Render for AurisApp {
         self.event_window
             .get_or_insert(window.window_handle().window_id());
         self.singer_portraits.release_images(window);
+        self.singer_icons.release_images(window);
         self.spectrograms.release_images(window);
         if crate::project_windows::installed(cx)
             && window.is_window_active()

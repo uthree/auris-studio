@@ -1687,6 +1687,7 @@ impl AurisApp {
         self.stop_audition();
         self.voicevox_catalogs.clear();
         self.singer_portraits.invalidate();
+        self.singer_icons.invalidate();
         self.sung_previews.clear();
         self.sung_preview_generation = self.sung_preview_generation.wrapping_add(1);
     }

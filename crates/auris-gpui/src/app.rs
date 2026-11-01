@@ -1470,6 +1470,8 @@ pub struct AurisApp {
     pub(crate) voicevox_menu_generation: u64,
     /// Bounded artwork cache and the current background image request.
     pub(crate) singer_portraits: crate::ui::singer_portrait::SingerPortraits,
+    /// The library's speaker faces, keyed by shelf entry.
+    pub(crate) singer_icons: crate::ui::singer_portrait::SingerIcons,
     /// Preview notes the voice has already sung, at the engine's rate.
     ///
     /// What makes dragging a note across pitches instant the second time it passes one.
@@ -1973,6 +1975,7 @@ impl AurisApp {
                         // anybody does, so this is the only place that could notice it.
                         this.finish_punch();
                         this.poll_singer_portrait(cx);
+                        this.poll_singer_icons(cx);
                         this.poll_spectrograms(cx);
                         this.report_graph_resource_error();
                         cx.notify();
@@ -2047,6 +2050,7 @@ impl AurisApp {
             sung_retry: BTreeSet::new(),
             voicevox_catalogs: std::collections::HashMap::new(),
             singer_portraits: Default::default(),
+            singer_icons: Default::default(),
             voicevox_menu_generation: 0,
             sung_previews: std::collections::HashMap::new(),
             sung_preview_wish: None,

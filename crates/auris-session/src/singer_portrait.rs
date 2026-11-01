@@ -43,6 +43,17 @@ impl SingerPortraitSource {
         }
     }
 
+    /// Identifies a voice on the library shelf, for artwork fetched without a user action.
+    ///
+    /// Like a saved track's source, background access to a VOICEVOX Engine is limited to the
+    /// loopback host: merely listing a voice must not contact a machine on the network.
+    pub fn for_library_voice(path: PathBuf, speaker: Option<String>) -> Self {
+        Self {
+            automatic: true,
+            ..Self::for_voice(path, speaker)
+        }
+    }
+
     /// The voice entry resolved against the project folder.
     pub fn path(&self) -> &Path {
         &self.path
@@ -73,6 +84,15 @@ pub enum SingerPortraitError {
     Invalid(String),
 }
 
+/// Which of a speaker's images an artwork request wants.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Artwork {
+    /// The standing figure the inspector shows, falling back to the character's.
+    Portrait,
+    /// The square face a list row shows. Only a style has one, so there is no fallback.
+    Icon,
+}
+
 /// Loads a voice's optional portrait without loading a model or accessing a session.
 ///
 /// VOICEVOX resolves the saved
@@ -82,6 +102,26 @@ pub enum SingerPortraitError {
 /// URLs must belong to the configured Engine's origin. Run this blocking work off the UI thread.
 pub fn load_singer_portrait(
     source: &SingerPortraitSource,
+) -> Result<Option<VoicePortrait>, SingerPortraitError> {
+    load_artwork(source, Artwork::Portrait)
+}
+
+/// Loads a voice's optional square icon, the face a library row shows in place of its mark.
+///
+/// VOICEVOX gives every style an `icon` beside its optional `portrait`; this downloads the
+/// decoding style's icon only, under the same limits as [`load_singer_portrait`]. A style
+/// without one has no icon — the character portrait is a standing figure, and cropping it to
+/// a face is not the frontend's call. DiffSinger and LeapSinger voices have none yet. Run
+/// this blocking work off the UI thread.
+pub fn load_singer_icon(
+    source: &SingerPortraitSource,
+) -> Result<Option<VoicePortrait>, SingerPortraitError> {
+    load_artwork(source, Artwork::Icon)
+}
+
+fn load_artwork(
+    source: &SingerPortraitSource,
+    artwork: Artwork,
 ) -> Result<Option<VoicePortrait>, SingerPortraitError> {
     match source.backend {
         Some(BackendKind::DiffSinger | BackendKind::LeapSinger) | None => Ok(None),
@@ -93,7 +133,7 @@ pub fn load_singer_portrait(
                     "automatic VOICEVOX artwork access is limited to the loopback host".into(),
                 ));
             }
-            fetch_voicevox_portrait(&connection.url, connection.decode_style_id)
+            fetch_voicevox_artwork(&connection.url, connection.decode_style_id, artwork)
         }
     }
 }
@@ -122,11 +162,22 @@ struct EngineStyleInfo {
     id: u32,
     #[serde(default)]
     portrait: Option<String>,
+    #[serde(default)]
+    icon: Option<String>,
 }
 
+#[cfg(test)]
 fn fetch_voicevox_portrait(
     root: &str,
     decode_style: u32,
+) -> Result<Option<VoicePortrait>, SingerPortraitError> {
+    fetch_voicevox_artwork(root, decode_style, Artwork::Portrait)
+}
+
+fn fetch_voicevox_artwork(
+    root: &str,
+    decode_style: u32,
+    artwork: Artwork,
 ) -> Result<Option<VoicePortrait>, SingerPortraitError> {
     let root = root.trim().trim_end_matches('/');
     let agent: ureq::Agent = ureq::Agent::config_builder()
@@ -149,13 +200,23 @@ fn fetch_voicevox_portrait(
             .query("resource_format", "url"),
     )?;
     validate_engine_singer_info(&info)?;
-    let selected = info
+    let style = info
         .style_infos
         .iter()
-        .find(|style| style.id == decode_style)
-        .and_then(|style| style.portrait.as_deref());
+        .find(|style| style.id == decode_style);
+    let candidates: Vec<&str> = match artwork {
+        Artwork::Portrait => style
+            .and_then(|style| style.portrait.as_deref())
+            .into_iter()
+            .chain(info.portrait.as_deref())
+            .collect(),
+        Artwork::Icon => style
+            .and_then(|style| style.icon.as_deref())
+            .into_iter()
+            .collect(),
+    };
     let mut last_error = None;
-    for resource in selected.into_iter().chain(info.portrait.as_deref()) {
+    for resource in candidates {
         if resource.is_empty() {
             continue;
         }
@@ -208,7 +269,7 @@ fn validate_engine_singer_info(info: &EngineSingerInfo) -> Result<(), SingerPort
     for resource in info.portrait.iter().chain(
         info.style_infos
             .iter()
-            .filter_map(|style| style.portrait.as_ref()),
+            .flat_map(|style| style.portrait.iter().chain(style.icon.iter())),
     ) {
         // Embedded legacy PNG data is bounded by the enclosing JSON response and again by
         // VoicePortrait's decoded limit. URL-form resources need a separate practical bound.
@@ -548,6 +609,7 @@ mod tests {
                 .map(|id| EngineStyleInfo {
                     id: id as u32,
                     portrait: None,
+                    icon: None,
                 })
                 .collect(),
         };
@@ -558,6 +620,7 @@ mod tests {
         info.style_infos.push(EngineStyleInfo {
             id: u32::MAX,
             portrait: None,
+            icon: None,
         });
         assert!(validate_engine_singer_info(&info).is_err());
     }
@@ -631,5 +694,53 @@ mod tests {
             PNG
         );
         assert!(server.join().unwrap()[1].contains("speaker_uuid=performer"));
+    }
+
+    #[test]
+    fn icon_is_the_decoding_style_face_and_never_the_standing_figure() {
+        let (root, server) = serve(vec![
+            ok(SINGERS),
+            ok(r#"{"portrait":"/_resources/main","style_infos":[
+                {"id":3001,"portrait":"/_resources/figure","icon":"/_resources/other"},
+                {"id":3003,"portrait":"/_resources/figure","icon":"/_resources/face"}
+            ]}"#),
+            ok(PNG),
+        ]);
+        let file = VoiceFile::new(&root);
+        let source =
+            SingerPortraitSource::for_library_voice(file.0.clone(), Some("Selected".into()));
+        let icon = load_singer_icon(&source).unwrap().unwrap();
+        assert_eq!(icon.bytes().as_ref(), PNG);
+        let requests = server.join().unwrap();
+        assert_eq!(requests.len(), 3);
+        assert!(
+            requests[2].starts_with("GET /_resources/face "),
+            "{requests:?}"
+        );
+    }
+
+    #[test]
+    fn a_style_without_an_icon_has_none_rather_than_the_portrait() {
+        let (root, server) = serve(vec![
+            ok(SINGERS),
+            ok(r#"{"portrait":"/_resources/main","style_infos":[
+                {"id":3003,"portrait":"/_resources/figure"}
+            ]}"#),
+        ]);
+        let file = VoiceFile::new(&root);
+        let source =
+            SingerPortraitSource::for_library_voice(file.0.clone(), Some("Selected".into()));
+        assert!(load_singer_icon(&source).unwrap().is_none());
+        assert_eq!(server.join().unwrap().len(), 2, "no image is downloaded");
+    }
+
+    #[test]
+    fn library_icons_only_contact_the_loopback_host() {
+        let file = VoiceFile::new("http://192.0.2.1:50021");
+        let source = SingerPortraitSource::for_library_voice(file.0.clone(), None);
+        assert!(matches!(
+            load_singer_icon(&source),
+            Err(SingerPortraitError::Invalid(_))
+        ));
     }
 }

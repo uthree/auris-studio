@@ -4,27 +4,34 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 
 use auris_i18n::Key;
-use auris_session::{SingerPortraitSource, load_singer_portrait, prelude::*};
+use auris_session::{SingerPortraitSource, load_singer_icon, load_singer_portrait, prelude::*};
 use gpui::{AnyElement, Context, ObjectFit, RenderImage, Window, div, img, prelude::*, px};
 
 use crate::app::AurisApp;
 use crate::dock::Panel;
-use crate::ui::portrait_image::decode_portrait;
+use crate::ui::portrait_image::{decode_icon, decode_portrait};
 use crate::ui::widgets::{ButtonStyle, button};
 
 const CACHE_LIMIT: usize = 8;
+/// A whole shelf of VOICEVOX styles; each decoded icon is 4 KiB.
+const ICON_CACHE_LIMIT: usize = 256;
 type PortraitResult = Result<Option<Arc<RenderImage>>, String>;
+
+/// The inspector's standing figures.
+pub(crate) type SingerPortraits = ArtworkCache<CACHE_LIMIT>;
+/// The library's speaker faces, one per shelf row.
+pub(crate) type SingerIcons = ArtworkCache<ICON_CACHE_LIMIT>;
 
 /// No image, including a failed request, is retried on each repaint.
 #[derive(Default)]
-pub(crate) struct SingerPortraits {
+pub(crate) struct ArtworkCache<const LIMIT: usize> {
     entries: VecDeque<(SingerPortraitSource, PortraitResult)>,
     pending: Option<(SingerPortraitSource, u64)>,
     generation: u64,
     retired: Vec<Arc<RenderImage>>,
 }
 
-impl SingerPortraits {
+impl<const LIMIT: usize> ArtworkCache<LIMIT> {
     /// A voice file may have been replaced without changing its path.
     pub(crate) fn invalidate(&mut self) {
         for (_, result) in self.entries.drain(..) {
@@ -36,7 +43,7 @@ impl SingerPortraits {
         // Keep the worker occupied until it finishes, so rapid edits cannot queue unbounded IO.
     }
 
-    fn get(&self, source: &SingerPortraitSource) -> Option<&PortraitResult> {
+    pub(crate) fn get(&self, source: &SingerPortraitSource) -> Option<&PortraitResult> {
         self.entries
             .iter()
             .find(|(key, _)| key == source)
@@ -70,7 +77,7 @@ impl SingerPortraits {
         }
         self.forget(&source);
         self.entries.push_back((source, result));
-        while self.entries.len() > CACHE_LIMIT {
+        while self.entries.len() > LIMIT {
             if let Some((_, Ok(Some(image)))) = self.entries.pop_front() {
                 self.retired.push(image);
             }
@@ -124,6 +131,62 @@ impl AurisApp {
             });
         })
         .detach();
+    }
+
+    /// The library shows faces for the voices it lists, loaded one at a time.
+    ///
+    /// Only an open library asks, and only for a voice with no cached answer, so a shelf
+    /// whose Engine is offline costs one failed request per row and then nothing. Library
+    /// sources are automatic: an Engine elsewhere on the network is never contacted merely
+    /// because its connection file sits on the shelf.
+    pub(crate) fn poll_singer_icons(&mut self, cx: &mut Context<Self>) {
+        if self.singer_icons.pending.is_some() || !self.panels.is_open(Panel::Library) {
+            return;
+        }
+        let Some(source) = self
+            .voice_list()
+            .into_iter()
+            .map(|(_, path, speaker)| SingerPortraitSource::for_library_voice(path, speaker))
+            .filter(|source| source.backend() == Some(auris_session::BackendKind::Voicevox))
+            .find(|source| self.singer_icons.get(source).is_none())
+        else {
+            return;
+        };
+        let generation = self.singer_icons.generation;
+        self.singer_icons.pending = Some((source.clone(), generation));
+        cx.spawn(async move |this, cx| {
+            let worker_source = source.clone();
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    load_singer_icon(&worker_source)
+                        .map_err(|error| error.to_string())
+                        .and_then(|icon| icon.map(|icon| decode_icon(icon.bytes())).transpose())
+                })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                if let Err(error) = &result {
+                    log::debug!("singer icon unavailable: {error}");
+                }
+                this.singer_icons.finish(source, generation, result);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// A library row's speaker face, when its Engine supplied one.
+    pub(crate) fn singer_icon(
+        &self,
+        path: &std::path::Path,
+        speaker: Option<&str>,
+    ) -> Option<Arc<RenderImage>> {
+        let source =
+            SingerPortraitSource::for_library_voice(path.to_path_buf(), speaker.map(Into::into));
+        match self.singer_icons.get(&source)? {
+            Ok(Some(image)) => Some(Arc::clone(image)),
+            _ => None,
+        }
     }
 
     /// Transparent artwork fits within the inspector without cropping the figure.
@@ -351,6 +414,60 @@ mod tests {
         });
         paint(&app, cx);
         assert!(cx.debug_bounds("singer-portrait").is_none());
+    }
+
+    #[gpui::test]
+    fn a_library_row_wears_its_speaker_face_and_keeps_the_mark_without_one(
+        cx: &mut TestAppContext,
+    ) {
+        let file = VoiceFile::new();
+        let (app, cx, _, _) = with_a_singer_clip(cx);
+        let row = |speaker: &str, suffix: &str| -> &'static str {
+            Box::leak(format!("lib-voice-{}-{speaker}{suffix}", file.0.display()).into_boxed_str())
+        };
+        app.update(cx, |this, _| {
+            this.panels = Default::default();
+            this.voices = Some(vec![
+                (
+                    "Artwork test · First".into(),
+                    file.0.clone(),
+                    Some("First".into()),
+                ),
+                (
+                    "Artwork test · Second".into(),
+                    file.0.clone(),
+                    Some("Second".into()),
+                ),
+            ]);
+            let first =
+                SingerPortraitSource::for_library_voice(file.0.clone(), Some("First".into()));
+            let generation = this.singer_icons.generation;
+            this.singer_icons.pending = Some((first.clone(), generation));
+            this.singer_icons
+                .finish(first, generation, Ok(Some(image())));
+            let second =
+                SingerPortraitSource::for_library_voice(file.0.clone(), Some("Second".into()));
+            this.singer_icons.pending = Some((second.clone(), generation));
+            this.singer_icons
+                .finish(second, generation, Err("Engine is offline".into()));
+            this.library_search = crate::ui::text_field::TextField::new("Artwork test");
+        });
+        paint(&app, cx);
+        let face = cx.debug_bounds(row("First", "-icon")).unwrap();
+        assert_eq!(face.size, size(px(16.0), px(16.0)));
+        assert!(cx.debug_bounds(row("Second", "")).is_some());
+        assert!(
+            cx.debug_bounds(row("Second", "-icon")).is_none(),
+            "a failed request leaves the microphone mark"
+        );
+        app.update(cx, |this, cx| {
+            this.poll_singer_icons(cx);
+            assert!(
+                this.singer_icons.pending.is_none(),
+                "every row has an answer, so nothing is requested again"
+            );
+            assert!(!this.status_failed, "artwork never reports a failure");
+        });
     }
 
     #[gpui::test]
