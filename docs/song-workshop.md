@@ -81,13 +81,16 @@ assignment and checkpoint. Before the first checkpoint exists, recovery starts f
 the original parent or a blank score. Fix unavailable resources before requesting
 recovery. Completed candidates keep the separate regeneration action.
 
-The workshop owns a sidecar under the project's conversation store. Unsaved documents
-use the same persistent recovery identity as ordinary agent conversations. The sidecar
-contains the readable transcript, draft, comparison identities, parent links, exact
-candidate projects and audition WAVs. Save As copies these with conversation storage;
-candidate-local assets retain relative references on disk.
+Workshop conversations live in one application-wide library, `workshop/` in the
+application configuration directory, whichever document is open. The workshop starts
+songs rather than editing one, so its history does not belong to a project: every
+launch lists every earlier conversation. The library contains the readable transcript,
+draft, comparison identities, parent links, exact candidate projects and audition WAVs;
+candidate-local assets retain relative references on disk. **Open editor** copies the
+conversation into the project's own agent conversation, which Save As then carries.
 
-Only one window may own a workshop store at a time. Reopening retains finished work
+Only one window may own a conversation at a time; a second window that finds the last
+conversation already open starts a new one beside it. Reopening retains finished work
 and marks incomplete candidates as interrupted; it does not automatically restart
 model requests. Storage errors are reported rather than replacing unreadable history.
 Audition loading is limited to the viewed comparison and continuation baseline.
