@@ -193,8 +193,10 @@
 //! [`crate::Session::replace_notes`] validates a complete note sequence before replacing
 //! only the authored notes of one clip. Clip timing, curves, transforms and recipe survive.
 //! The operation records one Undo step; identical sequences are no-ops, including an empty
-//! sequence on an empty clip. Agent `edit_notes` uses clip-relative integer ticks, numeric
-//! MIDI pitches and original storage indices checked against a content revision. Patches and
+//! sequence on an empty clip. Agent `edit_notes` places notes by song bar and fractional
+//! beat, never by tick: the session does the multiplication a model kept getting wrong, and
+//! refuses an attack between subdivisions instead of writing it. Pitches are numeric MIDI and
+//! notes are addressed by original storage indices checked against a content revision. Patches and
 //! replacements share an atomic batch across up to sixteen clips. Large batches can be read
 //! once from bounded JSON input before authorizing the exact draft. The source is not an asset.
 //! Saved MCP checkpoints changed documents; live execution creates one unsaved Undo step.

@@ -327,9 +327,9 @@ mod tests {
             .unwrap();
         let revision = expected.agent_document_revision().unwrap();
         let edits = json!([{"kind":"replace","clip":2,"notes":[
-            {"pitch":64,"start_tick":0,"length_ticks":480,"velocity":0.7},
-            {"pitch":67,"start_tick":720,"length_ticks":240,"velocity":0.6},
-            {"pitch":69,"start_tick":960,"length_ticks":960,"velocity":0.8}
+            {"pitch":64,"bar":1,"beat":1,"length_beats":0.5,"velocity":0.7},
+            {"pitch":67,"bar":1,"beat":1.75,"length_beats":0.25,"velocity":0.6},
+            {"pitch":69,"bar":1,"beat":2,"length_beats":1,"velocity":0.8}
         ]}]);
         let (url, seen) = crate::tests::mock_server(vec![
             call("add_clip", clip_args),
@@ -424,7 +424,7 @@ mod tests {
             .unwrap();
         let revision = session.agent_document_revision().unwrap();
         let command: Command = serde_json::from_value(json!({"action":"edit_notes","expected_revision":revision,
-            "edits":[{"kind":"patch","clip":clip.0,"add":[{"pitch":64,"start_tick":0,"length_ticks":960,"velocity":0.6}]}]})).unwrap();
+            "edits":[{"kind":"patch","clip":clip.0,"add":[{"pitch":64,"bar":1,"beat":1,"length_beats":1,"velocity":0.6}]}]})).unwrap();
         execute(&mut session, command, &settings, &cancel, &mut evidence).unwrap();
         let mixer: Command =
             serde_json::from_value(json!({"action":"mixer_graph","operation":{"action":"read"}}))

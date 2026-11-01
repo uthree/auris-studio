@@ -427,7 +427,7 @@ fn installed_agent_edits_and_exports_the_unsaved_document(cx: &mut gpui::TestApp
         this.agent_chat.load_preferences(&this.settings.agent.clone());
         this.panels.show(crate::dock::Panel::Agent);
         this.agent_chat.input=TextField::new(format!(
-            "共通ツールの実動作確認です。この未保存曲だけを次の通り編集してください。最初にinspect_projectを実行。トラックID {} のミキサーをgain_db=-6、pan=0.25にする。クリップID {} のread_notesを実行し、格納インデックス0の音符だけstart_tick=13、length_ticks=997、velocity=0.73125に更新する。ほかの音符は保持。さらにedit_clip_curveでCC64を読み、同じクリップのCC64を位置0で1.0、位置960で0.0の2点へreplaceする（ほかのCCは保持）。各編集は1回ずつ行い、変更後にmixer_graph/read_notes/edit_clip_curveで独立して読み戻してください。次にpreviewで1小節目だけを試聴用ファイルにし、export_midiで {} に出力。renderでdestination kind mix、path {}、range start_bar=1,bars=1、24bitで書き出し、verify_renderで実際のWAVを確認してください。ファイルはすべて新規です。必要ならtool_helpで正確な引数を確認してください。元の曲の保存、追加トラック、不要な編集、外部ネットワーク検索、音楽生成は不要です。最後に実際に得た結果だけを短く報告してください。",
+            "共通ツールの実動作確認です。この未保存曲だけを次の通り編集してください。最初にinspect_projectを実行。トラックID {} のミキサーをgain_db=-6、pan=0.25にする。クリップID {} のread_notesを実行し、格納インデックス0の音符だけ1小節目の1.5拍目へ移し、長さ1.25拍、velocity=0.73125に更新する。ほかの音符は保持。さらにedit_clip_curveでCC64を読み、同じクリップのCC64を位置0で1.0、位置960で0.0の2点へreplaceする（ほかのCCは保持）。各編集は1回ずつ行い、変更後にmixer_graph/read_notes/edit_clip_curveで独立して読み戻してください。次にpreviewで1小節目だけを試聴用ファイルにし、export_midiで {} に出力。renderでdestination kind mix、path {}、range start_bar=1,bars=1、24bitで書き出し、verify_renderで実際のWAVを確認してください。ファイルはすべて新規です。必要ならtool_helpで正確な引数を確認してください。元の曲の保存、追加トラック、不要な編集、外部ネットワーク検索、音楽生成は不要です。最後に実際に得た結果だけを短く報告してください。",
             track.0,clip.0,serde_json::to_string(&midi).unwrap(),serde_json::to_string(&wav).unwrap()
         ));
         this.agent_send();
@@ -494,8 +494,8 @@ fn installed_agent_edits_and_exports_the_unsaved_document(cx: &mut gpui::TestApp
         expected.track_mut(track).unwrap().mixer.gain_db = -6.0;
         expected.track_mut(track).unwrap().mixer.pan=0.25;
         let target=expected.midi_clip_mut(clip).unwrap();
-        target.notes[0].start=Ticks(13);
-        target.notes[0].length=Ticks(997);
+        target.notes[0].start=Ticks(480);
+        target.notes[0].length=Ticks(1200);
         target.notes[0].velocity=0.73125;
         target.controllers.insert(64,vec![CurvePoint{at:Ticks::ZERO,value:1.0},CurvePoint{at:Ticks(960),value:0.0}]);
         let exact_requested_edit=after==expected;

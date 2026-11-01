@@ -397,7 +397,7 @@ pub mod tool_help {
                 {"project":project,"clips":[{"clip":1},{"clip":2,"offset":128}]}
             ]),
             "edit_notes" => serde_json::json!([
-                {"project":project,"expected_revision":"copy-from-read_notes","input":{"kind":"inline","edits":[{"kind":"patch","clip":1,"add":[{"pitch":60,"start_tick":0,"length_ticks":960,"velocity":0.75}]}]}}
+                {"project":project,"expected_revision":"copy-from-read_notes","input":{"kind":"inline","edits":[{"kind":"patch","clip":1,"add":[{"pitch":60,"bar":1,"beat":1,"length_beats":1,"velocity":0.75}]}]}}
             ]),
             _ => serde_json::json!([]),
         };
