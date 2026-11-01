@@ -126,7 +126,7 @@ impl SettingsWindow {
                         true,
                         move || match selection {
                             Some(original) => workshop::revise_preference(&original, None),
-                            None => workshop::update_preferences(|p| p.selections.clear()),
+                            None => workshop::forget_preferences(),
                         },
                         cx,
                     );
@@ -241,9 +241,15 @@ impl SettingsWindow {
                                 })),
                         ),
                 );
-        } else if preferences.selections.is_empty() {
+        } else if preferences.selections.is_empty() && preferences.digest.is_empty() {
             body = body.child(note(self.t(Key::PreferenceEmpty), &self.theme));
         } else {
+            if !preferences.digest.is_empty() {
+                body = body
+                    .child(section_title(self.t(Key::PreferenceDigest), &self.theme))
+                    .child(note(&preferences.digest, &self.theme))
+                    .child(note(self.t(Key::PreferenceDigestHelp), &self.theme));
+            }
             for (index, selection) in preferences.selections.iter().enumerate().rev() {
                 let chosen = selection.alternatives.get(selection.chosen);
                 let original = selection.clone();
@@ -308,7 +314,7 @@ impl SettingsWindow {
             Button::new("preferences-reset", self.t(Key::WorkshopForget))
                 .ghost()
                 .disabled(
-                    busy || preferences.selections.is_empty()
+                    busy || (preferences.selections.is_empty() && preferences.digest.is_empty())
                         || self.personalization.original.is_some(),
                 )
                 .on_click(cx.listener(|this, _, window, cx| {
