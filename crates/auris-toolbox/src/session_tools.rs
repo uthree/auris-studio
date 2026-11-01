@@ -386,7 +386,7 @@ mod tests {
             json!({"project":created["project_id"],"clips":[{"clip":clip["clip"]}]}),
         );
         assert_eq!(read["clips"][0]["total"], 0);
-        assert_eq!(read["ticks_per_quarter"], 960);
+        assert_eq!(read["clips"][0]["bars"], json!([1, 1]));
     }
 
     #[test]
@@ -473,14 +473,14 @@ mod tests {
             .unwrap()
         };
         let initial = read();
-        let edits = json!([{"kind":"replace","clip":clip.0,"notes":[{"pitch":60,"start_tick":13,"length_ticks":97,"velocity":0.73125}]}]);
+        let edits = json!([{"kind":"replace","clip":clip.0,"notes":[{"pitch":60,"bar":1,"beat":2.75,"length_beats":0.125,"velocity":0.73125}]}]);
         call(
             "edit_notes",
             json!({"project":path,"expected_revision":initial["revision"],"input":{"kind":"inline","edits":edits}}),
         );
         let current = read();
-        assert_eq!(current["clips"][0]["notes"][0]["start_tick"], 13);
-        assert_eq!(current["clips"][0]["notes"][0]["length_ticks"], 97);
+        assert_eq!(current["clips"][0]["notes"][0]["beat"], 2.75);
+        assert_eq!(current["clips"][0]["notes"][0]["length_beats"], 0.125);
         let bytes = std::fs::read(&path).unwrap();
         call(
             "edit_notes",

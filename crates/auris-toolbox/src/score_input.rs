@@ -137,7 +137,7 @@ mod tests {
             .unwrap();
         let before = session.project().clone();
         let file = tempfile::NamedTempFile::new().unwrap();
-        let edits = json!([{"kind":"replace","clip":clip.0,"notes":[{"pitch":60,"start_tick":0,"length_ticks":960,"velocity":94}]}]);
+        let edits = json!([{"kind":"replace","clip":clip.0,"notes":[{"pitch":60,"bar":1,"beat":1,"length_beats":1,"velocity":94}]}]);
         std::fs::write(file.path(), serde_json::to_vec(&edits).unwrap()).unwrap();
         let request:Args=serde_json::from_value(json!({"expected_revision":session.agent_document_revision().unwrap(),"input":{"kind":"file","source_path":file.path()}})).unwrap();
         assert!(

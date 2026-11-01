@@ -64,13 +64,22 @@ preserve clip curves, performance, recipes and playback windows.
   "expected_revision":"<revision from read_notes>",
   "input":{"kind":"inline","edits":[{"kind":"patch","clip":2,
     "update":[{"index":0,"velocity":0.7}],
-    "add":[{"pitch":62,"start_tick":13,"length_ticks":997,"velocity":0.8}]}]}
+    "add":[{"pitch":62,"bar":3,"beat":2.5,"length_beats":1.5,"velocity":0.8}]}]}
 }
 ```
 
-Times are integer clip-relative ticks. `ticks_per_quarter` is returned by reads;
-there is no conversion to rounded meter beats. Notes must fit the clip, have a
-positive tick length, MIDI pitch 0..127 and velocity 0..1. All changes validate
+Positions are musical, never ticks. `bar` is the 1-based song bar, the same
+number `add_clip` and `edit_harmony` use, not one counted from the clip. `beat`
+is 1-based inside that bar, in the meter's beat (a quarter in 4/4, an eighth in
+6/8), and fractional for subdivisions: `2.5` is the offbeat, `2.25` a sixteenth,
+`2.333` a triplet. `length_beats` counts the same beat and may cross bar lines.
+An attack must sit on a straight subdivision down to an eighth of a beat or a
+triplet down to a sixth (within a hundredth of a beat, which is then snapped
+exactly); anything between is refused with the nearest choices, because feel
+belongs to swing and humanize performance rather than to offset attacks. Reads
+return the same fields, each clip's `bars` as `[first, last]`, and
+`on_grid: false` on a stored attack (recorded or imported) that an edit would
+refuse. Notes must fit the clip, have a positive length, MIDI pitch 0..127 and velocity 0..1. All changes validate
 before a single atomic edit. Stale revisions are refused without changing notes.
 Inline input allows 4096 note changes. For larger scores, choose
 `input:{"kind":"file","source_path":"/absolute/notes.json"}`: a local UTF-8 JSON
