@@ -1,0 +1,523 @@
+{
+  "format_version": 27,
+  "saved_by": "historical-core-fixture-author",
+  "name": "Pipeline migration fixture",
+  "sample_rate": 48000.0,
+  "tempo_map": {
+    "points": [
+      {
+        "tick": 0,
+        "bpm": 120.0
+      },
+      {
+        "tick": 3840,
+        "bpm": 90.0
+      }
+    ]
+  },
+  "signatures": {
+    "points": [
+      {
+        "tick": 0,
+        "signature": {
+          "numerator": 4,
+          "denominator": 4
+        }
+      }
+    ]
+  },
+  "harmony": {
+    "keys": {
+      "points": [
+        {
+          "tick": 0,
+          "key": "C major"
+        }
+      ]
+    },
+    "chords": {
+      "points": [
+        {
+          "tick": 0,
+          "chord": "V7"
+        }
+      ]
+    }
+  },
+  "sections": {
+    "points": []
+  },
+  "automation": [
+    {
+      "target": {
+        "TrackGain": 1
+      },
+      "key": null,
+      "curve": "Linear",
+      "points": [
+        {
+          "tick": 960,
+          "value": -6.0
+        },
+        {
+          "tick": 4800,
+          "value": -3.0
+        }
+      ]
+    },
+    {
+      "target": {
+        "Instrument": {
+          "track": 1,
+          "param": 0
+        }
+      },
+      "key": "cutoff",
+      "curve": "Linear",
+      "points": [
+        {
+          "tick": 960,
+          "value": 0.375
+        },
+        {
+          "tick": 4800,
+          "value": 0.75
+        }
+      ]
+    },
+    {
+      "target": {
+        "Effect": {
+          "track": 1,
+          "slot": 13,
+          "param": 0
+        }
+      },
+      "key": "gain_db",
+      "curve": "Linear",
+      "points": [
+        {
+          "tick": 960,
+          "value": -3.0
+        },
+        {
+          "tick": 4800,
+          "value": 0.0
+        }
+      ]
+    },
+    {
+      "target": {
+        "Send": {
+          "track": 1,
+          "send": 17
+        }
+      },
+      "key": null,
+      "curve": "Linear",
+      "points": [
+        {
+          "tick": 960,
+          "value": -12.0
+        },
+        {
+          "tick": 4800,
+          "value": -9.0
+        }
+      ]
+    }
+  ],
+  "tracks": [
+    {
+      "id": 1,
+      "name": "Lead",
+      "color": 5217758,
+      "height": 72.0,
+      "kind": {
+        "type": "instrument",
+        "instrument_id": "fixture.instrument",
+        "instrument_state": {
+          "params": {
+            "cutoff": 0.375
+          },
+          "extra": {
+            "hosted": "AP8RgCo="
+          }
+        },
+        "clips": [
+          {
+            "id": 2,
+            "name": "Authored phrase",
+            "start": 960,
+            "length": 3840,
+            "notes": [
+              {
+                "pitch": 60,
+                "velocity": 0.8,
+                "start": 0,
+                "length": 1440
+              },
+              {
+                "pitch": 67,
+                "velocity": 0.5,
+                "start": 1920,
+                "length": 960
+              }
+            ],
+            "muted": false,
+            "recipe": {
+              "preset": "lead",
+              "seed": 1234,
+              "density": 0.5,
+              "intensity": 0.7,
+              "groove": "basic-rock",
+              "swing": 50,
+              "subdivision": "sixteenth",
+              "gate": 1.0,
+              "dynamics": 1.0,
+              "syncopation": 0.3,
+              "octave": 0,
+              "fill": 0.5
+            },
+            "bend": [
+              {
+                "at": 0,
+                "value": 0.0
+              },
+              {
+                "at": 960,
+                "value": 2.0
+              }
+            ],
+            "controllers": {
+              "64": [
+                {
+                  "at": 0,
+                  "value": 1.0
+                },
+                {
+                  "at": 3360,
+                  "value": 0.0
+                }
+              ]
+            },
+            "length_is_explicit": true,
+            "loop_end": 7680,
+            "transforms": [
+              {
+                "kind": "humanize",
+                "amount": 0.25,
+                "seed": 42
+              },
+              {
+                "kind": "transpose",
+                "semitones": 12
+              },
+              {
+                "kind": "pitch",
+                "settings": {
+                  "scoop": 0.0,
+                  "scoop_ms": 100.0,
+                  "vibrato": 0.0,
+                  "vibrato_hz": 5.8,
+                  "vibrato_delay_ms": 300.0,
+                  "modulation": 0.0,
+                  "volume_swell": 0.7,
+                  "fall": 0.0,
+                  "fall_ms": 150.0,
+                  "glide_ms": 0.0
+                }
+              }
+            ]
+          }
+        ],
+        "file": {
+          "external": "/fixture/plugins/instrument.clap"
+        }
+      },
+      "mixer": {
+        "gain_db": -6.0,
+        "pan": -0.25,
+        "mute": false,
+        "solo": false,
+        "effects": [
+          {
+            "id": 13,
+            "effect_id": "auris.fx.gain",
+            "enabled": true,
+            "state": {
+              "params": {
+                "gain_db": -3.0
+              }
+            }
+          },
+          {
+            "id": 14,
+            "effect_id": "fixture.effect",
+            "enabled": false,
+            "state": {
+              "params": {},
+              "extra": {
+                "hosted": "/wAigA=="
+              }
+            },
+            "file": {
+              "external": "/fixture/plugins/effect.clap"
+            },
+            "sidechain": 3
+          }
+        ],
+        "target_lufs": null
+      },
+      "output": {
+        "bus": 12
+      },
+      "sends": [
+        {
+          "id": 17,
+          "target": 12,
+          "level_db": -12.0,
+          "pre_fader": true
+        },
+        {
+          "id": 18,
+          "target": 12,
+          "level_db": -18.0,
+          "pre_fader": false
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "name": "Kit",
+      "color": 14726226,
+      "height": 72.0,
+      "kind": {
+        "type": "drum",
+        "instrument_id": "auris.synth.drumkit",
+        "instrument_state": {
+          "params": {},
+          "extra": {
+            "auris_drum_map": {
+              "voices": {
+                "kick": 73
+              }
+            }
+          }
+        },
+        "clips": [
+          {
+            "id": 4,
+            "name": "Kick",
+            "start": 0,
+            "length": 3840,
+            "notes": [
+              {
+                "pitch": 73,
+                "velocity": 0.8,
+                "start": 0,
+                "length": 120
+              }
+            ],
+            "muted": false,
+            "length_is_explicit": false,
+            "loop_end": 0
+          }
+        ]
+      },
+      "mixer": {
+        "gain_db": 0.0,
+        "pan": 0.0,
+        "mute": false,
+        "solo": false,
+        "effects": [],
+        "target_lufs": null
+      },
+      "output": "master"
+    },
+    {
+      "id": 5,
+      "name": "Audio",
+      "color": 6277539,
+      "height": 72.0,
+      "kind": {
+        "type": "audio",
+        "clips": [
+          {
+            "id": 7,
+            "name": "Loop",
+            "start": 1920,
+            "source": 6,
+            "offset_frames": 0,
+            "length_frames": 96000,
+            "gain_db": 0.0,
+            "fade_in_frames": 0,
+            "fade_out_frames": 0,
+            "fade_in_curve": "linear",
+            "fade_out_curve": "linear",
+            "muted": false,
+            "follows_tempo": false,
+            "loop_end": 0
+          }
+        ]
+      },
+      "mixer": {
+        "gain_db": 0.0,
+        "pan": 0.0,
+        "mute": false,
+        "solo": false,
+        "effects": [],
+        "target_lufs": null
+      },
+      "output": "master"
+    },
+    {
+      "id": 9,
+      "name": "Singer",
+      "color": 11566278,
+      "height": 72.0,
+      "kind": {
+        "type": "singer",
+        "instrument_id": "auris.synth.vocal",
+        "clips": [
+          {
+            "id": 10,
+            "name": "Lyrics",
+            "start": 0,
+            "length": 3840,
+            "notes": [
+              {
+                "pitch": 64,
+                "velocity": 0.8,
+                "start": 480,
+                "length": 1920,
+                "lyric": "あ",
+                "phonemes": [
+                  "a"
+                ],
+                "phoneme_seconds": [
+                  0.2
+                ]
+              }
+            ],
+            "muted": false,
+            "length_is_explicit": false,
+            "loop_end": 0
+          }
+        ],
+        "frame_hop": 0.01,
+        "voice": {
+          "path": {
+            "inside": "voice.voicevox.json"
+          },
+          "name": "Fixture voice",
+          "speaker": "fixture-speaker"
+        },
+        "take": {
+          "source": 11,
+          "fingerprint": 987654321,
+          "seed": 123
+        }
+      },
+      "mixer": {
+        "gain_db": 0.0,
+        "pan": 0.0,
+        "mute": false,
+        "solo": false,
+        "effects": [],
+        "target_lufs": null
+      },
+      "output": "master"
+    },
+    {
+      "id": 12,
+      "name": "Return",
+      "color": 14252908,
+      "height": 72.0,
+      "kind": {
+        "type": "bus"
+      },
+      "mixer": {
+        "gain_db": 0.0,
+        "pan": 0.0,
+        "mute": false,
+        "solo": false,
+        "effects": [
+          {
+            "id": 15,
+            "effect_id": "auris.fx.reverb",
+            "enabled": true,
+            "state": {
+              "params": {}
+            }
+          }
+        ],
+        "target_lufs": null
+      },
+      "output": "master"
+    }
+  ],
+  "master": {
+    "gain_db": 0.0,
+    "pan": 0.0,
+    "mute": false,
+    "solo": false,
+    "effects": [
+      {
+        "id": 16,
+        "effect_id": "auris.fx.limiter",
+        "enabled": true,
+        "state": {
+          "params": {}
+        }
+      }
+    ],
+    "target_lufs": null
+  },
+  "audio_sources": {
+    "6": {
+      "id": 6,
+      "name": "Loop",
+      "path": {
+        "inside": "Audio/loop.wav"
+      },
+      "frame_count": 96000,
+      "sample_rate": 48000.0,
+      "channel_count": 2,
+      "byte_size": 0
+    },
+    "11": {
+      "id": 11,
+      "name": "Saved take",
+      "path": {
+        "inside": "Audio/singer.wav"
+      },
+      "frame_count": 192000,
+      "sample_rate": 48000.0,
+      "channel_count": 2,
+      "byte_size": 0
+    }
+  },
+  "soundfonts": {
+    "8": {
+      "id": 8,
+      "name": "Fixture font",
+      "path": {
+        "external": "/fixture/fonts/library.sf2"
+      },
+      "byte_size": 123456
+    }
+  },
+  "loop_region": [
+    0,
+    7680
+  ],
+  "loop_enabled": true,
+  "punch_region": null,
+  "punch_enabled": false,
+  "metronome": false,
+  "count_in_bars": 0,
+  "grid": 240,
+  "song_spec": null,
+  "next_id": 19
+}

@@ -705,6 +705,17 @@ pub enum Drag {
         /// Pointer x when the drag began.
         start_x: Pixels,
     },
+    /// Moving one of a layer's shape sliders.
+    LayerDial {
+        /// The layer whose shape is being edited.
+        track: TrackId,
+        /// Which slider.
+        dial: crate::ui::layer::LayerDial,
+        /// Where the bar was when the drag began, from 0 to 1.
+        start_fraction: f32,
+        /// Pointer x when the drag began.
+        start_x: Pixels,
+    },
     /// Moving one point of a normalized long-note volume contour.
     VolumeContourPoint {
         /// Clip whose performance curve is edited.
@@ -839,6 +850,8 @@ impl Drag {
             Drag::PerformDial { clip, .. } | Drag::VolumeContourPoint { clip, .. } => {
                 Some(Edit::SetClipTransforms(*clip))
             }
+            // One step for the sweep, as every other slider is.
+            Drag::LayerDial { .. } => Some(Edit::SetLayerShape),
             // undo stack until Write is pressed.
             Drag::Tempo { at, .. } => Some(Edit::ChangeTempo(*at)),
             // Selecting is not an edit; it changes what a later edit will act on.
@@ -1554,7 +1567,7 @@ pub struct AurisApp {
     /// The same, for the inspector's column of settings.
     pub(crate) inspector_scroll: gpui::ScrollHandle,
     /// Collapsed inspector groups, retained when the selected object changes.
-    pub(crate) inspector_collapsed: [bool; 4],
+    pub(crate) inspector_collapsed: [bool; 5],
     /// The same, for the log's lines.
     pub(crate) log_scroll: gpui::ScrollHandle,
     /// The viewport of the open custom menu-bar dropdown.
@@ -2086,7 +2099,7 @@ impl AurisApp {
             mixer_connect_send: false,
             library_scroll: gpui::ScrollHandle::new(),
             inspector_scroll: gpui::ScrollHandle::new(),
-            inspector_collapsed: [false; 4],
+            inspector_collapsed: [false; 5],
             log_scroll: gpui::ScrollHandle::new(),
             menu_bar_scroll: gpui::ScrollHandle::new(),
             menu: None,

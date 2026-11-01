@@ -37,6 +37,7 @@ enum InspectorSection {
     Performance,
     Sound,
     Effects,
+    Layer,
 }
 
 impl InspectorSection {
@@ -46,6 +47,7 @@ impl InspectorSection {
             Self::Performance => "inspector-performance",
             Self::Sound => "inspector-sound",
             Self::Effects => "inspector-effects",
+            Self::Layer => "inspector-layer",
         }
     }
 
@@ -55,6 +57,7 @@ impl InspectorSection {
             Self::Performance => Key::PerformHeading,
             Self::Sound => Key::InspectorSound,
             Self::Effects => Key::InspectorEffects,
+            Self::Layer => Key::InspectorLayer,
         }
     }
 }
@@ -459,6 +462,7 @@ impl AurisApp {
         };
         let is_drum = track.kind.is_drum();
         let is_singer = track.kind.is_singer();
+        let is_layer = track.kind.layer().is_some();
         let instrument_id = track
             .kind
             .as_instrument()
@@ -471,6 +475,12 @@ impl AurisApp {
             .collect();
 
         sections.push(self.inspector_scope(Key::Track).into_any_element());
+        // A layer's own settings come first: everything below them is any track's.
+        if is_layer {
+            let summary = self.layer_summary(track_id);
+            let rows = self.layer_rows(track_id, cx);
+            sections.push(self.inspector_section(InspectorSection::Layer, summary, rows, cx));
+        }
         let sound_summary = if is_singer {
             if self
                 .auto_sing
@@ -1485,13 +1495,13 @@ mod tests {
             );
         }
         app.read_with(cx, |this, _| {
-            assert_eq!(this.inspector_collapsed, [true; 4])
+            assert_eq!(this.inspector_collapsed, [true, true, true, true, false])
         });
 
         app.update(cx, |this, _| this.select_track(other));
         paint(&app, cx);
         app.read_with(cx, |this, _| {
-            assert_eq!(this.inspector_collapsed, [true; 4])
+            assert_eq!(this.inspector_collapsed, [true, true, true, true, false])
         });
         app.update(cx, |this, _| {
             this.select_track(track);

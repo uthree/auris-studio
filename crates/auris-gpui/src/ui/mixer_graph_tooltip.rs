@@ -112,6 +112,7 @@ impl Render for WireTooltip {
                 }
             ),
             MixerEdgeKind::Sidechain => app.t(Key::MenuSidechain).to_string(),
+            MixerEdgeKind::Notes => app.t(Key::MixerNotesWire).to_string(),
             MixerEdgeKind::Chain => app.t(Key::Effects).to_string(),
         };
         let theme = cx.global::<Theme>();
