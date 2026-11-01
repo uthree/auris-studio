@@ -838,6 +838,45 @@ impl ModelOption {
                 .as_ref()
                 .is_none_or(|route| route.matches(prefs))
     }
+
+    /// Makes this model the choice in `prefs`: its route, its name, and an effort it accepts.
+    pub(crate) fn apply_to(&self, prefs: &mut AgentPreferences) {
+        if let Some(route) = &self.connection {
+            route.apply_to(prefs);
+        }
+        prefs.model.clone_from(&self.name);
+        if self
+            .efforts
+            .as_ref()
+            .is_some_and(|levels| !levels.contains(&prefs.effort))
+        {
+            prefs.effort = ReasoningEffort::Default;
+        }
+    }
+}
+
+/// Which listed model stands in for a remembered one that is no longer offered.
+///
+/// `None` while the remembered model is listed, when nothing is listed (a provider that has
+/// not answered is not a provider that has gone), and when no model was ever chosen — a first
+/// run is the person's choice, not this function's. Otherwise another model on the same
+/// route comes first, since that provider is evidently still there, then the first listed.
+pub(crate) fn fallback_model(models: &[ModelOption], prefs: &AgentPreferences) -> Option<usize> {
+    if prefs.model.trim().is_empty()
+        || models.is_empty()
+        || models.iter().any(|model| model.matches(prefs))
+    {
+        return None;
+    }
+    models
+        .iter()
+        .position(|model| {
+            model
+                .connection
+                .as_ref()
+                .is_some_and(|route| route.matches(prefs))
+        })
+        .or(Some(0))
 }
 
 /// Reads the one line `auris-agent models` prints into the picker's options.
@@ -1536,6 +1575,30 @@ impl AgentChat {
         self.model_menu = false;
         self.context_window = None;
         self.preferences_loaded = true;
+    }
+
+    /// Takes over a model choice made elsewhere, leaving the catalogue and the form's edits.
+    pub(crate) fn adopt_choice(&mut self, prefs: &AgentPreferences) {
+        self.backend.clone_from(&prefs.backend);
+        self.provider_openai = prefs.provider.trim() == "openai";
+        self.url_field = TextField::new(prefs.url.clone());
+        self.key_env_field = TextField::new(prefs.api_key_env.clone());
+        if prefs.discovery_endpoint.is_some() {
+            self.discovery_endpoint
+                .clone_from(&prefs.discovery_endpoint);
+        }
+        self.chosen_model = prefs.model.trim().to_string();
+        self.effort = prefs.effort;
+        self.thinking = prefs.thinking;
+        self.fast_mode = prefs.fast_mode;
+        self.context_window = self
+            .models
+            .iter()
+            .find(|option| option.matches(prefs))
+            .and_then(|option| option.context_length);
+        if let Some(index) = self.models.iter().position(|option| option.matches(prefs)) {
+            self.model_highlighted = index;
+        }
     }
 
     /// Seeds an unopened settings form without overwriting edits on a later repaint.
@@ -3099,6 +3162,7 @@ impl AurisApp {
         if let Some(answer) = model_answer {
             self.agent_chat.models_rx = None;
             self.agent_chat.accept_model_listing(answer);
+            self.agent_fall_back_if_unavailable();
             cx.notify();
         }
         // A live command must not join or finish the user's in-progress undo transaction.
@@ -3341,6 +3405,47 @@ impl AurisApp {
             self.restart_agent_after_preferences_change();
         }
         self.finish_agent_settings_form();
+        Ok(())
+    }
+
+    /// Stands in another model when the remembered one is no longer offered.
+    ///
+    /// Only in memory: the file keeps the remembered choice, so a provider that was merely not
+    /// running yet is chosen again at the next launch. Picking a model, or any later change to
+    /// the agent's settings, writes what is then in use.
+    pub(crate) fn agent_fall_back_if_unavailable(&mut self) {
+        if self.agent_operation_busy() || self.agent_chat.configuring {
+            return;
+        }
+        let Some(index) = fallback_model(&self.agent_chat.models, &self.settings.agent) else {
+            return;
+        };
+        let mut prefs = self.settings.agent.clone();
+        self.agent_chat.models[index].apply_to(&mut prefs);
+        self.settings.agent = prefs;
+        self.agent_chat.adopt_choice(&self.settings.agent);
+        self.restart_agent_after_preferences_change();
+        self.agent_chat
+            .push_entry(ChatEntry::Note(Key::AgentModelFallback));
+    }
+
+    /// Makes a model choice from another surface the remembered one, and the editor's own.
+    ///
+    /// The editor's agent sends with the saved preferences, so it follows at once; the
+    /// conversation link is dropped as for a pick in its own menu.
+    pub(crate) fn remember_agent_choice(
+        &mut self,
+        choice: &AgentPreferences,
+    ) -> Result<(), auris_session::SessionError> {
+        if !choice.is_configured() {
+            return Ok(());
+        }
+        let mut prefs = self.settings.agent.clone();
+        prefs.adopt_choice(choice);
+        if self.persist_agent_preferences_with(prefs, self.settings_saver())? {
+            self.agent_chat.adopt_choice(&self.settings.agent);
+            self.restart_agent_after_preferences_change();
+        }
         Ok(())
     }
 
@@ -7690,6 +7795,65 @@ mod tests {
             ChatEntry::Tool { ok: false, line, .. } if line == "failed"
         ));
         assert!(chat.open_tools.is_empty());
+    }
+
+    #[test]
+    fn a_missing_remembered_model_falls_back_on_its_own_route_first() {
+        let option = |name: &str, backend: &str| ModelOption {
+            name: name.into(),
+            connection: Some(auris_agent::ModelConnection {
+                backend: backend.into(),
+                provider: "ollama".into(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let models = vec![option("gpt", "codex"), option("llama", "rig")];
+        let remembered = |model: &str, backend: &str| AgentPreferences {
+            model: model.into(),
+            backend: backend.into(),
+            provider: "ollama".into(),
+            ..Default::default()
+        };
+        // Listed: nothing to do.
+        assert_eq!(fallback_model(&models, &remembered("llama", "rig")), None);
+        // The model went, its provider did not.
+        assert_eq!(fallback_model(&models, &remembered("qwen", "rig")), Some(1));
+        // The provider went too.
+        assert_eq!(
+            fallback_model(&models, &remembered("sonnet", "claude")),
+            Some(0)
+        );
+        // Nothing answered yet, or nothing was ever chosen.
+        assert_eq!(fallback_model(&[], &remembered("qwen", "rig")), None);
+        assert_eq!(fallback_model(&models, &AgentPreferences::default()), None);
+    }
+
+    #[gpui::test]
+    fn the_editor_falls_back_in_memory_and_keeps_the_remembered_choice_saved(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, _| {
+            this.settings.agent.backend = "claude".into();
+            this.settings.agent.model = "uninstalled".into();
+            this.settings.agent.effort = ReasoningEffort::Max;
+            this.agent_chat
+                .load_preferences(&this.settings.agent.clone());
+            let saved = this.settings_baseline.borrow().agent.clone();
+            this.agent_chat.accept_model_listing(Ok(r#"{"models":[{"name":"local","context_length":8192,"efforts":["low"],"connection":{"backend":"rig","provider":"ollama","url":"","api_key_env":""}}]}"#.into()));
+            this.agent_fall_back_if_unavailable();
+            assert_eq!(this.settings.agent.model, "local");
+            assert_eq!(this.settings.agent.backend, "rig");
+            assert_eq!(this.settings.agent.effort, ReasoningEffort::Default);
+            assert_eq!(this.agent_chat.chosen_model, "local");
+            assert_eq!(this.agent_chat.context_window, Some(8192));
+            assert!(matches!(
+                this.agent_chat.entries.last(),
+                Some(ChatEntry::Note(Key::AgentModelFallback))
+            ));
+            assert_eq!(this.settings_baseline.borrow().agent, saved);
+        });
     }
 
     #[test]
