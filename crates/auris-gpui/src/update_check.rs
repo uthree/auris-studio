@@ -110,6 +110,66 @@ pub(crate) fn take_update_result() -> Option<UpdateOutcome> {
     }
 }
 
+/// Deletes what earlier updates left in the update folder, once per process.
+///
+/// Every update downloads an installer of some seventy megabytes and copies the helper beside it
+/// under the quitting process's id, and neither is needed once the update has run: the installer
+/// is for a version no newer than this one, and the helper copy belonged to a process that has
+/// gone. Without this the folder grows by one installer per release for ever.
+///
+/// A package for a *newer* version is kept, because [`download_update`] reuses one that still
+/// verifies. A helper copy that is still running cannot be deleted on Windows, and the error is
+/// ignored: it will go next launch.
+pub(crate) fn prune_update_folder() {
+    static PRUNED: AtomicBool = AtomicBool::new(false);
+    if PRUNED.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    let Some(directory) = update_result_path().parent().map(Path::to_path_buf) else {
+        return;
+    };
+    let Ok(current) = Version::parse(env!("CARGO_PKG_VERSION")) else {
+        return;
+    };
+    for path in stale_update_files(&directory, &current, std::process::id()) {
+        if let Err(error) = fs::remove_file(&path) {
+            log::debug!("could not remove {}: {error}", path.display());
+        }
+    }
+}
+
+/// The files in `directory` that [`prune_update_folder`] removes.
+fn stale_update_files(directory: &Path, current: &Version, own_pid: u32) -> Vec<PathBuf> {
+    let Ok(entries) = fs::read_dir(directory) else {
+        return Vec::new();
+    };
+    let own_helper = format!("auris-update-helper-{own_pid}");
+    entries
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_file()))
+        .filter(|entry| {
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else {
+                return false;
+            };
+            if let Some(rest) = name.strip_prefix("auris-update-helper-") {
+                let stem = rest.strip_suffix(".exe").unwrap_or(rest);
+                return !stem.is_empty()
+                    && stem.bytes().all(|byte| byte.is_ascii_digit())
+                    && name.strip_suffix(".exe").unwrap_or(name) != own_helper;
+            }
+            name.strip_prefix("auris-studio-v")
+                .and_then(|rest| {
+                    rest.strip_suffix("-windows-x86_64-setup.exe")
+                        .or_else(|| rest.strip_suffix("-macos-universal.dmg"))
+                })
+                .and_then(|version| Version::parse(version).ok())
+                .is_some_and(|version| version <= *current)
+        })
+        .map(|entry| entry.path())
+        .collect()
+}
+
 /// Leaves a visible failure for the next launch if the helper could not start at all.
 pub(crate) fn record_update_launch_failure(error: &CheckError) {
     let result = serde_json::json!({"status":"error","message":error.to_string()});
@@ -573,5 +633,42 @@ mod tests {
         assert!(verified_file(&path, &asset).unwrap());
         fs::write(&path, b"tampered").unwrap();
         assert!(!verified_file(&path, &asset).unwrap());
+    }
+
+    #[test]
+    fn applied_installers_and_old_helpers_are_pruned_but_a_newer_package_is_kept() {
+        let folder = tempfile::tempdir().unwrap();
+        for name in [
+            "auris-studio-v0.17.0-windows-x86_64-setup.exe",
+            "auris-studio-v0.18.0-windows-x86_64-setup.exe",
+            "auris-studio-v0.19.0-windows-x86_64-setup.exe",
+            "auris-studio-v0.16.0-macos-universal.dmg",
+            "auris-update-helper-41880.exe",
+            "auris-update-helper-28804",
+            "auris-update-helper-777.exe",
+            "update-result.json",
+            "auris-studio-vbogus-windows-x86_64-setup.exe",
+            "auris-update-helper-.exe",
+            "notes.txt",
+        ] {
+            fs::write(folder.path().join(name), b"x").unwrap();
+        }
+        fs::create_dir(folder.path().join("auris-update-helper-1")).unwrap();
+        let mut stale: Vec<_> =
+            stale_update_files(folder.path(), &Version::parse("0.18.0").unwrap(), 777)
+                .into_iter()
+                .map(|path| path.file_name().unwrap().to_string_lossy().into_owned())
+                .collect();
+        stale.sort();
+        assert_eq!(
+            stale,
+            [
+                "auris-studio-v0.16.0-macos-universal.dmg",
+                "auris-studio-v0.17.0-windows-x86_64-setup.exe",
+                "auris-studio-v0.18.0-windows-x86_64-setup.exe",
+                "auris-update-helper-28804",
+                "auris-update-helper-41880.exe",
+            ]
+        );
     }
 }
