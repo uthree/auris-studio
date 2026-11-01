@@ -85,6 +85,24 @@ impl ToolHost {
         // Keep approval and execution together even when an MCP client calls in parallel.
         let _guard = self.bridge.tool_lock().await;
         self.bridge.reserve_tool_call()?;
+        let result = self.call_reserved(name, args).await;
+        // A model that scripts its calls cannot see the allowance being spent; near the end,
+        // every answer says what is left.
+        let Some(left) = self.bridge.tool_calls_left_if_low() else {
+            return result;
+        };
+        match result {
+            Ok(mut reply) => {
+                if let Some(text) = reply["text"].as_str() {
+                    reply["text"] = crate::tool_calls::with_remaining(text, left).into();
+                }
+                Ok(reply)
+            }
+            Err(error) => Err(crate::tool_calls::with_remaining(&error, left)),
+        }
+    }
+
+    async fn call_reserved(&self, name: &str, args: Value) -> Result<Value, String> {
         if !Self::contains(name) {
             return Err(format!("Unknown live tool: {name}"));
         }

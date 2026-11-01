@@ -1279,13 +1279,65 @@ static AUDIO_WORK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 )]
 fn compose(
     candidate: &Candidate,
-    mut prefs: AgentPreferences,
+    prefs: AgentPreferences,
     settings: Settings,
     folder: PathBuf,
     parent: Option<PathBuf>,
     cancel: &AtomicBool,
     sender: &mpsc::Sender<JobEvent>,
     references: &[PathBuf],
+) -> Result<SongCandidate, AttemptError> {
+    // Before the log, which would otherwise create the folder a cancelled candidate never had.
+    if cancel.load(Ordering::Acquire) {
+        return Err("Cancelled".into());
+    }
+    let mut log = crate::generation_log::GenerationLog::create(&folder);
+    log.record(
+        "attempt.start",
+        json!({"candidate":candidate.id,"recoveries":candidate.recoveries,
+            "backend":prefs.backend,"provider":prefs.provider,"model":prefs.model,"effort":prefs.effort,
+            "title":candidate.direction.title,"instructions":candidate.direction.instructions,
+            "protected_tracks":candidate.direction.protected_tracks,"references":references,
+            "previous_error":candidate.error,"parent":parent}),
+    );
+    let result = compose_attempt(
+        candidate, prefs, settings, &folder, parent, cancel, sender, references, &mut log,
+    );
+    match &result {
+        Ok(song) => log.record(
+            "attempt.end",
+            json!({"ok":true,"seconds":song.audio.duration_seconds()}),
+        ),
+        Err(error) => log.record(
+            "attempt.end",
+            json!({"ok":false,"error":error.message,"retryable":error.retryable}),
+        ),
+    }
+    if let (Err(error), Some(path)) = (&result, log.path()) {
+        log::warn!(
+            "workshop candidate {} failed: {}; log: {}",
+            candidate.id,
+            error.message,
+            path.display()
+        );
+    }
+    result
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "isolated candidate inputs, worker channels and the attempt's log"
+)]
+fn compose_attempt(
+    candidate: &Candidate,
+    mut prefs: AgentPreferences,
+    settings: Settings,
+    folder: &std::path::Path,
+    parent: Option<PathBuf>,
+    cancel: &AtomicBool,
+    sender: &mpsc::Sender<JobEvent>,
+    references: &[PathBuf],
+    log: &mut crate::generation_log::GenerationLog,
 ) -> Result<SongCandidate, AttemptError> {
     if cancel.load(Ordering::Acquire) {
         return Err("Cancelled".into());
@@ -1371,15 +1423,23 @@ fn compose(
     let _ = sender.send(JobEvent::Progress(candidate.id, "planning".into()));
     worker.send(
         &json!({"say": json!({"assignment":candidate.direction.instructions,
+            "budget":budget_brief(prefs.tool_call_limit()),
             "recovery":candidate.error.as_ref().map(|error| json!({
                 "last_error":error,
                 "instruction":"Inspect the restored score and current resources. Continue only unfinished work; do not duplicate successful edits. Correct the cause of the last failure before completing."
             }))}).to_string(),"policy":prefs.policy,"attachments":references}).to_string(),
     )?;
     let deadline = Instant::now() + Duration::from_secs(900);
+    // For the log: commands the host ran, and how many of them moved the document.
+    let mut edits = 0;
+    let mut changes = 0;
     let mut denials = 0;
     let mut last_failure = String::new();
     let mut tool_calls = BTreeMap::new();
+    // The voice's own answer to the last `sing`, kept until a later one succeeds: any
+    // successful read clears `last_failure`, and a singer left without a take is otherwise
+    // reported only as the absence, not as the engine that refused.
+    let mut sing_failure: Option<String> = None;
     let completion = loop {
         if cancel.load(Ordering::Acquire) {
             return Err("Cancelled".into());
@@ -1398,6 +1458,7 @@ fn compose(
             Err(_) => return Err("Candidate worker stopped".into()),
         };
         observe_tool_event(candidate.id, &event, &mut tool_calls, sender);
+        log.worker_event(&event);
         match event["event"].as_str().unwrap_or_default() {
             "permission" => {
                 let allowed = auris_session::agent_policy::Operation::parse(
@@ -1421,12 +1482,16 @@ fn compose(
                     "reason":"Isolated candidate: only Auris music tools are available. Do not use shell or file tools; continue with the Auris tools."}).to_string())?;
                 if !allowed {
                     denials += 1;
-                    if denials > 8 {
-                        return Err(AttemptError::permanent(format!(
-                            "Candidate operation was denied: {}",
-                            event["tool"].as_str().unwrap_or_default()
-                        )));
-                    }
+                }
+                log.record(
+                    "host.permission",
+                    json!({"tool":event["tool"],"args":event["args"],"allowed":allowed,"denials":denials}),
+                );
+                if denials > 8 {
+                    return Err(AttemptError::permanent(format!(
+                        "Candidate operation was denied: {}",
+                        event["tool"].as_str().unwrap_or_default()
+                    )));
                 }
             }
             "edit" => {
@@ -1439,10 +1504,27 @@ fn compose(
                     _ => "arrange",
                 };
                 let _ = sender.send(JobEvent::Progress(candidate.id, stage.into()));
+                edits += 1;
+                let revision = session.revision();
+                let started = Instant::now();
                 let result = execute(&mut session, event["command"].clone(), &settings, cancel);
+                let changed = session.revision() != revision;
+                if changed {
+                    changes += 1;
+                }
+                if action == "sing" {
+                    sing_failure = result.as_ref().err().cloned();
+                }
+                log.record(
+                    "host.edit",
+                    json!({"command":event["command"],"ok":result.is_ok(),
+                        "result":result.as_ref().unwrap_or_else(|e| e),
+                        "ms":started.elapsed().as_millis() as u64,"changed":changed,
+                        "changes":changes,"edits":edits}),
+                );
                 if result.is_ok() && session.is_dirty() {
                     validate_protected(&session)?;
-                    save_checkpoint(&mut session, &folder)?;
+                    save_checkpoint(&mut session, folder)?;
                 }
                 let reply = match result {
                     Ok(text) if action == "inspect_audio" => {
@@ -1491,6 +1573,28 @@ fn compose(
     // Join before publishing a finished candidate so no late draft can replace its audition.
     drop(previews);
     session.end_agent_request();
+    log.record(
+        "composer.done",
+        json!({"answer":completion,"changes":changes,"edits":edits,"denials":denials,
+            "last_failure":last_failure,"seconds":session.project().duration_seconds(),
+            "tracks":session.project().tracks.iter().map(|t| json!({"id":t.id.0,"name":t.name,
+                "clips":t.kind.note_clips().map(|clips| clips.iter().map(|c| c.notes.len()).collect::<Vec<_>>())}))
+                .collect::<Vec<_>>()}),
+    );
+    // The composer was given the voice's refusal and could not get past it, so another attempt
+    // would only spend the same minutes reaching the same answer: say what refused, and stop.
+    if let Some(error) = &sing_failure
+        && let Some(track) = session.project().tracks.iter().find(|track| {
+            track.kind.is_singer()
+                && session.singer_take_state(track.id).ok()
+                    != Some(auris_session::SingerTakeState::Current)
+        })
+    {
+        return Err(AttemptError::permanent(format!(
+            "Singer {} has no current synthesized take; the voice could not sing: {error}",
+            track.name
+        )));
+    }
     validate_protected(&session)?;
     if session.project() == &before {
         return Err(format!(
@@ -1502,13 +1606,37 @@ fn compose(
         return Err(format!("The last tool failure remains unresolved: {last_failure}").into());
     }
     let _ = sender.send(JobEvent::Progress(candidate.id, "render_wait".into()));
+    let waited = Instant::now();
     let _gate = audio_gate(cancel)?;
+    log.record(
+        "render.start",
+        json!({"waited_ms":waited.elapsed().as_millis() as u64}),
+    );
     let _ = sender.send(JobEvent::Progress(candidate.id, "render".into()));
-    session
-        .finish_workshop_candidate(&folder, idea(&candidate.direction), cancel)
-        .map_err(Into::into)
+    let rendered = Instant::now();
+    let result = session
+        .finish_workshop_candidate(folder, idea(&candidate.direction), cancel)
+        .map_err(Into::into);
+    log.record(
+        "render.end",
+        json!({"ms":rendered.elapsed().as_millis() as u64,"ok":result.is_ok()}),
+    );
+    result
 }
 
+/// The tool allowance as the composer is told it with its assignment.
+///
+/// A composer that scripts its calls cannot feel them being spent, and one rewrote a song's
+/// harmony bar by bar after setting it section by section: the limit has to be known before the
+/// plan is made, together with the way of working that keeps well inside it. The tool host adds
+/// what is left to every result once it runs low.
+fn budget_brief(limit: usize) -> serde_json::Value {
+    json!({"tool_calls":limit,
+        "rule":"Every Auris tool call counts, reads included, and the candidate stops when the \
+            allowance runs out. Work in whole sections, not single bars or notes: one edit_harmony \
+            per section with its full chord string, one add_clip per track and section, one \
+            replace_notes or write_lyrics per clip. Do not redo work that already succeeded."})
+}
 fn audio_gate(cancel: &AtomicBool) -> Result<std::sync::MutexGuard<'static, ()>, String> {
     loop {
         if cancel.load(Ordering::Acquire) {
@@ -2582,6 +2710,145 @@ mod tests {
             receiver
                 .try_iter()
                 .any(|event| matches!(event, JobEvent::Recovering(1, 1, _)))
+        );
+        assert_eq!(seen.lock().unwrap().len(), 4);
+    }
+
+    #[test]
+    fn an_attempt_log_records_every_command_and_which_ones_changed_the_score() {
+        // A CLI composer inspects between nearly every edit; the log tells the reads apart.
+        let reads: Vec<_> = (0..200)
+            .map(|i| json!({"id":format!("read-{i}"),"type":"function","function":{"name":"inspect_project","arguments":"{}"}}))
+            .collect();
+        let reads = json!({"role":"assistant","tool_calls":reads}).to_string();
+        let call = |id: &str, name: &str, args: serde_json::Value| {
+            json!({"role":"assistant","tool_calls":[{"id":id,"type":"function","function":{"name":name,"arguments":args.to_string()}}]}).to_string()
+        };
+        let setup = call("setup", "add_track", json!({"name":"Kit","kind":"drum"}));
+        let phrase = call(
+            "phrase",
+            "generate_phrase",
+            json!({"track":1,"part":"drums","start_bar":1,"bars":2,"seed":42}),
+        );
+        let answer = json!({"role":"assistant","content":"Finished"}).to_string();
+        let (url, seen) = crate::tests::mock_server(vec![
+            crate::tests::completion(&reads, "tool_calls"),
+            crate::tests::completion(&setup, "tool_calls"),
+            crate::tests::completion(&phrase, "tool_calls"),
+            crate::tests::completion(&answer, "stop"),
+        ]);
+        let prefs = AgentPreferences {
+            provider: "openai".into(),
+            model: "mock".into(),
+            url,
+            ..Default::default()
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let (sender, _receiver) = mpsc::channel();
+        let cancel = AtomicBool::new(false);
+        let result = compose(
+            &assignment(),
+            prefs,
+            Settings::default(),
+            dir.path().join("1"),
+            None,
+            &cancel,
+            &sender,
+            &[],
+        );
+        assert!(result.is_ok(), "{:?}", result.err());
+
+        // The attempt left its account beside the candidate.
+        let logs: Vec<_> = std::fs::read_dir(dir.path().join("1/logs"))
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .collect();
+        assert_eq!(logs.len(), 1);
+        let entries: Vec<serde_json::Value> = std::fs::read_to_string(&logs[0])
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        let kind = |kind: &'static str| entries.iter().filter(move |e| e["kind"] == kind);
+        assert_eq!(entries[0]["kind"], "attempt.start");
+        assert_eq!(entries[0]["model"], "mock");
+        let edits: Vec<_> = kind("host.edit").collect();
+        assert_eq!(edits.len(), 202);
+        assert_eq!(edits.iter().filter(|e| e["changed"] == true).count(), 2);
+        assert_eq!(edits[201]["changes"], 2);
+        assert_eq!(edits[201]["edits"], 202);
+        assert_eq!(edits[201]["command"]["action"], "generate_phrase");
+        assert!(kind("worker.call").any(|e| e["tool"] == "add_track"));
+        assert_eq!(kind("composer.done").next().unwrap()["answer"], "Finished");
+        assert_eq!(kind("render.end").next().unwrap()["ok"], true);
+        assert_eq!(entries.last().unwrap()["kind"], "attempt.end");
+        assert_eq!(entries.last().unwrap()["ok"], true);
+
+        // The composer was told its allowance before it planned.
+        let first = &seen.lock().unwrap()[0];
+        assert!(first.contains(r#"\"tool_calls\":1000"#), "{first}");
+        assert!(first.contains("Work in whole sections"));
+    }
+
+    #[test]
+    fn a_voice_that_refused_is_named_and_not_retried() {
+        let call = |id: &str, name: &str, args: serde_json::Value| {
+            json!({"role":"assistant","tool_calls":[{"id":id,"type":"function","function":{"name":name,"arguments":args.to_string()}}]}).to_string()
+        };
+        let setup = call(
+            "setup",
+            "add_track",
+            json!({"name":"Vocal","kind":"singer"}),
+        );
+        let sing = call("sing", "sing", json!({"track":1}));
+        let read = call("read", "inspect_project", json!({}));
+        let answer = json!({"role":"assistant","content":"The voice engine refused."}).to_string();
+        let (url, seen) = crate::tests::mock_server(vec![
+            crate::tests::completion(&setup, "tool_calls"),
+            crate::tests::completion(&sing, "tool_calls"),
+            // A later successful read clears the generic failure; the voice's must survive it.
+            crate::tests::completion(&read, "tool_calls"),
+            crate::tests::completion(&answer, "stop"),
+        ]);
+        let prefs = AgentPreferences {
+            provider: "openai".into(),
+            model: "mock".into(),
+            url,
+            ..Default::default()
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let (sender, receiver) = mpsc::channel();
+        let cancel = AtomicBool::new(false);
+        let error = recover_candidate(
+            &assignment(),
+            &cancel,
+            &sender,
+            |_, _| true,
+            |candidate| {
+                compose(
+                    candidate,
+                    prefs.clone(),
+                    Settings::default(),
+                    dir.path().join("1"),
+                    None,
+                    &cancel,
+                    &sender,
+                    &[],
+                )
+            },
+        )
+        .err()
+        .unwrap();
+        assert!(
+            error.starts_with(
+                "Singer Vocal has no current synthesized take; the voice could not sing: "
+            ),
+            "{error}"
+        );
+        assert!(
+            !receiver
+                .try_iter()
+                .any(|event| matches!(event, JobEvent::Recovering(..)))
         );
         assert_eq!(seen.lock().unwrap().len(), 4);
     }

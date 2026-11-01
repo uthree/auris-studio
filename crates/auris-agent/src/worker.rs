@@ -258,6 +258,11 @@ impl Bridge {
         result
     }
 
+    /// Tool calls left in this request, once few enough to tell the model.
+    pub(super) fn tool_calls_left_if_low(&self) -> Option<usize> {
+        self.0.tool_calls.lock().ok()?.low()
+    }
+
     #[cfg(test)]
     pub(super) fn set_test_tool_call_limit(&self, limit: usize) {
         *self.0.tool_calls.lock().unwrap() = crate::tool_calls::Budget::new(limit);
