@@ -178,9 +178,12 @@ commands and Chrome disabled. Its explicit native shell and file tools pass
 through the desktop's approval policy. Saved conversations use the project folder
 as their working directory; unsaved conversations use disposable scratch space.
 The bearer token stays in the temporary
-configuration file, which is removed when the worker ends. CLI session
-persistence is disabled; Auris stores the conversation and restores its text
-when a worker is replaced. Stop revokes tools, interrupts the turn and terminates
+configuration file, which is removed when the worker ends. A saved project's
+conversation keeps a Claude Code session under an identifier Auris chooses
+(`--session-id`) and resumes it (`--resume`) when a worker is replaced, so the
+model keeps its own tool history. Unsaved conversations keep no session
+(`--no-session-persistence`). See [Restoring a conversation](#restoring-a-conversation).
+Stop revokes tools, interrupts the turn and terminates
 the child. Audio can be inspected through `inspect_audio`.
 
 The optional transport smoke test uses an installed CLI without inference:
@@ -345,10 +348,26 @@ are not covered by Auris Undo. User configuration files are
 not edited. Unexpected server-side requests are refused. Process arguments never
 include the live MCP bearer token.
 
-Completed exchanges use the existing Auris transcript storage. Codex threads are
-ephemeral; a replacement worker receives the stored text as historical context
-once, then Codex owns the active conversation. The transcript preview and reset
+Completed exchanges use the existing Auris transcript storage. A saved project's
+conversation keeps a Codex thread and resumes it with `thread/resume`; unsaved
+conversations start ephemeral threads. The transcript preview and reset
 generation checks remain shared with rig.
+
+## Restoring a conversation
+
+A worker that starts without the provider's own copy of the conversation is
+handed a selection of it, never the whole transcript: the original request, then
+the newest turns, newest first, within 32 KiB of UTF-8. Selected turns keep their
+full text, the omitted span is named by turn number, and the `read_conversation`
+tool returns any of it a page at a time. The new request is never shortened.
+
+Claude Code and Codex resume the session a saved project's conversation already
+has. Each records, per backend, the session and how many turns it had seen, so
+switching from Codex to Claude and back resumes the Codex thread and hands it
+only the turns Claude answered meanwhile. A session the CLI no longer has is not
+an error: a notice is shown and a new session starts with the selection above.
+Rig backends keep using their own compaction; Antigravity and OpenCode receive
+the selection.
 
 The panel's [conversation list](agent-conversations.md) keeps multiple independent
 histories, drafts and readable tool results for each project.

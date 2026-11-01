@@ -25,6 +25,11 @@ impl ToolHost {
         if !std::env::var("AURIS_COMPOSITION_CANDIDATES").is_ok_and(|v| v == "1") {
             catalog.retain(|tool| !matches!(tool.name.as_str(), "candidates" | "phrase_variation"));
         }
+        catalog.push(toolbox::live_agent::Definition {
+            name: toolbox::conversation_recall::NAME.into(),
+            description: toolbox::conversation_recall::DESCRIPTION.into(),
+            parameters: toolbox::parameter_schema::<toolbox::conversation_recall::Args>(),
+        });
         if Self::search_available() {
             catalog.push(toolbox::live_agent::Definition {
                 name: toolbox::internet_search::NAME.into(),
@@ -117,6 +122,13 @@ impl ToolHost {
             let result = toolbox::runtime::call_live_reference_in(name, args, &Self::catalog())
                 .expect("registered reference tool");
             return result.map(|text| json!({"event":"edit_result","ok":true,"text":text}));
+        }
+        if name == toolbox::conversation_recall::NAME {
+            // The model's own conversation, which it was already shown in part: no permission.
+            let request: toolbox::conversation_recall::Args =
+                serde_json::from_value(args).map_err(|e| e.to_string())?;
+            let text = self.bridge.recall_conversation(request.from, request.to);
+            return Ok(json!({"event":"edit_result","ok":true,"text":text}));
         }
         if name == toolbox::internet_search::NAME {
             let request: toolbox::internet_search::Args =

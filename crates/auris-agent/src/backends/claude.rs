@@ -73,10 +73,22 @@ pub(crate) fn executable(prefs: &auris_session::AgentPreferences) -> Result<Path
         .ok_or_else(|| "Claude Code CLI was not found. Install Claude Code, sign in with claude, or set its executable path in Agent settings".into())
 }
 
+/// Whether a Claude Code process keeps its own transcript of the conversation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Session<'a> {
+    /// Nothing is saved; earlier turns are replayed as text.
+    Ephemeral,
+    /// A new saved session under an identifier Auris chose, so it never has to be read back.
+    Start(&'a str),
+    /// The saved session with this identifier.
+    Resume(&'a str),
+}
+
 fn command(
     prefs: &auris_session::AgentPreferences,
     cwd: &Path,
     native: bool,
+    session: Session<'_>,
 ) -> Result<Command, String> {
     let mut command = Command::new(executable(prefs)?);
     // A file, not an argument: the preamble outgrows Windows' 32 767-character command line.
@@ -99,7 +111,6 @@ fn command(
             "stream-json",
             "--verbose",
             "--include-partial-messages",
-            "--no-session-persistence",
             "--setting-sources=",
             "--strict-mcp-config",
             "--mcp-config",
@@ -128,6 +139,11 @@ fn command(
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .kill_on_drop(true);
+    match session {
+        Session::Ephemeral => command.arg("--no-session-persistence"),
+        Session::Start(id) => command.args(["--session-id", id]),
+        Session::Resume(id) => command.args(["--resume", id]),
+    };
     if !prefs.model.is_empty() {
         command.arg(format!("--model={}", prefs.model));
     }
@@ -220,9 +236,10 @@ impl Cli {
         cwd: &Path,
         native: bool,
         project: Option<&Path>,
+        session: Session<'_>,
     ) -> Result<(Self, Value), String> {
         let root = project.unwrap_or(cwd);
-        let mut child = command(prefs, cwd, native)?
+        let mut child = command(prefs, cwd, native, session)?
             .current_dir(root)
             .spawn()
             .map_err(|error| format!("Cannot start Claude Code: {error}"))?;
@@ -307,10 +324,12 @@ impl Cli {
 pub(crate) async fn list_models(prefs: &auris_session::AgentPreferences) -> Result<String, String> {
     let cwd = working_directory()?;
     write_mcp_config(cwd.path(), None)?;
-    let (mut cli, initialized) =
-        tokio::time::timeout(STARTUP_TIMEOUT, Cli::spawn(prefs, cwd.path(), false, None))
-            .await
-            .map_err(|_| "Claude Code startup timed out".to_string())??;
+    let (mut cli, initialized) = tokio::time::timeout(
+        STARTUP_TIMEOUT,
+        Cli::spawn(prefs, cwd.path(), false, None, Session::Ephemeral),
+    )
+    .await
+    .map_err(|_| "Claude Code startup timed out".to_string())??;
     cli.stop().await;
     let models = initialized["models"]
         .as_array()
@@ -333,7 +352,7 @@ pub(crate) async fn complete(
 ) -> Result<String, String> {
     let cwd = working_directory()?;
     write_mcp_config(cwd.path(), None)?;
-    let (mut cli, _) = Cli::spawn(prefs, cwd.path(), false, None).await?;
+    let (mut cli, _) = Cli::spawn(prefs, cwd.path(), false, None, Session::Ephemeral).await?;
     let result = async {
         cli.send(
             json!({"type":"user","session_id":"","parent_tool_use_id":null,
@@ -385,24 +404,112 @@ pub(crate) async fn run(
 ) -> Result<(), String> {
     let cwd = working_directory()?;
     let project = super::native_project_directory(history_path.as_deref());
+    let opened = Opened::open(bridge, history_path.clone(), fresh, history)?;
+    let resume = super::NativeResume::new(
+        "claude",
+        &opened.memory,
+        project.is_some() && opened.generation.is_some(),
+    );
     let mcp = LiveMcp::start(ToolHost::new(bridge.clone())).await?;
     write_mcp_config(cwd.path(), Some(&mcp))?;
     let mut cancelled = cancelled;
-    let (mut cli, _) = tokio::select! {
-        biased;
-        _ = &mut cancelled => return Ok(()),
-        result = tokio::time::timeout(STARTUP_TIMEOUT, Cli::spawn(prefs, cwd.path(), true, project)) =>
-            result.map_err(|_| "Claude Code startup timed out".to_string())??,
+    let start = |session| {
+        tokio::time::timeout(
+            STARTUP_TIMEOUT,
+            Cli::spawn(prefs, cwd.path(), true, project, session),
+        )
+    };
+    let mut session = None;
+    let mut resumed = None;
+    let mut cli = None;
+    if let Some(previous) = resume.previous.as_deref() {
+        tokio::select! {
+            biased;
+            _ = &mut cancelled => return Ok(()),
+            result = start(Session::Resume(previous)) => match result {
+                Ok(Ok((resumed_cli, _))) => {
+                    cli = Some(resumed_cli);
+                    session = Some(previous.to_owned());
+                    resumed = Some(previous.to_owned());
+                }
+                // A session Claude Code no longer has is recovered, not reported as a failure:
+                // a new one starts with the conversation handed over as text.
+                _ => bridge.emit(json!({"event":"notice","message":"Claude Code could not resume this conversation's earlier session; continuing in a new one with the conversation so far."})),
+            },
+        }
+    }
+    let mut cli = match cli {
+        Some(cli) => cli,
+        None => {
+            let id = resume.enabled.then(|| uuid::Uuid::new_v4().to_string());
+            let mode = id.as_deref().map_or(Session::Ephemeral, Session::Start);
+            let (cli, _) = tokio::select! {
+                biased;
+                _ = &mut cancelled => return Ok(()),
+                result = start(mode) =>
+                    result.map_err(|_| "Claude Code startup timed out".to_string())??,
+            };
+            session = id;
+            cli
+        }
+    };
+    let native = Native {
+        resume,
+        session,
+        resumed,
     };
     let result = tokio::select! {
         biased;
         _ = &mut cancelled => Ok(()),
         _ = mcp.cancelled() => Err("Claude Code cancelled a pending live tool request. Inspect the document before continuing".into()),
-        result = conversation(&mut cli, prefs, bridge, &mcp, history_path, fresh, history) => result,
+        result = conversation(&mut cli, prefs, bridge, &mcp, opened, native) => result,
     };
     mcp.abort_calls();
     cli.stop().await;
     result
+}
+
+/// The conversation's model history, opened before the CLI starts so its saved session is known.
+struct Opened {
+    memory: memory::Memory,
+    generation: Option<crate::worker::HistoryGeneration>,
+    preloaded: bool,
+}
+
+impl Opened {
+    fn open(
+        bridge: &Bridge,
+        path: Option<PathBuf>,
+        fresh: bool,
+        snapshot: Option<HistorySnapshot>,
+    ) -> Result<Self, String> {
+        let preloaded = snapshot.is_some();
+        let (memory, generation) = match (snapshot, path) {
+            (Some(snapshot), _) => {
+                let (memory, generation) = snapshot.into_parts();
+                (memory, Some(generation))
+            }
+            (None, Some(path)) => {
+                let (memory, generation) = bridge.open_history(&path, fresh)?;
+                (memory, Some(generation))
+            }
+            _ => (memory::Memory::default(), None),
+        };
+        Ok(Self {
+            memory,
+            generation,
+            preloaded,
+        })
+    }
+}
+
+/// Which Claude Code session this process runs, and whether it is the conversation's saved one.
+struct Native {
+    resume: super::NativeResume,
+    /// The saved session this process writes to, or `None` when it saves nothing.
+    session: Option<String>,
+    /// Set when `session` is the one resumed from the conversation's history.
+    resumed: Option<String>,
 }
 
 async fn conversation(
@@ -410,22 +517,14 @@ async fn conversation(
     prefs: &auris_session::AgentPreferences,
     bridge: &Bridge,
     mcp: &LiveMcp,
-    history_path: Option<PathBuf>,
-    fresh: bool,
-    history: Option<HistorySnapshot>,
+    opened: Opened,
+    native: Native,
 ) -> Result<(), String> {
-    let preloaded = history.is_some();
-    let (mut memory, mut generation) = match (history, history_path) {
-        (Some(snapshot), _) => {
-            let (memory, generation) = snapshot.into_parts();
-            (memory, Some(generation))
-        }
-        (None, Some(path)) => {
-            let (memory, generation) = bridge.open_history(&path, fresh)?;
-            (memory, Some(generation))
-        }
-        _ => (memory::Memory::default(), None),
-    };
+    let Opened {
+        mut memory,
+        mut generation,
+        preloaded,
+    } = opened;
     bridge.bind_production_history(generation.as_ref())?;
     if !preloaded {
         bridge.emit(json!({"event":"history","summary":memory.summary,"turns":memory.turns}));
@@ -438,7 +537,9 @@ async fn conversation(
     .map_err(|_| "Claude Code MCP startup timed out".to_string())??;
     validate_servers(&status)?;
     bridge.emit(json!({"event":"ready","model":prefs.model}));
-    let mut context = super::memory_context(&memory);
+    let mut context = native
+        .resume
+        .opening_context(&memory, native.resumed.as_deref());
     while let Some(line) = bridge.receive().await {
         let wire: Value = serde_json::from_str(&line).map_err(|error| error.to_string())?;
         if wire["compact"] == true {
@@ -478,6 +579,7 @@ async fn conversation(
             Ok(text) => memory.push(display, text),
             Err(error) => memory.push_interrupted(display, error),
         }
+        native.resume.record(&mut memory, native.session.as_deref());
         if let Some(generation) = generation.as_mut()
             && let Err(error) = bridge.save_history(generation, &memory)
         {
@@ -774,6 +876,18 @@ async fn receive_turn_tracked(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_history(bridge: &Bridge, path: Option<PathBuf>) -> Opened {
+        Opened::open(bridge, path, false, None).unwrap()
+    }
+
+    fn ephemeral() -> Native {
+        Native {
+            resume: super::super::NativeResume::new("claude", &memory::Memory::default(), false),
+            session: None,
+            resumed: None,
+        }
+    }
     use tokio::io::{AsyncBufReadExt, BufReader};
 
     async fn reply(writer: &mut (impl AsyncWrite + Unpin), value: Value) {
@@ -898,7 +1012,7 @@ mod tests {
             .into(),
             ..prefs()
         };
-        let command = command(&prefs, cwd.path(), false).unwrap();
+        let command = command(&prefs, cwd.path(), false, Session::Ephemeral).unwrap();
         let args: Vec<_> = command
             .as_std()
             .get_args()
@@ -923,7 +1037,7 @@ mod tests {
         };
         assert_eq!(prompt(&args), prefs.system_prompt);
         assert!(!args.iter().any(|arg| arg == "--system-prompt"));
-        let native = super::command(&prefs, cwd.path(), true).unwrap();
+        let native = super::command(&prefs, cwd.path(), true, Session::Ephemeral).unwrap();
         let args: Vec<_> = native
             .as_std()
             .get_args()
@@ -966,7 +1080,7 @@ mod tests {
             effort: auris_session::ReasoningEffort::High,
             ..prefs()
         };
-        let command = command(&prefs, cwd.path(), true).unwrap();
+        let command = command(&prefs, cwd.path(), true, Session::Ephemeral).unwrap();
         let args: Vec<_> = command
             .as_std()
             .get_args()
@@ -1244,7 +1358,7 @@ mod tests {
                 drop(commands);
             };
             let preferences = prefs();
-            let (result, ()) = tokio::join!(conversation(&mut cli, &preferences, &bridge, &mcp, None, false, None), peer);
+            let (result, ()) = tokio::join!(conversation(&mut cli, &preferences, &bridge, &mcp, test_history(&bridge, None), ephemeral()), peer);
             result.unwrap();
             let events: Vec<_> = events.try_iter().collect();
             assert!(events.iter().any(|event| event["event"] == "error" && event["message"].as_str().is_some_and(|text| text.contains("fixture turn error"))));
@@ -1320,12 +1434,104 @@ mod tests {
                 drop(commands);
             };
             let preferences = prefs();
-            let (result, ()) = tokio::join!(conversation(&mut cli, &preferences, &bridge, &mcp, Some(path.clone()), false, None), peer);
+            let (result, ()) = tokio::join!(conversation(&mut cli, &preferences, &bridge, &mcp, test_history(&bridge, Some(path.clone())), ephemeral()), peer);
             result.unwrap();
             let memory = memory::Memory::load(&path).unwrap();
             assert_eq!(memory.turns.len(), 3);
             assert_eq!(memory.turns[1].user, "First display");
             assert_eq!(memory.turns[2].answer, "Response 1");
+        }).await.unwrap();
+    }
+
+    #[test]
+    fn a_saved_conversation_starts_or_resumes_its_own_session_and_others_save_none() {
+        let cwd = tempfile::tempdir().unwrap();
+        let prefs = auris_session::AgentPreferences {
+            claude_path: if cfg!(windows) {
+                "C:/Tools/claude.exe"
+            } else {
+                "/usr/local/bin/claude"
+            }
+            .into(),
+            ..prefs()
+        };
+        let args = |session| -> Vec<String> {
+            command(&prefs, cwd.path(), true, session)
+                .unwrap()
+                .as_std()
+                .get_args()
+                .map(|arg| arg.to_string_lossy().into_owned())
+                .collect()
+        };
+        let pair = |args: &[String], flag: &str| {
+            args.windows(2)
+                .find(|pair| pair[0] == flag)
+                .map(|pair| pair[1].clone())
+        };
+        let ephemeral = args(Session::Ephemeral);
+        assert!(
+            ephemeral
+                .iter()
+                .any(|arg| arg == "--no-session-persistence")
+        );
+        assert!(
+            pair(&ephemeral, "--session-id").is_none() && pair(&ephemeral, "--resume").is_none()
+        );
+        let start = args(Session::Start("chosen-id"));
+        assert_eq!(pair(&start, "--session-id").as_deref(), Some("chosen-id"));
+        assert!(!start.iter().any(|arg| arg == "--no-session-persistence"));
+        let resume = args(Session::Resume("chosen-id"));
+        assert_eq!(pair(&resume, "--resume").as_deref(), Some("chosen-id"));
+        assert!(
+            !resume
+                .iter()
+                .any(|arg| arg == "--no-session-persistence" || arg == "--session-id")
+        );
+    }
+
+    /// A resumed session is handed only the turns another backend answered, and every completed
+    /// turn records that the session has seen it.
+    #[tokio::test]
+    async fn a_resumed_session_hears_only_the_missed_turns_and_is_recorded() {
+        tokio::time::timeout(Duration::from_secs(10), async {
+            let folder = tempfile::tempdir().unwrap();
+            let path = folder.path().join("history.json");
+            let mut memory = memory::Memory::default();
+            memory.push("Sketch the melody on Claude", "Melody sketched");
+            memory.record_native("claude", "session-a");
+            memory.push("Harmonize on Codex", "Harmonized");
+            memory.save(&path).unwrap();
+            let (bridge, commands, _events) = crate::worker::test_bridge();
+            let mcp = LiveMcp::start(ToolHost::new(bridge.clone())).await.unwrap();
+            let (client, server) = tokio::io::duplex(32768);
+            let (reader, writer) = tokio::io::split(client);
+            let mut cli = Cli::transport(None, writer, reader);
+            commands.send(json!({"say":"Add a countermelody"}).to_string()).unwrap();
+            drop(commands);
+            let opened = test_history(&bridge, Some(path.clone()));
+            let native = Native {
+                resume: super::super::NativeResume::new("claude", &opened.memory, true),
+                session: Some("session-a".into()),
+                resumed: Some("session-a".into()),
+            };
+            let peer = async {
+                let (reader, mut writer) = tokio::io::split(server);
+                let mut lines = BufReader::new(reader).lines();
+                let request: Value = serde_json::from_str(&lines.next_line().await.unwrap().unwrap()).unwrap();
+                reply(&mut writer, json!({"type":"control_response","response":{"subtype":"success","request_id":request["request_id"],"response":{"mcpServers":[{"name":"auris_live","status":"connected"}]}}})).await;
+                let prompt: Value = serde_json::from_str(&lines.next_line().await.unwrap().unwrap()).unwrap();
+                let text = prompt["message"]["content"].to_string();
+                assert!(text.contains("Harmonize on Codex"), "{text}");
+                assert!(!text.contains("Sketch the melody"), "{text}");
+                assert!(text.contains("Add a countermelody"), "{text}");
+                reply(&mut writer, json!({"type":"result","subtype":"success","is_error":false,"result":"Countermelody added"})).await;
+            };
+            let preferences = prefs();
+            let (result, ()) = tokio::join!(conversation(&mut cli, &preferences, &bridge, &mcp, opened, native), peer);
+            result.unwrap();
+            let saved = memory::Memory::load(&path).unwrap();
+            let thread = saved.native_thread("claude").unwrap();
+            assert_eq!((thread.id.as_str(), thread.seen), ("session-a", 3));
         }).await.unwrap();
     }
 
@@ -1344,7 +1550,7 @@ mod tests {
                 crate::attachments::tests::reference_wav(&audio, false);
                 commands.send(json!({"say":"Add a track","attachments":[audio]}).to_string()).unwrap();
                 let preferences = prefs();
-                let drive = async { conversation(&mut cli, &preferences, &bridge, &mcp, None, false, None).await.unwrap() };
+                let drive = async { conversation(&mut cli, &preferences, &bridge, &mcp, test_history(&bridge, None), ephemeral()).await.unwrap() };
                 let peer = async {
                     let (reader, mut writer) = tokio::io::split(server);
                     let mut lines = BufReader::new(reader).lines();
@@ -1398,6 +1604,22 @@ mod tests {
         }
     }
 
+    /// The fallback in `run` depends on a lost session failing at startup, not mid-turn.
+    #[tokio::test]
+    #[ignore = "requires an installed Claude Code CLI; does not run inference"]
+    async fn installed_claude_refuses_a_missing_session_at_startup() {
+        let cwd = working_directory().unwrap();
+        write_mcp_config(cwd.path(), None).unwrap();
+        let missing = uuid::Uuid::new_v4().to_string();
+        let started = tokio::time::timeout(
+            STARTUP_TIMEOUT,
+            Cli::spawn(&prefs(), cwd.path(), false, None, Session::Resume(&missing)),
+        )
+        .await
+        .expect("a missing session is reported promptly");
+        assert!(started.is_err());
+    }
+
     #[tokio::test]
     #[ignore = "requires an installed Claude Code CLI; does not run inference"]
     async fn installed_claude_connects_to_the_live_mcp_catalog() {
@@ -1407,7 +1629,7 @@ mod tests {
         write_mcp_config(cwd.path(), Some(&mcp)).unwrap();
         let (mut cli, initialized) = tokio::time::timeout(
             STARTUP_TIMEOUT,
-            Cli::spawn(&prefs(), cwd.path(), true, None),
+            Cli::spawn(&prefs(), cwd.path(), true, None, Session::Ephemeral),
         )
         .await
         .unwrap()

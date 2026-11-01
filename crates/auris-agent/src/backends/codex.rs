@@ -523,9 +523,9 @@ pub(crate) async fn run(
 ) -> Result<(), String> {
     // Keep CLI configuration private; the model's working directory is the saved project.
     let working = tempfile::tempdir().map_err(|e| e.to_string())?;
-    let cwd = super::native_project_directory(history_path.as_deref())
-        .unwrap_or(working.path())
-        .to_path_buf();
+    let project = super::native_project_directory(history_path.as_deref());
+    let saved_project = project.is_some();
+    let cwd = project.unwrap_or(working.path()).to_path_buf();
     let mcp = LiveMcp::start(ToolHost::new(bridge.clone())).await?;
     let mut cancelled = cancelled;
     let mut rpc = tokio::select! {
@@ -537,7 +537,7 @@ pub(crate) async fn run(
         biased;
         _ = &mut cancelled => Ok(()),
         _ = mcp.cancelled() => Err("Codex cancelled a pending live tool request. Inspect the document before starting another conversation".into()),
-        result = conversation(&mut rpc, prefs, bridge, &mcp, &cwd, HistoryInput { path: history_path, fresh, snapshot: history }) => result,
+        result = conversation(&mut rpc, prefs, bridge, &mcp, &cwd, HistoryInput { path: history_path, fresh, project: saved_project, snapshot: history }) => result,
     };
     mcp.abort_calls();
     rpc.stop().await;
@@ -547,6 +547,8 @@ pub(crate) async fn run(
 struct HistoryInput {
     path: Option<PathBuf>,
     fresh: bool,
+    /// Whether `path` is a saved project's conversation, which may keep a Codex thread.
+    project: bool,
     snapshot: Option<HistorySnapshot>,
 }
 
@@ -574,11 +576,34 @@ async fn conversation(
     if !preloaded {
         bridge.emit(json!({"event":"history","summary":memory.summary,"turns":memory.turns}));
     }
-    let thread = rpc.request("thread/start", json!({"model":prefs.model,"cwd":cwd,"ephemeral":true,"sandbox":"read-only","approvalPolicy":"untrusted","baseInstructions":super::cli_preamble(prefs)})).await?;
-    let thread_id = thread["thread"]["id"]
-        .as_str()
-        .ok_or("Codex did not return a thread ID")?
-        .to_owned();
+    // Only a saved project's own conversation keeps a Codex thread; recovery stores stay private.
+    let resume =
+        super::NativeResume::new("codex", &memory, history.project && generation.is_some());
+    let settings = json!({"model":prefs.model,"cwd":cwd,"sandbox":"read-only","approvalPolicy":"untrusted","baseInstructions":super::cli_preamble(prefs)});
+    let mut resumed = None;
+    if let Some(previous) = resume.previous.as_deref() {
+        let mut params = settings.clone();
+        params["threadId"] = json!(previous);
+        params["excludeTurns"] = json!(true);
+        match rpc.request("thread/resume", params).await {
+            Ok(thread) if thread["thread"]["id"] == previous => resumed = Some(previous.to_owned()),
+            // A thread Codex no longer has is recovered, not reported as a failure.
+            _ => bridge.emit(json!({"event":"notice","message":"Codex could not resume this conversation's earlier thread; continuing in a new one with the conversation so far."})),
+        }
+    }
+    let thread_id = match &resumed {
+        Some(id) => id.clone(),
+        None => {
+            let mut params = settings;
+            params["ephemeral"] = json!(!resume.enabled);
+            let thread = rpc.request("thread/start", params).await?;
+            thread["thread"]["id"]
+                .as_str()
+                .ok_or("Codex did not return a thread ID")?
+                .to_owned()
+        }
+    };
+    let session = resume.enabled.then(|| thread_id.clone());
     rpc.thread = Some(thread_id.clone());
     // Check the effective catalog rather than assuming overrides were honored by this CLI.
     let servers = rpc
@@ -589,7 +614,7 @@ async fn conversation(
         .await?;
     validate_servers(&servers)?;
     bridge.emit(json!({"event":"ready","model":prefs.model}));
-    let mut context = super::memory_context(&memory);
+    let mut context = resume.opening_context(&memory, resumed.as_deref());
     while let Some(line) = bridge.receive().await {
         let wire: Value = serde_json::from_str(&line).map_err(|e| e.to_string())?;
         if wire["compact"] == true {
@@ -626,6 +651,7 @@ async fn conversation(
             Ok(text) => memory.push(display, text),
             Err(error) => memory.push_interrupted(display, error),
         }
+        resume.record(&mut memory, session.as_deref());
         if let Some(generation) = generation.as_mut()
             && let Err(error) = bridge.save_history(generation, &memory)
         {
@@ -996,7 +1022,7 @@ mod tests {
             crate::attachments::tests::reference_wav(&audio, false);
             commands.send(json!({"say":"Add an instrument track", "display":"Add a track", "attachments":[audio]}).to_string()).unwrap();
             let drive = async {
-                conversation(&mut rpc, &prefs, &bridge, &mcp, cwd.path(), HistoryInput { path: Some(history.clone()), fresh: false, snapshot: None }).await.unwrap();
+                conversation(&mut rpc, &prefs, &bridge, &mcp, cwd.path(), HistoryInput { path: Some(history.clone()), fresh: false, project: false, snapshot: None }).await.unwrap();
             };
             let peer = async {
                 let (reader, mut writer) = tokio::io::split(server);
@@ -1076,6 +1102,73 @@ mod tests {
             };
             let ((), (), ()) = tokio::join!(drive, peer, owner);
         }).await.unwrap();
+    }
+
+    /// A saved project's conversation resumes its Codex thread and is told only what another
+    /// backend answered meanwhile; a thread Codex lost falls back to a new, saved one.
+    #[tokio::test]
+    async fn saved_threads_resume_with_the_missed_turns_or_restart_with_the_selection() {
+        for resumable in [true, false] {
+            tokio::time::timeout(Duration::from_secs(10), async {
+                let folder = tempfile::tempdir().unwrap();
+                let history = folder.path().join("memory.json");
+                let mut memory = memory::Memory::default();
+                memory.push("Write the verse on Codex", "Verse written");
+                memory.record_native("codex", "old-thread");
+                memory.push("Add strings on Claude", "Strings added");
+                memory.save(&history).unwrap();
+                let (bridge, commands, _events) = crate::worker::test_bridge();
+                let mcp = LiveMcp::start(ToolHost::new(bridge.clone())).await.unwrap();
+                let (client, server) = tokio::io::duplex(32768);
+                let (reader, writer) = tokio::io::split(client);
+                let mut rpc = Rpc::transport(None, writer, reader);
+                let prefs = auris_session::AgentPreferences { backend:"codex".into(), model:"fixture".into(), ..Default::default() };
+                commands.send(json!({"say":"Now the bridge"}).to_string()).unwrap();
+                drop(commands);
+                let drive = conversation(&mut rpc, &prefs, &bridge, &mcp, folder.path(), HistoryInput { path: Some(history.clone()), fresh: false, project: true, snapshot: None });
+                let peer = async {
+                    let (reader, mut writer) = tokio::io::split(server);
+                    let mut lines = BufReader::new(reader).lines();
+                    let mut next = async || serde_json::from_str::<Value>(&lines.next_line().await.unwrap().unwrap()).unwrap();
+                    let request = next().await;
+                    assert_eq!(request["method"], "thread/resume");
+                    assert_eq!(request["params"]["threadId"], "old-thread");
+                    assert_eq!(request["params"]["sandbox"], "read-only");
+                    let thread = if resumable {
+                        reply(&mut writer, json!({"id":request["id"],"result":{"thread":{"id":"old-thread"}}})).await;
+                        "old-thread"
+                    } else {
+                        reply(&mut writer, json!({"id":request["id"],"error":{"code":-32600,"message":"no rollout found"}})).await;
+                        let request = next().await;
+                        assert_eq!(request["method"], "thread/start");
+                        assert_eq!(request["params"]["ephemeral"], false);
+                        reply(&mut writer, json!({"id":request["id"],"result":{"thread":{"id":"new-thread"}}})).await;
+                        "new-thread"
+                    };
+                    let request = next().await;
+                    assert_eq!(request["method"], "mcpServerStatus/list");
+                    reply(&mut writer, json!({"id":request["id"],"result":{"data":[{"name":"auris_live","tools":{"inspect_project":{}}}]}})).await;
+                    let request = next().await;
+                    assert_eq!(request["method"], "turn/start");
+                    assert_eq!(request["params"]["threadId"], thread);
+                    let input = request["params"]["input"].to_string();
+                    assert!(input.contains("Add strings on Claude"), "{input}");
+                    assert!(input.contains("Now the bridge"), "{input}");
+                    // The resumed thread already holds its own turn; a new one is handed it.
+                    assert_eq!(input.contains("Write the verse on Codex"), !resumable, "{input}");
+                    reply(&mut writer, json!({"id":request["id"],"result":{"turn":{"id":"turn"}}})).await;
+                    reply(&mut writer, json!({"method":"item/agentMessage/delta","params":{"threadId":thread,"turnId":"turn","delta":"Bridge added."}})).await;
+                    reply(&mut writer, json!({"method":"turn/completed","params":{"threadId":thread,"turn":{"id":"turn","status":"completed"}}})).await;
+                    thread
+                };
+                let (result, thread) = tokio::join!(drive, peer);
+                result.unwrap();
+                let saved = memory::Memory::load(&history).unwrap();
+                assert_eq!(saved.turns.len(), 3);
+                let native = saved.native_thread("codex").unwrap();
+                assert_eq!((native.id.as_str(), native.seen), (thread, 3));
+            }).await.unwrap();
+        }
     }
 
     #[tokio::test]

@@ -45,6 +45,7 @@ pub use tool_exposure::{
 mod project_handles;
 pub mod setup_tracks;
 pub use project_handles::open_project;
+pub mod conversation_recall;
 mod drums;
 mod editing;
 pub mod internet_search;
