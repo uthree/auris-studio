@@ -195,22 +195,19 @@ pub(super) fn paint_lane(
                 );
             }
         }
-        // A brighter top strip carries the clip name and doubles as the grab area. Only its
-        // top corners are rounded, so it sits inside the clip's outline instead of cutting a
-        // square notch out of it.
-        paint::rect_with_corners(
+        // A brighter top strip carries the clip name and doubles as the grab area. It is the
+        // clip's own rounded shape masked to the strip's height, rather than a strip rounded on
+        // its own: a quad's corners are clamped to half its height, so a 14 px strip could only
+        // ever round its top corners to 7 px while the clip's bottom corners kept the full
+        // radius — two different corners on one block, and the outline's curve showing through
+        // the gap at the top.
+        paint::clipped(
             window,
             Bounds {
                 origin: clip_bounds.origin,
                 size: size(clip_bounds.size.width, TITLE_HEIGHT),
             },
-            Corners {
-                top_left: radius,
-                top_right: radius,
-                bottom_right: px(0.0),
-                bottom_left: px(0.0),
-            },
-            title_fill,
+            |window| paint::rounded_rect(window, clip_bounds, radius, title_fill),
         );
         // A selected clip gets an outline as well as a lit title bar, so the selection reads
         // at a glance on a lane packed with clips.
