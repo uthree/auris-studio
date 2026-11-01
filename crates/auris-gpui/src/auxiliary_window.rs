@@ -122,7 +122,7 @@ fn open_surface(app: WeakEntity<AurisApp>, surface: Surface, cx: &mut App) {
         }
         Surface::Typing => size(px(680.), px(340.)),
         Surface::Analysis => size(px(540.), px(650.)),
-        Surface::TimbreMap => size(px(900.), px(700.)),
+        Surface::TimbreMap => size(px(1120.), px(720.)),
         Surface::Visualizer => {
             let preferred = size(px(780.), px(620.));
             cx.primary_display().map_or(preferred, |display| {

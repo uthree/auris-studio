@@ -315,7 +315,34 @@ strings! {
     VisualizerNegativePeak { en: "Negative peak", ja: "負側ピーク" }
     VisualizerCorrelationReset { en: "Reset correlation", ja: "相関をリセット" }
     VisualizerHint { en: "Vertical: mono · horizontal: opposite polarity. Auto gain changes the display only; recent traces fade behind the current one.", ja: "縦：モノラル · 横：逆位相。自動ゲインは表示だけを変更し、直近の軌跡は現在値の後ろに薄く残ります。" }
-    TimbreMap { en: "Timbre Map", ja: "音色マップ" }
+    TimbreMap { en: "Find Sounds", ja: "音源を探す" }
+    TimbreMapSounds { en: "Sounds", ja: "音源" }
+    TimbreMapSelected { en: "Selected sound", ja: "選んだ音" }
+    TimbreAxesEnvelope { en: "Envelope", ja: "エンベロープ" }
+    TimbreAxisAttackTime { en: "Attack (log ms)", ja: "アタック（対数ms）" }
+    TimbreAxisSustainLevel { en: "Sustain (dB)", ja: "サステイン（dB）" }
+    TimbreAxisReleaseTime { en: "Release (log ms)", ja: "リリース（対数ms）" }
+    TimbreEnvelopeGeometry { en: "Measured envelope · median of C2, C4 and C6 · times on a log scale", ja: "実測エンベロープ · C2・C4・C6の中央値 · 時間は対数目盛" }
+    TimbreEnvelopeFilter { en: "Filter by envelope", ja: "エンベロープで絞り込む" }
+    TimbreEnvelopeMeasured { en: "Measured envelope · C2, C4, C6 at velocity 100 · ≈ extrapolated", ja: "実測エンベロープ · C2・C4・C6、ベロシティ100 · ≈ は外挿値" }
+    TimbreEnvelopeMissing { en: "No envelope could be measured for this sound", ja: "この音はエンベロープを測定できませんでした" }
+    TimbreEnvelopeDecaying { en: "Never settles: decay is the time to fall 60 dB", ja: "持続しない音：ディケイは60dB下がるまでの時間" }
+    TimbreFindSimilar { en: "Find Similar Sounds", ja: "似た音を探す" }
+    TimbreRemoveCondition { en: "Remove condition", ja: "条件を外す" }
+    LibraryFindBySound { en: "Search by how it sounds…", ja: "音の性格で探す…" }
+    EnvelopeAttack { en: "Attack", ja: "アタック" }
+    EnvelopeDecay { en: "Decay", ja: "ディケイ" }
+    EnvelopeSustain { en: "Sustain", ja: "サステイン" }
+    EnvelopeRelease { en: "Release", ja: "リリース" }
+    EnvelopeAny { en: "Any", ja: "指定なし" }
+    EnvelopeFast { en: "Fast", ja: "速い" }
+    EnvelopeMedium { en: "Medium", ja: "中くらい" }
+    EnvelopeSlow { en: "Slow", ja: "遅い" }
+    EnvelopeShort { en: "Short", ja: "短い" }
+    EnvelopeLong { en: "Long", ja: "長い" }
+    EnvelopeHolds { en: "Holds", ja: "保つ" }
+    EnvelopeDips { en: "Dips", ja: "下がる" }
+    EnvelopeFades { en: "Fades", ja: "消える" }
     TimbreSearch { en: "Search…", ja: "検索…" }
     TimbreSearchClear { en: "Clear", ja: "クリア" }
     TimbreSearchPlaceholder { en: "Soft, plucky, or sound name", ja: "ふんわり、ポコポコ、音色名" }

@@ -1,5 +1,6 @@
 //! Shared interpretation and ranking for desktop and agent sound discovery.
 
+pub use auris_dsp::MeasuredEnvelope;
 pub use auris_dsp::timbre::TimbreCharacter;
 
 /// Optional fixed-scale targets; omitted dimensions do not affect ranking.
@@ -39,6 +40,16 @@ impl TimbreTargets {
     /// Interpret supported Japanese/English impressions; explicit targets take precedence.
     /// Returns recognized terms so callers can distinguish them from uninterpreted prose.
     pub fn interpret(query: &str, explicit: &Self) -> Result<(Self, Vec<String>), String> {
+        let (targets, recognized) = Self::interpret_partial(query, explicit)?;
+        if targets.values().iter().all(Option::is_none) {
+            return Err("No supported impression found; use text search for names or supply explicit timbre targets".into());
+        }
+        Ok((targets, recognized))
+    }
+
+    /// [`interpret`](Self::interpret) without requiring any target, for a search whose
+    /// constraints are all on the measured envelope.
+    pub fn interpret_partial(query: &str, explicit: &Self) -> Result<(Self, Vec<String>), String> {
         if query.len() > 1024 {
             return Err("Timbre query must be at most 1024 UTF-8 bytes".into());
         }
@@ -144,9 +155,6 @@ impl TimbreTargets {
         {
             return Err("Timbre targets must be finite values between 0 and 1".into());
         }
-        if values.iter().all(Option::is_none) {
-            return Err("No supported impression found; use text search for names or supply explicit timbre targets".into());
-        }
         Ok((
             Self {
                 brightness: values[0],
@@ -173,9 +181,173 @@ impl TimbreTargets {
     }
 }
 
+/// An inclusive range; an omitted bound is open.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
+)]
+#[serde(deny_unknown_fields)]
+pub struct Bounds {
+    /// Lowest accepted value.
+    pub min: Option<f64>,
+    /// Highest accepted value.
+    pub max: Option<f64>,
+}
+
+impl Bounds {
+    fn is_set(&self) -> bool {
+        self.min.is_some() || self.max.is_some()
+    }
+
+    /// How far `value` lies outside, in the caller's units; zero inside.
+    fn excess(&self, value: f64, scale: impl Fn(f64) -> f64) -> f64 {
+        let below = self
+            .min
+            .map_or(0., |min| (scale(min) - scale(value)).max(0.));
+        let above = self
+            .max
+            .map_or(0., |max| (scale(value) - scale(max)).max(0.));
+        below + above
+    }
+}
+
+/// Ranges on the measured amplitude envelope: times in milliseconds, sustain in dB below the
+/// note's peak. Omitted fields do not affect ranking.
+///
+/// A sound outside a range is ranked by how far outside, never dropped, so a search that is too
+/// strict still answers with the nearest sounds. Times compare on a log scale (8× off counts as
+/// 1), sustain linearly (24 dB off counts as 1).
+#[derive(
+    Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+#[serde(deny_unknown_fields)]
+pub struct EnvelopeTargets {
+    /// Time to reach the peak, e.g. `{"max": 10}` for a hard attack, `{"min": 200}` for a swell.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attack_ms: Option<Bounds>,
+    /// Time from the peak to the sustain level, or to −60 dB for a sound that never sustains.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decay_ms: Option<Bounds>,
+    /// Held level below the peak in dB, 0 to −120; `{"min": -6}` keeps sounds that hold up.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sustain_db: Option<Bounds>,
+    /// Time after note-off to fall 60 dB, e.g. `{"min": 1000}` for a long tail.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub release_ms: Option<Bounds>,
+}
+
+impl EnvelopeTargets {
+    /// Whether any range is set.
+    pub fn is_empty(&self) -> bool {
+        [
+            self.attack_ms,
+            self.decay_ms,
+            self.sustain_db,
+            self.release_ms,
+        ]
+        .iter()
+        .all(|b| !b.is_some_and(|b| b.is_set()))
+    }
+
+    /// Rejects non-finite bounds and a minimum above its maximum.
+    pub fn validate(&self) -> Result<(), String> {
+        for (name, bounds) in [
+            ("attack_ms", self.attack_ms),
+            ("decay_ms", self.decay_ms),
+            ("sustain_db", self.sustain_db),
+            ("release_ms", self.release_ms),
+        ] {
+            let Some(b) = bounds else { continue };
+            if [b.min, b.max].into_iter().flatten().any(|v| !v.is_finite()) {
+                return Err(format!("envelope.{name} bounds must be finite"));
+            }
+            if let (Some(min), Some(max)) = (b.min, b.max)
+                && min > max
+            {
+                return Err(format!("envelope.{name} min must not exceed max"));
+            }
+        }
+        Ok(())
+    }
+
+    /// Mean range excess; zero when the envelope meets every range.
+    pub fn distance(&self, envelope: &MeasuredEnvelope) -> f64 {
+        let time = |ms: f64| ms.max(1.).log2() / 3.;
+        let level = |db: f64| db / 24.;
+        let mut sum = 0.;
+        let mut count = 0;
+        for (bounds, value, scale) in [
+            (
+                self.attack_ms,
+                envelope.attack_ms,
+                &time as &dyn Fn(f64) -> f64,
+            ),
+            (self.decay_ms, envelope.decay_ms, &time),
+            (self.sustain_db, envelope.sustain_db, &level),
+            (self.release_ms, envelope.release_ms, &time),
+        ] {
+            if let Some(bounds) = bounds.filter(Bounds::is_set) {
+                sum += bounds.excess(value, scale);
+                count += 1;
+            }
+        }
+        sum / count.max(1) as f64
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn envelope(attack_ms: f64, sustain_db: f64, release_ms: f64) -> MeasuredEnvelope {
+        MeasuredEnvelope {
+            attack_ms,
+            decay_ms: 100.,
+            sustain_db,
+            release_ms,
+            decaying: false,
+            decay_estimated: false,
+            release_estimated: false,
+        }
+    }
+
+    #[test]
+    fn envelope_ranges_rank_by_how_far_outside_and_never_by_inside() {
+        let targets = EnvelopeTargets {
+            attack_ms: Some(Bounds {
+                min: None,
+                max: Some(20.),
+            }),
+            release_ms: Some(Bounds {
+                min: Some(300.),
+                max: Some(800.),
+            }),
+            ..Default::default()
+        };
+        assert_eq!(targets.distance(&envelope(5., 0., 500.)), 0.);
+        assert_eq!(targets.distance(&envelope(19., -40., 799.)), 0.);
+        // 160 ms is eight times the limit: one unit, averaged over two ranges.
+        assert!((targets.distance(&envelope(160., 0., 500.)) - 0.5).abs() < 1e-9);
+        let near = targets.distance(&envelope(5., 0., 1000.));
+        let far = targets.distance(&envelope(5., 0., 4000.));
+        assert!(0. < near && near < far);
+        assert!(!targets.is_empty());
+        assert!(EnvelopeTargets::default().is_empty());
+        let backwards = EnvelopeTargets {
+            sustain_db: Some(Bounds {
+                min: Some(-3.),
+                max: Some(-9.),
+            }),
+            ..Default::default()
+        };
+        assert!(backwards.validate().is_err());
+    }
 
     #[test]
     fn impressions_rank_acoustics_and_explicit_targets_override_dictionary() {
