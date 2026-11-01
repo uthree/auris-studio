@@ -3105,6 +3105,7 @@ mod tests {
         };
         for index in 0..=CONVERSATION_MESSAGES {
             owner.snapshot.document.messages.push(Message {
+                choices: None,
                 references: vec![],
                 attachments: Vec::new(),
                 user: index % 2 == 0,
