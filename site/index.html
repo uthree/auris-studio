@@ -64,16 +64,23 @@
           <span data-l="ja">Auris Studio は Rust で書かれた macOS / Windows 向けのデジタル・オーディオ・ワークステーションです。聴きたい音楽を言葉で伝えると、エージェントが実際のトラックを書き、鳴らし、直します。その結果は、そのまま手で編集し続けられます。</span>
         </p>
         <div class="hero__actions">
-          <a class="at-button at-button--primary at-button--lg" href="https://github.com/uthree/auris-studio/releases">
+          <a class="at-button at-button--primary at-button--lg" id="download-primary" href="#install">
             <span data-icon="arrow-up" class="icon-down"></span>
-            <span data-l="en">Download</span><span data-l="ja">ダウンロード</span>
+            <span data-l="en" data-os-label="en">Download</span><span data-l="ja" data-os-label="ja">ダウンロード</span>
           </a>
           <a class="at-button at-button--secondary at-button--lg" href="https://github.com/uthree/auris-studio">
             <span data-icon="code"></span>
             <span data-l="en">Source on GitHub</span><span data-l="ja">GitHub でソースを見る</span>
           </a>
         </div>
-        <p class="hero__note at-faint">
+        <p class="hero__platforms">
+          <span data-l="en">Direct download:</span><span data-l="ja">直接ダウンロード:</span>
+          <a data-download="macos" href="https://github.com/uthree/auris-studio/releases/latest">macOS (.dmg)</a>
+          ·
+          <a data-download="windows" href="https://github.com/uthree/auris-studio/releases/latest">Windows (.exe)</a>
+          <span class="hero__version" data-release-version></span>
+        </p>
+        <p class="hero__note">
           <span data-l="en">Free and open source · Apache-2.0 · macOS, Windows (CLI on Linux)</span>
           <span data-l="ja">無料・オープンソース · Apache-2.0 · macOS、Windows（Linux は CLI）</span>
         </p>
@@ -211,11 +218,45 @@
         <div class="section__head">
           <h2 class="section__title"><span data-l="en">Install</span><span data-l="ja">インストール</span></h2>
           <p class="section__lead at-muted">
-            <span data-l="en">Download the Windows installer or the macOS disk image from the <a href="https://github.com/uthree/auris-studio/releases">releases page</a>. The desktop, the <code>auris</code> CLI and <code>auris-mcp</code> ship together.</span>
-            <span data-l="ja"><a href="https://github.com/uthree/auris-studio/releases">リリースページ</a>から Windows 用インストーラーか macOS 用ディスクイメージをダウンロードしてください。デスクトップアプリ、<code>auris</code> CLI、<code>auris-mcp</code> が一緒に入っています。</span>
+            <span data-l="en">Pick your computer and download the latest version. The desktop app, the <code>auris</code> CLI and <code>auris-mcp</code> come together, and the app keeps itself up to date once installed.</span>
+            <span data-l="ja">お使いのパソコンを選んで最新版をダウンロードしてください。デスクトップアプリ、<code>auris</code> CLI、<code>auris-mcp</code> が一緒に入っていて、一度インストールすればアプリが自動で更新されます。</span>
           </p>
         </div>
-        <div class="grid grid--two">
+        <div class="grid grid--two downloads">
+          <div class="at-card at-card--padded download" data-platform="macos">
+            <h3 class="at-heading">macOS</h3>
+            <p class="at-muted"><span data-l="en">macOS 13.4 or later, Apple Silicon and Intel.</span><span data-l="ja">macOS 13.4 以降、Apple Silicon と Intel の両方に対応。</span></p>
+            <a class="at-button at-button--primary at-button--lg download__button" data-download="macos" href="https://github.com/uthree/auris-studio/releases/latest">
+              <span data-icon="arrow-up" class="icon-down"></span>
+              <span data-l="en">Download for macOS</span><span data-l="ja">macOS 版をダウンロード</span>
+              <span class="download__meta" data-download-meta="macos"></span>
+            </a>
+            <ol class="steps">
+              <li><span data-l="en">Open the downloaded <code>.dmg</code> file.</span><span data-l="ja">ダウンロードした <code>.dmg</code> ファイルを開きます。</span></li>
+              <li><span data-l="en">Drag <strong>Auris Studio</strong> onto the <strong>Applications</strong> folder.</span><span data-l="ja"><strong>Auris Studio</strong> を <strong>アプリケーション</strong> フォルダにドラッグします。</span></li>
+              <li><span data-l="en">The app is not yet signed, so macOS blocks the first launch. Open <strong>System Settings → Privacy &amp; Security</strong> and click <strong>Open Anyway</strong>.</span><span data-l="ja">アプリはまだ署名されていないため、初回起動は macOS に止められます。<strong>システム設定 → プライバシーとセキュリティ</strong> を開き、<strong>このまま開く</strong> を押してください。</span></li>
+            </ol>
+          </div>
+          <div class="at-card at-card--padded download" data-platform="windows">
+            <h3 class="at-heading">Windows</h3>
+            <p class="at-muted"><span data-l="en">64-bit Windows. No administrator rights needed.</span><span data-l="ja">64 ビット版 Windows。管理者権限は不要です。</span></p>
+            <a class="at-button at-button--primary at-button--lg download__button" data-download="windows" href="https://github.com/uthree/auris-studio/releases/latest">
+              <span data-icon="arrow-up" class="icon-down"></span>
+              <span data-l="en">Download for Windows</span><span data-l="ja">Windows 版をダウンロード</span>
+              <span class="download__meta" data-download-meta="windows"></span>
+            </a>
+            <ol class="steps">
+              <li><span data-l="en">Run the downloaded <code>setup.exe</code>.</span><span data-l="ja">ダウンロードした <code>setup.exe</code> を実行します。</span></li>
+              <li><span data-l="en">The installer is not yet signed. If SmartScreen appears, click <strong>More info</strong>, then <strong>Run anyway</strong>.</span><span data-l="ja">インストーラーはまだ署名されていません。「Windows によって PC が保護されました」と出たら <strong>詳細情報</strong> → <strong>実行</strong> を押します。</span></li>
+              <li><span data-l="en">Start Auris Studio from the Start menu.</span><span data-l="ja">スタートメニューから Auris Studio を起動します。</span></li>
+            </ol>
+          </div>
+        </div>
+        <p class="downloads__more at-muted">
+          <span data-l="en">Portable archives, the Linux command line tool and earlier versions are on the <a href="https://github.com/uthree/auris-studio/releases">releases page</a>.</span>
+          <span data-l="ja">ポータブル版、Linux 用のコマンドラインツール、過去のバージョンは<a href="https://github.com/uthree/auris-studio/releases">リリースページ</a>にあります。</span>
+        </p>
+        <div class="grid grid--two downloads__dev">
           <div class="at-card at-card--padded">
             <h3 class="at-heading"><span data-l="en">Build from source</span><span data-l="ja">ソースからビルド</span></h3>
             <p class="at-muted"><span data-l="en">With Rust 1.95 or newer.</span><span data-l="ja">Rust 1.95 以降が必要です。</span></p>
