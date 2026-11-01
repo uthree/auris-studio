@@ -85,6 +85,9 @@ crates/auris-agent       the model client (Ollama, OpenAI-compatible, Claude Cod
 crates/auris-gpui        desktop frontend (binary `auris-studio`)
 crates/auris-cli         command line frontend (binary `auris`)
 crates/auris-mcp         Model Context Protocol frontend (binary `auris-mcp`)
+crates/auris-update-helper  the small process that replaces the installed binary once the
+                         application has exited (binary `auris-update-helper`); not a frontend,
+                         and not in `default-members`
 ```
 
 Dependency direction is strictly downhill and the frontend boundary matters:
@@ -110,9 +113,12 @@ Dependency direction is strictly downhill and the frontend boundary matters:
   captures; a track names a sound by font id, bank and patch, never by position.
 * A frontend depends on `auris-session`, its own transport or toolkit, and the presentation
   crate for its *reader*; nothing else in the workspace. There are two presentation crates for
-  the two kinds of reader: `auris-i18n` is every word said to a person (the window and the
-  CLI), `auris-toolbox` every word said to a model — tool names, descriptions, schemas and the
-  work behind them, in English, since neither protocol has a language field. `auris-mcp` and
+  the two kinds of reader: `auris-i18n` is every word said to a person, `auris-toolbox` every
+  word said to a model — tool names, descriptions, schemas and the work behind them, in English,
+  since neither protocol has a language field. The window is the only reader `auris-i18n`
+  answers in a chosen language; the CLI links it and holds it to `Language::English`, because a
+  Windows console on another code page turns Japanese into mojibake and a pipe into a tool that
+  assumes ASCII does worse — see the constant's own doc comment in `auris-cli`. `auris-mcp` and
   `auris-agent` both take the toolbox, which is what keeps the tool called `compose` identical
   at both doors; each keeps its transport to itself (`rmcp`+`tokio`, `rig`+`tokio`). The
   desktop is the one frontend that also links `auris-agent`, because the agent door is a

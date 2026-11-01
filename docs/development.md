@@ -25,12 +25,17 @@ BACKEND — no UI dependency of any kind
   crates/auris-i18n     interface text in every language, and nothing else
   crates/auris-session  the document, the engine and every command a frontend needs
   crates/auris-toolbox  the commands as tools for a language model, shared by both model doors
+  crates/auris-video    note-roll videos: frames in software, encoded by an installed ffmpeg
 
 FRONTEND
   crates/auris-gpui     the desktop application  (binary: auris-studio)
   crates/auris-cli      the command line tool    (binary: auris)
   crates/auris-mcp      the Model Context Protocol server (binary: auris-mcp)
   crates/auris-agent    the model client: Ollama / OpenAI-compatible (library: background model worker)
+
+ALONGSIDE THE APPLICATION
+  crates/auris-update-helper  replaces the installed binary once the app has exited
+                              (binary: auris-update-helper)
 
 NOT THE WORKSPACE
   vendor/rustysynth     somebody else's crate, forked — see its own README
