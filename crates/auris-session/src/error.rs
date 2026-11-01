@@ -403,6 +403,32 @@ pub enum SessionError {
     /// [`Session::save_as_replacing`](crate::Session::save_as_replacing) to go ahead.
     #[error("{} is already a project", .0.display())]
     WouldReplace(PathBuf),
+
+    /// A latency measurement was asked for while one, a take, or playback was already running.
+    #[error("stop playback and recording before measuring the input latency")]
+    CalibrationBusy,
+
+    /// The measurement's clicks never reached the input.
+    ///
+    /// The input is somewhere the output cannot reach: headphones, a muted speaker, a cable in
+    /// the wrong socket, or the wrong input device chosen.
+    #[error("no clicks reached the input; let it hear the output and measure again")]
+    CalibrationHeardNothing,
+
+    /// The clicks arrived, but not at a steady distance from where they were played.
+    ///
+    /// Noise in the room, or an input that was also hearing something else.
+    #[error(
+        "the clicks arrived {spread_ms:.1} ms apart from one another; measure again somewhere quieter"
+    )]
+    CalibrationUnsteady {
+        /// How far the clicks strayed from their median, in milliseconds.
+        spread_ms: f64,
+    },
+
+    /// The output never played the clicks, so there was nothing to measure.
+    #[error("the audio output did not play the measurement")]
+    CalibrationStalled,
 }
 
 impl SessionError {

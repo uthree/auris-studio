@@ -1174,6 +1174,44 @@ mod tests {
     use super::*;
 
     #[gpui::test]
+    fn what_is_typed_on_a_selected_instrument_track_is_recorded_as_a_clip(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use crate::harness::{open, paint};
+        let (app, cx) = open(cx);
+        let track = app.update(cx, |this, _| {
+            let track = this.session.add_default_instrument_track("Lead").unwrap();
+            this.selected_track = Some(track);
+            track
+        });
+        let clips = |this: &crate::app::AurisApp| {
+            this.project()
+                .track(track)
+                .and_then(|found| found.kind.note_clips())
+                .map_or(0, Vec::len)
+        };
+        let clips_before = app.read_with(cx, |this, _| clips(this));
+        paint(&app, cx);
+        cx.dispatch_action(crate::actions::ToggleMusicalTyping);
+        cx.dispatch_action(crate::actions::ToggleRecording);
+        app.read_with(cx, |this, _| assert!(this.session.recording_notes()));
+        // C, E and G, one after another, the way a hand plays them.
+        cx.simulate_keystrokes("a d g");
+        cx.dispatch_action(crate::actions::ToggleRecording);
+        app.read_with(cx, |this, _| {
+            assert!(!this.session.is_recording());
+            assert_eq!(clips(this), clips_before + 1);
+            let notes = this
+                .project()
+                .track(track)
+                .and_then(|found| found.kind.note_clips())
+                .and_then(|clips| clips.last())
+                .map_or(0, |clip| clip.notes.len());
+            assert_eq!(notes, 3);
+        });
+    }
+
+    #[gpui::test]
     fn toolbar_visibility_and_order_preserve_narrow_window_alignment(
         cx: &mut gpui::TestAppContext,
     ) {

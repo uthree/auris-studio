@@ -671,6 +671,24 @@ messages! {
         ja: "{host} · 適用された出力バッファ: {frames}フレーム（1バッファ {duration_ms:.1} ms）"
     }
 
+    /// The measured input latency correction for the devices open now.
+    fn input_latency_measured(offset_ms: f64, spread_ms: f64) {
+        en: "Measured: {offset_ms:+.1} ms beyond the reported latency (spread {spread_ms:.1} ms)",
+        ja: "計測値: 報告値より {offset_ms:+.1} ms（ばらつき {spread_ms:.1} ms）"
+    }
+
+    /// The measured lateness of the typing keyboard.
+    fn typing_latency_measured(offset_ms: f64, spread_ms: f64) {
+        en: "Measured: keys arrive {offset_ms:+.1} ms after the beat (spread {spread_ms:.1} ms)",
+        ja: "計測値: キーは拍から {offset_ms:+.1} ms で届きます（ばらつき {spread_ms:.1} ms）"
+    }
+
+    /// The input latency measurement refused because its clicks did not arrive steadily.
+    fn calibration_unsteady(spread_ms: f64) {
+        en: "the clicks arrived {spread_ms:.1} ms apart from one another; measure again somewhere quieter",
+        ja: "クリック音の到着が {spread_ms:.1} ms ばらつきました。静かな環境でもう一度計測してください"
+    }
+
     /// What the audio backend is doing right now.
     fn running_device(device: &str, rate: f64, channels: usize, suffix: &str) {
         en: "Running: {device} · {rate:.0} Hz · {channels} ch{suffix}",
