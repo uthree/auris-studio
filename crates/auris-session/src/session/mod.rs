@@ -78,6 +78,7 @@ mod monitor;
 mod multitrack_transcription;
 mod musical_analysis;
 mod note_preview;
+mod note_take;
 pub(crate) mod notes;
 mod output_preview;
 mod perform;
@@ -98,6 +99,7 @@ mod timbre;
 mod tracks;
 mod transport;
 mod typing;
+mod typing_calibration;
 mod visualizer;
 mod vst3;
 pub use visualizer::{VisualizerFrame, VisualizerSpectrum};
@@ -530,6 +532,12 @@ pub struct Session {
     input: Option<auris_engine::Capture>,
     /// The take that is running, if one is. See [`record`].
     take: Option<record::Take>,
+    /// What the typing keyboard is playing onto a track, while Record is on one that holds notes.
+    note_take: Option<note_take::NoteTake>,
+    /// A tap-along measuring the typing keyboard, while its click plays.
+    typing_calibration_run: Option<typing_calibration::TypingCalibrationRun>,
+    /// How the last tap-along came out, until a frontend asks.
+    typing_calibration_result: Option<Result<crate::settings::TypingCalibration, SessionError>>,
     /// The Japanese text frontend: the folder the settings name, or the shipped dictionary.
     ///
     /// `None` only where neither exists, and the session sings anyway: kana lyrics go
@@ -762,6 +770,9 @@ impl Session {
             input_channels: None,
             counting: None,
             calibration: None,
+            note_take: None,
+            typing_calibration_run: None,
+            typing_calibration_result: None,
             calibration_result: None,
             graph_latency: 0,
             input: None,
@@ -860,6 +871,7 @@ impl Session {
         }
         // A measurement is against the devices being replaced, and would be kept for them.
         self.cancel_input_calibration();
+        self.cancel_typing_calibration();
         if preferences.uses_asio() {
             preferences.input_device = preferences.device.clone();
         }
@@ -1130,6 +1142,7 @@ impl Session {
         }
         self.recover_lost_output(std::time::Instant::now());
         self.service_calibration();
+        self.service_typing_calibration();
         // Writing a parameter is the one edit that reaches a plugin without rebuilding, so it is
         // also the one that can leave the tracks compensated for the wrong number of frames.
         // Rebuilding re-measures every chain and re-sizes the delay lines to match — and going

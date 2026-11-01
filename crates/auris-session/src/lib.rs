@@ -188,7 +188,7 @@ pub use session::{TrackConversion, TrackConversionJob};
 pub use settings::{
     AgentEndpoint, AgentPreferences, AudioPreferences, CONFIG_DIR_VAR, ExportPreferences,
     InputCalibration, PianoRollGrid, ReasoningEffort, Settings, ToolbarEntry, ToolbarItem,
-    ToolbarPreferences, WindowPlacement, config_dir,
+    ToolbarPreferences, TypingCalibration, WindowPlacement, config_dir,
 };
 pub use singer_portrait::{SingerPortraitError, SingerPortraitSource, load_singer_portrait};
 pub use sound_character::{TimbreCharacter, TimbreTargets};

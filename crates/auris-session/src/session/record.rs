@@ -39,6 +39,9 @@
 //! What a take may never do is pick a track for itself; a take on a track nobody chose is a take
 //! nobody finds.
 //!
+//! A selected track that holds notes is the other kind of take: what the typing keyboard plays,
+//! written down as a clip. It needs neither a device nor a folder — see [`super::note_take`].
+//!
 //! # More than one track at once
 //!
 //! Every armed track records, each from its own input channels: [`InputChannels`] is a run of
@@ -440,11 +443,14 @@ impl Session {
 
     /// `true` while a take is running.
     pub fn is_recording(&self) -> bool {
-        self.take.is_some()
+        self.take.is_some() || self.note_take.is_some()
     }
 
     /// How the running take is doing, for a clock.
     pub fn recording_status(&self) -> Option<RecordingStatus> {
+        if let Some(status) = self.note_take_status() {
+            return Some(status);
+        }
         self.take.as_ref()?;
         let capture = self.input.as_ref()?;
         let rate = capture.sample_rate().max(1.0);
@@ -650,14 +656,23 @@ impl Session {
     /// pin the next one there too, so selecting another track and pressing Record again would
     /// quietly record onto the first — which is the sequence this whole fallback exists to fix.
     pub fn start_recording(&mut self, selected: Option<TrackId>) -> Result<(), SessionError> {
-        if self.take.is_some() {
+        if self.take.is_some() || self.note_take.is_some() {
             return Err(SessionError::AlreadyRecording);
         }
-        if self.calibration.is_some() {
+        if self.calibration.is_some() || self.typing_calibration_run.is_some() {
             return Err(SessionError::CalibrationBusy);
         }
         let targets = self.record_targets(selected);
         if targets.is_empty() {
+            // A track that holds notes records what the typing keyboard plays onto it, which
+            // needs no device and no folder. See `note_take`.
+            if let Some(track) = selected.filter(|track| {
+                self.project
+                    .track(*track)
+                    .is_some_and(|found| found.kind.holds_notes())
+            }) {
+                return self.start_note_take(track);
+            }
             return Err(SessionError::NothingToRecordOnto);
         }
         // Re-checked rather than trusted: a track may have been deleted, or turned into something
@@ -793,6 +808,9 @@ impl Session {
     /// abandoned should leave the history exactly as it found it, and until the file is closed
     /// there is nothing in the document to undo.
     pub fn stop_recording(&mut self) -> Result<RecordingReport, SessionError> {
+        if self.note_take.is_some() {
+            return self.stop_note_take();
+        }
         let take = self.take.take().ok_or(SessionError::NotRecording)?;
         let Take { writer, files, .. } = take;
 
@@ -1039,7 +1057,7 @@ impl Session {
     }
 
     /// Where an engine frame sits on the musical timeline.
-    fn tick_of_frame(&self, frame: u64) -> Ticks {
+    pub(super) fn tick_of_frame(&self, frame: u64) -> Ticks {
         let rate = self.engine.sample_rate().max(1.0);
         self.project
             .tempo_map
@@ -1705,15 +1723,19 @@ mod tests {
 
     #[test]
     fn a_selection_that_could_not_hold_a_take_is_not_a_target() {
-        // Selecting a synth and pressing Record must say so rather than reaching past it for
-        // whichever audio track happens to be nearest.
+        // Selecting a synth and pressing Record must not reach past it for whichever audio
+        // track happens to be nearest: it records the typing keyboard onto the synth instead.
         let mut session = session();
         let synth = session.add_default_instrument_track("Synth").unwrap();
         session.add_audio_track("Vocals");
         assert!(targets(&mut session, Some(synth)).is_empty());
         assert!(targets(&mut session, None).is_empty());
+        session.start_recording(Some(synth)).unwrap();
+        assert!(session.recording_notes());
+        session.stop_recording().unwrap();
+        // With nothing selected there is still nothing to record onto.
         assert!(matches!(
-            session.start_recording(Some(synth)),
+            session.start_recording(None),
             Err(SessionError::NothingToRecordOnto)
         ));
     }

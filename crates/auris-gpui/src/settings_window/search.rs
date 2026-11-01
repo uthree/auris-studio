@@ -191,6 +191,8 @@ impl Section {
                 Key::AsioInputNote,
                 Key::InputLatency,
                 Key::InputLatencyNote,
+                Key::TypingLatency,
+                Key::TypingLatencyNote,
             ],
             Self::Rate => &[Key::SampleRate, Key::DeviceDefaultRate],
             Self::Buffer => &[Key::BufferSize, Key::RequestedBufferNote],

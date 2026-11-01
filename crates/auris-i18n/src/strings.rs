@@ -692,6 +692,16 @@ strings! {
         en: "Not measured: recordings use the devices' reported latency",
         ja: "未計測: デバイスが報告する遅延で録音位置を補正しています"
     }
+    TypingLatency { en: "Musical typing latency", ja: "ミュージカルタイピングの遅延" }
+    TypingLatencyNote {
+        en: "Measures how late notes played on the computer keyboard arrive. Press Measure, listen to the first bar of clicks, then tap any key on every click of the next two.",
+        ja: "PC キーボードで弾いたノートがどれだけ遅れて届くかを測ります。「計測」を押し、最初の1小節はクリックを聞き、続く2小節はクリックごとに好きなキーを叩いてください。"
+    }
+    TappingAlong { en: "Listen for one bar, then tap any key on each click…", ja: "1小節聞いてから、クリックごとにキーを叩いてください…" }
+    TypingLatencyUncalibrated {
+        en: "Not measured: notes are placed where the key reached the application",
+        ja: "未計測: キーがアプリに届いた時点の位置にノートを置きます"
+    }
     ErrorCalibrationBusy {
         en: "stop playback and recording before measuring the input latency",
         ja: "入力遅延を計測する前に、再生と録音を止めてください"

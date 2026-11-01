@@ -46,7 +46,7 @@ const CLICKS: u32 = 8;
 ///
 /// Long enough that a click's echo in an ordinary room has died before the next one starts, and
 /// that the search window around each click can run well past any latency a device has.
-const BEAT_SECONDS: f64 = 0.6;
+pub(super) const BEAT_SECONDS: f64 = 0.6;
 
 /// How far before its expected place a click is searched for, as a fraction of a beat.
 ///
@@ -87,7 +87,7 @@ const FEWEST_CLICKS: usize = 5;
 const STEADIEST_SPREAD_MS: f64 = 2.0;
 
 /// The master level the arrangement is held at while the clicks play, in decibels.
-const SILENT_DB: f32 = -200.0;
+pub(super) const SILENT_DB: f32 = -200.0;
 
 /// A measurement under way.
 pub(super) struct Calibration {
@@ -138,7 +138,11 @@ impl Session {
     /// Refused while the transport is moving or a take is running, because the measurement is
     /// both of those things itself.
     pub fn start_input_calibration(&mut self) -> Result<(), SessionError> {
-        if self.calibration.is_some() || self.take.is_some() || self.is_playing() {
+        if self.calibration.is_some()
+            || self.typing_calibration_run.is_some()
+            || self.is_recording()
+            || self.is_playing()
+        {
             return Err(SessionError::CalibrationBusy);
         }
         self.calibration_result = None;
@@ -404,7 +408,7 @@ pub(crate) fn measure_clicks(
     })
 }
 
-fn median(values: &mut [f64]) -> Option<f64> {
+pub(super) fn median(values: &mut [f64]) -> Option<f64> {
     if values.is_empty() {
         return None;
     }

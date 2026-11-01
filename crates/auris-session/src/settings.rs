@@ -141,6 +141,26 @@ pub struct AudioPreferences {
     ///
     /// [`Session::start_input_calibration`]: crate::Session::start_input_calibration
     pub input_calibrations: Vec<InputCalibration>,
+    /// How late a key of the typing keyboard arrives after it was pressed, once measured.
+    ///
+    /// One figure rather than one per device: the output's own latency is already read off its
+    /// clock, so what is left is the keyboard, the operating system and the window's event loop,
+    /// none of which changes with the audio interface. See
+    /// [`Session::start_typing_calibration`](crate::Session::start_typing_calibration).
+    pub typing_calibration: Option<TypingCalibration>,
+}
+
+/// How late the typing keyboard's notes arrive, as measured by tapping along to a click.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct TypingCalibration {
+    /// How much later than the click the taps arrived, in milliseconds: the median.
+    ///
+    /// Includes the player's own habit of pressing early or late, which is the point — what is
+    /// taken off a recorded note is the distance between where it was meant to be and where it
+    /// arrived, whatever made it.
+    pub offset_ms: f64,
+    /// The median distance of a tap from that, in milliseconds.
+    pub spread_ms: f64,
 }
 
 /// A measured correction to where recorded audio lands, for one arrangement of devices.
@@ -186,6 +206,7 @@ impl Default for AudioPreferences {
             // per-block overhead stays small.
             block_frames: 512,
             input_calibrations: Vec::new(),
+            typing_calibration: None,
         }
     }
 }
