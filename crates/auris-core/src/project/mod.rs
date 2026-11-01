@@ -41,6 +41,7 @@ pub mod drum;
 mod expression;
 mod ghost;
 mod groove;
+mod layer;
 pub use expression::Expression;
 pub use groove::{GroovePoint, GrooveTemplate};
 mod strum;
@@ -55,6 +56,7 @@ pub use volume_contour::{VolumeContour, VolumeContourPreset};
 mod mixer_view;
 mod recipe;
 mod routing;
+pub use layer::{LayerShape, LayerVoice, MAX_LAYER_OFFSET, NoteSource, PlayedClips};
 pub use mixer_view::{MixerGraphView, MixerNodePosition};
 mod track;
 mod transform;
@@ -298,11 +300,12 @@ impl Default for Project {
 
 impl Project {
     /// Schema version written into saved files and required when opening them.
+    /// Version 33 adds layers: instrument tracks that follow another track's notes.
     /// Version 32 stores zero or more track outputs; older files' single outputs load as one route.
     /// Version 31 adds power, added-tone, 6/9 and thirteenth chord qualities to stored harmony.
     /// Version 30 adds eleventh chord qualities to stored harmony.
     /// Version 29 adds ordered, named manual drum lanes beside generation-role assignments.
-    pub const FORMAT_VERSION: u32 = 32;
+    pub const FORMAT_VERSION: u32 = 33;
 
     /// The name a document carries until somebody — a person or the agent — gives it one.
     pub const UNTITLED: &'static str = "Untitled";

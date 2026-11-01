@@ -37,6 +37,7 @@ enum InspectorSection {
     Performance,
     Sound,
     Effects,
+    Layer,
 }
 
 impl InspectorSection {
@@ -46,6 +47,7 @@ impl InspectorSection {
             Self::Performance => "inspector-performance",
             Self::Sound => "inspector-sound",
             Self::Effects => "inspector-effects",
+            Self::Layer => "inspector-layer",
         }
     }
 
@@ -55,6 +57,7 @@ impl InspectorSection {
             Self::Performance => Key::PerformHeading,
             Self::Sound => Key::InspectorSound,
             Self::Effects => Key::InspectorEffects,
+            Self::Layer => Key::InspectorLayer,
         }
     }
 }
@@ -125,6 +128,20 @@ pub(crate) fn reorder_delta(
 /// third surface draws the same chain. Zero is reserved for the empty slot, which has no id.
 pub(crate) fn insert_element_key(slot: Option<EffectSlotId>) -> usize {
     slot.map_or(0, |id| id.0 as usize + 1)
+}
+
+/// How many times a looped clip's content plays, as the inspector writes it: `×3`, or `×2.5` when
+/// the last pass is cut off part-way.
+///
+/// One decimal, rounded down, so a loop that stops a hair short of its third pass never claims to
+/// reach it.
+pub(crate) fn loop_pass_label(content: Ticks, sounding: Ticks) -> String {
+    let content = content.raw().max(1);
+    let tenths = sounding.raw().max(0).saturating_mul(10) / content;
+    match tenths % 10 {
+        0 => format!("×{}", tenths / 10),
+        rest => format!("×{}.{rest}", tenths / 10),
+    }
 }
 
 /// The title strip at the top of a side panel.
@@ -327,6 +344,43 @@ impl AurisApp {
             .into_any_element()
     }
 
+    /// The clip's loop switch: the inspector's half of the loop edge on the name bar.
+    ///
+    /// Pressing it does what the L key and the context menu do — the content repeats out to the
+    /// next clip on the lane, or once more where there is none — so the three ways in agree about
+    /// where a fresh loop ends. The value is the number of times the content plays, a partial last
+    /// pass included, because that is the fact a dragged loop edge leaves hard to read.
+    fn clip_loop_row(&self, clip: ClipId, cx: &mut gpui::Context<Self>) -> AnyElement {
+        let looped = self.session.clip_is_looped(clip);
+        let value = match (
+            looped,
+            self.session.clip_content_length(clip),
+            self.session.clip_sounding_length(clip),
+        ) {
+            (true, Some(content), Some(sounding)) => {
+                format!(
+                    "{} · {}",
+                    self.t(Key::ValueOn),
+                    loop_pass_label(content, sounding)
+                )
+            }
+            _ => self.t(Key::ValueOff).to_string(),
+        };
+        crate::ui::widgets::picker_row(
+            "inspector-clip-loop",
+            self.t(Key::InspectorLoop),
+            value,
+            crate::ui::widgets::RowColumn::Equal,
+            crate::ui::widgets::PickerBehavior::Toggle(looped),
+            &self.theme,
+            cx.listener(move |this, _, _, cx| {
+                this.toggle_clip_loop(clip);
+                cx.notify();
+            }),
+        )
+        .into_any_element()
+    }
+
     fn inspector_scope(&self, title: Key) -> impl IntoElement + use<> {
         div()
             .flex_shrink_0()
@@ -341,11 +395,19 @@ impl AurisApp {
     fn render_track_inspector(&mut self, cx: &mut gpui::Context<Self>) -> AnyElement {
         let theme = self.theme.clone();
         let mut sections: Vec<AnyElement> = Vec::new();
+        // Every clip, recorded or written, can repeat — so the scope and its loop switch are
+        // offered for both kinds, and what only a score has follows below it.
+        if let Some(clip) = self
+            .selected_clip
+            .filter(|clip| self.session.clip_content_length(*clip).is_some())
+        {
+            sections.push(self.inspector_scope(Key::InspectorClip).into_any_element());
+            sections.push(self.clip_loop_row(clip, cx));
+        }
         if let Some(clip) = self
             .selected_clip
             .filter(|clip| self.project().midi_clip(*clip).is_some())
         {
-            sections.push(self.inspector_scope(Key::InspectorClip).into_any_element());
             if let Some(recipe) = self.session.clip_recipe(clip) {
                 let mut summary = self
                     .t(crate::ui::context_menu::preset_key(recipe.preset))
@@ -412,6 +474,7 @@ impl AurisApp {
         };
         let is_drum = track.kind.is_drum();
         let is_singer = track.kind.is_singer();
+        let is_layer = track.kind.layer().is_some();
         let instrument_id = track
             .kind
             .as_instrument()
@@ -424,6 +487,12 @@ impl AurisApp {
             .collect();
 
         sections.push(self.inspector_scope(Key::Track).into_any_element());
+        // A layer's own settings come first: everything below them is any track's.
+        if is_layer {
+            let summary = self.layer_summary(track_id);
+            let rows = self.layer_rows(track_id, cx);
+            sections.push(self.inspector_section(InspectorSection::Layer, summary, rows, cx));
+        }
         let sound_summary = if is_singer {
             if self
                 .auto_sing
@@ -480,8 +549,7 @@ impl AurisApp {
                             Some(portrait) => portrait,
                             None => gpui::svg()
                                 .path(artwork)
-                                .w(gpui::px(150.0))
-                                .h(gpui::px(140.0))
+                                .size(gpui::px(120.0))
                                 .text_color(theme.accent)
                                 .into_any_element(),
                         },
@@ -1235,45 +1303,39 @@ impl AurisApp {
 }
 
 /// Presentation artwork follows the shared sound classification and manual corrections.
+///
+/// The inspector draws the same instrument the library row does, so a sound the classifier
+/// could not place falls back on the built-in instrument's own family before the waveform.
 fn sound_artwork(
     id: &str,
     family: auris_session::SoundIcon,
     drum: bool,
     singer: bool,
 ) -> &'static str {
-    if singer {
-        return "sounds/voice.svg";
-    }
-    if drum {
-        return "sounds/drums.svg";
-    }
     use auris_session::SoundIcon;
-    match family {
-        SoundIcon::Piano | SoundIcon::Organ => return "sounds/keys.svg",
-        SoundIcon::Guitar | SoundIcon::Bass | SoundIcon::Strings | SoundIcon::Pluck => {
-            return "sounds/strings.svg";
+    let family = if singer {
+        SoundIcon::Voice
+    } else if drum {
+        SoundIcon::Drum
+    } else if family != SoundIcon::Sound {
+        family
+    } else {
+        match id {
+            "auris.physical.piano" => SoundIcon::Piano,
+            "auris.physical.guitar" | "auris.physical.electric_guitar" => SoundIcon::Guitar,
+            "auris.physical.bass" => SoundIcon::Bass,
+            "auris.physical.violin" => SoundIcon::Strings,
+            "auris.physical.clarinet" | "auris.physical.tin_whistle" => SoundIcon::Wind,
+            "auris.physical.mallet"
+            | "auris.physical.hammered_dulcimer"
+            | "auris.physical.bell" => SoundIcon::Bell,
+            "auris.synth.drumkit" | "auris.synth.noisedrum" => SoundIcon::Drum,
+            "auris.synth.vocal" | "auris.physical.choir" => SoundIcon::Voice,
+            "auris.synth.chiptune" | "auris.synth.fm2" => SoundIcon::Synth,
+            _ => SoundIcon::Sound,
         }
-        SoundIcon::Brass | SoundIcon::Wind => return "sounds/wind.svg",
-        SoundIcon::Drum => return "sounds/drums.svg",
-        SoundIcon::Bell => return "sounds/bell.svg",
-        SoundIcon::Voice => return "sounds/voice.svg",
-        SoundIcon::Synth | SoundIcon::Pad => return "sounds/synth.svg",
-        SoundIcon::Sound => {}
-    }
-    match id {
-        "auris.physical.piano" => "sounds/keys.svg",
-        "auris.physical.guitar"
-        | "auris.physical.electric_guitar"
-        | "auris.physical.bass"
-        | "auris.physical.violin" => "sounds/strings.svg",
-        "auris.physical.clarinet" | "auris.physical.tin_whistle" => "sounds/wind.svg",
-        "auris.physical.mallet" | "auris.physical.hammered_dulcimer" => "sounds/mallet.svg",
-        "auris.physical.bell" => "sounds/bell.svg",
-        "auris.synth.drumkit" | "auris.synth.noisedrum" => "sounds/drums.svg",
-        "auris.synth.vocal" | "auris.physical.choir" => "sounds/voice.svg",
-        "auris.synth.chiptune" | "auris.synth.fm2" => "sounds/synth.svg",
-        _ => "sounds/wave.svg",
-    }
+    };
+    super::icons::sound_artwork_path(family)
 }
 
 /// A plugin's display name, translated where the term is known.
@@ -1302,6 +1364,50 @@ mod tests {
     use super::*;
     use crate::harness::{click, paint, resize, with_a_clip};
     use gpui::{TestAppContext, point, px, size};
+
+    #[test]
+    fn the_loop_value_counts_passes_and_never_rounds_one_up() {
+        let bar = Ticks(3840);
+        assert_eq!(loop_pass_label(bar, bar * 4), "×4");
+        assert_eq!(loop_pass_label(bar, Ticks(3840 * 5 / 2)), "×2.5");
+        // A tick short of the third pass is still two and a bit, not three.
+        assert_eq!(loop_pass_label(bar, bar * 3 - Ticks(1)), "×2.9");
+    }
+
+    #[gpui::test]
+    fn the_inspectors_loop_switch_repeats_the_clip_and_one_undo_takes_it_back(
+        cx: &mut TestAppContext,
+    ) {
+        let (app, cx, track, clip) = with_a_clip(cx);
+        app.update(cx, |this, _| {
+            this.select_track(track);
+            this.select_clip(Some(clip));
+        });
+        paint(&app, cx);
+        click("inspector-clip-loop", cx);
+        paint(&app, cx);
+        app.read_with(cx, |this, _| {
+            assert!(
+                this.session.clip_is_looped(clip),
+                "the switch loops the clip"
+            );
+            assert!(
+                this.session.clip_sounding_length(clip) > this.session.clip_content_length(clip)
+            );
+        });
+        click("inspector-clip-loop", cx);
+        paint(&app, cx);
+        app.read_with(cx, |this, _| {
+            assert!(
+                !this.session.clip_is_looped(clip),
+                "and pressed again, stops it"
+            );
+        });
+        app.update(cx, |this, _| {
+            this.session.undo();
+        });
+        app.read_with(cx, |this, _| assert!(this.session.clip_is_looped(clip)));
+    }
 
     #[gpui::test]
     fn inspector_disclosure_activation_does_not_dispatch_transport_commands(
@@ -1401,13 +1507,13 @@ mod tests {
             );
         }
         app.read_with(cx, |this, _| {
-            assert_eq!(this.inspector_collapsed, [true; 4])
+            assert_eq!(this.inspector_collapsed, [true, true, true, true, false])
         });
 
         app.update(cx, |this, _| this.select_track(other));
         paint(&app, cx);
         app.read_with(cx, |this, _| {
-            assert_eq!(this.inspector_collapsed, [true; 4])
+            assert_eq!(this.inspector_collapsed, [true, true, true, true, false])
         });
         app.update(cx, |this, _| {
             this.select_track(track);
@@ -1501,7 +1607,7 @@ mod tests {
                 false,
                 false
             ),
-            "sounds/keys.svg"
+            "sounds/sound-piano.svg"
         );
         assert_eq!(
             sound_artwork(
@@ -1510,7 +1616,7 @@ mod tests {
                 false,
                 false
             ),
-            "sounds/strings.svg"
+            "sounds/sound-strings.svg"
         );
         assert_eq!(
             sound_artwork(
@@ -1519,7 +1625,7 @@ mod tests {
                 false,
                 false
             ),
-            "sounds/wind.svg"
+            "sounds/sound-wind.svg"
         );
         assert_eq!(
             sound_artwork(
@@ -1528,11 +1634,11 @@ mod tests {
                 true,
                 false
             ),
-            "sounds/drums.svg"
+            "sounds/sound-drum.svg"
         );
         assert_eq!(
             sound_artwork("", auris_session::SoundIcon::Sound, false, true),
-            "sounds/voice.svg"
+            "sounds/sound-voice.svg"
         );
         assert_eq!(
             sound_artwork(
@@ -1541,11 +1647,11 @@ mod tests {
                 false,
                 false
             ),
-            "sounds/synth.svg"
+            "sounds/sound-synth.svg"
         );
         assert_eq!(
             sound_artwork("third.party", auris_session::SoundIcon::Sound, false, false),
-            "sounds/wave.svg"
+            "sounds/sound-sound.svg"
         );
     }
 

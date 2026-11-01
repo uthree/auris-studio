@@ -41,6 +41,9 @@ fn transcript(entries: &[ChatEntry]) -> Vec<Value> {
             }
             ChatEntry::Error(text) => json!({"kind":"error","text":text}),
             ChatEntry::Note(key) => json!({"kind":"note","key":format!("{key:?}")}),
+            ChatEntry::Choices { card, picked, .. } => {
+                json!({"kind":"choices","card":card,"picked":picked})
+            }
             ChatEntry::Tool {
                 name,
                 args,

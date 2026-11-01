@@ -129,6 +129,16 @@ absolute ticks and note positions stay unchanged. Read reports native BPM bounds
 Meter numerator is 1..32 and denominator a power of two within 1..32. Use `set_loop`
 for a one-based bar playback range.
 
+`layer` doubles or splits a part without copying its notes. `add` places an
+instrument track below a melodic or singer source; drums and other layers cannot be
+followed. `shape` changes only the fields it names: `lowest`/`highest` choose notes
+by source key, `voice` keeps `all`, the `top` or the `bottom` note at each onset,
+then `transpose` (semitones), `velocity` and `length` (multipliers) and
+`offset_quarters` apply; `reset` restores the identity first. `read` returns the
+followed track and shape, which `inspect_project` also lists under `layer`. A layer
+has no clips of its own, so note edits go to the source. `detach` copies the shaped
+notes into the layer, and removing a source detaches its layers in the same Undo.
+
 ## Sound search, controls and mixing
 
 `search_instruments` takes one `request` object: mode `text` with query, `similar`

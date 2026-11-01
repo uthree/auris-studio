@@ -54,6 +54,7 @@ mod analysis;
 mod assets;
 mod audition;
 mod autosave;
+mod calibrate;
 mod checkpoints;
 #[cfg(test)]
 mod choir_tests;
@@ -69,6 +70,7 @@ mod generated;
 mod groove;
 mod harmony;
 mod hosted;
+mod layers;
 mod levels;
 pub mod lyric_harness;
 mod lyrics;
@@ -77,6 +79,7 @@ mod monitor;
 mod multitrack_transcription;
 mod musical_analysis;
 mod note_preview;
+mod note_take;
 pub(crate) mod notes;
 mod output_preview;
 mod perform;
@@ -97,6 +100,7 @@ mod timbre;
 mod tracks;
 mod transport;
 mod typing;
+mod typing_calibration;
 mod visualizer;
 mod vst3;
 pub use visualizer::{VisualizerFrame, VisualizerSpectrum};
@@ -511,6 +515,16 @@ pub struct Session {
     /// "three beats to go" needs the length of a beat, and this side is where that was worked
     /// out. Stale between takes, and harmless — nothing reads it while the count is over.
     counting: Option<auris_engine::CountIn>,
+    /// A measurement of the input's latency, while its clicks are playing. See [`calibrate`].
+    calibration: Option<calibrate::Calibration>,
+    /// How the last measurement came out, until a frontend asks.
+    calibration_result: Option<Result<crate::settings::InputCalibration, SessionError>>,
+    /// The delay compensation of the last graph handed to the engine, in engine frames.
+    ///
+    /// The metronome is laid over the mix past the compensation, so its clicks reach the speaker
+    /// this much sooner than the music at the same position — which a latency measurement made
+    /// with them has to take back off.
+    graph_latency: usize,
     /// The input device, open while a take is running or somebody is monitoring.
     ///
     /// One device serving both, because it is one device: a take that closed it on stopping would
@@ -519,6 +533,12 @@ pub struct Session {
     input: Option<auris_engine::Capture>,
     /// The take that is running, if one is. See [`record`].
     take: Option<record::Take>,
+    /// What the typing keyboard is playing onto a track, while Record is on one that holds notes.
+    note_take: Option<note_take::NoteTake>,
+    /// A tap-along measuring the typing keyboard, while its click plays.
+    typing_calibration_run: Option<typing_calibration::TypingCalibrationRun>,
+    /// How the last tap-along came out, until a frontend asks.
+    typing_calibration_result: Option<Result<crate::settings::TypingCalibration, SessionError>>,
     /// The Japanese text frontend: the folder the settings name, or the shipped dictionary.
     ///
     /// `None` only where neither exists, and the session sings anyway: kana lyrics go
@@ -750,6 +770,12 @@ impl Session {
             armed: Vec::new(),
             input_channels: None,
             counting: None,
+            calibration: None,
+            note_take: None,
+            typing_calibration_run: None,
+            typing_calibration_result: None,
+            calibration_result: None,
+            graph_latency: 0,
             input: None,
             monitored: Vec::new(),
             typing: MusicalTyping::default(),
@@ -844,6 +870,9 @@ impl Session {
         if self.take.is_some() {
             return Err(SessionError::RecordingInProgress);
         }
+        // A measurement is against the devices being replaced, and would be kept for them.
+        self.cancel_input_calibration();
+        self.cancel_typing_calibration();
         if preferences.uses_asio() {
             preferences.input_device = preferences.device.clone();
         }
@@ -1113,6 +1142,8 @@ impl Session {
             device.discard_pending();
         }
         self.recover_lost_output(std::time::Instant::now());
+        self.service_calibration();
+        self.service_typing_calibration();
         // Writing a parameter is the one edit that reaches a plugin without rebuilding, so it is
         // also the one that can leave the tracks compensated for the wrong number of frames.
         // Rebuilding re-measures every chain and re-sizes the delay lines to match — and going
@@ -1722,6 +1753,7 @@ impl Session {
         // runs on every structural edit, and a monitor that did not survive one would go quiet the
         // moment somebody added a track while playing.
         graph.set_monitors(&self.monitor_taps());
+        self.graph_latency = graph.latency_frames();
         if let Err(error) = self.engine.set_graph(graph) {
             log::warn!("could not update the render graph: {error}");
         }

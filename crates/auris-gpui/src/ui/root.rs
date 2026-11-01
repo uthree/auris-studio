@@ -259,7 +259,7 @@ impl Render for AurisApp {
             .text_size(theme.atelier.typography.size_md)
             .child(title_bar)
             .children(project_tabs)
-            .child(transport)
+            .children(transport)
             .child(
                 div()
                     .flex()
@@ -2003,6 +2003,15 @@ impl AurisApp {
             } => {
                 let delta = f32::from(event.position.x - start_x);
                 self.drag_perform_dial(clip, dial, start_fraction, delta);
+            }
+            Drag::LayerDial {
+                track,
+                dial,
+                start_fraction,
+                start_x,
+            } => {
+                let delta = f32::from(event.position.x - start_x);
+                self.drag_layer_dial(track, dial, start_fraction, delta);
             }
             Drag::VolumeContourPoint {
                 clip,

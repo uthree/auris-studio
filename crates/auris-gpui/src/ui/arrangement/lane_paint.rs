@@ -147,13 +147,11 @@ pub(super) fn paint_lane(
             origin: point(x, bounds.origin.y + CLIP_INSET),
             size: size(width.max(px(3.0)), bounds.size.height - CLIP_INSET * 2.0),
         };
-        let selected = lane.selected.contains(&clip.id);
+        // A layer's lane shows its source's clips under the same ids, and lighting them up there
+        // would say the layer holds something it does not.
+        let selected = !lane.borrowed && lane.selected.contains(&clip.id);
         let (title_fill, title_ink) = clip_title_colors(theme, lane.color, selected, clip.muted);
-        let body = if clip.muted {
-            Theme::translucent(lane.color, 0.08)
-        } else {
-            Theme::translucent(lane.color, 0.30)
-        };
+        let body_alpha = if clip.muted { 0.08 } else { 0.30 };
         let radius = theme
             .atelier
             .shape
@@ -161,24 +159,57 @@ pub(super) fn paint_lane(
             .min(clip_bounds.size.width / 2.0)
             .min(clip_bounds.size.height / 2.0);
         if lane.rendered_spectrum.is_none() {
-            paint::rounded_rect(window, clip_bounds, radius, body);
+            // The repeats are the same colour at half the strength, so the phrase that was
+            // written and the echo of it read apart from across the window — the notes inside
+            // fade the same way below. The written pass is laid over the faint block rather than
+            // beside it, so the outline stays one rounded shape.
+            let (repeat_alpha, first_alpha) = repeat_body_alphas(body_alpha);
+            let first_pass = view
+                .duration_to_width(clip.length)
+                .min(clip_bounds.size.width);
+            if first_pass < clip_bounds.size.width {
+                paint::rounded_rect(
+                    window,
+                    clip_bounds,
+                    radius,
+                    Theme::translucent(lane.color, repeat_alpha),
+                );
+                paint::rect_with_corners(
+                    window,
+                    Bounds {
+                        origin: clip_bounds.origin,
+                        size: size(first_pass, clip_bounds.size.height),
+                    },
+                    Corners {
+                        top_left: radius,
+                        top_right: px(0.0),
+                        bottom_right: px(0.0),
+                        bottom_left: radius,
+                    },
+                    Theme::translucent(lane.color, first_alpha),
+                );
+            } else {
+                paint::rounded_rect(
+                    window,
+                    clip_bounds,
+                    radius,
+                    Theme::translucent(lane.color, body_alpha),
+                );
+            }
         }
-        // A brighter top strip carries the clip name and doubles as the grab area. Only its
-        // top corners are rounded, so it sits inside the clip's outline instead of cutting a
-        // square notch out of it.
-        paint::rect_with_corners(
+        // A brighter top strip carries the clip name and doubles as the grab area. It is the
+        // clip's own rounded shape masked to the strip's height, rather than a strip rounded on
+        // its own: a quad's corners are clamped to half its height, so a 14 px strip could only
+        // ever round its top corners to 7 px while the clip's bottom corners kept the full
+        // radius — two different corners on one block, and the outline's curve showing through
+        // the gap at the top.
+        paint::clipped(
             window,
             Bounds {
                 origin: clip_bounds.origin,
                 size: size(clip_bounds.size.width, TITLE_HEIGHT),
             },
-            Corners {
-                top_left: radius,
-                top_right: radius,
-                bottom_right: px(0.0),
-                bottom_left: px(0.0),
-            },
-            title_fill,
+            |window| paint::rounded_rect(window, clip_bounds, radius, title_fill),
         );
         // A selected clip gets an outline as well as a lit title bar, so the selection reads
         // at a glance on a lane packed with clips.
@@ -202,7 +233,7 @@ pub(super) fn paint_lane(
                 window,
                 Bounds {
                     origin: point(
-                        clip_bounds.origin.x + clip_bounds.size.width - dot - px(4.0),
+                        clip_bounds.origin.x + clip_bounds.size.width - dot - name_inset(radius),
                         clip_bounds.origin.y + (TITLE_HEIGHT - dot) / 2.0,
                     ),
                     size: size(dot, dot),
@@ -367,7 +398,7 @@ pub(super) fn paint_lane(
                 window,
                 cx,
                 point(
-                    clip_bounds.origin.x + px(5.0),
+                    clip_bounds.origin.x + name_inset(radius),
                     clip_bounds.origin.y + px(1.5),
                 ),
                 name,
@@ -394,7 +425,10 @@ pub(super) fn paint_lane(
             let width = paint::measure_label(window, text.clone(), px(9.0));
             let pill = Bounds {
                 origin: point(
-                    clip_bounds.origin.x + clip_bounds.size.width - width - padding * 3.0,
+                    clip_bounds.origin.x + clip_bounds.size.width
+                        - width
+                        - padding * 2.0
+                        - name_inset(radius),
                     clip_bounds.origin.y + inset / 2.0,
                 ),
                 size: size(width + padding * 2.0, height),
@@ -415,9 +449,61 @@ pub(super) fn paint_lane(
     }
 }
 
+/// How far in from a clip's side its name (and the composer's dot, on the other side) sits.
+///
+/// Five pixels was enough while the name bar's corners were clamped small; under the clip's full
+/// radius the curve reaches into the strip, and the name started inside it. Half the radius plus
+/// a little clears the arc at the height the text is drawn, and a square-cornered theme keeps the
+/// old five.
+fn name_inset(radius: Pixels) -> Pixels {
+    px(5.0).max(radius * 0.5 + px(3.0))
+}
+
+/// The body strengths of a looped clip: its repeats, and what the written pass lays over them so
+/// that the two layers together come to exactly `body` — the strength an unlooped clip has.
+///
+/// The repeats take half. Laying one translucent fill over another composes as
+/// `1 - (1 - a)(1 - b)`, so the overlay is solved from that rather than being `body - repeat`,
+/// which would leave the written pass of a looped clip paler than the same clip unlooped.
+fn repeat_body_alphas(body: f32) -> (f32, f32) {
+    let repeat = body * 0.5;
+    let first = 1.0 - (1.0 - body) / (1.0 - repeat);
+    (repeat, first)
+}
+
 #[cfg(test)]
 mod tests {
     use super::clip_title_colors;
+
+    #[test]
+    fn a_clips_name_clears_its_rounded_corner() {
+        // At the text's height (a few pixels below the top) the corner's arc reaches in by
+        // r - sqrt(r^2 - (r - y)^2); the name has to start past it.
+        for radius in [0.0_f32, 7.0, 14.0] {
+            let y = 3.0_f32.min(radius);
+            let arc = radius - (radius * radius - (radius - y).powi(2)).max(0.0).sqrt();
+            let inset = f32::from(super::name_inset(gpui::px(radius)));
+            assert!(
+                inset >= arc + 2.0,
+                "radius {radius}: inset {inset} vs arc {arc}"
+            );
+            assert!(inset >= 5.0);
+        }
+    }
+
+    #[test]
+    fn a_looped_clips_written_pass_is_as_strong_as_the_same_clip_unlooped() {
+        for body in [0.08_f32, 0.30] {
+            let (repeat, first) = super::repeat_body_alphas(body);
+            assert!(
+                (repeat - body / 2.0).abs() < 1e-6,
+                "repeats at half strength"
+            );
+            let composed = 1.0 - (1.0 - repeat) * (1.0 - first);
+            assert!((composed - body).abs() < 1e-6, "{composed} != {body}");
+            assert!(first > 0.0 && first < body);
+        }
+    }
     use crate::theme::{SCHEMES, Theme, contrast_ratio};
     use auris_session::prelude::Color;
 

@@ -319,8 +319,16 @@ impl Session {
             let next = request.offset + notes.len();
             let first_bar = signatures.bar_of(clip.start);
             let last_bar = signatures.bar_of(clip.start + clip.length - Ticks(1));
-            pages.push(serde_json::json!({"clip":request.clip,"bars":[first_bar,last_bar],"offset":request.offset,"notes":notes,"total":clip.notes.len(),
-                "next_offset":(next < clip.notes.len()).then_some(next),"truncated":next < clip.notes.len()}));
+            let mut page = serde_json::json!({"clip":request.clip,"bars":[first_bar,last_bar],"offset":request.offset,"notes":notes,"total":clip.notes.len(),
+                "next_offset":(next < clip.notes.len()).then_some(next),"truncated":next < clip.notes.len()});
+            // A looped clip stores one pass and plays it again out to its loop end. Saying where
+            // the repeats stop keeps a model from writing the second pass out by hand.
+            if clip.sounding_length() > clip.length {
+                page["repeats_through_bar"] = signatures
+                    .bar_of(clip.start + clip.sounding_length() - Ticks(1))
+                    .into();
+            }
+            pages.push(page);
         }
         Ok(serde_json::json!({"revision":self.agent_document_revision()?,"time":TIME_UNITS,"clips":pages}).to_string())
     }

@@ -23,7 +23,11 @@ the executable embeds every preset for both automatic classifications and manual
 
 ## Sound artwork
 
-`sounds/` contains original monochrome SVG illustrations for instrument families in the
-inspector. These are embedded alongside the UI icons and tinted by the active theme. The shared sound
-classification and manual corrections select the artwork, with explicit built-in fallbacks and
-a waveform for unrecognised sounds.
+`sounds/sound-*.svg` is the inspector's large drawing of each family: the very same file as
+`icons/sound-*.svg` with `stroke-width="1"` in place of `2`, so a sound looks the same in the
+library row and in the inspector, only lighter where it is drawn big. Edit the icon, then copy it
+across with the stroke changed; a test in `provider_logo.rs` fails while the two differ.
+
+When drawing a family, follow Atelier's icon geometry: the 24×24 grid with nothing outside
+2–22, round caps and joins, `rx="2"` on enclosing shapes, no fills, and
+neighbouring strokes kept far enough apart that the glyph still separates at 16 px.

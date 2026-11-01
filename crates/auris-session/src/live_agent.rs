@@ -6,6 +6,7 @@ pub mod document_editing;
 pub mod file_jobs;
 pub mod harmony_suggestions;
 mod jobs;
+pub mod layers;
 pub mod recipes;
 pub mod vocal_editing;
 pub use jobs::{AgentJob, AgentResult, AgentStep};
@@ -41,6 +42,22 @@ fn sound_search_limit() -> usize {
     10
 }
 
+/// Adds `loop_end_tick` to a clip summary when the clip repeats past its own end.
+///
+/// Left off an unlooped clip so the common case costs a model nothing to read; present, it is the
+/// absolute tick where the repeats stop, which is the value `edit_clip`'s `loop` takes back.
+fn with_loop_end(
+    mut summary: serde_json::Value,
+    start: Ticks,
+    content: Ticks,
+    sounding: Ticks,
+) -> serde_json::Value {
+    if sounding > content {
+        summary["loop_end_tick"] = (start + sounding).raw().into();
+    }
+    summary
+}
+
 fn mixer_summary(mixer: &auris_core::project::MixerStrip) -> serde_json::Value {
     serde_json::json!({
         "gain_db":mixer.gain_db, "pan":mixer.pan,
@@ -59,6 +76,12 @@ pub enum Command {
     SuggestIssueReport {
         /// Generic title and evidence-based limitation, without private conversation excerpts.
         suggestion: crate::issue_report::Suggestion,
+    },
+    /// Ask the user one question with 2..8 fixed answers, shown as a card under your reply. Exclusive by default; multiple=true allows several. Use it instead of a numbered list whenever the user must choose before you can continue, then end your turn: the pick arrives as the user's next message with the exact labels, and the user may type something else instead. Never answer it yourself. No document edits.
+    OfferChoices {
+        /// Question, options and whether several may be picked.
+        #[serde(flatten)]
+        card: crate::choices::ChoiceCard,
     },
     /// Opt in to bounded transition evidence, read its cursor or stop collection. Starting requires explicit user consent via the host permission gate. No audio or document edits.
     ExecutionTrace {
@@ -247,7 +270,7 @@ pub enum Command {
         /// Explicit read, set or removal operation with absolute ticks.
         operation: document_editing::TimelineOperation,
     },
-    /// Move/copy/split/resize/remove MIDI or audio clips by stable ID. Preserves contents, recipes and performance unless explicitly frozen or baked. One atomic Undo step.
+    /// Move/copy/split/resize/loop/remove MIDI or audio clips by stable ID. Preserves contents, recipes and performance unless explicitly frozen or baked. A looped clip stores one pass (length_ticks) and repeats it to loop_end_tick, so edit the one pass rather than writing the repeats out. One atomic Undo step.
     EditClip {
         /// Stable clip ID from inspect_project.
         clip: u64,
@@ -475,7 +498,12 @@ pub enum Command {
         #[schemars(length(min = 1))]
         name: String,
     },
-    /// Remove one track and its clips.
+    /// Add a layer (an instrument track playing another melodic or singer track's notes, for doubling or splitting a part), read or reshape it, or detach it into notes of its own. Shape filters by source key range and top/bottom voice, then transposes and scales velocity/length and shifts by quarter notes; omitted fields keep their values. A layer has no clips of its own: edit the source's notes. Drums cannot be followed.
+    Layer {
+        /// Add, read, shape or detach.
+        operation: layers::Operation,
+    },
+    /// Remove one track and its clips. Layers following it are detached first, keeping their sound.
     RemoveTrack {
         /// Stable track ID.
         track: u64,
@@ -561,8 +589,10 @@ impl Command {
             Self::MixerGraph { operation } => !operation.is_read_only(),
             Self::EditClipCurve { operation, .. } => !operation.is_read_only(),
             Self::EditTimeline { operation } => !operation.is_read_only(),
+            Self::Layer { operation } => !operation.is_read_only(),
             Self::Inspect {}
             | Self::SuggestIssueReport { .. }
+            | Self::OfferChoices { .. }
             | Self::ExecutionTrace { .. }
             | Self::PhraseVariation { .. }
             | Self::SuggestHarmony { .. }
@@ -685,6 +715,10 @@ impl Session {
             Command::SuggestIssueReport { suggestion } => {
                 suggestion.validate()?;
                 Ok(serde_json::json!({"suggestion":suggestion,"published":false,"private_context_included":false,"next":"The desktop offers a report invitation. The human must open the draft and explicitly approve each private context category. No permission to disclose or publish has been granted."}).to_string())
+            }
+            Command::OfferChoices { card } => {
+                card.validate()?;
+                Ok(serde_json::json!({"shown":true,"multiple":card.multiple,"options":card.options.len(),"next":"The desktop shows the card. End your turn now without choosing for the user; the pick arrives as the user's next message."}).to_string())
             }
             Command::ExecutionTrace { operation } => self.execution_trace(operation),
             Command::PhraseVariation {
@@ -988,13 +1022,14 @@ impl Session {
                     .iter()
                     .map(|track| {
                         let clips: Vec<_> = if let Some(clips)=track.kind.note_clips() {
-                            clips.iter().map(|clip|serde_json::json!({"clip":clip.id.0,"name":clip.name,"start_tick":clip.start.raw(),"length_ticks":clip.length.raw(),"note_count":clip.notes.len()})).collect()
+                            clips.iter().map(|clip|with_loop_end(serde_json::json!({"clip":clip.id.0,"name":clip.name,"start_tick":clip.start.raw(),"length_ticks":clip.length.raw(),"note_count":clip.notes.len()}), clip.start, clip.length, clip.sounding_length())).collect()
                         } else if let Some(audio)=track.kind.as_audio() {
-                            audio.clips.iter().map(|clip|serde_json::json!({"clip":clip.id.0,"name":clip.name,"start_tick":clip.start.raw(),"length_ticks":project.audio_clip_length_ticks(clip).raw(),"gain_db":clip.gain_db,"source_bpm":clip.source_bpm,"follows_tempo":clip.follows_tempo,"fade_in_frames":clip.fade_in_frames,"fade_out_frames":clip.fade_out_frames,"source_frames":clip.length_frames,"source_sample_rate":project.audio_sources.get(&clip.source).map(|source|source.sample_rate),"fade_in_curve":clip.fade_in_curve,"fade_out_curve":clip.fade_out_curve})).collect()
+                            audio.clips.iter().map(|clip|with_loop_end(serde_json::json!({"clip":clip.id.0,"name":clip.name,"start_tick":clip.start.raw(),"length_ticks":project.audio_clip_length_ticks(clip).raw(),"gain_db":clip.gain_db,"source_bpm":clip.source_bpm,"follows_tempo":clip.follows_tempo,"fade_in_frames":clip.fade_in_frames,"fade_out_frames":clip.fade_out_frames,"source_frames":clip.length_frames,"source_sample_rate":project.audio_sources.get(&clip.source).map(|source|source.sample_rate),"fade_in_curve":clip.fade_in_curve,"fade_out_curve":clip.fade_out_curve}), clip.start, project.audio_clip_length_ticks(clip), project.audio_clip_sounding_ticks(clip))).collect()
                         } else { Vec::new() };
                         serde_json::json!({"track":track.id.0, "name":track.name,
                         "kind":track.kind.label(), "mixer":mixer_summary(&track.mixer), "clips":clips,"drum_assignments":self.drum_assignments(track.id),
                         "instrument":track.kind.as_instrument().map(|inner| &inner.instrument_id),
+                        "layer":track.kind.layer().map(|source| serde_json::json!({"follows":source.track.0,"shape":layers::shape_json(&source.shape)})),
                         "soundfont_preset":self.track_preset(track.id)})
                     })
                     .collect();
@@ -1087,6 +1122,7 @@ impl Session {
                 self.rename_track(TrackId(track), name).map_err(error)?;
                 Ok("Renamed track".into())
             }
+            Command::Layer { operation } => self.agent_layer(operation),
             Command::RemoveTrack { track } => {
                 self.remove_track(TrackId(track)).map_err(error)?;
                 Ok("Removed track".into())

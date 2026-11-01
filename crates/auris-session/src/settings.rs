@@ -131,6 +131,68 @@ pub struct AudioPreferences {
     pub sample_rate: Option<u32>,
     /// Callback size to request, in frames.
     pub block_frames: u32,
+    /// Measured corrections to where a take lands, one per arrangement of devices.
+    ///
+    /// The round trip `auris_engine::capture` takes off a take is what the operating system
+    /// *reports*, and a report leaves out whatever happens past the driver: a USB interface's
+    /// converters, a Bluetooth headset's buffering. [`Session::start_input_calibration`]
+    /// measures what is left over, and only the entry whose devices are the ones open now is
+    /// applied — a figure measured through one interface says nothing about another.
+    ///
+    /// [`Session::start_input_calibration`]: crate::Session::start_input_calibration
+    pub input_calibrations: Vec<InputCalibration>,
+    /// How late a key of the typing keyboard arrives after it was pressed, once measured.
+    ///
+    /// One figure rather than one per device: the output's own latency is already read off its
+    /// clock, so what is left is the keyboard, the operating system and the window's event loop,
+    /// none of which changes with the audio interface. See
+    /// [`Session::start_typing_calibration`](crate::Session::start_typing_calibration).
+    pub typing_calibration: Option<TypingCalibration>,
+}
+
+/// How late the typing keyboard's notes arrive, as measured by tapping along to a click.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct TypingCalibration {
+    /// How much later than the click the taps arrived, in milliseconds: the median.
+    ///
+    /// Includes the player's own habit of pressing early or late, which is the point — what is
+    /// taken off a recorded note is the distance between where it was meant to be and where it
+    /// arrived, whatever made it.
+    pub offset_ms: f64,
+    /// The median distance of a tap from that, in milliseconds.
+    pub spread_ms: f64,
+}
+
+/// A measured correction to where recorded audio lands, for one arrangement of devices.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct InputCalibration {
+    /// The backend it was measured on, as [`AudioPreferences::host`] names it.
+    pub host: Option<String>,
+    /// The output device, as [`AudioPreferences::device`] names it.
+    pub output: Option<String>,
+    /// The input device, as [`AudioPreferences::input_device`] names it.
+    pub input: Option<String>,
+    /// The callback size it was measured at: a driver's buffering moves with it.
+    pub block_frames: u32,
+    /// How much later than the reported round trip a performance arrives, in milliseconds.
+    ///
+    /// Positive when takes landed late, which is the usual direction: something between the
+    /// driver and the air that nobody reported. Negative when the report overstated it.
+    pub offset_ms: f64,
+    /// How far the individual clicks of the measurement strayed from it, in milliseconds.
+    ///
+    /// The median distance from the median, so one click that a cough landed on does not count.
+    pub spread_ms: f64,
+}
+
+impl InputCalibration {
+    /// Whether this was measured on the devices `audio` opens.
+    pub fn applies_to(&self, audio: &AudioPreferences) -> bool {
+        self.host == audio.host
+            && self.output == audio.device
+            && self.input == audio.input_device
+            && self.block_frames == audio.block_frames
+    }
 }
 
 impl Default for AudioPreferences {
@@ -143,6 +205,8 @@ impl Default for AudioPreferences {
             // ~11 ms at 48 kHz: responsive enough to audition notes against, long enough that
             // per-block overhead stays small.
             block_frames: 512,
+            input_calibrations: Vec::new(),
+            typing_calibration: None,
         }
     }
 }
@@ -153,6 +217,31 @@ impl AudioPreferences {
         self.host
             .as_deref()
             .is_some_and(|host| host.eq_ignore_ascii_case("ASIO"))
+    }
+
+    /// The measured correction for the devices these preferences open, if there is one.
+    pub fn input_calibration(&self) -> Option<&InputCalibration> {
+        self.input_calibrations
+            .iter()
+            .find(|calibration| calibration.applies_to(self))
+    }
+
+    /// Keeps `calibration`, replacing whatever was measured on the same devices before.
+    pub fn set_input_calibration(&mut self, calibration: InputCalibration) {
+        self.input_calibrations.retain(|kept| {
+            !(kept.host == calibration.host
+                && kept.output == calibration.output
+                && kept.input == calibration.input
+                && kept.block_frames == calibration.block_frames)
+        });
+        self.input_calibrations.push(calibration);
+    }
+
+    /// Forgets the correction for the devices these preferences open.
+    pub fn clear_input_calibration(&mut self) {
+        let current = self.clone();
+        self.input_calibrations
+            .retain(|kept| !kept.applies_to(&current));
     }
 
     /// Buffer sizes offered in a settings panel, in frames.
@@ -431,6 +520,81 @@ impl AgentPreferences {
     /// The model is the one field with no sensible default — everything else falls back.
     pub fn is_configured(&self) -> bool {
         !self.model.trim().is_empty()
+    }
+
+    /// Take over another surface's model choice: the route, the model and its reasoning.
+    ///
+    /// The choice is what the editor's agent and the song workshop share, so that whichever was
+    /// used last is what both open with next time. Everything else — paths, permissions,
+    /// limits, the system prompt — stays as this side has it.
+    pub fn adopt_choice(&mut self, from: &AgentPreferences) {
+        self.backend.clone_from(&from.backend);
+        self.provider.clone_from(&from.provider);
+        self.url.clone_from(&from.url);
+        self.api_key_env.clone_from(&from.api_key_env);
+        if from.discovery_endpoint.is_some() {
+            self.discovery_endpoint.clone_from(&from.discovery_endpoint);
+        }
+        self.model.clone_from(&from.model);
+        self.effort = from.effort;
+        self.thinking = from.thinking;
+        self.fast_mode = from.fast_mode;
+    }
+}
+
+#[cfg(test)]
+mod agent_choice_tests {
+    use super::{AgentEndpoint, AgentPreferences, ReasoningEffort};
+
+    #[test]
+    fn adopting_a_choice_moves_the_route_and_reasoning_but_nothing_else() {
+        let mut saved = AgentPreferences {
+            backend: "rig".into(),
+            provider: "openai".into(),
+            url: "https://example.invalid/v1".into(),
+            api_key_env: "MY_KEY".into(),
+            model: "old".into(),
+            codex_path: "C:/Tools/codex.exe".into(),
+            system_prompt: "custom".into(),
+            max_tool_calls: Some(200),
+            ..Default::default()
+        };
+        let chosen = AgentPreferences {
+            backend: "codex".into(),
+            provider: "openai".into(),
+            url: "https://example.invalid/v1".into(),
+            api_key_env: "MY_KEY".into(),
+            model: "gpt-fixture".into(),
+            effort: ReasoningEffort::High,
+            fast_mode: true,
+            ..Default::default()
+        };
+        saved.adopt_choice(&chosen);
+        assert_eq!(saved.backend, "codex");
+        assert_eq!(saved.model, "gpt-fixture");
+        assert_eq!(saved.effort, ReasoningEffort::High);
+        assert!(saved.fast_mode);
+        assert_eq!(saved.codex_path, "C:/Tools/codex.exe");
+        assert_eq!(saved.system_prompt, "custom");
+        assert_eq!(saved.max_tool_calls, Some(200));
+    }
+
+    #[test]
+    fn a_choice_without_a_discovery_endpoint_keeps_the_saved_one() {
+        let endpoint = AgentEndpoint {
+            provider: "openai".into(),
+            url: "https://example.invalid/v1".into(),
+            api_key_env: "MY_KEY".into(),
+        };
+        let mut saved = AgentPreferences {
+            discovery_endpoint: Some(endpoint.clone()),
+            ..Default::default()
+        };
+        saved.adopt_choice(&AgentPreferences {
+            model: "m".into(),
+            ..Default::default()
+        });
+        assert_eq!(saved.discovery_endpoint, Some(endpoint));
     }
 }
 

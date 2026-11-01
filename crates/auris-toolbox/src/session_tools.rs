@@ -42,6 +42,8 @@ pub(crate) fn definitions() -> Vec<ToolDefinition> {
                     | "search_documentation"
                     | "export_audio_attachment"
                     | "read_report"
+                    // A card needs a window to draw it; a saved-project client has none.
+                    | "offer_choices"
             )
         })
         .map(|tool| {

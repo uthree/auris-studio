@@ -122,6 +122,7 @@ pub fn tool_group(name: &str) -> &'static str {
         | "rename_project"
         | "rename_track"
         | "remove_track"
+        | "layer"
         | "set_instrument"
         | "add_clip"
         | "edit_clip"

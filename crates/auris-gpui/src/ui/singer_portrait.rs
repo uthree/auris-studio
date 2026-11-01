@@ -13,7 +13,7 @@ use crate::ui::portrait_image::{decode_icon, decode_portrait};
 use crate::ui::widgets::{ButtonStyle, button};
 
 const CACHE_LIMIT: usize = 8;
-/// The sound card's artwork height: the singer mark's 140 px plus the card's own padding.
+/// The sound card's artwork height, a little taller than its 120 px mark: a figure is tall.
 const PORTRAIT_HEIGHT: f32 = 180.0;
 /// A whole shelf of VOICEVOX styles; each decoded icon is 4 KiB.
 const ICON_CACHE_LIMIT: usize = 256;

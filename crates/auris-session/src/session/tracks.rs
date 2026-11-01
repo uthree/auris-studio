@@ -307,6 +307,9 @@ impl Session {
     pub fn remove_track(&mut self, id: TrackId) -> Result<(), SessionError> {
         self.require_track(id)?;
         self.record(Edit::DeleteTrack);
+        // A layer on the track keeps the part rather than falling silent: deleting the source is
+        // a command aimed at it, not at the instruments stacked on its notes.
+        self.detach_layers_of(id);
         self.project.remove_track(id);
         // An arm on a track that no longer exists would refuse the next take rather than being
         // ignored by it, and the button that could clear it has gone with the track.

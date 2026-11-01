@@ -46,6 +46,7 @@ pub mod agent_policy;
 mod audio_attachment;
 pub mod audio_audition;
 pub mod audio_inspection;
+pub mod choices;
 pub use audio_attachment::{AudioAttachmentCopy, copy_audio_attachment, prepare_audio_attachment};
 pub mod audio_input;
 pub mod audio_review;
@@ -187,8 +188,8 @@ mod sound_icons;
 pub use session::{TrackConversion, TrackConversionJob};
 pub use settings::{
     AgentEndpoint, AgentPreferences, AudioPreferences, CONFIG_DIR_VAR, ExportPreferences,
-    PianoRollGrid, ReasoningEffort, Settings, ToolbarEntry, ToolbarItem, ToolbarPreferences,
-    WindowPlacement, config_dir,
+    InputCalibration, PianoRollGrid, ReasoningEffort, Settings, ToolbarEntry, ToolbarItem,
+    ToolbarPreferences, TypingCalibration, WindowPlacement, config_dir,
 };
 pub use singer_portrait::{
     SingerPortraitError, SingerPortraitSource, load_singer_icon, load_singer_portrait,
@@ -302,10 +303,11 @@ pub mod prelude {
     pub use auris_core::{
         AudioBuffer, AudioClip, AudioSource, AuxSend, ClipId, ClipPreset, ClipRecipe, Color,
         ConsonantWidths, DrumMap, DrumRole, EffectSlot, EffectSlotId, FadeCurve, Fall, GhostNotes,
-        GhostPattern, MidiClip, MixerStrip, Note, NoteTransform, Output, PluginRegistry, PresetRef,
-        Project, Scoop, SectionMap, SectionPoint, SectionSpan, SendId, SingerPitch, SingerTrack,
-        SoundFontId, SoundFontRef, SourceId, StrokeDirection, Subdivision, Track, TrackId,
-        TrackKind, Vibrato, default_frame_hop, default_loop_end, loop_passes, sounding_length,
+        GhostPattern, LayerShape, LayerVoice, MAX_LAYER_OFFSET, MidiClip, MixerStrip, Note,
+        NoteTransform, Output, PluginRegistry, PresetRef, Project, Scoop, SectionMap, SectionPoint,
+        SectionSpan, SendId, SingerPitch, SingerTrack, SoundFontId, SoundFontRef, SourceId,
+        StrokeDirection, Subdivision, Track, TrackId, TrackKind, Vibrato, default_frame_hop,
+        default_loop_end, loop_passes, sounding_length,
     };
     pub use auris_core::{
         Expression, GroovePoint, GrooveTemplate, PitchPerformance, Strum, StrumClock,

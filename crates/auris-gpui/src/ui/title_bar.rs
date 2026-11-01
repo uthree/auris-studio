@@ -1,4 +1,5 @@
-//! Compact project navigation, history and menus; playback lives in the control bar below.
+//! The window's one bar: project navigation, history and menus, and — in a window wide enough
+//! to hold it — the transport as well. A narrower window keeps the transport in a row below.
 
 use auris_i18n::Key;
 use gpui::{AnyElement, Context, IntoElement, Pixels, Window, div, prelude::*, px};
@@ -9,12 +10,15 @@ use crate::ui::icons::Icon;
 use crate::ui::widgets::icon_button;
 
 impl AurisApp {
-    /// Draws project identity, the application menu and native window controls.
+    /// Draws project identity, the application menu, native window controls and, when the
+    /// window is wide enough, the transport.
     pub(crate) fn render_title_bar(
-        &self,
-        window: &Window,
+        &mut self,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
+        let transport = super::transport_bar::transport_in_title_bar(window.viewport_size().width)
+            .then(|| self.transport_parts(window, true, cx));
         let theme = &self.theme;
         let controls = titlebar::controls(
             window,
@@ -25,29 +29,38 @@ impl AurisApp {
             }),
         );
 
-        titlebar::bar(
-            window,
-            theme,
-            titlebar::Parts::new("project-title", self.document_title()).leading(
+        let mut parts = titlebar::Parts::new("project-title", self.document_title()).leading(
+            div()
+                .flex()
+                .items_center()
+                .gap_1()
+                .child(self.render_application_menu_button(cx))
+                .child(
+                    atelier::Button::icon_only("editor-start", atelier::IconName::ChevronLeft)
+                        .ghost()
+                        .size(atelier::ControlSize::Small)
+                        .tooltip(self.t(Key::BackToStart))
+                        .on_click(
+                            cx.listener(|this, _, window, cx| this.show_editor_start(window, cx)),
+                        ),
+                )
+                .child(self.render_history_buttons(cx))
+                .children(self.render_titlebar_menus(window, cx)),
+        );
+        if let Some(transport) = transport {
+            // The playback strip leads, after the navigation, so play sits where it sits in the
+            // row the narrower window gives it; the grid, zoom and meters close the far end.
+            parts = parts.leading(transport.primary).trailing(
                 div()
+                    .debug_selector(|| "titlebar-transport-trailing".into())
                     .flex()
                     .items_center()
-                    .gap_1()
-                    .child(self.render_application_menu_button(cx))
-                    .child(
-                        atelier::Button::icon_only("editor-start", atelier::IconName::ChevronLeft)
-                            .ghost()
-                            .size(atelier::ControlSize::Small)
-                            .tooltip(self.t(Key::BackToStart))
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.show_editor_start(window, cx)
-                            })),
-                    )
-                    .child(self.render_history_buttons(cx))
-                    .children(self.render_titlebar_menus(window, cx)),
-            ),
-            controls,
-        )
+                    .gap_3()
+                    .children(transport.editing)
+                    .children(transport.meters),
+            );
+        }
+        titlebar::bar(window, theme, parts, controls)
     }
 
     /// A single entry point to all application commands on Windows and Linux.
@@ -88,7 +101,12 @@ impl AurisApp {
             + spacing.md * 2.0
             + self.theme.atelier.density.control_sm * 4.0
             + spacing.sm * 2.0
-            + spacing.xxl * 4.0;
+            + spacing.xxl * 4.0
+            + if super::transport_bar::transport_in_title_bar(window.viewport_size().width) {
+                super::transport_bar::TITLE_BAR_TRANSPORT_WIDTH
+            } else {
+                px(0.0)
+            };
         let mut available = (window.viewport_size().width - reserved).max(px(0.0));
         let mut visible = Vec::new();
         for (index, section) in self.menu_model().into_iter().enumerate() {
@@ -278,14 +296,25 @@ mod tests {
     }
 
     #[gpui::test]
-    fn playback_and_panel_switches_stay_outside_the_titlebar(cx: &mut TestAppContext) {
+    fn the_transport_joins_the_titlebar_only_where_it_fits(cx: &mut TestAppContext) {
+        use crate::ui::transport_bar::ONE_BAR_FROM;
         let (app, cx) = open(cx);
         app.read_with(cx, |this, _| {
             assert_eq!(this.document_title(), "Untitled");
             assert!(this.window_title().contains("Auris Studio"));
         });
-        for width in [1360.0, 640.0, 1100.0] {
+        // Every menu category pinned, so the menu titles want as much of the bar as they can
+        // get, in the language with the longer captions.
+        app.update(cx, |this, _| {
+            this.language = auris_i18n::Language::Japanese;
+            this.appearance.titlebar_menus = crate::menu::MenuCategory::ALL
+                .iter()
+                .map(|category| category.id().to_owned())
+                .collect()
+        });
+        for width in [2560.0, 1440.0, f32::from(ONE_BAR_FROM), 1100.0, 640.0] {
             resize(&app, cx, size(px(width), px(700.0)));
+            let one_bar = px(width) >= ONE_BAR_FROM;
             let title = cx.debug_bounds("project-title").unwrap();
             // Native title bars keep the title centred until side controls need the room; once
             // they do, Atelier shifts it away rather than letting it overlap a control.
@@ -293,10 +322,44 @@ mod tests {
             let history = cx.debug_bounds("editing-history").unwrap();
             assert!(history.top() >= px(0.0) && history.bottom() <= crate::titlebar::HEIGHT);
             let transport = cx.debug_bounds("transport-buttons").unwrap();
-            assert!(transport.top() >= crate::titlebar::HEIGHT);
             let panels = cx.debug_bounds("panel-switch-5").unwrap();
             assert!(panels.top() > transport.bottom());
             assert!(panels.right() <= px(width));
+            if one_bar {
+                // One bar, and nothing on it covering anything else: the navigation, the
+                // playback strip, the title and the grid-to-meters run each in their own span.
+                let primary = cx.debug_bounds("transport-primary").unwrap();
+                let trailing = cx.debug_bounds("titlebar-transport-trailing").unwrap();
+                assert!(
+                    primary.bottom() <= crate::titlebar::HEIGHT,
+                    "{width} {title:?} {history:?} {primary:?}"
+                );
+                assert!(
+                    history.right() <= primary.left(),
+                    "{width} {title:?} {history:?} {primary:?}"
+                );
+                assert!(
+                    primary.right() <= title.left(),
+                    "{width} {title:?} {history:?} {primary:?}"
+                );
+                assert!(
+                    title.right() <= trailing.left(),
+                    "{width} {title:?} {trailing:?} {primary:?}"
+                );
+                assert!(trailing.right() <= px(width), "{width} {trailing:?}");
+                // The application menu is drawn only where there is no system menu bar.
+                if crate::app::AurisApp::wants_menu_bar() {
+                    assert!(cx.debug_bounds("application-menu").unwrap().left() >= px(0.0));
+                }
+                // The arrangement starts right under it.
+                let workspace = app.read_with(cx, |this, _| this.chrome_height());
+                assert_eq!(
+                    workspace,
+                    crate::titlebar::HEIGHT + crate::theme::Metrics::STATUS_HEIGHT
+                );
+            } else {
+                assert!(transport.top() >= crate::titlebar::HEIGHT);
+            }
             let looping = app.read_with(cx, |this, _| this.project().loop_enabled);
             click("loop", cx);
             app.read_with(cx, |this, _| {
@@ -323,7 +386,9 @@ mod tests {
         app.update(cx, |this, _| {
             this.appearance.titlebar_menus = crate::appearance::Appearance::default().titlebar_menus
         });
-        resize(&app, cx, size(px(1360.), px(700.)));
+        // Narrow enough that the transport keeps its own row, so the menu titles have the bar's
+        // room to themselves; where the transport joins the bar they give way to it instead.
+        resize(&app, cx, size(px(1100.), px(700.)));
         for index in [0, 1, 4] {
             let selector: &'static str =
                 Box::leak(format!("titlebar-menu-{index}").into_boxed_str());

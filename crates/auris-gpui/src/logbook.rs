@@ -18,6 +18,7 @@
 //! one clone.
 
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
 
@@ -39,6 +40,12 @@ pub struct Entry {
     pub target: String,
     /// What it said.
     pub message: String,
+    /// Where this record falls among everything the process has logged, counting from zero.
+    ///
+    /// Neither dropping the oldest nor clearing the book reuses a number, so a view keeping state
+    /// for one line — a text selection — can key it on this and stay with the same line while
+    /// newer ones push it down the panel.
+    pub number: u64,
     /// Whole seconds since the application started.
     ///
     /// Relative rather than a clock reading, and coarse: what a log panel is read for is *what
@@ -51,6 +58,7 @@ pub struct Entry {
 #[derive(Debug)]
 pub struct Logbook {
     entries: Mutex<VecDeque<Entry>>,
+    next: AtomicU64,
     start: Instant,
 }
 
@@ -58,6 +66,7 @@ impl Default for Logbook {
     fn default() -> Self {
         Self {
             entries: Mutex::new(VecDeque::with_capacity(CAPACITY)),
+            next: AtomicU64::new(0),
             start: Instant::now(),
         }
     }
@@ -71,13 +80,15 @@ impl Logbook {
 
     /// Adds a record, dropping the oldest when the book is full.
     pub fn push(&self, level: Level, target: &str, message: String) {
+        let mut entries = self.lock();
+        // Taken under the lock, so the numbers rise in the order the records are kept.
         let entry = Entry {
             level,
             target: target.to_string(),
             message,
+            number: self.next.fetch_add(1, Ordering::Relaxed),
             seconds: self.start.elapsed().as_secs(),
         };
-        let mut entries = self.lock();
         if entries.len() == CAPACITY {
             entries.pop_front();
         }
@@ -223,6 +234,22 @@ mod tests {
         book.clear();
         assert!(book.entries().is_empty());
         assert_eq!(book.problems(), 0);
+    }
+
+    #[test]
+    fn a_number_is_never_given_to_a_second_record() {
+        // The log panel keys each line's selection on it: a number reused after the ring drops
+        // a record, or after a clear, would hand one line's selection to another.
+        let book = Logbook::new();
+        for index in 0..CAPACITY + 2 {
+            book.push(Level::Info, "test", format!("line {index}"));
+        }
+        let entries = book.entries();
+        assert_eq!(entries[0].number, 2);
+        assert_eq!(entries[CAPACITY - 1].number, CAPACITY as u64 + 1);
+        book.clear();
+        book.push(Level::Info, "test", "after".into());
+        assert_eq!(book.entries()[0].number, CAPACITY as u64 + 2);
     }
 
     #[test]

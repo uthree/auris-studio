@@ -19,6 +19,17 @@
 //! in its URL; the person pastes, reviews and publishes there.
 //! Model-authored title/explanation proposals also require local review before entering the draft.
 //!
+//! # Questions with fixed answers
+//!
+//! A [`crate::choices::ChoiceCard`] is how an agent asks the person to pick: exclusive, or with
+//! `multiple` several at once. The editor's agent offers one through `offer_choices`, the song
+//! workshop's director as the `choices` beside its reply (kept on the
+//! [`crate::workshop::Message`]). Neither waits inside a model turn — a tool that blocked on a
+//! person would hold the provider's request open for as long as they are away. The agent ends
+//! its turn instead; the window draws the card, and the pick goes back as the person's next
+//! message, the exact labels [`crate::choices::ChoiceCard::answer`] writes. Typing anything else
+//! passes the card by. The tool is left out of the saved-project catalogue, which has no window.
+//!
 //! # Runtime tools
 //!
 //! Saved-project MCP registers and dispatches through the toolbox execution registry.
@@ -92,8 +103,20 @@
 //! The frontend owns presentation, provider selection, audition and explicit editor handoff.
 //! Local cross-project preference evidence records contextual choices. It is optional, inspectable
 //! and clearable, and does not infer dislike from nonselection or override explicit instructions.
-//! The desktop's personalization settings show the complete preference history, allow corrections to a
+//! The desktop's personalization settings show the recent preference history, allow corrections to a
 //! request or chosen alternative, and support individual removal or a confirmed history reset.
+//!
+//! Neither kind of workshop memory grows without bound in model context; the thresholds are
+//! [`crate::workshop::digest_policy`]. A conversation whose model-facing tail outgrows its budget
+//! is summarized by the configured model, and the director and composers then receive that summary
+//! and the newest messages verbatim; the readable transcript keeps every message, because rounds
+//! and the editor handoff refer to them by position. Once the stored choices outgrow theirs, the
+//! oldest are summarized, moved to an append-only archive beside the preferences rather than
+//! deleted, and the director receives that summary, labelled as one, beside the newest choices.
+//! Summaries run in the background only while the director is idle, are applied only against the
+//! exact state they were written from, and a failed one changes nothing. Resetting the history
+//! removes the summary and the archive as well. The panel's own model memory has its own
+//! compaction (`auris_agent`'s turn summaries), which this does not change.
 //! Corrections compare the original observation under the storage lock, so concurrent selection,
 //! deletion or reset cannot be silently overwritten. Preference I/O runs on a background executor.
 //! Direction planning, lyric generation and composer workers share the agent's musical-design
@@ -1129,6 +1152,31 @@ pub mod architecture {
     //! listens to, and only where the effect in the slot answers
     //! [`Effect::wants_sidechain`](auris_core::plugin::Effect::wants_sidechain) — so a project
     //! with no key in it carries no extra buffer and copies nothing.
+    //!
+    //! # Notes are an edge too: layers
+    //!
+    //! A **layer** is an instrument track that plays another track's clips instead of its own —
+    //! [`NoteSource`](auris_core::NoteSource) on the track, made by
+    //! [`Session::add_layer_track`](crate::Session::add_layer_track). It is the cheapest way to put
+    //! one part through several instruments: each layer is a whole track, so its own fader,
+    //! chain, outputs, sends and automation are the ones every track already has, and a filter
+    //! shared by the source and its layers is a bus they all feed. Nothing about routing changed.
+    //!
+    //! **The source is always a track with notes of its own.** A layer is never followed and a drum
+    //! track never is either, so there is no chain to walk and no cycle to refuse; a file that says
+    //! otherwise opens with that one layer silent.
+    //!
+    //! **The shape applies to what the source sounds.** A [`LayerShape`](auris_core::LayerShape)
+    //! — key range, top or bottom voice, transpose, velocity, length, offset — runs after the
+    //! source clip's own performance stack, and
+    //! [`Project::played_clips`](auris_core::Project::played_clips) is the one answer the renderer
+    //! and the MIDI writer share.
+    //!
+    //! **A layer holds no clips.** [`TrackKind::holds_notes`](auris_core::TrackKind::holds_notes)
+    //! is `false` for one, which is what keeps every command that writes, pastes or moves notes off
+    //! it. Removing the source detaches its layers in the same step:
+    //! [`Session::detach_layer`](crate::Session::detach_layer) copies the source's clips and writes
+    //! the shape into them, so a layer goes on sounding as it did.
 }
 
 pub mod realtime {
@@ -1221,6 +1269,14 @@ pub mod realtime {
     //! renderer, the MIDI exporter and the arrangement painter all walk passes and the ordinary
     //! case falls out of the general one. And a loop is a *length* rather than a count, which is
     //! what lets its edge be dragged continuously and its last pass be cut half way through.
+    //!
+    //! Every door says the same length. The name bar's loop edge, the L key, the inspector's
+    //! switch and a model's `edit_clip` `loop` all end in
+    //! [`Session::set_clip_loop`](crate::Session::set_clip_loop), and the three that are not
+    //! dragging start a fresh loop where [`default_loop_end`](auris_core::default_loop_end) says —
+    //! up to the next clip on the lane. A model reads the loop back as `loop_end_tick` from
+    //! `inspect_project` and `repeats_through_bar` from `read_notes`, because a model that cannot
+    //! see a loop writes its second pass out by hand on top of it.
     //!
     //! # A stretch is prepared, not performed
     //!

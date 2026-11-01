@@ -32,6 +32,10 @@ const MAX_ZOOM: f32 = 2.0;
 #[path = "mixer_graph_tooltip.rs"]
 mod wire_tooltip;
 
+#[path = "mixer_graph_menu.rs"]
+mod menu;
+pub use menu::NewMixerTrack;
+
 #[cfg(test)]
 #[path = "mixer_graph_wires_tests.rs"]
 mod wire_tests;
@@ -94,6 +98,7 @@ fn wire_style(kind: MixerEdgeKind, theme: &Theme) -> (gpui::Hsla, EdgeStroke) {
         MixerEdgeKind::Output => (theme.mixer_output_color(), EdgeStroke::Solid),
         MixerEdgeKind::Send { .. } => (theme.mixer_send_color(), EdgeStroke::Dashed),
         MixerEdgeKind::Sidechain => (theme.mixer_sidechain_color(), EdgeStroke::Dotted),
+        MixerEdgeKind::Notes => (theme.mixer_notes_color(), EdgeStroke::Dashed),
         MixerEdgeKind::Chain => (theme.text_faint, EdgeStroke::Solid),
     }
 }
@@ -141,6 +146,7 @@ fn wire_lanes(graph: &MixerGraph) -> HashMap<SharedString, f32> {
                 MixerEdgeKind::Send { send, .. } => (1, send.0),
                 MixerEdgeKind::Sidechain => (2, 0),
                 MixerEdgeKind::Chain => (3, 0),
+                MixerEdgeKind::Notes => (4, 0),
             });
             let center = (edges.len() - 1) as f32 / 2.0;
             edges.into_iter().enumerate().map(move |(index, edge)| {
@@ -197,7 +203,24 @@ where
     L: Into<SharedString>,
     F: Fn(&gpui::ClickEvent, &mut gpui::Window, &mut gpui::App) + 'static,
 {
-    button(id, label, style, active, color, theme, click).h(Metrics::CONTROL_HEIGHT * zoom)
+    // The card sits in the canvas's rem scope, so rem-sized text shrinks with the zoom. A
+    // button's own caption is sized in pixels by the design language and would stay full size in
+    // a card a third as wide; the caption is given in rems instead, and truncates if the padding,
+    // which does not scale, still leaves too little room.
+    let label: SharedString = label.into();
+    crate::ui::widgets::button_with_content(
+        id,
+        div().min_w_0().truncate().text_sm().child(label),
+        style,
+        ButtonState::Enabled(active.into()),
+        color,
+        theme,
+        click,
+    )
+    .h(Metrics::CONTROL_HEIGHT * zoom)
+    .max_w_full()
+    .min_w_0()
+    .overflow_hidden()
 }
 
 fn node_id(node: MixerNode) -> SharedString {
@@ -218,6 +241,7 @@ fn edge_id(edge: &MixerEdge) -> SharedString {
         MixerEdgeKind::Send { send, .. } => format!("mix-send-{}", send.0),
         MixerEdgeKind::Output => format!("mix-output-{source}-{}", edge.target.key()),
         MixerEdgeKind::Sidechain => format!("mix-key-{source}-{}", edge.target.key()),
+        MixerEdgeKind::Notes => format!("mix-notes-{source}-{}", edge.target.key()),
         MixerEdgeKind::Chain => format!("mix-chain-{}-{}", edge.source.key(), edge.target.key()),
     }
     .into()
@@ -607,7 +631,18 @@ impl AurisApp {
                         }),
                     )),
             )
-            .child(div().flex_1().min_h_0().min_w_0().children(view))
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .min_w_0()
+                    // A right click that no node and no wire claimed landed on the canvas itself.
+                    .on_mouse_down(
+                        MouseButton::Right,
+                        Self::opens_menu(cx, |this, at| this.mixer_canvas_menu(at)),
+                    )
+                    .children(view),
+            )
             .child(
                 div()
                     .px_2()
@@ -633,6 +668,11 @@ impl AurisApp {
                                 self.t(Key::MenuSidechain),
                                 theme.mixer_sidechain_color(),
                                 EdgeStroke::Dotted,
+                            ))
+                            .child(wire_legend(
+                                self.t(Key::MixerNotesWire),
+                                theme.mixer_notes_color(),
+                                EdgeStroke::Dashed,
                             ))
                             // The how-to, behind a mark rather than under the graph: two lines
                             // of instructions were drawn on every frame, over the wires, and the
@@ -933,6 +973,7 @@ impl AurisApp {
                                 .target_handle("sidechain");
                         }
                         MixerEdgeKind::Output => flow = flow.label(self.t(Key::OutputShort)),
+                        MixerEdgeKind::Notes => flow = flow.label(self.t(Key::MixerNotesWire)),
                         _ => {}
                     }
                     flow
@@ -973,7 +1014,7 @@ impl AurisApp {
         }
     }
 
-    fn arrange_mixer_nodes(&mut self, cx: &mut gpui::Context<Self>) {
+    pub(crate) fn arrange_mixer_nodes(&mut self, cx: &mut gpui::Context<Self>) {
         let layout = positions(&self.session.mixer_graph());
         if let Some(canvas) = &mut self.mixer_canvas {
             let before = canvas.presentation(cx);
@@ -1126,6 +1167,10 @@ impl AurisApp {
                     }
                     cx.notify();
                 }),
+            )
+            .on_mouse_down(
+                MouseButton::Right,
+                Self::opens_menu(cx, move |this, at| this.mixer_node_menu(at, node)),
             )
             .child(div().truncate().text_color(theme.text_muted).child(name));
         match node {

@@ -406,9 +406,11 @@ impl AurisApp {
         }
     }
 
-    /// Compact master/selected-track spectrum, sharing the utility window's live tap.
+    /// Compact master/selected-track spectrum, sharing the utility window's live tap, `height`
+    /// tall: the transport row's, or the title bar's when that carries the transport.
     pub(crate) fn render_toolbar_visualizer(
         &self,
+        height: gpui::Pixels,
         cx: &mut gpui::Context<Self>,
     ) -> impl IntoElement + use<> {
         let theme = self.theme.clone();
@@ -437,7 +439,7 @@ impl AurisApp {
         .flex_col()
         .gap_1()
         .w(px(124.))
-        .h(crate::theme::Metrics::TRANSPORT_HEIGHT - px(8.))
+        .h(height)
         .flex_shrink_0()
         .child(
             canvas(

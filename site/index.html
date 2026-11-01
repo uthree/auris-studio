@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="en" data-theme="glass-dark" data-lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Auris Studio</title>
+    <meta name="description" content="A digital audio workstation you compose in together with an AI agent. Arrange, edit, compose from text, record, host CLAP and VST3 plugins and render singing voices, on macOS and Windows." />
+    <meta property="og:title" content="Auris Studio" />
+    <meta property="og:description" content="A digital audio workstation you compose in together with an AI agent." />
+    <meta property="og:image" content="screenshots/editor-en.png" />
+    <meta name="theme-color" content="#16161a" />
+    <link rel="icon" href="icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="icon.png" />
+    <link rel="stylesheet" href="atelier/atelier.css" />
+    <link rel="stylesheet" href="site.css" />
+    <script>
+      // Before first paint, so the page never flashes in the wrong language or appearance.
+      (() => {
+        const root = document.documentElement;
+        const params = new URLSearchParams(location.search);
+        const stored = (key) => { try { return localStorage.getItem(key); } catch { return null; } };
+        const lang = params.get("lang") || stored("auris-site-lang") || (navigator.language || "").slice(0, 2);
+        root.dataset.lang = lang === "ja" ? "ja" : "en";
+        root.lang = root.dataset.lang;
+        const appearance = stored("auris-site-appearance") || (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+        root.dataset.theme = `glass-${appearance}`;
+      })();
+    </script>
+  </head>
+  <body class="at-root">
+    <canvas class="at-ambient" id="ambient" aria-hidden="true"></canvas>
+
+    <header class="nav at-chrome">
+      <a class="nav__brand" href="#top">
+        <img src="icon.svg" alt="" width="24" height="24" />
+        <span>Auris Studio</span>
+      </a>
+      <nav class="nav__links">
+        <a href="#features"><span data-l="en">Features</span><span data-l="ja">機能</span></a>
+        <a href="#install"><span data-l="en">Install</span><span data-l="ja">インストール</span></a>
+        <a href="#docs"><span data-l="en">Docs</span><span data-l="ja">ドキュメント</span></a>
+      </nav>
+      <div class="nav__tools">
+        <div class="at-segmented at-segmented--sm" id="lang" role="group" aria-label="Language">
+          <button value="en">EN</button>
+          <button value="ja">日本語</button>
+        </div>
+        <button class="at-button at-button--ghost at-button--icon at-button--sm" id="appearance" aria-label="Toggle light and dark" data-tooltip="Light / Dark">
+          <span data-icon="eye"></span>
+        </button>
+        <a class="at-button at-button--ghost at-button--sm" href="https://github.com/uthree/auris-studio">GitHub</a>
+      </div>
+    </header>
+
+    <main id="top">
+      <section class="hero">
+        <span class="at-badge at-badge--agent hero__badge"><span data-icon="sparkles"></span> Vibe Composing</span>
+        <h1 class="hero__title">
+          <span data-l="en">Compose with an AI,<br />in a real DAW.</span>
+          <span data-l="ja">AIと一緒に、<br />本物のDAWで作曲する。</span>
+        </h1>
+        <p class="hero__lead">
+          <span data-l="en">Auris Studio is a digital audio workstation for macOS and Windows, written in Rust. Tell the agent what you want to hear, and it writes, plays back and revises real tracks you can keep editing by hand.</span>
+          <span data-l="ja">Auris Studio は Rust で書かれた macOS / Windows 向けのデジタル・オーディオ・ワークステーションです。聴きたい音楽を言葉で伝えると、エージェントが実際のトラックを書き、鳴らし、直します。その結果は、そのまま手で編集し続けられます。</span>
+        </p>
+        <div class="hero__actions">
+          <a class="at-button at-button--primary at-button--lg" href="https://github.com/uthree/auris-studio/releases">
+            <span data-icon="arrow-up" class="icon-down"></span>
+            <span data-l="en">Download</span><span data-l="ja">ダウンロード</span>
+          </a>
+          <a class="at-button at-button--secondary at-button--lg" href="https://github.com/uthree/auris-studio">
+            <span data-icon="code"></span>
+            <span data-l="en">Source on GitHub</span><span data-l="ja">GitHub でソースを見る</span>
+          </a>
+        </div>
+        <p class="hero__note at-faint">
+          <span data-l="en">Free and open source · Apache-2.0 · macOS, Windows (CLI on Linux)</span>
+          <span data-l="ja">無料・オープンソース · Apache-2.0 · macOS、Windows（Linux は CLI）</span>
+        </p>
+      </section>
+
+      <figure class="shot shot--hero">
+        <img data-l="en" src="screenshots/editor-en.png" width="1440" height="868" alt="The editor: arrangement, piano roll and the agent panel" />
+        <img data-l="ja" src="screenshots/editor-ja.png" width="1440" height="868" alt="エディタ：アレンジ、ピアノロール、エージェントパネル" loading="lazy" />
+      </figure>
+
+      <section class="section" id="features">
+        <div class="section__head">
+          <h2 class="section__title">
+            <span data-l="en">One document, two hands on it</span>
+            <span data-l="ja">ひとつの曲を、ふたりで触る</span>
+          </h2>
+          <p class="section__lead at-muted">
+            <span data-l="en">The agent edits the same project you do, through the same commands, so every change it makes is an ordinary step you can undo, tweak or keep.</span>
+            <span data-l="ja">エージェントはあなたと同じプロジェクトを、同じコマンドで編集します。だからエージェントの変更はどれも、取り消しも手直しもできる普通の一手です。</span>
+          </p>
+        </div>
+
+        <div class="grid">
+          <article class="at-card at-card--padded feature">
+            <span class="feature__icon feature__icon--agent" data-icon="sparkles"></span>
+            <h3 class="at-heading"><span data-l="en">AI workshop</span><span data-l="ja">AIワークショップ</span></h3>
+            <p class="at-muted">
+              <span data-l="en">Describe a song: mood, instruments, length, lyrics. A director asks what it needs to know, then several composers write alternatives side by side for you to choose from.</span>
+              <span data-l="ja">雰囲気、楽器、長さ、歌詞などで曲を説明すると、ディレクターが必要なことを確認し、複数の作曲担当が候補を並行して書きます。その中から選ぶだけです。</span>
+            </p>
+          </article>
+          <article class="at-card at-card--padded feature">
+            <span class="feature__icon feature__icon--agent" data-icon="brain"></span>
+            <h3 class="at-heading"><span data-l="en">An agent beside the editor</span><span data-l="ja">エディタの隣にエージェント</span></h3>
+            <p class="at-muted">
+              <span data-l="en">Ask for a bass line, a reharmonisation or a mix pass while you work. Use Claude Code, Codex, OpenCode, local Ollama or any OpenAI-compatible API.</span>
+              <span data-l="ja">作業しながらベースラインやリハーモナイズ、ミックスの調整を頼めます。Claude Code、Codex、OpenCode、ローカルの Ollama、OpenAI 互換 API に対応します。</span>
+            </p>
+          </article>
+          <article class="at-card at-card--padded feature">
+            <span class="feature__icon" data-icon="notes"></span>
+            <h3 class="at-heading"><span data-l="en">Composition from text</span><span data-l="ja">テキストからの作曲</span></h3>
+            <p class="at-muted">
+              <span data-l="en">Write a song specification of sections, chords and style, or start from a preset, and a score-based composer writes it out. Every random choice is pinned by a seed.</span>
+              <span data-l="ja">セクション、コード、スタイルを書いた曲の仕様やプリセットから、楽譜ベースの作曲エンジンが曲を書き出します。ランダムな選択はすべてシードで固定されます。</span>
+            </p>
+          </article>
+          <article class="at-card at-card--padded feature">
+            <span class="feature__icon" data-icon="knob"></span>
+            <h3 class="at-heading"><span data-l="en">Instruments built in</span><span data-l="ja">すぐ鳴る内蔵音源</span></h3>
+            <p class="at-muted">
+              <span data-l="en">Physically modelled piano, guitars, bass, strings, winds and choir, chiptune synths and SoundFont playback, with no sample library to download.</span>
+              <span data-l="ja">物理モデルのピアノ、ギター、ベース、弦、管、合唱に、チップチューン音源と SoundFont 再生。サンプルライブラリのダウンロードは不要です。</span>
+            </p>
+          </article>
+          <article class="at-card at-card--padded feature">
+            <span class="feature__icon" data-icon="mic"></span>
+            <h3 class="at-heading"><span data-l="en">Singing voices</span><span data-l="ja">歌声合成</span></h3>
+            <p class="at-muted">
+              <span data-l="en">Singer tracks carry lyrics on their notes and render them through DiffSinger, VOICEVOX and other singing backends.</span>
+              <span data-l="ja">シンガートラックはノートに歌詞を持ち、DiffSinger や VOICEVOX などの歌声合成エンジンで歌わせられます。</span>
+            </p>
+          </article>
+          <article class="at-card at-card--padded feature">
+            <span class="feature__icon" data-icon="sliders"></span>
+            <h3 class="at-heading"><span data-l="en">A full DAW underneath</span><span data-l="ja">中身はちゃんとしたDAW</span></h3>
+            <p class="at-muted">
+              <span data-l="en">Piano roll, audio recording with punch-in, automation, buses and sends, CLAP and VST3 plugins, MIDI import and export, and a GPU-drawn interface.</span>
+              <span data-l="ja">ピアノロール、パンチイン録音、オートメーション、バスとセンド、CLAP / VST3 プラグイン、MIDI の読み書き、そして GPU で描画される UI。</span>
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section section--pair">
+        <figure class="at-card pair">
+          <div class="shot">
+            <img data-l="en" src="screenshots/chooser-en.png" width="1440" height="868" alt="The project chooser" loading="lazy" />
+            <img data-l="ja" src="screenshots/chooser-ja.png" width="1440" height="868" alt="プロジェクトの選択画面" loading="lazy" />
+          </div>
+          <figcaption>
+            <h3 class="at-heading"><span data-l="en">Start a project</span><span data-l="ja">プロジェクトを始める</span></h3>
+            <p class="at-muted">
+              <span data-l="en">Start an empty project, reopen a recent one, or hand the first draft to the AI workshop.</span>
+              <span data-l="ja">空のプロジェクトから始めるか、最近のプロジェクトを開くか、最初の下書きを AI ワークショップに任せます。</span>
+            </p>
+          </figcaption>
+        </figure>
+        <figure class="at-card pair">
+          <div class="shot">
+            <img data-l="en" src="screenshots/workshop-en.png" width="1440" height="868" alt="The AI workshop" loading="lazy" />
+            <img data-l="ja" src="screenshots/workshop-ja.png" width="1440" height="868" alt="AIワークショップ" loading="lazy" />
+          </div>
+          <figcaption>
+            <h3 class="at-heading"><span data-l="en">Compose with the AI workshop</span><span data-l="ja">AIワークショップで作曲する</span></h3>
+            <p class="at-muted">
+              <span data-l="en">Listen to the candidates, pick one and open it in the editor.</span>
+              <span data-l="ja">候補を聴き比べて選び、そのままエディタで開けます。</span>
+            </p>
+          </figcaption>
+        </figure>
+      </section>
+
+      <section class="section" id="frontends">
+        <div class="section__head">
+          <h2 class="section__title">
+            <span data-l="en">The same commands at every door</span>
+            <span data-l="ja">どの入り口からも、同じコマンド</span>
+          </h2>
+          <p class="section__lead at-muted">
+            <span data-l="en">The desktop, the <code>auris</code> command line and the <code>auris-mcp</code> server all drive one headless session, so a coding agent you already use can compose, render and check music too.</span>
+            <span data-l="ja">デスクトップアプリ、<code>auris</code> コマンド、<code>auris-mcp</code> サーバーは、どれも同じヘッドレスなセッションを動かします。普段使っているコーディングエージェントからも、作曲、レンダリング、確認ができます。</span>
+          </p>
+        </div>
+        <div class="grid grid--three">
+          <div class="at-card at-card--padded door">
+            <span data-icon="window-maximize"></span>
+            <h3 class="at-heading"><span data-l="en">Desktop</span><span data-l="ja">デスクトップ</span></h3>
+            <p class="at-muted"><span data-l="en">The editor and the AI workshop.</span><span data-l="ja">エディタと AI ワークショップ。</span></p>
+          </div>
+          <div class="at-card at-card--padded door">
+            <span data-icon="keyboard"></span>
+            <h3 class="at-heading">CLI</h3>
+            <p class="at-muted"><span data-l="en">Compose, render and inspect from a shell.</span><span data-l="ja">シェルから作曲、レンダリング、確認。</span></p>
+          </div>
+          <div class="at-card at-card--padded door">
+            <span data-icon="wrench"></span>
+            <h3 class="at-heading">MCP</h3>
+            <p class="at-muted"><span data-l="en">Tools for any Model Context Protocol client.</span><span data-l="ja">Model Context Protocol 対応クライアント向けのツール。</span></p>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="install">
+        <div class="section__head">
+          <h2 class="section__title"><span data-l="en">Install</span><span data-l="ja">インストール</span></h2>
+          <p class="section__lead at-muted">
+            <span data-l="en">Download the Windows installer or the macOS disk image from the <a href="https://github.com/uthree/auris-studio/releases">releases page</a>. The desktop, the <code>auris</code> CLI and <code>auris-mcp</code> ship together.</span>
+            <span data-l="ja"><a href="https://github.com/uthree/auris-studio/releases">リリースページ</a>から Windows 用インストーラーか macOS 用ディスクイメージをダウンロードしてください。デスクトップアプリ、<code>auris</code> CLI、<code>auris-mcp</code> が一緒に入っています。</span>
+          </p>
+        </div>
+        <div class="grid grid--two">
+          <div class="at-card at-card--padded">
+            <h3 class="at-heading"><span data-l="en">Build from source</span><span data-l="ja">ソースからビルド</span></h3>
+            <p class="at-muted"><span data-l="en">With Rust 1.95 or newer.</span><span data-l="ja">Rust 1.95 以降が必要です。</span></p>
+            <div class="code">
+              <pre class="at-code"><code>git clone https://github.com/uthree/auris-studio.git
+cd auris-studio
+cargo run --release</code></pre>
+              <button class="at-button at-button--ghost at-button--icon at-button--sm code__copy" aria-label="Copy" data-tooltip="Copy"><span data-icon="copy"></span></button>
+            </div>
+          </div>
+          <div class="at-card at-card--padded">
+            <h3 class="at-heading"><span data-l="en">Composition skill for coding agents</span><span data-l="ja">コーディングエージェント用の作曲スキル</span></h3>
+            <p class="at-muted"><span data-l="en">Teaches Codex and others to compose with Auris.</span><span data-l="ja">Codex などに Auris での作曲を教えます。</span></p>
+            <div class="code">
+              <pre class="at-code"><code>npx skills add uthree/auris-studio \
+  --skill auris-composition -a codex -g -y</code></pre>
+              <button class="at-button at-button--ghost at-button--icon at-button--sm code__copy" aria-label="Copy" data-tooltip="Copy"><span data-icon="copy"></span></button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="docs">
+        <div class="section__head">
+          <h2 class="section__title"><span data-l="en">Documentation</span><span data-l="ja">ドキュメント</span></h2>
+        </div>
+        <div class="at-card links">
+          <a class="link" data-doc="features" href="#"><span data-icon="file"></span><span data-l="en">Features and usage</span><span data-l="ja">機能と使い方</span><span data-icon="chevron-right" class="link__chevron"></span></a>
+          <a class="link" data-doc="song-workshop" href="#"><span data-icon="sparkles"></span><span data-l="en">AI workshop</span><span data-l="ja">AIワークショップ</span><span data-icon="chevron-right" class="link__chevron"></span></a>
+          <a class="link" data-doc="composition" href="#"><span data-icon="notes"></span><span data-l="en">Automatic composition</span><span data-l="ja">自動作曲</span><span data-icon="chevron-right" class="link__chevron"></span></a>
+          <a class="link" data-doc="agent-workflows" href="#"><span data-icon="brain"></span><span data-l="en">Agent and MCP workflows</span><span data-l="ja">エージェントと MCP</span><span data-icon="chevron-right" class="link__chevron"></span></a>
+          <a class="link" data-doc="installation" href="#"><span data-icon="folder"></span><span data-l="en">Installation and portable releases</span><span data-l="ja">インストールとポータブル版</span><span data-icon="chevron-right" class="link__chevron"></span></a>
+          <a class="link" data-doc="singing-backends" href="#"><span data-icon="mic"></span><span data-l="en">Singing backends</span><span data-l="ja">歌声合成エンジン</span><span data-icon="chevron-right" class="link__chevron"></span></a>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer at-faint">
+      <span>Auris Studio · <a href="https://github.com/uthree/auris-studio/blob/main/LICENSE">Apache-2.0</a></span>
+      <span>
+        <span data-l="en">Drawn with the</span><span data-l="ja">デザイン:</span>
+        <a href="https://github.com/uthree/design-language">Atelier</a>
+        <span data-l="en">design language</span>
+      </span>
+    </footer>
+
+    <script type="module" src="site.js"></script>
+  </body>
+</html>

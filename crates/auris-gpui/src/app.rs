@@ -705,6 +705,17 @@ pub enum Drag {
         /// Pointer x when the drag began.
         start_x: Pixels,
     },
+    /// Moving one of a layer's shape sliders.
+    LayerDial {
+        /// The layer whose shape is being edited.
+        track: TrackId,
+        /// Which slider.
+        dial: crate::ui::layer::LayerDial,
+        /// Where the bar was when the drag began, from 0 to 1.
+        start_fraction: f32,
+        /// Pointer x when the drag began.
+        start_x: Pixels,
+    },
     /// Moving one point of a normalized long-note volume contour.
     VolumeContourPoint {
         /// Clip whose performance curve is edited.
@@ -839,6 +850,8 @@ impl Drag {
             Drag::PerformDial { clip, .. } | Drag::VolumeContourPoint { clip, .. } => {
                 Some(Edit::SetClipTransforms(*clip))
             }
+            // One step for the sweep, as every other slider is.
+            Drag::LayerDial { .. } => Some(Edit::SetLayerShape),
             // undo stack until Write is pressed.
             Drag::Tempo { at, .. } => Some(Edit::ChangeTempo(*at)),
             // Selecting is not an edit; it changes what a later edit will act on.
@@ -1556,7 +1569,7 @@ pub struct AurisApp {
     /// The same, for the inspector's column of settings.
     pub(crate) inspector_scroll: gpui::ScrollHandle,
     /// Collapsed inspector groups, retained when the selected object changes.
-    pub(crate) inspector_collapsed: [bool; 4],
+    pub(crate) inspector_collapsed: [bool; 5],
     /// The same, for the log's lines.
     pub(crate) log_scroll: gpui::ScrollHandle,
     /// The viewport of the open custom menu-bar dropdown.
@@ -1974,6 +1987,8 @@ impl AurisApp {
                         // The punch-out is a position the playhead crosses rather than a thing
                         // anybody does, so this is the only place that could notice it.
                         this.finish_punch();
+                        this.finish_input_calibration();
+                        this.finish_typing_calibration();
                         this.poll_singer_portrait(cx);
                         this.poll_singer_icons(cx);
                         this.poll_spectrograms(cx);
@@ -2088,7 +2103,7 @@ impl AurisApp {
             mixer_connect_send: false,
             library_scroll: gpui::ScrollHandle::new(),
             inspector_scroll: gpui::ScrollHandle::new(),
-            inspector_collapsed: [false; 4],
+            inspector_collapsed: [false; 5],
             log_scroll: gpui::ScrollHandle::new(),
             menu_bar_scroll: gpui::ScrollHandle::new(),
             menu: None,
@@ -3097,6 +3112,77 @@ impl AurisApp {
         let line = audio_line(&self.session.audio_status(), self.language);
         self.set_status(line.clone());
         Ok(line)
+    }
+
+    /// Starts measuring the input latency, saying so in the status line.
+    pub(crate) fn start_input_calibration(&mut self) -> Result<(), SessionError> {
+        self.session.start_input_calibration()?;
+        self.set_status(Key::MeasuringInputLatency.get(self.language).to_owned());
+        Ok(())
+    }
+
+    /// Forgets the measured input latency for the devices open now, and saves that.
+    pub(crate) fn clear_input_calibration(&mut self) {
+        self.session.clear_input_calibration();
+        self.settings.audio = self.session.audio_preferences().clone();
+        if let Err(error) = self.save_settings() {
+            log::warn!("could not save settings: {error}");
+        }
+    }
+
+    /// Keeps the result of a latency measurement that has just finished, and reports it.
+    ///
+    /// Polled, because the measurement ends when its clicks have played rather than when anybody
+    /// does anything.
+    fn finish_input_calibration(&mut self) {
+        let Some(result) = self.session.take_input_calibration() else {
+            return;
+        };
+        let line = match result {
+            Ok(found) => {
+                self.settings.audio = self.session.audio_preferences().clone();
+                if let Err(error) = self.save_settings() {
+                    log::warn!("could not save settings: {error}");
+                }
+                messages::input_latency_measured(self.language, found.offset_ms, found.spread_ms)
+            }
+            Err(error) => crate::i18n::error_text(&error, self.language),
+        };
+        self.set_status(line);
+    }
+
+    /// Starts a tap-along measuring the typing keyboard, saying so in the status line.
+    pub(crate) fn start_typing_calibration(&mut self) -> Result<(), SessionError> {
+        self.session.start_typing_calibration()?;
+        self.set_status(Key::TappingAlong.get(self.language).to_owned());
+        Ok(())
+    }
+
+    /// Forgets the measured typing latency, and saves that.
+    pub(crate) fn clear_typing_calibration(&mut self) {
+        self.session.clear_typing_calibration();
+        self.settings.audio = self.session.audio_preferences().clone();
+        if let Err(error) = self.save_settings() {
+            log::warn!("could not save settings: {error}");
+        }
+    }
+
+    /// Keeps the result of a tap-along that has just finished, and reports it.
+    fn finish_typing_calibration(&mut self) {
+        let Some(result) = self.session.take_typing_calibration() else {
+            return;
+        };
+        let line = match result {
+            Ok(found) => {
+                self.settings.audio = self.session.audio_preferences().clone();
+                if let Err(error) = self.save_settings() {
+                    log::warn!("could not save settings: {error}");
+                }
+                messages::typing_latency_measured(self.language, found.offset_ms, found.spread_ms)
+            }
+            Err(error) => crate::i18n::error_text(&error, self.language),
+        };
+        self.set_status(line);
     }
 
     /// Switches the interface language and remembers the choice.

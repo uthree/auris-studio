@@ -72,6 +72,8 @@ strings! {
     IssueNoContext { en: "No recorded context is available in this scope.", ja: "この範囲には記録された情報がありません。" }
     IssueInvitation { en: "A limitation or possible defect was found. You can prepare an Issue draft and choose what context to include.", ja: "機能の制約または不具合の可能性があります。補助情報を含めるか選んで、Issueの下書きを作れます。" }
     IssueOpenSuggestion { en: "Prepare Issue draft…", ja: "Issueの下書きを作成…" }
+    ChoicesSend { en: "Send", ja: "送信" }
+    ChoicesMultiple { en: "Choose any that apply", ja: "複数選べます" }
     WorkshopTitle { en: "AI workshop…", ja: "AIワークショップ…" }
     WorkshopChatHint { en: "Describe the music you want. Ask for one to three candidates, request more ideas, or keep developing your favourite.", ja: "作りたい曲を自由に伝えてください。候補は1〜3案で指定でき、追加の案を頼んだり、気に入った曲を育てたりできます。" }
     WorkshopMessage { en: "Message", ja: "メッセージ" }
@@ -89,6 +91,8 @@ strings! {
     PreferenceHeading { en: "Song personalization", ja: "曲作りのパーソナライズ" }
     PreferenceTab { en: "Personalization", ja: "パーソナライズ" }
     PreferenceHelp { en: "Choices from “AI workshop” are stored locally across projects. Edit the request or selected alternative below. Changes apply to your next request; current instructions take priority.", ja: "「AIワークショップ」での選択を、プロジェクト共通の好みとしてこの端末に保存しています。依頼内容や選んだ候補を修正できます。変更は次の依頼から使われ、今回の指示が優先されます。" }
+    PreferenceDigest { en: "Summary of earlier choices", ja: "以前の選択の要約" }
+    PreferenceDigestHelp { en: "Older choices are summarized automatically once the history grows, and the originals are moved to an archive file. Clearing the history removes the summary and the archive.", ja: "履歴が増えると古い選択は自動で要約され、元の記録はアーカイブファイルに退避されます。履歴を消去すると要約とアーカイブも消えます。" }
     PreferenceEmpty { en: "No choices recorded yet. Choose a song with preference recording enabled to build your history.", ja: "記録された選択はありません。好みの記録を有効にして曲を選ぶと、ここに履歴が表示されます。" }
     PreferenceRefresh { en: "Refresh history", ja: "履歴を再読み込み" }
     PreferenceEdit { en: "Edit choice", ja: "選択を編集" }
@@ -418,6 +422,9 @@ strings! {
     MixerConnectionRejected { en: "Cannot connect these nodes. Choose a bus input or sidechain that does not create a cycle.", ja: "このノードには接続できません。循環しないバス入力かサイドチェインを選んでください。" }
     Inspector { en: "Inspector", ja: "インスペクタ" }
     InspectorClip { en: "Clip", ja: "クリップ" }
+    // The region inspector's loop switch. The value beside it says how many times the content
+    // plays, which is what a looped clip is for; the word alone would only say that it repeats.
+    InspectorLoop { en: "Loop", ja: "ループ" }
     InspectorGeneration { en: "Generation", ja: "生成" }
     InspectorSound { en: "Sound", ja: "音源" }
     InspectorUnmodified { en: "Unmodified", ja: "未調整" }
@@ -680,6 +687,40 @@ strings! {
         ja: "要求するサイズです。デバイスが別のサイズを採用する場合があります。msはバッファ1つ分の時間で、全体の遅延ではありません。"
     }
     ActualBufferUnknown { en: "Applied buffer size: unavailable", ja: "適用されたバッファサイズ: 取得できません" }
+    InputLatency { en: "Input latency", ja: "入力遅延" }
+    InputLatencyNote {
+        en: "Measures how late recordings arrive beyond what the devices report. Connect the output to the input with a cable, or let the microphone hear the speakers (not headphones), then measure. Kept for these devices and this buffer size.",
+        ja: "デバイスが報告する遅延を超えて、録音がどれだけ遅れて届くかを測ります。出力を入力にケーブルでつなぐか、マイクにスピーカーの音を聞かせて（ヘッドホン不可）から計測してください。このデバイスとバッファサイズの組み合わせごとに保存されます。"
+    }
+    MeasureInputLatency { en: "Measure", ja: "計測" }
+    MeasuringInputLatency { en: "Measuring… keep quiet", ja: "計測中… お静かに" }
+    ResetInputLatency { en: "Reset", ja: "リセット" }
+    InputLatencyUncalibrated {
+        en: "Not measured: recordings use the devices' reported latency",
+        ja: "未計測: デバイスが報告する遅延で録音位置を補正しています"
+    }
+    TypingLatency { en: "Musical typing latency", ja: "ミュージカルタイピングの遅延" }
+    TypingLatencyNote {
+        en: "Measures how late notes played on the computer keyboard arrive. Press Measure, listen to the first bar of clicks, then tap any key on every click of the next two.",
+        ja: "PC キーボードで弾いたノートがどれだけ遅れて届くかを測ります。「計測」を押し、最初の1小節はクリックを聞き、続く2小節はクリックごとに好きなキーを叩いてください。"
+    }
+    TappingAlong { en: "Listen for one bar, then tap any key on each click…", ja: "1小節聞いてから、クリックごとにキーを叩いてください…" }
+    TypingLatencyUncalibrated {
+        en: "Not measured: notes are placed where the key reached the application",
+        ja: "未計測: キーがアプリに届いた時点の位置にノートを置きます"
+    }
+    ErrorCalibrationBusy {
+        en: "stop playback and recording before measuring the input latency",
+        ja: "入力遅延を計測する前に、再生と録音を止めてください"
+    }
+    ErrorCalibrationHeardNothing {
+        en: "no clicks reached the input; let it hear the output and measure again",
+        ja: "クリック音が入力に届きませんでした。入力に出力の音が届くようにして、もう一度計測してください"
+    }
+    ErrorCalibrationStalled {
+        en: "the audio output did not play the measurement",
+        ja: "オーディオ出力が計測音を再生しませんでした"
+    }
     InputDevice { en: "Input Device", ja: "入力デバイス" }
     InputDeviceNote {
         en: "Opened only while recording, so changing it does not interrupt playback.",
@@ -1523,6 +1564,27 @@ strings! {
         ja: "バスにクリップは置けません — 音は他のトラックからのルーティングで届きます"
     }
     DuplicatedTrack { en: "Duplicated track", ja: "トラックを複製しました" }
+    AddedLayer { en: "Added a layer", ja: "レイヤーを追加しました" }
+    DetachedLayer { en: "Detached the layer", ja: "レイヤーを切り離しました" }
+    MenuAddLayer { en: "Add Layer", ja: "レイヤーを追加" }
+    MenuDetachLayer { en: "Detach Layer", ja: "レイヤーを切り離す" }
+    InspectorLayer { en: "Layer", ja: "レイヤー" }
+    MixerNotesWire { en: "Notes", ja: "音符" }
+    LayerFollows { en: "Plays notes of", ja: "音符の参照元" }
+    LayerSourceMissing { en: "Missing track", ja: "見つからないトラック" }
+    LayerUnshaped { en: "As played", ja: "そのまま" }
+    LayerShaped { en: "Shaped", ja: "変形あり" }
+    LayerLowest { en: "Lowest Note", ja: "最低音" }
+    LayerHighest { en: "Highest Note", ja: "最高音" }
+    LayerVoice { en: "Notes Kept", ja: "残す音" }
+    LayerVoiceAll { en: "Every Note", ja: "すべての音" }
+    LayerVoiceTop { en: "Top Note Only", ja: "最高音のみ" }
+    LayerVoiceBottom { en: "Bottom Note Only", ja: "最低音のみ" }
+    LayerTranspose { en: "Transpose", ja: "トランスポーズ" }
+    LayerVelocity { en: "Velocity", ja: "ベロシティ" }
+    LayerLength { en: "Length", ja: "長さ" }
+    LayerOffset { en: "Timing", ja: "タイミング" }
+    LayerReset { en: "Reset Shape", ja: "変形をリセット" }
     DuplicatedClip { en: "Duplicated clip", ja: "クリップを複製しました" }
     SplitClipStatus { en: "Split clip", ja: "クリップを分割しました" }
     CopiedToClipboard { en: "Copied", ja: "コピーしました" }
@@ -1568,6 +1630,9 @@ strings! {
     EditAddBusTrack { en: "adding a bus", ja: "バスの追加" }
     EditDeleteTrack { en: "deleting a track", ja: "トラックの削除" }
     EditDuplicateTrack { en: "duplicating a track", ja: "トラックの複製" }
+    EditAddLayerTrack { en: "adding a layer", ja: "レイヤーの追加" }
+    EditSetLayerShape { en: "shaping a layer", ja: "レイヤーの変形" }
+    EditDetachLayer { en: "detaching a layer", ja: "レイヤーの切り離し" }
     EditMoveTrack { en: "moving a track", ja: "トラックの並べ替え" }
     EditMoveMixerNodes { en: "moving mixer nodes", ja: "ミキサーノードの移動" }
     EditArrangeMixerNodes { en: "arranging mixer nodes", ja: "ミキサーノードの自動配置" }
@@ -2063,6 +2128,7 @@ new のオプション
     }
     LogPanel { en: "Log", ja: "ログ" }
     LogClear { en: "Clear", ja: "消去" }
+    LogCopyAll { en: "Copy all", ja: "すべてコピー" }
     LogEmpty { en: "Nothing has been logged.", ja: "ログはまだありません。" }
     CmdShowLog { en: "Log", ja: "ログ" }
     AgentPanel { en: "Agent", ja: "エージェント" }
@@ -2102,6 +2168,7 @@ new のオプション
     AgentCodexPathLabel { en: "Codex executable path (optional)", ja: "Codex実行ファイルのパス（任意）" }
     AgentCodexHelp { en: "Sign in with codex login. Leave the path empty to detect the installed CLI.", ja: "codex loginでログインしてください。パスが空欄ならインストール済みのCLIを探します。" }
     AgentOpenCodePathLabel { en: "OpenCode executable path (optional)", ja: "OpenCode実行ファイルのパス（任意）" }
+    AgentModelFallback { en: "The model used last is not available now, so another one has been chosen. Pick one from the model menu to keep it.", ja: "前回使ったモデルが現在利用できないため、別のモデルを選びました。使い続けるモデルはモデルメニューから選んでください。" }
     AgentOpenCodeVariantHelp { en: "Choose an OpenCode model variant in the model menu to change reasoning effort.", ja: "推論の強度を変更するには、モデルメニューでOpenCodeのモデルバリアントを選択してください。" }
     AgentOpenCodeHelp { en: "Install OpenCode and run opencode auth login. Leave the path empty to detect the CLI, then choose an OpenCode model in the Agent panel. Custom provider configuration and user plugins are not inherited.", ja: "OpenCodeをインストールし、opencode auth loginで認証してください。パスが空欄ならCLIを検出します。エージェントパネルでOpenCodeのモデルを選択してください。独自プロバイダー設定とユーザープラグインは引き継ぎません。" }
     AgentDiscoveryHelp { en: "Available Codex, Claude Code, OpenCode, Antigravity CLI, Ollama and configured API models appear together in the Agent panel.", ja: "利用可能なCodex・Claude Code・OpenCode・Antigravity CLI・Ollama・設定済みAPIのモデルを、エージェントパネルにまとめて表示します。" }
@@ -2235,7 +2302,6 @@ new のオプション
     AgentAttachedFiles { en: "Attached files", ja: "添付ファイル" }
     AttachFiles { en: "Attach files", ja: "ファイルを添付" }
     AttachmentClosePreview { en: "Close preview", ja: "プレビューを閉じる" }
-    AttachmentLoading { en: "Loading preview…", ja: "プレビューを読み込み中…" }
     AgentOpenAttachment {
         en: "Preview attachment: {path}",
         ja: "添付ファイルをプレビュー：{path}"
@@ -2308,6 +2374,12 @@ new のオプション
     AgentInterrupting { en: "Stopping the current turn…", ja: "現在の処理を中断中…" }
     AgentQueueReattach { en: "Attach the reference files again before sending this saved message.", ja: "保存されたメッセージを送るには、参照ファイルをもう一度添付してください。" }
     AgentCopyMarkdown { en: "Copy Markdown", ja: "Markdownをコピー" }
+    AgentCopyText { en: "Copy", ja: "コピー" }
+    AgentCopyConversation { en: "Copy conversation", ja: "会話をコピー" }
+    AgentTranscriptYou { en: "You", ja: "あなた" }
+    AgentTranscriptAgent { en: "Agent", ja: "エージェント" }
+    AgentTranscriptTool { en: "Tool", ja: "ツール" }
+    AgentTranscriptError { en: "Error", ja: "エラー" }
     AgentDropFiles { en: "Drop MIDI, images, text or audio here", ja: "MIDI・画像・テキスト・音声をここにドロップ" }
     AgentComposerPlaceholder { en: "Ask about this song, or drop reference files…", ja: "この曲について相談、または参考ファイルをドロップ…" }
     AgentEffortDefaultShort { en: "Auto", ja: "既定" }
