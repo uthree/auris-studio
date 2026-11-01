@@ -193,7 +193,9 @@ pub use settings::{
     InputCalibration, PianoRollGrid, ReasoningEffort, Settings, ToolbarEntry, ToolbarItem,
     ToolbarPreferences, TypingCalibration, WindowPlacement, config_dir,
 };
-pub use singer_portrait::{SingerPortraitError, SingerPortraitSource, load_singer_portrait};
+pub use singer_portrait::{
+    SingerPortraitError, SingerPortraitSource, load_singer_icon, load_singer_portrait,
+};
 pub use sound_character::{
     Bounds, EnvelopeTargets, MeasuredEnvelope, TimbreCharacter, TimbreTargets,
 };

@@ -122,6 +122,7 @@ impl AurisApp {
                 rows.push(
                     div()
                         .debug_selector(|| "singer-phoneme-limits".into())
+                        .w_full()
                         .text_xs()
                         .text_color(theme.text_muted)
                         .child(self.t(Key::VoicevoxPhonemesHint))
@@ -170,7 +171,7 @@ impl AurisApp {
                         theme.accent_text,
                     ))
                 })
-                .child(div().min_w_0().child(state))
+                .child(div().flex_1().min_w_0().child(state))
                 .into_any_element(),
         );
         if info.is_some() && !rendering && !queued {
@@ -192,10 +193,10 @@ impl AurisApp {
                 .into_any_element(),
             );
         }
-        // Artwork arrives asynchronously; keep the voice and synthesis controls above it so
-        // they cannot move away from a pointer while the image is loading.
-        if let Some(portrait) = self.singer_portrait_row(track, cx) {
-            rows.push(portrait);
+        // The figure itself stands in the sound card above; only a failure lands here, after
+        // the controls, so a retry cannot push them away from a pointer.
+        if let Some(retry) = self.singer_portrait_row(track, cx) {
+            rows.push(retry);
         }
         rows.push(divider(&theme).into_any_element());
         rows
@@ -214,25 +215,10 @@ impl AurisApp {
             .singer_voice_info(track)
             .ok()
             .flatten()
-            .map(|info| (info.path, info.speaker));
-        for (name, path, speaker) in self.voice_list() {
-            let selected = current
-                .as_ref()
-                .is_some_and(|(current_path, current_speaker)| {
-                    current_path == &path
-                        && speaker
-                            .as_ref()
-                            .is_none_or(|speaker| current_speaker.as_ref() == Some(speaker))
-                });
-            menu = menu.toggle(
-                name,
-                MenuCommand::SingerVoice {
-                    track,
-                    path,
-                    speaker,
-                },
-                selected,
-            );
+            .map(|info| info.path);
+        for (name, path) in self.voice_list() {
+            let selected = current.as_ref() == Some(&path);
+            menu = menu.toggle(name, MenuCommand::SingerVoice { track, path }, selected);
         }
         menu.separator().item(
             self.t(Key::CmdChooseVoice),
@@ -457,7 +443,7 @@ impl AurisApp {
             .set_voicevox_speaker(track, &connection, &choice)
         {
             Ok(()) => {
-                self.voices = None;
+                self.forget_voice_shelf();
                 self.select_track(track);
                 self.invalidate_sung_previews();
                 if let Ok(connection) = self.session.singer_voicevox_connection(track) {
@@ -514,7 +500,7 @@ mod tests {
             this.session
                 .set_singer_speaker(track, Some("Warm"))
                 .unwrap();
-            this.voices = Some(vec![("Test Voice".into(), path.clone(), None)]);
+            this.voices = Some(vec![("Test Voice".into(), path.clone())]);
             this.set_status("Unrelated status");
         });
         paint(&app, cx);
@@ -609,7 +595,7 @@ mod tests {
             this.panels = crate::dock::PanelLayout::default();
             let piano = this.session.add_default_instrument_track("Piano").unwrap();
             this.select_track(piano);
-            this.voices = Some(vec![("Test Voice".into(), path.clone(), None)]);
+            this.voices = Some(vec![("Test Voice".into(), path.clone())]);
             this.library_search = crate::ui::text_field::TextField::new("Test Voice");
         });
         paint(&app, cx);
