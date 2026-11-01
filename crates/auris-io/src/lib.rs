@@ -50,8 +50,8 @@ pub use midi::{
 };
 pub use project_file::{
     AUDIO_DIR, MAX_PROJECT_FILE_BYTES, PROJECT_EXTENSION, StagedFile, StagedProject,
-    document_in_folder, load_project, project_folder, save_project, stage_file_bytes,
-    stage_project,
+    document_in_folder, load_project, match_folder_permissions, project_folder, save_project,
+    stage_file_bytes, stage_project,
 };
 pub use record::WavRecorder;
 pub use soundfont::{
