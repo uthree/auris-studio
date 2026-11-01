@@ -392,10 +392,9 @@ impl SaveJob {
             path: folder.clone(),
             source,
         })?;
-        let lock = project_write_lock(&self.document)?;
-        if cancelled.load(Ordering::Relaxed) {
+        let Some(lock) = project_write_lock_until(&self.document, cancelled)? else {
             return Ok(None);
-        }
+        };
 
         if self.collect_assets {
             if self.document.exists() {
@@ -1872,8 +1871,15 @@ fn same_font_file(left: &Path, right: &Path) -> bool {
             .is_some_and(|(left, right)| left == right)
 }
 
-/// Serialises cooperating writers across processes, including the optimistic disk check.
-pub(super) fn project_write_lock(path: &Path) -> Result<std::fs::File, SessionError> {
+/// How long a saving thread waits between attempts on another process's lock.
+///
+/// Fifty milliseconds. Short enough that a cancel is answered while the dialog that asked for it
+/// is still closing, long enough that waiting out a large save next door costs nothing anyone
+/// could measure.
+const WRITE_LOCK_POLL: std::time::Duration = std::time::Duration::from_millis(50);
+
+/// Opens the lock file beside a document, without taking the lock.
+fn open_write_lock_file(path: &Path) -> Result<(PathBuf, std::fs::File), SessionError> {
     let folder = path.parent().ok_or(SessionError::NoPath)?;
     let lock_path = folder.join(".auris-write.lock");
     let file = std::fs::OpenOptions::new()
@@ -1883,9 +1889,46 @@ pub(super) fn project_write_lock(path: &Path) -> Result<std::fs::File, SessionEr
         .write(true)
         .open(&lock_path)
         .map_err(|error| IoError::from_fs(&lock_path, error))?;
+    Ok((lock_path, file))
+}
+
+/// Serialises cooperating writers across processes, including the optimistic disk check.
+///
+/// Blocking, for a caller with nothing to cancel. A caller that can be cancelled wants
+/// [`project_write_lock_until`] instead.
+pub(super) fn project_write_lock(path: &Path) -> Result<std::fs::File, SessionError> {
+    let (lock_path, file) = open_write_lock_file(path)?;
     file.lock()
         .map_err(|error| IoError::from_fs(&lock_path, error))?;
     Ok(file)
+}
+
+/// [`project_write_lock`], but answering `cancelled` while another process holds it.
+///
+/// `None` when the flag was set before the lock could be taken.
+///
+/// Polled rather than blocking. [`SaveJob::run`] is built around cancellation and checks the flag
+/// on either side of taking this lock — but a blocking `lock()` cannot be interrupted, so a
+/// second Auris holding it left the save hanging on the worker with the flag going unread: the
+/// window stayed responsive, the save never finished, and Cancel did nothing. `try_lock` in a
+/// loop is how `autosave` and `workshop` already take theirs.
+pub(super) fn project_write_lock_until(
+    path: &Path,
+    cancelled: &AtomicBool,
+) -> Result<Option<std::fs::File>, SessionError> {
+    let (lock_path, file) = open_write_lock_file(path)?;
+    loop {
+        if cancelled.load(Ordering::Relaxed) {
+            return Ok(None);
+        }
+        match file.try_lock() {
+            Ok(()) => return Ok(Some(file)),
+            Err(std::fs::TryLockError::WouldBlock) => std::thread::sleep(WRITE_LOCK_POLL),
+            Err(std::fs::TryLockError::Error(error)) => {
+                return Err(IoError::from_fs(&lock_path, error).into());
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1905,6 +1948,43 @@ mod tests {
             .collect();
         entries.sort();
         entries
+    }
+
+    #[test]
+    fn a_held_lock_does_not_make_a_save_uncancellable() {
+        // The lock used to be taken with a blocking `lock()`, which cannot be interrupted: with
+        // another process holding it, `SaveJob::run` sat inside the call and never read the flag
+        // again. The window stayed responsive, the save never finished, and Cancel did nothing.
+        let scratch = Scratch::new("cancel-under-a-held-lock");
+        let chosen = scratch.join("Held.auris");
+        let document = document_in_folder(&chosen);
+        std::fs::create_dir_all(document.parent().unwrap()).unwrap();
+        let blocker = project_write_lock(&document).expect("the test holds the project lock");
+
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let waiting = Arc::new(Barrier::new(2));
+        let worker = {
+            let cancelled = Arc::clone(&cancelled);
+            let waiting = Arc::clone(&waiting);
+            let document = document.clone();
+            std::thread::spawn(move || {
+                waiting.wait();
+                project_write_lock_until(&document, &cancelled)
+            })
+        };
+
+        // Let it reach the lock and find it taken, then cancel while it is still waiting.
+        waiting.wait();
+        std::thread::sleep(WRITE_LOCK_POLL * 3);
+        cancelled.store(true, Ordering::Relaxed);
+
+        let answered = worker.join().expect("the waiting thread finishes");
+        assert!(
+            matches!(answered, Ok(None)),
+            "a cancelled wait should report cancellation, not a lock or an error"
+        );
+        // The lock was never taken from the holder, which is the other half of the contract.
+        drop(blocker);
     }
 
     #[test]
