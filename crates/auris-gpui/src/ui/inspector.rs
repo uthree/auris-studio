@@ -447,8 +447,7 @@ impl AurisApp {
                     .child(
                         gpui::svg()
                             .path(artwork)
-                            .w(gpui::px(150.0))
-                            .h(gpui::px(140.0))
+                            .size(gpui::px(120.0))
                             .text_color(theme.accent),
                     )
                     .child(
@@ -1192,45 +1191,39 @@ impl AurisApp {
 }
 
 /// Presentation artwork follows the shared sound classification and manual corrections.
+///
+/// The inspector draws the same instrument the library row does, so a sound the classifier
+/// could not place falls back on the built-in instrument's own family before the waveform.
 fn sound_artwork(
     id: &str,
     family: auris_session::SoundIcon,
     drum: bool,
     singer: bool,
 ) -> &'static str {
-    if singer {
-        return "sounds/voice.svg";
-    }
-    if drum {
-        return "sounds/drums.svg";
-    }
     use auris_session::SoundIcon;
-    match family {
-        SoundIcon::Piano | SoundIcon::Organ => return "sounds/keys.svg",
-        SoundIcon::Guitar | SoundIcon::Bass | SoundIcon::Strings | SoundIcon::Pluck => {
-            return "sounds/strings.svg";
+    let family = if singer {
+        SoundIcon::Voice
+    } else if drum {
+        SoundIcon::Drum
+    } else if family != SoundIcon::Sound {
+        family
+    } else {
+        match id {
+            "auris.physical.piano" => SoundIcon::Piano,
+            "auris.physical.guitar" | "auris.physical.electric_guitar" => SoundIcon::Guitar,
+            "auris.physical.bass" => SoundIcon::Bass,
+            "auris.physical.violin" => SoundIcon::Strings,
+            "auris.physical.clarinet" | "auris.physical.tin_whistle" => SoundIcon::Wind,
+            "auris.physical.mallet"
+            | "auris.physical.hammered_dulcimer"
+            | "auris.physical.bell" => SoundIcon::Bell,
+            "auris.synth.drumkit" | "auris.synth.noisedrum" => SoundIcon::Drum,
+            "auris.synth.vocal" | "auris.physical.choir" => SoundIcon::Voice,
+            "auris.synth.chiptune" | "auris.synth.fm2" => SoundIcon::Synth,
+            _ => SoundIcon::Sound,
         }
-        SoundIcon::Brass | SoundIcon::Wind => return "sounds/wind.svg",
-        SoundIcon::Drum => return "sounds/drums.svg",
-        SoundIcon::Bell => return "sounds/bell.svg",
-        SoundIcon::Voice => return "sounds/voice.svg",
-        SoundIcon::Synth | SoundIcon::Pad => return "sounds/synth.svg",
-        SoundIcon::Sound => {}
-    }
-    match id {
-        "auris.physical.piano" => "sounds/keys.svg",
-        "auris.physical.guitar"
-        | "auris.physical.electric_guitar"
-        | "auris.physical.bass"
-        | "auris.physical.violin" => "sounds/strings.svg",
-        "auris.physical.clarinet" | "auris.physical.tin_whistle" => "sounds/wind.svg",
-        "auris.physical.mallet" | "auris.physical.hammered_dulcimer" => "sounds/mallet.svg",
-        "auris.physical.bell" => "sounds/bell.svg",
-        "auris.synth.drumkit" | "auris.synth.noisedrum" => "sounds/drums.svg",
-        "auris.synth.vocal" | "auris.physical.choir" => "sounds/voice.svg",
-        "auris.synth.chiptune" | "auris.synth.fm2" => "sounds/synth.svg",
-        _ => "sounds/wave.svg",
-    }
+    };
+    super::icons::sound_artwork_path(family)
 }
 
 /// A plugin's display name, translated where the term is known.
@@ -1458,7 +1451,7 @@ mod tests {
                 false,
                 false
             ),
-            "sounds/keys.svg"
+            "sounds/sound-piano.svg"
         );
         assert_eq!(
             sound_artwork(
@@ -1467,7 +1460,7 @@ mod tests {
                 false,
                 false
             ),
-            "sounds/strings.svg"
+            "sounds/sound-strings.svg"
         );
         assert_eq!(
             sound_artwork(
@@ -1476,7 +1469,7 @@ mod tests {
                 false,
                 false
             ),
-            "sounds/wind.svg"
+            "sounds/sound-wind.svg"
         );
         assert_eq!(
             sound_artwork(
@@ -1485,11 +1478,11 @@ mod tests {
                 true,
                 false
             ),
-            "sounds/drums.svg"
+            "sounds/sound-drum.svg"
         );
         assert_eq!(
             sound_artwork("", auris_session::SoundIcon::Sound, false, true),
-            "sounds/voice.svg"
+            "sounds/sound-voice.svg"
         );
         assert_eq!(
             sound_artwork(
@@ -1498,11 +1491,11 @@ mod tests {
                 false,
                 false
             ),
-            "sounds/synth.svg"
+            "sounds/sound-synth.svg"
         );
         assert_eq!(
             sound_artwork("third.party", auris_session::SoundIcon::Sound, false, false),
-            "sounds/wave.svg"
+            "sounds/sound-sound.svg"
         );
     }
 
