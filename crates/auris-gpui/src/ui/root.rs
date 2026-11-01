@@ -258,7 +258,7 @@ impl Render for AurisApp {
             .text_size(theme.atelier.typography.size_md)
             .child(title_bar)
             .children(project_tabs)
-            .child(transport)
+            .children(transport)
             .child(
                 div()
                     .flex()
