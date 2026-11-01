@@ -674,6 +674,10 @@ strings! {
         en: "No audio output — editing and export still work",
         ja: "オーディオ出力なし — 編集と書き出しは可能です"
     }
+    AudioOpensOnPlayback {
+        en: "Audio output opens on playback",
+        ja: "再生すると音声出力を開きます"
+    }
 
     // ------------------------------------------------------------------ settings window
     Settings { en: "Settings", ja: "設定" }

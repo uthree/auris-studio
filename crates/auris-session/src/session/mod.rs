@@ -346,6 +346,13 @@ pub struct AudioStatus {
     pub device: String,
     /// `true` when a real output stream is open.
     pub running: bool,
+    /// `true` when nothing is open *because this session has not asked for the device yet*.
+    ///
+    /// The distinction a frontend needs and `running` alone cannot make. Every project window
+    /// starts suspended and takes the output on the first explicit audio command, so "not
+    /// running" is the ordinary state of a window nobody has pressed Play in — and it reads the
+    /// same as a device that failed to open, which is the one case worth alarming anybody about.
+    pub suspended: bool,
     /// Rate the engine renders at, which is the device's rate and not necessarily the project's.
     pub sample_rate: f64,
     /// Output channel count.
@@ -847,6 +854,7 @@ impl Session {
                 .as_ref()
                 .map_or_else(|| "none".to_string(), |d| d.name().to_string()),
             running: self.engine.is_running(),
+            suspended: self.audio_suspended,
             sample_rate: self.engine.sample_rate(),
             channels: self.engine.channel_count(),
             gpu: self

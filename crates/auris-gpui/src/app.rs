@@ -3855,6 +3855,13 @@ pub(crate) fn audio_line(status: &auris_session::AudioStatus, language: Language
             status.sample_rate,
             status.channels,
         )
+    } else if status.suspended {
+        // Not a fault, and it used to read like one. Every project window opens suspended and
+        // takes the device on the first explicit audio command — see `acquire_audio`, which
+        // switches "only for an explicit audio command, never because focus changed" — so this
+        // is what a healthy machine says before anybody has pressed Play. Saying "No audio
+        // output" there is indistinguishable from a device that would not open.
+        Key::AudioOpensOnPlayback.get(language).to_string()
     } else {
         Key::NoAudioOutput.get(language).to_string()
     };
@@ -3863,6 +3870,69 @@ pub(crate) fn audio_line(status: &auris_session::AudioStatus, language: Language
         None => messages::gpu_unavailable(language),
     };
     format!("{engine} · {gpu}")
+}
+
+#[cfg(test)]
+mod audio_line_tests {
+    use super::audio_line;
+    use auris_i18n::{Key, Language};
+    use auris_session::AudioStatus;
+
+    fn status(running: bool, suspended: bool) -> AudioStatus {
+        AudioStatus {
+            host: None,
+            buffer_frames: None,
+            device: "none".to_string(),
+            running,
+            suspended,
+            sample_rate: 48_000.0,
+            channels: 2,
+            gpu: None,
+        }
+    }
+
+    #[test]
+    fn a_window_that_has_not_asked_for_the_device_does_not_report_a_fault() {
+        // Every project window opens suspended and takes the output on the first explicit audio
+        // command, so this is what a healthy machine says before anybody presses Play. It used
+        // to say "No audio output", which is what a device that would not open says.
+        for language in Language::ALL {
+            let line = audio_line(&status(false, true), language);
+            assert!(
+                line.contains(Key::AudioOpensOnPlayback.get(language)),
+                "{language:?}: {line}"
+            );
+            assert!(
+                !line.contains(Key::NoAudioOutput.get(language)),
+                "{language:?} still reports a fault: {line}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_device_that_would_not_open_still_says_so() {
+        // The other half: a real failure must keep its own words, in both languages.
+        for language in Language::ALL {
+            let line = audio_line(&status(false, false), language);
+            assert!(
+                line.contains(Key::NoAudioOutput.get(language)),
+                "{language:?}: {line}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_running_device_names_itself_whatever_the_suspended_flag_says() {
+        // `running` wins: the flag is only consulted to explain a silence.
+        for suspended in [false, true] {
+            let line = audio_line(&status(true, suspended), Language::English);
+            assert!(line.contains("48"), "the rate is missing: {line}");
+            assert!(
+                !line.contains(Key::NoAudioOutput.get(Language::English)),
+                "a running device reported a fault: {line}"
+            );
+        }
+    }
 }
 
 /// One gesture, one undo step — checked by making the gesture rather than by calling what it
