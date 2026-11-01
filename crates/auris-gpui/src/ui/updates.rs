@@ -11,7 +11,7 @@ use crate::app::AurisApp;
 use crate::ui::prompt::{PendingAction, Prompt, PromptBody, Question};
 use crate::update_check::{
     ReadyUpdate, ReleaseAsset, UpdateOutcome, UpdateStatus, check_latest_release, download_update,
-    installed_target, take_update_result,
+    installed_target, prune_update_folder, take_update_result,
 };
 
 /// One release operation at a time, with a verified package retained until quit.
@@ -82,6 +82,9 @@ impl AurisApp {
 
     /// Starts one quiet check shortly after launch and repeats while the app remains open.
     pub(crate) fn start_auto_updates(&mut self, cx: &mut Context<Self>) {
+        cx.background_executor()
+            .spawn(async { prune_update_folder() })
+            .detach();
         if let Some(UpdateOutcome::Failure(detail)) = take_update_result() {
             log::warn!("previous update failed: {detail}");
             let message = self.t(Key::UpdateInstallFailed).to_owned();
