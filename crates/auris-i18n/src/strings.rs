@@ -246,6 +246,12 @@ strings! {
     TrackGridEmpty { en: "Add a track to see its sound here.", ja: "トラックを追加すると、音源の動きや波形をここに表示します。" }
     ToolbarHeading { en: "Top toolbar", ja: "上部ツールバー" }
     ToolbarNote { en: "Show or hide items and change their order within each group.", ja: "項目の表示を切り替え、グループ内の順序を変更できます。" }
+    TopBarLayout { en: "Layout", ja: "レイアウト" }
+    TopBarLayoutNote { en: "Spacious keeps the transport in a row of its own under the title bar, with each readout captioned. Compact puts it in the title bar when the window is wide enough.", ja: "ゆったりは、タイトルバーの下に再生操作の段を設け、各表示に見出しを付けます。コンパクトは、ウィンドウの幅が十分あるとき再生操作をタイトルバーにまとめます。" }
+    TopBarSpacious { en: "Spacious", ja: "ゆったり" }
+    TopBarSpaciousNote { en: "Title bar and transport on two rows", ja: "タイトルバーと再生操作を2段に" }
+    TopBarCompact { en: "Compact", ja: "コンパクト" }
+    TopBarCompactNote { en: "One bar in a wide window", ja: "幅の広いウィンドウでは1段に" }
     ToolbarPlayback { en: "Playback controls", ja: "再生操作" }
     ToolbarEditing { en: "Editing controls", ja: "編集操作" }
     ToolbarReadouts { en: "Position and tempo", ja: "位置・テンポ表示" }

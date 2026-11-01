@@ -8,6 +8,7 @@ use auris_session::session::MonitorStatus;
 use gpui::{Axis, IntoElement, Pixels, Window, div, prelude::*, px};
 
 use crate::app::{AurisApp, Drag};
+use crate::appearance::TopBarLayout;
 use crate::theme::Metrics;
 use crate::ui::context_menu::count_in_label;
 use crate::ui::icons::Icon;
@@ -47,8 +48,11 @@ pub(crate) const TITLE_BAR_TRANSPORT_WIDTH: Pixels = px(820.0);
 const COMPACT_METER_WIDTH: Pixels = px(104.0);
 
 /// Whether a window `width` wide carries the transport in its title bar.
-pub(crate) fn transport_in_title_bar(width: Pixels) -> bool {
-    width >= ONE_BAR_FROM
+///
+/// Only the compact layout ever does; the spacious one keeps the transport in a row of its own
+/// at every width, with room around each readout and its caption above it.
+pub(crate) fn transport_in_title_bar(width: Pixels, layout: TopBarLayout) -> bool {
+    layout == TopBarLayout::Compact && width >= ONE_BAR_FROM
 }
 
 /// The transport's three groups, laid out by whichever bar is carrying them.
@@ -63,8 +67,8 @@ pub(crate) struct TransportParts {
 
 /// The height of the transport's own row: none while the title bar carries it, and two rows
 /// once secondary controls move below playback before the main controls would crowd each other.
-pub(crate) fn transport_height(width: Pixels) -> Pixels {
-    if transport_in_title_bar(width) {
+pub(crate) fn transport_height(width: Pixels, layout: TopBarLayout) -> Pixels {
+    if transport_in_title_bar(width, layout) {
         px(0.0)
     } else if width < px(1100.0) {
         Metrics::TRANSPORT_HEIGHT + Metrics::TRANSPORT_AUX_HEIGHT
@@ -451,7 +455,8 @@ impl AurisApp {
         cx: &mut gpui::Context<Self>,
     ) -> Option<gpui::AnyElement> {
         let width = window.viewport_size().width;
-        if transport_in_title_bar(width) {
+        let layout = self.appearance.top_bar_layout;
+        if transport_in_title_bar(width, layout) {
             return None;
         }
         let theme = self.theme.clone();
@@ -493,44 +498,46 @@ impl AurisApp {
             .debug_selector(|| "transport-bar".into())
             .flex()
             .flex_shrink_0()
-            .h(transport_height(width))
+            .h(transport_height(width, layout))
             .bg(theme.surface)
             .border_b_1()
             .border_color(theme.border_subtle);
-        Some(if transport_height(width) > Metrics::TRANSPORT_HEIGHT {
-            bar.flex_col()
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .flex_shrink_0()
-                        .h(Metrics::TRANSPORT_HEIGHT)
-                        .px_3()
-                        .child(parts.primary),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap_3()
-                        .px_3()
-                        .flex_1()
-                        .min_h_0()
-                        .child(editing)
-                        .child(meters),
-                )
-                .into_any_element()
-        } else {
-            bar.items_center()
-                .gap_3()
-                .px_3()
-                .h(Metrics::TRANSPORT_HEIGHT)
-                .child(editing)
-                .child(parts.primary)
-                .child(meters)
-                .into_any_element()
-        })
+        Some(
+            if transport_height(width, layout) > Metrics::TRANSPORT_HEIGHT {
+                bar.flex_col()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .flex_shrink_0()
+                            .h(Metrics::TRANSPORT_HEIGHT)
+                            .px_3()
+                            .child(parts.primary),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_3()
+                            .px_3()
+                            .flex_1()
+                            .min_h_0()
+                            .child(editing)
+                            .child(meters),
+                    )
+                    .into_any_element()
+            } else {
+                bar.items_center()
+                    .gap_3()
+                    .px_3()
+                    .h(Metrics::TRANSPORT_HEIGHT)
+                    .child(editing)
+                    .child(parts.primary)
+                    .child(meters)
+                    .into_any_element()
+            },
+        )
     }
 
     /// The transport's three groups, drawn for a row of its own or, `compact`, for the title bar.

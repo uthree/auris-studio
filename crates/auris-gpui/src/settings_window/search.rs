@@ -153,6 +153,10 @@ impl Section {
             Self::Host => &[Key::AudioHost, Key::RefreshAudioDevices],
             Self::Toolbar => &[
                 Key::ToolbarHeading,
+                Key::TopBarLayout,
+                Key::TopBarLayoutNote,
+                Key::TopBarSpacious,
+                Key::TopBarCompact,
                 Key::ToolbarNote,
                 Key::ToolbarPlayback,
                 Key::ToolbarVisualizer,

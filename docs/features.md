@@ -279,10 +279,13 @@ Either shape can be chosen by hand — *Fade-In Shape* and *Fade-Out Shape* on t
 which appear once that edge has a fade on it. That is for the joins made another way: a fade
 dragged out by its handle over a neighbour, or a clip trimmed back until it met one.
 
-The transport — the playback buttons, the readouts, the grid and zoom, and the meters — sits in
-the title bar when the window is at least 1280 points wide, so the window has one bar as Atelier
-asks; a narrower window gives it a row of its own under the title bar. In the title bar each
-readout is one line and names itself in a tooltip.
+The transport — the playback buttons, the readouts, the grid and zoom, and the meters — has two
+layouts, chosen under *Settings → Top toolbar → Layout*. *Spacious*, the default, gives it a row
+of its own under the title bar at every width: the grid and zoom at one end, playback and the
+captioned readouts in the middle, the meters at the other. *Compact* puts it in the title bar
+when the window is at least 1280 points wide, so the window has one bar as Atelier asks; a
+narrower window still gives it its own row. In the title bar each readout is one line and names
+itself in a tooltip.
 
 The transport's readouts are the position, the tempo and the time
 signature. The first two are typeable — double-click either and the number can be entered

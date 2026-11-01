@@ -162,8 +162,10 @@ impl Render for AurisApp {
         // Pointer coordinates arrive in window space, and the resize handlers need to know how
         // tall the window is to bound the bottom panel; record it once per frame.
         self.viewport_height = window.viewport_size().height;
-        self.transport_height =
-            super::transport_bar::transport_height(window.viewport_size().width);
+        self.transport_height = super::transport_bar::transport_height(
+            window.viewport_size().width,
+            self.appearance.top_bar_layout,
+        );
         // Where the window is, kept for next time. Read rather than written: the file is put
         // out once, on the way out.
         self.remember_window(window);
