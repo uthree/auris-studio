@@ -149,11 +149,7 @@ pub(super) fn paint_lane(
         };
         let selected = lane.selected.contains(&clip.id);
         let (title_fill, title_ink) = clip_title_colors(theme, lane.color, selected, clip.muted);
-        let body = if clip.muted {
-            Theme::translucent(lane.color, 0.08)
-        } else {
-            Theme::translucent(lane.color, 0.30)
-        };
+        let body_alpha = if clip.muted { 0.08 } else { 0.30 };
         let radius = theme
             .atelier
             .shape
@@ -161,7 +157,43 @@ pub(super) fn paint_lane(
             .min(clip_bounds.size.width / 2.0)
             .min(clip_bounds.size.height / 2.0);
         if lane.rendered_spectrum.is_none() {
-            paint::rounded_rect(window, clip_bounds, radius, body);
+            // The repeats are the same colour at half the strength, so the phrase that was
+            // written and the echo of it read apart from across the window — the notes inside
+            // fade the same way below. The written pass is laid over the faint block rather than
+            // beside it, so the outline stays one rounded shape.
+            let (repeat_alpha, first_alpha) = repeat_body_alphas(body_alpha);
+            let first_pass = view
+                .duration_to_width(clip.length)
+                .min(clip_bounds.size.width);
+            if first_pass < clip_bounds.size.width {
+                paint::rounded_rect(
+                    window,
+                    clip_bounds,
+                    radius,
+                    Theme::translucent(lane.color, repeat_alpha),
+                );
+                paint::rect_with_corners(
+                    window,
+                    Bounds {
+                        origin: clip_bounds.origin,
+                        size: size(first_pass, clip_bounds.size.height),
+                    },
+                    Corners {
+                        top_left: radius,
+                        top_right: px(0.0),
+                        bottom_right: px(0.0),
+                        bottom_left: radius,
+                    },
+                    Theme::translucent(lane.color, first_alpha),
+                );
+            } else {
+                paint::rounded_rect(
+                    window,
+                    clip_bounds,
+                    radius,
+                    Theme::translucent(lane.color, body_alpha),
+                );
+            }
         }
         // A brighter top strip carries the clip name and doubles as the grab area. Only its
         // top corners are rounded, so it sits inside the clip's outline instead of cutting a
@@ -415,9 +447,35 @@ pub(super) fn paint_lane(
     }
 }
 
+/// The body strengths of a looped clip: its repeats, and what the written pass lays over them so
+/// that the two layers together come to exactly `body` — the strength an unlooped clip has.
+///
+/// The repeats take half. Laying one translucent fill over another composes as
+/// `1 - (1 - a)(1 - b)`, so the overlay is solved from that rather than being `body - repeat`,
+/// which would leave the written pass of a looped clip paler than the same clip unlooped.
+fn repeat_body_alphas(body: f32) -> (f32, f32) {
+    let repeat = body * 0.5;
+    let first = 1.0 - (1.0 - body) / (1.0 - repeat);
+    (repeat, first)
+}
+
 #[cfg(test)]
 mod tests {
     use super::clip_title_colors;
+
+    #[test]
+    fn a_looped_clips_written_pass_is_as_strong_as_the_same_clip_unlooped() {
+        for body in [0.08_f32, 0.30] {
+            let (repeat, first) = super::repeat_body_alphas(body);
+            assert!(
+                (repeat - body / 2.0).abs() < 1e-6,
+                "repeats at half strength"
+            );
+            let composed = 1.0 - (1.0 - repeat) * (1.0 - first);
+            assert!((composed - body).abs() < 1e-6, "{composed} != {body}");
+            assert!(first > 0.0 && first < body);
+        }
+    }
     use crate::theme::{SCHEMES, Theme, contrast_ratio};
     use auris_session::prelude::Color;
 
