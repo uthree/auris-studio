@@ -1217,6 +1217,7 @@ fn render(args: &[String]) -> Result<(), String> {
     let mut options = OfflineOptions::whole_project();
     let mut loop_only = false;
     let mut stems: Option<PathBuf> = None;
+    let mut force = false;
 
     let mut index = 2;
     while index < args.len() {
@@ -1245,6 +1246,7 @@ fn render(args: &[String]) -> Result<(), String> {
             "--dither" => settings.dither = true,
             "--no-tail" => options.include_tail = false,
             "--loop" => loop_only = true,
+            "--force" => force = true,
             "--stems" => {
                 index += 1;
                 stems = Some(PathBuf::from(args.get(index).ok_or_else(|| {
@@ -1258,6 +1260,14 @@ fn render(args: &[String]) -> Result<(), String> {
             other => return Err(messages::unknown_option(LANGUAGE, other)),
         }
         index += 1;
+    }
+    // Asked before the project is even opened, so a refusal costs nothing. `compose` and `new`
+    // refuse an existing destination the same way, and stems already refuse existing files.
+    if stems.is_none() && !force && output.exists() {
+        return Err(messages::output_exists(
+            LANGUAGE,
+            &output.display().to_string(),
+        ));
     }
 
     let mut session = headless()?;
@@ -1605,6 +1615,29 @@ mod tests {
         ])
         .unwrap_err();
         assert!(error.contains("--preset"));
+    }
+
+    #[test]
+    fn render_keeps_an_existing_file_unless_forced() {
+        let folder = tempfile::tempdir().unwrap();
+        let project = folder.path().join("Song.auris");
+        let arg = |path: &Path| path.display().to_string();
+        new_project(&["new".into(), arg(&project)]).unwrap();
+        let document = folder.path().join("Song").join("Song.auris");
+        let master = folder.path().join("master.wav");
+        std::fs::write(&master, b"the delivered master").unwrap();
+
+        let render_to = |extra: &[&str]| {
+            let mut args = vec!["render".into(), arg(&document), "-o".into(), arg(&master)];
+            args.extend(extra.iter().map(|value| value.to_string()));
+            render(&args)
+        };
+        let error = render_to(&[]).unwrap_err();
+        assert!(error.contains("--force"), "{error}");
+        assert_eq!(std::fs::read(&master).unwrap(), b"the delivered master");
+
+        render_to(&["--force"]).unwrap();
+        assert!(std::fs::read(&master).unwrap().starts_with(b"RIFF"));
     }
 
     #[test]

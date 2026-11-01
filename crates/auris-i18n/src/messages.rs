@@ -918,6 +918,12 @@ messages! {
         ja: "`{path}` には既にプロジェクトがあります。置き換えるには `--force` を指定してください"
     }
 
+    /// A render whose output file is already there, refused without `--force`.
+    fn output_exists(path: &str) {
+        en: "`{path}` already exists; pass `--force` to replace it",
+        ja: "`{path}` は既に存在します。置き換えるには `--force` を指定してください"
+    }
+
     /// A `--preset` naming a style the composer does not ship.
     fn unknown_preset(name: &str) {
         en: "there is no `{name}` preset; `auris presets` lists them",

@@ -122,6 +122,7 @@ def render(cli: Path, project: Path, wav: Path, log: Path, env: dict) -> None:
             "--bit-depth",
             "32",
             "--no-tail",
+            "--force",
             "-o",
             str(wav),
         ],
