@@ -583,6 +583,10 @@ status line says so. And the master fader is *after* the master's effects, so a 
 after it was measured can push past the limiter's ceiling — the ceiling guarantees what leaves the
 effect chain, not what leaves the mixer.
 
+A new document starts with the same limiter last on its master, at -1 dBTP, so a song written by
+hand or by an agent has something to lean on when it is normalised. Take it off and the mix can
+only be made as loud as its single loudest moment allows.
+
 ## The time signature
 
 So can the meter. The signature readout shows the one the playhead is in, and clicking it drops

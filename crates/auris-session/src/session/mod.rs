@@ -133,10 +133,11 @@ pub use files::{
     SaveResult, decode_audio, read_soundfont,
 };
 pub use hosted::PluginWindow;
+pub(crate) use levels::NEW_DOCUMENT_CEILING_DB;
 pub use levels::{
     BalanceReport, CEILING_DB, ComposeBalanceJob, ComposeBalancePhase, ComposeBalanceProgress,
-    ComposeBalanceResult, ComposeBalanceStep, LIMITER_ALLOWANCE_DB, NormalizeMixReport,
-    TARGET_LUFS, TrackLevel, fader_for, faders_lift_db, master_gain_db,
+    ComposeBalanceResult, ComposeBalanceStep, LIMITER_ALLOWANCE_DB, NORMALIZE_LIMITER_ALLOWANCE_DB,
+    NormalizeMixReport, TARGET_LUFS, TrackLevel, fader_for, faders_lift_db, master_gain_db,
 };
 pub use lyrics::LyricsMeasure;
 pub use monitor::MonitorStatus;
@@ -225,6 +226,14 @@ pub struct SessionOptions {
     /// composer wrote and nothing else: the tests that are *about* those numbers, and anything
     /// that cannot afford a render per part.
     pub balance_composed: bool,
+    /// Start every new document with a limiter last on its master.
+    ///
+    /// On, because a mix with nothing on its master can only be made as loud as its single
+    /// loudest moment allows — see `Session::normalize_mix`. Off in [`Self::headless`] for the
+    /// reason [`Self::shipped_fonts`] is: a test that builds a document from nothing should get
+    /// exactly the document it built, and a tool that wants the application's own new document
+    /// asks for it with [`Self::with_master_limiter`].
+    pub master_limiter: bool,
     /// Keep a recovery snapshot in private working storage as the document changes.
     ///
     /// On by default, and off for a headless session: a batch tool holds a document for a few
@@ -257,6 +266,7 @@ impl Default for SessionOptions {
             shipped_fonts: true,
             soundfont_library: Some(crate::settings::config_dir().join("soundfonts.json")),
             balance_composed: true,
+            master_limiter: true,
             autosave: true,
             shipped_dictionary: true,
             plugin_paths: Vec::new(),
@@ -277,6 +287,7 @@ impl SessionOptions {
             soundfont_library: None,
             autosave: false,
             shipped_dictionary: false,
+            master_limiter: false,
             ..Self::default()
         }
     }
@@ -302,6 +313,12 @@ impl SessionOptions {
     /// The user's own plugin folders, beside the standard ones. See [`Self::plugin_paths`].
     pub fn with_plugin_paths(mut self, plugin_paths: Vec<PathBuf>) -> Self {
         self.plugin_paths = plugin_paths;
+        self
+    }
+
+    /// Whether new documents start with a limiter last on their master.
+    pub fn with_master_limiter(mut self, master_limiter: bool) -> Self {
+        self.master_limiter = master_limiter;
         self
     }
 
@@ -386,6 +403,8 @@ pub struct Session {
     soundfont_library: Option<PathBuf>,
     /// Whether composing ends by measuring the piece — see [`SessionOptions::balance_composed`].
     balance_composed: bool,
+    /// Whether a new document starts with a master limiter — see [`SessionOptions::master_limiter`].
+    master_limiter: bool,
     registry: Arc<PluginRegistry>,
     device: Option<AudioDevice>,
     engine: EngineHandle,
@@ -682,7 +701,14 @@ impl Session {
         let work_dir = autosave::create_session_workspace(options.autosave)?;
         let fonts = SoundFontBank::shared();
         let registry = default_registry(Arc::clone(&fonts));
-        let project = Project::new(Project::UNTITLED, options.sample_rate);
+        let mut project = Project::new(Project::UNTITLED, options.sample_rate);
+        if options.master_limiter {
+            levels::install_master_limiter(
+                &registry,
+                &mut project,
+                levels::NEW_DOCUMENT_CEILING_DB,
+            );
+        }
         let mut audio = options.audio_preferences.clone();
         if audio.uses_asio() {
             audio.input_device = audio.device.clone();
@@ -725,6 +751,7 @@ impl Session {
             shipped_library: options.shipped_fonts,
             soundfont_library: options.soundfont_library,
             balance_composed: options.balance_composed,
+            master_limiter: options.master_limiter,
             registry,
             device: Some(device),
             engine,

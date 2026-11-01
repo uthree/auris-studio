@@ -1492,7 +1492,11 @@ mod tests {
         );
         app.read_with(cx, |this, _| {
             let nodes = &this.mixer_canvas.as_ref().unwrap().document.nodes;
-            assert_eq!(nodes.len(), this.project().tracks.len() + 1);
+            let strips = nodes
+                .iter()
+                .filter(|node| matches!(node, MixerNode::Strip(_)))
+                .count();
+            assert_eq!(strips, this.project().tracks.len() + 1);
             assert_eq!(
                 nodes
                     .iter()
@@ -1501,7 +1505,12 @@ mod tests {
                 1,
                 "a track and its fader have one shared node"
             );
-            assert!(nodes.iter().all(|node| matches!(node, MixerNode::Strip(_))));
+            // The only other nodes are the new document's master inserts — its limiter.
+            assert_eq!(
+                nodes.len() - strips,
+                this.project().master.effects.len(),
+                "no node for a fader of its own"
+            );
         });
     }
 
