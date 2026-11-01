@@ -787,6 +787,46 @@ pub fn loop_region(
     );
 }
 
+/// The loop mark drawn beside a clip's loop edge while the pointer is on it.
+///
+/// `zone` is the edge's hit rectangle in window coordinates. The mark sits just past it, at the
+/// top, on a raised chip so it reads over a clip, the grid or the empty lane alike; it is the
+/// same Atelier loop glyph the transport's cycle button wears, because both say "this repeats".
+pub fn loop_handle_mark(window: &mut Window, cx: &App, zone: Bounds<Pixels>, theme: &Theme) {
+    let glyph = px(12.0);
+    let pad = px(2.0);
+    let chip = Bounds {
+        origin: point(
+            zone.origin.x + zone.size.width + px(2.0),
+            zone.origin.y + px(1.0),
+        ),
+        size: size(glyph + pad * 2.0, glyph + pad * 2.0),
+    };
+    rounded_rect(
+        window,
+        chip,
+        theme.atelier.shape.radius_sm,
+        theme.surface_raised,
+    );
+    rounded_outline(
+        window,
+        chip,
+        theme.atelier.shape.radius_sm,
+        px(1.0),
+        theme.border,
+    );
+    let _ = window.paint_svg(
+        Bounds {
+            origin: point(chip.origin.x + pad, chip.origin.y + pad),
+            size: size(glyph, glyph),
+        },
+        atelier::IconName::Loop.path().into(),
+        gpui::TransformationMatrix::unit(),
+        theme.accent,
+        cx,
+    );
+}
+
 /// Shades the stretch of timeline a take is trimmed to.
 ///
 /// The same wash as the cycle in the record colour, because they are the same kind of thing said

@@ -380,7 +380,8 @@ pub mod tool_help {
             ]),
             "edit_clip" => serde_json::json!([
                 {"project":project,"clip":2,"operation":{"kind":"resize","end_tick":30720}},
-                {"project":project,"clip":2,"operation":{"kind":"copy","track":1,"start_tick":30720,"transpose":12}}
+                {"project":project,"clip":2,"operation":{"kind":"copy","track":1,"start_tick":30720,"transpose":12}},
+                {"project":project,"clip":2,"operation":{"kind":"loop","end_tick":61440}}
             ]),
             "preview" => serde_json::json!([
                 {"project":project,"range":{"start_bar":1,"bars":4}}

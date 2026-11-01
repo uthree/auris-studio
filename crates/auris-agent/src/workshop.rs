@@ -16,6 +16,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+mod digest;
 mod preview;
 #[cfg(test)]
 mod scenario_tests;
@@ -298,9 +299,20 @@ fn capture_references(
 }
 
 fn composition_assignment(candidate: &Candidate, document: &Document) -> String {
-    json!({"assignment":candidate.direction.instructions,"conversation":document.messages,
+    json!({"assignment":candidate.direction.instructions,
+        "conversation_summary":conversation_summary(document),
+        "conversation":document.model_messages(),
         "user_feedback":feedback_context(document)})
     .to_string()
+}
+
+/// The summary standing in for messages no longer passed verbatim, or null when there is none.
+fn conversation_summary(document: &Document) -> serde_json::Value {
+    if document.digest.is_empty() {
+        serde_json::Value::Null
+    } else {
+        json!(document.digest)
+    }
 }
 
 fn feedback_context(document: &Document) -> Vec<serde_json::Value> {
@@ -403,6 +415,11 @@ struct Owner {
     snapshot: Snapshot,
     events: mpsc::Sender<Snapshot>,
     planner: Option<crate::song_ideas::SongPlanner>,
+    conversation_digest: Option<digest::ConversationDigest>,
+    preference_digest: Option<digest::PreferenceDigest>,
+    /// The furthest summary that failed, so it is not retried until it would cover more.
+    conversation_digest_failed: usize,
+    preference_digest_failed: usize,
     planned_parent: Option<u64>,
     selection_followup: bool,
     prefs: AgentPreferences,
@@ -468,6 +485,10 @@ impl Owner {
             settings,
             events,
             planner: None,
+            conversation_digest: None,
+            preference_digest: None,
+            conversation_digest_failed: 0,
+            preference_digest_failed: 0,
             planned_parent: None,
             selection_followup: false,
             jobs: BTreeMap::new(),
@@ -673,6 +694,7 @@ impl Owner {
                     _ => {}
                 }
             }
+            self.digest();
         }
         for cancel in self.jobs.values() {
             cancel.store(true, Ordering::Release);
@@ -842,7 +864,8 @@ impl Owner {
                             "feedback": candidate.feedback})
                     }).collect::<Vec<_>>()})
                 }).collect();
-                let prompt = json!({"conversation": self.snapshot.document.messages, "selected": selected, "selected_score":self.planned_parent.and_then(|id| self.snapshot.candidates.get(&id)).map(|c| c.workshop_outline()),
+                let prompt = json!({"conversation_summary": conversation_summary(&self.snapshot.document),
+                    "conversation": self.snapshot.document.model_messages(), "selected": selected, "selected_score":self.planned_parent.and_then(|id| self.snapshot.candidates.get(&id)).map(|c| c.workshop_outline()),
                     "candidate_history": candidate_history,
                     "preference_evidence": self.snapshot.preferences.context(), "installed_voices": voices}).to_string();
                 let references = self
@@ -934,7 +957,8 @@ impl Owner {
                 let recorded = self.snapshot.preferences.enabled && self.snapshot.error.is_none();
                 let prompt = json!({
                     "event":"candidate_selected",
-                    "conversation":self.snapshot.document.messages,
+                    "conversation_summary":conversation_summary(&self.snapshot.document),
+                    "conversation":self.snapshot.document.model_messages(),
                     "selected":selected,
                     "selected_score":self.snapshot.candidates[&id].workshop_outline(),
                     "user_feedback":feedback_context(&self.snapshot.document),
@@ -1036,7 +1060,9 @@ impl Owner {
                 }
             }
             Command::Forget => {
-                match auris_session::workshop::update_preferences(|p| p.selections.clear()) {
+                self.preference_digest = None;
+                self.preference_digest_failed = 0;
+                match auris_session::workshop::forget_preferences() {
                     Ok(p) => self.snapshot.preferences = p,
                     Err(e) => self.snapshot.error = Some(e),
                 }
@@ -1051,6 +1077,61 @@ impl Owner {
                 }
             }
             _ => {}
+        }
+    }
+    /// Apply finished summaries, then start any that have become due while the director is idle.
+    fn digest(&mut self) {
+        if let Some(job) = &self.conversation_digest
+            && let Some(result) = job.poll(&mut self.snapshot.document)
+        {
+            let to = job.to();
+            self.conversation_digest = None;
+            match result {
+                Ok(()) => self.publish(true),
+                Err(e) => {
+                    log::warn!("conversation summary discarded: {e}");
+                    self.conversation_digest_failed = to;
+                }
+            }
+        }
+        if let Some(job) = &self.preference_digest
+            && let Some(result) = job.poll()
+        {
+            let folded = job.folded();
+            self.preference_digest = None;
+            match result {
+                Ok(preferences) => {
+                    self.snapshot.preferences = preferences;
+                    self.publish(false);
+                }
+                Err(e) => {
+                    log::warn!("preference summary discarded: {e}");
+                    self.preference_digest_failed = folded;
+                }
+            }
+        }
+        if self.planner.is_some() || !self.prefs.is_configured() {
+            return;
+        }
+        if self.conversation_digest.is_none()
+            && let Some(to) = self.snapshot.document.digest_due()
+            && to > self.conversation_digest_failed
+        {
+            self.conversation_digest =
+                digest::ConversationDigest::start(&self.prefs, &self.snapshot.document);
+            if self.conversation_digest.is_none() {
+                self.conversation_digest_failed = to;
+            }
+        }
+        if self.preference_digest.is_none()
+            && let Some(folded) = self.snapshot.preferences.digest_due().map(<[_]>::len)
+            && folded > self.preference_digest_failed
+        {
+            self.preference_digest =
+                digest::PreferenceDigest::start(&self.prefs, &self.snapshot.preferences);
+            if self.preference_digest.is_none() {
+                self.preference_digest_failed = folded;
+            }
         }
     }
     fn can_change_thread(&mut self) -> bool {
@@ -2864,6 +2945,67 @@ mod tests {
         assert!(
             decision(&json!({"reply":"Compare these", "directions":directions}).to_string())
                 .is_err()
+        );
+    }
+
+    #[test]
+    fn a_long_conversation_is_summarized_once_while_the_director_is_idle() {
+        use auris_session::workshop::digest_policy::*;
+        let summary = "The user wants a calm piano piece in D minor.";
+        let answer = json!({"role":"assistant","content":summary}).to_string();
+        let (url, requests) =
+            crate::tests::mock_server(vec![crate::tests::completion(&answer, "stop")]);
+        let directory = tempfile::tempdir().unwrap();
+        let (sender, _) = mpsc::channel();
+        let mut owner = Owner::new(
+            Store::new(directory.path().into()),
+            Settings::default(),
+            sender,
+        );
+        owner.snapshot.preferences.enabled = false;
+        owner.prefs = AgentPreferences {
+            provider: "openai".into(),
+            model: "mock".into(),
+            url,
+            ..Default::default()
+        };
+        for index in 0..=CONVERSATION_MESSAGES {
+            owner.snapshot.document.messages.push(Message {
+                references: vec![],
+                attachments: Vec::new(),
+                user: index % 2 == 0,
+                text: format!("message {index}"),
+            });
+        }
+        let deadline = Instant::now() + Duration::from_secs(15);
+        while owner.snapshot.document.digest.is_empty() {
+            owner.digest();
+            assert!(Instant::now() < deadline, "the summary never arrived");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(owner.snapshot.document.digest, summary);
+        assert_eq!(
+            owner.snapshot.document.model_messages().len(),
+            CONVERSATION_KEEP
+        );
+        assert_eq!(
+            owner.snapshot.document.messages.len(),
+            CONVERSATION_MESSAGES + 1
+        );
+        owner.digest();
+        assert!(owner.conversation_digest.is_none());
+        let requests = requests.lock().unwrap();
+        assert_eq!(requests.len(), 1);
+        assert!(requests[0].contains("message 0"));
+        assert!(!requests[0].contains(&format!("message {CONVERSATION_MESSAGES}")));
+        let stored = Store::new(directory.path().into()).load().unwrap();
+        assert_eq!(stored.digest, summary);
+        let assignment = composition_assignment(&assignment(), &owner.snapshot.document);
+        let assignment: serde_json::Value = serde_json::from_str(&assignment).unwrap();
+        assert_eq!(assignment["conversation_summary"], summary);
+        assert_eq!(
+            assignment["conversation"].as_array().unwrap().len(),
+            CONVERSATION_KEEP
         );
     }
 }

@@ -356,12 +356,15 @@ impl AurisApp {
                 );
                 let has_fade_band = self.audio_clip(clip_id).is_some()
                     && f32::from(clip_end_x - clip_start_x) > FADE_HANDLE_MIN_WIDTH;
+                let clip_height = automation::row_at(&self.lane_rows(), local.y)
+                    .map_or(px(0.0), |row| row.height - CLIP_INSET * 2.0);
                 match clip_grab_at(
                     clip_start_x,
                     clip_end_x,
                     loop_end_x,
                     local.x,
                     local.y - lane_top - CLIP_INSET,
+                    clip_height,
                     has_fade_band,
                 ) {
                     Some(ClipGrab::Loop) => self.begin_drag(Drag::ClipLoop { clip: clip_id }),

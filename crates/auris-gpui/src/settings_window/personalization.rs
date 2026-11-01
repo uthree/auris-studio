@@ -127,7 +127,7 @@ impl SettingsWindow {
                         true,
                         move || match selection {
                             Some(original) => workshop::revise_preference(&original, None),
-                            None => workshop::update_preferences(|p| p.selections.clear()),
+                            None => workshop::forget_preferences(),
                         },
                         cx,
                     );
@@ -202,14 +202,32 @@ impl SettingsWindow {
         if let Some(original) = self.personalization.original.clone() {
             body = body.child(self.render_preference_editor(&original, busy, cx));
         } else {
-            body = body.child(self.render_preference_history(&preferences, busy, cx));
+            if !preferences.digest.is_empty() {
+                body = body.child(
+                    FormGroup::new(self.t(Key::PreferenceDigest))
+                        .description(self.t(Key::PreferenceDigestHelp))
+                        .child(
+                            div()
+                                .text_size(self.theme.atelier.typography.size_sm)
+                                .text_color(self.theme.text_muted)
+                                .child(preferences.digest.trim().to_owned()),
+                        ),
+                );
+            }
+            if !preferences.selections.is_empty() || preferences.digest.is_empty() {
+                body = body.child(self.render_preference_history(&preferences, busy, cx));
+            }
         }
         // The page's foot: the reset, a ghost at the leading end.
         body = body.child(
             div().flex().child(
                 Button::new("preferences-reset", self.t(Key::WorkshopForget))
                     .ghost()
-                    .disabled(busy || preferences.selections.is_empty() || editing)
+                    .disabled(
+                        busy || (preferences.selections.is_empty()
+                            && preferences.digest.is_empty())
+                            || editing,
+                    )
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.confirm_delete_preference(None, window, cx);
                     })),

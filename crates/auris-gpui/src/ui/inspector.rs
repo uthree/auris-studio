@@ -127,6 +127,20 @@ pub(crate) fn insert_element_key(slot: Option<EffectSlotId>) -> usize {
     slot.map_or(0, |id| id.0 as usize + 1)
 }
 
+/// How many times a looped clip's content plays, as the inspector writes it: `×3`, or `×2.5` when
+/// the last pass is cut off part-way.
+///
+/// One decimal, rounded down, so a loop that stops a hair short of its third pass never claims to
+/// reach it.
+pub(crate) fn loop_pass_label(content: Ticks, sounding: Ticks) -> String {
+    let content = content.raw().max(1);
+    let tenths = sounding.raw().max(0).saturating_mul(10) / content;
+    match tenths % 10 {
+        0 => format!("×{}", tenths / 10),
+        rest => format!("×{}.{rest}", tenths / 10),
+    }
+}
+
 /// The title strip at the top of a side panel.
 ///
 /// Shared by the library and the inspector so the two line up: they sit either side of the
@@ -316,6 +330,43 @@ impl AurisApp {
             .into_any_element()
     }
 
+    /// The clip's loop switch: the inspector's half of the loop edge on the name bar.
+    ///
+    /// Pressing it does what the L key and the context menu do — the content repeats out to the
+    /// next clip on the lane, or once more where there is none — so the three ways in agree about
+    /// where a fresh loop ends. The value is the number of times the content plays, a partial last
+    /// pass included, because that is the fact a dragged loop edge leaves hard to read.
+    fn clip_loop_row(&self, clip: ClipId, cx: &mut gpui::Context<Self>) -> AnyElement {
+        let looped = self.session.clip_is_looped(clip);
+        let value = match (
+            looped,
+            self.session.clip_content_length(clip),
+            self.session.clip_sounding_length(clip),
+        ) {
+            (true, Some(content), Some(sounding)) => {
+                format!(
+                    "{} · {}",
+                    self.t(Key::ValueOn),
+                    loop_pass_label(content, sounding)
+                )
+            }
+            _ => self.t(Key::ValueOff).to_string(),
+        };
+        crate::ui::widgets::picker_row(
+            "inspector-clip-loop",
+            self.t(Key::InspectorLoop),
+            value,
+            crate::ui::widgets::RowColumn::Equal,
+            crate::ui::widgets::PickerBehavior::Toggle(looped),
+            &self.theme,
+            cx.listener(move |this, _, _, cx| {
+                this.toggle_clip_loop(clip);
+                cx.notify();
+            }),
+        )
+        .into_any_element()
+    }
+
     fn inspector_scope(&self, title: Key) -> impl IntoElement + use<> {
         div()
             .pt_3()
@@ -329,11 +380,19 @@ impl AurisApp {
     fn render_track_inspector(&mut self, cx: &mut gpui::Context<Self>) -> AnyElement {
         let theme = self.theme.clone();
         let mut sections: Vec<AnyElement> = Vec::new();
+        // Every clip, recorded or written, can repeat — so the scope and its loop switch are
+        // offered for both kinds, and what only a score has follows below it.
+        if let Some(clip) = self
+            .selected_clip
+            .filter(|clip| self.session.clip_content_length(*clip).is_some())
+        {
+            sections.push(self.inspector_scope(Key::InspectorClip).into_any_element());
+            sections.push(self.clip_loop_row(clip, cx));
+        }
         if let Some(clip) = self
             .selected_clip
             .filter(|clip| self.project().midi_clip(*clip).is_some())
         {
-            sections.push(self.inspector_scope(Key::InspectorClip).into_any_element());
             if let Some(recipe) = self.session.clip_recipe(clip) {
                 let mut summary = self
                     .t(crate::ui::context_menu::preset_key(recipe.preset))
@@ -1283,6 +1342,50 @@ mod tests {
     use super::*;
     use crate::harness::{click, paint, resize, with_a_clip};
     use gpui::{TestAppContext, point, px, size};
+
+    #[test]
+    fn the_loop_value_counts_passes_and_never_rounds_one_up() {
+        let bar = Ticks(3840);
+        assert_eq!(loop_pass_label(bar, bar * 4), "×4");
+        assert_eq!(loop_pass_label(bar, Ticks(3840 * 5 / 2)), "×2.5");
+        // A tick short of the third pass is still two and a bit, not three.
+        assert_eq!(loop_pass_label(bar, bar * 3 - Ticks(1)), "×2.9");
+    }
+
+    #[gpui::test]
+    fn the_inspectors_loop_switch_repeats_the_clip_and_one_undo_takes_it_back(
+        cx: &mut TestAppContext,
+    ) {
+        let (app, cx, track, clip) = with_a_clip(cx);
+        app.update(cx, |this, _| {
+            this.select_track(track);
+            this.select_clip(Some(clip));
+        });
+        paint(&app, cx);
+        click("inspector-clip-loop", cx);
+        paint(&app, cx);
+        app.read_with(cx, |this, _| {
+            assert!(
+                this.session.clip_is_looped(clip),
+                "the switch loops the clip"
+            );
+            assert!(
+                this.session.clip_sounding_length(clip) > this.session.clip_content_length(clip)
+            );
+        });
+        click("inspector-clip-loop", cx);
+        paint(&app, cx);
+        app.read_with(cx, |this, _| {
+            assert!(
+                !this.session.clip_is_looped(clip),
+                "and pressed again, stops it"
+            );
+        });
+        app.update(cx, |this, _| {
+            this.session.undo();
+        });
+        app.read_with(cx, |this, _| assert!(this.session.clip_is_looped(clip)));
+    }
 
     #[gpui::test]
     fn inspector_disclosure_activation_does_not_dispatch_transport_commands(

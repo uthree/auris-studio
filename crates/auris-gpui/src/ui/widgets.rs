@@ -731,9 +731,12 @@ where
 }
 
 /// A caption and value inside the transport's shared control surface.
+///
+/// With no caption the readout is one line, for the title bar, where the caption moves into a
+/// tooltip the caller hangs on its wrapper.
 pub fn readout<C: Into<SharedString>, V: Into<SharedString>>(
     // atelier: allow — caption, value and unit share the parent transport's surface.
-    caption: C,
+    caption: Option<C>,
     value: V,
     sub: Option<SharedString>,
     width: Pixels,
@@ -750,12 +753,12 @@ pub fn readout<C: Into<SharedString>, V: Into<SharedString>>(
         .flex_shrink_0()
         .whitespace_nowrap()
         .px_2()
-        .child(
+        .children(caption.map(|caption| {
             div()
                 .text_xs()
                 .text_color(theme.text_faint)
-                .child(caption.into()),
-        )
+                .child(caption.into())
+        }))
         .child(
             div()
                 .flex()

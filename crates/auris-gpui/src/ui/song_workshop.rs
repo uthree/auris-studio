@@ -504,6 +504,7 @@ impl AurisApp {
 
     pub(crate) fn poll_song_workshop(&mut self, cx: &mut Context<Self>) {
         self.poll_workshop_input_assist(cx);
+        let language = self.language();
         let Some(s) = &mut self.song_workshop else {
             return;
         };
@@ -517,7 +518,18 @@ impl AurisApp {
                 self.menu = None;
             }
             match answer.and_then(|text| super::agent_chat::parse_model_list(&text)) {
-                Ok(models) => s.models = models,
+                Ok(models) => {
+                    // In memory only, like the editor's: the remembered choice stays saved.
+                    if !s.busy()
+                        && let Some(index) =
+                            super::agent_chat::fallback_model(&models, &s.preferences)
+                    {
+                        models[index].apply_to(&mut s.preferences);
+                        s.command_feedback =
+                            Some(Ok(Key::AgentModelFallback.get(language).to_owned()));
+                    }
+                    s.models = models;
+                }
                 Err(e) => s.model_error = Some(e),
             }
             cx.notify();
@@ -1710,6 +1722,16 @@ impl AurisApp {
                     })),
             ),
         );
+        if !snapshot.preferences.digest.is_empty() {
+            list = list.child(
+                ListItem::new(
+                    "song-memory-digest",
+                    self.t(Key::PreferenceDigest).to_owned(),
+                )
+                .icon(IconName::Music)
+                .description(snapshot.preferences.digest.clone()),
+            );
+        }
         for (index, selection) in snapshot.preferences.selections.iter().enumerate() {
             let Some(chosen) = selection.alternatives.get(selection.chosen) else {
                 continue;
@@ -3105,7 +3127,6 @@ mod tests {
             })
         });
         make_ready(&app, cx);
-        let before = app.read_with(cx, |this, _| this.settings.agent.clone());
         app.update(cx, |this, _| {
             let s = this.song_workshop.as_mut().unwrap();
             s.preferences.backend = "codex".into();
@@ -3140,7 +3161,14 @@ mod tests {
             assert_eq!(
                 this.song_workshop.as_ref().unwrap().preferences.effort,
                 auris_session::ReasoningEffort::High
-            )
+            );
+            // Each change is the one both chats open with next time.
+            assert_eq!(
+                this.settings.agent.effort,
+                auris_session::ReasoningEffort::High
+            );
+            assert_eq!(this.settings.agent.model, "fixture");
+            assert_eq!(this.agent_chat.effort, auris_session::ReasoningEffort::High);
         });
         let slider = cx.debug_bounds("workshop-effort-picker-steps").unwrap();
         crate::harness::press(cx, slider.center());
@@ -3163,7 +3191,11 @@ mod tests {
             let prefs = &this.song_workshop.as_ref().unwrap().preferences;
             assert_eq!(prefs.effort, auris_session::ReasoningEffort::Default);
             assert!(!prefs.fast_mode);
-            assert_eq!(this.settings.agent, before);
+            assert_eq!(
+                this.settings.agent.effort,
+                auris_session::ReasoningEffort::Default
+            );
+            assert!(!this.settings.agent.fast_mode);
         });
         cx.simulate_keystrokes("escape");
         crate::harness::paint(&app, cx);
@@ -3171,7 +3203,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn workshop_slash_models_keep_provider_routes_and_global_preferences(
+    fn workshop_slash_models_keep_provider_routes_and_are_remembered(
         cx: &mut gpui::TestAppContext,
     ) {
         let (app, cx) = crate::harness::open(cx);
@@ -3237,7 +3269,9 @@ mod tests {
             assert_eq!(s.preferences.backend, "rig");
             assert_eq!(s.preferences.model, "same-model");
             assert!(s.brief.content().is_empty());
-            assert_eq!(this.settings.agent, before);
+            assert_eq!(this.settings.agent.backend, "rig");
+            assert_eq!(this.settings.agent.model, "same-model");
+            assert_eq!(this.settings.agent.policy, before.policy);
         });
     }
 
@@ -3444,7 +3478,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn model_selection_does_not_change_global_settings(cx: &mut gpui::TestAppContext) {
+    fn a_workshop_model_choice_is_remembered_for_both_chats(cx: &mut gpui::TestAppContext) {
         let (app, cx) = crate::harness::open(cx);
         let before = app.read_with(cx, |this, _| this.settings.agent.clone());
         cx.update(|window, cx| app.update(cx, |this, cx| this.open_song_workshop(window, cx)));
@@ -3453,6 +3487,11 @@ mod tests {
             this.song_workshop.as_mut().unwrap().models =
                 vec![super::super::agent_chat::ModelOption {
                     name: "test-model".into(),
+                    connection: Some(auris_agent::ModelConnection {
+                        backend: "claude".into(),
+                        provider: "ollama".into(),
+                        ..Default::default()
+                    }),
                     ..Default::default()
                 }];
             this.choose_workshop_model(0);
@@ -3460,7 +3499,44 @@ mod tests {
                 this.song_workshop.as_ref().unwrap().preferences.model,
                 "test-model"
             );
-            assert_eq!(this.settings.agent, before);
+            assert_eq!(this.settings.agent.model, "test-model");
+            assert_eq!(this.settings.agent.backend, "claude");
+            assert_eq!(this.settings.agent.policy, before.policy);
+            assert_eq!(this.agent_chat.chosen_model, "test-model");
+            assert_eq!(this.agent_chat.backend, "claude");
+            // Saved, not merely held: the baseline is what was last written to the file.
+            assert_eq!(this.settings_baseline.borrow().agent.model, "test-model");
+        });
+    }
+
+    #[gpui::test]
+    fn an_unavailable_remembered_model_falls_back_without_forgetting_it(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (app, cx) = crate::harness::open(cx);
+        cx.update(|window, cx| app.update(cx, |this, cx| this.open_song_workshop(window, cx)));
+        make_ready(&app, cx);
+        app.update(cx, |this, _| {
+            let s = this.song_workshop.as_mut().unwrap();
+            s.preferences.backend = "codex".into();
+            s.preferences.model = "gone".into();
+            s.preferences.effort = auris_session::ReasoningEffort::Max;
+            let (sender, receiver) = std::sync::mpsc::channel();
+            sender
+                .send(Ok(r#"{"models":[{"name":"local","efforts":["low","high"],"connection":{"backend":"rig","provider":"ollama","url":"","api_key_env":""}}]}"#.into()))
+                .unwrap();
+            s.model_receiver = Some(receiver);
+        });
+        app.update(cx, |this, cx| this.poll_song_workshop(cx));
+        app.read_with(cx, |this, _| {
+            let s = this.song_workshop.as_ref().unwrap();
+            assert_eq!(s.preferences.model, "local");
+            assert_eq!(s.preferences.backend, "rig");
+            assert_eq!(
+                s.preferences.effort,
+                auris_session::ReasoningEffort::Default
+            );
+            assert!(matches!(s.command_feedback, Some(Ok(_))));
         });
     }
     #[gpui::test]

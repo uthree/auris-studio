@@ -8,14 +8,14 @@
 //! silent.
 
 use auris_i18n::Key;
-use gpui::{AnyElement, IntoElement, Window, div, prelude::*, px};
+use gpui::{AnyElement, IntoElement, SharedString, Window, div, prelude::*, px};
 use log::Level;
 
 use crate::app::AurisApp;
 use crate::logbook::{Entry, book};
 use crate::theme::{Metrics, Theme};
 use crate::ui::scrollbars::ScrollPanel;
-use crate::ui::widgets::{ButtonStyle, button};
+use crate::ui::widgets::{ButtonState, ButtonStyle, button, button_enabled};
 
 impl AurisApp {
     /// Renders the log panel.
@@ -73,6 +73,22 @@ impl AurisApp {
                         theme.accent,
                         &theme,
                         cx.listener(|this, _, _, cx| this.open_issue_report(None, cx)),
+                    ))
+                    .child(button_enabled(
+                        "log-copy-all",
+                        self.t(Key::LogCopyAll),
+                        ButtonStyle::Normal,
+                        ButtonState::available(false, !empty),
+                        theme.accent,
+                        &theme,
+                        cx.listener(|_, _, _, cx| {
+                            // Read again at the click rather than captured at the frame: a line
+                            // logged in between is one somebody investigating wants too.
+                            let text = log_text(&book().entries());
+                            if !text.is_empty() {
+                                cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
+                            }
+                        }),
                     ))
                     .child(button(
                         "log-clear",
@@ -165,9 +181,36 @@ fn log_row(index: usize, entry: &Entry, theme: &Theme) -> AnyElement {
                 .whitespace_normal()
                 .text_color(theme.text)
                 .debug_selector(move || format!("log-message-{index}"))
-                .child(entry.message.clone()),
+                // Keyed on the record rather than the row, which every new line moves down one.
+                .child(
+                    atelier::SelectableText::new(
+                        SharedString::from(format!("log-text-{}", entry.number)),
+                        entry.message.clone(),
+                    )
+                    .size(atelier::TextSize::XSmall),
+                ),
         )
         .into_any_element()
+}
+
+/// The whole log as text to paste into a report, oldest first as a terminal would have it.
+///
+/// One line per record, `12s WARN auris_session::session: message`, with the module in full
+/// where the panel truncates it — the panel is read on a screen and this is read in an issue.
+fn log_text(entries: &[Entry]) -> String {
+    entries
+        .iter()
+        .map(|entry| {
+            format!(
+                "{}s {} {}: {}",
+                entry.seconds,
+                level_word(entry.level),
+                entry.target,
+                entry.message
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// The colour a level is drawn in.
@@ -227,6 +270,80 @@ mod tests {
                 "{quiet} should not have a colour of its own"
             );
         }
+    }
+
+    #[test]
+    fn the_copied_log_reads_oldest_first_with_every_module_in_full() {
+        let entry = |number, level, target: &str, message: &str| Entry {
+            level,
+            target: target.into(),
+            message: message.into(),
+            number,
+            seconds: number * 3,
+        };
+        let entries = [
+            entry(0, Level::Info, "auris_gpui", "started"),
+            entry(
+                1,
+                Level::Warn,
+                "auris_session::session::plugin",
+                "no font\nfor track 2",
+            ),
+        ];
+        assert_eq!(
+            log_text(&entries),
+            "0s INFO auris_gpui: started\n3s WARN auris_session::session::plugin: no font\nfor track 2"
+        );
+        assert_eq!(log_text(&[]), "");
+    }
+
+    #[gpui::test]
+    fn the_log_can_be_copied_whole_and_line_by_line(cx: &mut TestAppContext) {
+        struct ClearLog;
+        impl Drop for ClearLog {
+            fn drop(&mut self) {
+                book().clear();
+            }
+        }
+
+        book().clear();
+        let _clear = ClearLog;
+        let (app, cx) = harness::open(cx);
+        book().push(Level::Warn, "auris_session::session", "a font moved".into());
+        book().push(
+            Level::Error,
+            "auris_engine",
+            "the device disappeared".into(),
+        );
+        app.update(cx, |this, _| this.show_panel(Panel::Log));
+        harness::resize(&app, cx, size(px(1200.0), px(800.0)));
+
+        harness::click("log-copy-all", cx);
+        cx.update(|_, cx| {
+            let copied = cx.read_from_clipboard().and_then(|item| item.text());
+            // The seconds are since the book was created, which another test may have done.
+            let lines: Vec<String> = copied
+                .unwrap_or_default()
+                .lines()
+                .map(|line| line.split_once("s ").expect("seconds first").1.to_owned())
+                .collect();
+            assert_eq!(
+                lines,
+                [
+                    "WARN auris_session::session: a font moved",
+                    "ERROR auris_engine: the device disappeared",
+                ]
+            );
+        });
+
+        // Newest first on screen, so row 0 is the error.
+        let number = book().entries()[1].number;
+        harness::select_text(&app, cx, format!("log-text-{number}").leak());
+        cx.simulate_keystrokes("secondary-c");
+        cx.update(|_, cx| {
+            let copied = cx.read_from_clipboard().and_then(|item| item.text());
+            assert_eq!(copied.as_deref(), Some("the device disappeared"));
+        });
     }
 
     #[gpui::test]
