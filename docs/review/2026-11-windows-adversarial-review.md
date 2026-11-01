@@ -98,15 +98,17 @@ reasoned rather than reproduced.
 **Direction.** On Windows, compare case-insensitively and add each private path's
 `GetShortPathNameW` spelling to the list.
 
-### AN-05 — The audio-file search lists any folder without asking (open)
+### AN-05 — The audio-file search lists any folder without asking (fixed)
 
 `audio_assets` `search` takes any absolute `root` and is not marked `requires_confirmation`, so
 the agent can list the names and sizes of audio files anywhere the user can read, eight levels
 deep, without a prompt. A native CLI read outside the project does ask (`cli_file_read` with
 `within_project` false). Only audio file names are returned, which keeps this low.
 
-**Direction.** Ask when `root` is given and lies outside the project folder and the OS Music and
-Downloads folders that the default search uses.
+**Fix.** `Operation::requires_confirmation` is true for a `search` with a `root`, so the agent panel asks
+before listing a folder the model names. The default search of the Music and Downloads folders
+still runs without asking. The project folder is not exempted: the rule has no project context,
+and the project's own audio is already in the project.
 
 ### AN-06 — The installer does not associate `.auris` files with the application (open)
 

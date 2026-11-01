@@ -35,7 +35,7 @@ pub enum Operation {
     },
     /// Search supported audio filenames, not audio content. Bounded to 10000 entries and depth 8; symlinks are skipped. Inspect completeness before claiming absence.
     Search {
-        /// Absolute local directory; omitted searches the OS Music and Downloads folders.
+        /// Absolute local directory, which asks the user first; omitted searches the OS Music and Downloads folders without asking.
         root: Option<String>,
         /// Case-insensitive words matched against the relative path; empty lists audio files.
         query: String,
@@ -89,8 +89,15 @@ impl Operation {
         matches!(self, Self::ImportUrl { .. } | Self::Process { .. })
     }
     /// Remote searches and ingestion require the application's network approval gate.
+    ///
+    /// So does a local search of a folder the model names: it lists file names anywhere the user
+    /// can read, the same reach as a native read outside the project, which asks too. Only the
+    /// default folders, where people keep the music and sounds they mean to use, are free.
     pub fn requires_confirmation(&self) -> bool {
-        matches!(self, Self::ImportUrl { .. } | Self::SearchOnline { .. })
+        matches!(
+            self,
+            Self::ImportUrl { .. } | Self::SearchOnline { .. } | Self::Search { root: Some(_), .. }
+        )
     }
 }
 
