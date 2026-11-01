@@ -19,6 +19,17 @@
 //! in its URL; the person pastes, reviews and publishes there.
 //! Model-authored title/explanation proposals also require local review before entering the draft.
 //!
+//! # Questions with fixed answers
+//!
+//! A [`crate::choices::ChoiceCard`] is how an agent asks the person to pick: exclusive, or with
+//! `multiple` several at once. The editor's agent offers one through `offer_choices`, the song
+//! workshop's director as the `choices` beside its reply (kept on the
+//! [`crate::workshop::Message`]). Neither waits inside a model turn — a tool that blocked on a
+//! person would hold the provider's request open for as long as they are away. The agent ends
+//! its turn instead; the window draws the card, and the pick goes back as the person's next
+//! message, the exact labels [`crate::choices::ChoiceCard::answer`] writes. Typing anything else
+//! passes the card by. The tool is left out of the saved-project catalogue, which has no window.
+//!
 //! # Runtime tools
 //!
 //! Saved-project MCP registers and dispatches through the toolbox execution registry.

@@ -76,6 +76,12 @@ pub enum Command {
         /// Generic title and evidence-based limitation, without private conversation excerpts.
         suggestion: crate::issue_report::Suggestion,
     },
+    /// Ask the user one question with 2..8 fixed answers, shown as a card under your reply. Exclusive by default; multiple=true allows several. Use it instead of a numbered list whenever the user must choose before you can continue, then end your turn: the pick arrives as the user's next message with the exact labels, and the user may type something else instead. Never answer it yourself. No document edits.
+    OfferChoices {
+        /// Question, options and whether several may be picked.
+        #[serde(flatten)]
+        card: crate::choices::ChoiceCard,
+    },
     /// Opt in to bounded transition evidence, read its cursor or stop collection. Starting requires explicit user consent via the host permission gate. No audio or document edits.
     ExecutionTrace {
         /// Collection control or cursor read.
@@ -579,6 +585,7 @@ impl Command {
             Self::EditTimeline { operation } => !operation.is_read_only(),
             Self::Inspect {}
             | Self::SuggestIssueReport { .. }
+            | Self::OfferChoices { .. }
             | Self::ExecutionTrace { .. }
             | Self::PhraseVariation { .. }
             | Self::SuggestHarmony { .. }
@@ -701,6 +708,10 @@ impl Session {
             Command::SuggestIssueReport { suggestion } => {
                 suggestion.validate()?;
                 Ok(serde_json::json!({"suggestion":suggestion,"published":false,"private_context_included":false,"next":"The desktop offers a report invitation. The human must open the draft and explicitly approve each private context category. No permission to disclose or publish has been granted."}).to_string())
+            }
+            Command::OfferChoices { card } => {
+                card.validate()?;
+                Ok(serde_json::json!({"shown":true,"multiple":card.multiple,"options":card.options.len(),"next":"The desktop shows the card. End your turn now without choosing for the user; the pick arrives as the user's next message."}).to_string())
             }
             Command::ExecutionTrace { operation } => self.execution_trace(operation),
             Command::PhraseVariation {
