@@ -896,6 +896,23 @@ mod tests {
     }
 
     #[test]
+    fn a_window_waiting_for_play_does_not_claim_there_is_no_output() {
+        let silent = auris_session::AudioStatus {
+            host: None,
+            buffer_frames: None,
+            device: "none".into(),
+            running: false,
+            sample_rate: 48_000.0,
+            channels: 2,
+            gpu: None,
+        };
+        let waiting = audio_line(&silent, true, Language::English);
+        assert!(waiting.starts_with(Key::AudioWaitsForPlay.get(Language::English)));
+        let missing = audio_line(&silent, false, Language::English);
+        assert!(missing.starts_with(Key::NoAudioOutput.get(Language::English)));
+    }
+
+    #[test]
     fn a_clip_click_is_not_a_completed_move() {
         let drag = |pressed_at| Drag::ClipMove {
             clip: ClipId(1),
@@ -1939,7 +1956,7 @@ impl AurisApp {
         // the course; the first voice loaded follows it.
         session.set_singer_acceleration(settings.singer_acceleration);
 
-        let status = audio_line(&session.audio_status(), language);
+        let status = audio_line(&session.audio_status(), session.audio_suspended(), language);
         log::info!("{status}");
 
         // Repaint on a timer rather than per audio block: the playhead and meters live in
@@ -1958,6 +1975,7 @@ impl AurisApp {
                         if this.session.take_output_changed() {
                             this.set_status(audio_line(
                                 &this.session.audio_status(),
+                                this.session.audio_suspended(),
                                 this.language,
                             ));
                         }
@@ -3109,7 +3127,11 @@ impl AurisApp {
             log::warn!("could not save settings: {error}");
         }
 
-        let line = audio_line(&self.session.audio_status(), self.language);
+        let line = audio_line(
+            &self.session.audio_status(),
+            self.session.audio_suspended(),
+            self.language,
+        );
         self.set_status(line.clone());
         Ok(line)
     }
@@ -3847,7 +3869,16 @@ mod hidden_panel_input_tests {
 }
 
 /// The status line describing what the audio backend ended up doing.
-pub(crate) fn audio_line(status: &auris_session::AudioStatus, language: Language) -> String {
+///
+/// A window opens with its audio `suspended`: the device is claimed by the first explicit audio
+/// command, so a second project window does not take it from the first. Such a window has no
+/// running output yet, and saying "no audio output" there would tell somebody with working
+/// speakers that they have none.
+pub(crate) fn audio_line(
+    status: &auris_session::AudioStatus,
+    suspended: bool,
+    language: Language,
+) -> String {
     let engine = if status.running {
         messages::audio_status(
             language,
@@ -3855,6 +3886,8 @@ pub(crate) fn audio_line(status: &auris_session::AudioStatus, language: Language
             status.sample_rate,
             status.channels,
         )
+    } else if suspended {
+        Key::AudioWaitsForPlay.get(language).to_string()
     } else {
         Key::NoAudioOutput.get(language).to_string()
     };

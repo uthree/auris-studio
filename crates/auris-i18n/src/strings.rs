@@ -680,6 +680,10 @@ strings! {
         en: "No audio output — editing and export still work",
         ja: "オーディオ出力なし — 編集と書き出しは可能です"
     }
+    AudioWaitsForPlay {
+        en: "Audio output opens when you press Play",
+        ja: "再生すると音声出力を開きます"
+    }
 
     // ------------------------------------------------------------------ settings window
     Settings { en: "Settings", ja: "設定" }

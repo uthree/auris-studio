@@ -74,7 +74,7 @@ CGNAT or unspecified address. The address the person typed is still trusted, so 
 they chose works. A hostname that *resolves* to a private address is not caught; that would need
 the resolver's answer, and is left.
 
-### AN-03 — Every window opens saying there is no audio output (open)
+### AN-03 — Every window opens saying there is no audio output (fixed)
 
 The same finding as MR-08. A desktop window starts with its audio suspended and claims the device
 on the first explicit audio command (`acquire_audio`), so that a second project window does not
@@ -82,8 +82,9 @@ take the output from the first. `audio_line` only looks at whether a stream is r
 launch reports "No audio output — editing and export still work" on a machine with working
 speakers. It was in the log of the run above, which is how it was found.
 
-**Direction.** Pass `audio_line` whether the session is suspended, and say that output opens on
-Play in that case.
+**Fix.** `audio_line` takes whether the session is suspended, and says "Audio output opens when you press
+Play" (「再生すると音声出力を開きます」) in that case. "No audio output" is kept for a session that
+tried to open a device and could not.
 
 ### AN-04 — Issue-report redaction misses other spellings of a Windows path (fixed)
 
