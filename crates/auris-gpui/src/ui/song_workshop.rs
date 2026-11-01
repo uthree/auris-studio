@@ -1710,6 +1710,16 @@ impl AurisApp {
                     })),
             ),
         );
+        if !snapshot.preferences.digest.is_empty() {
+            list = list.child(
+                ListItem::new(
+                    "song-memory-digest",
+                    self.t(Key::PreferenceDigest).to_owned(),
+                )
+                .icon(IconName::Music)
+                .description(snapshot.preferences.digest.clone()),
+            );
+        }
         for (index, selection) in snapshot.preferences.selections.iter().enumerate() {
             let Some(chosen) = selection.alternatives.get(selection.chosen) else {
                 continue;

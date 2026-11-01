@@ -92,8 +92,20 @@
 //! The frontend owns presentation, provider selection, audition and explicit editor handoff.
 //! Local cross-project preference evidence records contextual choices. It is optional, inspectable
 //! and clearable, and does not infer dislike from nonselection or override explicit instructions.
-//! The desktop's personalization settings show the complete preference history, allow corrections to a
+//! The desktop's personalization settings show the recent preference history, allow corrections to a
 //! request or chosen alternative, and support individual removal or a confirmed history reset.
+//!
+//! Neither kind of workshop memory grows without bound in model context; the thresholds are
+//! [`crate::workshop::digest_policy`]. A conversation whose model-facing tail outgrows its budget
+//! is summarized by the configured model, and the director and composers then receive that summary
+//! and the newest messages verbatim; the readable transcript keeps every message, because rounds
+//! and the editor handoff refer to them by position. Once the stored choices outgrow theirs, the
+//! oldest are summarized, moved to an append-only archive beside the preferences rather than
+//! deleted, and the director receives that summary, labelled as one, beside the newest choices.
+//! Summaries run in the background only while the director is idle, are applied only against the
+//! exact state they were written from, and a failed one changes nothing. Resetting the history
+//! removes the summary and the archive as well. The panel's own model memory has its own
+//! compaction (`auris_agent`'s turn summaries), which this does not change.
 //! Corrections compare the original observation under the storage lock, so concurrent selection,
 //! deletion or reset cannot be silently overwritten. Preference I/O runs on a background executor.
 //! Direction planning, lyric generation and composer workers share the agent's musical-design

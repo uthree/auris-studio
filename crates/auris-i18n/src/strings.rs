@@ -89,6 +89,8 @@ strings! {
     PreferenceHeading { en: "Song personalization", ja: "曲作りのパーソナライズ" }
     PreferenceTab { en: "Personalization", ja: "パーソナライズ" }
     PreferenceHelp { en: "Choices from “AI workshop” are stored locally across projects. Edit the request or selected alternative below. Changes apply to your next request; current instructions take priority.", ja: "「AIワークショップ」での選択を、プロジェクト共通の好みとしてこの端末に保存しています。依頼内容や選んだ候補を修正できます。変更は次の依頼から使われ、今回の指示が優先されます。" }
+    PreferenceDigest { en: "Summary of earlier choices", ja: "以前の選択の要約" }
+    PreferenceDigestHelp { en: "Older choices are summarized automatically once the history grows, and the originals are moved to an archive file. Clearing the history removes the summary and the archive.", ja: "履歴が増えると古い選択は自動で要約され、元の記録はアーカイブファイルに退避されます。履歴を消去すると要約とアーカイブも消えます。" }
     PreferenceEmpty { en: "No choices recorded yet. Choose a song with preference recording enabled to build your history.", ja: "記録された選択はありません。好みの記録を有効にして曲を選ぶと、ここに履歴が表示されます。" }
     PreferenceRefresh { en: "Refresh history", ja: "履歴を再読み込み" }
     PreferenceEdit { en: "Edit choice", ja: "選択を編集" }
