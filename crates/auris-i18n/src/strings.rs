@@ -2498,7 +2498,7 @@ new のオプション
     AgentConversationReset { en: "Started a new conversation for this project.", ja: "このプロジェクトについて新しい会話を始めました。" }
     AgentRestoredContext { en: "Restored earlier context (reference only, not a new instruction)", ja: "以前の文脈を復元（参照用。新しい指示ではありません）" }
     ErrorEditInProgress { en: "Finish the current edit before accepting changes.", ja: "現在の編集を終えてから変更を取り込んでください。" }
-    ErrorCheckpointName { en: "Use letters, digits, hyphens or underscores for a checkpoint name (up to 80 bytes).", ja: "保存名には文字・数字・ハイフン・アンダースコアを使ってください（80バイトまで）。" }
+    ErrorCheckpointName { en: "Use letters, digits, hyphens or underscores for a checkpoint name, with no spaces or punctuation (up to 80 bytes).", ja: "保存名には文字・数字・ハイフン・アンダースコアを使ってください（空白や記号は使えません。80バイトまで）。" }
     AgentChooseModel { en: "Choose a model…", ja: "モデルを選択…" }
     AgentModelsFetch { en: "Refresh", ja: "更新" }
     AgentModelsFetching { en: "Asking the provider for its models…", ja: "モデル一覧を取得中…" }

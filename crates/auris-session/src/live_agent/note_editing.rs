@@ -321,6 +321,11 @@ impl Session {
             let last_bar = signatures.bar_of(clip.start + clip.length - Ticks(1));
             let mut page = serde_json::json!({"clip":request.clip,"bars":[first_bar,last_bar],"offset":request.offset,"notes":notes,"total":clip.notes.len(),
                 "next_offset":(next < clip.notes.len()).then_some(next),"truncated":next < clip.notes.len()});
+            // The lanes that exist, so nobody reads all hundred and twenty-nine to find them.
+            let curves = super::document_editing::authored_curves(clip);
+            if !curves.is_empty() {
+                page["authored_curves"] = curves.into();
+            }
             // A looped clip stores one pass and plays it again out to its loop end. Saying where
             // the repeats stop keeps a model from writing the second pass out by hand.
             if clip.sounding_length() > clip.length {
@@ -510,6 +515,46 @@ mod tests {
             "{error}"
         );
         assert!(error.contains(&format!("\"clip\":{}", clip.0)), "{error}");
+        assert_eq!(session.project(), &before);
+    }
+
+    #[test]
+    fn note_pages_name_the_clip_s_authored_curves_and_stay_silent_when_there_are_none() {
+        let mut session = Session::new(crate::SessionOptions::headless()).unwrap();
+        let track = session.add_default_instrument_track("Lead").unwrap();
+        let plain = session
+            .add_midi_clip(track, "Plain", Ticks::ZERO, Ticks::QUARTER)
+            .unwrap();
+        let shaped = session
+            .add_midi_clip(track, "Shaped", Ticks::QUARTER, Ticks::QUARTER)
+            .unwrap();
+        session.set_curve_point(
+            shaped,
+            auris_core::project::ClipCurve::Controller(1),
+            Ticks(333),
+            0.37,
+        );
+        let before = session.project().clone();
+        let result: serde_json::Value = serde_json::from_str(
+            &session
+                .agent_read_notes(&[
+                    NoteRead {
+                        clip: plain.0,
+                        offset: 0,
+                    },
+                    NoteRead {
+                        clip: shaped.0,
+                        offset: 0,
+                    },
+                ])
+                .unwrap(),
+        )
+        .unwrap();
+        assert!(result["clips"][0].get("authored_curves").is_none());
+        assert_eq!(
+            result["clips"][1]["authored_curves"],
+            serde_json::json!([{"kind":"controller","number":1,"points":1}])
+        );
         assert_eq!(session.project(), &before);
     }
 
