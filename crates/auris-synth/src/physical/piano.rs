@@ -11,11 +11,23 @@ use std::f32::consts::{PI, TAU};
 
 use auris_dsp::BiquadCoefficients;
 
-use super::super::Settings;
+use super::super::{Quality, Settings};
 
 const PARTIALS: usize = 96;
 /// Partial-string products one voice may run: three strings of 64 partials.
+///
+/// [`Quality::High`] keeps this budget. Lifting it to every partial below 0.45 × the sample
+/// rate (up to 170 on A0, whose stiff-string 96th partial is already near 7.4 kHz) changed a
+/// struck A0 or A1 by -73 dB RMS and anything higher by nothing measurable: the hammer's
+/// contact spectrum and the strings' frictional loss have taken those partials first.
 const BUDGET: usize = 192;
+/// Partial-string products at [`Quality::Draft`]: a triple unison of 21 partials, a pair of 32.
+///
+/// Measured over a second of a struck note, Draft differs from Standard by -31 dB RMS on A0,
+/// -38 dB on A1 and less than -52 dB from A2 up, and 24 held notes cost a little over half.
+/// A smaller cut saves less than it looks: Standard's upper partials retire within the first
+/// fraction of a second, so most of the sustained cost is the low partials every level keeps.
+const DRAFT_BUDGET: usize = 64;
 /// Highest key with a damper, F6. Strings above it ring on after the key is released.
 const HIGHEST_DAMPER: u8 = 89;
 const NEPERS_PER_DB: f32 = 0.115_129_25;
@@ -427,7 +439,14 @@ impl Piano {
         }
     }
 
-    pub(super) fn excite(&mut self, frequency: f32, velocity: f32, rate: f32, settings: Settings) {
+    pub(super) fn excite(
+        &mut self,
+        frequency: f32,
+        velocity: f32,
+        rate: f32,
+        quality: Quality,
+        settings: Settings,
+    ) {
         let voicing = self.voicing;
         self.fundamental = frequency;
         self.pitch = 69.0 + 12.0 * (frequency / 440.0).log2();
@@ -492,7 +511,12 @@ impl Piano {
         let amplitude = velocity.powf(1.25)
             * loudness
             * 10.0_f32.powf(register_db(&voicing.gain, self.pitch) / 20.0);
-        let limit = (BUDGET / strings).min(PARTIALS);
+        let budget = if quality == Quality::Draft {
+            DRAFT_BUDGET
+        } else {
+            BUDGET
+        };
+        let limit = (budget / strings).min(PARTIALS);
         self.active = 0;
         for (index, partial) in self.partials.iter_mut().enumerate() {
             *partial = Partial::default();
@@ -715,16 +739,33 @@ mod tests {
     }
 
     #[test]
+    fn draft_halves_the_partial_budget_and_high_keeps_the_standard_one() {
+        let mut piano = Piano::default();
+        let mut products = |hz, quality| {
+            piano.excite(hz, 0.8, 48_000.0, quality, settings());
+            piano.active * piano.strings
+        };
+        // A bass pair fills either budget; a treble triple runs out of band first.
+        assert_eq!(products(55.0, Quality::Standard), BUDGET);
+        assert_eq!(products(55.0, Quality::High), BUDGET);
+        assert_eq!(products(55.0, Quality::Draft), DRAFT_BUDGET);
+        let treble = products(1_760.0, Quality::Standard);
+        assert!(treble < DRAFT_BUDGET);
+        assert_eq!(products(1_760.0, Quality::Draft), treble);
+    }
+
+    #[test]
     fn contact_duration_and_string_count_follow_the_performance() {
         let mut piano = Piano::default();
         for (hz, strings) in [(55.0, 2), (110.0, 2), (440.0, 3)] {
-            piano.excite(hz, 0.3, 48_000.0, settings());
+            piano.excite(hz, 0.3, 48_000.0, Quality::Standard, settings());
             assert_eq!(piano.strings, strings);
             let soft = piano.contact_frames;
             piano.excite(
                 hz,
                 0.9,
                 48_000.0,
+                Quality::Standard,
                 Settings {
                     hardness: 1.0,
                     ..settings()
@@ -732,14 +773,14 @@ mod tests {
             );
             assert!(piano.contact_frames < soft);
         }
-        piano.excite(65.4, 0.8, 48_000.0, settings());
+        piano.excite(65.4, 0.8, 48_000.0, Quality::Standard, settings());
         assert!(piano.active > 32);
     }
 
     #[test]
     fn unison_rotations_are_detuned_and_bridge_coupling_is_passive() {
         let mut piano = Piano::default();
-        piano.excite(440.0, 0.8, 48_000.0, settings());
+        piano.excite(440.0, 0.8, 48_000.0, Quality::Standard, settings());
         let first = &piano.partials[0];
         assert!(first.strings[0].sine < first.strings[1].sine);
         assert!(first.strings[1].sine < first.strings[2].sine);
@@ -769,6 +810,7 @@ mod tests {
             130.8,
             0.8,
             48_000.0,
+            Quality::Standard,
             Settings {
                 decay: 0.3,
                 ..settings()

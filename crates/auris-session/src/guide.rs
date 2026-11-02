@@ -831,6 +831,17 @@ pub mod architecture {
     //! bridge on the right. A note's place is fixed when it starts, so a held note never moves,
     //! and the gains `1 - pan` and `1 + pan` keep the mono downmix identical to the centred
     //! instrument. A `width` parameter scales the spread from mono to twice the natural image.
+    //! The seven [`auris_synth::Physical`] models also carry two [`auris_synth::Quality`]
+    //! choices, `quality` for live playback and `render_quality` for any block the engine marks
+    //! [`is_offline`](auris_core::ProcessContext::is_offline) — export, freeze, bounce,
+    //! analysis. Draft trims the piano's partial budget to a third, which is what lets a dense
+    //! piano part play live on a slow machine; High runs the delay-line strings at twice the
+    //! host rate. Render defaults to High and live to Standard, the calibrated model, so an
+    //! export can sound a little finer than playback but never coarser. The level is taken
+    //! when a note is struck, so neither control allocates or disturbs a sounding note. The
+    //! GPU is deliberately not involved: the heaviest of these models is a few thousand
+    //! phasors a block, which a GPU round trip would cost more to schedule than to compute —
+    //! the reasoning is [`auris_gpu`]'s own, under "When the GPU is used".
     //! There is no sample asset behind these instruments. [`crate::DEFAULT_INSTRUMENT`] names
     //! the physical piano. SoundFont import uses the same worker/session boundary as before.
     //! [`auris_synth::Choir`] is a polyphonic instrument for wordless ensemble vowels. Each

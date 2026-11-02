@@ -73,6 +73,8 @@ pub(super) struct StringModel {
     rate: f32,
     guitar: bool,
     pluck: Pluck,
+    /// Internal samples per host sample; scales the plucked bass loop's per-sample lowpass.
+    oversampling: f32,
 }
 
 impl StringModel {
@@ -103,22 +105,30 @@ impl StringModel {
         }
         (position, if self.bowed { self.bow.motion() } else { 0.0 })
     }
-    pub(super) fn prepare(&mut self, rate: f32) {
-        self.rate = rate;
+    /// Allocates delay lines long enough for MIDI 0 at `max_rate`, the highest internal rate a
+    /// note will ever be excited at.
+    pub(super) fn prepare(&mut self, max_rate: f32) {
+        self.rate = max_rate;
+        self.oversampling = 1.0;
         // MIDI 0 is 8.18 Hz. Bound the supported host rate before allocating the voice pool.
-        let capacity = (rate / 8.0).ceil() as usize + 8;
+        let capacity = (max_rate / 8.0).ceil() as usize + 8;
         self.bridge.prepare(capacity);
         self.neck.prepare(capacity);
     }
 
+    /// Strikes, plucks or bows a new note at the internal `rate`, which is `oversampling` times
+    /// the host's.
     pub(super) fn excite(
         &mut self,
         model: Model,
         frequency: f32,
         velocity: f32,
         rate: f32,
+        oversampling: f32,
         settings: Settings,
     ) {
+        self.rate = rate;
+        self.oversampling = oversampling.max(1.0);
         let frequency = frequency.clamp(8.0, rate * 0.2);
         self.bridge.clear();
         self.neck.clear();
@@ -132,12 +142,7 @@ impl StringModel {
                 .excite(&mut self.bridge, frequency, velocity, rate, settings);
             return;
         }
-        self.pole = if self.bowed {
-            (0.35 + 0.55 * settings.damping).powf(48_000.0 / rate)
-        } else {
-            (0.8 - 0.65 * settings.hardness * (0.4 + 0.6 * velocity) + settings.damping * 0.15)
-                .clamp(0.05, 0.92)
-        };
+        self.pole = self.loop_pole(settings);
         self.position = settings.position;
         self.position_target = self.position;
         self.bow.excite(velocity, rate, settings);
@@ -166,6 +171,25 @@ impl StringModel {
         }
     }
 
+    /// The bridge's one-pole loss coefficient at the internal rate.
+    ///
+    /// The plucked bass was voiced per host sample; an oversampled loop takes the root that
+    /// keeps the filter's corner where it was in hertz.
+    fn loop_pole(&self, settings: Settings) -> f32 {
+        if self.bowed {
+            (0.35 + 0.55 * settings.damping).powf(48_000.0 / self.rate)
+        } else {
+            let pole = (0.8 - 0.65 * settings.hardness * (0.4 + 0.6 * self.velocity)
+                + settings.damping * 0.15)
+                .clamp(0.05, 0.92);
+            if self.oversampling > 1.0 {
+                pole.powf(self.oversampling.recip())
+            } else {
+                pole
+            }
+        }
+    }
+
     pub(super) fn retune(&mut self, ratio: f32) {
         if self.guitar {
             self.pluck.retune(ratio);
@@ -187,12 +211,7 @@ impl StringModel {
         }
         let phase_scale = if self.bowed { BOW_PHASE } else { 1.0 };
         let old_phase = phase_scale * self.pole / (1.0 - self.pole);
-        self.pole = if self.bowed {
-            (0.35 + 0.55 * settings.damping).powf(48_000.0 / self.rate)
-        } else {
-            (0.8 - 0.65 * settings.hardness * (0.4 + 0.6 * self.velocity) + settings.damping * 0.15)
-                .clamp(0.05, 0.92)
-        };
+        self.pole = self.loop_pole(settings);
         let new_phase = phase_scale * self.pole / (1.0 - self.pole);
         self.period = (self.period + old_phase - new_phase).max(6.0);
         self.period_target = (self.period_target + old_phase - new_phase).max(6.0);
