@@ -1494,6 +1494,9 @@ fn candidate_options(settings: &Settings) -> SessionOptions {
     let mut options = SessionOptions::headless()
         .with_balance(false)
         .with_shipped_fonts(installed)
+        // An empty dictionary setting means the shipped one, as it does in the window; a
+        // headless session would otherwise read kanji lyrics with nothing at all.
+        .with_shipped_dictionary(installed)
         .with_plugin_paths(settings.plugin_paths.clone());
     if installed {
         options =

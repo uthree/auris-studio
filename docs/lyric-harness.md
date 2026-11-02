@@ -30,6 +30,14 @@ Unreadable phrases retain their text and error and make `complete` false. A read
 override is kana-only, addresses one existing phrase and lasts only for that request.
 It does not change a subsequent composition's pronunciation.
 
+Kana spells a long o as おう and a long e as えい (りょうて, せんせい), and the kana table sings
+what is spelt. When a dictionary is installed and reads the written text to the same moras
+as the reading, differing only where the reading spells う or い after that vowel, the
+dictionary's held vowel is sung and the reading's spelling is kept: 両手 with the reading
+りょうて sings *ryo-o-te*. Any other difference makes the reading a deliberate alternative,
+sung as spelt. Without a dictionary, spell the long vowel with ー (りょーて). `write_lyrics`
+reads its `reading` the same way.
+
 ## Fit a phrase to its notes
 
 A mora is a unit of the language, not of the melody. Each mora's `slot` says what it asks

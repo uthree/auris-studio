@@ -1791,6 +1791,9 @@ pub mod composition {
     //! written lyrics and an independent kana pronunciation, including without a dictionary.
     //! The written spelling stays on the first note with `+` continuations; phonemes carry
     //! pronunciation. Workshop cards read that written score rather than the kana reading.
+    //! Kana spells a long o as おう, which the table sings as spelt; where a dictionary reads
+    //! the written text to the same moras and hears that vowel held, the held vowel is sung —
+    //! 両手 read りょうて sings *ryo-o-te* — and any other difference keeps the reading as it is.
     //!
     //! A mora is a unit of the language, not of the melody, and two kinds need no note of
     //! their own: a held long vowel (ー, or the second あ of さあ) may end the note before it,

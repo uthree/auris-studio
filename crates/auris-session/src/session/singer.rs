@@ -435,8 +435,9 @@ impl Session {
         }
         // A grouped っ is the rest after its note, so that rest has to be there.
         if let Some(reading) = reading.filter(|r| r.contains(lyric_slots::NOTE_SEPARATOR)) {
-            let groups = lyric_slots::read_note_groups(reading.trim(), self.japanese.as_ref())
-                .map_err(SessionError::InvalidNotes)?;
+            let groups =
+                lyric_slots::read_note_groups(text, reading.trim(), self.japanese.as_ref())
+                    .map_err(SessionError::InvalidNotes)?;
             let Some((_, target)) = self.project.midi_clip(clip) else {
                 return Err(SessionError::UnknownClip(clip.0));
             };
@@ -497,7 +498,7 @@ impl Session {
                     "Supply nonempty written lyrics and a nonempty kana reading".into(),
                 ));
             }
-            return lyric_slots::read_note_groups(reading.trim(), dictionary)
+            return lyric_slots::read_note_groups(text, reading.trim(), dictionary)
                 .map(|groups| {
                     groups
                         .into_iter()
@@ -508,7 +509,7 @@ impl Session {
         }
         let explicit = reading
             .map(|reading| {
-                spoken_kana_lyric(reading.trim(), dictionary)
+                lyric_slots::spoken_reading(text, reading.trim(), dictionary)
                     .filter(|moras| !moras.is_empty() && !text.trim().is_empty())
                     .ok_or_else(|| {
                         SessionError::InvalidNotes(

@@ -8,6 +8,8 @@
 //! fits neither way is reported, and a grouping is only ever written when it is asked for.
 
 use auris_vocal::{JapaneseDictionary, split_kana_moras, spoken_kana_lyric};
+
+use super::lyrics::read_lyrics;
 use serde::Serialize;
 
 /// Separates notes in a grouped reading: `さあ|い|こ|う` sings さあ on one note.
@@ -107,6 +109,51 @@ pub(crate) fn grouped_reading(texts: &[&str], sizes: &[usize], word_starts: &[us
     out
 }
 
+/// A kana reading's moras, with each long vowel sung as the dictionary hears the written text.
+///
+/// Kana spells a long o as おう and a long e as えい — りょうて, せんせい — and the kana table
+/// sings what is spelt, りょ・う・て. The dictionary knows 両手 is リョーテ. Where it reads the
+/// written text to as many moras as the reading, differing only where the reading spells う
+/// or い and the dictionary hears the o or e before it held, the held vowel is sung and the
+/// reading's spelling is kept. Any other difference means the reading is a deliberate
+/// alternative, and it is sung exactly as spelt; so is every reading without a dictionary.
+pub(crate) fn spoken_reading(
+    text: &str,
+    reading: &str,
+    dictionary: Option<&JapaneseDictionary>,
+) -> Option<Vec<(String, Vec<String>)>> {
+    let mut moras = spoken_kana_lyric(reading, dictionary)?;
+    let Some(heard) = dictionary.and_then(|d| read_lyrics(text, Some(d)).ok()) else {
+        return Some(moras);
+    };
+    let heard: Vec<_> = heard.into_iter().flat_map(|phrase| phrase.moras).collect();
+    if heard.len() != moras.len() {
+        return Some(moras);
+    }
+    let mut held = Vec::new();
+    for (at, ((_, spelt), sung)) in moras.iter().zip(&heard).enumerate() {
+        if *spelt == sung.phonemes {
+            continue;
+        }
+        let long = matches!(
+            (spelt.as_slice(), sung.phonemes.as_slice()),
+            ([u], [o]) if u == "ɯ" && o == "o"
+        ) || matches!(
+            (spelt.as_slice(), sung.phonemes.as_slice()),
+            ([i], [e]) if i == "i" && e == "e"
+        );
+        let after_same_vowel = at > 0 && moras[at - 1].1.last() == sung.phonemes.last();
+        if !(long && after_same_vowel) {
+            return Some(moras);
+        }
+        held.push(at);
+    }
+    for at in held {
+        moras[at].1 = heard[at].phonemes.clone();
+    }
+    Some(moras)
+}
+
 /// One note of a grouped reading.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct NoteGroup {
@@ -124,6 +171,7 @@ pub(crate) struct NoteGroup {
 /// cut where the separators are. Only a held long vowel or a final っ may share a note, so a
 /// grouping can never hide two sung moras on one note.
 pub(crate) fn read_note_groups(
+    text: &str,
     reading: &str,
     dictionary: Option<&JapaneseDictionary>,
 ) -> Result<Vec<NoteGroup>, String> {
@@ -135,7 +183,7 @@ pub(crate) fn read_note_groups(
         ));
     }
     let whole: String = pieces.concat();
-    let moras = spoken_kana_lyric(whole.trim(), dictionary)
+    let moras = spoken_reading(text, whole.trim(), dictionary)
         .filter(|moras| !moras.is_empty())
         .ok_or("The grouped reading must be kana")?;
     let mut sizes = Vec::with_capacity(pieces.len());
@@ -256,7 +304,7 @@ mod tests {
 
     #[test]
     fn a_grouped_reading_puts_holds_on_one_note_and_drops_the_closure() {
-        let groups = read_note_groups("さあ| いっ|しょ|に", None).unwrap();
+        let groups = read_note_groups("", "さあ| いっ|しょ|に", None).unwrap();
         assert_eq!(groups.len(), 4);
         assert_eq!(groups[0].phonemes, ["s", "a", "a"]);
         assert!(!groups[0].rest_after);
@@ -266,24 +314,54 @@ mod tests {
     }
 
     #[test]
+    fn a_reading_sings_the_long_vowels_the_dictionary_hears() {
+        let Some(folder) = std::env::var_os("AURIS_JAPANESE_DICTIONARY") else {
+            return;
+        };
+        let dictionary = JapaneseDictionary::load(std::path::Path::new(&folder)).unwrap();
+        let sung = |text: &str, reading: &str| -> Vec<Vec<String>> {
+            spoken_reading(text, reading, Some(&dictionary))
+                .unwrap()
+                .into_iter()
+                .map(|(_, phonemes)| phonemes)
+                .collect()
+        };
+        // 両手 is リョーテ and 先生 is センセー, however the reading spells them.
+        assert_eq!(sung("両手で", "りょうてで")[1], ["o"]);
+        assert_eq!(sung("先生", "せんせい")[3], ["e"]);
+        // 思う really ends in u.
+        assert_eq!(sung("思う", "おもう")[2], ["ɯ"]);
+        // A reading that differs elsewhere is a deliberate one, sung as spelt.
+        assert_eq!(sung("両手で", "りょうてに")[1], ["ɯ"]);
+        // Without a dictionary there is nothing to ask.
+        assert_eq!(
+            spoken_reading("両手", "りょうて", None).unwrap()[1].1,
+            ["ɯ"]
+        );
+        // A grouped reading may then hold that vowel on one note.
+        let groups = read_note_groups("両手で", "りょう|て|で", Some(&dictionary)).unwrap();
+        assert_eq!(groups[0].phonemes, ["ɾʲ", "o", "o"]);
+    }
+
+    #[test]
     fn a_grouped_reading_refuses_to_hide_sung_moras() {
         assert!(
-            read_note_groups("さく|ら", None)
+            read_note_groups("", "さく|ら", None)
                 .unwrap_err()
                 .contains("2 moras")
         );
         assert!(
-            read_note_groups("ま|って", None)
+            read_note_groups("", "ま|って", None)
                 .unwrap_err()
                 .contains("starts with っ")
         );
         assert!(
-            read_note_groups("き|ょう", None)
+            read_note_groups("", "き|ょう", None)
                 .unwrap_err()
                 .contains("cuts a mora")
         );
         assert!(
-            read_note_groups("さ||く", None)
+            read_note_groups("", "さ||く", None)
                 .unwrap_err()
                 .contains("empty")
         );
