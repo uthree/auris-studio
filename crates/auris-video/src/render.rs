@@ -737,8 +737,18 @@ mod tests {
         };
         let folder = tempfile::tempdir().unwrap();
         let output = folder.path().join("roll.mp4");
-        let style = NoteRollStyle { fps: 10, ..style() };
-        let renderer = FrameRenderer::with_background(&score(), &style, None);
+        let style = NoteRollStyle {
+            fps: 10,
+            chords: true,
+            ..style()
+        };
+        let mut score = score();
+        score.chords.push(crate::ScoreChord {
+            start: 0.0,
+            end: 2.0,
+            name: "C".into(),
+        });
+        let renderer = FrameRenderer::with_background(&score, &style, None);
         let mut last = 0.0;
         let frames = render_video(&renderer, &ffmpeg, None, 2.0, &output, &mut |fraction| {
             last = fraction;
