@@ -44,6 +44,39 @@ pub(super) fn register(model: Model, pitch: u8, mut settings: Settings) -> Setti
     settings
 }
 
+/// How far a piano key is tuned from equal temperament, in cents.
+///
+/// A stiff string's overtones run sharp of its harmonics. A piano with every fundamental on
+/// equal temperament therefore beats in its octaves, and its bass sounds sharp, because the ear
+/// hears a low note's pitch in its overtones. Tuned the way a technician tunes one, outward from
+/// A4, each octave is widened to split the difference between two pure octaves: from A2 up, the
+/// 2:1 (the lower note's second partial on the upper note's fundamental) and the 4:2. Below A2
+/// the fundamentals thin out and the octaves are judged on higher partials in proportion, 4:2
+/// and 8:4 at A1 and 8:4 and 16:8 at A0. Without stiffness every octave is pure and the piano is
+/// in equal temperament.
+pub(super) fn piano_stretch(pitch: u8, settings: Settings) -> f32 {
+    /// Fundamental below which an octave is judged on proportionally higher partials.
+    const JUDGED_FROM: f32 = 110.0;
+    let partial = |key: i32, n: f32| {
+        let stiffness = register(Model::Piano, key.clamp(0, 127) as u8, settings).stiffness;
+        600.0 * ((1.0 + stiffness * n * n) / (1.0 + stiffness)).log2()
+    };
+    // Width of the octave from `key` to `key + 12` beyond 1200 cents.
+    let octave = |key: i32| {
+        let hz = 440.0 * ((key as f32 - 69.0) / 12.0).exp2();
+        let m = (JUDGED_FROM / hz).max(1.0);
+        let narrow = partial(key, 2.0 * m) - partial(key + 12, m);
+        let wide = partial(key, 4.0 * m) - partial(key + 12, 2.0 * m);
+        0.5 * (narrow + wide)
+    };
+    let pitch = i32::from(pitch);
+    if pitch >= 69 {
+        (69..pitch).map(octave).sum::<f32>() / 12.0
+    } else {
+        -(pitch..69).map(octave).sum::<f32>() / 12.0
+    }
+}
+
 pub(super) fn expression(model: Model, value: f32) -> f32 {
     if model == Model::Violin {
         f64::from(value).powf(model.expression_exponent()) as f32

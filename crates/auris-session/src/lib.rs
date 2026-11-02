@@ -310,10 +310,10 @@ pub mod prelude {
         AudioBuffer, AudioClip, AudioSource, AuxSend, ClipId, ClipPreset, ClipRecipe, Color,
         ConsonantWidths, DrumMap, DrumRole, EffectSlot, EffectSlotId, FadeCurve, Fall, GhostNotes,
         GhostPattern, LayerShape, LayerVoice, MAX_LAYER_OFFSET, MidiClip, MixerStrip, Note,
-        NoteTransform, Output, PluginRegistry, PresetRef, Project, Scoop, SectionMap, SectionPoint,
-        SectionSpan, SendId, SingerPitch, SingerTrack, SoundFontId, SoundFontRef, SourceId,
-        StrokeDirection, Subdivision, Track, TrackId, TrackKind, Vibrato, default_frame_hop,
-        default_loop_end, loop_passes, sounding_length,
+        NoteTransform, Output, PluginRegistry, PresetRef, Project, STRUM_VALUES, Scoop, SectionMap,
+        SectionPoint, SectionSpan, SendId, SingerPitch, SingerTrack, SoundFontId, SoundFontRef,
+        SourceId, StrokeDirection, Subdivision, Track, TrackId, TrackKind, Vibrato,
+        default_frame_hop, default_loop_end, loop_passes, sounding_length,
     };
     pub use auris_core::{
         Expression, GroovePoint, GrooveTemplate, PitchPerformance, Strum, StrumClock,

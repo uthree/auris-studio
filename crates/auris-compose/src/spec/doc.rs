@@ -472,6 +472,10 @@ struct PartDoc {
     pan: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     note: Option<u8>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    low_root: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    strum: Option<u16>,
 }
 
 impl SongDoc {
@@ -965,6 +969,24 @@ impl PartDoc {
                 ))),
             }
         }
+        // A chord part's left hand and strum. Refused elsewhere rather than ignored: a bass
+        // asked to strum would otherwise look like a setting that did nothing.
+        let chordal = matches!(role, Role::Chords | Role::Pad | Role::Stab);
+        if (self.low_root || self.strum.is_some_and(|value| value != 0)) && !chordal {
+            errors.push(SpecError::about(format!(
+                "part `{name}`: low_root and strum are read by chords, pad and stab parts only"
+            )));
+        }
+        part.low_root = self.low_root;
+        if let Some(value) = self.strum {
+            if value == 0 || auris_core::STRUM_VALUES.contains(&value) {
+                part.strum = value;
+            } else {
+                errors.push(SpecError::about(format!(
+                    "part `{name}`: strum is a note value, 16, 32, 64 or 128 (0 for none), not {value}"
+                )));
+            }
+        }
         if let Some(gate) = self.gate {
             if !(0.0..=1.0).contains(&gate) {
                 errors.push(SpecError::about(format!(
@@ -1302,6 +1324,8 @@ impl PartDoc {
             gain: (part.gain_db != plain.gain_db).then_some(f64::from(part.gain_db)),
             pan: (part.pan != plain.pan).then_some(part.pan),
             note: part.note,
+            low_root: part.low_root,
+            strum: (part.strum != 0).then_some(part.strum),
         }
     }
 }
@@ -2562,6 +2586,31 @@ mod tests {
             1.0,
             "everything else is legato"
         );
+    }
+
+    #[test]
+    fn a_chord_parts_left_hand_and_strum_survive_the_round_trip_and_nothing_else_takes_them() {
+        let spec = SongSpec::parse(
+            r#"
+            form = "verse"
+            [[part]]
+            name = "keys"
+            role = "chords"
+            low_root = true
+            strum = 32
+            "#,
+        )
+        .unwrap();
+        assert!(spec.parts[0].low_root);
+        assert_eq!(spec.parts[0].strum, 32);
+        assert_eq!(SongSpec::parse(&spec.to_toml()), Ok(spec));
+
+        let odd =
+            SongSpec::parse("[[part]]\nname = 'keys'\nrole = 'chords'\nstrum = 33").unwrap_err();
+        assert!(odd[0].to_string().contains("note value"), "{odd:?}");
+        let bass =
+            SongSpec::parse("[[part]]\nname = 'bass'\nrole = 'bass'\nlow_root = true").unwrap_err();
+        assert!(bass[0].to_string().contains("chords"), "{bass:?}");
     }
 
     #[test]

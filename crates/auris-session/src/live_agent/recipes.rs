@@ -37,6 +37,14 @@ pub struct RecipePatch {
     /// eighth, sixteenth, eighth-triplet or sixteenth-triplet.
     #[schemars(with = "Option<String>", extend("enum" = ["eighth","sixteenth","eighth-triplet","sixteenth-triplet",null]))]
     pub subdivision: Option<Subdivision>,
+    /// Chords and pad only: also strike the chord's root (its slash bass) an octave or more
+    /// below the voicing, like a pianist's left hand.
+    pub low_root: Option<bool>,
+    /// Chords and pad only: stagger each chord's onsets from the bottom note upward, by this
+    /// note value (16 = a sixteenth between successive notes, 32 = a thirty-second, 64, 128);
+    /// 0 strikes them together. Written into the notes; releases are unchanged.
+    #[schemars(extend("enum" = [0, 16, 32, 64, 128, null]))]
+    pub strum: Option<u16>,
     /// Space-separated relative scale steps; empty clears the authored motif.
     pub motif: Option<String>,
     /// x hit, X accent, o ghost and ./~/- rest; empty clears authored rhythm.
@@ -141,6 +149,15 @@ impl RecipePatch {
         if let Some(value) = self.subdivision {
             recipe.subdivision = value;
         }
+        if let Some(value) = self.low_root {
+            recipe.low_root = value;
+        }
+        if let Some(value) = self.strum {
+            if value != 0 && !STRUM_VALUES.contains(&value) {
+                return Err("strum must be 0, 16, 32, 64 or 128 (a note value)".into());
+            }
+            recipe.strum = value;
+        }
         if let Some(value) = &self.motif {
             if value.len() > 4096 {
                 return Err("motif is limited to 4096 bytes".into());
@@ -173,7 +190,7 @@ impl RecipePatch {
 }
 
 pub(crate) fn summary(recipe: &ClipRecipe) -> serde_json::Value {
-    serde_json::json!({"part":recipe.preset.name(),"seed":recipe.seed,"density":recipe.density,"intensity":recipe.intensity,"gate":recipe.gate,"dynamics":recipe.dynamics,"syncopation":recipe.syncopation,"fill":recipe.fill,"octave":recipe.octave,"swing":recipe.swing,"groove":recipe.groove,"subdivision":recipe.subdivision,"motif":recipe.motif,"rhythm":recipe.rhythm,"drum_voices":recipe.drum_voices.iter().map(|voice|serde_json::json!({"name":voice.name,"has_recipe":voice.recipe.is_some()})).collect::<Vec<_>>()})
+    serde_json::json!({"part":recipe.preset.name(),"seed":recipe.seed,"density":recipe.density,"intensity":recipe.intensity,"gate":recipe.gate,"dynamics":recipe.dynamics,"syncopation":recipe.syncopation,"fill":recipe.fill,"octave":recipe.octave,"low_root":recipe.low_root,"strum":recipe.strum,"swing":recipe.swing,"groove":recipe.groove,"subdivision":recipe.subdivision,"motif":recipe.motif,"rhythm":recipe.rhythm,"drum_voices":recipe.drum_voices.iter().map(|voice|serde_json::json!({"name":voice.name,"has_recipe":voice.recipe.is_some()})).collect::<Vec<_>>()})
 }
 
 impl Session {
