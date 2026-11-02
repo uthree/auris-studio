@@ -133,16 +133,10 @@ pub(crate) struct CopyLabels {
 
 impl CopyLabels {
     /// The footer button, findable in window tests as the message id followed by `-copy`.
-    fn button(&self, id: &ElementId, text: SharedString) -> gpui::Div {
-        let selector = format!("{id}-copy");
-        div().debug_selector(move || selector.clone()).child(
-            CopyButton::new(
-                ElementId::NamedChild(Box::new(id.clone()), "copy".into()),
-                text,
-            )
+    fn button(&self, id: &ElementId, text: SharedString) -> CopyButton {
+        CopyButton::new(SharedString::from(format!("{id}-copy")), text)
             .tooltip(self.tooltip.clone())
-            .copied_label(self.copied.clone()),
-        )
+            .copied_label(self.copied.clone())
     }
 }
 
