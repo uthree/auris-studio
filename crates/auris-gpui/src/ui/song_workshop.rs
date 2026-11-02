@@ -1584,10 +1584,22 @@ impl AurisApp {
                     .rounded(theme.atelier.shape.radius_md)
                     .bg(colors.surface)
                     .child(
-                        atelier::Spinner::new(("song-candidate-spinner", index))
-                            .color(colors.accent),
+                        div().flex_shrink_0().child(
+                            atelier::Spinner::new(("song-candidate-spinner", index))
+                                .color(colors.accent),
+                        ),
                     )
-                    .child(Label::new(label).size(TextSize::Small)),
+                    // The composer writes this line, so its length is not ours to choose: wrap it
+                    // inside the row, and cut a third line short rather than run past the card.
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .text_size(theme.atelier.typography.size_sm)
+                            .line_clamp(2)
+                            .text_ellipsis()
+                            .child(label),
+                    ),
             );
         }
         if !candidate.tools.is_empty() {
