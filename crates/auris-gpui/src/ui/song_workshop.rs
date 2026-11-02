@@ -1038,11 +1038,16 @@ impl AurisApp {
                     &theme,
                 ));
             }
+            let copy = agent_components::CopyLabels {
+                tooltip: self.t(Key::AgentCopyMarkdown).into(),
+                copied: self.t(Key::CopiedToClipboard).into(),
+            };
             for (i, message) in snapshot.document.messages.iter().enumerate() {
                 let entry = agent_components::workshop_message(
                     ("song-workshop-message", i),
                     message.user,
                     message.text.clone(),
+                    Some(&copy),
                     &theme,
                     window,
                     cx,
