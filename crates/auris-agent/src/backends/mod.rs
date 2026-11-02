@@ -27,11 +27,30 @@ fn native_project_directory(history: Option<&Path>) -> Option<&Path> {
     Some(directory)
 }
 
+/// Whether a live conversation is given the CLI runtime's own shell and file tools.
+///
+/// Denying `cli_command` outright — a workshop composer's policy, or the user's own deny list —
+/// starts the runtime without them, so the model is neither offered a shell nor told it has one.
+/// Offering one and refusing it afterwards still costs the model a turn.
+fn native_tools(prefs: &auris_session::AgentPreferences) -> bool {
+    !prefs
+        .policy
+        .deny
+        .iter()
+        .any(|rule| rule == "*" || rule == "cli_command")
+}
+
 fn cli_preamble(prefs: &auris_session::AgentPreferences) -> String {
     let recovery = format!(
         "Tool errors are feedback, not task completion. After a recoverable argument or state error, inspect tool_help/current IDs, correct the call and continue the unfinished request. The configured allowance is up to {} failed attempts for the same tool and arguments; success resets that count. Failed calls do not consume the separate musical polishing budget. Preserve earlier successful edits, and never retry a permission refusal or cancellation.",
         prefs.tool_failure_limit()
     );
+    if !native_tools(prefs) {
+        return format!(
+            "{}\n{recovery}\nOnly the Auris live tools are available: this conversation has no shell or file tools, so do not look for the auris CLI or the .auris file.",
+            crate::live_system_prompt(prefs)
+        );
+    }
     format!(
         "{}\n{recovery}\nNative shell and file tools are available for the user's external-file and scripting tasks. Edit the open song through Auris live MCP tools so unsaved changes and undo stay coherent. Never rewrite its .auris file behind the window. External file writes and shell effects are durable and are not covered by Auris Undo. Request approvals when needed; never work around a refusal. Use explicit persistent paths for requested deliverables; temporary working files are removed when this conversation ends. Keep runtime discovery scoped to the project and dedicated runtime queries. For Python, prefer a project-local uv environment; Get-Command, uv python list --only-installed and uv python find locate executables without enumerating home or hidden configuration directories. Do not scan personal folders to find a runtime.",
         crate::live_system_prompt(prefs)

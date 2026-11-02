@@ -16,6 +16,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+mod composer_log;
 mod digest;
 mod preview;
 #[cfg(test)]
@@ -1575,7 +1576,15 @@ fn compose(
     prefs.policy = auris_session::agent_policy::Policy {
         mode: auris_session::agent_policy::Mode::Edit,
         allow: vec![],
-        deny: vec!["search_internet".into(), "edit_project.listen".into()],
+        // Denying the shell outright starts CLI runtimes without their own shell and file
+        // tools, so a composer is never offered one only to have it refused.
+        deny: vec![
+            "search_internet".into(),
+            "edit_project.listen".into(),
+            "cli_command".into(),
+            "cli_file_change".into(),
+            "cli_file_read".into(),
+        ],
     };
     prefs.system_prompt = format!(
         "{}\n{}",
@@ -1595,12 +1604,19 @@ fn compose(
     }
     session.begin_agent_request();
     let _ = sender.send(JobEvent::Progress(candidate.id, "planning".into()));
+    let assignment = json!({"assignment":candidate.direction.instructions,
+    "recovery":candidate.error.as_ref().map(|error| json!({
+        "last_error":error,
+        "instruction":"Inspect the restored score and current resources. Continue only unfinished work; do not duplicate successful edits. Correct the cause of the last failure before completing."
+    }))});
+    let mut log = composer_log::Log::open(&folder);
+    log.note(
+        "assignment",
+        json!({"message":assignment,"backend":prefs.backend,"model":prefs.model}),
+    );
     worker.send(
-        &json!({"say": json!({"assignment":candidate.direction.instructions,
-            "recovery":candidate.error.as_ref().map(|error| json!({
-                "last_error":error,
-                "instruction":"Inspect the restored score and current resources. Continue only unfinished work; do not duplicate successful edits. Correct the cause of the last failure before completing."
-            }))}).to_string(),"policy":prefs.policy,"attachments":references}).to_string(),
+        &json!({"say": assignment.to_string(),"policy":prefs.policy,"attachments":references})
+            .to_string(),
     )?;
     let deadline = Instant::now() + Duration::from_secs(900);
     let mut denials = 0;
@@ -1608,9 +1624,11 @@ fn compose(
     let mut tool_calls = BTreeMap::new();
     let completion = loop {
         if cancel.load(Ordering::Acquire) {
+            log.note("cancelled", json!(null));
             return Err("Cancelled".into());
         }
         if Instant::now() > deadline {
+            log.note("timed_out", json!(null));
             return Err("Candidate production timed out".into());
         }
         // Capturing is cheap; rendering happens separately while the model keeps composing.
@@ -1624,6 +1642,7 @@ fn compose(
             Err(_) => return Err("Candidate worker stopped".into()),
         };
         observe_tool_event(candidate.id, &event, &mut tool_calls, sender);
+        log.observe(&event);
         match event["event"].as_str().unwrap_or_default() {
             "permission" => {
                 let allowed = auris_session::agent_policy::Operation::parse(
@@ -1643,6 +1662,7 @@ fn compose(
                 // A refusal is an answer the composer can act on: CLI runtimes reach for their
                 // own shell and file tools (Claude Code reads oversized tool output back from a
                 // file), and one such reach should not discard the whole candidate.
+                log.permission(event["tool"].as_str().unwrap_or_default(), allowed);
                 worker.send(&json!({"event":"permission_result","id":event["id"],"ok":allowed,
                     "reason":"Isolated candidate: only Auris music tools are available. Do not use shell or file tools; continue with the Auris tools."}).to_string())?;
                 if !allowed {
@@ -1719,14 +1739,18 @@ fn compose(
     session.end_agent_request();
     validate_protected(&session)?;
     if session.project() == &before {
+        log.note("unchanged", json!(null));
         return Err(format!(
             "The composer did not make the requested music changes. {completion} {last_failure}"
         )
         .into());
     }
     if !last_failure.is_empty() {
+        log.note("unresolved_failure", json!(last_failure));
         return Err(format!("The last tool failure remains unresolved: {last_failure}").into());
     }
+    log.note("finished", json!(null));
+    drop(log);
     let _ = sender.send(JobEvent::Progress(candidate.id, "render_wait".into()));
     let _gate = audio_gate(cancel)?;
     let _ = sender.send(JobEvent::Progress(candidate.id, "render".into()));

@@ -479,10 +479,17 @@ The production sequence lives in `crates/auris-agent/src/prompts/composition.md`
 `prompts/live-tools.md` retains essential operation contracts such as IDs, revisions,
 note units, lyrics, singer takes and final-render verification. Exact schemas and
 detailed task guidance are obtained through discovery and `tool_help` when needed.
-The experimental modular profile additionally selects a production-record workflow.
+The experimental modular profile additionally enters production phases
+([composition-workflows.md](composition-workflows.md)).
 The editor panel and workshop composers resolve the same shared prompt; the workshop
 adds its private-session and host-owned export constraints. Codex and Claude Code
-receive the same resolved composition prompt.
+receive the same resolved composition prompt. A composer's policy denies the shell and
+file operations, so CLI backends start it without their own shell and file tools.
+
+Each workshop candidate's folder holds `composer-log.jsonl`, one JSON object per line:
+the assignment, every tool call with its arguments, every result with its text, refused
+permissions, the model's prose between calls and how the attempt ended. Long values are
+cut and the file stops at 8 MiB. It is deleted with the conversation.
 
 Settings → Agent includes a multiline **System prompt** editor shared by Codex,
 Claude Code and Rig models. It starts with the current standard prompt in full.
