@@ -75,6 +75,7 @@ mod hosted;
 mod layers;
 mod levels;
 pub mod lyric_harness;
+mod lyric_lines;
 mod lyrics;
 mod mixer;
 mod monitor;
@@ -139,6 +140,7 @@ pub use levels::{
     ComposeBalanceResult, ComposeBalanceStep, LIMITER_ALLOWANCE_DB, NORMALIZE_LIMITER_ALLOWANCE_DB,
     NormalizeMixReport, TARGET_LUFS, TrackLevel, fader_for, faders_lift_db, master_gain_db,
 };
+pub use lyric_lines::SungLine;
 pub use lyrics::LyricsMeasure;
 pub use monitor::MonitorStatus;
 pub use musical_analysis::MusicalClipAnalysis;

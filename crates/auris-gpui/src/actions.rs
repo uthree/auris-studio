@@ -206,6 +206,8 @@ actions!(
         ToggleStructureLane,
         /// Show or hide the key and chord strip above the arrangement.
         ToggleHarmonyLane,
+        /// Show or hide the song-wide lyrics strip under the chords.
+        ToggleLyricsLane,
         /// Show or hide the tempo changes marked along the ruler.
         ToggleTempoMarks,
         /// Show or hide the pitch bend strip under the piano roll.
@@ -571,6 +573,7 @@ bindable! {
         // shifted forms of these letters are all spoken for.
         "view.structure_lane",  GroupView,      CmdShowStructureLane,  "secondary-alt-s" => ToggleStructureLane;
         "view.harmony_lane",    GroupView,      CmdShowHarmonyLane,    "secondary-alt-h" => ToggleHarmonyLane;
+        "view.lyrics_lane",     GroupView,      CmdShowLyricsLane,     "secondary-alt-y" => ToggleLyricsLane;
         "view.tempo_marks",     GroupView,      CmdShowTempoMarks,     "secondary-alt-t" => ToggleTempoMarks;
         "view.bend_lane",       GroupView,      CmdShowBendLane,       "secondary-alt-b" => ToggleBendLane;
         "view.modulation_lane", GroupView,      CmdShowModulationLane, "secondary-alt-w" => ToggleModulationLane;

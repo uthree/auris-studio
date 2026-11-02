@@ -119,6 +119,11 @@ pub struct NoteRollStyle {
     /// Colour of the chord caption: its names, the arrow before the next one, and the bar that
     /// fills as the chord plays.
     pub chord_color: Color,
+    /// Show the line being sung as a subtitle along the bottom of the frame.
+    ///
+    /// The lines are the song-wide lyrics annotation, not the words on the notes: those are
+    /// what a voice sings, often a mora at a time or in kana, and this is what a person reads.
+    pub lyrics: bool,
 }
 
 impl Default for NoteRollStyle {
@@ -157,6 +162,7 @@ impl Default for NoteRollStyle {
             include_drums: false,
             chords: true,
             chord_color: Color(0xffffff),
+            lyrics: true,
         }
     }
 }

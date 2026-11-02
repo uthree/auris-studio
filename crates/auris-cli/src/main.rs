@@ -1386,6 +1386,7 @@ fn video(args: &[String]) -> Result<(), String> {
             }
             "--drums" => style.include_drums = true,
             "--no-chords" => style.chords = false,
+            "--no-lyrics" => style.lyrics = false,
             "--size" => {
                 let text = value(&mut index, option, Key::CliNeedsValue)?;
                 let (width, height) = text
