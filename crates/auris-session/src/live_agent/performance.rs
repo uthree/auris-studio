@@ -94,11 +94,10 @@ fn rank(stage: &NoteTransform) -> usize {
         NoteTransform::Mute { .. } => 5,
         NoteTransform::Strum { .. } | NoteTransform::Stroke { .. } => 6,
         NoteTransform::Lean { .. } | NoteTransform::ForDrumVoice { .. } => 7,
-        NoteTransform::Humanize { .. }
-        | NoteTransform::Expression { .. }
-        | NoteTransform::Sustain { .. } => 8,
-        NoteTransform::Pitch { .. } => 9,
-        NoteTransform::Octaves { .. } => 10,
+        NoteTransform::Humanize { .. } | NoteTransform::Expression { .. } => 8,
+        NoteTransform::Sustain { .. } => 9,
+        NoteTransform::Pitch { .. } => 10,
+        NoteTransform::Octaves { .. } => 11,
     }
 }
 

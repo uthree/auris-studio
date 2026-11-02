@@ -148,8 +148,8 @@ impl PerformDial {
 /// *joining* the stack.
 pub(super) fn rank(transform: &NoteTransform) -> usize {
     match transform {
-        NoteTransform::Pitch { .. } => 9,
-        NoteTransform::Octaves { .. } => 10,
+        NoteTransform::Pitch { .. } => 10,
+        NoteTransform::Octaves { .. } => 11,
         NoteTransform::ForDrumVoice { .. } => 7,
         NoteTransform::Swing { .. } => 0,
         // The lean sits between: deterministic feel before random feel, and after the swing for
@@ -157,9 +157,8 @@ pub(super) fn rank(transform: &NoteTransform) -> usize {
         NoteTransform::Lean { .. } => 7,
         // The pedal is the last note stage: it holds what the timing stages left, and stops
         // where the moved strike of the same key lands.
-        NoteTransform::Humanize { .. }
-        | NoteTransform::Expression { .. }
-        | NoteTransform::Sustain { .. } => 8,
+        NoteTransform::Humanize { .. } | NoteTransform::Expression { .. } => 8,
+        NoteTransform::Sustain { .. } => 9,
         NoteTransform::Groove { .. } => 0,
         NoteTransform::Transpose { .. } => 1,
         NoteTransform::Gate { .. } => 2,
