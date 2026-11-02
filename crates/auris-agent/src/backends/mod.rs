@@ -34,7 +34,7 @@ fn cli_preamble(prefs: &auris_session::AgentPreferences) -> String {
     );
     format!(
         "{}\n{recovery}\nNative shell and file tools are available for the user's external-file and scripting tasks. Edit the open song through Auris live MCP tools so unsaved changes and undo stay coherent. Never rewrite its .auris file behind the window. External file writes and shell effects are durable and are not covered by Auris Undo. Request approvals when needed; never work around a refusal. Use explicit persistent paths for requested deliverables; temporary working files are removed when this conversation ends. Keep runtime discovery scoped to the project and dedicated runtime queries. For Python, prefer a project-local uv environment; Get-Command, uv python list --only-installed and uv python find locate executables without enumerating home or hidden configuration directories. Do not scan personal folders to find a runtime.",
-        crate::system_prompt(prefs)
+        crate::live_system_prompt(prefs)
     )
 }
 
