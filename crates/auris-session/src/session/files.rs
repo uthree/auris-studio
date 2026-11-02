@@ -990,6 +990,7 @@ impl Session {
     pub fn save(&mut self, path: &Path) -> Result<(), SessionError> {
         self.collect_hosted_state()?;
         save_project(path, &mut self.project)?;
+        self.remember_sound_scope_before_saving_to(path);
         self.path = Some(path.to_path_buf());
         self.dirty = false;
         // Every write restarts the autosave clock, so saving by hand postpones the next automatic
@@ -1184,6 +1185,7 @@ impl Session {
         drop(_lock);
 
         self.project = project;
+        self.remember_sound_scope_before_saving_to(&document);
         self.path = Some(document.clone());
         let cached_fonts: Vec<_> = self
             .project

@@ -391,6 +391,9 @@ pub struct Session {
     fonts: SharedSoundFonts,
     /// Separates discovery handles belonging to different unsaved sessions.
     sound_scope: String,
+    /// The scopes this same document had before a save moved it, oldest first, so a sound
+    /// found before the save can still be chosen after it. Emptied when the document is replaced.
+    earlier_sound_scopes: Vec<sound_search::DocumentScope>,
     pub(crate) listening: crate::audio_audition::ListeningContext,
     /// Decoded fonts, kept by the path they were read from as well as their document ids.
     ///
@@ -830,6 +833,7 @@ impl Session {
             voice_load_generations: HashMap::new(),
             acceleration: auris_singer::Acceleration::default(),
             sound_scope: crate::transient_id::transient_id("session"),
+            earlier_sound_scopes: Vec::new(),
             hosted: hosted::HostedPlugins::default(),
             vst3: vst3::Vst3Plugins::default(),
             plugin_trust: plugin_trust::PluginTrust::new(&options.plugin_paths),
