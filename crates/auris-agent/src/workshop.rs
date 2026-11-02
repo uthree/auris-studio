@@ -1558,6 +1558,70 @@ fn candidate_options(settings: &Settings) -> SessionOptions {
     options
 }
 
+/// Composes one candidate from a direction, outside any conversation: development tooling for
+/// repeating a theme already in the workshop logs after a prompt or tool change.
+///
+/// The candidate is made exactly as the workshop makes it — the same isolated session, the same
+/// composer, the same log in `folder` — so a trial's `composer-log.jsonl` compares line for
+/// line with a logged one. `parent` continues an earlier song; `progress` hears each stage, tool
+/// result and status line as it happens. It is not part of the application: nothing in the
+/// window calls it.
+pub fn compose_trial(
+    direction: Direction,
+    prefs: AgentPreferences,
+    settings: Settings,
+    folder: PathBuf,
+    parent: Option<PathBuf>,
+    mut progress: impl FnMut(String),
+) -> Result<SongCandidate, String> {
+    let candidate = Candidate {
+        id: 1,
+        parent: None,
+        direction,
+        ready: false,
+        error: None,
+        recoveries: 0,
+        tools: Default::default(),
+        feedback: None,
+    };
+    let (sender, receiver) = mpsc::channel();
+    let cancel = AtomicBool::new(false);
+    std::thread::scope(|scope| {
+        let worker = scope.spawn(|| {
+            compose(
+                &candidate,
+                prefs,
+                settings,
+                folder,
+                parent,
+                &cancel,
+                &sender,
+                &[],
+            )
+            .map_err(|error| error.message)
+        });
+        while !worker.is_finished() {
+            while let Ok(event) = receiver.try_recv() {
+                match event {
+                    JobEvent::Progress(_, stage) => progress(format!("stage {stage}")),
+                    JobEvent::Status(_, status) => progress(format!("status {status}")),
+                    JobEvent::Tool(_, name, Some(ok)) => {
+                        progress(format!("tool {name} {}", if ok { "ok" } else { "FAILED" }))
+                    }
+                    JobEvent::Recovering(_, count, error) => {
+                        progress(format!("recovering ({count}): {error}"))
+                    }
+                    _ => {}
+                }
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        worker
+            .join()
+            .map_err(|_| "The composer panicked".to_owned())?
+    })
+}
+
 // Render and voice inference share a conservative process-wide gate; model turns remain parallel.
 static AUDIO_WORK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
