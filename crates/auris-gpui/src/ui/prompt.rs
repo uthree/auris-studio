@@ -73,6 +73,8 @@ pub enum PromptTarget {
         /// The piano-roll row, inside a clip.
         pitch: Option<u8>,
     },
+    /// Why an ignore rule exists, by its place in the project's list.
+    LintReason(usize),
     /// An existing comment's text.
     Comment {
         /// What holds it.
@@ -265,6 +267,7 @@ impl PromptTarget {
             // A comment is prose.
             | PromptTarget::NewComment { .. }
             | PromptTarget::Comment { .. }
+            | PromptTarget::LintReason(_)
             // No shared notation: every parameter is written in its own units, and the range
             // and the unit are in the prompt's title instead, where they can name this one.
             | PromptTarget::Param(_) => return None,
@@ -1140,6 +1143,14 @@ impl AurisApp {
                 self.session.add_comment(host, at, pitch, &text).map(|_| ())
             }
             PromptTarget::Comment { host, id } => self.session.set_comment_text(host, id, &text),
+            PromptTarget::LintReason(index) => {
+                if let Some(rule) = self.session.project().lint_suppressions.get(index).cloned() {
+                    let before = self.session.revision();
+                    self.session.set_lint_suppression_reason(&rule, &text);
+                    self.lint_suppressions_changed(before);
+                }
+                Ok(())
+            }
             PromptTarget::Seed(clip) => match text.parse::<u64>() {
                 Ok(seed) => {
                     self.set_clip_seed(clip, seed);
@@ -2834,6 +2845,7 @@ mod tests {
                 host: CommentHost::Clip(ClipId(1)),
                 id: CommentId(1),
             },
+            PromptTarget::LintReason(0),
             PromptTarget::Lyric {
                 clip: ClipId(1),
                 index: 0,
@@ -2885,6 +2897,7 @@ mod tests {
                 | PromptTarget::LyricLine(_)
                 | PromptTarget::NewComment { .. }
                 | PromptTarget::Comment { .. }
+                | PromptTarget::LintReason(_)
                 | PromptTarget::Lyric { .. }
                 | PromptTarget::Phonemes { .. }
                 | PromptTarget::Lyrics { .. }

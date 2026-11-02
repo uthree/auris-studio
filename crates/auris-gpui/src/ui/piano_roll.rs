@@ -2150,17 +2150,7 @@ impl AurisApp {
             .position(tick)
             - clip_start)
             .max_zero();
-        let mut menu = self.roll_menu(event.position, under_pointer, pitch, snapped);
-        if let Some(clip) = self.selected_clip {
-            menu = menu.separator().item(
-                self.t(auris_i18n::Key::MenuAddCommentHere),
-                crate::ui::context_menu::MenuCommand::AddCommentAt {
-                    host: CommentHost::Clip(clip),
-                    at: snapped,
-                    pitch: Some(pitch),
-                },
-            );
-        }
+        let menu = self.roll_menu(event.position, under_pointer, pitch, snapped);
         self.open_menu(menu);
         cx.notify();
     }

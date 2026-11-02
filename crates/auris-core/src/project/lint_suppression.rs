@@ -41,4 +41,28 @@ pub struct LintSuppression {
     pub rule: Option<String>,
     /// Where it applies.
     pub scope: LintScope,
+    /// Why it was ignored, in the words of whoever ignored it; empty when nobody said.
+    ///
+    /// The comment habit again, applied to the one place a score most needs one: an ignored
+    /// warning with no reason is a warning the next reader un-ignores to find out. Not part of
+    /// what the rule *is* — [`Self::same_rule`] compares without it — so retyping the reason
+    /// never makes a second rule.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub reason: String,
+}
+
+impl LintSuppression {
+    /// A rule with no reason written yet.
+    pub fn new(rule: Option<String>, scope: LintScope) -> Self {
+        Self {
+            rule,
+            scope,
+            reason: String::new(),
+        }
+    }
+
+    /// Whether `other` ignores the same thing in the same place, whatever either says about why.
+    pub fn same_rule(&self, other: &Self) -> bool {
+        self.rule == other.rule && self.scope == other.scope
+    }
 }

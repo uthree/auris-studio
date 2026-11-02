@@ -268,13 +268,13 @@ impl AurisApp {
         let Some(clip) = self.selected_clip.and_then(|id| self.session.midi_clip(id)) else {
             return Vec::new();
         };
-        let row = px(self.pitch.row_height);
         clip.comments
             .iter()
             .map(|comment| {
                 let left = self.timeline.tick_to_x(clip.start + comment.at);
                 let top = match comment.pitch {
-                    Some(pitch) => self.pitch.pitch_to_y(pitch) + (row - TAG_HEIGHT) / 2.0,
+                    // Just above its row, so the note it is about stays in sight under the pin.
+                    Some(pitch) => (self.pitch.pitch_to_y(pitch) - TAG_HEIGHT).max(px(0.0)),
                     None => px(2.0),
                 };
                 self.comment_tag(CommentHost::Clip(clip.id), comment, left, top, cx)
@@ -397,15 +397,16 @@ mod window_tests {
         let host = CommentHost::Clip(clip);
         let id = app.update(cx, |this, _| {
             this.session
-                .add_comment(host, Ticks(960), Some(60), "もっと強く")
+                .add_comment(host, Ticks(960), Some(55), "もっと強く")
                 .unwrap()
         });
         paint(&app, cx);
         let bounds = tag(cx, host, id);
-        let row = roll_point(&app, cx, Ticks(960), 60);
+        let row = roll_point(&app, cx, Ticks(960), 55);
+        let row_top = row.y - gpui::px(app.read_with(cx, |this, _| this.pitch.row_height) / 2.0);
         assert!(
-            (bounds.center().y - row.y).abs() < gpui::px(2.0),
-            "the tag is centred on its pitch row"
+            (bounds.bottom() - row_top).abs() < gpui::px(2.0),
+            "the tag sits just above its pitch row, leaving the note in sight"
         );
         assert!(
             (bounds.left() - row.x).abs() < gpui::px(1.0),

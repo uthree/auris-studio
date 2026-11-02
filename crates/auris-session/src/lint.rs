@@ -527,7 +527,12 @@ impl crate::Session {
 
     /// Stops reporting what `suppression` covers, as one undo step. Adding one twice is a no-op.
     pub fn suppress_lint(&mut self, suppression: LintSuppression) {
-        if self.project().lint_suppressions.contains(&suppression) {
+        if self
+            .project()
+            .lint_suppressions
+            .iter()
+            .any(|kept| kept.same_rule(&suppression))
+        {
             return;
         }
         let before = self.revision();
@@ -537,12 +542,44 @@ impl crate::Session {
 
     /// Reports what `suppression` covered again, as one undo step.
     pub fn unsuppress_lint(&mut self, suppression: &LintSuppression) {
-        if !self.project().lint_suppressions.contains(suppression) {
+        if !self
+            .project()
+            .lint_suppressions
+            .iter()
+            .any(|kept| kept.same_rule(suppression))
+        {
             return;
         }
         let before = self.revision();
-        self.edit_suppressions().retain(|kept| kept != suppression);
+        self.edit_suppressions()
+            .retain(|kept| !kept.same_rule(suppression));
         self.carry_audio_lint(before);
+    }
+
+    /// Writes down why an ignore rule exists, as one undo step; empty text clears it.
+    ///
+    /// Whether the rule was there to annotate.
+    pub fn set_lint_suppression_reason(
+        &mut self,
+        suppression: &LintSuppression,
+        reason: &str,
+    ) -> bool {
+        let reason = auris_core::Comment::clean_text(reason).unwrap_or_default();
+        let Some(index) = self
+            .project()
+            .lint_suppressions
+            .iter()
+            .position(|kept| kept.same_rule(suppression))
+        else {
+            return false;
+        };
+        if self.project().lint_suppressions[index].reason == reason {
+            return true;
+        }
+        let before = self.revision();
+        self.edit_suppressions()[index].reason = reason;
+        self.carry_audio_lint(before);
+        true
     }
 
     /// The suppressions changed and the sound did not, so an audio pass of the revision before
@@ -624,6 +661,7 @@ mod tests {
             let suppression = LintSuppression {
                 rule: rule.clone(),
                 scope,
+                reason: String::new(),
             };
             session.suppress_lint(suppression.clone());
             let report = session.lint_score();
@@ -637,6 +675,7 @@ mod tests {
         session.suppress_lint(LintSuppression {
             rule: Some(Rule::HarshInterval.name().into()),
             scope: LintScope::Song,
+            reason: String::new(),
         });
         assert_eq!(duplicates(&session), 2);
 
@@ -644,6 +683,7 @@ mod tests {
         session.suppress_lint(LintSuppression {
             rule: None,
             scope: LintScope::Track { track: tracks[1] },
+            reason: String::new(),
         });
         assert_eq!(duplicates(&session), 1);
         session.undo().unwrap();
@@ -656,6 +696,7 @@ mod tests {
         let suppression = LintSuppression {
             rule: None,
             scope: LintScope::Track { track: tracks[0] },
+            reason: String::new(),
         };
         session.suppress_lint(suppression.clone());
         session.suppress_lint(suppression.clone());
@@ -663,6 +704,34 @@ mod tests {
         let json = serde_json::to_string(session.project()).unwrap();
         let back: Project = serde_json::from_str(&json).unwrap();
         assert_eq!(back.lint_suppressions, vec![suppression]);
+    }
+
+    #[test]
+    fn a_reason_annotates_the_rule_without_making_another() {
+        let (mut session, tracks, _) = session();
+        let rule = LintSuppression::new(None, LintScope::Track { track: tracks[0] });
+        session.suppress_lint(rule.clone());
+        assert!(session.set_lint_suppression_reason(&rule, "  doubled on purpose  "));
+        let mut retyped = rule.clone();
+        retyped.reason = "something else".into();
+        session.suppress_lint(retyped.clone());
+        let kept = &session.project().lint_suppressions;
+        assert_eq!(
+            kept.len(),
+            1,
+            "the same rule with another reason is not a second rule"
+        );
+        assert_eq!(kept[0].reason, "doubled on purpose");
+        let json = serde_json::to_string(session.project()).unwrap();
+        let back: Project = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.lint_suppressions[0].reason, "doubled on purpose");
+        assert!(session.undo().is_some());
+        assert!(session.project().lint_suppressions[0].reason.is_empty());
+        session.unsuppress_lint(&retyped);
+        assert!(
+            session.project().lint_suppressions.is_empty(),
+            "removal ignores the reason"
+        );
     }
 
     #[test]

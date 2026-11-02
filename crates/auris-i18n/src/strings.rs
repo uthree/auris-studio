@@ -1462,7 +1462,7 @@ strings! {
     SetChordTitle { en: "Chord from here", ja: "ここからのコード" }
     SetSectionTitle { en: "Section from here", ja: "ここからのセクション" }
     SetLyricLineTitle { en: "Lyrics from here", ja: "ここからの歌詞" }
-    CommentTitle { en: "Comment — a note for people and the AI; it is never played", ja: "コメント（人やAIへのメモ。演奏には影響しません）" }
+    CommentTitle { en: "Comment (never played)", ja: "コメント（演奏には影響しません）" }
     SetSeedTitle { en: "Seed for this part", ja: "このパートのシード" }
     SetTempoTitle { en: "Tempo", ja: "テンポ" }
     SetSignatureTitle { en: "Time signature", ja: "拍子" }
@@ -2264,6 +2264,8 @@ new のオプション
     ProblemsIgnoreRules { en: "Ignore rules ({count})", ja: "無視の設定（{count}）" }
     ProblemsIgnoreRulesTip { en: "What this project has asked not to be told about. Saved with the project; removing one shows its problems again.", ja: "このプロジェクトで表示しないことにした問題です。プロジェクトに保存され、削除するとその問題が再び表示されます。" }
     ProblemsUnignore { en: "Show again", ja: "再表示" }
+    ProblemsWriteReason { en: "Reason…", ja: "理由…" }
+    ProblemsReasonTitle { en: "Why is this ignored? Optional; Esc skips", ja: "無視する理由（任意・Escで省略）" }
     ProblemsEveryRule { en: "Every problem", ja: "すべての問題" }
     ProblemsScopeSong { en: "everywhere", ja: "曲全体" }
     ProblemsScopeTrack { en: "on {track}", ja: "{track}" }
