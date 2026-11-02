@@ -1023,6 +1023,7 @@ strings! {
     VideoDrums { en: "Include drums", ja: "ドラムも描く" }
     VideoChordSection { en: "Chords", ja: "コード" }
     VideoChords { en: "Show chords", ja: "コード進行を表示" }
+    VideoChordColour { en: "Caption colour", ja: "表示の色" }
     VideoChordsHint { en: "The chord sounding now and the next one, in the top corner. Uses the chords written in the song, or reads them from the notes when none are written.", ja: "今鳴っているコードと次のコードを左上に表示します。曲に入力したコードを使い、未入力なら音符から読み取ります。" }
     VideoPreviewHint { en: "The preview shows the moment under the playhead. Move the playhead to see another.", ja: "プレビューは再生位置の瞬間です。再生位置を動かすと別の場面を確認できます。" }
     VideoFfmpegChecking { en: "Looking for ffmpeg…", ja: "ffmpeg を探しています…" }

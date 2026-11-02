@@ -71,6 +71,19 @@ const BACKGROUNDS: [Color; 6] = [
     Color(0xf4f1ea),
 ];
 
+/// Colours the chord caption's picker offers: the whites and black that read over most
+/// backgrounds, then a few of the note presets.
+const CAPTIONS: [Color; 8] = [
+    Color(0xffffff),
+    Color(0xf4f1ea),
+    Color(0x000000),
+    Color(0xffd84d),
+    Color(0x9ad1ff),
+    Color(0x7cf08a),
+    Color(0xff8f4d),
+    Color(0xff7ad9),
+];
+
 /// What is known about the ffmpeg on this machine.
 #[derive(Clone, Debug, Default)]
 pub(crate) enum FfmpegProbe {
@@ -94,6 +107,8 @@ pub enum VideoColourSlot {
     Single,
     /// The fill behind the notes.
     Background,
+    /// The chord caption in the corner.
+    Chords,
 }
 
 impl VideoColourSlot {
@@ -103,6 +118,7 @@ impl VideoColourSlot {
             VideoColourSlot::Palette(index) => style.palette.get(index).copied(),
             VideoColourSlot::Single => Some(style.single_color),
             VideoColourSlot::Background => Some(style.background),
+            VideoColourSlot::Chords => Some(style.chord_color),
         }
     }
 
@@ -116,11 +132,13 @@ impl VideoColourSlot {
             }
             VideoColourSlot::Single => style.single_color = color,
             VideoColourSlot::Background => style.background = color,
+            VideoColourSlot::Chords => style.chord_color = color,
         }
     }
 
     /// Whether the window shows this slot for `style`: a palette entry only while the notes are
-    /// coloured by palette, the single colour only while they take one.
+    /// coloured by palette, the single colour only while they take one, the caption's only while
+    /// it is drawn.
     fn shown(self, style: &NoteRollStyle) -> bool {
         match self {
             VideoColourSlot::Palette(index) => {
@@ -128,6 +146,7 @@ impl VideoColourSlot {
             }
             VideoColourSlot::Single => style.coloring == NoteColoring::Single,
             VideoColourSlot::Background => true,
+            VideoColourSlot::Chords => style.chords,
         }
     }
 
@@ -137,6 +156,7 @@ impl VideoColourSlot {
             VideoColourSlot::Palette(index) => format!("palette-{index}"),
             VideoColourSlot::Single => "single".to_owned(),
             VideoColourSlot::Background => "background".to_owned(),
+            VideoColourSlot::Chords => "chords".to_owned(),
         }
     }
 }
@@ -1151,7 +1171,8 @@ impl AurisApp {
         theme: &Theme,
         cx: &mut Context<Self>,
     ) -> gpui::Div {
-        self.section(Key::VideoChordSection, theme)
+        let mut section = self
+            .section(Key::VideoChordSection, theme)
             .child(self.toggle(
                 "video-chords",
                 Key::VideoChords,
@@ -1159,8 +1180,25 @@ impl AurisApp {
                 theme,
                 cx,
                 |style| style.chords = !style.chords,
-            ))
-            .child(self.note(self.t(Key::VideoChordsHint), theme))
+            ));
+        if style.chords {
+            section = section
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(self.picker_swatch(
+                            VideoColourSlot::Chords,
+                            style.chord_color,
+                            theme,
+                            cx,
+                        ))
+                        .child(self.note(self.t(Key::VideoChordColour), theme)),
+                )
+                .children(self.video_colour_picker(VideoColourSlot::Chords, &CAPTIONS, theme, cx));
+        }
+        section.child(self.note(self.t(Key::VideoChordsHint), theme))
     }
 
     fn video_background_section(
@@ -1549,6 +1587,38 @@ mod tests {
             assert_eq!(app.settings.video.background, BACKGROUNDS[0]);
             assert_eq!(app.video_export.picking.unwrap().hsv.value, 0.0);
         });
+        app.update(&mut cx, |app, _| {
+            app.edit_video_style(|style| *style = original);
+        });
+    }
+
+    #[gpui::test]
+    fn the_chord_caption_takes_any_colour_while_it_is_shown(cx: &mut TestAppContext) {
+        let (app, mut cx, original) = open_window(cx);
+        app.update(&mut cx, |app, _| {
+            app.edit_video_style(|style| style.chords = true);
+        });
+        // Tall enough that the chord section, near the end of the settings, is on screen.
+        harness::resize(&app, &mut cx, gpui::size(px(1100.), px(1600.)));
+        harness::click("video-swatch-chords", &mut cx);
+        harness::paint(&app, &mut cx);
+        harness::click("video-preset-chords-3", &mut cx);
+        harness::paint(&app, &mut cx);
+        app.update(&mut cx, |app, _| {
+            assert_eq!(app.settings.video.chord_color, CAPTIONS[3]);
+            app.set_video_colour_channel(HsvChannel::Value, 0.5, true);
+            assert_ne!(app.settings.video.chord_color, CAPTIONS[3]);
+            let drawn = app.settings.video.chord_color;
+            assert_eq!(
+                app.settings.video.playhead_color, original.playhead_color,
+                "the playhead line keeps its own colour"
+            );
+            // Hiding the caption takes its picker away with it.
+            app.edit_video_style(|style| style.chords = false);
+            assert_eq!(app.settings.video.chord_color, drawn);
+        });
+        harness::paint(&app, &mut cx);
+        app.read_with(&cx, |app, _| assert_eq!(app.video_export.picking, None));
         app.update(&mut cx, |app, _| {
             app.edit_video_style(|style| *style = original);
         });
