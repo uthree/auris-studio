@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use jpreprocess::{DefaultTokenizer, JPreprocess, SystemDictionaryConfig};
 
 use crate::accent::{AccentPhrase, SungMora};
-use crate::kana::{kana_phonemes, split_kana_lyric};
+use crate::kana::{kana_phonemes, split_kana_lyric, spoken_moras, walk_spaced};
 use crate::openjtalk::openjtalk_phoneme;
 use crate::phoneme::VOWELS;
 
@@ -93,7 +93,7 @@ impl JapaneseDictionary {
     pub fn phonemes(&self, text: &str) -> Result<Vec<String>, VocalError> {
         let labels = self
             .inner
-            .extract_fullcontext(text)
+            .extract_fullcontext(&held_vowels(text))
             .map_err(|error| VocalError::Text {
                 text: text.to_string(),
                 detail: error.to_string(),
@@ -128,12 +128,16 @@ impl JapaneseDictionary {
         };
         let mut njd = self
             .inner
-            .text_to_njd(text)
+            .text_to_njd(&held_vowels(text))
             .map_err(|error| refused(error.to_string()))?;
         njd.preprocess();
 
         let mut phrases: Vec<AccentPhrase> = Vec::new();
         let mut previous_vowel = None;
+        // The last kana mora as *written*, and whether any mora has been read yet: the two
+        // facts the particle guards of `spoken_moras` need, kept across node boundaries.
+        let mut previous_written: Option<String> = None;
+        let mut first = true;
         for node in &njd.nodes {
             let pron = node.get_pron();
             // Katakana per mora; a devoiced mora prints a trailing ’ the kana table has no
@@ -148,8 +152,32 @@ impl JapaneseDictionary {
                 previous_vowel = None;
                 continue;
             }
-            let moras = dictionary_moras(&kana, previous_vowel.as_deref())
+            let mut moras = dictionary_moras(&kana, previous_vowel.as_deref())
                 .ok_or_else(|| refused(format!("unreadable moras `{kana}`")))?;
+            // The dictionary reads は and へ as particles wherever it cannot place them in a
+            // word, and a phrase of bare kana is exactly where it cannot: はは comes back
+            // *wawa*. Hold its verdicts to the same two guards the table keeps.
+            let written = written_moras(node.get_string());
+            if let Some(written) = written.as_ref().filter(|w| w.len() == moras.len()) {
+                for (at, (mora, (spelling, as_written))) in
+                    moras.iter_mut().zip(written).enumerate()
+                {
+                    let leading = first && at == 0;
+                    let previous = match at {
+                        0 => previous_written.as_deref(),
+                        _ => Some(written[at - 1].0.as_str()),
+                    };
+                    let repeated = previous == Some(spelling.as_str());
+                    if matches!(spelling.as_str(), "は" | "へ")
+                        && mora.phonemes != *as_written
+                        && (leading || repeated)
+                    {
+                        mora.phonemes = as_written.clone();
+                    }
+                }
+            }
+            previous_written = written.and_then(|w| w.last().map(|(spelling, _)| spelling.clone()));
+            first = false;
             previous_vowel = moras
                 .last()
                 .and_then(|mora| mora.phonemes.last())
@@ -163,8 +191,56 @@ impl JapaneseDictionary {
                 }),
             }
         }
+        // The dictionary's words cannot see the spaces a lyric marks them with: it reads はしる
+        // after わたしは as *washiru*. Where the phrase is all kana, its written は and へ take
+        // the phrase-level reading, which can — everything else stays the dictionary's.
+        if let Some(spoken) = spoken_kana_lyric(text, Some(self))
+            && spoken.len() == phrases.iter().map(|p| p.moras.len()).sum::<usize>()
+        {
+            let moras = phrases
+                .iter_mut()
+                .flat_map(|phrase| phrase.moras.iter_mut());
+            for (mora, (written, phonemes)) in moras.zip(spoken) {
+                if matches!(written.as_str(), "は" | "へ") {
+                    mora.phonemes = phonemes;
+                }
+            }
+        }
         Ok(phrases)
     }
+}
+
+/// A node's written surface as `(hiragana mora, phonemes as written)`, or `None` where it is
+/// not all kana.
+///
+/// A leading ー — NJD gives the auxiliary in ゆこう a node of its own — is a mora whose vowel
+/// lives in the node before, and is spelt here with no phonemes.
+fn written_moras(surface: &str) -> Option<Vec<(String, Vec<String>)>> {
+    let held = held_vowels(surface);
+    let rest = held.trim_start_matches('ー');
+    let mut moras: Vec<(String, Vec<String>)> = (0..held.chars().count() - rest.chars().count())
+        .map(|_| ("ー".to_string(), Vec::new()))
+        .collect();
+    if !rest.is_empty() {
+        moras.extend(
+            walk_spaced(rest)?
+                .into_iter()
+                .map(|mora| (mora.text, mora.phonemes)),
+        );
+    }
+    (!moras.is_empty()).then_some(moras)
+}
+
+/// A wave dash or half-width prolonged mark spelt as the ー the dictionary reads.
+///
+/// The dictionary takes 〜 for punctuation and drops it, so あ〜 would lose its held mora.
+fn held_vowels(text: &str) -> String {
+    text.chars()
+        .map(|c| match c {
+            '〜' | '～' | 'ｰ' => 'ー',
+            c => c,
+        })
+        .collect()
 }
 
 /// Reads one dictionary node while retaining the vowel a preceding node can prolong.
@@ -187,6 +263,58 @@ fn dictionary_moras(kana: &str, previous_vowel: Option<&str>) -> Option<Vec<Sung
             .map(|(text, phonemes)| SungMora { text, phonemes }),
     );
     Some(moras)
+}
+
+impl JapaneseDictionary {
+    /// Which moras of a kana phrase the dictionary reads as the particles は (*wa*) and
+    /// へ (*e*), or `None` where its words do not line up with the phrase's moras.
+    fn particle_marks(&self, text: &str) -> Option<Vec<bool>> {
+        let mut njd = self.inner.text_to_njd(&held_vowels(text)).ok()?;
+        njd.preprocess();
+        let mut marks = Vec::new();
+        for node in &njd.nodes {
+            let surface = node.get_string();
+            if surface.chars().all(char::is_whitespace) {
+                continue;
+            }
+            let written = written_moras(surface).or_else(|| {
+                // A node that is all punctuation is no mora at all; anything else unread
+                // means the alignment is lost.
+                surface.chars().all(|c| !c.is_alphanumeric()).then(Vec::new)
+            })?;
+            let spoken: Vec<String> = node
+                .get_pron()
+                .moras()
+                .iter()
+                .map(|mora| mora.to_string().replace('’', ""))
+                .collect();
+            let aligned = spoken.len() == written.len();
+            for (at, (spelling, _)) in written.iter().enumerate() {
+                let said = aligned.then(|| spoken[at].as_str());
+                marks.push(matches!(
+                    (spelling.as_str(), said),
+                    ("は", Some("ワ")) | ("へ", Some("エ"))
+                ));
+            }
+        }
+        Some(marks)
+    }
+}
+
+/// The moras of a kana phrase as they are spoken, or `None` where any of it is not kana.
+///
+/// A lyric laid across several notes is a phrase, and a phrase is where は and へ have a
+/// reading: the particles sing *wa* and *e*, the same kana inside a word sing *ha* and *he*.
+/// With a dictionary its word boundaries decide — きみはわらう needs no spaces — and a word
+/// that ends at a space counts as well; without one, only the space does. The text of each
+/// mora stays as written. A single mora on its own is read as written, because nothing says
+/// which word it belongs to.
+pub fn spoken_kana_lyric(
+    text: &str,
+    dictionary: Option<&JapaneseDictionary>,
+) -> Option<Vec<(String, Vec<String>)>> {
+    let marks = dictionary.and_then(|dictionary| dictionary.particle_marks(text));
+    spoken_moras(text, marks.as_deref())
 }
 
 /// The phonemes of one note's lyric: the kana table, then the dictionary, then an honest error.
@@ -303,6 +431,57 @@ mod tests {
                 "a nucleus falls inside its own phrase"
             );
         }
+    }
+
+    fn sounds(moras: &[(String, Vec<String>)]) -> Vec<&str> {
+        moras
+            .iter()
+            .flat_map(|(_, phonemes)| phonemes.iter().map(String::as_str))
+            .collect()
+    }
+
+    #[test]
+    fn without_a_dictionary_a_spaced_particle_is_still_spoken() {
+        let moras = spoken_kana_lyric("きみは そらへ", None).unwrap();
+        assert_eq!(sounds(&moras)[4..6], ["w", "a"]);
+        assert_eq!(*sounds(&moras).last().unwrap(), "e");
+        assert_eq!(moras[2].0, "は", "the note keeps the kana as written");
+    }
+
+    /// The particles inside unspaced kana, read by the dictionary's words — and its
+    /// over-eager *wa* held back where the phrase plainly holds none.
+    #[test]
+    fn the_dictionary_finds_particles_and_keeps_the_guards() {
+        let Some(folder) = std::env::var_os("AURIS_JAPANESE_DICTIONARY") else {
+            return;
+        };
+        let dictionary = JapaneseDictionary::load(Path::new(&folder)).expect("a loadable folder");
+        let read = |text: &str| spoken_kana_lyric(text, Some(&dictionary)).unwrap();
+        assert_eq!(sounds(&read("きみはわらう"))[4..6], ["w", "a"]);
+        assert_eq!(*sounds(&read("とおくへいこう")).get(5).unwrap(), "e");
+        assert_eq!(sounds(&read("はなが さいた"))[..2], ["h", "a"]);
+        assert_eq!(sounds(&read("はは")), ["h", "a", "h", "a"]);
+        assert_eq!(sounds(&read("こんにちは"))[7..], ["w", "a"]);
+
+        let flat = |text: &str| -> Vec<String> {
+            dictionary
+                .accent_phrases(text)
+                .unwrap()
+                .into_iter()
+                .flat_map(|phrase| phrase.moras)
+                .flat_map(|mora| mora.phonemes)
+                .collect()
+        };
+        assert_eq!(flat("はは"), ["h", "a", "h", "a"]);
+        assert_eq!(flat("母は")[4..], ["w", "a"]);
+        assert_eq!(flat("空へ")[4..], ["e"]);
+        assert_eq!(flat("あ〜"), ["a", "a"], "a wave dash is a held vowel");
+        assert_eq!(
+            flat("わたしは はしる"),
+            [
+                "w", "a", "t", "a", "ɕ", "i", "w", "a", "h", "a", "ɕ", "i", "ɾ", "ɯ"
+            ]
+        );
     }
 
     #[test]

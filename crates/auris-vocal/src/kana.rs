@@ -86,36 +86,158 @@ const SMALL: [char; 9] = ['ゃ', 'ゅ', 'ょ', 'ぁ', 'ぃ', 'ぅ', 'ぇ', 'ぉ'
 /// Reads a kana string as `(mora text, phonemes)` pairs, or `None` at the first thing that is
 /// not kana. Whitespace separates moras and is otherwise ignored.
 fn walk(text: &str) -> Option<Vec<(String, Vec<String>)>> {
-    let normalized: String = text.chars().map(hiragana).collect();
-    let chars: Vec<char> = normalized.chars().filter(|c| !c.is_whitespace()).collect();
-    let mut out: Vec<(String, Vec<String>)> = Vec::new();
+    walk_spaced(text).map(|moras| {
+        moras
+            .into_iter()
+            .map(|mora| (mora.text, mora.phonemes))
+            .collect()
+    })
+}
+
+/// One mora of a walked phrase, remembering whether whitespace came before it.
+///
+/// The whitespace is the only word boundary a kana phrase has without a dictionary, and the
+/// particle rule in [`spoken_moras`] is a rule about the ends of words.
+#[derive(Clone, Debug)]
+pub(crate) struct WalkedMora {
+    /// The mora as written, folded onto hiragana.
+    pub(crate) text: String,
+    /// Its phonemes, read as written.
+    pub(crate) phonemes: Vec<String>,
+    /// Whether whitespace separates it from the mora before.
+    pub(crate) spaced: bool,
+}
+
+/// [`walk`], keeping the word boundaries.
+pub(crate) fn walk_spaced(text: &str) -> Option<Vec<WalkedMora>> {
+    let normalized = normalize(text);
+    let mut chars: Vec<(char, bool)> = Vec::new();
+    let mut spaced = false;
+    for c in normalized.chars() {
+        if c.is_whitespace() {
+            spaced = true;
+        } else {
+            chars.push((c, std::mem::take(&mut spaced)));
+        }
+    }
+    let mut out: Vec<WalkedMora> = Vec::new();
     let mut at = 0;
     while at < chars.len() {
-        let this = chars[at];
+        let (this, spaced) = chars[at];
         if this == 'ー' {
             // The stretch of whatever vowel came before it — which is the last phoneme of the
             // previous mora whenever that mora ends in one.
             let vowel = out
                 .last()
-                .and_then(|(_, phonemes)| phonemes.last())
+                .and_then(|mora| mora.phonemes.last())
                 .filter(|last| VOWELS.contains(&last.as_str()))?
                 .clone();
-            out.push(('ー'.to_string(), vec![vowel]));
+            out.push(WalkedMora {
+                text: 'ー'.to_string(),
+                phonemes: vec![vowel],
+                spaced,
+            });
             at += 1;
             continue;
         }
         let next = chars.get(at + 1).copied();
-        if let Some(small) = next.filter(|next| SMALL.contains(next))
+        // A small kana glues onto its base even across a space: き ょ is still きょ.
+        if let Some((small, _)) = next.filter(|(next, _)| SMALL.contains(next))
             && let Some(phonemes) = digraph(this, small)
         {
-            out.push((format!("{this}{small}"), phonemes));
+            out.push(WalkedMora {
+                text: format!("{this}{small}"),
+                phonemes,
+                spaced,
+            });
             at += 2;
             continue;
         }
-        out.push((this.to_string(), single(this)?));
+        out.push(WalkedMora {
+            text: this.to_string(),
+            phonemes: single(this)?,
+            spaced,
+        });
         at += 1;
     }
     Some(out)
+}
+
+/// The moras of a kana phrase as they are *spoken*, or `None` where any of it is not kana.
+///
+/// Kana spells Japanese as it is pronounced with three exceptions, all particles: は is
+/// read わ, へ is read え and を is read お. を is never anything but the particle, so the table
+/// already reads it お; は and へ are ordinary syllables everywhere else — はな, へや — so which
+/// reading a written は takes depends on the words around it, and a table that reads one mora
+/// at a time sang every topic marker as *ha*. This is the phrase-level reading that fixes it.
+///
+/// `particles` is a per-mora verdict from something that knows the words — the dictionary,
+/// through [`spoken_kana_lyric`](crate::spoken_kana_lyric) — and is consulted where it has the
+/// same length as the phrase. Without it the rule is the one whitespace allows: a は or へ that
+/// ends a word of two or more moras is the particle, which is how lyrics are ordinarily spaced
+/// (きみは わらう, あしたへ). Either way two guards hold, because a mistaken *wa* is as audible
+/// as a mistaken *ha*: the first mora of a phrase is never a particle, and neither is a は
+/// written straight after another は — はは and あはは are a mother and a laugh.
+///
+/// The mora text stays as written, so a note still shows the は somebody typed; only the
+/// phonemes change.
+pub(crate) fn spoken_moras(
+    text: &str,
+    particles: Option<&[bool]>,
+) -> Option<Vec<(String, Vec<String>)>> {
+    let mut moras = walk_spaced(text)?;
+    let particles = particles.filter(|marks| marks.len() == moras.len());
+    for at in 1..moras.len() {
+        let spoken: &[&str] = match moras[at].text.as_str() {
+            "は" => &["w", "a"],
+            "へ" => &["e"],
+            _ => continue,
+        };
+        let ends_word = |at: usize| moras.get(at + 1).is_none_or(|next| next.spaced);
+        let word_final = ends_word(at);
+        // へ joined by の or と — きみへの, みらいへと — is the particle doubled up, and the
+        // words that end so are rare; へとへと is the one a lyric meets, and is spared.
+        let doubled = moras[at].text == "へ"
+            && moras
+                .get(at + 1)
+                .is_some_and(|next| !next.spaced && matches!(next.text.as_str(), "の" | "と"))
+            && ends_word(at + 1)
+            && moras[at - 1].text != "と";
+        // The dictionary is trusted inside a word, never at the start of one: a particle
+        // follows something, and はしる after a space is a verb.
+        let marked = particles.is_some_and(|marks| marks[at]) && (!moras[at].spaced || word_final);
+        let repeated = !moras[at].spaced && moras[at - 1].text == moras[at].text;
+        if (marked || word_final || doubled) && !repeated {
+            moras[at].phonemes = tokens(spoken);
+        }
+    }
+    Some(
+        moras
+            .into_iter()
+            .map(|mora| (mora.text, mora.phonemes))
+            .collect(),
+    )
+}
+
+/// Katakana folded onto hiragana, and the spellings people actually type folded onto the
+/// ones the table knows.
+///
+/// A wave dash is how a lyric sheet writes a held vowel (あ〜), and the half-width ｰ is the
+/// prolonged mark from a half-width keyboard; both mean ー. ヷ ヸ ヹ ヺ have no hiragana and
+/// are ヴ with a small vowel.
+fn normalize(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        match c {
+            '〜' | '～' | 'ｰ' => out.push('ー'),
+            'ヷ' => out.push_str("ゔぁ"),
+            'ヸ' => out.push_str("ゔぃ"),
+            'ヹ' => out.push_str("ゔぇ"),
+            'ヺ' => out.push_str("ゔぉ"),
+            _ => out.push(hiragana(c)),
+        }
+    }
+    out
 }
 
 /// Katakana folded onto hiragana, so one table serves both spellings.
@@ -399,6 +521,96 @@ mod tests {
         assert_eq!(moras, ["こ", "ー", "ひ", "ー"]);
         assert_eq!(pairs[1].1, ["o"]);
         assert_eq!(pairs[3].1, ["i"]);
+    }
+
+    fn spoken(text: &str) -> Vec<String> {
+        spoken_moras(text, None)
+            .unwrap_or_else(|| panic!("{text} should read as kana"))
+            .into_iter()
+            .flat_map(|(_, phonemes)| phonemes)
+            .collect()
+    }
+
+    #[test]
+    fn particles_that_end_a_word_are_spoken_wa_and_e() {
+        assert_eq!(
+            spoken("きみは わらう"),
+            ["k", "i", "m", "i", "w", "a", "w", "a", "ɾ", "a", "ɯ"]
+        );
+        assert_eq!(spoken("あしたへ"), ["a", "ɕ", "i", "t", "a", "e"]);
+        assert_eq!(spoken("ぼくを"), ["b", "o", "k", "ɯ", "o"]);
+        // A particle written as a word of its own is still the particle.
+        assert_eq!(spoken("きみ は"), ["k", "i", "m", "i", "w", "a"]);
+        assert_eq!(spoken("こんにちは")[7..], ["w", "a"]);
+        // The written spelling stays on the mora; only the sound changes.
+        let moras = spoken_moras("ゆめは", None).unwrap();
+        assert_eq!(moras[2].0, "は");
+        assert_eq!(moras[2].1, ["w", "a"]);
+        // Katakana is the same kana.
+        assert_eq!(spoken("ソラヘ")[4..], ["e"]);
+    }
+
+    #[test]
+    fn the_same_kana_inside_a_word_keeps_its_written_sound() {
+        assert_eq!(spoken("はな"), ["h", "a", "n", "a"]);
+        assert_eq!(spoken("へや"), ["h", "e", "j", "a"]);
+        assert_eq!(
+            spoken("はれる そら"),
+            ["h", "a", "ɾ", "e", "ɾ", "ɯ", "s", "o", "ɾ", "a"]
+        );
+        // The first mora of a phrase belongs to no word before it.
+        assert_eq!(spoken("は"), ["h", "a"]);
+        assert_eq!(spoken("へ"), ["h", "e"]);
+        // はは is a mother, あはは a laugh; neither holds a particle.
+        assert_eq!(spoken("はは"), ["h", "a", "h", "a"]);
+        assert_eq!(spoken("あはは"), ["a", "h", "a", "h", "a"]);
+        assert_eq!(spoken("えへへ"), ["e", "h", "e", "h", "e"]);
+        // But a mother who *is* the topic: the particle stands apart from her.
+        assert_eq!(spoken("はは は")[4..], ["w", "a"]);
+        // Without a dictionary, an unspaced phrase has no words to end.
+        assert_eq!(spoken("きみはわらう")[4..6], ["h", "a"]);
+        assert_eq!(spoken("きみへの うた")[4], "e");
+        assert_eq!(spoken("みらいへと")[5], "e");
+        assert_eq!(spoken("へとへと"), ["h", "e", "t", "o", "h", "e", "t", "o"]);
+    }
+
+    #[test]
+    fn a_verdict_from_the_words_marks_particles_inside_unspaced_text() {
+        let marks = [false, false, true, false, false, false];
+        let moras = spoken_moras("きみはわらう", Some(&marks)).unwrap();
+        assert_eq!(moras[2].1, ["w", "a"]);
+        // The guards outrank the verdict: はは is never *wawa*.
+        let moras = spoken_moras("はは", Some(&[true, true])).unwrap();
+        assert_eq!(moras[0].1, ["h", "a"]);
+        assert_eq!(moras[1].1, ["h", "a"]);
+        // Nor does it start a word: はしる after a space is a verb.
+        let moras = spoken_moras(
+            "わたしは はしる",
+            Some(&[false, false, false, true, true, false, false]),
+        )
+        .unwrap();
+        assert_eq!(moras[3].1, ["w", "a"]);
+        assert_eq!(moras[4].1, ["h", "a"]);
+        // A verdict of the wrong length is no verdict.
+        let moras = spoken_moras("きみはわらう", Some(&[true])).unwrap();
+        assert_eq!(moras[2].1, ["h", "a"]);
+    }
+
+    #[test]
+    fn a_wave_dash_holds_the_vowel_like_the_prolonged_mark() {
+        assert_eq!(phonemes("あ〜"), ["a", "a"]);
+        assert_eq!(phonemes("ラ～"), ["ɾ", "a", "a"]);
+        assert_eq!(phonemes("そｰ"), ["s", "o", "o"]);
+        assert_eq!(split_kana_moras("きみ〜").unwrap(), ["き", "み", "ー"]);
+    }
+
+    #[test]
+    fn the_katakana_va_row_reads_as_vu_with_a_small_vowel() {
+        assert_eq!(phonemes("ヷ"), ["v", "a"]);
+        assert_eq!(phonemes("ヸ"), ["v", "i"]);
+        assert_eq!(phonemes("ヹ"), ["v", "e"]);
+        assert_eq!(phonemes("ヺ"), ["v", "o"]);
+        assert_eq!(split_kana_moras("ヷ").unwrap().len(), 1);
     }
 
     #[test]

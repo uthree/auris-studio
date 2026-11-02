@@ -1768,6 +1768,12 @@ pub mod composition {
     //! The written spelling stays on the first note with `+` continuations; phonemes carry
     //! pronunciation. Workshop cards read that written score rather than the kana reading.
     //!
+    //! Kana is read a phrase at a time, never a mora at a time, because three kana are read
+    //! by the words around them: the particles は and へ sing *wa* and *e*
+    //! ([`spoken_kana_lyric`](auris_vocal::spoken_kana_lyric)). A space ends a word, and with
+    //! a dictionary its own word boundaries count too; the note keeps the は as written and
+    //! the phonemes carry the *wa*. を needs no context, being nothing but the particle.
+    //!
     //! Existing singer phrases are compared through explicit
     //! [`ClipComparison`](crate::lyric_harness::ClipComparison) relationships. Each selected span
     //! is a contiguous monophonic run with one established mora per note. Pitch, relative onset,
