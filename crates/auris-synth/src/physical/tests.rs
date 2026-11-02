@@ -72,29 +72,75 @@ fn strings_are_tuned_across_their_playing_registers() {
     }
 }
 
+/// Cents from `hz` at which the spectrum peaks, searched within `range` in tenths of a cent.
+fn peak_cents(samples: &[f32], rate: f64, hz: f64, range: std::ops::RangeInclusive<i32>) -> f64 {
+    range
+        .map(|tenths| f64::from(tenths) * 0.1)
+        .max_by(|a, b| {
+            let strength = |cents: f64| goertzel(samples, rate, hz * (cents / 1200.0).exp2());
+            strength(*a).total_cmp(&strength(*b))
+        })
+        .unwrap()
+}
+
 #[test]
 fn piano_bass_overtones_do_not_have_tenor_register_stretch() {
-    for (pitch, maximum_cents) in [(24, 20), (36, 12)] {
+    for (pitch, maximum_cents) in [(24, 20.0), (36, 12.0)] {
         let mut piano = rig(Model::Piano, 48_000.0);
         let audio = piano.render(48_000, &[on(pitch, 0.8)]);
-        let harmonic = f64::from(pitch_to_hz(f32::from(pitch))) * 8.0;
-        let strongest = (0..=70)
-            .max_by(|a, b| {
-                let strength = |cents| {
-                    goertzel(
-                        &audio,
-                        48_000.0,
-                        harmonic * (f64::from(cents) / 1200.0).exp2(),
-                    )
-                };
-                strength(*a).total_cmp(&strength(*b))
-            })
-            .unwrap();
+        let hz = f64::from(pitch_to_hz(f32::from(pitch)));
+        // The key's stretch tuning moves the fundamental; the overtone is measured against it.
+        let fundamental = peak_cents(&audio, 48_000.0, hz, -400..=100);
+        let eighth = peak_cents(&audio, 48_000.0, hz * 8.0, -400..=700);
+        let stretch = eighth - fundamental;
         assert!(
-            strongest <= maximum_cents,
-            "MIDI {pitch}: eighth partial stretched {strongest} cents"
+            (0.0..=maximum_cents).contains(&stretch),
+            "MIDI {pitch}: eighth partial stretched {stretch:.1} cents"
         );
     }
+}
+
+#[test]
+fn piano_octaves_are_stretched_between_pure_two_one_and_four_two() {
+    // Every fundamental on equal temperament left the tenor's 4:2 octaves 7.6 cents wide.
+    let rate = 48_000.0;
+    let steady = |pitch: u8| {
+        let mut piano = rig(Model::Piano, rate);
+        let audio = piano.render(rate as usize * 2, &[on(pitch, 0.7)]);
+        audio[(rate * 0.3) as usize..].to_vec()
+    };
+    for low in [48_u8, 60, 72] {
+        let (lower, upper) = (steady(low), steady(low + 12));
+        let hz = f64::from(pitch_to_hz(f32::from(low)));
+        let partial = |audio: &[f32], hz: f64| peak_cents(audio, rate, hz, -300..=300);
+        let two_one = partial(&lower, hz * 2.0) - partial(&upper, hz * 2.0);
+        let four_two = partial(&lower, hz * 4.0) - partial(&upper, hz * 4.0);
+        assert!(
+            two_one < 0.0 && four_two > 0.0 && (two_one + four_two).abs() < 1.0,
+            "MIDI {low}: 2:1 {two_one:+.1} cents, 4:2 {four_two:+.1} cents"
+        );
+        assert!(
+            four_two < 4.0,
+            "MIDI {low}: 4:2 octave {four_two:+.1} cents wide"
+        );
+    }
+}
+
+#[test]
+fn piano_stretch_keeps_a4_and_vanishes_without_stiffness() {
+    let mut piano = Physical::new(Model::Piano);
+    assert_eq!(piano.stretch(69), 0.0);
+    assert!(piano.stretch(21) < -0.15 && piano.stretch(108) > 0.1);
+    // Around C2 the wound strings are far less stiff than the plain ones an octave up, which
+    // narrows those octaves; from A2 up the stiffness is one and the stretch only grows.
+    for pair in (45..=108).collect::<Vec<u8>>().windows(2) {
+        assert!(piano.stretch(pair[0]) < piano.stretch(pair[1]));
+    }
+    piano.set_param_by_key("stiffness", 0.0);
+    for pitch in [21, 48, 69, 96, 108] {
+        assert!(piano.stretch(pitch).abs() < 1e-6);
+    }
+    assert_eq!(Physical::new(Model::Mallet).stretch(21), 0.0);
 }
 
 #[test]
