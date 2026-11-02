@@ -158,6 +158,29 @@ impl Session {
                 self.set_param(ParamTarget::TrackGain(*track), 0.0);
                 Ok(())
             }
+            Fix::SetChords { chords, end } => {
+                let map = &self.project().harmony.chords;
+                // Only a run still blank: a chord written since is somebody's decision.
+                let Some(&(first, _)) = chords.first() else {
+                    return Err(SessionError::LintStale);
+                };
+                if map.numeral_at(first).is_some()
+                    || map
+                        .points()
+                        .iter()
+                        .any(|point| point.tick > first && point.tick < *end)
+                {
+                    return Err(SessionError::LintStale);
+                }
+                let after = map.numeral_at(*end);
+                let harmony = self.edit_chords();
+                for (at, numeral) in chords {
+                    harmony.set_point(*at, Some(*numeral));
+                }
+                // What came after the run keeps coming after it.
+                harmony.set_point(*end, after);
+                Ok(())
+            }
             Fix::NormalizeMix => {
                 self.normalize_mix(crate::TARGET_LUFS, -1.0)?;
                 Ok(())

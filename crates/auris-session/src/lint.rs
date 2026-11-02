@@ -81,6 +81,8 @@ pub enum Rule {
     OutOfKey,
     /// A sustained scale note a semitone above a chord tone (an "avoid note").
     AvoidNote,
+    /// Bars that sound chords with no chord written over them.
+    MissingChord,
     /// Two notes of the same pitch on top of each other in one clip.
     DuplicateNote,
     /// A note struck too softly to be heard.
@@ -99,13 +101,14 @@ pub enum Rule {
 
 impl Rule {
     /// Every rule, score rules first.
-    pub const ALL: [Rule; 13] = [
+    pub const ALL: [Rule; 14] = [
         Rule::CrowdedOnset,
         Rule::DenseNotes,
         Rule::HarshInterval,
         Rule::MuddyLowInterval,
         Rule::OutOfKey,
         Rule::AvoidNote,
+        Rule::MissingChord,
         Rule::DuplicateNote,
         Rule::InaudibleVelocity,
         Rule::ExtremePitch,
@@ -124,6 +127,7 @@ impl Rule {
             Rule::MuddyLowInterval => "muddy_low_interval",
             Rule::OutOfKey => "out_of_key",
             Rule::AvoidNote => "avoid_note",
+            Rule::MissingChord => "missing_chord",
             Rule::DuplicateNote => "duplicate_note",
             Rule::InaudibleVelocity => "inaudible_velocity",
             Rule::ExtremePitch => "extreme_pitch",
@@ -190,6 +194,13 @@ pub enum Fix {
     ResetFader {
         /// The track.
         track: TrackId,
+    },
+    /// Write chords where none are written: one per bar, then nothing again from `end`.
+    SetChords {
+        /// `(bar start, chord)` pairs, as numerals in the key at that tick.
+        chords: Vec<(Ticks, auris_core::theory::numeral::Numeral)>,
+        /// Where the run of bars ends.
+        end: Ticks,
     },
     /// Run [`Session::normalize_mix`](crate::Session::normalize_mix) toward the standard target.
     NormalizeMix,
@@ -298,6 +309,20 @@ impl Diagnostic {
             Rule::AvoidNote => format!(
                 "{pitches} is held a semitone above a chord tone (an avoid note against the written chord)"
             ),
+            Rule::MissingChord => {
+                let chords = match &self.fix {
+                    Some(Fix::SetChords { chords, .. }) => format!(
+                        "; the notes spell {}",
+                        chords
+                            .iter()
+                            .map(|(_, numeral)| numeral.to_text())
+                            .collect::<Vec<_>>()
+                            .join(" | ")
+                    ),
+                    _ => String::new(),
+                };
+                format!("{value:.0} bar(s) sound chords but no chord is written over them{chords}")
+            }
             Rule::DuplicateNote => {
                 format!("{pitches} is written twice on top of itself in one clip")
             }
@@ -332,6 +357,7 @@ impl Diagnostic {
             Fix::SetPitches { .. } => "move the note to the nearest chord tone",
             Fix::SetVelocity { .. } => "raise the velocity to the default",
             Fix::ResetFader { .. } => "bring the track's fader back to 0 dB",
+            Fix::SetChords { .. } => "write the chords the notes spell, one per bar",
             Fix::NormalizeMix => "normalize the mix toward -14 LUFS",
         })
     }
@@ -590,5 +616,45 @@ mod tests {
         let json = serde_json::to_string(session.project()).unwrap();
         let back: Project = serde_json::from_str(&json).unwrap();
         assert_eq!(back.lint_suppressions, vec![suppression]);
+    }
+
+    #[test]
+    fn writing_the_obvious_chords_is_one_undo_step_and_stops_at_the_run() {
+        let mut session = crate::Session::new(SessionOptions::headless()).unwrap();
+        let track = session.add_default_instrument_track("Keys").unwrap();
+        let clip = session
+            .add_midi_clip(track, "Clip", Ticks::ZERO, Ticks(3840 * 3))
+            .unwrap();
+        let mut notes: Vec<Note> = [57, 60, 64]
+            .into_iter()
+            .map(|p| Note::new(p, Ticks::ZERO, Ticks(3840)))
+            .collect();
+        notes.push(Note::new(72, Ticks(3840), Ticks(3840)));
+        session.replace_notes(clip, notes).unwrap();
+        let report = session.lint_score();
+        let missing = report
+            .diagnostics
+            .iter()
+            .find(|d| d.rule == Rule::MissingChord)
+            .unwrap();
+        session.apply_lint_fix(missing, report.revision).unwrap();
+        let harmony = &session.project().harmony;
+        assert_eq!(
+            harmony
+                .numeral_at(Ticks::ZERO)
+                .map(|n| n.name_in(harmony.key_at(Ticks::ZERO)))
+                .as_deref(),
+            Some("Am")
+        );
+        assert_eq!(harmony.numeral_at(Ticks(3840)), None);
+        assert!(
+            !session
+                .lint_score()
+                .diagnostics
+                .iter()
+                .any(|d| d.rule == Rule::MissingChord)
+        );
+        session.undo().unwrap();
+        assert!(session.project().harmony.chords.is_empty());
     }
 }

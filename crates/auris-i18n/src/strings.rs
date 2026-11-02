@@ -2267,6 +2267,7 @@ new のオプション
     LintNameMuddyLowInterval { en: "Muddy low interval", ja: "低音域の濁り" }
     LintNameOutOfKey { en: "Outside key and chord", ja: "キー・コード外の音" }
     LintNameAvoidNote { en: "Avoid note", ja: "アボイドノート" }
+    LintNameMissingChord { en: "No chord written", ja: "コード未記入" }
     LintNameDuplicateNote { en: "Duplicate note", ja: "重複した音符" }
     LintNameInaudibleVelocity { en: "Inaudible velocity", ja: "聞こえないベロシティ" }
     LintNameExtremePitch { en: "Extreme pitch", ja: "極端な音高" }
@@ -2284,6 +2285,7 @@ new のオプション
     LintMuddyLowInterval { en: "{pitches} sit a second apart in the bass and sound muddy", ja: "{pitches}が低音域で2度で重なり、濁って聞こえます" }
     LintOutOfKey { en: "{pitches} is in neither the key nor the chord", ja: "{pitches}はキーにもコードにも含まれない音です" }
     LintAvoidNote { en: "{pitches} is an avoid note against the chord", ja: "{pitches}はコードに対するアボイドノートです" }
+    LintMissingChord { en: "{value} bar(s) play chords, but no chord is written over them", ja: "{value}小節で和音が鳴っていますが、コードが書かれていません" }
     LintDuplicateNote { en: "{pitches} is written twice on top of itself", ja: "{pitches}が同じ位置に重複して書かれています" }
     LintInaudibleVelocity { en: "{pitches} is too soft to hear (velocity {value})", ja: "{pitches}はベロシティ{value}で、小さすぎて聞こえません" }
     LintExtremePitch { en: "{pitches} is outside any instrument's range", ja: "{pitches}は楽器や声の音域から外れています" }
@@ -2295,6 +2297,7 @@ new のオプション
     LintFixTrim { en: "Shorten the earlier note", ja: "前のノートを短くする" }
     LintFixPitch { en: "Move to {pitch}", ja: "{pitch}に移動" }
     LintFixVelocity { en: "Raise the velocity", ja: "ベロシティを上げる" }
+    LintFixChords { en: "Write {chords}", ja: "{chords} を記入" }
     LintFixFader { en: "Reset the fader to 0 dB", ja: "フェーダーを0 dBに戻す" }
     LintFixNormalize { en: "Normalize the mix", ja: "ミックスをノーマライズ" }
     ErrorLintStale { en: "the song changed since this problem was found; it has been checked again", ja: "問題を見つけた後に曲が変更されたため、もう一度確認しました" }

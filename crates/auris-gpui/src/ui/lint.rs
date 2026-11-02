@@ -224,6 +224,7 @@ impl AurisApp {
             Rule::MuddyLowInterval => Key::LintMuddyLowInterval,
             Rule::OutOfKey => Key::LintOutOfKey,
             Rule::AvoidNote => Key::LintAvoidNote,
+            Rule::MissingChord => Key::LintMissingChord,
             Rule::DuplicateNote => Key::LintDuplicateNote,
             Rule::InaudibleVelocity => Key::LintInaudibleVelocity,
             Rule::ExtremePitch => Key::LintExtremePitch,
@@ -264,6 +265,15 @@ impl AurisApp {
             Fix::SetVelocity { .. } => self.t(Key::LintFixVelocity).into(),
             Fix::ResetFader { .. } => self.t(Key::LintFixFader).into(),
             Fix::NormalizeMix => self.t(Key::LintFixNormalize).into(),
+            Fix::SetChords { chords, .. } => {
+                let harmony = &self.session.project().harmony;
+                let names = chords
+                    .iter()
+                    .map(|(at, numeral)| numeral.name_in(harmony.key_at(*at)))
+                    .collect::<Vec<_>>()
+                    .join(" | ");
+                self.t(Key::LintFixChords).replace("{chords}", &names)
+            }
         }
     }
 
@@ -435,6 +445,7 @@ impl AurisApp {
             Rule::MuddyLowInterval => Key::LintNameMuddyLowInterval,
             Rule::OutOfKey => Key::LintNameOutOfKey,
             Rule::AvoidNote => Key::LintNameAvoidNote,
+            Rule::MissingChord => Key::LintNameMissingChord,
             Rule::DuplicateNote => Key::LintNameDuplicateNote,
             Rule::InaudibleVelocity => Key::LintNameInaudibleVelocity,
             Rule::ExtremePitch => Key::LintNameExtremePitch,

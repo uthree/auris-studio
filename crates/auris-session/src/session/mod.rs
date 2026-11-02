@@ -1664,6 +1664,12 @@ impl Session {
     /// user both — a phantom step that undoes nothing, and a redo branch that is simply gone.
     /// The document's lint suppressions, recorded as one undoable edit. They change nothing that
     /// plays, so the graph is left alone.
+    /// The chord timeline, for an edit made directly on it, recorded as one chord edit.
+    pub(crate) fn edit_chords(&mut self) -> &mut auris_core::harmony::ChordMap {
+        self.record(Edit::SetChord);
+        &mut self.project.harmony.chords
+    }
+
     pub(crate) fn edit_suppressions(&mut self) -> &mut Vec<auris_core::project::LintSuppression> {
         self.record(Edit::LintSuppression);
         &mut self.project.lint_suppressions
