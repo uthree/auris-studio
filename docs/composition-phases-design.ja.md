@@ -101,7 +101,7 @@
 ## 9. 実装の順番
 
 1. 単位表記の矛盾を直す（tool_exposure.rs の「tick-based notes」）。分割とは独立した作業。
-2. `production_record` に `Phase`、`enter_phase`、完了判定、指紋を加える。`AURIS_COMPOSITION_WORKFLOWS` の下に置き、プロンプトだけで分ける。
+2. `production_record` に `Phase`、`enter_phase`、`set_roles`、完了判定を加える。`AURIS_COMPOSITION_WORKFLOWS` の下に置き、プロンプトだけで分ける。指紋と、作曲へ戻った後に「変わった小節と重なるトラック」を返す機能は、どちらも指紋が要るので手順5で入れる。
 3. フェーズ別の指示を書き、定石の索引を入れる。共通の核を切り出し、skill を三段に合わせる。
 4. legacy / modular / phased を比較評価する。
 5. ホストでの拒否を入れ、別の条件として評価する。

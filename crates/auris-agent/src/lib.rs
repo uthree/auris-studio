@@ -372,7 +372,7 @@ fn preamble_for_profile(modular: bool) -> String {
     );
     // Detailed musical/operation guidance is returned by tool_help when needed.
     if modular {
-        text.push_str("\nFor music-making select production_record select_workflow (composition, accompaniment, vocals, local_edit or delivery), choose writing_order harmony_first, melody_first or rhythm_first, and follow the returned workflow.\n");
+        text.push_str("\nWork in three phases recorded in production_record: score (form, chords, lyrics, foreground melody and its voice), arrangement (sounds, backing, drums, performance, transitions) and mix (balance, effects, loudness, delivery). Enter one with enter_phase and a reason before editing; for score choose writing_order harmony_first, melody_first or rhythm_first. Follow the returned phase_instructions, and enter an earlier phase explicitly when the user asks to change what it decided. A local fix enters the phase that owns what is being fixed and leaves everything else as it is.\n");
     }
     text
 }
@@ -1524,7 +1524,7 @@ mod tests {
                 assert!(text.contains(contract), "Missing {contract}");
             }
         }
-        assert!(modular.contains("select_workflow"));
+        assert!(modular.contains("enter_phase"));
         assert_eq!(
             catalog,
             host::ToolHost::definitions()

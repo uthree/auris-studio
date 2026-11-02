@@ -1065,6 +1065,7 @@ impl Session {
                 Ok(serde_json::json!({"title":project.name, "tracks":tracks, "revision":self.agent_document_revision()?,
                     "document_instance":self.document_instance(), "session_revision":self.revision(),
                     "verification_regions":crate::production_record::verification_regions(project),
+                    "phase_facts":crate::production_record::phase_facts(self),
                     "sample_rate":project.sample_rate,"duration_seconds":project.duration_seconds(), "harmony":project.harmony,
                     "sections":project.sections, "lyrics":lyric_annotation::lyric_lines_json(project), "tempo_map":project.tempo_map, "signatures":project.signatures, "loop_region":project.loop_region, "loop_enabled":project.loop_enabled, "ticks_per_quarter":Ticks::QUARTER.raw()})
                 .to_string())

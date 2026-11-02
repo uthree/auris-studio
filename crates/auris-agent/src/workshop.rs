@@ -3008,7 +3008,7 @@ mod tests {
         let record = call(
             "record-1",
             "production_record",
-            json!({"operation":{"kind":"select_workflow","workflow":"composition","writing_order":"rhythm_first"}}),
+            json!({"operation":{"kind":"enter_phase","phase":"score","reason":"new song","writing_order":"rhythm_first"}}),
         );
         let setup = call("setup-1", "add_track", json!({"name":"Kit","kind":"drum"}));
         let phrase = call(

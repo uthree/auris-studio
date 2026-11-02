@@ -13,10 +13,10 @@ pub(super) struct State {
 fn record_view(record: &Record, document: &Value) -> Result<Value, String> {
     let mut view = record.view(document);
     if toolbox::composition_workflows::enabled()
-        && let Some((workflow, order)) = record.workflow
+        && let Some(state) = &record.phase
     {
-        view["workflow_instructions"] =
-            toolbox::composition_workflows::instructions(workflow, order).into();
+        view["phase_instructions"] =
+            toolbox::composition_workflows::instructions(state.phase, state.writing_order).into();
     }
     let text = toolbox::present_domain_report(&view.to_string())?;
     serde_json::from_str(&text).map_err(|e| e.to_string())
@@ -174,9 +174,10 @@ mod tests {
         bridge.production_record(serde_json::from_value(json!({"kind":"put","entry":{
             "key":"motif","category":"motif","source":"agent_assumption","basis":"opening phrase","text":"keep the rising third"}})).unwrap()).unwrap();
         bridge
-            .production_record(Operation::SelectWorkflow {
-                workflow: auris_session::production_record::Workflow::LocalEdit,
-                writing_order: auris_session::production_record::WritingOrder::MelodyFirst,
+            .production_record(Operation::EnterPhase {
+                phase: auris_session::production_record::Phase::Score,
+                reason: "new song".into(),
+                writing_order: Some(auris_session::production_record::WritingOrder::MelodyFirst),
             })
             .unwrap();
         let (resumed, _, _) = test_bridge();
@@ -189,8 +190,12 @@ mod tests {
             "keep the rising third"
         );
         assert_eq!(
-            resumed.production_record(Operation::Read).unwrap()["workflow"],
-            json!({"task":"local_edit","writing_order":"melody_first"})
+            resumed.production_record(Operation::Read).unwrap()["phase"]["current"],
+            "score"
+        );
+        assert_eq!(
+            resumed.production_record(Operation::Read).unwrap()["phase"]["writing_order"],
+            "melody_first"
         );
         clear_history(&path).unwrap();
         assert!(
