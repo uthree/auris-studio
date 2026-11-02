@@ -6,6 +6,11 @@ use crate::ui::prompt::{Prompt, PromptTarget};
 use atelier::{Edge, Sidebar};
 
 impl SongWorkshop {
+    /// Whether the sidebar must wait: a conversation change, or a send it would interrupt, is
+    /// still on its way. Production does not hold it; the conversation left carries on.
+    pub(crate) fn threads_locked(&self) -> bool {
+        self.switching || self.submitted
+    }
     /// Reject a rename sheet that belongs to a conversation view which has since changed.
     pub(in crate::ui) fn rename_thread(&self, identity: u64, title: String) -> bool {
         self.identity == identity
@@ -21,7 +26,7 @@ impl AurisApp {
         if self
             .song_workshop
             .as_ref()
-            .is_none_or(|s| s.busy() || s.references.midi_loading)
+            .is_none_or(|s| s.threads_locked() || s.references.midi_loading)
             || !self.commit_midi_draft()
         {
             return;
@@ -56,7 +61,7 @@ impl AurisApp {
         let Some(state) = &mut self.song_workshop else {
             return;
         };
-        if state.busy() {
+        if state.threads_locked() {
             return;
         }
         let title = state
@@ -89,7 +94,7 @@ impl AurisApp {
         let Some(state) = &self.song_workshop else {
             return;
         };
-        if state.busy() {
+        if state.threads_locked() {
             return;
         }
         let title = state
@@ -130,7 +135,7 @@ impl AurisApp {
             return div().into_any_element();
         };
         let spacing = self.theme.atelier.spacing;
-        let busy = state.busy() || state.references.midi_loading;
+        let busy = state.threads_locked() || state.references.midi_loading;
         let active = state
             .snapshot
             .as_ref()
@@ -156,6 +161,7 @@ impl AurisApp {
                     thread.title.clone()
                 };
                 let menu_title = title.clone();
+                let working = snapshot.working.contains(&id);
                 let item = ListItem::new(
                     gpui::SharedString::from(format!("workshop-thread-{id}")),
                     title,
@@ -216,10 +222,18 @@ impl AurisApp {
                         state.foci[0].focus(window);
                     }
                 }));
-                list = list.child(if archived {
-                    item.description(self.t(Key::WorkshopArchivedThreads))
-                } else {
+                let description = [
+                    working.then(|| self.t(Key::WorkshopThreadWorking)),
+                    archived.then(|| self.t(Key::WorkshopArchivedThreads)),
+                ]
+                .into_iter()
+                .flatten()
+                .collect::<Vec<_>>()
+                .join(" · ");
+                list = list.child(if description.is_empty() {
                     item
+                } else {
+                    item.description(description)
                 });
             }
         }
@@ -260,13 +274,6 @@ impl AurisApp {
                     cx.notify();
                 })),
             )
-            .when(busy, |sidebar| {
-                sidebar.child(
-                    Label::new(self.t(Key::WorkshopThreadBusy))
-                        .size(TextSize::Small)
-                        .color(TextColor::Muted),
-                )
-            })
             .into_any_element()
     }
 }

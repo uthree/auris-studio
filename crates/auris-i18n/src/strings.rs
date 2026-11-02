@@ -2348,7 +2348,7 @@ new のオプション
     WorkshopDeleteThreadTitle { en: "Delete “{name}”?", ja: "「{name}」を削除しますか？" }
     WorkshopDeleteThreadBody { en: "This conversation, its attachments and every song it produced will be permanently deleted. Songs already opened in the editor and your learned preferences will remain.", ja: "この会話と添付ファイル、制作したすべての曲を完全に削除します。エディタで開いた曲と学習した好みは残ります。" }
     WorkshopArchivedThreads { en: "Archived conversations", ja: "保管済みの会話" }
-    WorkshopThreadBusy { en: "Stop production before switching conversations", ja: "制作を停止すると会話を切り替えられます" }
+    WorkshopThreadWorking { en: "Working…", ja: "制作中…" }
     WorkshopThreadNameInvalid { en: "Use 1 to 80 characters for the conversation name.", ja: "会話の名前は1〜80文字で入力してください。" }
     WorkshopThreadUnavailable { en: "Could not update the conversation. Reopen the workshop and try again.", ja: "会話を更新できませんでした。制作画面を開き直して再度お試しください。" }
     WorkshopEditFeedback { en: "Edit feedback…", ja: "評価を編集…" }

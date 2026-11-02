@@ -6,7 +6,7 @@ use auris_session::workshop::{
 use auris_session::{AgentPreferences, Session, SessionOptions, Settings, SongCandidate, SongIdea};
 use serde_json::json;
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     path::PathBuf,
     sync::{
         Arc,
@@ -37,9 +37,9 @@ pub const AUTO_RECOVERY_LIMIT: u32 = 3;
 
 /// Commands accepted by the background workshop owner.
 pub enum Command {
-    /// Create an independent song conversation when production is idle.
+    /// Create an independent song conversation. Work in the one being left carries on.
     NewThread,
-    /// Open a conversation by its host-assigned identity.
+    /// Open a conversation by its host-assigned identity. Work in the one being left carries on.
     OpenThread(String),
     /// Rename an exact conversation.
     RenameThread(String, String),
@@ -51,6 +51,9 @@ pub enum Command {
     Feedback(String, u64, auris_session::workshop::Feedback),
     /// Submit one natural-language message with model settings captured at submission.
     Send(String, Box<AgentPreferences>, Vec<PathBuf>),
+    /// [`Command::Send`] aimed at an exact conversation, which need not be the open one: a
+    /// message queued in a conversation the user has left goes out once that one is idle.
+    SendTo(String, String, Box<AgentPreferences>, Vec<PathBuf>),
     /// Choose an exact completed candidate without closing the conversation.
     Select(u64, Box<AgentPreferences>, String),
     /// Retry only this candidate in a new artifact directory.
@@ -93,6 +96,12 @@ pub struct Snapshot {
     pub preferences: Preferences,
     /// Storage/provider/runtime failure, never silently swallowed.
     pub error: Option<String>,
+    /// Conversations whose director or composers are at work, the open one included. A
+    /// conversation left while busy keeps working in the background until it is done.
+    pub working: BTreeSet<String>,
+    /// How many commands the owner had handled when this snapshot was taken, to compare with
+    /// [`Workshop::sent`]: a snapshot that has caught up has seen the effect of every send.
+    pub handled: u64,
 }
 
 /// One background owner; dropping it cancels all child workers.
@@ -100,6 +109,7 @@ pub struct Workshop {
     sender: mpsc::Sender<Command>,
     receiver: mpsc::Receiver<Snapshot>,
     stopped: Arc<AtomicBool>,
+    sent: std::sync::atomic::AtomicU64,
 }
 
 impl Workshop {
@@ -141,6 +151,8 @@ impl Workshop {
                         planning: false,
                         preferences: Preferences::default(),
                         error: Some(error),
+                        working: BTreeSet::new(),
+                        handled: 0,
                     });
                 }
             })
@@ -149,11 +161,20 @@ impl Workshop {
             sender,
             receiver,
             stopped,
+            sent: Default::default(),
         })
     }
     /// Queue a command without blocking the window.
     pub fn send(&self, command: Command) -> bool {
-        self.sender.send(command).is_ok()
+        let sent = self.sender.send(command).is_ok();
+        if sent {
+            self.sent.fetch_add(1, Ordering::AcqRel);
+        }
+        sent
+    }
+    /// How many commands this window has handed over; see [`Snapshot::handled`].
+    pub fn sent(&self) -> u64 {
+        self.sent.load(Ordering::Acquire)
     }
     /// Drain available snapshots; callers should keep the newest.
     pub fn poll(&self) -> Option<Snapshot> {
@@ -169,6 +190,7 @@ impl Workshop {
             sender,
             receiver,
             stopped: Arc::new(AtomicBool::new(false)),
+            sent: Default::default(),
         };
         (workshop, commands, snapshots)
     }
@@ -518,6 +540,29 @@ struct Owner {
     job_sender: mpsc::Sender<JobEvent>,
     job_receiver: mpsc::Receiver<JobEvent>,
     handles: Vec<std::thread::JoinHandle<()>>,
+    /// Conversations left while their director or composers were still at work, by thread id.
+    /// Each keeps its own lease and workers, and is let go once it is idle. Only the open
+    /// conversation's map is used; a parked owner's own is always empty.
+    parked: BTreeMap<String, Owner>,
+    /// Set on a parked owner: it saves what happens, but the window is not looking at it.
+    is_parked: bool,
+    /// A parked owner saved a change the sidebar may want to show.
+    parked_changed: bool,
+    /// Commands handled by this window's owner so far; carried across conversation changes.
+    handled: u64,
+}
+
+impl Drop for Owner {
+    /// Cancel and wait for this conversation's workers, so its lease and files are free after.
+    fn drop(&mut self) {
+        for cancel in self.jobs.values() {
+            cancel.store(true, Ordering::Release);
+        }
+        self.planner = None;
+        for handle in self.handles.drain(..) {
+            let _ = handle.join();
+        }
+    }
 }
 
 impl Owner {
@@ -586,6 +631,10 @@ impl Owner {
             job_sender,
             job_receiver,
             handles: Vec::new(),
+            parked: BTreeMap::new(),
+            is_parked: false,
+            parked_changed: false,
+            handled: 0,
             snapshot: Snapshot {
                 threads,
                 document,
@@ -596,21 +645,42 @@ impl Owner {
                 planning: false,
                 preferences,
                 error,
+                working: BTreeSet::new(),
+                handled: 0,
             },
         }
+    }
+    fn thread_id(&self) -> &str {
+        &self.snapshot.document.thread_id
+    }
+    /// Whether the director or a composer of this conversation is at work.
+    fn busy(&self) -> bool {
+        self.planner.is_some() || !self.jobs.is_empty()
     }
     fn publish(&mut self, save: bool) {
         if save && let Err(e) = self.store.save(&self.snapshot.document) {
             self.snapshot.error = Some(e);
         }
-        if let Some(thread) = self
-            .snapshot
-            .threads
-            .iter_mut()
-            .find(|t| t.id == self.snapshot.document.thread_id)
-        {
-            thread.title = self.snapshot.document.sidebar_title();
-            thread.archived = self.snapshot.document.archived;
+        if self.is_parked {
+            self.parked_changed |= save;
+            return;
+        }
+        let shown = std::iter::once(&self.snapshot.document)
+            .chain(self.parked.values().map(|owner| &owner.snapshot.document));
+        for document in shown {
+            if let Some(thread) = self
+                .snapshot
+                .threads
+                .iter_mut()
+                .find(|t| t.id == document.thread_id)
+            {
+                thread.title = document.sidebar_title();
+                thread.archived = document.archived;
+            }
+        }
+        let mut working: BTreeSet<String> = self.parked.keys().cloned().collect();
+        if self.busy() {
+            working.insert(self.thread_id().to_owned());
         }
         let _ = self.events.send(Snapshot {
             threads: self.snapshot.threads.clone(),
@@ -622,6 +692,8 @@ impl Owner {
             planning: self.planner.is_some(),
             preferences: self.snapshot.preferences.clone(),
             error: self.snapshot.error.clone(),
+            working,
+            handled: self.handled,
         });
     }
     fn run(&mut self, commands: mpsc::Receiver<Command>, stopped: Arc<AtomicBool>) {
@@ -629,12 +701,81 @@ impl Owner {
         while !stopped.load(Ordering::Acquire) {
             match commands.recv_timeout(Duration::from_millis(25)) {
                 Ok(command) => {
+                    self.handled += 1;
                     self.command(command);
                     self.publish(true);
                 }
                 Err(mpsc::RecvTimeoutError::Disconnected) => break,
                 Err(mpsc::RecvTimeoutError::Timeout) => {}
             }
+            self.tick();
+            self.digest();
+            self.tick_parked();
+        }
+        self.halt();
+        // Persist accepted storage-only commands even when the window closes immediately.
+        for command in commands.try_iter() {
+            if matches!(
+                command,
+                Command::ThreadDraft(..)
+                    | Command::Feedback(..)
+                    | Command::NewThread
+                    | Command::OpenThread(_)
+                    | Command::RenameThread(..)
+                    | Command::ArchiveThread(..)
+                    | Command::DeleteThread(_)
+            ) {
+                self.command(command);
+            }
+        }
+        for mut owner in std::mem::take(&mut self.parked).into_values() {
+            owner.halt();
+            owner.publish(true);
+        }
+        self.publish(true);
+    }
+    /// Cancel this conversation's work and wait for its workers to stop.
+    fn halt(&mut self) {
+        for cancel in self.jobs.values() {
+            cancel.store(true, Ordering::Release);
+        }
+        self.jobs.clear();
+        self.snapshot.progress.clear();
+        self.planner = None;
+        for handle in self.handles.drain(..) {
+            let _ = handle.join();
+        }
+        for usage in self
+            .snapshot
+            .document
+            .rounds
+            .iter_mut()
+            .flat_map(|r| &mut r.candidates)
+            .flat_map(|c| c.tools.values_mut())
+        {
+            usage.interrupt();
+        }
+    }
+    /// Advance the conversations left at work, and let go of the ones that have finished.
+    fn tick_parked(&mut self) {
+        if self.parked.is_empty() {
+            return;
+        }
+        let mut changed = false;
+        self.parked.retain(|_, owner| {
+            owner.tick();
+            changed |= std::mem::take(&mut owner.parked_changed);
+            let busy = owner.busy();
+            changed |= !busy;
+            busy
+        });
+        if changed {
+            self.publish(false);
+        }
+    }
+    /// Take in the director's answer and the composers' events for this conversation.
+    fn tick(&mut self) {
+        {
             if let Some(answer) = self.planner.as_mut().and_then(|p| p.poll_text()) {
                 self.planner = None;
                 match answer.and_then(|text| decision(&text)) {
@@ -795,85 +936,60 @@ impl Owner {
                     _ => {}
                 }
             }
-            self.digest();
         }
-        for cancel in self.jobs.values() {
-            cancel.store(true, Ordering::Release);
+    }
+    /// The conversation a command is addressed to, when it names one.
+    fn addressee(command: &Command) -> Option<&str> {
+        match command {
+            Command::ThreadDraft(thread, ..)
+            | Command::Feedback(thread, ..)
+            | Command::SendTo(thread, ..) => Some(thread),
+            _ => None,
         }
-        self.planner = None;
-        for handle in self.handles.drain(..) {
-            let _ = handle.join();
-        }
-        for usage in self
-            .snapshot
-            .document
-            .rounds
-            .iter_mut()
-            .flat_map(|r| &mut r.candidates)
-            .flat_map(|c| c.tools.values_mut())
-        {
-            usage.interrupt();
-        }
-        // Persist accepted storage-only commands even when the window closes immediately.
-        for command in commands.try_iter() {
-            if matches!(
-                command,
-                Command::ThreadDraft(..)
-                    | Command::Feedback(..)
-                    | Command::NewThread
-                    | Command::OpenThread(_)
-                    | Command::RenameThread(..)
-                    | Command::ArchiveThread(..)
-                    | Command::DeleteThread(_)
-            ) {
-                self.command(command);
-            }
-        }
-        self.publish(true);
     }
     fn command(&mut self, command: Command) {
+        if let Some(thread) = Self::addressee(&command)
+            && thread != self.thread_id()
+            && !self.is_parked
+        {
+            let thread = thread.to_owned();
+            if matches!(command, Command::SendTo(..))
+                && !self.parked.contains_key(&thread)
+                && let Err(error) = self.park(&thread)
+            {
+                self.snapshot.error = Some(error);
+                return;
+            }
+            if let Some(owner) = self.parked.get_mut(&thread) {
+                owner.command(command);
+                owner.publish(true);
+                return;
+            }
+        }
+        let command = match command {
+            Command::SendTo(_, text, prefs, attachments) => Command::Send(text, prefs, attachments),
+            command => command,
+        };
         match command {
             Command::NewThread => {
-                if !self.can_change_thread() {
-                    return;
-                }
-                match self
-                    .store
-                    .create_thread()
-                    .and_then(|store| self.change_thread(store))
-                {
-                    Ok(()) => {}
-                    Err(error) => self.snapshot.error = Some(error),
+                if let Err(error) = self.change_thread(None) {
+                    self.snapshot.error = Some(error);
                 }
             }
             Command::OpenThread(id) => {
-                if !self.can_change_thread() {
-                    return;
-                }
                 if id == self.snapshot.document.thread_id {
                     return;
                 }
-                match self
-                    .store
-                    .thread(&id)
-                    .and_then(|store| self.change_thread(store))
-                {
-                    Ok(()) => {}
-                    Err(error) => self.snapshot.error = Some(error),
+                if let Err(error) = self.change_thread(Some(&id)) {
+                    self.snapshot.error = Some(error);
                 }
             }
             Command::RenameThread(id, title) => {
-                if !self.can_change_thread() {
-                    return;
-                }
                 if let Err(error) = self.update_thread(&id, |document| document.rename(&title)) {
                     self.snapshot.error = Some(error);
                 }
             }
             Command::ArchiveThread(id, archived) => {
-                if !self.can_change_thread() {
-                    return;
-                }
                 if let Err(error) = self.update_thread(&id, |document| {
                     document.archived = archived;
                     Ok(())
@@ -881,36 +997,22 @@ impl Owner {
                     self.snapshot.error = Some(error);
                     return;
                 }
-                if archived && id == self.snapshot.document.thread_id {
-                    let next = self
-                        .snapshot
-                        .threads
-                        .iter()
-                        .find(|t| !t.archived && t.id != id)
-                        .map(|t| self.store.thread(&t.id))
-                        .unwrap_or_else(|| self.store.create_thread());
-                    if let Err(error) = next.and_then(|store| self.change_thread(store)) {
-                        self.snapshot.error = Some(error);
-                    }
+                if archived
+                    && id == self.snapshot.document.thread_id
+                    && let Err(error) = self.leave(&id)
+                {
+                    self.snapshot.error = Some(error);
                 }
             }
             Command::DeleteThread(id) => {
-                if !self.can_change_thread() {
+                if id == self.snapshot.document.thread_id
+                    && let Err(error) = self.leave(&id)
+                {
+                    self.snapshot.error = Some(error);
                     return;
                 }
-                if id == self.snapshot.document.thread_id {
-                    let next = self
-                        .snapshot
-                        .threads
-                        .iter()
-                        .find(|t| !t.archived && t.id != id)
-                        .map(|t| self.store.thread(&t.id))
-                        .unwrap_or_else(|| self.store.create_thread());
-                    if let Err(error) = next.and_then(|store| self.change_thread(store)) {
-                        self.snapshot.error = Some(error);
-                        return;
-                    }
-                }
+                // Deleting a conversation stops its work first: its workers write into it.
+                drop(self.parked.remove(&id));
                 let deleted = self
                     .store
                     .delete_thread(&id)
@@ -1264,22 +1366,69 @@ impl Owner {
             }
         }
     }
-    fn can_change_thread(&mut self) -> bool {
-        let idle = self.planner.is_none() && self.jobs.is_empty();
-        if !idle {
-            self.snapshot.error = Some("Stop production before changing conversations".into());
-        }
-        idle
+    /// Move off the open conversation `id` to another unarchived one, or to a new one.
+    fn leave(&mut self, id: &str) -> Result<(), String> {
+        let next = self
+            .snapshot
+            .threads
+            .iter()
+            .find(|t| !t.archived && t.id != id)
+            .map(|t| t.id.clone());
+        self.change_thread(next.as_deref())
     }
-    fn change_thread(&mut self, store: Store) -> Result<(), String> {
-        store.load()?;
-        self.store.save(&self.snapshot.document)?;
+    /// Load a conversation that is not open as a parked owner, holding its lease.
+    fn park(&mut self, id: &str) -> Result<(), String> {
+        let store = self.store.thread(id)?;
         let lease = store.lease()?;
         store.load()?;
-        let mut next = Self::new(store, self.settings.clone(), self.events.clone());
-        next.store.set_active_thread()?;
-        next.lease = Some(lease);
-        *self = next;
+        let mut owner = Self::new(store, self.settings.clone(), self.events.clone());
+        owner.lease = Some(lease);
+        owner.is_parked = true;
+        self.parked.insert(id.to_owned(), owner);
+        Ok(())
+    }
+    /// Open conversation `id`, or a new one when absent. A conversation still at work is parked
+    /// rather than stopped, and one parked earlier is picked up where it is.
+    fn change_thread(&mut self, id: Option<&str>) -> Result<(), String> {
+        let mut next = match id.and_then(|id| self.parked.remove(id)) {
+            Some(mut owner) => {
+                if let Err(error) = owner.store.set_active_thread() {
+                    self.parked.insert(owner.thread_id().to_owned(), owner);
+                    return Err(error);
+                }
+                owner.is_parked = false;
+                owner.parked_changed = false;
+                if let Ok(preferences) = auris_session::workshop::load_preferences() {
+                    owner.snapshot.preferences = preferences;
+                }
+                owner
+            }
+            None => {
+                let store = match id {
+                    Some(id) => self.store.thread(id)?,
+                    None => self.store.create_thread()?,
+                };
+                store.load()?;
+                let lease = store.lease()?;
+                store.load()?;
+                let mut next = Self::new(store, self.settings.clone(), self.events.clone());
+                next.store.set_active_thread()?;
+                next.lease = Some(lease);
+                next
+            }
+        };
+        self.store.save(&self.snapshot.document)?;
+        next.parked = std::mem::take(&mut self.parked);
+        next.handled = self.handled;
+        let mut previous = std::mem::replace(self, next);
+        if let Ok(threads) = self.store.threads() {
+            self.snapshot.threads = threads;
+        }
+        if previous.busy() {
+            previous.is_parked = true;
+            self.parked
+                .insert(previous.thread_id().to_owned(), previous);
+        }
         Ok(())
     }
     fn update_thread(
@@ -1290,6 +1439,9 @@ impl Owner {
         if id == self.snapshot.document.thread_id {
             update(&mut self.snapshot.document)?;
             self.store.save(&self.snapshot.document)?;
+        } else if let Some(owner) = self.parked.get_mut(id) {
+            update(&mut owner.snapshot.document)?;
+            owner.store.save(&owner.snapshot.document)?;
         } else {
             let store = self.store.thread(id)?;
             let _lease = store.lease()?;
@@ -1990,14 +2142,138 @@ mod tests {
         owner.command(Command::OpenThread(second.clone()));
         assert_eq!(owner.snapshot.document.draft, "Second draft");
         assert_eq!(owner.snapshot.document.title, "Second song");
-        owner.jobs.insert(99, Arc::new(AtomicBool::new(false)));
-        owner.command(Command::NewThread);
-        assert_eq!(owner.snapshot.document.thread_id, second);
-        assert!(owner.snapshot.error.is_some());
         assert_eq!(
             store.active_thread().unwrap().load().unwrap().title,
             "Second song"
         );
+    }
+    #[test]
+    fn a_conversation_at_work_keeps_working_while_another_is_open() {
+        use super::*;
+        let directory = tempfile::tempdir().unwrap();
+        let store = Store::new(directory.path().into());
+        let (sender, events) = mpsc::channel();
+        let mut owner = Owner::new(store.clone(), Settings::default(), sender);
+        owner.lease = Some(store.lease().unwrap());
+        owner.snapshot.document.rounds.push(Round {
+            after_message: 0,
+            candidates: vec![assignment()],
+        });
+        let cancel = Arc::new(AtomicBool::new(false));
+        owner.jobs.insert(1, cancel.clone());
+
+        // Leaving a busy conversation is allowed, and its work is neither stopped nor lost.
+        owner.command(Command::NewThread);
+        let second = owner.snapshot.document.thread_id.clone();
+        assert_ne!(second, "default");
+        assert_eq!(owner.snapshot.error, None);
+        assert!(!cancel.load(Ordering::Acquire));
+        assert!(owner.parked.contains_key("default"));
+        owner.publish(false);
+        let snapshot = events.try_iter().last().unwrap();
+        assert_eq!(snapshot.document.thread_id, second);
+        assert!(snapshot.working.contains("default"));
+        assert!(!snapshot.working.contains(&second));
+
+        // The parked conversation still hears from its composer and saves what it hears.
+        let job_sender = owner.parked["default"].job_sender.clone();
+        job_sender
+            .send(JobEvent::Tool(1, "add_track".into(), None))
+            .unwrap();
+        owner.tick_parked();
+        assert_eq!(
+            store.load().unwrap().rounds[0].candidates[0].tools["add_track"].total,
+            1
+        );
+
+        // A draft written there, and a rename, reach it rather than the open conversation.
+        owner.command(Command::ThreadDraft(
+            "default".into(),
+            "Later idea".into(),
+            vec![],
+        ));
+        owner.command(Command::RenameThread("default".into(), "First song".into()));
+        assert!(owner.snapshot.document.draft.is_empty());
+        assert!(
+            owner
+                .snapshot
+                .threads
+                .iter()
+                .any(|t| t.id == "default" && t.title == "First song")
+        );
+
+        // Going back picks the same conversation up, workers and all.
+        owner.command(Command::OpenThread("default".into()));
+        assert_eq!(owner.snapshot.document.thread_id, "default");
+        assert_eq!(owner.snapshot.document.draft, "Later idea");
+        assert!(owner.jobs.contains_key(&1));
+        assert!(owner.parked.is_empty(), "the idle second one is let go");
+        job_sender
+            .send(JobEvent::Done(1, Err("Composition stopped".into())))
+            .unwrap();
+        owner.tick();
+        assert!(!owner.busy());
+
+        // Once finished in the background, a conversation is released and its lease with it.
+        owner.jobs.insert(2, Arc::new(AtomicBool::new(false)));
+        owner.command(Command::OpenThread(second.clone()));
+        let job_sender = owner.parked["default"].job_sender.clone();
+        job_sender
+            .send(JobEvent::Done(2, Err("Composition stopped".into())))
+            .unwrap();
+        owner.tick_parked();
+        assert!(owner.parked.is_empty());
+        drop(
+            store
+                .lease()
+                .expect("the finished conversation's lease is free"),
+        );
+    }
+    #[test]
+    fn deleting_a_conversation_at_work_stops_it_first() {
+        use super::*;
+        let directory = tempfile::tempdir().unwrap();
+        let store = Store::new(directory.path().into());
+        let (sender, _) = mpsc::channel();
+        let mut owner = Owner::new(store.clone(), Settings::default(), sender);
+        owner.command(Command::NewThread);
+        let second = owner.snapshot.document.thread_id.clone();
+        let cancel = Arc::new(AtomicBool::new(false));
+        owner.jobs.insert(1, cancel.clone());
+        owner.command(Command::OpenThread("default".into()));
+        assert!(owner.parked.contains_key(&second));
+        owner.command(Command::DeleteThread(second.clone()));
+        assert_eq!(owner.snapshot.error, None);
+        assert!(cancel.load(Ordering::Acquire));
+        assert!(owner.parked.is_empty());
+        assert!(owner.snapshot.threads.iter().all(|t| t.id != second));
+    }
+    #[test]
+    fn a_message_sent_to_a_conversation_not_open_is_delivered_there() {
+        use super::*;
+        let directory = tempfile::tempdir().unwrap();
+        let store = Store::new(directory.path().into());
+        let (sender, _) = mpsc::channel();
+        let mut owner = Owner::new(store.clone(), Settings::default(), sender);
+        owner.command(Command::NewThread);
+        let second = owner.snapshot.document.thread_id.clone();
+        // An unconfigured model is refused, so nothing runs; the message still lands in the
+        // conversation it was written for, and the open one is untouched.
+        owner.command(Command::SendTo(
+            "default".into(),
+            "   ".into(),
+            Box::default(),
+            vec![],
+        ));
+        assert_eq!(owner.snapshot.document.thread_id, second);
+        assert_eq!(owner.snapshot.error, None);
+        assert!(owner.parked.contains_key("default"));
+        owner.tick_parked();
+        assert!(
+            owner.parked.is_empty(),
+            "an idle conversation is not kept loaded"
+        );
+        drop(store.lease().expect("and its lease is released"));
     }
     #[test]
     fn deleting_the_open_conversation_moves_to_another_and_removes_it_from_disk() {
