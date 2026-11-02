@@ -775,7 +775,8 @@ mod tests {
 
     #[test]
     fn the_bundle_plist_carries_this_build_version() {
-        let plist = bundle_info_plist();
+        // A Windows checkout may hold the plist with CRLF endings.
+        let plist = bundle_info_plist().replace('\r', "");
         let version = env!("CARGO_PKG_VERSION");
         assert!(plist.contains(&format!(
             "<key>CFBundleShortVersionString</key>\n    <string>{version}</string>"
