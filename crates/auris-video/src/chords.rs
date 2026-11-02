@@ -221,11 +221,13 @@ fn rect(
     height: f64,
     opacity: f64,
 ) {
-    if let Some(rect) = Rect::from_xywh(x as f32, y as f32, width as f32, height as f32) {
-        let (r, g, b) = style.playhead_color.rgb();
-        let mut paint = Paint::default();
-        paint.set_color_rgba8(r, g, b, unit_byte(opacity));
-        frame.fill_rect(rect, &paint, Transform::identity(), None);
+    if let Some(rect) = Rect::from_xywh(x as f32, y as f32, width as f32, height as f32)
+        .filter(|rect| rect.width() > 0.0 && rect.height() > 0.0)
+    {
+        // tiny-skia 0.11's AA rectangle fast path asserts when a narrow bar straddles a
+        // pixel boundary with no whole pixel inside. The path rasteriser handles that coverage.
+        let path = PathBuilder::from_rect(rect);
+        fill(frame, &path, style, opacity, Transform::identity());
     }
 }
 
@@ -354,6 +356,30 @@ mod tests {
         let mut frame = renderer.canvas();
         renderer.draw(seconds, &mut frame);
         Some(frame)
+    }
+
+    #[test]
+    fn a_subpixel_progress_bar_covers_both_sides_of_a_pixel_boundary() {
+        let mut frame = Pixmap::new(16, 16).unwrap();
+        rect(&mut frame, &style(true), 4.5, 4.5, 1.0, 3.0, 1.0);
+        let alpha = |x: usize| frame.data()[(5 * 16 + x) * 4 + 3];
+        assert!(alpha(4) > 0 && alpha(5) > 0);
+        assert!(alpha(4) < 255 && alpha(5) < 255);
+        assert_eq!(alpha(3), 0);
+        assert_eq!(alpha(6), 0);
+    }
+
+    #[test]
+    fn the_first_video_frames_draw_a_narrow_chord_progress_bar() {
+        if system_font().is_none() {
+            return;
+        }
+        let renderer = FrameRenderer::with_background(&score(), &NoteRollStyle::default(), None);
+        let mut frame = renderer.canvas();
+        for index in 0..4 {
+            renderer.draw(f64::from(index) / 60.0, &mut frame);
+        }
+        assert!(lit(&frame, 0, 200) > 0);
     }
 
     #[test]
