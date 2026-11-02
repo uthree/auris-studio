@@ -318,6 +318,27 @@ impl Session {
         }
     }
 
+    /// Excites a track's instrument where a person touched its body, outside the timeline.
+    ///
+    /// `at` is the place along the body, from zero at one end to one at the other (for a drum
+    /// head, from the centre to the rim), and is what makes this more than [`Self::note_on`]: it
+    /// rides in just ahead of the note on the instrument's touch controller, which the note
+    /// consumes, so the next note — the song's, say — is excited wherever the instrument's own
+    /// position control puts it again. Nothing is written into the document. An instrument with
+    /// no place to touch (a reed, a jet) plays the note as `note_on` would; release it with
+    /// [`Self::note_off`].
+    pub fn touch_instrument(&mut self, track: TrackId, pitch: u8, at: f32, velocity: f32) {
+        if !at.is_finite() {
+            return self.note_on(track, pitch, velocity);
+        }
+        self.controller(
+            track,
+            auris_core::motion::TOUCH_CONTROLLER,
+            at.clamp(0.0, 1.0),
+        );
+        self.note_on(track, pitch, velocity);
+    }
+
     /// Releases an auditioned note.
     pub fn note_off(&mut self, track: TrackId, pitch: u8) {
         if let Ok(index) = self.require_track(track) {

@@ -732,6 +732,15 @@ pub enum Drag {
         /// Drawable graph bounds captured when the drag begins.
         bounds: Bounds<Pixels>,
     },
+    /// Dragging one of the video window's colour sliders.
+    VideoColour {
+        /// Which slider of the open picker.
+        channel: crate::ui::colour_picker::HsvChannel,
+        /// Slider position when the drag began, from 0 to 1.
+        start_fraction: f32,
+        /// Pointer x when the drag began.
+        start_x: Pixels,
+    },
     /// Dragging the time-zoom slider.
     TimeZoom {
         /// Slider position when the drag began, from 0 to 1.
@@ -870,6 +879,8 @@ impl Drag {
             Drag::LyricLine { .. } => Some(Edit::MoveLyricLine),
             // How far in the view is zoomed is a property of the window, like a panel's width.
             Drag::TimeZoom { .. } => None,
+            // The video's look is an application setting, not part of the document.
+            Drag::VideoColour { .. } => None,
             // Panel and window geometry is a property of the window, not the document: resizing
             // a panel or moving the plugin editor is not an edit and must never land on the undo
             // stack.

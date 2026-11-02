@@ -81,14 +81,6 @@ pub enum MenuCommand {
     RelativeNoteSnap(bool),
     /// Sets the note-roll video's frame size.
     VideoSize(auris_session::VideoSize),
-    /// Sets one of the note-roll video's colours: a palette slot, or the single colour when
-    /// `slot` is `None`.
-    VideoColor {
-        /// Which palette entry, or `None` for the single colour.
-        slot: Option<usize>,
-        /// The colour chosen.
-        color: Color,
-    },
     /// Enables or disables grid snapping for note ends.
     SnapNoteEnds(bool),
     /// Captures a track before asking to replace a saved user sound.
@@ -847,14 +839,6 @@ impl AurisApp {
             }
             MenuCommand::SnapNoteEnds(enabled) => self.apply_snap_note_lengths(enabled),
             MenuCommand::VideoSize(size) => self.edit_video_style(|style| style.size = size),
-            MenuCommand::VideoColor { slot, color } => self.edit_video_style(|style| match slot {
-                Some(index) => {
-                    if let Some(entry) = style.palette.get_mut(index) {
-                        *entry = color;
-                    }
-                }
-                None => style.single_color = color,
-            }),
             MenuCommand::SetExpressionSettings { clip, settings } => {
                 if let Ok(stack) = self.session.clip_transforms(clip) {
                     let next = crate::ui::expression::with_expression_settings(stack, settings);

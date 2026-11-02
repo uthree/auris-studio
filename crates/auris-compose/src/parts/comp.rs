@@ -417,7 +417,10 @@ pub(super) fn comp(
                 ))
             })
             .unwrap_or(push_early);
+        // Only a change is anticipated: restriking a chord that is already sounding half a
+        // beat early is a stumble, not a push.
         let push = pushing
+            && !section.continues_chord(event_index)
             && !pad
             && !written
             && drive == 0.0
@@ -943,6 +946,90 @@ mod tests {
                 "the pad struck at {} which is not a chord change",
                 at.raw()
             );
+        }
+    }
+
+    #[test]
+    fn a_chord_held_over_the_bar_line_is_accompanied_like_one_written_twice() {
+        // The document stores `| I | I |` as one I lasting two bars, and the accompaniment must
+        // not hear the difference: every part keeps its figure going in the second bar.
+        for seed in 1..=6u64 {
+            let (spec, frame, parts) = draft(&format!(
+                r#"
+                    form = "verse"
+                    chords = "| I | I | V | V |"
+                    humanize = 0
+                    syncopation = 0.8
+                    ending = "none"
+                    seed = {seed}
+                    [section.verse]
+                    bars = 4
+                    [[part]]
+                    name = "chords"
+                    [[part]]
+                    name = "pad"
+                    [[part]]
+                    name = "bass"
+                    [[part]]
+                    name = "arp"
+                    [[part]]
+                    name = "kick"
+                    "#
+            ));
+            let mut merged = frame.clone();
+            let events = &mut merged.sections[0].events;
+            assert_eq!(events.len(), 4, "the chart spells each bar");
+            events[0].length = events[0].length + events[1].length;
+            events[2].length = events[2].length + events[3].length;
+            events.remove(3);
+            events.remove(1);
+            let again = crate::parts::write_parts(
+                &crate::parts::ScoreSettings::from(&spec),
+                &spec.parts,
+                &merged,
+            );
+            for name in ["chords", "pad", "bass", "arp"] {
+                let notes = |drafts: &[crate::parts::PartDraft]| {
+                    part(drafts, name)
+                        .notes
+                        .iter()
+                        .map(|note| (note.start.raw(), note.pitch, note.length.raw()))
+                        .collect::<Vec<_>>()
+                };
+                assert_eq!(notes(&parts), notes(&again), "seed {seed}: {name}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_comp_never_pushes_a_chord_that_is_already_sounding() {
+        for seed in 1..=12u64 {
+            let (_, frame, parts) = draft(&format!(
+                r#"
+                    form = "verse"
+                    chords = "| I | I | I | I |"
+                    humanize = 0
+                    syncopation = 1
+                    ending = "none"
+                    seed = {seed}
+                    [section.verse]
+                    bars = 4
+                    [[part]]
+                    name = "chords"
+                    "#
+            ));
+            let bar = frame.grid.bar_ticks();
+            let chords = part(&parts, "chords");
+            for line in 1..4 {
+                let at = bar * line;
+                assert!(
+                    !chords
+                        .notes
+                        .iter()
+                        .any(|note| note.start < at && note.start + note.length > at),
+                    "seed {seed}: a strike ran over bar line {line} as if anticipating a change"
+                );
+            }
         }
     }
 }

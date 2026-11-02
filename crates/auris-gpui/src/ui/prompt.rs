@@ -155,6 +155,11 @@ pub enum PromptTarget {
     ClipSourceTempo(ClipId),
     /// Where the playhead sits, as bar, beat and hundredth.
     Position,
+    /// One of the note-roll video's colours, as a code such as `#3D7BFF`.
+    ///
+    /// The picker's sliders find a colour by eye; this is for the one that is already known —
+    /// a brand colour, the same blue as last time.
+    VideoColour(crate::ui::video_export::VideoColourSlot),
 }
 
 /// Whether an empty field carries a target-specific meaning instead of being a missing name.
@@ -199,6 +204,8 @@ pub enum Notation {
     MidiNote,
     /// A place in the song, as bar, beat and hundredth.
     Position,
+    /// A colour code, `#3D7BFF`.
+    Colour,
 }
 
 impl PromptTarget {
@@ -223,6 +230,7 @@ impl PromptTarget {
             | PromptTarget::NewDrumLane(_)
             | PromptTarget::DrumLaneNote { .. } => Notation::MidiNote,
             PromptTarget::Position => Notation::Position,
+            PromptTarget::VideoColour(_) => Notation::Colour,
             PromptTarget::SaveSound(_)
             | PromptTarget::WorkshopThreadName { .. }
             | PromptTarget::WorkshopFeedback { .. }
@@ -273,6 +281,7 @@ impl Notation {
             Notation::Gain => Key::HintClipGain,
             Notation::MidiNote => Key::HintMidiNote,
             Notation::Position => Key::HintPosition,
+            Notation::Colour => Key::HintColour,
         }
     }
 
@@ -292,7 +301,8 @@ impl Notation {
             | Notation::Tempo
             | Notation::Gain
             | Notation::MidiNote
-            | Notation::Position => &[],
+            | Notation::Position
+            | Notation::Colour => &[],
         }
     }
 
@@ -1242,6 +1252,16 @@ impl AurisApp {
                 }
                 Err(_) => {
                     self.reject_prompt(messages::not_a_signature(self.language(), &text));
+                    return;
+                }
+            },
+            PromptTarget::VideoColour(slot) => match crate::ui::colour_picker::parse_hex(&text) {
+                Some(color) => {
+                    self.set_video_colour(slot, color);
+                    Ok(())
+                }
+                None => {
+                    self.reject_prompt(messages::not_a_colour(self.language(), &text));
                     return;
                 }
             },
@@ -2784,6 +2804,7 @@ mod tests {
             },
             PromptTarget::ClipSourceTempo(ClipId(1)),
             PromptTarget::Position,
+            PromptTarget::VideoColour(crate::ui::video_export::VideoColourSlot::Single),
         ];
         for target in &representatives {
             match target {
@@ -2815,7 +2836,8 @@ mod tests {
                 | PromptTarget::DrumLaneName { .. }
                 | PromptTarget::DrumLaneNote { .. }
                 | PromptTarget::ClipSourceTempo(_)
-                | PromptTarget::Position => {}
+                | PromptTarget::Position
+                | PromptTarget::VideoColour(_) => {}
             }
         }
         representatives

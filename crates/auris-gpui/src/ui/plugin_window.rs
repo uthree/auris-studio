@@ -391,7 +391,7 @@ impl AurisApp {
             _ => None,
         };
         let wide = host_window.viewport_size().width >= host_window.rem_size() * 48.;
-        let physical = self.physical_model_display(wide, cx);
+        let physical = self.physical_model_display(cx);
         // The native editor leaves this window open behind it. Building thousands of hidden
         // controls on every meter tick otherwise starves the same UI thread that drives it.
         let body = if let Some(physical) = physical {

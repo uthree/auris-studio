@@ -24,7 +24,7 @@ use auris_core::{
 use auris_singer::{BackendKind, VoiceCapabilities, VoiceInfo, VoiceModel};
 use auris_vocal::{
     CurveSources, JapaneseDictionary, SingerFrames, SingerScore, lyric_phonemes, phoneme_moras,
-    render_score, split_kana_lyric,
+    render_score, spoken_kana_lyric,
 };
 
 use crate::error::SessionError;
@@ -449,9 +449,12 @@ impl Session {
         text: &str,
         reading: Option<&str>,
     ) -> Result<Vec<(String, Vec<String>)>, SessionError> {
+        // Read as a phrase, not a mora at a time: the particles は and へ sing *wa* and *e*,
+        // and only the words around them say which は is the particle.
+        let dictionary = self.japanese.as_ref();
         let explicit = reading
             .map(|reading| {
-                split_kana_lyric(reading.trim())
+                spoken_kana_lyric(reading.trim(), dictionary)
                     .filter(|moras| !moras.is_empty() && !text.trim().is_empty())
                     .ok_or_else(|| {
                         SessionError::InvalidNotes(
@@ -461,7 +464,7 @@ impl Session {
             })
             .transpose()?;
         let portions: Vec<(String, Vec<String>)> =
-            match explicit.or_else(|| split_kana_lyric(text.trim())) {
+            match explicit.or_else(|| spoken_kana_lyric(text.trim(), dictionary)) {
                 Some(moras) => moras,
                 None => {
                     let phonemes = lyric_phonemes(text, self.japanese.as_ref())?;
@@ -475,7 +478,6 @@ impl Session {
                         .collect()
                 }
             };
-
         Ok(portions)
     }
 
@@ -4355,6 +4357,36 @@ mod tests {
                 .iter()
                 .all(|note| note.lyric.is_empty())
         );
+    }
+
+    #[test]
+    fn a_written_phrase_sings_its_particles_as_spoken() {
+        let (mut session, _, clip) = sung(9);
+        let filled = session
+            .write_lyrics(clip, &(0..9).collect::<Vec<_>>(), "きみは そらへ はしる")
+            .unwrap();
+        assert_eq!(filled, 9);
+        let notes = &session.midi_clip(clip).unwrap().notes;
+        // The spaces are part of the surface, so the phrase is kept whole on its first note.
+        assert_eq!(notes[0].lyric, "きみは そらへ はしる");
+        assert_eq!(notes[2].phonemes, ["w", "a"]);
+        assert_eq!(notes[5].phonemes, ["e"]);
+        assert_eq!(notes[6].phonemes, ["h", "a"], "はしる starts a word");
+
+        // A kana reading beside written text is read the same way.
+        let (mut session, _, clip) = sung(4);
+        session
+            .write_lyrics_with_reading(clip, &[0, 1, 2, 3], "夢は", Some("ゆめは"))
+            .unwrap();
+        let notes = &session.midi_clip(clip).unwrap().notes;
+        assert_eq!(notes[2].phonemes, ["w", "a"]);
+
+        // An unspaced word keeps one kana to a note, as written.
+        let (mut session, _, clip) = sung(3);
+        session.write_lyrics(clip, &[0, 1, 2], "ゆめは").unwrap();
+        let notes = &session.midi_clip(clip).unwrap().notes;
+        assert_eq!(notes[2].lyric, "は", "the note shows the kana as written");
+        assert_eq!(notes[2].phonemes, ["w", "a"]);
     }
 
     #[test]

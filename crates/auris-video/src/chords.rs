@@ -231,14 +231,8 @@ fn rect(
     }
 }
 
-pub(crate) fn fill(
-    frame: &mut Pixmap,
-    path: &SkPath,
-    style: &NoteRollStyle,
-    opacity: f64,
-    at: Transform,
-) {
-    let (r, g, b) = style.playhead_color.rgb();
+fn fill(frame: &mut Pixmap, path: &SkPath, style: &NoteRollStyle, opacity: f64, at: Transform) {
+    let (r, g, b) = style.chord_color.rgb();
     let mut paint = Paint {
         anti_alias: true,
         ..Paint::default()
@@ -437,6 +431,30 @@ mod tests {
             lit(&full, 0, 640),
             "a frame is the same however often it is drawn"
         );
+    }
+
+    #[test]
+    fn the_caption_is_drawn_in_its_own_colour() {
+        if system_font().is_none() {
+            return;
+        }
+        let green = NoteRollStyle {
+            chord_color: Color(0x00ff00),
+            ..style(true)
+        };
+        let renderer = FrameRenderer::with_background(&score(), &green, None);
+        let mut frame = renderer.canvas();
+        renderer.draw(1.0, &mut frame);
+        let greens = (0..frame.height() / 3)
+            .flat_map(|y| (0..frame.width()).map(move |x| (x, y)))
+            .filter(|&(x, y)| {
+                let at = ((y * frame.width() + x) * 4) as usize;
+                let pixel = &frame.data()[at..at + 3];
+                pixel[1] > 128 && pixel[0] < 64 && pixel[2] < 64
+            })
+            .count();
+        assert!(greens > 50, "the caption is green: {greens}");
+        assert_eq!(lit(&frame, 0, 640), 0, "and not the playhead's white");
     }
 
     #[test]

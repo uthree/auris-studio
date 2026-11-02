@@ -114,9 +114,11 @@ pub struct NoteRollStyle {
     /// Show the chord sounding now in the top corner, with the next one beside it.
     ///
     /// The chords are the ones written into the project, or — where none are written — the
-    /// ones recognised from its pitched notes. Drawn in [`Self::playhead_color`], which is the
-    /// colour of everything in the frame that is not a note.
+    /// ones recognised from its pitched notes. Drawn in [`Self::chord_color`].
     pub chords: bool,
+    /// Colour of the chord caption: its names, the arrow before the next one, and the bar that
+    /// fills as the chord plays.
+    pub chord_color: Color,
     /// Show the line being sung as a subtitle along the bottom of the frame.
     ///
     /// The lines are the song-wide lyrics annotation, not the words on the notes: those are
@@ -159,6 +161,7 @@ impl Default for NoteRollStyle {
             sink: 1.0,
             include_drums: false,
             chords: true,
+            chord_color: Color(0xffffff),
             lyrics: true,
         }
     }

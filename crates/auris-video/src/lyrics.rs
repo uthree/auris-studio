@@ -12,7 +12,7 @@ use std::sync::OnceLock;
 
 use tiny_skia::{LineCap, LineJoin, Paint, Path as SkPath, PathBuilder, Pixmap, Stroke, Transform};
 
-use crate::chords::{FontData, fill, system_font, unit_byte};
+use crate::chords::{FontData, system_font, unit_byte};
 use crate::{NoteRollStyle, NoteScore};
 
 /// Height of the text's em square, as a fraction of the frame's shorter side.
@@ -157,7 +157,14 @@ impl LyricOverlay {
             ..Stroke::default()
         };
         frame.stroke_path(path, &rim, &stroke, place, None);
-        fill(frame, path, style, opacity, place);
+        // The playhead colour, the frame's own ink, rather than the chord caption's colour.
+        let (r, g, b) = style.playhead_color.rgb();
+        let mut ink = Paint {
+            anti_alias: true,
+            ..Paint::default()
+        };
+        ink.set_color_rgba8(r, g, b, unit_byte(opacity));
+        frame.fill_path(path, &ink, tiny_skia::FillRule::Winding, place, None);
     }
 
     /// How wide `text` is drawn at an em of `em` pixels.

@@ -24,17 +24,21 @@ use gpui::{
 };
 use image::{Frame, RgbaImage};
 
-use crate::app::{AurisApp, ExportState};
+use crate::app::{AurisApp, Drag, ExportState};
 use crate::auxiliary_window::Surface;
 use crate::theme::{Metrics, Theme};
+use crate::ui::colour_picker::{Hsv, HsvChannel, hex};
 use crate::ui::context_menu::{ContextMenu, MenuCommand};
-use crate::ui::widgets::{ButtonState, ButtonStyle, button, button_enabled};
+use crate::ui::prompt::{Prompt, PromptTarget};
+use crate::ui::widgets::{
+    ButtonState, ButtonStyle, SliderFill, SliderKeyboardEvent, button, button_enabled, value_slider,
+};
 
 /// Width of the preview image; a portrait video is previewed at this height instead.
 const PREVIEW_EDGE: u32 = 640;
 
-/// Colours a palette or single-colour swatch offers when clicked: bright enough to read
-/// on a dark background, and different enough from their neighbours to tell parts apart.
+/// Presets a palette or single-colour swatch's picker offers: bright enough to read on a dark
+/// background, and different enough from their neighbours to tell parts apart.
 const VIVID: [Color; 16] = [
     Color(0x3d7bff),
     Color(0x35d0e0),
@@ -67,6 +71,19 @@ const BACKGROUNDS: [Color; 6] = [
     Color(0xf4f1ea),
 ];
 
+/// Colours the chord caption's picker offers: the whites and black that read over most
+/// backgrounds, then a few of the note presets.
+const CAPTIONS: [Color; 8] = [
+    Color(0xffffff),
+    Color(0xf4f1ea),
+    Color(0x000000),
+    Color(0xffd84d),
+    Color(0x9ad1ff),
+    Color(0x7cf08a),
+    Color(0xff8f4d),
+    Color(0xff7ad9),
+];
+
 /// What is known about the ffmpeg on this machine.
 #[derive(Clone, Debug, Default)]
 pub(crate) enum FfmpegProbe {
@@ -81,11 +98,85 @@ pub(crate) enum FfmpegProbe {
     Missing(String),
 }
 
+/// One of the colours the video's look holds, as the picker addresses it.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum VideoColourSlot {
+    /// An entry of the palette the tracks take in order.
+    Palette(usize),
+    /// The one colour every note takes.
+    Single,
+    /// The fill behind the notes.
+    Background,
+    /// The chord caption in the corner.
+    Chords,
+}
+
+impl VideoColourSlot {
+    /// The colour in this slot, or `None` for a palette entry past the end.
+    pub fn get(self, style: &NoteRollStyle) -> Option<Color> {
+        match self {
+            VideoColourSlot::Palette(index) => style.palette.get(index).copied(),
+            VideoColourSlot::Single => Some(style.single_color),
+            VideoColourSlot::Background => Some(style.background),
+            VideoColourSlot::Chords => Some(style.chord_color),
+        }
+    }
+
+    /// Puts `color` in this slot; a palette entry past the end is left alone.
+    pub fn set(self, style: &mut NoteRollStyle, color: Color) {
+        match self {
+            VideoColourSlot::Palette(index) => {
+                if let Some(entry) = style.palette.get_mut(index) {
+                    *entry = color;
+                }
+            }
+            VideoColourSlot::Single => style.single_color = color,
+            VideoColourSlot::Background => style.background = color,
+            VideoColourSlot::Chords => style.chord_color = color,
+        }
+    }
+
+    /// Whether the window shows this slot for `style`: a palette entry only while the notes are
+    /// coloured by palette, the single colour only while they take one, the caption's only while
+    /// it is drawn.
+    fn shown(self, style: &NoteRollStyle) -> bool {
+        match self {
+            VideoColourSlot::Palette(index) => {
+                style.coloring == NoteColoring::Palette && index < style.palette.len()
+            }
+            VideoColourSlot::Single => style.coloring == NoteColoring::Single,
+            VideoColourSlot::Background => true,
+            VideoColourSlot::Chords => style.chords,
+        }
+    }
+
+    /// A stable name for element ids and test selectors.
+    fn id(self) -> String {
+        match self {
+            VideoColourSlot::Palette(index) => format!("palette-{index}"),
+            VideoColourSlot::Single => "single".to_owned(),
+            VideoColourSlot::Background => "background".to_owned(),
+            VideoColourSlot::Chords => "chords".to_owned(),
+        }
+    }
+}
+
+/// The colour picker that is open, and what it holds while it is.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub(crate) struct ColourPicking {
+    /// Which colour it edits.
+    pub(crate) slot: VideoColourSlot,
+    /// The colour as the sliders hold it, which keeps a hue through grey.
+    pub(crate) hsv: Hsv,
+}
+
 /// The window's state, kept on the document's view so the window itself stays a view.
 #[derive(Default)]
 pub(crate) struct VideoExportState {
     /// Whether the window is open.
     pub(crate) open: bool,
+    /// The colour picker open under a swatch, if one is.
+    pub(crate) picking: Option<ColourPicking>,
     pub(crate) ffmpeg: FfmpegProbe,
     /// The notes of the document at a revision.
     score: Option<(u64, NoteScore)>,
@@ -181,6 +272,70 @@ impl AurisApp {
         self.settings.video = style;
         if let Err(error) = self.save_settings() {
             log::warn!("could not save settings: {error}");
+        }
+    }
+
+    /// Opens the picker on `slot`, or closes it if it was already open there.
+    pub(crate) fn toggle_video_colour_picker(&mut self, slot: VideoColourSlot) {
+        let open_here = self
+            .video_export
+            .picking
+            .is_some_and(|picking| picking.slot == slot);
+        self.video_export.picking = match (open_here, slot.get(&self.settings.video)) {
+            (false, Some(color)) => Some(ColourPicking {
+                slot,
+                hsv: Hsv::from_color(color),
+            }),
+            _ => None,
+        };
+    }
+
+    /// Puts a whole colour in a slot — a preset, or a typed code — and remembers it.
+    pub(crate) fn set_video_colour(&mut self, slot: VideoColourSlot, color: Color) {
+        self.edit_video_style(|style| slot.set(style, color));
+        if let Some(picking) = self.video_export.picking.as_mut()
+            && picking.slot == slot
+        {
+            picking.hsv = Hsv::from_color(color);
+        }
+    }
+
+    /// Moves one of the open picker's sliders to `fraction`.
+    ///
+    /// `save` is false while a drag is under way: the look is changed at once, so the preview
+    /// follows the hand, and written to the settings file once, when the drag lets go.
+    pub(crate) fn set_video_colour_channel(
+        &mut self,
+        channel: HsvChannel,
+        fraction: f32,
+        save: bool,
+    ) {
+        let Some(picking) = self.video_export.picking.as_mut() else {
+            return;
+        };
+        picking.hsv = picking.hsv.with(channel, fraction);
+        let (slot, color) = (picking.slot, picking.hsv.to_color());
+        if save {
+            self.edit_video_style(|style| slot.set(style, color));
+        } else {
+            slot.set(&mut self.settings.video, color);
+        }
+    }
+
+    /// Closes a picker whose slot is no longer on screen, and catches its sliders up with a
+    /// colour that was changed some other way.
+    fn sync_video_colour_picker(&mut self) {
+        let style = &self.settings.video;
+        let Some(picking) = self.video_export.picking.as_mut() else {
+            return;
+        };
+        match picking.slot.get(style) {
+            Some(color) if picking.slot.shown(style) => {
+                if picking.hsv.to_color() != color {
+                    picking.hsv = Hsv::from_color(color);
+                }
+            }
+            _ => self.video_export.picking = None,
         }
     }
 
@@ -387,6 +542,7 @@ impl AurisApp {
                 log::debug!("could not release a video preview: {error}");
             }
         }
+        self.sync_video_colour_picker();
         let theme = self.theme.clone();
         let style = self.settings.video.clone();
         let preview = self.video_preview();
@@ -758,24 +914,145 @@ impl AurisApp {
         )
     }
 
-    /// Every colour a swatch can take, the one it has ticked.
-    fn video_color_menu(
+    /// Opens the sheet a colour code is typed into.
+    fn open_video_colour_code(&mut self, slot: VideoColourSlot) {
+        let Some(color) = slot.get(&self.settings.video) else {
+            return;
+        };
+        self.open_prompt(Prompt::new(
+            self.t(Key::VideoColourCode),
+            PromptTarget::VideoColour(slot),
+            hex(color),
+        ));
+    }
+
+    /// A swatch that opens and closes the picker on its slot.
+    fn picker_swatch(
         &self,
-        at: gpui::Point<gpui::Pixels>,
-        slot: Option<usize>,
-        current: Color,
-    ) -> ContextMenu {
-        VIVID.into_iter().enumerate().fold(
-            ContextMenu::new(at, self.t(Key::VideoColors)),
-            |menu, (index, color)| {
-                menu.colour(
-                    format!("{}", index + 1),
-                    MenuCommand::VideoColor { slot, color },
-                    hsla(color),
-                    color == current,
-                )
-            },
+        slot: VideoColourSlot,
+        color: Color,
+        theme: &Theme,
+        cx: &mut Context<Self>,
+    ) -> gpui::Stateful<gpui::Div> {
+        let open = self
+            .video_export
+            .picking
+            .is_some_and(|picking| picking.slot == slot);
+        Self::swatch(
+            ElementId::Name(format!("video-swatch-{}", slot.id()).into()),
+            color,
+            open,
+            theme,
+            cx.listener(move |this, _, _, cx| {
+                this.toggle_video_colour_picker(slot);
+                cx.notify();
+            }),
         )
+    }
+
+    /// The open picker, when it is open on `slot`: the colour and its code, the three sliders,
+    /// and `presets` to start from.
+    fn video_colour_picker(
+        &self,
+        slot: VideoColourSlot,
+        presets: &[Color],
+        theme: &Theme,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui::Stateful<gpui::Div>> {
+        let picking = self
+            .video_export
+            .picking
+            .filter(|picking| picking.slot == slot)?;
+        let hsv = picking.hsv;
+        let color = hsv.to_color();
+        let name = slot.id();
+        let head = div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .child(
+                div()
+                    .size(px(28.))
+                    .flex_none()
+                    .rounded(Metrics::RADIUS_SM)
+                    .bg(hsla(color))
+                    .border_1()
+                    .border_color(theme.border),
+            )
+            .child(button(
+                ElementId::Name(format!("video-colour-code-{name}").into()),
+                hex(color),
+                ButtonStyle::Normal,
+                false,
+                theme.accent,
+                theme,
+                cx.listener(move |this, _, _, cx| {
+                    this.open_video_colour_code(slot);
+                    cx.notify();
+                }),
+            ));
+        let selector = format!("video-picker-{name}");
+        let mut panel = div()
+            .id(ElementId::Name(selector.clone().into()))
+            .debug_selector(move || selector.clone()) // atelier: allow — the picker is the application's own; Atelier has none yet.
+            .flex()
+            .flex_col()
+            .gap_1()
+            .p_2()
+            .rounded(Metrics::RADIUS_MD)
+            .border_1()
+            .border_color(theme.border_subtle)
+            .child(head);
+        for channel in HsvChannel::ALL {
+            let fraction = hsv.fraction(channel);
+            let label = match channel {
+                HsvChannel::Hue => Key::VideoHue,
+                HsvChannel::Saturation => Key::VideoSaturation,
+                HsvChannel::Value => Key::VideoBrightness,
+            };
+            panel = panel.child(value_slider(
+                ElementId::Name(format!("video-{}-{name}", channel.id()).into()),
+                self.t(label),
+                hsv.label(channel),
+                fraction,
+                hsla(hsv.slider_fill(channel)),
+                SliderFill::FromStart,
+                // A degree of hue, a percent of the others: the steps their readouts count in.
+                match channel {
+                    HsvChannel::Hue => 1.0 / 360.0,
+                    HsvChannel::Saturation | HsvChannel::Value => 0.01,
+                },
+                theme,
+                cx.listener(move |this, event: &gpui::MouseDownEvent, _, _| {
+                    this.begin_drag(Drag::VideoColour {
+                        channel,
+                        start_fraction: fraction,
+                        start_x: event.position.x,
+                    });
+                }),
+                cx.listener(move |this, event: &SliderKeyboardEvent, _, cx| {
+                    this.set_video_colour_channel(channel, event.fraction, true);
+                    cx.notify();
+                }),
+            ));
+        }
+        if !presets.is_empty() {
+            let mut row = div().flex().flex_wrap().gap_1().pt_1();
+            for (index, preset) in presets.iter().copied().enumerate() {
+                row = row.child(Self::swatch(
+                    ElementId::NamedInteger(format!("video-preset-{name}").into(), index as u64),
+                    preset,
+                    preset == color,
+                    theme,
+                    cx.listener(move |this, _, _, cx| {
+                        this.set_video_colour(slot, preset);
+                        cx.notify();
+                    }),
+                ));
+            }
+            panel = panel.child(row);
+        }
+        Some(panel)
     }
 
     fn video_color_section(
@@ -829,29 +1106,30 @@ impl AurisApp {
             NoteColoring::Palette => {
                 let mut row = div().flex().flex_wrap().gap_1();
                 for (index, color) in style.palette.iter().copied().enumerate() {
-                    row = row.child(Self::swatch(
-                        ElementId::NamedInteger("video-palette".into(), index as u64),
+                    row = row.child(self.picker_swatch(
+                        VideoColourSlot::Palette(index),
                         color,
-                        false,
                         theme,
-                        Self::opens_menu(cx, move |this, at| {
-                            this.video_color_menu(at, Some(index), color)
-                        }),
+                        cx,
                     ));
                 }
-                section = section
-                    .child(row)
-                    .child(self.note(self.t(Key::VideoPaletteHint), theme));
+                section = section.child(row);
+                if let Some(picker) = (0..style.palette.len()).find_map(|index| {
+                    self.video_colour_picker(VideoColourSlot::Palette(index), &VIVID, theme, cx)
+                }) {
+                    section = section.child(picker);
+                }
+                section = section.child(self.note(self.t(Key::VideoPaletteHint), theme));
             }
             NoteColoring::Single => {
-                let current = style.single_color;
-                section = section.child(div().flex().child(Self::swatch(
-                    "video-single".into(),
-                    current,
-                    false,
-                    theme,
-                    Self::opens_menu(cx, move |this, at| this.video_color_menu(at, None, current)),
-                )));
+                section = section
+                    .child(div().flex().child(self.picker_swatch(
+                        VideoColourSlot::Single,
+                        style.single_color,
+                        theme,
+                        cx,
+                    )))
+                    .children(self.video_colour_picker(VideoColourSlot::Single, &VIVID, theme, cx));
             }
             NoteColoring::Pitch => {
                 section = section
@@ -894,7 +1172,8 @@ impl AurisApp {
         theme: &Theme,
         cx: &mut Context<Self>,
     ) -> gpui::Div {
-        self.section(Key::VideoChordSection, theme)
+        let mut section = self
+            .section(Key::VideoChordSection, theme)
             .child(self.toggle(
                 "video-chords",
                 Key::VideoChords,
@@ -902,8 +1181,25 @@ impl AurisApp {
                 theme,
                 cx,
                 |style| style.chords = !style.chords,
-            ))
-            .child(self.note(self.t(Key::VideoChordsHint), theme))
+            ));
+        if style.chords {
+            section = section
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(self.picker_swatch(
+                            VideoColourSlot::Chords,
+                            style.chord_color,
+                            theme,
+                            cx,
+                        ))
+                        .child(self.note(self.t(Key::VideoChordColour), theme)),
+                )
+                .children(self.video_colour_picker(VideoColourSlot::Chords, &CAPTIONS, theme, cx));
+        }
+        section.child(self.note(self.t(Key::VideoChordsHint), theme))
     }
 
     fn video_lyrics_section(
@@ -938,11 +1234,30 @@ impl AurisApp {
                 style.background == color,
                 theme,
                 cx.listener(move |this, _, _, cx| {
-                    this.edit_video_style(|style| style.background = color);
+                    this.set_video_colour(VideoColourSlot::Background, color);
                     cx.notify();
                 }),
             ));
         }
+        // The presets are the row itself, so the picker under it holds only the sliders and
+        // the code. Its button reads as on while the fill in use is none of the presets.
+        let custom = !BACKGROUNDS.contains(&style.background);
+        let picking = self
+            .video_export
+            .picking
+            .is_some_and(|picking| picking.slot == VideoColourSlot::Background);
+        fills = fills.child(button(
+            "video-background-custom",
+            self.t(Key::VideoCustomColour),
+            ButtonStyle::Normal,
+            picking || custom,
+            theme.accent,
+            theme,
+            cx.listener(|this, _, _, cx| {
+                this.toggle_video_colour_picker(VideoColourSlot::Background);
+                cx.notify();
+            }),
+        ));
         let mut images = div().flex().flex_wrap().gap_1().child(button(
             "video-choose-image",
             self.t(Key::VideoChooseImage),
@@ -952,7 +1267,10 @@ impl AurisApp {
             theme,
             cx.listener(|this, _, _, cx| this.choose_video_background(cx)),
         ));
-        let mut section = self.section(Key::VideoBackground, theme).child(fills);
+        let mut section = self
+            .section(Key::VideoBackground, theme)
+            .child(fills)
+            .children(self.video_colour_picker(VideoColourSlot::Background, &[], theme, cx));
         if let Some(path) = &style.background_image {
             images = images.child(button(
                 "video-clear-image",
@@ -1133,38 +1451,195 @@ mod tests {
         );
     }
 
-    #[gpui::test]
-    fn a_swatch_offers_every_colour_and_choosing_one_sets_it(cx: &mut TestAppContext) {
+    /// The video window, open and painted, with the look it started with to put back.
+    fn open_window(
+        cx: &mut TestAppContext,
+    ) -> (
+        gpui::Entity<AurisApp>,
+        gpui::VisualTestContext,
+        NoteRollStyle,
+    ) {
         let (app, cx) = harness::open(cx);
-        app.update(cx, |app, cx| {
-            let current = app.settings.video.palette[0];
-            let menu = app.video_color_menu(gpui::point(px(0.), px(0.)), Some(0), current);
-            let rows: Vec<_> = menu
-                .entries
-                .iter()
-                .filter_map(|entry| match entry {
-                    crate::ui::context_menu::MenuEntry::Item(item) => Some(item),
-                    crate::ui::context_menu::MenuEntry::Separator => None,
-                })
-                .collect();
-            assert_eq!(rows.len(), VIVID.len(), "every colour is one choice away");
-            let pick = VIVID.into_iter().find(|color| *color != current).unwrap();
-            app.run_menu_command(
-                MenuCommand::VideoColor {
-                    slot: Some(0),
-                    color: pick,
-                },
-                cx,
+        cx.dispatch_action(crate::actions::ExportVideo);
+        harness::paint(&app, cx);
+        let (handle, style) = app.read_with(cx, |app, _| {
+            (
+                app.auxiliary_windows[&Surface::VideoExport],
+                app.settings.video.clone(),
+            )
+        });
+        let mut window = gpui::VisualTestContext::from_window(handle.into(), cx);
+        harness::paint(&app, &mut window);
+        (app, window, style)
+    }
+
+    #[gpui::test]
+    fn a_swatch_opens_a_picker_whose_sliders_and_presets_set_the_colour(cx: &mut TestAppContext) {
+        let (app, mut cx, original) = open_window(cx);
+        app.update(&mut cx, |app, _| {
+            app.edit_video_style(|style| {
+                style.coloring = NoteColoring::Palette;
+                style.palette[0] = Color(0x3d7bff);
+            });
+        });
+        harness::paint(&app, &mut cx);
+        assert!(cx.debug_bounds("video-picker-palette-0").is_none());
+
+        harness::click("video-swatch-palette-0", &mut cx);
+        harness::paint(&app, &mut cx);
+        assert!(
+            cx.debug_bounds("video-picker-palette-0").is_some(),
+            "the picker opens under the palette"
+        );
+
+        // A preset is still one click away.
+        harness::click("video-preset-palette-0-4", &mut cx);
+        harness::paint(&app, &mut cx);
+        app.read_with(&cx, |app, _| {
+            assert_eq!(app.settings.video.palette[0], VIVID[4]);
+        });
+
+        // Dragging brightness to the bottom makes black, and back up again restores the hue
+        // the colour had: the picker holds it through black.
+        let bar = cx.debug_bounds("video-value-palette-0").unwrap();
+        let from = bar.center();
+        harness::drag(&mut cx, from, from - gpui::point(px(240.), px(0.)));
+        harness::paint(&app, &mut cx);
+        app.read_with(&cx, |app, _| {
+            assert_eq!(app.settings.video.palette[0], Color(0x000000));
+        });
+        // Back up in two shorter strokes, which keep the pointer inside the window: a full
+        // sweep is [`crate::ui::widgets::DRAG_RANGE_PIXELS`].
+        for _ in 0..2 {
+            let from = cx.debug_bounds("video-value-palette-0").unwrap().center();
+            harness::drag(&mut cx, from, from + gpui::point(px(120.), px(0.)));
+            harness::paint(&app, &mut cx);
+        }
+        app.read_with(&cx, |app, _| {
+            let back = Hsv::from_color(app.settings.video.palette[0]);
+            let preset = Hsv::from_color(VIVID[4]);
+            assert!(
+                (back.hue - preset.hue).abs() < 1.0,
+                "{back:?} against {preset:?}"
             );
-            assert_eq!(app.settings.video.palette[0], pick);
-            app.run_menu_command(
-                MenuCommand::VideoColor {
-                    slot: None,
-                    color: pick,
-                },
-                cx,
+            assert_eq!(back.value, 1.0);
+        });
+
+        // Clicking the open swatch again closes it.
+        harness::click("video-swatch-palette-0", &mut cx);
+        harness::paint(&app, &mut cx);
+        app.read_with(&cx, |app, _| assert_eq!(app.video_export.picking, None));
+
+        app.update(&mut cx, |app, _| {
+            app.edit_video_style(|style| *style = original);
+        });
+    }
+
+    #[gpui::test]
+    fn a_colour_code_is_typed_and_a_wrong_one_is_refused(cx: &mut TestAppContext) {
+        let (app, mut cx, original) = open_window(cx);
+        app.update(&mut cx, |app, _| {
+            app.edit_video_style(|style| style.coloring = NoteColoring::Single);
+        });
+        harness::paint(&app, &mut cx);
+        harness::click("video-swatch-single", &mut cx);
+        harness::paint(&app, &mut cx);
+        harness::click("video-colour-code-single", &mut cx);
+        harness::paint(&app, &mut cx);
+
+        let answer = |text: &str, cx: &mut gpui::VisualTestContext| {
+            app.update(cx, |app, _| {
+                let Some(Prompt {
+                    body: crate::ui::prompt::PromptBody::Text { target, field },
+                    ..
+                }) = app.prompt.as_mut()
+                else {
+                    panic!("the code sheet is open");
+                };
+                assert_eq!(*target, PromptTarget::VideoColour(VideoColourSlot::Single));
+                let all = 0..field.content().len();
+                field.replace(all, text);
+            });
+            cx.simulate_keystrokes("enter");
+            harness::paint(&app, cx);
+        };
+        answer("blue", &mut cx);
+        app.read_with(&cx, |app, _| {
+            assert!(
+                app.prompt.is_some(),
+                "a word is not a colour, and the sheet stays"
             );
-            assert_eq!(app.settings.video.single_color, pick);
+        });
+        answer("#38f", &mut cx);
+        app.read_with(&cx, |app, _| {
+            assert!(app.prompt.is_none());
+            assert_eq!(app.settings.video.single_color, Color(0x3388ff));
+            let picking = app.video_export.picking.unwrap();
+            assert_eq!(
+                picking.hsv.to_color(),
+                Color(0x3388ff),
+                "the sliders follow"
+            );
+        });
+
+        app.update(&mut cx, |app, _| {
+            app.edit_video_style(|style| *style = original);
+        });
+    }
+
+    #[gpui::test]
+    fn the_background_takes_any_colour_beside_its_presets(cx: &mut TestAppContext) {
+        let (app, mut cx, original) = open_window(cx);
+        harness::click("video-background-custom", &mut cx);
+        harness::paint(&app, &mut cx);
+        assert!(cx.debug_bounds("video-picker-background").is_some());
+        app.update(&mut cx, |app, _| {
+            app.set_video_colour_channel(HsvChannel::Value, 0.5, true);
+            app.set_video_colour_channel(HsvChannel::Saturation, 1.0, true);
+            app.set_video_colour_channel(HsvChannel::Hue, 0.0, true);
+            assert_eq!(app.settings.video.background, Color(0x800000));
+        });
+        // A preset in the row above moves the open picker's sliders too.
+        harness::click("video-background-0", &mut cx);
+        harness::paint(&app, &mut cx);
+        app.read_with(&cx, |app, _| {
+            assert_eq!(app.settings.video.background, BACKGROUNDS[0]);
+            assert_eq!(app.video_export.picking.unwrap().hsv.value, 0.0);
+        });
+        app.update(&mut cx, |app, _| {
+            app.edit_video_style(|style| *style = original);
+        });
+    }
+
+    #[gpui::test]
+    fn the_chord_caption_takes_any_colour_while_it_is_shown(cx: &mut TestAppContext) {
+        let (app, mut cx, original) = open_window(cx);
+        app.update(&mut cx, |app, _| {
+            app.edit_video_style(|style| style.chords = true);
+        });
+        // Tall enough that the chord section, near the end of the settings, is on screen.
+        harness::resize(&app, &mut cx, gpui::size(px(1100.), px(1600.)));
+        harness::click("video-swatch-chords", &mut cx);
+        harness::paint(&app, &mut cx);
+        harness::click("video-preset-chords-3", &mut cx);
+        harness::paint(&app, &mut cx);
+        app.update(&mut cx, |app, _| {
+            assert_eq!(app.settings.video.chord_color, CAPTIONS[3]);
+            app.set_video_colour_channel(HsvChannel::Value, 0.5, true);
+            assert_ne!(app.settings.video.chord_color, CAPTIONS[3]);
+            let drawn = app.settings.video.chord_color;
+            assert_eq!(
+                app.settings.video.playhead_color, original.playhead_color,
+                "the playhead line keeps its own colour"
+            );
+            // Hiding the caption takes its picker away with it.
+            app.edit_video_style(|style| style.chords = false);
+            assert_eq!(app.settings.video.chord_color, drawn);
+        });
+        harness::paint(&app, &mut cx);
+        app.read_with(&cx, |app, _| assert_eq!(app.video_export.picking, None));
+        app.update(&mut cx, |app, _| {
+            app.edit_video_style(|style| *style = original);
         });
     }
 
