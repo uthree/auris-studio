@@ -398,6 +398,12 @@ pub struct Session {
     /// while this document's history may need them. Paths also distinguish two history branches that
     /// reused one id for different fonts.
     font_cache: HashMap<PathBuf, CachedFont>,
+    /// Why a SoundFont file could not be read, by the path that was tried.
+    ///
+    /// A font that fails to load stays in the document as a reference and simply has no sounds,
+    /// which on its own reads as "not found". Keeping the reason lets the sound search say
+    /// *why* — a missing file, a size refused, a parser error — to whoever asked for it.
+    font_errors: HashMap<PathBuf, String>,
     /// Whether this session reads the shipped library at all — see
     /// [`SessionOptions::shipped_fonts`].
     shipped_library: bool,
@@ -750,6 +756,7 @@ impl Session {
             render_bank_rate,
             fonts,
             font_cache: HashMap::new(),
+            font_errors: HashMap::new(),
             shipped_library: options.shipped_fonts,
             soundfont_library: options.soundfont_library,
             balance_composed: options.balance_composed,

@@ -1481,6 +1481,26 @@ fn idea(direction: &Direction) -> SongIdea {
     }
 }
 
+/// The private session one composer works in: the sounds the window has, and nothing more.
+///
+/// A composer is asked for "the Yamaha Grand Piano out of Fluid R3" in the user's words, and the
+/// only place it can look is `search_instruments` on this session. A headless session has no
+/// SoundFonts at all, so without the shipped fonts and the user's library here a composer could
+/// only answer every such request with a built-in synthesiser and an apologetic track name.
+/// Tests leave both out for the reason [`SessionOptions::shipped_fonts`] gives.
+fn candidate_options(settings: &Settings) -> SessionOptions {
+    let installed = !cfg!(test);
+    let mut options = SessionOptions::headless()
+        .with_balance(false)
+        .with_shipped_fonts(installed)
+        .with_plugin_paths(settings.plugin_paths.clone());
+    if installed {
+        options =
+            options.with_soundfont_library(auris_session::config_dir().join("soundfonts.json"));
+    }
+    options
+}
+
 // Render and voice inference share a conservative process-wide gate; model turns remain parallel.
 static AUDIO_WORK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -1501,12 +1521,7 @@ fn compose(
     if cancel.load(Ordering::Acquire) {
         return Err("Cancelled".into());
     }
-    let mut session = Session::new(
-        SessionOptions::headless()
-            .with_balance(false)
-            .with_plugin_paths(settings.plugin_paths.clone()),
-    )
-    .map_err(|e| e.to_string())?;
+    let mut session = Session::new(candidate_options(&settings)).map_err(|e| e.to_string())?;
     if let Some(dictionary) = &settings.japanese_dictionary {
         session
             .set_japanese_dictionary(Some(dictionary))
