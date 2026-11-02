@@ -265,6 +265,11 @@ pub enum Edit {
     SetSection,
     /// A section boundary moved along the timeline.
     MoveSection,
+    /// A line of the song-wide lyrics changed — written, retyped, removed or brought in from
+    /// the sung notes.
+    SetLyricLine,
+    /// A lyric line moved along the timeline.
+    MoveLyricLine,
     /// A named progression was written across a range of bars.
     StampProgression,
     /// A clip was written from the harmony under it.

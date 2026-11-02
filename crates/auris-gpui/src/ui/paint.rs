@@ -540,6 +540,9 @@ pub struct StructurePaint {
     pub spans: Vec<(SectionSpan, String)>,
     /// The section being dragged, by the change that starts it, drawn lit.
     pub held: Option<Ticks>,
+    /// Draw the blocks in the accent rather than the selection colour — the lyrics lane, which
+    /// is the same shape as the structure lane and must not be mistaken for it.
+    pub accent: bool,
 }
 
 /// Draws the section names across `bounds`.
@@ -575,11 +578,16 @@ pub fn structure_lane(
         };
         // The selection colour rather than the accent, so the structure reads as a different
         // kind of thing from the chords two rows down.
+        let tint = if structure.accent {
+            theme.accent
+        } else {
+            theme.selection
+        };
         rounded_rect(
             window,
             block,
             px(3.0),
-            Theme::translucent(theme.selection, if lit { 0.42 } else { 0.18 }),
+            Theme::translucent(tint, if lit { 0.42 } else { 0.18 }),
         );
         // A handle only where the change actually sits: a span clipped by the window's left
         // edge starts somewhere off to the left, and dragging its visible edge would move a
@@ -593,7 +601,7 @@ pub fn structure_lane(
                     size: size(CHORD_HANDLE.min(block.size.width), block.size.height),
                 },
                 px(3.0),
-                if lit { theme.accent } else { theme.selection },
+                if lit { theme.accent } else { tint },
             );
         }
         clipped(window, block, |window| {

@@ -89,8 +89,9 @@ pub fn tool_group(name: &str) -> &'static str {
         "analyze_audio" | "analyze_chords" | "analyze_instruments" | "import_transcription" => {
             "transcription"
         }
-        "write_lyrics" | "sing" | "list_voices" | "inspect_singer" | "set_singer_voice"
-        | "edit_vocal_notes" | "analyze_lyrics" | "diagnose_song" | "repair_lyrics" => "vocals",
+        "write_lyrics" | "edit_lyrics" | "sing" | "list_voices" | "inspect_singer"
+        | "set_singer_voice" | "edit_vocal_notes" | "analyze_lyrics" | "diagnose_song"
+        | "repair_lyrics" => "vocals",
         "mixer_graph"
         | "automation"
         | "normalize_mix"

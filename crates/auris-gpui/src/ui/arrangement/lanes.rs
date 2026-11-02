@@ -157,6 +157,9 @@ impl AurisApp {
                     .when(self.panels.lanes.harmony, |this| {
                         this.child(self.render_harmony_lane(cx))
                     })
+                    .when(self.panels.lanes.lyrics, |this| {
+                        this.child(self.render_lyrics_lane(cx))
+                    })
                     .when(self.spectrograms.project_enabled, |this| {
                         this.child(self.render_project_spectrogram(cx))
                     }),

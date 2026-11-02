@@ -18,6 +18,8 @@ use super::Session;
 
 /// One musical phrase of a lyric: its moras, and what each asks of the melody.
 pub(super) struct LyricPhrase {
+    /// The phrase as written, kanji and all, which is what a caption shows.
+    pub(super) text: String,
     pub(super) moras: Vec<SungMora>,
     contours: Vec<Contour>,
     group_starts: Vec<usize>,
@@ -389,7 +391,9 @@ impl Session {
     /// playing's harmony. A section with `melody_from` reuses those notes with its own words,
     /// after validation has proved that every mora fits. There is one clip per playing.
     /// Words are fitted to the section's fixed bars after validation establishes their
-    /// pronunciation and capacity. Answers `(sung notes, clips, unsung sections)`;
+    /// pronunciation and capacity. Every phrase is also written into the song-wide
+    /// [`lyrics`](auris_core::Project::lyrics) as it was typed, over the notes that sing it, so
+    /// a composed song is captioned without being asked. Answers `(sung notes, clips, unsung sections)`;
     /// defensive preparation failures are retained in the report.
     pub(super) fn write_spec_vocal(
         &self,
@@ -463,6 +467,7 @@ impl Session {
             melodies.insert(span.label.clone(), (rhythm, notes));
         }
         let (mut sung, mut clips) = (0usize, 0usize);
+        let mut lines = Vec::new();
         for (span, phrases) in prepared {
             let source = spec.sections[&span.label]
                 .melody_from
@@ -473,9 +478,19 @@ impl Session {
             };
 
             let mut moras: std::collections::HashMap<Ticks, &SungMora> = Default::default();
+            let mut section_lines = Vec::new();
             for (slots, phrase) in rhythm.phrases.iter().zip(&phrases) {
                 for ((onset, _), mora) in slots.iter().zip(&phrase.moras) {
                     moras.insert(*onset, mora);
+                }
+                // The song-wide lyrics get the phrase as written, over the notes that sing it.
+                if let Some(&(first, _)) = slots.first() {
+                    let end = slots
+                        .iter()
+                        .map(|(onset, length)| *onset + *length)
+                        .max()
+                        .unwrap_or(first);
+                    section_lines.push((span.start + first, span.start + end, phrase.text.clone()));
                 }
             }
 
@@ -483,6 +498,7 @@ impl Session {
             let Some(clip) = project.add_midi_clip(track, &span.label, span.start, length) else {
                 continue;
             };
+            lines.extend(section_lines);
             if let Some(target) = project.midi_clip_mut(clip) {
                 // The length is the section's, exactly as a band clip's is.
                 target.length_is_explicit = true;
@@ -515,6 +531,9 @@ impl Session {
                 target.name = original.to_owned();
             }
             clips += 1;
+        }
+        for (start, end, text) in lines {
+            project.lyrics.write_line(start, end, &text);
         }
         let backing_tracks: Vec<_> = project.tracks.iter().map(|track| track.id).collect();
         arrange_vocal_backing(project, track, &backing_tracks);
@@ -625,6 +644,7 @@ pub(super) fn read_lyrics(
             continue;
         }
         let mut phrase = LyricPhrase {
+            text: segment.to_string(),
             moras: Vec::new(),
             contours: Vec::new(),
             group_starts: Vec::new(),
@@ -1479,6 +1499,19 @@ mod tests {
         );
         // Two playings of one section are one idea, sung the same both times.
         assert_eq!(clips[0].notes, clips[1].notes);
+
+        // And the song-wide lyrics carry each playing's line, as written, over its notes.
+        let lines = session
+            .project()
+            .lyrics
+            .spans_in(Ticks::ZERO, session.project().end_tick());
+        assert_eq!(lines.len(), 2);
+        assert!(lines.iter().all(|line| line.text == "さくら さいた"));
+        for (line, clip) in lines.iter().zip(clips) {
+            let first = clip.start + clip.notes.iter().map(|n| n.start).min().unwrap();
+            let last = clip.start + clip.notes.iter().map(|n| n.start + n.length).max().unwrap();
+            assert_eq!((line.start, line.end), (first, last));
+        }
 
         // An instrumental spec writes no vocal track at all.
         let plain =

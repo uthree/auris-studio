@@ -7,6 +7,7 @@ pub mod file_jobs;
 pub mod harmony_suggestions;
 mod jobs;
 pub mod layers;
+pub mod lyric_annotation;
 pub mod recipes;
 pub mod vocal_editing;
 pub use jobs::{AgentJob, AgentResult, AgentStep};
@@ -338,6 +339,11 @@ pub enum Command {
         #[serde(default)]
         clear_chords: bool,
     },
+    /// Write the song-wide lyrics annotation: the line sung at each moment, shown as video captions and read back by inspect_project. Required for every song with words, beside the clip lyrics: write_lyrics annotates the lines it fills automatically, and from_vocals rebuilds it from a singer's notes after note edits. Use write for explicit lines in original spelling, placed by 1-based bar/beat from the first sung word to where the line ends. Never changes notes. One Undo.
+    EditLyrics {
+        /// from_vocals, write or clear.
+        operation: lyric_annotation::Operation,
+    },
     /// Discover installed singing voices in pages of 16 without loading their models. Copy a returned voice path into set_singer_voice. Discovery is not validation; no models are downloaded.
     ListVoices {
         /// Zero-based page offset; follow next_offset.
@@ -364,7 +370,7 @@ pub enum Command {
         /// Exact speaker name; omit for the voice's default. Unknown names are refused with available names.
         speaker: Option<String>,
     },
-    /// Write original lyrics (graphemes, not readings) across a singer clip's notes in time order. Keep original kanji/kana spelling in text for display; supply optional kana reading separately for pronunciation, including without a dictionary. The clip name becomes its complete written lyrics without abbreviation. Optional from is a zero-based storage index from read_notes; omit to start at the earliest note. Without reading, kana is split into moras and other text requires the installed Japanese dictionary. Kana is read as a phrase: particles は/へ sing wa/e where they end a space-separated word or the dictionary identifies them, so separate words with spaces (きみは わらう); write わ/え in reading only to force it. Insufficient note slots are refused without editing; later unfilled notes keep their words. Returns filled count, available notes and full clip name; one transaction. Use read_notes to verify before sing.
+    /// Write original lyrics (graphemes, not readings) across a singer clip's notes in time order. Keep original kanji/kana spelling in text for display; supply optional kana reading separately for pronunciation, including without a dictionary. The clip name becomes its complete written lyrics without abbreviation. Optional from is a zero-based storage index from read_notes; omit to start at the earliest note. Without reading, kana is split into moras and other text requires the installed Japanese dictionary. Kana is read as a phrase: particles は/へ sing wa/e where they end a space-separated word or the dictionary identifies them, so separate words with spaces (きみは わらう); write わ/え in reading only to force it. Insufficient note slots are refused without editing; later unfilled notes keep their words. Also writes the filled notes' span into the song-wide lyrics annotation in original spelling, one line per text line when each line's moras fill its notes; edit_lyrics refines it. Returns filled count, available notes, full clip name and annotated lines; one transaction. Use read_notes to verify before sing.
     WriteLyrics {
         /// Stable singer clip ID.
         clip: u64,
@@ -916,14 +922,37 @@ impl Session {
                     .transpose()?
                     .unwrap_or(0);
                 let indices = &indices[first..];
-                let filled = self
-                    .write_lyrics_with_reading(ClipId(clip), indices, &text, reading.as_deref())
-                    .map_err(error)?;
+                self.begin_transaction(crate::Edit::WriteLyrics);
+                let filled = match self.write_lyrics_with_reading(
+                    ClipId(clip),
+                    indices,
+                    &text,
+                    reading.as_deref(),
+                ) {
+                    Ok(filled) => filled,
+                    Err(failure) => {
+                        self.end_transaction();
+                        return Err(error(failure));
+                    }
+                };
+                // The song-wide lyrics follow every lyric an agent writes, so a caption or a
+                // lyric sheet never depends on the agent remembering a second call.
+                let lines = self.written_lyric_lines(
+                    ClipId(clip),
+                    &indices[..filled.min(indices.len())],
+                    &text,
+                    reading.as_deref(),
+                );
+                self.annotate_written_lines(&lines);
+                self.end_transaction();
                 Ok(
-                    serde_json::json!({"filled":filled,"available":indices.len(),"clip_name":self.midi_clip(ClipId(clip)).map(|clip| &clip.name),"unsaved":true})
+                    serde_json::json!({"filled":filled,"available":indices.len(),"clip_name":self.midi_clip(ClipId(clip)).map(|clip| &clip.name),
+                        "lyric_annotation":lines.iter().map(|line| serde_json::json!({"text":line.text,"start_tick":line.start.raw(),"end_tick":line.end.raw()})).collect::<Vec<_>>(),
+                        "unsaved":true})
                         .to_string(),
                 )
             }
+            Command::EditLyrics { operation } => self.agent_edit_lyrics(operation),
             Command::InspectSinger {
                 track,
                 offset,
@@ -1037,7 +1066,7 @@ impl Session {
                     "document_instance":self.document_instance(), "session_revision":self.revision(),
                     "verification_regions":crate::production_record::verification_regions(project),
                     "sample_rate":project.sample_rate,"duration_seconds":project.duration_seconds(), "harmony":project.harmony,
-                    "sections":project.sections, "tempo_map":project.tempo_map, "signatures":project.signatures, "loop_region":project.loop_region, "loop_enabled":project.loop_enabled, "ticks_per_quarter":Ticks::QUARTER.raw()})
+                    "sections":project.sections, "lyrics":lyric_annotation::lyric_lines_json(project), "tempo_map":project.tempo_map, "signatures":project.signatures, "loop_region":project.loop_region, "loop_enabled":project.loop_enabled, "ticks_per_quarter":Ticks::QUARTER.raw()})
                 .to_string())
             }
             Command::InspectAudio {
