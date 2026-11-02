@@ -103,7 +103,7 @@ macOS の ⌘ コマンドはここでは Ctrl（音符を置く ⌘-click も�
 <a id="macos-without-a-full-xcode-install"></a>
 ### 完全な Xcode インストールなしの macOS
 
-macOS ビルドには13.4以降が必要で、付属 Core ML ONNX Runtime に合わせています。ワークスペースの Cargo 設定は両アーキテクチャにこの deployment target を設定し、アプリバンドルと Intel 用ランタイムも同じ最小バージョンを使います。gpui は通常 `xcrun metal` でビルド時にシェーダーをコンパイルしますが、Xcode 内にあるため `xcode-select -p` が Command Line Tools を指すと到達できません。このプロジェクトは `gpui/runtime_shaders` を有効にし、起動時に Metal framework 経由でコンパイルします。設定はすでに `Cargo.toml` にあり、Xcode があっても保持してください。起動時のシェーダーコンパイル1回が必要ですが、15 GBのダウンロードなしにビルドできます。
+macOS ビルドには13.4以降が必要で、付属 Core ML ONNX Runtime に合わせています。ワークスペースの Cargo 設定がこの deployment target を設定し、アプリバンドルも同じ最小バージョンを使います。リリースは Apple Silicon 専用で、Intel Mac には対応していません。gpui は通常 `xcrun metal` でビルド時にシェーダーをコンパイルしますが、Xcode 内にあるため `xcode-select -p` が Command Line Tools を指すと到達できません。このプロジェクトは `gpui/runtime_shaders` を有効にし、起動時に Metal framework 経由でコンパイルします。設定はすでに `Cargo.toml` にあり、Xcode があっても保持してください。起動時のシェーダーコンパイル1回が必要ですが、15 GBのダウンロードなしにビルドできます。
 
 <a id="adding-a-sound-source"></a>
 ## 音源を追加する

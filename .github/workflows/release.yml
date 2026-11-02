@@ -26,12 +26,11 @@ env:
   CARGO_TERM_COLOR: always
   RELEASE_NAME: ${{ inputs.release_tag || github.ref_name }}
 
-# Application builds are deliberately uncached. The pinned Intel ONNX Runtime library is
-# cached separately so a packaging recovery need not rebuild that third-party dependency.
+# Application builds are deliberately uncached.
 jobs:
-  # One universal binary rather than one per architecture: both halves are built on the same
-  # runner and joined with `lipo`, so an Intel Mac and an Apple Silicon one take the same file.
-  # The alternative is a second runner image for x86_64, and those are being retired.
+  # Apple Silicon only. Intel Macs were dropped in 0.19: macOS 26 is the last release Apple ships
+  # for them, the x86_64 runner images are being retired, and `ort` has no Intel prebuilt, so
+  # keeping them meant building ONNX Runtime from source on every release.
   macos:
     name: Build for macOS
     if: github.event_name != 'workflow_dispatch' || inputs.platform == 'all' || inputs.platform == 'macos'
@@ -57,13 +56,12 @@ jobs:
           path: .release-tools
           sparse-checkout: |
             tools/fetch-dictionary.sh
-            tools/build-macos-intel-ort.sh
           sparse-checkout-cone-mode: false
 
       - name: Install the toolchain
         run: |
           rustup toolchain install stable --profile minimal
-          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+          rustup target add aarch64-apple-darwin
 
       # ONNX Runtime's Core ML objects use Apple's availability checks. Rust drives the final
       # linker directly, so carry the compiler runtime that provides those symbols with it.
@@ -72,24 +70,7 @@ jobs:
           clang_runtime="$(xcrun --sdk macosx clang -print-libgcc-file-name)"
           echo "RUSTFLAGS=${RUSTFLAGS:-} -C link-arg=$clang_runtime" >> "$GITHUB_ENV"
 
-      - name: Restore the Intel ONNX Runtime library
-        id: intel-ort
-        uses: actions/cache/restore@v4
-        with:
-          path: ${{ runner.temp }}/auris-intel-ort-lib
-          key: onnxruntime-1.28.0-macos-x86_64-coreml-13.4-static-v4
-
-      - name: Build ONNX Runtime for Intel Macs
-        run: bash .release-tools/tools/build-macos-intel-ort.sh
-
-      - name: Save the Intel ONNX Runtime library
-        if: always() && steps.intel-ort.outputs.cache-hit != 'true' && env.ORT_INTEL_LIB_DIR != ''
-        uses: actions/cache/save@v4
-        with:
-          path: ${{ runner.temp }}/auris-intel-ort-lib
-          key: onnxruntime-1.28.0-macos-x86_64-coreml-13.4-static-v4
-
-      - name: Build both architectures
+      - name: Build the application
         run: |
           if cargo metadata --no-deps --format-version 1 --locked | grep -q '"name":"auris-update-helper"'; then
             AURIS_UPDATE_HELPER=true
@@ -97,20 +78,12 @@ jobs:
             AURIS_UPDATE_HELPER=false
           fi
           echo "AURIS_UPDATE_HELPER=$AURIS_UPDATE_HELPER" >> "$GITHUB_ENV"
-          for target in aarch64-apple-darwin x86_64-apple-darwin; do
-            build_args=(--release --locked --target "$target" -p auris-gpui -p auris-cli -p auris-mcp)
-            if [ "${AURIS_UPDATE_HELPER}" = true ]; then
-              build_args+=(-p auris-update-helper)
-            fi
-            if [ "$target" = x86_64-apple-darwin ] && [ -n "${ORT_INTEL_LIB_DIR:-}" ]; then
-              ORT_LIB_PATH="$ORT_INTEL_LIB_DIR" cargo build "${build_args[@]}"
-            else
-              cargo build "${build_args[@]}"
-            fi
-          done
-          arch -x86_64 target/x86_64-apple-darwin/release/auris help > /dev/null
-          native_target="$(rustc -vV | sed -n 's/^host: //p')"
-          echo "AURIS_CLI=$PWD/target/$native_target/release/auris" >> "$GITHUB_ENV"
+          build_args=(--release --locked --target aarch64-apple-darwin -p auris-gpui -p auris-cli -p auris-mcp)
+          if [ "${AURIS_UPDATE_HELPER}" = true ]; then
+            build_args+=(-p auris-update-helper)
+          fi
+          cargo build "${build_args[@]}"
+          echo "AURIS_CLI=$PWD/target/aarch64-apple-darwin/release/auris" >> "$GITHUB_ENV"
 
       # After the build, because the scripts ask the command line tool what to fetch — the
       # manifests live in `auris_session::library` and are not duplicated in the scripts.
@@ -125,7 +98,7 @@ jobs:
       - name: Assemble the archive
         run: |
           version="${RELEASE_NAME#v}"
-          stage="auris-studio-${RELEASE_NAME}-macos-universal"
+          stage="auris-studio-${RELEASE_NAME}-macos-aarch64"
           app="$stage/Auris Studio.app"
           mkdir -p "$app/Contents/MacOS"
 
@@ -139,9 +112,7 @@ jobs:
             binaries+=(auris-update-helper)
           fi
           for binary in "${binaries[@]}"; do
-            lipo -create -output "$app/Contents/MacOS/$binary" \
-              "target/aarch64-apple-darwin/release/$binary" \
-              "target/x86_64-apple-darwin/release/$binary"
+            cp "target/aarch64-apple-darwin/release/$binary" "$app/Contents/MacOS/$binary"
           done
           ln -s "Auris Studio.app/Contents/MacOS/auris" "$stage/auris"
           ln -s "Auris Studio.app/Contents/MacOS/auris-mcp" "$stage/auris-mcp"
@@ -173,7 +144,7 @@ jobs:
 
       - name: Verify the disk image
         run: |
-          stage="auris-studio-${RELEASE_NAME}-macos-universal"
+          stage="auris-studio-${RELEASE_NAME}-macos-aarch64"
           mount="$RUNNER_TEMP/auris-dmg-verify"
           mkdir -p "$mount"
           hdiutil attach "$stage.dmg" -readonly -nobrowse -mountpoint "$mount"
@@ -185,8 +156,8 @@ jobs:
         with:
           name: macos
           path: |
-            auris-studio-*-macos-universal.tar.gz
-            auris-studio-*-macos-universal.dmg
+            auris-studio-*-macos-aarch64.tar.gz
+            auris-studio-*-macos-aarch64.dmg
           if-no-files-found: error
 
   windows:
@@ -480,9 +451,9 @@ jobs:
 
           | File | What it holds |
           | --- | --- |
-          | `…-macos-universal.dmg` | Drag `Auris Studio.app` to Applications; CLI and MCP are inside the app |
+          | `…-macos-aarch64.dmg` | Drag `Auris Studio.app` to Applications; CLI and MCP are inside the app |
           | `…-windows-x86_64-setup.exe` | Per-user installer for the desktop, CLI and MCP |
-          | `…-macos-universal.tar.gz` | Portable app, CLI and MCP for Apple Silicon and Intel |
+          | `…-macos-aarch64.tar.gz` | Portable app, CLI and MCP for Apple Silicon (Intel Macs are no longer supported) |
           | `…-windows-x86_64.zip` | Portable desktop, CLI and MCP executables |
           | `…-linux-x86_64.tar.gz` | the `auris` command line tool only |
 
