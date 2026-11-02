@@ -143,7 +143,8 @@ FreezeRecipe drops a recipe; BakePerformance explicitly writes performance into 
 edit_clip_curve reads/merges/replaces/clears authored bend or MIDI controllers; sustain is controller 64.
 Writes require the revision returned by the lane read. Controller values are 0..1; bend uses semitones.
 edit_timeline reads or edits tempo/meter points without moving existing notes.
-Arrangement bar ranges start at 1; note/curve ticks start at 0 relative to their clip.
+Arrangement bar ranges start at 1. Only notes use bar/beat; clip, timeline and import positions are
+absolute ticks (960 per quarter note), curve points are ticks from 0 relative to their clip.
 
 mixer_graph has one operation object with an action tag. Read first and copy stable node IDs.
 set_strip changes only supplied gain_db/pan/mute/solo. set_outputs atomically replaces output destinations;

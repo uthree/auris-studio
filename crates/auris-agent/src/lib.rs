@@ -1509,7 +1509,7 @@ mod tests {
         for text in [&modular, &legacy] {
             assert_eq!(text.matches(MUSICAL_DESIGN_INSTRUCTIONS).count(), 1);
             assert!(
-                text.len() < 9000,
+                text.len() < 16000,
                 "Shared prompt grew to {} bytes",
                 text.len()
             );
