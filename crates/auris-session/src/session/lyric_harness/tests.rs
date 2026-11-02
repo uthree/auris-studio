@@ -140,6 +140,34 @@ fn readings_reject_ambiguous_addresses_and_phrase_breaks() {
 }
 
 #[test]
+fn a_zero_based_phrase_is_refused_with_the_numbering_spelt_out() {
+    // Models number from zero more often than not; the refusal has to say which entry was
+    // wrong and where numbering starts, or the retry guesses again.
+    let session = session();
+    let reading = |phrase| PhraseReading {
+        phrase,
+        kana: "あ".into(),
+    };
+    let error = session
+        .analyze_lyrics("あ\nい", &[reading(1), reading(0)])
+        .unwrap_err();
+    assert!(error.contains("readings[1].phrase is 0"), "{error}");
+    assert!(error.contains("first line is phrase 1"), "{error}");
+    let error = session
+        .analyze_lyrics_fitted(
+            "あ\nい",
+            &[],
+            &[PhraseFit {
+                phrase: 3,
+                notes: 1,
+            }],
+        )
+        .unwrap_err();
+    assert!(error.contains("fit[0].phrase is 3"), "{error}");
+    assert!(error.contains("2 phrases"), "{error}");
+}
+
+#[test]
 fn diagnosis_reports_each_phrase_even_when_total_moras_match() {
     let session = session();
     let spec = verses("きっとあう、あさがきたよ");

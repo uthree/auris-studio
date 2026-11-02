@@ -124,7 +124,7 @@ pub enum Command {
         /// Inspect, validate or apply. Copy stable clip IDs and native parameter addresses from inspection.
         operation: crate::arrangement::Operation,
     },
-    /// Analyze Japanese lyrics into source-located phrases, readings and moras without editing. Each mora's slot is note, hold (a long vowel, ー or the second あ of さあ, that may end the previous note) or rest (っ, sung as a rest after the previous note). Each phrase reports min_notes..max_notes and note_reading, the reading cut into notes with '|' for write_lyrics. Pass fit to check phrases against the note count of their melody (字余り/字足らず). Explicit kana readings are diagnostic-only; use repair_lyrics to apply a pronunciation to existing note slots.
+    /// Analyze Japanese lyrics into source-located phrases, readings and moras without editing. Each mora's slot is note, hold (a long vowel, ー or the second あ of さあ, that may end the previous note) or rest (っ, sung as a rest after the previous note). Each phrase reports min_notes..max_notes and note_reading, the reading cut into notes with '|' for write_lyrics. Pass fit to check phrases against the note count of their melody (字余り/字足らず). readings and fit number phrases from 1: the first line is phrase 1. Explicit kana readings are diagnostic-only; use repair_lyrics to apply a pronunciation to existing note slots.
     AnalyzeLyrics {
         /// Original Japanese lyric, up to 65536 UTF-8 bytes.
         text: String,

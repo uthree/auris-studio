@@ -23,7 +23,9 @@ const MAX_PHRASES: usize = 512;
 #[derive(Clone, Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PhraseReading {
-    /// One-based phrase number, after splitting at line breaks and sentence punctuation.
+    /// Phrase number counted from 1 (the first line is 1, not 0), after splitting at line
+    /// breaks and sentence punctuation.
+    #[schemars(range(min = 1))]
     pub phrase: usize,
     /// Kana pronunciation; does not replace the original text or persist to a project.
     pub kana: String,
@@ -33,7 +35,9 @@ pub struct PhraseReading {
 #[derive(Clone, Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PhraseFit {
-    /// One-based phrase number, after splitting at line breaks and sentence punctuation.
+    /// Phrase number counted from 1 (the first line is 1, not 0), after splitting at line
+    /// breaks and sentence punctuation.
+    #[schemars(range(min = 1))]
     pub phrase: usize,
     /// Notes available to the phrase, 1..=256.
     #[schemars(range(min = 1, max = 256))]
@@ -259,6 +263,21 @@ fn delimiter(c: char) -> bool {
     matches!(c, '\n' | '\r' | '、' | '。' | '！' | '？' | '!' | '?')
 }
 
+/// Refuses a phrase number outside 1..=found, saying which entry and what the numbers are.
+fn phrase_number(field: &str, index: usize, phrase: usize, found: usize) -> Result<(), String> {
+    if phrase == 0 {
+        return Err(format!(
+            "{field}[{index}].phrase is 0; phrases are numbered from 1, so the first line is phrase 1"
+        ));
+    }
+    if phrase > found {
+        return Err(format!(
+            "{field}[{index}].phrase is {phrase}, but the text has {found} phrases (numbered 1..={found}, split at line breaks and sentence punctuation)"
+        ));
+    }
+    Ok(())
+}
+
 /// Source locations use Unicode scalars; dictionary segmentation never fabricates spans.
 fn source_phrases(text: &str) -> Vec<(usize, usize, usize, &str)> {
     let mut result = Vec::new();
@@ -302,28 +321,39 @@ impl Session {
         if sources.len() > MAX_PHRASES {
             return Err("Lyrics are limited to 512 musical phrases".into());
         }
+        let phrases_found = sources.len();
         let mut overrides = std::collections::BTreeMap::new();
-        for reading in readings {
-            if reading.phrase == 0
-                || reading.phrase > sources.len()
-                || overrides
-                    .insert(reading.phrase, reading.kana.as_str())
-                    .is_some()
-                || reading.kana.len() > MAX_TEXT_BYTES
+        for (index, reading) in readings.iter().enumerate() {
+            phrase_number("readings", index, reading.phrase, phrases_found)?;
+            if overrides
+                .insert(reading.phrase, reading.kana.as_str())
+                .is_some()
+            {
+                return Err(format!(
+                    "readings[{index}] names phrase {} a second time",
+                    reading.phrase
+                ));
+            }
+            if reading.kana.len() > MAX_TEXT_BYTES
                 || reading.kana.chars().any(delimiter)
                 || split_kana_lyric(&reading.kana).is_none_or(|m| m.is_empty())
             {
-                return Err("Readings need unique existing one-based phrases and nonempty kana without phrase breaks".into());
+                return Err(format!(
+                    "readings[{index}] needs nonempty kana without line breaks or sentence punctuation"
+                ));
             }
         }
         let mut targets = std::collections::BTreeMap::new();
-        for fit in fits {
-            if fit.phrase == 0
-                || fit.phrase > sources.len()
-                || !(1..=256).contains(&fit.notes)
-                || targets.insert(fit.phrase, fit.notes).is_some()
-            {
-                return Err("Fits need unique existing one-based phrases and 1..=256 notes".into());
+        for (index, fit) in fits.iter().enumerate() {
+            phrase_number("fit", index, fit.phrase, phrases_found)?;
+            if !(1..=256).contains(&fit.notes) {
+                return Err(format!("fit[{index}] needs 1..=256 notes"));
+            }
+            if targets.insert(fit.phrase, fit.notes).is_some() {
+                return Err(format!(
+                    "fit[{index}] names phrase {} a second time",
+                    fit.phrase
+                ));
             }
         }
         let mut phrases = Vec::with_capacity(sources.len());
