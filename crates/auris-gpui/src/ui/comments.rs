@@ -250,7 +250,11 @@ impl AurisApp {
             let Some(track) = self.project().track(row.track) else {
                 continue;
             };
-            let top = row.top - self.lane_scroll + row.height - TAG_HEIGHT - px(3.0);
+            // Above the linter's strip along the foot of the lane, so both stay in reach.
+            let top = row.top - self.lane_scroll + row.height
+                - TAG_HEIGHT
+                - crate::ui::lint::MARK_STRIP
+                - px(2.0);
             for comment in &track.comments {
                 let left = self.timeline.tick_to_x(comment.at);
                 tags.push(self.comment_tag(CommentHost::Track(track.id), comment, left, top, cx));

@@ -323,6 +323,31 @@
 //! measures the actual mix or a selected track's solo routing. A fixed colour scale preserves
 //! gain differences. These representations intentionally answer different questions.
 //!
+//! # The music linter
+//!
+//! [`crate::lint`] finds problems with one right answer — a dozen notes struck on one tick, a
+//! held minor second, a sustained note outside both the written key and chord, a duplicate
+//! note, chords sounding under no chord symbol, a mix that clips, a track that plays notes and
+//! makes no sound, a lone note rendered off its written pitch — and leaves everything
+//! with more than one answer to people and agents. Score rules read the document
+//! ([`crate::lint::lint_score`]); audio rules render the mix and every sounding track once on a
+//! worker ([`crate::lint::AudioLintJob`]). A finding carries a [`crate::lint::Fix`] only when the
+//! repair is obvious, and [`crate::Session::apply_lint_fix`] applies it as one Undo step at the
+//! revision it was found at, refusing a stale one.
+//!
+//! The desktop re-lints the score after every edit and runs the audio pass in the background
+//! only after an edit, once the document holds still and nothing else is playing, rendering,
+//! singing or talking to a model. The agent lints only when it calls `lint_project` (with
+//! `audio=true` for the render), and applies fixes by id through `apply_lint_fixes`. A clean
+//! report is a mechanical check, never a claim about musical quality.
+//!
+//! What a song does on purpose is recorded in the document, not in anyone's settings:
+//! [`auris_core::project::LintSuppression`] names one rule or every rule, over the whole song,
+//! a track, a clip or every section with one label, and [`crate::Session::suppress_lint`] adds
+//! one as an Undo step. Suppressed findings are counted, not reported, at both doors. Ignoring
+//! changes what is shown and not what sounds, so it carries the last audio pass forward rather
+//! than asking for another render.
+//!
 //! # Auditory feedback on unsaved music
 //!
 //! The live `listen` operation captures the open document through

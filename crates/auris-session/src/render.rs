@@ -997,6 +997,57 @@ impl RenderJob {
     }
 }
 
+impl RenderJob {
+    /// Plays the one graph once per pass and hands every rendered block to `sink`.
+    ///
+    /// A pass of `None` hears every track — the mix with solos ignored, which is what a check of
+    /// the song wants rather than what somebody happens to be monitoring — and `Some(track)` hears
+    /// that track as its stem would. The graph is built once, for the reason
+    /// [`Self::render_stems`] gives. Returns the rate the passes ran at.
+    pub(crate) fn render_passes(
+        &mut self,
+        passes: &[Option<TrackId>],
+        options: &OfflineOptions,
+        progress: &mut RenderProgress<'_>,
+        mut sink: impl FnMut(usize, &AudioBuffer),
+    ) -> Result<f64, SessionError> {
+        let rate = options.sample_rate.unwrap_or(self.project.sample_rate);
+        self.check_hosted_rate(rate)?;
+        let mut bank = bank_at_rate(&self.bank, rate);
+        fill_stretches(&self.project, &mut bank);
+        let mut render = OfflineRender::new(
+            &self.project,
+            &bank,
+            &self.registry,
+            &mut self.placed,
+            &mut self.instruments,
+            options,
+        )?;
+        let span = 1.0 / passes.len().max(1) as f32;
+        for (index, pass) in passes.iter().enumerate() {
+            match pass {
+                Some(track) => render.set_audible(&self.project.soloed_alone(*track)),
+                None => render.set_audible(&vec![true; self.project.tracks.len()]),
+            }
+            let streamed = progress.within(index as f32 * span, span, |progress| {
+                render.render_streamed(progress, |block| {
+                    sink(index, block);
+                    Ok::<(), std::convert::Infallible>(())
+                })
+            });
+            match streamed {
+                Ok(()) => {}
+                Err(OfflineStreamError::Render(error)) => return Err(error.into()),
+                Err(OfflineStreamError::Sink(never)) => match never {},
+            }
+            if progress.is_cancelled() {
+                break;
+            }
+        }
+        Ok(render.sample_rate())
+    }
+}
+
 impl std::fmt::Debug for RenderJob {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RenderJob")

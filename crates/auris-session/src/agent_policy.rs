@@ -226,6 +226,8 @@ pub const OPERATIONS: &[&str] = &[
     "edit_project.mixer_graph.set_strip",
     "edit_project.inspect",
     "edit_project.inspect_audio",
+    "edit_project.lint_project",
+    "edit_project.apply_lint_fixes",
     "edit_project.listen",
     "edit_project.checkpoints",
     "edit_project.import_audio",

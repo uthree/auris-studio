@@ -158,6 +158,10 @@ pub enum SessionError {
     #[error("no clip with id {0}")]
     UnknownClip(u64),
 
+    /// A lint fix was found at another revision, or has no fix to apply; lint again.
+    #[error("the document changed since this problem was found; lint again before fixing it")]
+    LintStale,
+
     /// The clip exists but holds no note at that index.
     ///
     /// Most many-note commands quietly skip indices a stale selection no longer covers; the

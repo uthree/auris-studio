@@ -8,6 +8,7 @@ pub mod file_jobs;
 pub mod harmony_suggestions;
 mod jobs;
 pub mod layers;
+mod lint;
 pub mod lyric_annotation;
 pub mod recipes;
 pub mod vocal_editing;
@@ -40,6 +41,10 @@ pub enum HistoryOperation {
 }
 mod vocals;
 pub use vocals::{VocalJob, VocalResult, VocalStep};
+fn lint_limit() -> usize {
+    32
+}
+
 fn sound_search_limit() -> usize {
     10
 }
@@ -419,6 +424,31 @@ pub enum Command {
     },
     /// Read the current arrangement and stable track/clip IDs. Use read_notes for note data.
     Inspect {},
+    /// Lint the song for mechanical problems with one right answer: too many notes struck at once, bars too dense to hear, held minor seconds, muddy low seconds, held notes outside both the written key and chord, avoid notes, duplicate or inaudible notes, impossible pitches, and bars that sound chords with no chord written (fix: the chords the notes spell, when one per bar is unambiguous). It also flags a singer asked for two notes at once and sung notes with no lyric. audio=true also renders the mix and each sounding track (seconds of work) to find clipping, a mix far too loud or quiet, tracks that play notes but make no sound, single notes that sound off their written pitch or with no pitch, and stretches that cancel when summed to mono. Returns diagnostics with stable ids, ticks/bars, note {clip,index} refs and an obvious fix when one exists; pass those ids to apply_lint_fixes. No edits. Passing lint is not musical quality, and a finding may be deliberate: judge it against the user's intent before changing anything.
+    LintProject {
+        /// Also render and measure the audio. Default false.
+        #[serde(default)]
+        audio: bool,
+        /// Optional first one-based bar to report.
+        #[schemars(range(min = 1))]
+        start_bar: Option<u32>,
+        /// Optional number of bars to report from start_bar.
+        #[schemars(range(min = 1))]
+        bars: Option<u32>,
+        /// Zero-based first diagnostic, for paging.
+        #[serde(default)]
+        offset: usize,
+        /// Page size, 1..64; default 32.
+        #[serde(default = "lint_limit")]
+        #[schemars(range(min = 1, max = 64))]
+        limit: usize,
+    },
+    /// Apply the obvious fixes of diagnostics returned by lint_project, by id, as one Undo step. Only diagnostics that still exist in the current document are fixed; audio diagnostics need a lint_project audio=true at the current revision. Returns what was applied and what was not. Diagnostics without a fix need a musical decision: edit the notes yourself instead.
+    ApplyLintFixes {
+        /// 1..64 diagnostic ids from lint_project.
+        #[schemars(length(min = 1, max = 64))]
+        ids: Vec<String>,
+    },
     /// Read bounded scan/measurement failures after searching. Does not rescan.
     InstrumentDiagnostics {
         /// Zero-based first diagnostic.
@@ -603,6 +633,7 @@ impl Command {
             Self::EditTimeline { operation } => !operation.is_read_only(),
             Self::Layer { operation } => !operation.is_read_only(),
             Self::Inspect {}
+            | Self::LintProject { .. }
             | Self::SuggestIssueReport { .. }
             | Self::OfferChoices { .. }
             | Self::ExecutionTrace { .. }
@@ -646,6 +677,7 @@ impl Command {
                 | Self::Preview { .. }
                 | Self::ExportMidi { .. }
                 | Self::VerifyRender { .. }
+                | Self::LintProject { audio: true, .. }
                 | Self::ImportAudio { .. }
                 | Self::ImportMidi { .. }
                 | Self::Checkpoints { .. }
@@ -974,6 +1006,7 @@ impl Session {
             | Command::Preview { .. }
             | Command::ExportMidi { .. }
             | Command::VerifyRender { .. }
+            | Command::LintProject { audio: true, .. }
             | Command::ImportAudio { .. }
             | Command::ImportMidi { .. }
             | Command::Checkpoints { .. }
@@ -1041,6 +1074,17 @@ impl Session {
             Command::MixerGraph { operation } => self
                 .apply_mixer_graph(&operation)
                 .map(|report| report.to_string()),
+            Command::LintProject {
+                audio: false,
+                start_bar,
+                bars,
+                offset,
+                limit,
+            } => {
+                let request = lint::LintRequest::new(start_bar, bars, offset, limit)?;
+                self.agent_lint_report(&request)
+            }
+            Command::ApplyLintFixes { ids } => self.agent_apply_lint_fixes(&ids),
             Command::InstrumentDiagnostics { offset, limit } => self
                 .sound_library_job(plugin_paths)
                 .diagnostics(offset, limit),

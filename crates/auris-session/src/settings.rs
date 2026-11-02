@@ -701,6 +701,12 @@ pub struct Settings {
     /// On unless turned off. The snapshot never replaces the user-chosen project file; see
     /// [`should_autosave`](crate::session::should_autosave).
     pub autosave: bool,
+    /// Let the editor render and measure the song in the background after an edit, for the
+    /// music linter's audio rules.
+    ///
+    /// On by default. It runs only once the document has held still after a change and nothing
+    /// else is playing or rendering; see [`crate::lint`].
+    pub background_lint: bool,
     /// Check for and install desktop updates automatically when a release is available.
     ///
     /// On by default. Older settings files omit this field and receive the default so the
@@ -779,6 +785,7 @@ impl Default for Settings {
             // and a settings file written before this field existed is filled in from exactly
             // this value.
             autosave: true,
+            background_lint: true,
             auto_update: true,
             snap_note_lengths: true,
             piano_roll_grid: PianoRollGrid::default(),

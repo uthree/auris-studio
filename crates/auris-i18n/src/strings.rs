@@ -1769,6 +1769,8 @@ strings! {
     EditSetSingerVoice { en: "choosing a voice", ja: "声の選択" }
     EditSetSingerSpeaker { en: "choosing a speaker", ja: "話者の選択" }
     EditSing { en: "the sung take", ja: "歌唱テイク" }
+    EditLintFix { en: "fixing a problem", ja: "問題の修正" }
+    EditLintSuppression { en: "ignoring a problem", ja: "問題の無視設定" }
     EditAddEffect { en: "adding an effect", ja: "エフェクトの追加" }
     EditRemoveEffect { en: "removing an effect", ja: "エフェクトの削除" }
     EditBypassEffect { en: "bypassing an effect", ja: "エフェクトのバイパス" }
@@ -2230,6 +2232,97 @@ new のオプション
         --force                   同名のプロジェクトフォルダがあっても書き出す"
     }
     LogPanel { en: "Log", ja: "ログ" }
+    ProblemsTab { en: "Problems", ja: "問題" }
+    ProblemsLogTab { en: "Log", ja: "ログ" }
+    ProblemsEmpty { en: "No problems found.", ja: "問題は見つかりませんでした。" }
+    ProblemsAnalyzeAudio { en: "Check the sound", ja: "音声も解析" }
+    ProblemsAnalyzing { en: "Checking the sound…", ja: "音声を解析中…" }
+    ProblemsBackground { en: "Check in the background", ja: "バックグラウンドで解析" }
+    ProblemsBackgroundTip { en: "After an edit, once the song has held still and nothing is playing, render it quietly and check clipping, loudness and silent tracks", ja: "編集後、曲が落ち着いて再生も書き出しもしていないときに、裏でレンダリングしてクリップ・音量・鳴っていないトラックを確認します" }
+    ProblemsHostedManual { en: "Plugins are in use, so the sound is checked only when asked.", ja: "プラグインを使っているため、音声の解析はボタンを押したときだけ行います。" }
+    ProblemsAudioPending { en: "The sound has not been checked since the last edit.", ja: "最後の編集以降、音声はまだ解析していません。" }
+    ProblemsAudioSummary { en: "Mix {lufs} LUFS · peak {peak} dBFS", ja: "ミックス {lufs} LUFS・ピーク {peak} dBFS" }
+    ProblemsAudioSilent { en: "The mix is silent", ja: "ミックスは無音です" }
+    ProblemsAudioFailed { en: "Could not check the sound: {error}", ja: "音声を解析できませんでした：{error}" }
+    ProblemsSummary { en: "{errors} errors · {warnings} warnings · {infos} notes", ja: "エラー {errors}・警告 {warnings}・情報 {infos}" }
+    ProblemsFix { en: "Fix", ja: "修正" }
+    ProblemsFixAll { en: "Fix all obvious", ja: "自明なものをまとめて修正" }
+    ProblemsAskAgent { en: "Ask the agent", ja: "エージェントに依頼" }
+    ProblemsShowInPanel { en: "Show in Problems", ja: "問題パネルで表示" }
+    ProblemsMix { en: "Mix", ja: "ミックス" }
+    ProblemsLocation { en: "bar {bar}", ja: "{bar}小節目" }
+    ProblemsFixed { en: "Fixed {count} problems", ja: "{count}件の問題を修正しました" }
+    ProblemsIgnore { en: "Ignore…", ja: "無視…" }
+    ProblemsIgnoreRuleEverywhere { en: "Ignore “{rule}” everywhere", ja: "「{rule}」を曲全体で無視" }
+    ProblemsIgnoreRuleTrack { en: "Ignore “{rule}” on {track}", ja: "「{rule}」を{track}で無視" }
+    ProblemsIgnoreRuleClip { en: "Ignore “{rule}” in {clip}", ja: "「{rule}」を{clip}で無視" }
+    ProblemsIgnoreRuleSection { en: "Ignore “{rule}” in every {section}", ja: "「{rule}」をすべての{section}で無視" }
+    ProblemsIgnoreTrack { en: "Ignore every problem on {track}", ja: "{track}の問題をすべて無視" }
+    ProblemsIgnoreClip { en: "Ignore every problem in {clip}", ja: "{clip}の問題をすべて無視" }
+    ProblemsIgnoreSection { en: "Ignore every problem in every {section}", ja: "すべての{section}の問題を無視" }
+    ProblemsIgnored { en: "{count} ignored", ja: "{count}件を無視中" }
+    ProblemsIgnoreRules { en: "Ignore rules ({count})", ja: "無視の設定（{count}）" }
+    ProblemsIgnoreRulesTip { en: "What this project has asked not to be told about. Saved with the project; removing one shows its problems again.", ja: "このプロジェクトで表示しないことにした問題です。プロジェクトに保存され、削除するとその問題が再び表示されます。" }
+    ProblemsUnignore { en: "Show again", ja: "再表示" }
+    ProblemsEveryRule { en: "Every problem", ja: "すべての問題" }
+    ProblemsScopeSong { en: "everywhere", ja: "曲全体" }
+    ProblemsScopeTrack { en: "on {track}", ja: "{track}" }
+    ProblemsScopeClip { en: "in {clip}", ja: "{clip}" }
+    ProblemsScopeSection { en: "in every {section}", ja: "すべての{section}" }
+    ProblemsDeleted { en: "(deleted)", ja: "（削除済み）" }
+    ProblemsThisClip { en: "this clip", ja: "このクリップ" }
+    LintNameCrowdedOnset { en: "Too many notes at once", ja: "同時発音が多すぎる" }
+    LintNameDenseNotes { en: "Too dense", ja: "音符が密集しすぎ" }
+    LintNameHarshInterval { en: "Harsh interval", ja: "耳障りな音程" }
+    LintNameMuddyLowInterval { en: "Muddy low interval", ja: "低音域の濁り" }
+    LintNameOutOfKey { en: "Outside key and chord", ja: "キー・コード外の音" }
+    LintNameAvoidNote { en: "Avoid note", ja: "アボイドノート" }
+    LintNameMissingChord { en: "No chord written", ja: "コード未記入" }
+    LintNameSingerOverlap { en: "Overlapping sung notes", ja: "歌の音の重なり" }
+    LintNameMissingLyric { en: "No lyric", ja: "歌詞なし" }
+    LintNamePitchMismatch { en: "Off pitch", ja: "ピッチのずれ" }
+    LintNameUnpitched { en: "No pitch detected", ja: "ピッチ検出不可" }
+    LintNamePhaseCancellation { en: "Cancels in mono", ja: "モノラルで打ち消し" }
+    LintNameDuplicateNote { en: "Duplicate note", ja: "重複した音符" }
+    LintNameInaudibleVelocity { en: "Inaudible velocity", ja: "聞こえないベロシティ" }
+    LintNameExtremePitch { en: "Extreme pitch", ja: "極端な音高" }
+    LintNameClipping { en: "Clipping", ja: "クリッピング" }
+    LintNameTooLoud { en: "Too loud", ja: "音量が大きすぎ" }
+    LintNameTooQuiet { en: "Too quiet", ja: "音量が小さすぎ" }
+    LintNameSilentTrack { en: "Silent track", ja: "鳴っていないトラック" }
+    ProblemsAgentPrompt { en: "The music linter found this problem: \"{problem}\" ({where}; rule {rule}, id {id}, ticks {start}–{end}). Check it with lint_project, fix it in a way that keeps the song's intent, then lint again and tell me briefly what you changed.", ja: "音楽Linterが次の問題を検出しました：「{problem}」（{where}・ルール {rule}・id {id}・tick {start}〜{end}）。lint_project で確認し、曲の意図を保つ方法で修正してから、もう一度 lint で確かめて、何を変えたか簡潔に教えてください。" }
+    LintSeverityError { en: "Error", ja: "エラー" }
+    LintSeverityWarning { en: "Warning", ja: "警告" }
+    LintSeverityInfo { en: "Info", ja: "情報" }
+    LintCrowdedOnset { en: "{value} notes start at the same moment (more than {limit})", ja: "同じタイミングで{value}音が鳴り始めています（上限{limit}音）" }
+    LintDenseNotes { en: "{value} attacks per beat: too dense to hear separately (limit {limit})", ja: "1拍あたり{value}回の発音で、音符の密度が高すぎます（上限{limit}）" }
+    LintHarshInterval { en: "{pitches} are held a semitone apart and clash", ja: "{pitches}が半音でぶつかったまま伸びています" }
+    LintMuddyLowInterval { en: "{pitches} sit a second apart in the bass and sound muddy", ja: "{pitches}が低音域で2度で重なり、濁って聞こえます" }
+    LintOutOfKey { en: "{pitches} is in neither the key nor the chord", ja: "{pitches}はキーにもコードにも含まれない音です" }
+    LintAvoidNote { en: "{pitches} is an avoid note against the chord", ja: "{pitches}はコードに対するアボイドノートです" }
+    LintMissingChord { en: "{value} bar(s) play chords, but no chord is written over them", ja: "{value}小節で和音が鳴っていますが、コードが書かれていません" }
+    LintSingerOverlap { en: "{pitches} overlap on a singer track; a voice sings one note at a time", ja: "シンガートラックで{pitches}が重なっています。声は一度に一音しか歌えません" }
+    LintMissingLyric { en: "{pitches} has no lyric and is sung as a stock vowel", ja: "{pitches}に歌詞がなく、仮の母音で歌われます" }
+    LintMissingLyricClip { en: "None of this clip's {value} sung notes has a lyric", ja: "このクリップの{value}音すべてに歌詞がありません" }
+    LintPitchMismatch { en: "{pitches} sounds {value} cents off its written pitch (octaves aside)", ja: "{pitches}が楽譜の音高から{value}セントずれて鳴っています（オクターブ違いは除く）" }
+    LintUnpitched { en: "{pitches} is sung with no detectable pitch", ja: "{pitches}の歌声からピッチが検出できません" }
+    LintUnpitchedTrack { en: "{value}% of this track's single notes render with no detectable pitch", ja: "このトラックの単音の{value}%でピッチが検出できません（打楽器なら問題ありません）" }
+    LintPhaseCancellation { en: "Summed to mono the mix loses {value} dB here: left and right cancel", ja: "モノラルにすると{value} dB下がります。左右の音が打ち消し合っています" }
+    LintDuplicateNote { en: "{pitches} is written twice on top of itself", ja: "{pitches}が同じ位置に重複して書かれています" }
+    LintInaudibleVelocity { en: "{pitches} is too soft to hear (velocity {value})", ja: "{pitches}はベロシティ{value}で、小さすぎて聞こえません" }
+    LintExtremePitch { en: "{pitches} is outside any instrument's range", ja: "{pitches}は楽器や声の音域から外れています" }
+    LintClipping { en: "The mix clips ({value} dBFS)", ja: "ミックスがクリップしています（{value} dBFS）" }
+    LintTooLoud { en: "The mix is too loud ({value} LUFS, above {limit})", ja: "ミックスの音量が大きすぎます（{value} LUFS、上限 {limit} LUFS）" }
+    LintTooQuiet { en: "The mix is too quiet ({value} LUFS, below {limit})", ja: "ミックスの音量が小さすぎます（{value} LUFS、下限 {limit} LUFS）" }
+    LintSilentTrack { en: "Notes are playing but no sound comes out", ja: "演奏しているのに音が出ていません" }
+    LintFixRemove { en: "Remove the duplicate", ja: "重複を削除" }
+    LintFixTrim { en: "Shorten the earlier note", ja: "前のノートを短くする" }
+    LintFixPitch { en: "Move to {pitch}", ja: "{pitch}に移動" }
+    LintFixVelocity { en: "Raise the velocity", ja: "ベロシティを上げる" }
+    LintFixChords { en: "Write {chords}", ja: "{chords} を記入" }
+    LintFixFader { en: "Reset the fader to 0 dB", ja: "フェーダーを0 dBに戻す" }
+    LintFixNormalize { en: "Normalize the mix", ja: "ミックスをノーマライズ" }
+    ErrorLintStale { en: "the song changed since this problem was found; it has been checked again", ja: "問題を見つけた後に曲が変更されたため、もう一度確認しました" }
     LogClear { en: "Clear", ja: "消去" }
     LogCopyAll { en: "Copy all", ja: "すべてコピー" }
     LogEmpty { en: "Nothing has been logged.", ja: "ログはまだありません。" }

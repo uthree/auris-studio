@@ -48,6 +48,14 @@ impl MenuCommand {
 /// What choosing a menu item does.
 #[derive(Clone, Debug, PartialEq)]
 pub enum MenuCommand {
+    /// Applies the obvious fix of the linter problem with this id.
+    LintFix(String),
+    /// Hands the linter problem with this id to the agent.
+    LintAskAgent(String),
+    /// Opens the Problems tab on the linter problem with this id.
+    LintShow(String),
+    /// Adds this ignore rule to the project.
+    LintIgnore(auris_session::lint::LintSuppression),
     /// Rename an exact project-local song conversation.
     WorkshopThreadRename(String),
     /// Archive or restore an exact project-local song conversation.
@@ -846,6 +854,15 @@ impl AurisApp {
             return;
         }
         match command {
+            MenuCommand::LintFix(id) => self.apply_lint(&id, cx),
+            MenuCommand::LintAskAgent(id) => self.ask_agent_about_lint(&id, cx),
+            MenuCommand::LintIgnore(suppression) => self.lint_ignore(suppression, cx),
+            MenuCommand::LintShow(id) => {
+                self.lint.tab = crate::ui::lint::LogTab::Problems;
+                self.show_panel(crate::dock::Panel::Log);
+                self.reveal_lint(&id);
+                cx.notify();
+            }
             MenuCommand::CopyAgentMarkdown(text) => {
                 cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
             }
