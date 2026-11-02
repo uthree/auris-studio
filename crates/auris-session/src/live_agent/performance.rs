@@ -69,6 +69,7 @@ fn family(stage: &NoteTransform) -> Option<ResetStage> {
     Some(match stage {
         NoteTransform::Swing { .. } => ResetStage::Swing,
         NoteTransform::Gate { .. } => ResetStage::Gate,
+        NoteTransform::Sustain { .. } => ResetStage::Sustain,
         NoteTransform::Expression { .. } | NoteTransform::Humanize { .. } => ResetStage::Expression,
         NoteTransform::Strum { .. } | NoteTransform::Stroke { .. } => ResetStage::Strum,
         NoteTransform::Ghost { .. } | NoteTransform::Brush { .. } => ResetStage::Ghost,
@@ -94,8 +95,9 @@ fn rank(stage: &NoteTransform) -> usize {
         NoteTransform::Strum { .. } | NoteTransform::Stroke { .. } => 6,
         NoteTransform::Lean { .. } | NoteTransform::ForDrumVoice { .. } => 7,
         NoteTransform::Humanize { .. } | NoteTransform::Expression { .. } => 8,
-        NoteTransform::Pitch { .. } => 9,
-        NoteTransform::Octaves { .. } => 10,
+        NoteTransform::Sustain { .. } => 9,
+        NoteTransform::Pitch { .. } => 10,
+        NoteTransform::Octaves { .. } => 11,
     }
 }
 
@@ -260,7 +262,8 @@ impl Session {
                 "swing_percent": "50..75 percent",
                 "times": "milliseconds",
                 "pitch_depths": "semitones",
-                "lean_ticks": "960 ticks per quarter note"
+                "lean_ticks": "960 ticks per quarter note",
+                "sustain_ticks": "960 ticks per quarter note"
             },
             "settings": {
                 "humanize": match scalar(ResetStage::Expression) {
@@ -279,6 +282,10 @@ impl Session {
                 "gate": match scalar(ResetStage::Gate) {
                     Some(NoteTransform::Gate { amount }) => *amount,
                     _ => 1.0
+                },
+                "sustain_ticks": match scalar(ResetStage::Sustain) {
+                    Some(NoteTransform::Sustain { ticks }) => *ticks,
+                    _ => 0
                 },
                 "mute": match scalar(ResetStage::Mute) {
                     Some(NoteTransform::Mute { amount }) => *amount,
@@ -443,6 +450,13 @@ impl Session {
                 (amount < 1.0).then_some(NoteTransform::Gate { amount }),
             );
         }
+        if let Some(ticks) = patch.sustain_ticks {
+            replace(
+                &mut stack,
+                ResetStage::Sustain,
+                (ticks > 0).then_some(NoteTransform::Sustain { ticks }),
+            );
+        }
         if let Some(amount) = patch.mute {
             replace(
                 &mut stack,
@@ -600,7 +614,7 @@ impl Session {
 #[serde(default, deny_unknown_fields)]
 pub struct PerformancePatch {
     /// Remove selected stage families before applying the supplied edits.
-    #[schemars(length(max = 12))]
+    #[schemars(length(max = 13))]
     pub reset: Vec<ResetStage>,
     /// Combined timing/velocity wander, 0..1; individual expression fields override it.
     #[schemars(range(min = 0, max = 1))]
@@ -614,6 +628,11 @@ pub struct PerformancePatch {
     /// Held fraction of written note lengths, 0.05..1.
     #[schemars(range(min = 0.05, max = 1))]
     pub gate: Option<f32>,
+    /// Ticks added to every release, like a held sustain pedal; 960 ticks is one quarter note
+    /// and 0 removes it. A note stops where the same pitch is struck again and at the clip end;
+    /// attacks do not move and no notes are added.
+    #[schemars(range(min = 0, max = 3840))]
+    pub sustain_ticks: Option<i64>,
     /// Muted retrigger strength, 0..1.
     #[schemars(range(min = 0, max = 1))]
     pub mute: Option<f32>,
@@ -796,6 +815,8 @@ pub enum ResetStage {
     Swing,
     /// Remove the gate family, including its legacy representation.
     Gate,
+    /// Remove the sustain (held release) stage.
+    Sustain,
     /// Remove the expression family, including its legacy representation.
     Expression,
     /// Remove the strum family, including its legacy representation.
@@ -827,8 +848,8 @@ fn bounded(name: &str, value: f64, min: f64, max: f64) -> Result<(), String> {
 
 impl PerformancePatch {
     fn validate(&self) -> Result<(), String> {
-        if self.reset.len() > 12 {
-            return Err("reset accepts at most 12 stage families".into());
+        if self.reset.len() > 13 {
+            return Err("reset accepts at most 13 stage families".into());
         }
         let fields = serde_json::to_value(self).map_err(|e| e.to_string())?;
         for name in ["expression", "strum", "ghost", "pitch", "groove"] {
@@ -844,6 +865,9 @@ impl PerformancePatch {
         }
         if let Some(value) = self.gate {
             bounded("PerformancePatch.gate", value as f64, 0.05, 1.0)?;
+        }
+        if let Some(value) = self.sustain_ticks {
+            bounded("PerformancePatch.sustain_ticks", value as f64, 0.0, 3840.0)?;
         }
         if let Some(value) = self.mute {
             bounded("PerformancePatch.mute", value as f64, 0.0, 1.0)?;

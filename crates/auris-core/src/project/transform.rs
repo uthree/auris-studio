@@ -161,7 +161,27 @@ pub enum NoteTransform {
         /// A note never shrinks below one tick.
         amount: f32,
     },
+    /// Holds every note past its written release, the way a sustain pedal keeps a struck string
+    /// ringing after the key comes up.
+    ///
+    /// The opposite of [`Gate`](Self::Gate), and only that: the attacks stay where they are and
+    /// nothing is added. A held note stops where the same key is struck again, as a re-struck
+    /// string would, so a repeated pitch never overlaps itself; and like every performed note it
+    /// ends at the clip's (or the loop pass's) end. A phrase stage, since the next strike of the
+    /// key is a neighbour's business, so [`performed`] leaves it alone and
+    /// [`performed_notes`](super::performed_notes) applies it.
+    Sustain {
+        /// Ticks added to every release, read clamped to 0..=[`SUSTAIN_MAX_TICKS`]. In ticks
+        /// for the reason [`Lean`](Self::Lean) is: how long a chord rings is felt against the
+        /// bar, so it scales with the music's grid rather than with the clock.
+        ticks: i64,
+    },
 }
+
+/// The longest [`NoteTransform::Sustain`] is read as: a whole note, four quarters.
+///
+/// Further than a bar of 4/4 stops being a pedal held through a chord and becomes a drone.
+pub const SUSTAIN_MAX_TICKS: i64 = 4 * TICKS_PER_QUARTER;
 
 /// The pitch order of a chord stroke.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -184,7 +204,7 @@ pub enum StrokeDirection {
 /// them.
 ///
 /// An empty stack is the identity, bit for bit. This single-note helper applies only local
-/// transforms; expression, strum, stroke, ghost, mute, brush and slide require
+/// transforms; expression, strum, stroke, ghost, mute, brush, slide and sustain require
 /// [`super::performed_notes`] instead.
 pub fn performed(mut note: Note, transforms: &[NoteTransform], pass: u64, bpm: f64) -> Note {
     for transform in transforms {
@@ -197,7 +217,8 @@ pub fn performed(mut note: Note, transforms: &[NoteTransform], pass: u64, bpm: f
             | NoteTransform::Ghost { .. }
             | NoteTransform::Mute { .. }
             | NoteTransform::Brush { .. }
-            | NoteTransform::Slide { .. } => note,
+            | NoteTransform::Slide { .. }
+            | NoteTransform::Sustain { .. } => note,
             NoteTransform::ForDrumVoice { voice, transforms } => {
                 if note.drum_voice == *voice {
                     performed(note, transforms, pass, bpm)

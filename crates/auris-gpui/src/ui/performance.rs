@@ -75,11 +75,18 @@ pub enum PerformDial {
     /// How much of each note's length is held. Whole is as written, and is stored as no
     /// transform at all.
     Gate,
+    /// How long every release is held on, like a sustain pedal, in sixteenth-note steps up to
+    /// a whole note. None is as written, and is stored as no transform at all.
+    Sustain,
 }
+
+/// The sustain dial's steps: sixteenth notes, up to [`SUSTAIN_MAX_TICKS`].
+const SUSTAIN_STEP_TICKS: i64 = TICKS_PER_QUARTER / 4;
 
 fn perform_keyboard_step(dial: PerformDial) -> f32 {
     match dial {
         PerformDial::Swing => 1.0 / f32::from(SWING_MAX - SWING_MIN),
+        PerformDial::Sustain => SUSTAIN_STEP_TICKS as f32 / SUSTAIN_MAX_TICKS as f32,
         _ => SLIDER_PERCENT_STEP,
     }
 }
@@ -88,6 +95,7 @@ fn perform_keyboard_step(dial: PerformDial) -> f32 {
 pub const PERFORM_DIALS: &[PerformDial] = &[
     PerformDial::Swing,
     PerformDial::Gate,
+    PerformDial::Sustain,
     PerformDial::Brush,
     PerformDial::Slide,
     PerformDial::Mute,
@@ -127,6 +135,7 @@ impl PerformDial {
             PerformDial::Humanize => Key::PartHumanize,
             PerformDial::Swing => Key::PartSwing,
             PerformDial::Gate => Key::PartGate,
+            PerformDial::Sustain => Key::PerformSustain,
         }
     }
 }
@@ -139,14 +148,17 @@ impl PerformDial {
 /// *joining* the stack.
 pub(super) fn rank(transform: &NoteTransform) -> usize {
     match transform {
-        NoteTransform::Pitch { .. } => 9,
-        NoteTransform::Octaves { .. } => 10,
+        NoteTransform::Pitch { .. } => 10,
+        NoteTransform::Octaves { .. } => 11,
         NoteTransform::ForDrumVoice { .. } => 7,
         NoteTransform::Swing { .. } => 0,
         // The lean sits between: deterministic feel before random feel, and after the swing for
         // the same reason the humanise is — a leaned note is off the grid the swing reads.
         NoteTransform::Lean { .. } => 7,
+        // The pedal is the last note stage: it holds what the timing stages left, and stops
+        // where the moved strike of the same key lands.
         NoteTransform::Humanize { .. } | NoteTransform::Expression { .. } => 8,
+        NoteTransform::Sustain { .. } => 9,
         NoteTransform::Groove { .. } => 0,
         NoteTransform::Transpose { .. } => 1,
         NoteTransform::Gate { .. } => 2,
@@ -171,6 +183,7 @@ fn answers_to(transform: &NoteTransform, dial: PerformDial) -> bool {
             | (NoteTransform::Slide { .. }, PerformDial::Slide)
             | (NoteTransform::Swing { .. }, PerformDial::Swing)
             | (NoteTransform::Gate { .. }, PerformDial::Gate)
+            | (NoteTransform::Sustain { .. }, PerformDial::Sustain)
     )
 }
 
@@ -249,7 +262,19 @@ pub fn dial_fraction(stack: &[NoteTransform], dial: PerformDial) -> f32 {
                 _ => None,
             })
             .unwrap_or(1.0),
+        PerformDial::Sustain => sustain_ticks(stack) as f32 / SUSTAIN_MAX_TICKS as f32,
     }
+}
+
+/// The ticks the stack's sustain holds every release on for; none when it holds no sustain.
+pub fn sustain_ticks(stack: &[NoteTransform]) -> i64 {
+    stack
+        .iter()
+        .find_map(|transform| match transform {
+            NoteTransform::Sustain { ticks } => Some((*ticks).clamp(0, SUSTAIN_MAX_TICKS)),
+            _ => None,
+        })
+        .unwrap_or(0)
 }
 
 /// The swing the stack plays, as a whole percent; straight when it holds none.
@@ -426,6 +451,11 @@ pub fn with_dial(
             let amount = ((fraction.max(GATE_MIN)) * 100.0).round() / 100.0;
             (amount < 1.0).then_some(NoteTransform::Gate { amount })
         }
+        PerformDial::Sustain => {
+            let steps = SUSTAIN_MAX_TICKS / SUSTAIN_STEP_TICKS;
+            let ticks = (fraction * steps as f32).round() as i64 * SUSTAIN_STEP_TICKS;
+            (ticks > 0).then_some(NoteTransform::Sustain { ticks })
+        }
     };
 
     let mut out = stack.to_vec();
@@ -508,7 +538,19 @@ pub fn dial_text(stack: &[NoteTransform], dial: PerformDial, straight: &str) -> 
             percent => format!("{percent}%"),
         },
         PerformDial::Gate => format!("{:.0}%", dial_fraction(stack, dial) * 100.0),
+        PerformDial::Sustain => sustain_text(sustain_ticks(stack)),
     }
+}
+
+/// A hold in quarter-note beats, the unit a pedal is felt in: `+1.5 ♩`, and `0` for none.
+fn sustain_text(ticks: i64) -> String {
+    if ticks <= 0 {
+        return "0".to_string();
+    }
+    let beats = ticks as f64 / Ticks::QUARTER.raw() as f64;
+    let text = format!("{beats:.2}");
+    let text = text.trim_end_matches('0').trim_end_matches('.');
+    format!("+{text} ♩")
 }
 
 /// A stable element key per dial, so gpui tells the sliders apart.
@@ -535,6 +577,7 @@ fn dial_element_key(dial: PerformDial) -> usize {
         PerformDial::Swing => 0,
         PerformDial::Humanize => 1,
         PerformDial::Gate => 2,
+        PerformDial::Sustain => 40,
     }
 }
 
@@ -762,7 +805,7 @@ impl AurisApp {
 
         for dial in PERFORM_DIALS {
             let dial = *dial;
-            if is_drum && dial == PerformDial::Gate {
+            if is_drum && matches!(dial, PerformDial::Gate | PerformDial::Sustain) {
                 continue;
             }
             let fraction = dial_fraction(&stack, dial);
@@ -1028,6 +1071,11 @@ mod tests {
             ),
             (PerformDial::Gate, 0.5, serde_json::json!({"gate":0.5})),
             (
+                PerformDial::Sustain,
+                0.25,
+                serde_json::json!({"sustain_ticks":960}),
+            ),
+            (
                 PerformDial::Humanize,
                 0.4,
                 serde_json::json!({"humanize":0.4}),
@@ -1260,6 +1308,27 @@ mod tests {
         assert!(with_dial(&stack, PerformDial::Humanize, 0.0, 7).is_empty());
         assert!(with_dial(&[], PerformDial::Swing, 0.0, 7).is_empty());
         assert!(with_dial(&[], PerformDial::Gate, 1.0, 7).is_empty());
+        assert!(with_dial(&[], PerformDial::Sustain, 0.0, 7).is_empty());
+    }
+
+    #[test]
+    fn the_sustain_dial_steps_in_sixteenths_and_reads_in_beats() {
+        // A quarter of the way is a quarter note: four sixteenth steps of a whole-note range.
+        let stack = with_dial(&[], PerformDial::Sustain, 0.25, 7);
+        assert_eq!(stack, vec![NoteTransform::Sustain { ticks: 960 }]);
+        assert_eq!(dial_text(&stack, PerformDial::Sustain, ""), "+1 ♩");
+        // Between steps snaps to the nearer sixteenth, and reads back where it snapped.
+        let stack = with_dial(&[], PerformDial::Sustain, 0.4, 7);
+        assert_eq!(sustain_ticks(&stack), 1440);
+        assert_eq!(dial_text(&stack, PerformDial::Sustain, ""), "+1.5 ♩");
+        assert_eq!(dial_fraction(&stack, PerformDial::Sustain), 0.375);
+        assert_eq!(dial_text(&[], PerformDial::Sustain, ""), "0");
+        // The pedal joins after the wander, so it holds to the moved strike.
+        let stack = with_dial(&stack, PerformDial::Humanize, 0.3, 7);
+        assert!(
+            matches!(stack[1], NoteTransform::Sustain { .. }),
+            "{stack:?}"
+        );
     }
 
     #[test]

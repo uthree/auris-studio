@@ -1364,6 +1364,7 @@ strings! {
     PerformMute { en: "Mute strength", ja: "ミュートの強さ" }
     PerformBrush { en: "Brush strength", ja: "ブラシの強さ" }
     PerformSlide { en: "Slide strength", ja: "スライドの強さ" }
+    PerformSustain { en: "Sustain", ja: "サステイン" }
     PerformDirection { en: "Stroke direction", ja: "ストローク方向" }
     PerformLowToHigh { en: "Low to high", ja: "低音から高音" }
     PerformHighToLow { en: "High to low", ja: "高音から低音" }
