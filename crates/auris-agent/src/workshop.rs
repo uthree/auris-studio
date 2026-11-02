@@ -88,6 +88,9 @@ pub struct Snapshot {
     pub preview_errors: BTreeMap<u64, String>,
     /// Real current stages; absence means the job is not running.
     pub progress: BTreeMap<u64, String>,
+    /// The composer's own latest account of what it is doing, from its report_status calls.
+    /// Shown only while its stage is the composer's; see [`Snapshot::status_line`].
+    pub status: BTreeMap<u64, String>,
     /// The director is responding.
     pub planning: bool,
     /// Preference evidence the user may inspect or clear.
@@ -101,6 +104,24 @@ pub struct Workshop {
     sender: mpsc::Sender<Command>,
     receiver: mpsc::Receiver<Snapshot>,
     stopped: Arc<AtomicBool>,
+}
+
+impl Snapshot {
+    /// The line a running candidate shows: the composer's own words while it is composing,
+    /// `None` when the host's stage should be shown instead.
+    ///
+    /// Planning, rendering, stopping and recovery are the host's work, which the composer cannot
+    /// see, so its last line would be stale there; those stages always show the host's label.
+    pub fn status_line(&self, id: u64) -> Option<&str> {
+        let composing = matches!(
+            self.progress.get(&id).map(String::as_str),
+            Some("harmony" | "melody" | "sing" | "compose" | "arrange")
+        );
+        composing
+            .then(|| self.status.get(&id))
+            .flatten()
+            .map(String::as_str)
+    }
 }
 
 impl Workshop {
@@ -139,6 +160,7 @@ impl Workshop {
                         previews: BTreeMap::new(),
                         preview_errors: BTreeMap::new(),
                         progress: BTreeMap::new(),
+                        status: BTreeMap::new(),
                         planning: false,
                         preferences: Preferences::default(),
                         error: Some(error),
@@ -465,6 +487,7 @@ fn numbered_choices(reply: &str) -> Option<(String, auris_session::choices::Choi
 enum JobEvent {
     Tool(u64, String, Option<bool>),
     Progress(u64, String),
+    Status(u64, String),
     Preview(u64, Result<Preview, String>),
     Recovering(u64, u32, String),
     Done(u64, Result<Arc<SongCandidate>, String>),
@@ -594,6 +617,7 @@ impl Owner {
                 previews: BTreeMap::new(),
                 preview_errors: BTreeMap::new(),
                 progress: BTreeMap::new(),
+                status: BTreeMap::new(),
                 planning: false,
                 preferences,
                 error,
@@ -620,6 +644,7 @@ impl Owner {
             previews: self.snapshot.previews.clone(),
             preview_errors: self.snapshot.preview_errors.clone(),
             progress: self.snapshot.progress.clone(),
+            status: self.snapshot.status.clone(),
             planning: self.planner.is_some(),
             preferences: self.snapshot.preferences.clone(),
             error: self.snapshot.error.clone(),
@@ -741,10 +766,19 @@ impl Owner {
                             candidate.error = Some(error);
                         }
                         self.snapshot.progress.insert(id, "recovering".into());
+                        // A new attempt has not said what it is doing yet.
+                        self.snapshot.status.remove(&id);
                         self.publish(true);
                     }
                     JobEvent::Progress(id, stage) if self.jobs.contains_key(&id) => {
+                        if stage == "planning" {
+                            self.snapshot.status.remove(&id);
+                        }
                         self.snapshot.progress.insert(id, stage);
+                        self.publish(false);
+                    }
+                    JobEvent::Status(id, status) if self.jobs.contains_key(&id) => {
+                        self.snapshot.status.insert(id, status);
                         self.publish(false);
                     }
                     JobEvent::Done(id, result) => {
@@ -753,6 +787,7 @@ impl Owner {
                             .remove(&id)
                             .is_none_or(|c| c.load(Ordering::Acquire));
                         self.snapshot.progress.remove(&id);
+                        self.snapshot.status.remove(&id);
                         // A single completed edit advances the selected song. Comparisons,
                         // older recovery jobs and a selection changed during production do not.
                         let advance_selection = !cancelled
@@ -1626,6 +1661,7 @@ fn compose(
     session.begin_agent_request();
     let _ = sender.send(JobEvent::Progress(candidate.id, "planning".into()));
     let assignment = json!({"assignment":candidate.direction.instructions,
+    "status":"The user watches this candidate's card and sees only your report_status lines while you work. Call report_status with one short line in the assignment's language each time you start a new step, naming the concrete musical work.",
     "sources":(!candidate.direction.sources.is_empty()).then(|| json!({
         "candidates":candidate.direction.sources,
         "instruction":"These earlier versions are loaded read-only. To bring material back, call source_material list, then restore the named clips exactly; never rewrite remembered notes. Re-sing restored singer clips."
@@ -1712,6 +1748,22 @@ fn compose(
                         )));
                     }
                 }
+            }
+            "edit" if event["command"]["action"] == "report_status" => {
+                // The composer's own words replace the stage guessed from its tool calls.
+                let result = auris_session::live_agent::report_status(
+                    event["command"]["status"].as_str().unwrap_or_default(),
+                );
+                if let Ok(status) = &result {
+                    let _ = sender.send(JobEvent::Status(candidate.id, status.clone()));
+                }
+                let reply = match result {
+                    Ok(status) => {
+                        json!({"event":"edit_result","ok":true,"text":json!({"shown":status}).to_string()})
+                    }
+                    Err(error) => json!({"event":"edit_result","ok":false,"text":error}),
+                };
+                worker.send(&reply.to_string())?;
             }
             "edit" => {
                 let action = event["command"]["action"].as_str().unwrap_or_default();
@@ -3121,6 +3173,12 @@ mod tests {
             json!({"operation":{"kind":"enter_phase","phase":"score","reason":"new song","writing_order":"rhythm_first"}}),
         );
         let setup = call("setup-1", "add_track", json!({"name":"Kit","kind":"drum"}));
+        let status = call(
+            "status-1",
+            "report_status",
+            json!({"status":"ドラムの基本パターンを
+書いています"}),
+        );
         let phrase = call(
             "phrase-1",
             "generate_phrase",
@@ -3135,6 +3193,7 @@ mod tests {
         let (url, seen) = crate::tests::mock_server(vec![
             crate::tests::completion(&record, "tool_calls"),
             crate::tests::completion(&setup, "tool_calls"),
+            crate::tests::completion(&status, "tool_calls"),
             crate::tests::completion(&phrase, "tool_calls"),
             crate::tests::completion(&inspect, "tool_calls"),
             crate::tests::completion(&answer, "stop"),
@@ -3160,7 +3219,7 @@ mod tests {
         .unwrap();
         assert!(result.audio.peak() > 1e-8);
         assert!(dir.path().join("1/song/song.auris").is_file());
-        assert_eq!(seen.lock().unwrap().len(), 5);
+        assert_eq!(seen.lock().unwrap().len(), 6);
         assert!(seen.lock().unwrap()[1].contains("worker_lifetime"));
         let events: Vec<_> = receiver.try_iter().collect();
         let completed: Vec<_> = events
@@ -3175,6 +3234,7 @@ mod tests {
             vec![
                 ("production_record", true),
                 ("add_track", true),
+                ("report_status", true),
                 ("generate_phrase", true),
                 ("inspect_audio", true)
             ]
@@ -3184,6 +3244,47 @@ mod tests {
                 .iter()
                 .any(|e| matches!(e, JobEvent::Progress(_, stage) if stage == "compose"))
         );
+        // The composer's own line reaches the card as one line, and is not mistaken for a stage.
+        let statuses: Vec<_> = events
+            .iter()
+            .filter_map(|event| match event {
+                JobEvent::Status(_, status) => Some(status.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(statuses, ["ドラムの基本パターンを 書いています"]);
+    }
+
+    #[test]
+    fn the_card_shows_the_composers_words_only_while_it_composes() {
+        let mut snapshot = Snapshot {
+            threads: Vec::new(),
+            document: Document::default(),
+            candidates: BTreeMap::new(),
+            previews: BTreeMap::new(),
+            preview_errors: BTreeMap::new(),
+            progress: BTreeMap::new(),
+            status: BTreeMap::new(),
+            planning: false,
+            preferences: Preferences::default(),
+            error: None,
+        };
+        snapshot.progress.insert(1, "melody".into());
+        assert_eq!(snapshot.status_line(1), None);
+        snapshot.status.insert(1, "サビの歌詞を当てています".into());
+        assert_eq!(snapshot.status_line(1), Some("サビの歌詞を当てています"));
+        for host in [
+            "planning",
+            "render_wait",
+            "render",
+            "stopping",
+            "recovering",
+        ] {
+            snapshot.progress.insert(1, host.into());
+            assert_eq!(snapshot.status_line(1), None, "{host}");
+        }
+        snapshot.progress.remove(&1);
+        assert_eq!(snapshot.status_line(1), None);
     }
     #[test]
     fn cancellation_prevents_model_work_and_output() {

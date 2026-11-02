@@ -39,6 +39,19 @@ pub enum HistoryOperation {
 }
 mod vocals;
 pub use vocals::{VocalJob, VocalResult, VocalStep};
+/// The line a [`Command::ReportStatus`] shows: one line, whitespace collapsed, 1-80 characters.
+///
+/// The host draws it on a single row, so a line break or a paragraph would be cut off where the
+/// user cannot see it; refusing says so to the model instead.
+pub fn report_status(status: &str) -> Result<String, String> {
+    let line = status.split_whitespace().collect::<Vec<_>>().join(" ");
+    match line.chars().count() {
+        0 => Err("status needs a short line of text".into()),
+        1..=80 => Ok(line),
+        _ => Err("status is limited to 80 characters; say only the step you are on".into()),
+    }
+}
+
 fn sound_search_limit() -> usize {
     10
 }
@@ -153,6 +166,12 @@ pub enum Command {
     SourceMaterial {
         /// List, or restore named clips from one source.
         operation: crate::session::source_material::Operation,
+    },
+    /// Workshop candidates only: tell the user, in one short line, what you are working on now. The candidate's card shows it while you work until the next one replaces it; elsewhere it is not shown. Call it when you start each new step, before that step's first tool call, in the language of the assignment. Name the concrete musical work, such as "Fitting the chorus lyrics to the melody" or "Thinning the strings under the second verse", never a generic "Working" or a tool name. Changes nothing.
+    ReportStatus {
+        /// The line, 1-80 characters.
+        #[schemars(length(min = 1, max = 80))]
+        status: String,
     },
     /// Read or undo/redo one complete user request in the live session. First use operation {"kind":"read"}; then supply its available_group and numeric revision. Human edits and open gestures are boundaries. Use this for "undo that change" instead of rewriting old notes. Does not save. Session-local; unavailable for saved-project calls.
     History {
@@ -606,6 +625,7 @@ impl Command {
             Self::EditTimeline { operation } => !operation.is_read_only(),
             Self::Layer { operation } => !operation.is_read_only(),
             Self::Inspect {}
+            | Self::ReportStatus { .. }
             | Self::SuggestIssueReport { .. }
             | Self::OfferChoices { .. }
             | Self::ExecutionTrace { .. }
@@ -1056,6 +1076,8 @@ impl Session {
                 edits,
             } => self.agent_edit_notes(&expected_revision, edits),
             Command::SourceMaterial { operation } => self.agent_source_material(operation),
+            Command::ReportStatus { status } => report_status(&status)
+                .map(|status| serde_json::json!({ "shown": status }).to_string()),
             Command::Inspect {} => {
                 let project = self.project();
                 let tracks: Vec<_> = project
@@ -1280,6 +1302,34 @@ mod tests {
 
     fn session() -> Session {
         Session::new(crate::SessionOptions::headless().with_balance(false)).unwrap()
+    }
+
+    #[test]
+    fn a_status_line_is_one_short_line_and_changes_nothing() {
+        let mut session = session();
+        let before = session.project().clone();
+        let command = |status: &str| Command::ReportStatus {
+            status: status.into(),
+        };
+        assert!(!command("x").is_mutating());
+        let shown: serde_json::Value = serde_json::from_str(
+            &session
+                .agent_command(command("  サビの歌詞を\nメロディに合わせています "))
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(shown["shown"], "サビの歌詞を メロディに合わせています");
+        assert_eq!(session.project(), &before);
+        assert!(!session.is_dirty());
+        assert!(session.agent_command(command(" \n ")).is_err());
+        assert!(session.agent_command(command(&"あ".repeat(81))).is_err());
+        assert!(
+            crate::agent_policy::Operation::parse(
+                "edit_project",
+                &serde_json::json!({"command":{"action":"report_status","status":"Writing"}}),
+            )
+            .is_ok_and(|op| op.name == "edit_project.report_status" && !op.mutating)
+        );
     }
 
     #[test]

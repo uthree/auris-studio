@@ -496,6 +496,11 @@ that round as a letter, so `1B` is the second song of the first round. The direc
 the same label in `candidate_history`, so the user can ask for "1B's chorus" and be understood,
 and the selection and feedback messages name the label too.
 
+While a candidate is composed, its card shows what the composer says it is doing: the
+composer calls `report_status` with one short line in the assignment's language as it starts
+each step. Until the first line, and while the host plans, renders, stops or recovers it, the
+card shows the host's own label for that stage instead.
+
 A composer edits a copy of its parent candidate and sees no other version. When the user
 wants material back from an earlier one ("return the chorus to the previous melody"), the
 director lists those candidates in the direction's `sources`. The host loads their saved

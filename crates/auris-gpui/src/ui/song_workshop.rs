@@ -1556,7 +1556,7 @@ impl AurisApp {
             .child(badges)
             .child(description);
         if let Some(stage) = snapshot.progress.get(&id) {
-            let label = self.t(match stage.as_str() {
+            let stage_label = self.t(match stage.as_str() {
                 "harmony" => Key::WorkshopHarmonyProgress,
                 "melody" => Key::WorkshopMelodyProgress,
                 "compose" => Key::WorkshopComposing,
@@ -1568,6 +1568,12 @@ impl AurisApp {
                 "recovering" => Key::WorkshopRecovering,
                 _ => Key::WorkshopArrangeProgress,
             });
+            // The composer's own words when it has said what it is doing.
+            let label = gpui::SharedString::from(
+                snapshot
+                    .status_line(id)
+                    .map_or_else(|| stage_label.to_string(), str::to_owned),
+            );
             card = card.child(
                 div()
                     .debug_selector(move || format!("song-candidate-activity-{index}"))
@@ -2317,6 +2323,7 @@ mod tests {
                 previews: Default::default(),
                 preview_errors: Default::default(),
                 progress: Default::default(),
+                status: Default::default(),
                 planning: false,
                 preferences: Default::default(),
                 error: None,
@@ -2345,6 +2352,7 @@ mod tests {
             previews: Default::default(),
             preview_errors: Default::default(),
             progress: Default::default(),
+            status: Default::default(),
             planning,
             preferences: Default::default(),
             error: None,
