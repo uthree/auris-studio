@@ -57,9 +57,16 @@ acoustic pianos come up 19.9, 19.5 and 11.7 dB, and the remaining 24 move by les
 
 ## Keeping it
 
-Out of the workspace on purpose — see `exclude` in the root manifest. `cargo test` and
-`cargo clippy` from *this* directory run its own suite; two upstream tests fail there because they
-want SoundFont files the published crate does not ship.
+Out of the workspace on purpose — see `exclude` in the root manifest, and the `[workspace]` table
+in this crate's own manifest, which is what keeps it out of an *enclosing* workspace as well: a
+git worktree sits inside the main checkout, so without it cargo bound this crate to that
+checkout's workspace and refused to do anything at all.
+
+`cargo test` and `cargo clippy` from *this* directory run its own suite, and CI runs it too, on
+both platforms. Two upstream tests are `#[ignore]`d: they want a `samples` directory beside the
+crate, which exists in upstream's repository and not in the published crate this fork came from.
+They used to fail, which is a suite that cannot gate anything; ignoring them keeps them in place
+for a future upstream merge and lets the rest be a check.
 
 ---
 

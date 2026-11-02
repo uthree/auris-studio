@@ -65,6 +65,19 @@ jobs:
       - name: Test the release update helper
         run: cargo test -p auris-update-helper --release --locked
 
+      # The forks are excluded from the workspace, so `--workspace` never reached them and
+      # nothing was running the tests that guard them. For `vendor/vst3-host` that is the whole
+      # of its cover: its 240 tests include the single-owner realtime path the fork exists for
+      # and the process isolation around a plugin that crashes, while `crates/auris-vst3` has
+      # thirteen tests of its own and its one end-to-end test needs an external plugin bundle, so
+      # it is `#[ignore]`d here. Two steps rather than one `run:` with two lines, because a
+      # multi-command `run:` on the Windows job reports only the last command's exit code.
+      - name: Test the vendored VST3 host
+        run: cargo test --manifest-path vendor/vst3-host/Cargo.toml --locked
+
+      - name: Test the vendored synthesiser
+        run: cargo test --manifest-path vendor/rustysynth/Cargo.toml --locked
+
       # The documentation is checked the same way the code is, and on this job because it is the
       # one that builds every crate including the frontend. Nothing was checking it before, which
       # is how two dozen warnings accumulated — among them a macro feeding command line usage text
@@ -126,6 +139,15 @@ jobs:
       - name: Test the release update helper
         run: cargo test -p auris-update-helper --release --locked
 
+      # Here as well as on macOS, and for this job's own reason: the VST3 host's module loader is
+      # a different file per platform, and the Windows one — a private-namespace `LoadLibrary`
+      # with its own tests — compiles nowhere else.
+      - name: Test the vendored VST3 host
+        run: cargo test --manifest-path vendor/vst3-host/Cargo.toml --locked
+
+      - name: Test the vendored synthesiser
+        run: cargo test --manifest-path vendor/rustysynth/Cargo.toml --locked
+
       - name: Prepare LLVM for ASIO
         shell: pwsh
         run: ./tools/setup-windows.ps1 -InstallLlvm
@@ -180,6 +202,15 @@ jobs:
       # skips, so this exercises the DSP, the document model and the whole render path.
       - name: Test
         run: cargo test --workspace --exclude auris-gpui --locked --timings
+
+      # The forks are part of the backend this job exists to keep honest, and this is where the
+      # XCB headers above are installed for — so the host's third module loader is compiled here
+      # and may as well be tested here.
+      - name: Test the vendored VST3 host
+        run: cargo test --manifest-path vendor/vst3-host/Cargo.toml --locked
+
+      - name: Test the vendored synthesiser
+        run: cargo test --manifest-path vendor/rustysynth/Cargo.toml --locked
 
       - name: Upload build timings
         if: always()
