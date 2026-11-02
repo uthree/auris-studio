@@ -417,9 +417,16 @@ fn score_lyric(lyric: &str, phonemes: &[String]) -> String {
     // Keep ordinary kana score labels, including their script, unchanged.
     let phrase_on_one_mora = crate::split_kana_lyric(lyric).is_some_and(|moras| moras.len() > 1)
         && crate::phoneme_moras(phonemes).len() == 1;
+    // The particles は and へ are stored with their spoken phonemes, *wa* and *e*, and a
+    // backend that reads the label rather than the phonemes must be told わ and え.
+    let read_otherwise = matches!(
+        (lyric, phonemes),
+        ("は" | "ハ", [w, a]) if w == "w" && a == "a"
+    ) || matches!((lyric, phonemes), ("へ" | "ヘ", [e]) if e == "e");
     if lyric == "+"
         || lyric.is_empty()
         || phrase_on_one_mora
+        || read_otherwise
         || (lyric != "ー" && crate::kana_phonemes(lyric).is_none())
     {
         crate::kana::phonemes_to_kana(phonemes).unwrap_or_else(|| match lyric {
@@ -763,6 +770,15 @@ mod tests {
         );
         assert_eq!(track.clips[0].notes[0].lyric, "光");
         assert_eq!(track.clips[0].notes[1].lyric, "+");
+    }
+
+    #[test]
+    fn a_kana_label_follows_the_phonemes_it_is_sung_as() {
+        let wa = vec!["w".to_string(), "a".to_string()];
+        assert_eq!(score_lyric("は", &wa), "わ");
+        assert_eq!(score_lyric("へ", &["e".to_string()]), "え");
+        // Agreement keeps the label, script and all.
+        assert_eq!(score_lyric("ハ", &["h".to_string(), "a".to_string()]), "ハ");
     }
 
     #[test]
