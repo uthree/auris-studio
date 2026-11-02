@@ -991,9 +991,9 @@ impl Owner {
                 });
                 let selected = self.snapshot.document.continuation_candidate();
                 let voices = auris_session::library::voices_with_settings(&self.settings);
-                let candidate_history: Vec<_> = self.snapshot.document.rounds.iter().map(|round| {
-                    json!({"after_message": round.after_message, "candidates": round.candidates.iter().map(|candidate| {
-                        json!({"id": candidate.id, "parent": candidate.parent,
+                let candidate_history: Vec<_> = self.snapshot.document.rounds.iter().enumerate().map(|(round_index, round)| {
+                    json!({"after_message": round.after_message, "candidates": round.candidates.iter().enumerate().map(|(position, candidate)| {
+                        json!({"id": candidate.id, "label": auris_session::workshop::candidate_label(round_index, position), "parent": candidate.parent,
                             "title": candidate.direction.title, "description": candidate.direction.description,
                             "feedback": candidate.feedback})
                     }).collect::<Vec<_>>()})
@@ -2453,6 +2453,10 @@ mod tests {
         assert_eq!(owner.snapshot.document.rounds.len(), 1);
         let requests = seen.lock().unwrap();
         assert!(requests[0].contains("candidate_history"));
+        // The director is told the label the user sees, so "1A" means the same to both.
+        assert!(
+            requests[0].contains(r#""label":"1A""#) || requests[0].contains(r#"\"label\":\"1A\""#)
+        );
         assert!(requests[0].contains("Earlier piano idea"));
         assert!(requests[0].contains("Sparse piano over a steady pulse"));
         assert!(requests[0].contains("LYRIC_REFERENCE_夜の雨"));

@@ -491,6 +491,11 @@ the assignment, every tool call with its arguments, every result with its text, 
 permissions, the model's prose between calls and how the attempt ended. Long values are
 cut and the file stops at 8 MiB. It is deleted with the conversation.
 
+Each candidate card shows a label: the round counted from 1, then the candidate's place in
+that round as a letter, so `1B` is the second song of the first round. The director receives
+the same label in `candidate_history`, so the user can ask for "1B's chorus" and be understood,
+and the selection and feedback messages name the label too.
+
 A composer edits a copy of its parent candidate and sees no other version. When the user
 wants material back from an earlier one ("return the chorus to the previous melody"), the
 director lists those candidates in the direction's `sources`. The host loads their saved

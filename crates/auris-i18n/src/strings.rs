@@ -176,7 +176,7 @@ strings! {
     WorkshopListen { en: "Listen", ja: "試聴" }
     WorkshopStop { en: "Stop", ja: "停止" }
     WorkshopRetry { en: "Regenerate this candidate", ja: "この候補を作り直す" }
-    WorkshopSelectionRequest { en: "Continue with “{song}”. Suggest some arrangement and improvement options.", ja: "「{song}」で続けます。追加の編曲や改良の選択肢を提案してください。" }
+    WorkshopSelectionRequest { en: "Continue with {label} “{song}”. Suggest some arrangement and improvement options.", ja: "{label}「{song}」で続けます。追加の編曲や改良の選択肢を提案してください。" }
     WorkshopRecover { en: "Resume recovery", ja: "途中から復旧" }
     WorkshopRecovering { en: "Waiting to recover", ja: "自動復旧を待っています" }
     WorkshopRecoveryCount { en: "Automatic recoveries", ja: "自動復旧" }
@@ -2332,7 +2332,7 @@ new のオプション
     WorkshopThreadNameInvalid { en: "Use 1 to 80 characters for the conversation name.", ja: "会話の名前は1〜80文字で入力してください。" }
     WorkshopThreadUnavailable { en: "Could not update the conversation. Reopen the workshop and try again.", ja: "会話を更新できませんでした。制作画面を開き直して再度お試しください。" }
     WorkshopEditFeedback { en: "Edit feedback…", ja: "評価を編集…" }
-    WorkshopFeedbackTitle { en: "Feedback for “{song}”", ja: "「{song}」の評価" }
+    WorkshopFeedbackTitle { en: "Feedback for {label} “{song}”", ja: "{label}「{song}」の評価" }
     WorkshopFeedbackRating { en: "Rating (1–5)", ja: "評価（5段階）" }
     WorkshopFeedbackComment { en: "Impressions (optional)", ja: "感想（任意）" }
     WorkshopFeedbackHint { en: "Up to 2,000 characters. Enter adds a line; secondary-Return sends.", ja: "2000文字まで。Enterで改行、secondary-Returnで送信" }
