@@ -34,6 +34,15 @@ pub struct ExportInspection {
     pub full_scale_samples: u64,
     /// RMS of the final half second in dBFS.
     pub ending_rms_db: f32,
+    /// The worst channel's mean sample, as a fraction of full scale, sign kept.
+    ///
+    /// A steady offset is inaudible by itself and still costs headroom: the limiter judges
+    /// absolute peak, so an offset comes off the ceiling before any music reaches it. It is
+    /// measured because none of the fields above can see one — a master can pass `lufs`,
+    /// `peak_db` and `true_peak_db` and still carry it. The worst channel rather than the mean
+    /// of the mix, because a mono source panned off centre offsets one side more than the other
+    /// and it is that side which runs out of room first.
+    pub dc_offset: f32,
     /// SHA-256 of the exact file measured.
     pub sha256: String,
 }
@@ -63,10 +72,19 @@ pub fn inspect_export(path: &Path) -> Result<ExportInspection, SessionError> {
     } else {
         1.0 - 1.0e-6
     };
+    let mut dc_offset = 0.0f32;
     for channel in buffer.iter_channels() {
+        let mut sum = 0.0f64;
         for &sample in channel {
             if f64::from(sample.abs()) >= full_scale_threshold {
                 full_scale_samples += 1;
+            }
+            sum += f64::from(sample);
+        }
+        if !channel.is_empty() {
+            let mean = (sum / channel.len() as f64) as f32;
+            if mean.abs() > dc_offset.abs() {
+                dc_offset = mean;
             }
         }
         for &sample in &channel[from..] {
@@ -104,6 +122,7 @@ pub fn inspect_export(path: &Path) -> Result<ExportInspection, SessionError> {
         true_peak_db: loudness.true_peak_db(),
         full_scale_samples,
         ending_rms_db,
+        dc_offset,
         sha256: hex::encode(hasher.finalize()),
     })
 }

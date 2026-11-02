@@ -104,6 +104,85 @@ impl SmoothedValue {
     }
 }
 
+/// Removes a signal's steady component without touching the band it plays in.
+///
+/// `y[n] = x[n] - x[n-1] + r * y[n-1]`, the ordinary one-pole DC blocker: a zero exactly at DC
+/// and a pole just inside it. A [`Biquad`](crate::Biquad) highpass would do the same job and is
+/// the wrong tool for a corner this low — at five hertz against a 192 kHz rate the normalised
+/// frequency is 2.6e-5, and a direct-form biquad spends most of its `f32` mantissa on the
+/// difference between coefficients that are all but equal. This form has one coefficient and
+/// stays well conditioned wherever the corner is.
+///
+/// What it is for: an excitation with a mean. A bow pushes a string one way for as long as it is
+/// drawn, and a bridge does not pass that to the air; a struck or plucked string has no mean to
+/// remove and wants none of this.
+#[derive(Clone, Copy, Debug)]
+pub struct DcBlocker {
+    previous_input: f32,
+    previous_output: f32,
+    retention: f32,
+}
+
+/// Transparent until [`DcBlocker::new`] gives it a corner.
+///
+/// The derived default would be a retention of zero, which is `y[n] = x[n] - x[n-1]`: a
+/// differentiator, not a blocker. A value that has not been prepared yet belongs to a voice that
+/// has not sounded yet, and it must pass audio through untouched rather than shape it.
+impl Default for DcBlocker {
+    fn default() -> Self {
+        Self {
+            previous_input: 0.0,
+            previous_output: 0.0,
+            retention: 1.0,
+        }
+    }
+}
+
+impl DcBlocker {
+    /// A blocker whose -3 dB corner is `corner_hz` at `sample_rate`.
+    ///
+    /// Choose the corner below every fundamental the signal carries: the attenuation at a
+    /// frequency `f` is `f / hypot(f, corner_hz)`, so five hertz costs a double bass's open E
+    /// (41 Hz) seven hundredths of a decibel and a bowed cello's open C rather less.
+    ///
+    /// A corner that is not finite, not positive, or at or above half the rate leaves the signal
+    /// alone rather than ringing: a nonsensical setting should be inaudible, not destructive.
+    pub fn new(corner_hz: f32, sample_rate: f32) -> Self {
+        let usable = corner_hz.is_finite()
+            && sample_rate.is_finite()
+            && corner_hz > 0.0
+            && sample_rate > 0.0
+            && corner_hz < sample_rate * 0.5;
+        Self {
+            previous_input: 0.0,
+            previous_output: 0.0,
+            // `exp` rather than the `1 - 2*pi*f/rate` approximation, which is only close while
+            // the corner is a small fraction of the rate and goes negative when it is not.
+            retention: if usable {
+                (-std::f32::consts::TAU * corner_hz / sample_rate).exp()
+            } else {
+                // A pole at one is a zero and a pole on top of each other: the pair cancel and
+                // the sample passes through untouched.
+                1.0
+            },
+        }
+    }
+
+    /// The next sample, with the steady component taken out.
+    pub fn next(&mut self, input: f32) -> f32 {
+        let output = input - self.previous_input + self.retention * self.previous_output;
+        self.previous_input = input;
+        self.previous_output = output;
+        output
+    }
+
+    /// Forgets the signal so far, for a voice starting again.
+    pub fn reset(&mut self) {
+        self.previous_input = 0.0;
+        self.previous_output = 0.0;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -138,6 +217,82 @@ mod tests {
         }
         assert!(value.is_settled());
         assert_eq!(value.current(), -3.25);
+    }
+
+    #[test]
+    fn a_blocker_removes_a_steady_offset_and_keeps_the_note() {
+        // Numbers rather than "it runs": the offset has to go and the fundamental has to stay,
+        // at every rate a project can be set to.
+        for rate in [44_100.0_f32, 48_000.0, 96_000.0, 192_000.0] {
+            let mut blocker = DcBlocker::new(5.0, rate);
+            let frequency = 196.0_f32; // A violin's open G, the lowest note the bow plays here.
+            let step = std::f32::consts::TAU * frequency / rate;
+            let frames = rate as usize;
+            let mut out = Vec::with_capacity(frames);
+            for n in 0..frames {
+                out.push(blocker.next((step * n as f32).sin() + 0.25));
+            }
+            // Past the first few corner periods, where the blocker is still converging.
+            let steady = &out[frames / 2..];
+            let mean = steady.iter().sum::<f32>() / steady.len() as f32;
+            let peak = steady.iter().fold(0.0_f32, |high, s| high.max(s.abs()));
+            assert!(
+                mean.abs() < 1.0e-3,
+                "{rate}: offset left behind, mean {mean}"
+            );
+            assert!(
+                (0.97..=1.03).contains(&peak),
+                "{rate}: the note was attenuated, peak {peak}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_blocker_leaves_the_lowest_notes_alone() {
+        // The corner is only useful if it is below the band. A first-order response is
+        // `f / hypot(f, corner)`, so check the two lowest open strings in the pack against it.
+        let mut blocker = DcBlocker::new(5.0, 48_000.0);
+        let frequency = 41.2_f32; // A double bass's open E.
+        let step = std::f32::consts::TAU * frequency / 48_000.0;
+        let mut peak = 0.0_f32;
+        for n in 0..48_000 {
+            let value = blocker.next((step * n as f32).sin());
+            if n > 24_000 {
+                peak = peak.max(value.abs());
+            }
+        }
+        let expected = frequency / frequency.hypot(5.0);
+        assert!(
+            (peak - expected).abs() < 0.01,
+            "peak {peak} against the first-order response {expected}"
+        );
+        assert!(peak > 0.99, "a bass note lost more than 0.1 dB: {peak}");
+    }
+
+    #[test]
+    fn an_unprepared_blocker_is_transparent_rather_than_a_differentiator() {
+        // A derived `Default` would leave the retention at zero, which is `x[n] - x[n-1]`. A
+        // voice built but not yet prepared must pass audio through, not differentiate it.
+        let mut blocker = DcBlocker::default();
+        let input = [0.0, 1.0, -0.5, 0.25, 0.25];
+        let out: Vec<f32> = input.iter().map(|s| blocker.next(*s)).collect();
+        assert_eq!(out, input);
+    }
+
+    #[test]
+    fn a_nonsensical_corner_passes_the_signal_through() {
+        // A corner at or above Nyquist, or a rate of nothing, must be inaudible rather than
+        // destructive: a project opened with a corrupt rate should still make a sound.
+        for (corner, rate) in [
+            (0.0_f32, 48_000.0_f32),
+            (-5.0, 48_000.0),
+            (30_000.0, 48_000.0),
+        ] {
+            let mut blocker = DcBlocker::new(corner, rate);
+            let input = [0.0, 1.0, -0.5, 0.25, 0.25];
+            let out: Vec<f32> = input.iter().map(|s| blocker.next(*s)).collect();
+            assert_eq!(out, input, "corner {corner} at {rate} changed the signal");
+        }
     }
 
     #[test]

@@ -1,6 +1,21 @@
 //! Fractional-delay string loops with pluck and nonlinear bow excitation.
 
+use auris_dsp::DcBlocker;
+
 use super::{Model, Settings};
+
+/// Corner of the bowed string's DC blocker, in hertz.
+///
+/// A bow pushes the string one way for as long as it is drawn, so the friction force carries a
+/// steady mean — and a bridge does not transmit that to the air. Nothing else here excites with
+/// a mean: a pluck and a strike both average to nothing.
+///
+/// Five hertz is below every fundamental the bow plays: a bowed cello's open C is 65 Hz and a
+/// double bass's open E is 41, which this costs seven hundredths of a decibel. It is taken off
+/// the value leaving the bridge, which is the return and not part of the loop, so the friction
+/// junction's own dynamics are untouched — and before the voice's envelope, so the blocker's own
+/// settling cannot outlive the note.
+const DC_CORNER_HZ: f32 = 5.0;
 
 #[path = "pluck.rs"]
 mod pluck;
@@ -73,6 +88,8 @@ pub(super) struct StringModel {
     rate: f32,
     guitar: bool,
     pluck: Pluck,
+    /// Takes the bow's steady push off what leaves the bridge; see [`DC_CORNER_HZ`].
+    dc: DcBlocker,
 }
 
 impl StringModel {
@@ -105,6 +122,7 @@ impl StringModel {
     }
     pub(super) fn prepare(&mut self, rate: f32) {
         self.rate = rate;
+        self.dc = DcBlocker::new(DC_CORNER_HZ, rate);
         // MIDI 0 is 8.18 Hz. Bound the supported host rate before allocating the voice pool.
         let capacity = (rate / 8.0).ceil() as usize + 8;
         self.bridge.prepare(capacity);
@@ -141,6 +159,7 @@ impl StringModel {
         self.position = settings.position;
         self.position_target = self.position;
         self.bow.excite(velocity, rate, settings);
+        self.dc.reset();
         // Compensate the low-frequency phase delay of the bridge's one-pole loss filter.
         let phase = self.pole / (1.0 - self.pole) * if self.bowed { BOW_PHASE } else { 1.0 };
         self.period = (rate / frequency - phase).max(6.0);
@@ -220,7 +239,7 @@ impl StringModel {
         let force = self.bow.next(incoming, bow, pressure);
         self.neck.write(self.filtered * self.loss + force);
         self.bridge.write(neck + force);
-        bridge
+        self.dc.next(bridge)
     }
 
     pub(super) fn set_velocity(&mut self, velocity: f32) {
