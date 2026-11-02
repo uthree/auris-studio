@@ -4,7 +4,10 @@ use std::sync::Arc;
 
 use auris_core::PluginRegistry;
 use auris_dsp::DspPack;
-use auris_sampler::{SharedSoundFonts, SoundFontBank, register_sampler};
+use auris_sampler::{
+    SampleBank, SharedSamples, SharedSoundFonts, SoundFontBank, register_audio_sampler,
+    register_sampler,
+};
 use auris_synth::SynthPack;
 
 /// What a new track plays until somebody chooses otherwise.
@@ -20,10 +23,23 @@ pub const DEFAULT_INSTRUMENT: &str = "auris.physical.piano";
 /// something built here because the session has to fill it — a font is loaded by a command, long
 /// after the registry exists — and because every sampler must read the *same* one.
 pub fn default_registry(fonts: SharedSoundFonts) -> Arc<PluginRegistry> {
+    registry_with_samples(fonts, SampleBank::shared())
+}
+
+/// [`default_registry`], with the bank the audio sampler reads its samples from.
+///
+/// The session's own registry is built through this, because the session is what fills the
+/// bank — with the audio sources it has decoded. Every other registry gets an empty one, which
+/// is right for a registry that only renders what has no file behind it.
+pub fn registry_with_samples(
+    fonts: SharedSoundFonts,
+    samples: SharedSamples,
+) -> Arc<PluginRegistry> {
     let mut registry = PluginRegistry::new();
     registry.install::<SynthPack>();
     registry.install::<DspPack>();
     register_sampler(&mut registry, fonts);
+    register_audio_sampler(&mut registry, samples);
     // New tracks start on the physical piano, independent of registry sort order.
     registry.set_default_instrument(DEFAULT_INSTRUMENT);
     Arc::new(registry)
@@ -49,6 +65,7 @@ mod tests {
         assert!(registry.has_instrument("auris.synth.fm2"));
         assert!(registry.has_instrument("auris.synth.noisedrum"));
         assert!(registry.has_instrument(auris_sampler::SAMPLER_ID));
+        assert!(registry.has_instrument(auris_sampler::AUDIO_SAMPLER_ID));
         for id in [
             "auris.fx.gain",
             "auris.fx.eq",

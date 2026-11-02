@@ -84,6 +84,13 @@ impl Session {
             .kind
             .as_instrument()
             .ok_or_else(|| SessionError::SoundPreset("select an instrument track".into()))?;
+        // The audio sampler names its sample by a source id that only means something inside
+        // this song; a library sound carrying it would play some other project's audio.
+        if instrument.instrument_id == auris_sampler::AUDIO_SAMPLER_ID {
+            return Err(SessionError::SoundPreset(
+                "a sampler playing a song's own audio cannot be saved as a library sound".into(),
+            ));
+        }
         let folder = self.project_folder().map(Path::to_path_buf);
         let resolve = |asset: &AssetPath| {
             asset.resolve(folder.as_deref()).ok_or_else(|| {

@@ -320,3 +320,51 @@ fn effect_button_opens_native_editor_without_changing_bypass(cx: &mut TestAppCon
         })
     });
 }
+
+#[gpui::test]
+fn a_sample_loaded_from_the_window_puts_the_track_on_the_sampler(cx: &mut TestAppContext) {
+    let (app, cx, track, _) = with_a_clip(cx);
+    let rate = app.read_with(cx, |this, _| this.project().sample_rate);
+    let tone: Vec<f32> = (0..4_800)
+        .map(|n| (std::f64::consts::TAU * 440.0 * n as f64 / rate).sin() as f32)
+        .collect();
+    let buffer = AudioBuffer::from_planar(vec![tone], rate).unwrap();
+    let line = app.update(cx, |this, _| {
+        this.take_sample(
+            track,
+            std::path::Path::new("/samples/Pluck_C4.wav"),
+            crate::ui::commands::Loaded::Audio(buffer),
+        )
+        .unwrap()
+    });
+    assert!(line.contains("Pluck_C4"), "{line}");
+    app.read_with(cx, |this, _| {
+        let inner = this
+            .project()
+            .track(track)
+            .unwrap()
+            .kind
+            .as_instrument()
+            .unwrap();
+        assert_eq!(inner.instrument_id, AUDIO_SAMPLER_ID);
+        assert!(this.session.track_sample_is_loaded(track));
+        assert_eq!(
+            this.session.track_sample_name(track).as_deref(),
+            Some("Pluck_C4")
+        );
+    });
+    // The sampler's window draws its sample row with the rest of its controls.
+    app.update(cx, |this, _| {
+        this.select_track(track);
+        this.panels.show(crate::dock::Panel::Inspector);
+    });
+    paint(&app, cx);
+    click("inst-open", cx);
+    paint(&app, cx);
+    app.read_with(cx, |this, _| {
+        assert_eq!(
+            this.plugin_window.unwrap().subject,
+            PluginSubject::Instrument(track)
+        );
+    });
+}

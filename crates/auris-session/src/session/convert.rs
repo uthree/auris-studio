@@ -208,11 +208,13 @@ impl Session {
                 readiness.track == track
                     && matches!(
                         readiness.state,
-                        PlaybackState::MissingInstrument | PlaybackState::MissingSoundfont
+                        PlaybackState::MissingInstrument
+                            | PlaybackState::MissingSoundfont
+                            | PlaybackState::MissingSample
                     )
             }) {
                 return Err(SessionError::TrackConversion(
-                    "the track's instrument or SoundFont is unavailable".into(),
+                    "the track's instrument, SoundFont or sample is unavailable".into(),
                 ));
             }
             let mut project = original.clone();

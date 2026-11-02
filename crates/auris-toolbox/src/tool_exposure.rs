@@ -116,6 +116,7 @@ pub fn tool_group(name: &str) -> &'static str {
         | "create_project"
         | "audio_assets"
         | "import_audio"
+        | "load_sample"
         | "import_midi"
         | "setup_tracks"
         | "add_track"

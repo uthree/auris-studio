@@ -1509,6 +1509,16 @@ pub mod plugins {
     //! inside a plugin can be built the same way; what must not happen is the resource travelling
     //! through the state.
     //!
+    //! The audio sampler, [`auris_sampler::AudioSampler`], is the second plugin built that way,
+    //! and the cheaper one, because its samples are not a new kind of asset at all. Loading a file
+    //! into it ([`crate::Session::load_sample`]) adds an ordinary audio source to the document —
+    //! copied into the project folder, relocated, reported when missing — and places no clip; the
+    //! track's instrument state names the source by id. The session mirrors its decoded sources
+    //! into an [`auris_sampler::SampleBank`] in [`crate::Session::rebuild_graph`], the one moment
+    //! a sampler reads it, so no edit has to remember to keep the two in step.
+    //! [`auris_sampler::needs_asset`] names both samplers for whatever picks an instrument on
+    //! somebody's behalf: each is registered, and each is silent until a file is chosen.
+    //!
     //! SoundFont imports also register their absolute file identity in the application's
     //! `soundfonts.json` catalog. Every new or opened document adopts these library entries
     //! without creating an undo step or making the project dirty. The file itself stays at its

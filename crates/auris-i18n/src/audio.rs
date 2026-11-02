@@ -229,6 +229,7 @@ const PLUGIN_NAMES: &[(&str, &str)] = &[
     ("Limiter", "リミッター"),
     ("Reverb", "リバーブ"),
     ("SoundFont", "サウンドフォント"),
+    ("Sampler", "サンプラー"),
 ];
 
 /// Japanese versions of the one-line descriptions shown in the plugin browser.
@@ -341,6 +342,10 @@ const PLUGIN_DESCRIPTIONS: &[(&str, &str)] = &[
         "Plays an imported SoundFont",
         "読み込んだサウンドフォントを再生します",
     ),
+    (
+        "Plays an audio file across the keyboard",
+        "オーディオファイルを鍵盤全体に割り当てて、音程を変えて鳴らします",
+    ),
 ];
 
 /// Japanese names for parameters. Shared across plugins on purpose — see the module note.
@@ -389,6 +394,12 @@ const PARAMETERS: &[(&str, &str)] = &[
     ("Detune", "デチューン"),
     ("Drive", "ドライブ"),
     ("Envelope", "エンベロープ"),
+    ("Fine Tune", "微調整"),
+    ("Key Tracking", "キー追従"),
+    ("Loop", "ループ"),
+    ("Loop End", "ループ終点"),
+    ("Loop Start", "ループ始点"),
+    ("Root Note", "ルートノート"),
     ("Feedback", "フィードバック"),
     ("Gain", "ゲイン"),
     ("Glide", "グライド"),

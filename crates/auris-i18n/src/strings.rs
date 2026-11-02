@@ -1850,6 +1850,7 @@ strings! {
     EditRecordTake { en: "recording a take", ja: "録音" }
     EditImportSoundFont { en: "importing a SoundFont", ja: "サウンドフォントの読み込み" }
     EditChoosePreset { en: "choosing a sound", ja: "音色の選択" }
+    EditLoadSample { en: "loading a sample", ja: "サンプルの読み込み" }
     EditSetKey { en: "setting the key", ja: "調の変更" }
     EditSetChord { en: "setting a chord", ja: "コードの変更" }
     EditMoveChord { en: "moving a chord", ja: "コードの移動" }
@@ -1928,6 +1929,10 @@ strings! {
     ErrorDictionary {
         en: "the dictionary did not load",
         ja: "辞書を読み込めませんでした"
+    }
+    ErrorEmptySample {
+        en: "that file holds no audio to sample",
+        ja: "このファイルにはサンプルにできる音声がありません"
     }
     ErrorNoPath {
         en: "the project has no path yet; save it somewhere first",
@@ -2620,6 +2625,14 @@ new のオプション
         en: "Envelope on: 14-note polyphony, and drum choke groups stop working.",
         ja: "エンベロープ有効：同時発音は14音まで。ドラムのチョークグループも無効になります。"
     }
+
+    // ------------------------------------------------------------------ audio sampler
+    // The row in the audio sampler's window naming the file it plays.
+    SamplerSample { en: "Sample", ja: "サンプル" }
+    SamplerNoSample { en: "Load a sample…", ja: "サンプルを読み込む…" }
+    SamplerSampleMissing { en: "missing", ja: "見つかりません" }
+    SamplerLoadSample { en: "Load sample", ja: "サンプルの読み込み" }
+    DialogLoadSample { en: "Load a sample", ja: "サンプルを読み込む" }
 
 }
 
