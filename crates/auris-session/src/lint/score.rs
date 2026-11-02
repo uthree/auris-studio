@@ -72,6 +72,7 @@ pub fn lint_score(project: &Project) -> Vec<Diagnostic> {
     diagnostics.extend(harmony(project, &events));
     diagnostics.extend(limit(missing_chords(project, &events)));
     diagnostics.extend(clip_rules(project));
+    diagnostics.extend(singer_rules(project));
     sort(&mut diagnostics);
     diagnostics
 }
@@ -572,6 +573,98 @@ fn clip_rules(project: &Project) -> Vec<Diagnostic> {
     all
 }
 
+/// What a voice cannot do: sing two notes at once, or sing a note with no words on it.
+///
+/// Overlaps are read within a clip, where trimming the earlier note is the obvious repair: a
+/// singer moves to the next note when it begins. A note with no lyric and no phonemes is sung as
+/// a stock vowel; in a clip with words elsewhere that is a gap, and a clip with none at all is
+/// reported once.
+fn singer_rules(project: &Project) -> Vec<Diagnostic> {
+    let mut overlaps = Vec::new();
+    let mut wordless = Vec::new();
+    for track in project.tracks.iter().filter(|t| !t.mixer.mute) {
+        let TrackKind::Singer(singer) = &track.kind else {
+            continue;
+        };
+        for clip in singer.clips.iter().filter(|clip| !clip.muted) {
+            let mut notes: Vec<_> = clip.playable_notes_with_indices().collect();
+            notes.sort_by_key(|(index, note)| (note.start, *index));
+            for pair in notes.windows(2) {
+                let ((first, a), (second, b)) = (&pair[0], &pair[1]);
+                if b.start >= a.end() || (a.start == b.start && a.pitch == b.pitch) {
+                    continue;
+                }
+                let start = clip.start + b.start;
+                let end = clip.start + a.end().min(b.end());
+                let mut diagnostic =
+                    Diagnostic::new(Rule::SingerOverlap, Severity::Warning, start, end);
+                diagnostic.track = Some(track.id);
+                diagnostic.notes = vec![
+                    NoteRef {
+                        clip: clip.id,
+                        index: *first,
+                    },
+                    NoteRef {
+                        clip: clip.id,
+                        index: *second,
+                    },
+                ];
+                diagnostic.pitches = vec![a.pitch, b.pitch];
+                if b.start > a.start {
+                    diagnostic.fix = Some(Fix::TrimNotes {
+                        clip: clip.id,
+                        lengths: vec![(*first, (b.start - a.start).raw())],
+                    });
+                }
+                overlaps.push(diagnostic);
+            }
+            let silent: Vec<_> = notes
+                .iter()
+                .filter(|(_, note)| note.lyric.trim().is_empty() && note.phonemes.is_empty())
+                .collect();
+            if silent.is_empty() {
+                continue;
+            }
+            if silent.len() == notes.len() {
+                let mut diagnostic = Diagnostic::new(
+                    Rule::MissingLyric,
+                    Severity::Info,
+                    clip.start + notes[0].1.start,
+                    clip.start + notes.iter().map(|(_, n)| n.end()).max().unwrap_or_default(),
+                );
+                diagnostic.track = Some(track.id);
+                diagnostic.notes = vec![NoteRef {
+                    clip: clip.id,
+                    index: notes[0].0,
+                }];
+                diagnostic.value = Some(notes.len() as f32);
+                wordless.push(diagnostic);
+                continue;
+            }
+            for (index, note) in silent {
+                let start = clip.start + note.start;
+                let mut diagnostic = Diagnostic::new(
+                    Rule::MissingLyric,
+                    Severity::Warning,
+                    start,
+                    start + note.length,
+                );
+                diagnostic.track = Some(track.id);
+                diagnostic.notes = vec![NoteRef {
+                    clip: clip.id,
+                    index: *index,
+                }];
+                diagnostic.pitches = vec![note.pitch];
+                diagnostic.value = Some(1.0);
+                wordless.push(diagnostic);
+            }
+        }
+    }
+    let mut all = limit(overlaps);
+    all.extend(limit(wordless));
+    all
+}
+
 /// Same pitch (and, on a drum track, the same voice) written over itself in one clip.
 fn duplicate_notes(track: TrackId, clip: &MidiClip) -> Vec<Diagnostic> {
     let mut order: Vec<(usize, &auris_core::project::Note)> =
@@ -904,5 +997,69 @@ mod tests {
         let (mut project, _) = project_with(held(&[60, 64, 67], 0));
         in_c_with_chord(&mut project, "I");
         assert!(missing(&project).is_empty());
+    }
+
+    fn singer_with(notes: Vec<Note>) -> (Project, ClipId) {
+        let mut project = Project::new("Lint", 48_000.0);
+        let track = project.add_singer_track("Voice", "auris.synth.pulse");
+        let clip = project
+            .add_midi_clip(track, "Verse", Ticks::ZERO, Ticks(3840))
+            .unwrap();
+        project.midi_clip_mut(clip).unwrap().notes = notes;
+        (project, clip)
+    }
+
+    fn sung(pitch: u8, start: i64, length: i64, lyric: &str) -> Note {
+        Note {
+            lyric: lyric.into(),
+            ..Note::new(pitch, Ticks(start), Ticks(length))
+        }
+    }
+
+    #[test]
+    fn a_singer_asked_for_two_notes_at_once_is_told_to_let_go_of_the_first() {
+        let (project, clip) = singer_with(vec![
+            sung(60, 0, 960, "ら"),
+            sung(62, 480, 480, "ら"),
+            sung(64, 960, 480, "ら"),
+        ]);
+        let found: Vec<_> = lint_score(&project)
+            .into_iter()
+            .filter(|d| d.rule == Rule::SingerOverlap)
+            .collect();
+        assert_eq!(found.len(), 1);
+        assert_eq!((found[0].start, found[0].end), (Ticks(480), Ticks(960)));
+        assert_eq!(
+            found[0].fix,
+            Some(Fix::TrimNotes {
+                clip,
+                lengths: vec![(0, 480)]
+            })
+        );
+    }
+
+    #[test]
+    fn a_wordless_sung_note_is_reported_alone_and_a_wordless_clip_once() {
+        let (project, _) = singer_with(vec![
+            sung(60, 0, 480, "あ"),
+            sung(62, 480, 480, ""),
+            sung(64, 960, 480, "い"),
+        ]);
+        let found: Vec<_> = lint_score(&project)
+            .into_iter()
+            .filter(|d| d.rule == Rule::MissingLyric)
+            .collect();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].pitches, vec![62]);
+        assert_eq!(found[0].severity, Severity::Warning);
+
+        let (project, _) = singer_with((0..4).map(|i| sung(60, i * 480, 480, "")).collect());
+        let found: Vec<_> = lint_score(&project)
+            .into_iter()
+            .filter(|d| d.rule == Rule::MissingLyric)
+            .collect();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].value, Some(4.0));
+        assert!(found[0].pitches.is_empty());
     }
 }

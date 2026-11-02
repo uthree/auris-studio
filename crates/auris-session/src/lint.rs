@@ -85,6 +85,10 @@ pub enum Rule {
     MissingChord,
     /// Two notes of the same pitch on top of each other in one clip.
     DuplicateNote,
+    /// A singer asked to sing two notes at once.
+    SingerOverlap,
+    /// A sung note with no lyric, which the voice sings as a stock vowel.
+    MissingLyric,
     /// A note struck too softly to be heard.
     InaudibleVelocity,
     /// A note outside any instrument's or voice's usable range.
@@ -97,11 +101,17 @@ pub enum Rule {
     TooQuiet,
     /// A track plays notes but its rendered signal is silent.
     SilentTrack,
+    /// A note alone on its track sounds off its written pitch, octaves aside.
+    PitchMismatch,
+    /// Notes that should have a pitch come out without one.
+    Unpitched,
+    /// The mix loses most of its level summed to mono: left and right cancel.
+    PhaseCancellation,
 }
 
 impl Rule {
     /// Every rule, score rules first.
-    pub const ALL: [Rule; 14] = [
+    pub const ALL: [Rule; 19] = [
         Rule::CrowdedOnset,
         Rule::DenseNotes,
         Rule::HarshInterval,
@@ -110,12 +120,17 @@ impl Rule {
         Rule::AvoidNote,
         Rule::MissingChord,
         Rule::DuplicateNote,
+        Rule::SingerOverlap,
+        Rule::MissingLyric,
         Rule::InaudibleVelocity,
         Rule::ExtremePitch,
         Rule::Clipping,
         Rule::TooLoud,
         Rule::TooQuiet,
         Rule::SilentTrack,
+        Rule::PitchMismatch,
+        Rule::Unpitched,
+        Rule::PhaseCancellation,
     ];
 
     /// The stable identifier used on the wire.
@@ -129,12 +144,17 @@ impl Rule {
             Rule::AvoidNote => "avoid_note",
             Rule::MissingChord => "missing_chord",
             Rule::DuplicateNote => "duplicate_note",
+            Rule::SingerOverlap => "singer_overlap",
+            Rule::MissingLyric => "missing_lyric",
             Rule::InaudibleVelocity => "inaudible_velocity",
             Rule::ExtremePitch => "extreme_pitch",
             Rule::Clipping => "clipping",
             Rule::TooLoud => "too_loud",
             Rule::TooQuiet => "too_quiet",
             Rule::SilentTrack => "silent_track",
+            Rule::PitchMismatch => "pitch_mismatch",
+            Rule::Unpitched => "unpitched",
+            Rule::PhaseCancellation => "phase_cancellation",
         }
     }
 
@@ -142,7 +162,13 @@ impl Rule {
     pub fn needs_audio(self) -> bool {
         matches!(
             self,
-            Rule::Clipping | Rule::TooLoud | Rule::TooQuiet | Rule::SilentTrack
+            Rule::Clipping
+                | Rule::TooLoud
+                | Rule::TooQuiet
+                | Rule::SilentTrack
+                | Rule::PitchMismatch
+                | Rule::Unpitched
+                | Rule::PhaseCancellation
         )
     }
 }
@@ -326,6 +352,27 @@ impl Diagnostic {
             Rule::DuplicateNote => {
                 format!("{pitches} is written twice on top of itself in one clip")
             }
+            Rule::SingerOverlap => {
+                format!("{pitches} overlap on a singer track; a voice sings one note at a time")
+            }
+            Rule::MissingLyric if self.pitches.is_empty() => format!(
+                "none of this clip's {value:.0} sung notes has a lyric; each is sung as a stock vowel"
+            ),
+            Rule::MissingLyric => {
+                format!("{pitches} has no lyric and is sung as a stock vowel")
+            }
+            Rule::PitchMismatch => format!(
+                "{pitches} sounds {value:+.0} cents from its written pitch (octaves aside), beyond the {limit:.0} cent tolerance"
+            ),
+            Rule::Unpitched if self.pitches.is_empty() => format!(
+                "{value:.0}% of this track's single notes render with no detectable pitch; fine for percussion, a fault for a melody"
+            ),
+            Rule::Unpitched => {
+                format!("{pitches} is sung with no detectable pitch")
+            }
+            Rule::PhaseCancellation => format!(
+                "summed to mono the mix loses {value:.0} dB here: left and right cancel, and a phone speaker plays a hole"
+            ),
             Rule::InaudibleVelocity => {
                 format!("{pitches} has velocity {value:.2}, too soft to be heard")
             }

@@ -327,7 +327,8 @@
 //!
 //! [`crate::lint`] finds problems with one right answer — a dozen notes struck on one tick, a
 //! held minor second, a sustained note outside both the written key and chord, a duplicate
-//! note, a mix that clips, a track that plays notes and makes no sound — and leaves everything
+//! note, chords sounding under no chord symbol, a mix that clips, a track that plays notes and
+//! makes no sound, a lone note rendered off its written pitch — and leaves everything
 //! with more than one answer to people and agents. Score rules read the document
 //! ([`crate::lint::lint_score`]); audio rules render the mix and every sounding track once on a
 //! worker ([`crate::lint::AudioLintJob`]). A finding carries a [`crate::lint::Fix`] only when the

@@ -24,6 +24,28 @@ pub const CLIP_LEVEL: f32 = 0.999;
 /// A fader at or below this is as good as off.
 pub const FADER_OFF_DB: f32 = -60.0;
 
+/// A note whose sound sits further than this from its written pitch, once octaves are set aside,
+/// is out of tune: a quarter tone either way.
+pub const PITCH_TOLERANCE_CENTS: f32 = 50.0;
+/// A note with a pitch in fewer than this share of its frames has none to speak of.
+pub const VOICED_SHARE: f32 = 0.3;
+/// Below this, a stretch of the mix loses this much level summed to mono that the left and
+/// right channels are cancelling each other: a phone speaker plays it as a hole.
+pub const MONO_LOSS_DB: f32 = -12.0;
+
+/// The written notes measured: C2 to C6, where a period fits a short frame at the lint's rate.
+const PITCH_NOTES: (u8, u8) = (36, 84);
+/// The shortest note measured: Harvest needs a few periods past the attack.
+const PITCH_SHORTEST: f64 = 0.15;
+/// The most notes, and the most seconds of notes, measured per track.
+const PITCH_MAX_NOTES: usize = 160;
+const PITCH_MAX_SECONDS: f64 = 60.0;
+/// Mono-loss windows are longer than peak windows: cancellation is a property of a sound, not a
+/// click.
+const PHASE_WINDOW_SECONDS: f64 = 0.4;
+/// Mono loss is judged only where the mix is loud enough to be heard.
+const PHASE_LEVEL_DB: f32 = -40.0;
+
 /// Measurement windows: short enough to place a click, long enough to stay cheap.
 const WINDOW_SECONDS: f64 = 0.05;
 /// No more tracks are rendered alone than this; each is a whole extra pass.
@@ -47,6 +69,19 @@ pub struct AudioSummary {
 /// A checked track, its fader in dB, and the merged stretches where its notes play.
 type CheckedTrack = (TrackId, f32, Vec<(Ticks, Ticks)>);
 
+/// A note played alone on its track, whose pitch the render can be held to.
+#[derive(Clone, Debug)]
+struct PitchNote {
+    note: super::NoteRef,
+    pitch: u8,
+    start: Ticks,
+    end: Ticks,
+    /// Where it sounds, in frames of the render.
+    frames: (usize, usize),
+    /// Whether the track is a singer, whose every note must have a pitch.
+    singer: bool,
+}
+
 /// A render of the mix and every sounding track, captured on the session thread.
 ///
 /// `Send`: run it on a worker, then hand the result to the frontend, which keeps it only if
@@ -59,6 +94,8 @@ pub struct AudioLintJob {
     tracks: Vec<CheckedTrack>,
     /// Whether any track holds notes, which is what makes a silent mix a problem.
     has_notes: bool,
+    /// For each checked track, the notes it plays alone, by start.
+    pitched: Vec<Vec<PitchNote>>,
 }
 
 /// The audio pass's findings, tagged with the revision they describe.
@@ -78,13 +115,25 @@ impl Session {
     pub fn audio_lint_job(&mut self) -> AudioLintJob {
         let project = self.project();
         let tracks = checked_tracks(project);
-        let has_notes = !super::score::events(project).is_empty();
+        let events = super::score::events(project);
+        let has_notes = !events.is_empty();
+        let pitched = tracks
+            .iter()
+            .map(|(track, _, _)| {
+                if self.unpitched_instrument(*track) {
+                    Vec::new()
+                } else {
+                    pitch_notes(project, &events, *track, AUDIO_LINT_RATE)
+                }
+            })
+            .collect();
         AudioLintJob {
             revision: self.revision(),
             job: self.render_job_at(Some(AUDIO_LINT_RATE)),
             rate: AUDIO_LINT_RATE,
             tracks,
             has_notes,
+            pitched,
         }
     }
 
@@ -97,6 +146,71 @@ impl Session {
                 || track.mixer.effects.iter().any(|slot| slot.is_hosted())
         }) || project.master.effects.iter().any(|slot| slot.is_hosted())
     }
+}
+
+impl Session {
+    /// Whether a track's instrument is percussion played from an instrument track, whose notes
+    /// choose sounds rather than pitches. The same exclusions the chord reader makes.
+    fn unpitched_instrument(&self, track: TrackId) -> bool {
+        self.track_preset(track)
+            .is_some_and(|preset| preset.bank == 128)
+            || self
+                .project()
+                .track(track)
+                .and_then(|t| t.kind.as_instrument())
+                .is_some_and(|i| i.instrument_id == "auris.synth.noisedrum")
+    }
+}
+
+/// The notes `track` plays with nothing else of its own sounding, long enough and in a range
+/// where a pitch can be measured.
+fn pitch_notes(
+    project: &Project,
+    events: &[super::score::Event],
+    track: TrackId,
+    rate: f64,
+) -> Vec<PitchNote> {
+    let Some(kind) = project.track(track).map(|t| &t.kind) else {
+        return Vec::new();
+    };
+    let singer = matches!(kind, TrackKind::Singer(_));
+    if !singer && !matches!(kind, TrackKind::Instrument(_)) {
+        return Vec::new();
+    }
+    let own: Vec<_> = events
+        .iter()
+        .filter(|event| event.track == track && !event.drum)
+        .collect();
+    let tempo = &project.tempo_map;
+    let mut notes = Vec::new();
+    let mut seconds = 0.0;
+    for (index, event) in own.iter().enumerate() {
+        let alone = own
+            .iter()
+            .enumerate()
+            .all(|(other, e)| other == index || e.end <= event.start || e.start >= event.end);
+        if !alone || !(PITCH_NOTES.0..=PITCH_NOTES.1).contains(&event.pitch) {
+            continue;
+        }
+        let from = tempo.ticks_to_seconds(event.start).0;
+        let to = tempo.ticks_to_seconds(event.end).0;
+        if to - from < PITCH_SHORTEST {
+            continue;
+        }
+        seconds += to - from;
+        if notes.len() >= PITCH_MAX_NOTES || seconds > PITCH_MAX_SECONDS {
+            break;
+        }
+        notes.push(PitchNote {
+            note: event.note,
+            pitch: event.pitch,
+            start: event.start,
+            end: event.end,
+            frames: ((from * rate) as usize, (to * rate) as usize),
+            singer,
+        });
+    }
+    notes
 }
 
 /// Unmuted note tracks that can make a sound at all, with where their notes play.
@@ -189,11 +303,34 @@ impl AudioLintJob {
         let mut windows: Vec<Windows> = passes.iter().map(|_| Windows::new(self.rate)).collect();
         // The mix is kept whole for its integrated loudness, which is gated over the song.
         let mut mix: Vec<Vec<f32>> = vec![Vec::new(), Vec::new()];
+        // Each pitched note's samples, mono, captured as its track's pass goes by.
+        let mut captured: Vec<Vec<Vec<f32>>> = self
+            .pitched
+            .iter()
+            .map(|notes| notes.iter().map(|_| Vec::new()).collect())
+            .collect();
+        let mut position = vec![0usize; passes.len()];
+        let pitched = &self.pitched;
         let mut progress = RenderProgress::default().cancelled_by(cancelled);
         let rate = self
             .job
             .render_passes(&passes, &options, &mut progress, |pass, block| {
                 windows[pass].feed(block);
+                let at = position[pass];
+                position[pass] += block.frame_count();
+                if pass > 0 {
+                    let channels = block.channel_count().max(1);
+                    for (note, out) in pitched[pass - 1].iter().zip(&mut captured[pass - 1]) {
+                        let from = note.frames.0.max(at);
+                        let to = note.frames.1.min(at + block.frame_count());
+                        for frame in from..to {
+                            let sum: f32 = (0..block.channel_count())
+                                .map(|channel| block.channel(channel)[frame - at])
+                                .sum();
+                            out.push(sum / channels as f32);
+                        }
+                    }
+                }
                 if pass == 0 {
                     for (channel, out) in mix.iter_mut().enumerate() {
                         let source = channel.min(block.channel_count().saturating_sub(1));
@@ -265,7 +402,7 @@ impl AudioLintJob {
         }
 
         // Tracks that play but make no sound.
-        let silent = auris_core::param::db_to_gain(SILENCE_DB);
+        let silent = silent_gain();
         for (pass, (track, fader, spans)) in self.tracks.iter().enumerate() {
             let windows = &windows[pass + 1];
             let mut quiet = Vec::new();
@@ -306,6 +443,12 @@ impl AudioLintJob {
                 diagnostics.push(diagnostic);
             }
         }
+        diagnostics.extend(mono_loss(&mix, rate, &to_ticks));
+        for ((track, _, _), (notes, samples)) in
+            self.tracks.iter().zip(self.pitched.iter().zip(&captured))
+        {
+            diagnostics.extend(pitch_problems(*track, notes, samples, rate, silent_gain()));
+        }
         sort(&mut diagnostics);
         Ok(AudioLintResult {
             revision: self.revision,
@@ -318,6 +461,135 @@ impl AudioLintJob {
             },
         })
     }
+}
+
+fn silent_gain() -> f32 {
+    auris_core::param::db_to_gain(SILENCE_DB)
+}
+
+/// Stretches where the mix, summed to mono, loses [`MONO_LOSS_DB`] or more against its stereo
+/// level: the left and right channels are out of phase.
+fn mono_loss(mix: &AudioBuffer, rate: f64, to_ticks: &dyn Fn(f64) -> Ticks) -> Vec<Diagnostic> {
+    if mix.channel_count() < 2 {
+        return Vec::new();
+    }
+    let (left, right) = (mix.channel(0), mix.channel(1));
+    let size = ((rate * PHASE_WINDOW_SECONDS) as usize).max(1);
+    let audible = auris_core::param::db_to_gain(PHASE_LEVEL_DB);
+    let mut spans: Vec<(usize, usize, f32)> = Vec::new();
+    for (index, (l, r)) in left.chunks(size).zip(right.chunks(size)).enumerate() {
+        let stereo = l
+            .iter()
+            .zip(r)
+            .map(|(a, b)| (a * a + b * b) / 2.0)
+            .sum::<f32>()
+            / l.len() as f32;
+        let mono = l
+            .iter()
+            .zip(r)
+            .map(|(a, b)| ((a + b) / 2.0).powi(2))
+            .sum::<f32>()
+            / l.len() as f32;
+        if stereo.sqrt() < audible {
+            continue;
+        }
+        let loss = 10.0 * (mono.max(1e-12) / stereo).log10();
+        if loss > MONO_LOSS_DB {
+            continue;
+        }
+        match spans.last_mut() {
+            Some(last) if last.1 + 1 == index => {
+                last.1 = index;
+                last.2 = last.2.min(loss);
+            }
+            _ => spans.push((index, index, loss)),
+        }
+    }
+    spans
+        .into_iter()
+        .take(MAX_SPANS)
+        .map(|(first, last, loss)| {
+            let mut diagnostic = Diagnostic::new(
+                Rule::PhaseCancellation,
+                Severity::Warning,
+                to_ticks(first as f64 * PHASE_WINDOW_SECONDS),
+                to_ticks((last + 1) as f64 * PHASE_WINDOW_SECONDS),
+            );
+            diagnostic.value = Some(loss);
+            diagnostic.limit = Some(MONO_LOSS_DB);
+            diagnostic
+        })
+        .collect()
+}
+
+/// The written pitch of MIDI note `pitch`, in hertz.
+fn hertz(pitch: u8) -> f32 {
+    440.0 * 2f32.powf((f32::from(pitch) - 69.0) / 12.0)
+}
+
+/// Notes that sound off their written pitch, or with no pitch at all.
+///
+/// Octaves are set aside: an instrument an octave up or down is a register choice, and Harvest
+/// can be an octave out on a bright sound. A pitched instrument with most of its notes unvoiced
+/// is one finding for the track; a singer's unvoiced note is a finding of its own, because a
+/// sung note is nothing but its pitch.
+fn pitch_problems(
+    track: TrackId,
+    notes: &[PitchNote],
+    samples: &[Vec<f32>],
+    rate: f64,
+    silent: f32,
+) -> Vec<Diagnostic> {
+    let mut found = Vec::new();
+    let mut unvoiced = Vec::new();
+    let mut measured = 0usize;
+    for (note, samples) in notes.iter().zip(samples) {
+        let peak = samples.iter().fold(0.0f32, |a, b| a.max(b.abs()));
+        if peak < silent {
+            continue;
+        }
+        measured += 1;
+        let heard = auris_analysis::pitch::note_pitch(samples, rate, hertz(note.pitch));
+        let Some(hz) = heard.hz.filter(|_| heard.voiced >= VOICED_SHARE) else {
+            unvoiced.push(note);
+            continue;
+        };
+        let cents = 1200.0 * (hz / hertz(note.pitch)).log2();
+        let off = cents - 1200.0 * (cents / 1200.0).round();
+        if off.abs() <= PITCH_TOLERANCE_CENTS || found.len() >= MAX_SPANS * 2 {
+            continue;
+        }
+        let mut diagnostic =
+            Diagnostic::new(Rule::PitchMismatch, Severity::Warning, note.start, note.end);
+        diagnostic.track = Some(track);
+        diagnostic.notes = vec![note.note];
+        diagnostic.pitches = vec![note.pitch];
+        diagnostic.value = Some(off);
+        diagnostic.limit = Some(PITCH_TOLERANCE_CENTS);
+        found.push(diagnostic);
+    }
+    let singer = notes.first().is_some_and(|note| note.singer);
+    if singer {
+        for note in unvoiced.iter().take(MAX_SPANS * 2) {
+            let mut diagnostic =
+                Diagnostic::new(Rule::Unpitched, Severity::Warning, note.start, note.end);
+            diagnostic.track = Some(track);
+            diagnostic.notes = vec![note.note];
+            diagnostic.pitches = vec![note.pitch];
+            found.push(diagnostic);
+        }
+    } else if measured >= 4 && unvoiced.len() * 2 >= measured {
+        let mut diagnostic = Diagnostic::new(
+            Rule::Unpitched,
+            Severity::Info,
+            unvoiced[0].start,
+            unvoiced[unvoiced.len() - 1].end,
+        );
+        diagnostic.track = Some(track);
+        diagnostic.value = Some(unvoiced.len() as f32 / measured as f32 * 100.0);
+        found.push(diagnostic);
+    }
+    found
 }
 
 #[cfg(test)]
@@ -359,14 +631,66 @@ mod tests {
         assert!(result.summary.tracks_checked == 1);
         assert!(result.summary.integrated_lufs.is_some());
         assert!(result.summary.seconds > 1.5);
+        // The built-in voice plays in tune, and the measurement agrees.
         assert!(
-            !result
-                .diagnostics
-                .iter()
-                .any(|d| d.rule == Rule::SilentTrack),
+            !result.diagnostics.iter().any(|d| matches!(
+                d.rule,
+                Rule::SilentTrack | Rule::PitchMismatch | Rule::Unpitched | Rule::PhaseCancellation
+            )),
             "{:?}",
             result.diagnostics
         );
+    }
+
+    fn sawtooth(hz: f32, seconds: f64) -> Vec<f32> {
+        (0..(AUDIO_LINT_RATE * seconds) as usize)
+            .map(|i| ((i as f32 * hz / AUDIO_LINT_RATE as f32).fract() * 2.0 - 1.0) * 0.3)
+            .collect()
+    }
+
+    fn note(pitch: u8, index: usize) -> PitchNote {
+        PitchNote {
+            note: super::super::NoteRef {
+                clip: auris_core::project::ClipId(1),
+                index,
+            },
+            pitch,
+            start: Ticks(index as i64 * 960),
+            end: Ticks(index as i64 * 960 + 960),
+            frames: (0, 0),
+            singer: false,
+        }
+    }
+
+    #[test]
+    fn a_note_a_semitone_sharp_is_off_pitch_and_one_an_octave_up_is_not() {
+        let a3 = hertz(57);
+        let notes = [note(57, 0), note(57, 1), note(57, 2)];
+        let samples = [
+            sawtooth(a3, 0.5),
+            sawtooth(a3 * 2f32.powf(1.0 / 12.0), 0.5),
+            sawtooth(a3 * 2.0, 0.5),
+        ];
+        let found = pitch_problems(TrackId(1), &notes, &samples, AUDIO_LINT_RATE, silent_gain());
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].rule, Rule::PitchMismatch);
+        assert_eq!(found[0].notes[0].index, 1);
+        assert!((found[0].value.unwrap() - 100.0).abs() < 15.0, "{found:?}");
+    }
+
+    #[test]
+    fn a_mix_whose_channels_are_opposite_cancels_in_mono() {
+        let left = sawtooth(220.0, 2.0);
+        let right: Vec<f32> = left.iter().map(|s| -s).collect();
+        let mix = AudioBuffer::from_planar(vec![left.clone(), right], AUDIO_LINT_RATE).unwrap();
+        let tempo = auris_core::time::TempoMap::default();
+        let to_ticks = |seconds: f64| tempo.seconds_to_ticks(Seconds(seconds));
+        let found = mono_loss(&mix, AUDIO_LINT_RATE, &to_ticks);
+        assert_eq!(found.len(), 1);
+        assert!(found[0].value.unwrap() < -40.0);
+
+        let mix = AudioBuffer::from_planar(vec![left.clone(), left], AUDIO_LINT_RATE).unwrap();
+        assert!(mono_loss(&mix, AUDIO_LINT_RATE, &to_ticks).is_empty());
     }
 
     #[test]

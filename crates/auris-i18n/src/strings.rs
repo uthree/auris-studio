@@ -2268,6 +2268,11 @@ new のオプション
     LintNameOutOfKey { en: "Outside key and chord", ja: "キー・コード外の音" }
     LintNameAvoidNote { en: "Avoid note", ja: "アボイドノート" }
     LintNameMissingChord { en: "No chord written", ja: "コード未記入" }
+    LintNameSingerOverlap { en: "Overlapping sung notes", ja: "歌の音の重なり" }
+    LintNameMissingLyric { en: "No lyric", ja: "歌詞なし" }
+    LintNamePitchMismatch { en: "Off pitch", ja: "ピッチのずれ" }
+    LintNameUnpitched { en: "No pitch detected", ja: "ピッチ検出不可" }
+    LintNamePhaseCancellation { en: "Cancels in mono", ja: "モノラルで打ち消し" }
     LintNameDuplicateNote { en: "Duplicate note", ja: "重複した音符" }
     LintNameInaudibleVelocity { en: "Inaudible velocity", ja: "聞こえないベロシティ" }
     LintNameExtremePitch { en: "Extreme pitch", ja: "極端な音高" }
@@ -2286,6 +2291,13 @@ new のオプション
     LintOutOfKey { en: "{pitches} is in neither the key nor the chord", ja: "{pitches}はキーにもコードにも含まれない音です" }
     LintAvoidNote { en: "{pitches} is an avoid note against the chord", ja: "{pitches}はコードに対するアボイドノートです" }
     LintMissingChord { en: "{value} bar(s) play chords, but no chord is written over them", ja: "{value}小節で和音が鳴っていますが、コードが書かれていません" }
+    LintSingerOverlap { en: "{pitches} overlap on a singer track; a voice sings one note at a time", ja: "シンガートラックで{pitches}が重なっています。声は一度に一音しか歌えません" }
+    LintMissingLyric { en: "{pitches} has no lyric and is sung as a stock vowel", ja: "{pitches}に歌詞がなく、仮の母音で歌われます" }
+    LintMissingLyricClip { en: "None of this clip's {value} sung notes has a lyric", ja: "このクリップの{value}音すべてに歌詞がありません" }
+    LintPitchMismatch { en: "{pitches} sounds {value} cents off its written pitch (octaves aside)", ja: "{pitches}が楽譜の音高から{value}セントずれて鳴っています（オクターブ違いは除く）" }
+    LintUnpitched { en: "{pitches} is sung with no detectable pitch", ja: "{pitches}の歌声からピッチが検出できません" }
+    LintUnpitchedTrack { en: "{value}% of this track's single notes render with no detectable pitch", ja: "このトラックの単音の{value}%でピッチが検出できません（打楽器なら問題ありません）" }
+    LintPhaseCancellation { en: "Summed to mono the mix loses {value} dB here: left and right cancel", ja: "モノラルにすると{value} dB下がります。左右の音が打ち消し合っています" }
     LintDuplicateNote { en: "{pitches} is written twice on top of itself", ja: "{pitches}が同じ位置に重複して書かれています" }
     LintInaudibleVelocity { en: "{pitches} is too soft to hear (velocity {value})", ja: "{pitches}はベロシティ{value}で、小さすぎて聞こえません" }
     LintExtremePitch { en: "{pitches} is outside any instrument's range", ja: "{pitches}は楽器や声の音域から外れています" }

@@ -225,6 +225,13 @@ impl AurisApp {
             Rule::OutOfKey => Key::LintOutOfKey,
             Rule::AvoidNote => Key::LintAvoidNote,
             Rule::MissingChord => Key::LintMissingChord,
+            Rule::SingerOverlap => Key::LintSingerOverlap,
+            Rule::MissingLyric if diagnostic.pitches.is_empty() => Key::LintMissingLyricClip,
+            Rule::MissingLyric => Key::LintMissingLyric,
+            Rule::PitchMismatch => Key::LintPitchMismatch,
+            Rule::Unpitched if diagnostic.pitches.is_empty() => Key::LintUnpitchedTrack,
+            Rule::Unpitched => Key::LintUnpitched,
+            Rule::PhaseCancellation => Key::LintPhaseCancellation,
             Rule::DuplicateNote => Key::LintDuplicateNote,
             Rule::InaudibleVelocity => Key::LintInaudibleVelocity,
             Rule::ExtremePitch => Key::LintExtremePitch,
@@ -241,6 +248,10 @@ impl AurisApp {
             .join("・");
         let value = match diagnostic.rule {
             Rule::InaudibleVelocity => format!("{:.2}", diagnostic.value.unwrap_or_default()),
+            Rule::PitchMismatch => format!("{:+.0}", diagnostic.value.unwrap_or_default()),
+            Rule::Unpitched | Rule::PhaseCancellation => {
+                format!("{:.0}", diagnostic.value.unwrap_or_default())
+            }
             _ => number(diagnostic.value.unwrap_or_default()),
         };
         self.t(key)
@@ -446,6 +457,11 @@ impl AurisApp {
             Rule::OutOfKey => Key::LintNameOutOfKey,
             Rule::AvoidNote => Key::LintNameAvoidNote,
             Rule::MissingChord => Key::LintNameMissingChord,
+            Rule::SingerOverlap => Key::LintNameSingerOverlap,
+            Rule::MissingLyric => Key::LintNameMissingLyric,
+            Rule::PitchMismatch => Key::LintNamePitchMismatch,
+            Rule::Unpitched => Key::LintNameUnpitched,
+            Rule::PhaseCancellation => Key::LintNamePhaseCancellation,
             Rule::DuplicateNote => Key::LintNameDuplicateNote,
             Rule::InaudibleVelocity => Key::LintNameInaudibleVelocity,
             Rule::ExtremePitch => Key::LintNameExtremePitch,
