@@ -2,7 +2,7 @@
 
 use std::f32::consts::{PI, TAU};
 
-use super::{Model, Settings};
+use super::{Model, Quality, Settings};
 
 #[path = "piano.rs"]
 pub(super) mod piano;
@@ -10,6 +10,8 @@ use piano::Piano;
 pub(super) use piano::{PianoVoicing, VOICING};
 
 const MODES: usize = 32;
+/// Modes a struck bar or bell keeps at [`Quality::Draft`].
+const DRAFT_MODES: usize = 8;
 /// Middle C, where the tuned bar's fundamental decays in exactly the Resonance Decay time.
 const MALLET_REFERENCE_HZ: f32 = 261.63;
 
@@ -117,12 +119,18 @@ impl Modal {
         frequency: f32,
         velocity: f32,
         rate: f32,
+        quality: Quality,
         settings: Settings,
     ) {
         if let Some(piano) = &mut self.piano {
-            piano.excite(frequency, velocity, rate, settings);
+            piano.excite(frequency, velocity, rate, quality, settings);
             return;
         }
+        let count = if quality == Quality::Draft {
+            DRAFT_MODES
+        } else {
+            MODES
+        };
         for (index, mode) in self.modes.iter_mut().enumerate() {
             let n = (index + 1) as f32;
             let ratio = match model {
@@ -143,7 +151,7 @@ impl Modal {
             };
             let hz = frequency * ratio;
             *mode = Mode::default();
-            if ratio == 0.0 || hz >= rate * 0.45 {
+            if ratio == 0.0 || index >= count || hz >= rate * 0.45 {
                 continue;
             }
             mode.ratio = ratio;
