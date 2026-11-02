@@ -1257,6 +1257,10 @@ strings! {
     PartOctave { en: "Octave", ja: "オクターブ" }
     PartSubdivision { en: "Subdivision", ja: "音符の細かさ" }
     PartSwing { en: "Swing", ja: "スウィング" }
+    // A pianist's left hand under a chord comp: the root struck an octave or more below.
+    PartLowRoot { en: "Root below", ja: "低音でルート" }
+    // How far apart a chord's notes begin, bottom first, as a note value.
+    PartStrum { en: "Strum", ja: "ずらし（ストラム）" }
     PartHumanize { en: "Humanize", ja: "ゆらぎ" }
     PartGroove { en: "Groove", ja: "グルーヴ" }
     PartRhythm { en: "Rhythm", ja: "リズム" }

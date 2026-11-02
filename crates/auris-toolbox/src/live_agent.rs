@@ -534,6 +534,12 @@ mod tests {
                 null
             ])
         );
+        assert_eq!(
+            settings["strum"]["enum"],
+            serde_json::json!([0, 16, 32, 64, 128, null])
+        );
+        assert!(settings["low_root"].is_object());
+        assert!(accompaniment_settings["strum"].is_object());
         assert_eq!(settings["rhythm"]["pattern"], "^[xXo.~ \\t|-]*$");
         assert_eq!(settings["rhythm"]["maxLength"], 4096);
         let description = crate::tool_exposure::concise_description(&tool.description);

@@ -2132,6 +2132,16 @@ pub mod composition {
     //! at 100% it strikes every step, while gate independently controls note length. The
     //! foreground-arrangement pass preserves this dense rhythm, and authored rests stay intact.
     //!
+    //! Chords and pad clips also take a left hand and a strum, the piano-comp texture of a root
+    //! under a voicing rolled upward. [`ClipRecipe::low_root`](auris_core::ClipRecipe::low_root)
+    //! strikes the chord's root (its slash bass) at least an octave under the voicing without
+    //! joining the voice leading; [`ClipRecipe::strum`](auris_core::ClipRecipe::strum) delays each
+    //! note above the lowest by a note value, written into the score, with every release left
+    //! where the strike would have ended. That is the difference from the stroke performance
+    //! transform, which spreads in milliseconds and leaves the text alone. Both reach the agent
+    //! through the recipe patch (`edit_recipe`, `accompaniment`) and a song part's `low_root` and
+    //! `strum` fields.
+    //!
     //! Each clip a piece arrives with carries a [`ClipRecipe`](auris_core::ClipRecipe), derived by
     //! [`recipe_for`](auris_compose::recipe_for) from the part *as that section played it* — a
     //! chorus that patched the bass an octave up produces a clip whose recipe says so. That one
