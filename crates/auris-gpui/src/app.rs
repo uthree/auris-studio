@@ -1544,6 +1544,8 @@ pub struct AurisApp {
     pub(crate) drum_analysis: crate::ui::drums::DrumAnalysisState,
     /// Whether the dedicated analysis panel is open.
     pub(crate) analysis_panel: bool,
+    /// The music linter's findings and its two schedules.
+    pub(crate) lint: crate::ui::lint::LintState,
     /// CPU music-analysis jobs and their unapplied draft.
     pub(crate) music_analysis: crate::ui::music_analysis::MusicAnalysisState,
     pub(crate) visualizer: crate::ui::visualizer::VisualizerState,
@@ -2017,6 +2019,7 @@ impl AurisApp {
                         this.watch_disk(cx);
                         this.drain_agent(cx);
                         this.poll_auto_sing(cx);
+                        this.poll_lint(cx);
                         this.poll_drum_analysis(cx);
                         this.poll_sung_preview(cx);
                         // Also here rather than in a command, because a monitor breaking up
@@ -2111,6 +2114,7 @@ impl AurisApp {
             sung_preview_rendering: false,
             drum_analysis: Default::default(),
             analysis_panel: false,
+            lint: Default::default(),
             music_analysis: Default::default(),
             visualizer: Default::default(),
             video_export: Default::default(),

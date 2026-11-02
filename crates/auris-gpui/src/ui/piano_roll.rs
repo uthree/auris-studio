@@ -666,6 +666,23 @@ impl AurisApp {
             .find_map(|(clip, index)| {
                 (Some(clip) == self.selected_clip && editable).then_some(index)
             });
+        // The linter's notes in this clip, outlined in the colour of what is wrong with them.
+        let lint_notes: Vec<(usize, gpui::Hsla)> = match editable {
+            true => self
+                .lint
+                .diagnostics()
+                .iter()
+                .flat_map(|diagnostic| {
+                    let colour = crate::ui::lint::severity_colour(diagnostic.severity, &self.theme);
+                    diagnostic
+                        .notes
+                        .iter()
+                        .filter(|note| Some(note.clip) == self.selected_clip)
+                        .map(move |note| (note.index, colour))
+                })
+                .collect(),
+            false => Vec::new(),
+        };
         // After the last read of `clip`, whose borrow the cache lookup cannot share. What
         // the voice will sing, drawn over the notes: the pitch contour so a drawn slide
         // reads as the slide it is, and the phoneme cuts so the sixty milliseconds a
@@ -969,6 +986,7 @@ impl AurisApp {
                                                 &notes,
                                                 &selected,
                                                 failed_note,
+                                                &lint_notes,
                                                 velocity_tag,
                                                 clip_start,
                                                 &view,
@@ -2556,6 +2574,7 @@ fn paint_notes(
     notes: &[Note],
     selected: &[usize],
     failed_note: Option<usize>,
+    lint: &[(usize, gpui::Hsla)],
     tag: Option<(usize, u8)>,
     clip_start: Ticks,
     view: &TimelineView,
@@ -2603,6 +2622,9 @@ fn paint_notes(
         // fill resembles its background. Bar length still conveys velocity.
         if selected {
             paint::rounded_outline(window, note_bounds, Metrics::RADIUS_XS, px(2.0), theme.text);
+        }
+        if !selected && let Some((_, colour)) = lint.iter().find(|(flagged, _)| *flagged == index) {
+            paint::rounded_outline(window, note_bounds, Metrics::RADIUS_XS, px(1.5), *colour);
         }
         if failed_note == Some(index) {
             paint::rounded_outline(
