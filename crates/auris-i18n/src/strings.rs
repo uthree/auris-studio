@@ -1560,6 +1560,18 @@ strings! {
     UpdateRestartNow { en: "Restart and Update", ja: "再起動して更新" }
     UpdateDownloadFailed { en: "Could not download the update. Please try again later.", ja: "更新をダウンロードできませんでした。時間をおいて再度お試しください。" }
     UpdateInstallFailed { en: "Could not install the update. Use Help → Check for Updates to try again.", ja: "更新をインストールできませんでした。ヘルプの「更新を確認」から再度お試しください。" }
+    // A copy installed with `cargo install` is not one an installer made, so it is upgraded by
+    // a terminal command rather than by the updater, and Cargo gives it no application shortcut.
+    CargoUpdateBody { en: "This copy was installed with Cargo. To upgrade it, run this in a terminal:", ja: "このコピーは Cargo でインストールされています。ターミナルで次のコマンドを実行すると更新できます。" }
+    CargoUpdateCopy { en: "Copy Command", ja: "コマンドをコピー" }
+    CargoUpdateCopied { en: "The upgrade command is on the clipboard.", ja: "更新コマンドをクリップボードにコピーしました。" }
+    CargoShortcutOffer { en: "This copy was installed with Cargo. Add it to {place} to open it like any other app.", ja: "このコピーは Cargo でインストールされています。{place}に追加すると、ほかのアプリと同じように開けます。" }
+    CargoShortcutCreate { en: "Add to {place}", ja: "{place}に追加" }
+    CargoShortcutCreated { en: "Added Auris Studio to {place}.", ja: "Auris Studio を{place}に追加しました。" }
+    CargoShortcutFailed { en: "Could not add Auris Studio to {place}: {error}", ja: "{place}に追加できませんでした: {error}" }
+    CargoShortcutPlaceMac { en: "Applications", ja: "アプリケーション" }
+    CargoShortcutPlaceWindows { en: "the Start menu", ja: "スタートメニュー" }
+    CargoShortcutPlaceLinux { en: "the application menu", ja: "アプリケーションメニュー" }
     MenuNoRecentProjects { en: "Nothing opened yet", ja: "まだ何も開いていません" }
     MenuForgetRecent { en: "Forget This List", ja: "履歴を消去" }
     DialogImportAudio { en: "Import audio", ja: "オーディオを読み込む" }

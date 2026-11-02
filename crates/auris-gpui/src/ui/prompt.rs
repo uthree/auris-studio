@@ -544,6 +544,16 @@ pub enum Question {
         /// Published version shown in the question.
         latest: String,
     },
+    /// A newer version was found for a copy installed with `cargo install`, which the updater
+    /// cannot replace: the answer copies the command that upgrades it.
+    CargoUpgrade {
+        /// Installed version shown in the question.
+        current: String,
+        /// Published version shown in the question.
+        latest: String,
+        /// The terminal command shown and copied.
+        command: String,
+    },
     /// Replaces an exact library entry with a snapshot captured before confirmation.
     OverwriteSound {
         /// The entry whose previous contents were shown to the user.
@@ -1378,6 +1388,10 @@ impl AurisApp {
                 cx.open_url(crate::update_check::RELEASE_PAGE);
             }
             (Question::OpenUpdateRelease { .. }, Answer::Deny) => {}
+            (Question::CargoUpgrade { command, .. }, Answer::Confirm) => {
+                self.copy_upgrade_command(command, cx);
+            }
+            (Question::CargoUpgrade { .. }, Answer::Deny) => {}
             (
                 Question::OverwriteSound {
                     expected,
@@ -2307,6 +2321,22 @@ impl AurisApp {
                     .replace("{version}", latest)
                     .into(),
                 self.t(Key::UpdateOpenRelease).into(),
+                None,
+            ),
+            Question::CargoUpgrade {
+                current,
+                latest,
+                command,
+            } => (
+                format!(
+                    "{} {}\n\n{command}",
+                    self.t(Key::UpdateAvailable)
+                        .replace("{current}", current)
+                        .replace("{version}", latest),
+                    self.t(Key::CargoUpdateBody),
+                )
+                .into(),
+                self.t(Key::CargoUpdateCopy).into(),
                 None,
             ),
             Question::OverwriteSound { source, .. } => (
