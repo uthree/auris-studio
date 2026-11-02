@@ -255,6 +255,13 @@ other stages retain their order. Stored notes, generation recipes, authored cont
 and automatic volume contour shapes remain intact. The live host groups changed calls by
 user request; repeating current settings adds no history. The result reads back settings.
 
+Swing is one decision for the whole song. A swung clip moves every position on its half-step
+grid in proportion (eighth swing carries the sixteenths between the eighths), and a sung clip
+is sung swung too, both ends of each note moving so a legato line stays legato. When a
+`set_performance` call changes swing and the song's parts then disagree about it, the result
+carries `swing_warning` naming the tracks on each setting: a part swung alone plays its
+offbeats late against the rest, which is heard as the part dragging.
+
 `note_effects` measures the first loop pass through the actual performer, with at most
 2048 notes and 32 stages. It reports changed onsets, durations, velocities and pitches,
 added/removed notes, simultaneous chord groups, warnings and explicit truncation.
@@ -325,6 +332,13 @@ Use `import_transcription` to accept externally prepared note JSON, supplied as 
 one inline `transcription` or absolute JSON `path`. Optional `at_tick` controls placement
 and `name` names the piano track. Notes remain estimates; review timing and timbres.
 See the [external note API](transcription-api.md) for its validation and permission contract.
+
+`melody_shape` measures a melody track section by section — low and high note, average pitch,
+leaps of a fourth or more — and compares every section labelled as a chorus (サビ, chorus,
+hook, refrain) with the section just before it. It warns when a chorus sits less than a minor
+third higher on average, does not reach a higher peak, moves only by step, or when the song's
+highest note is outside every chorus. It reads the written notes, taking the top note where
+several sound together.
 
 For a new song, write its musical decisions into the document with `edit_harmony`, for example
 `{"start_bar":1,"bars":16,"key":"D major","chords":["I","IV V","vi","ii V"]}`.

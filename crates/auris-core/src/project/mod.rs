@@ -84,7 +84,7 @@ pub use track::{
     AudioTrack, Color, ConsonantLevels, ConsonantWidths, InstrumentTrack, SingerPitch, SingerTake,
     SingerTrack, SingerVoice, Track, TrackKind, default_frame_hop,
 };
-pub use transform::{NoteTransform, StrokeDirection, performed};
+pub use transform::{NoteTransform, StrokeDirection, performed, swing_position};
 
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
