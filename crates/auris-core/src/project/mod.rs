@@ -84,7 +84,7 @@ pub use track::{
     AudioTrack, Color, ConsonantLevels, ConsonantWidths, InstrumentTrack, SingerPitch, SingerTake,
     SingerTrack, SingerVoice, Track, TrackKind, default_frame_hop,
 };
-pub use transform::{NoteTransform, StrokeDirection, performed};
+pub use transform::{NoteTransform, SUSTAIN_MAX_TICKS, StrokeDirection, performed};
 
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -311,12 +311,13 @@ impl Default for Project {
 
 impl Project {
     /// Schema version written into saved files and required when opening them.
+    /// Version 34 adds the sustain transform, which holds every release on like a pedal.
     /// Version 33 adds layers: instrument tracks that follow another track's notes.
     /// Version 32 stores zero or more track outputs; older files' single outputs load as one route.
     /// Version 31 adds power, added-tone, 6/9 and thirteenth chord qualities to stored harmony.
     /// Version 30 adds eleventh chord qualities to stored harmony.
     /// Version 29 adds ordered, named manual drum lanes beside generation-role assignments.
-    pub const FORMAT_VERSION: u32 = 33;
+    pub const FORMAT_VERSION: u32 = 34;
 
     /// The name a document carries until somebody — a person or the agent — gives it one.
     pub const UNTITLED: &'static str = "Untitled";
