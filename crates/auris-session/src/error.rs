@@ -171,6 +171,20 @@ pub enum SessionError {
         index: usize,
     },
 
+    /// The track or clip holds no comment with that id.
+    #[error("no comment with id {0} there")]
+    UnknownComment(u64),
+
+    /// A comment with no words was asked for; there is nothing to pin.
+    #[error("a comment needs some text")]
+    EmptyComment,
+
+    /// Comments are pinned inside note clips only; an audio clip has no piano roll to hold one.
+    #[error(
+        "clip {0} is not a note clip, so it cannot hold comments; pin the comment on its track"
+    )]
+    NotANoteClip(u64),
+
     /// The requested send does not exist on that track.
     #[error("track {track} has no send with id {send}")]
     UnknownSend {

@@ -61,6 +61,8 @@ mod choir_tests;
 mod chord_preview;
 mod clipboard;
 mod clips;
+mod comments;
+pub use comments::CommentHost;
 mod compose;
 mod convert;
 mod drum_analysis;

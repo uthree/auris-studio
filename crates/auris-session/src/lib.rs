@@ -269,6 +269,7 @@ pub fn midi_extensions() -> &'static [&'static str] {
 /// text. Both names would compile — an explicit `use` beats a glob — but a reader would have to
 /// know that rule to tell which `Key` a line means, and one of the two would be wrong silently.
 pub mod prelude {
+    pub use crate::session::CommentHost;
     pub use crate::session::{PlaybackReadiness, PlaybackState};
     pub use crate::session::{RhythmGrid, RhythmRow};
     pub use crate::session::{TrackConversion, TrackConversionJob};
@@ -316,6 +317,7 @@ pub mod prelude {
         SoundFontId, SoundFontRef, SourceId, StrokeDirection, Subdivision, Track, TrackId,
         TrackKind, Vibrato, default_frame_hop, default_loop_end, loop_passes, sounding_length,
     };
+    pub use auris_core::{Comment, CommentId};
     pub use auris_core::{
         Expression, GroovePoint, GrooveTemplate, PitchPerformance, Strum, StrumClock,
         VolumeContour, VolumeContourPreset,

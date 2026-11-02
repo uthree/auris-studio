@@ -1578,6 +1578,11 @@ impl AurisApp {
                     *at = wanted;
                 }
             }
+            Drag::Comment {
+                host,
+                id,
+                grab_offset,
+            } => self.drag_comment(host, id, grab_offset, event),
             Drag::PanelScroll {
                 panel,
                 start,

@@ -638,6 +638,15 @@ pub enum Drag {
         /// to the pointer on the first move.
         grab_offset: Ticks,
     },
+    /// Dragging a comment along its track's lane or around the piano roll.
+    Comment {
+        /// What holds it.
+        host: CommentHost,
+        /// Which comment.
+        id: CommentId,
+        /// How far right of the comment's pin the pointer took hold.
+        grab_offset: Ticks,
+    },
     /// Dragging the start of a lyric line along the lyrics lane.
     LyricLine {
         /// The change being moved, by where it currently sits.
@@ -877,6 +886,7 @@ impl Drag {
             Drag::HarmonyChord { .. } => Some(Edit::MoveChord),
             Drag::SectionLabel { .. } => Some(Edit::MoveSection),
             Drag::LyricLine { .. } => Some(Edit::MoveLyricLine),
+            Drag::Comment { .. } => Some(Edit::MoveComment),
             // How far in the view is zoomed is a property of the window, like a panel's width.
             Drag::TimeZoom { .. } => None,
             // The video's look is an application setting, not part of the document.

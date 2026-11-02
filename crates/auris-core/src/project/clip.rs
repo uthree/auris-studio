@@ -327,6 +327,12 @@ pub struct MidiClip {
     /// identity, and is what every clip carried before this field existed.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub transforms: Vec<super::NoteTransform>,
+    /// Notes for the reader pinned inside the clip, in clip time; nothing plays them.
+    ///
+    /// On the clip for the reason the bend is: a comment about these notes moves, copies and
+    /// splits with them. See [`Comment`](super::Comment).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub comments: Vec<super::Comment>,
 }
 
 // JSON object keys are strings. TrackKind's internally tagged deserializer buffers them,
@@ -366,6 +372,7 @@ impl MidiClip {
             length_is_explicit: false,
             loop_end: Ticks::ZERO,
             transforms: Vec::new(),
+            comments: Vec::new(),
         }
     }
 
@@ -1266,6 +1273,11 @@ impl Project {
             }
             right.forget_empty_curves();
             right.loop_end = Ticks::ZERO;
+            // Each comment goes with the notes it sits among.
+            right.comments.retain(|comment| comment.at >= offset);
+            for comment in &mut right.comments {
+                comment.at -= offset;
+            }
 
             let new_id = right.id;
             let left = self.midi_clip_mut(id)?;
@@ -1282,6 +1294,7 @@ impl Project {
             left.forget_empty_curves();
             left.length = offset;
             left.loop_end = Ticks::ZERO;
+            left.comments.retain(|comment| comment.at < offset);
             self.track_mut(track_id)?.kind.note_clips_mut()?.push(right);
             return Some(new_id);
         }

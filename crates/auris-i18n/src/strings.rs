@@ -1231,6 +1231,10 @@ strings! {
     MenuEditLyricLine { en: "Edit Lyric Line…", ja: "歌詞の行を編集…" }
     MenuRemoveLyricLine { en: "Remove Lyric Line", ja: "歌詞の行を削除" }
     MenuEndLyricLineHere { en: "End Line Here", ja: "ここで行を終える" }
+    MenuAddCommentHere { en: "Add Comment Here…", ja: "ここにコメントを追加…" }
+    MenuEditComment { en: "Edit Comment…", ja: "コメントを編集…" }
+    MenuRemoveComment { en: "Remove Comment", ja: "コメントを削除" }
+    MenuComment { en: "Comment", ja: "コメント" }
     MenuLyricsFromVocals { en: "Fill Lyrics from Vocal Tracks", ja: "ボーカルトラックから歌詞を取り込む" }
     MenuWriteProgression { en: "Write a Progression", ja: "コード進行を書き込む" }
     MenuGenerateClip { en: "Write a Part Here…", ja: "ここにパートを自動生成…" }
@@ -1458,6 +1462,7 @@ strings! {
     SetChordTitle { en: "Chord from here", ja: "ここからのコード" }
     SetSectionTitle { en: "Section from here", ja: "ここからのセクション" }
     SetLyricLineTitle { en: "Lyrics from here", ja: "ここからの歌詞" }
+    CommentTitle { en: "Comment — a note for people and the AI; it is never played", ja: "コメント（人やAIへのメモ。演奏には影響しません）" }
     SetSeedTitle { en: "Seed for this part", ja: "このパートのシード" }
     SetTempoTitle { en: "Tempo", ja: "テンポ" }
     SetSignatureTitle { en: "Time signature", ja: "拍子" }
@@ -1897,6 +1902,8 @@ strings! {
     EditMoveSection { en: "moving a section", ja: "セクションの移動" }
     EditSetLyricLine { en: "changing the lyrics", ja: "歌詞の変更" }
     EditMoveLyricLine { en: "moving a lyric line", ja: "歌詞の行の移動" }
+    EditSetComment { en: "changing a comment", ja: "コメントの変更" }
+    EditMoveComment { en: "moving a comment", ja: "コメントの移動" }
     EditStampProgression { en: "writing a progression", ja: "コード進行の書き込み" }
     EditGenerateClip { en: "writing a clip", ja: "クリップの自動生成" }
     EditFreezeClip { en: "keeping a clip", ja: "クリップの確定" }
@@ -1908,6 +1915,9 @@ strings! {
     // ------------------------------------------------------------------ errors
     ErrorUnknownTrack { en: "that track no longer exists", ja: "そのトラックは存在しません" }
     ErrorUnknownClip { en: "that clip no longer exists", ja: "そのクリップは存在しません" }
+    ErrorUnknownComment { en: "that comment no longer exists", ja: "そのコメントは存在しません" }
+    ErrorEmptyComment { en: "a comment needs some text", ja: "コメントに文字を入力してください" }
+    ErrorNotANoteClip { en: "comments go inside note clips; pin this one on the track instead", ja: "コメントはノートのクリップ内に置けます。トラック上に置いてください" }
     ErrorUnknownSend { en: "that send no longer exists", ja: "そのセンドは存在しません" }
     ErrorNotABus {
         en: "only a bus can be routed into",

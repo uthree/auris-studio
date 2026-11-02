@@ -233,6 +233,8 @@ pub fn edit_key(edit: Edit) -> Key {
         Edit::MoveSection => Key::EditMoveSection,
         Edit::SetLyricLine => Key::EditSetLyricLine,
         Edit::MoveLyricLine => Key::EditMoveLyricLine,
+        Edit::SetComment => Key::EditSetComment,
+        Edit::MoveComment => Key::EditMoveComment,
         Edit::StampProgression => Key::EditStampProgression,
         Edit::GenerateClip => Key::EditGenerateClip,
         Edit::FreezeClip => Key::EditFreezeClip,
@@ -314,6 +316,9 @@ pub fn error_text(error: &SessionError, language: Language) -> String {
         },
         SessionError::UnknownTrack(_) => Key::ErrorUnknownTrack.get(language).to_string(),
         SessionError::UnknownClip(_) => Key::ErrorUnknownClip.get(language).to_string(),
+        SessionError::UnknownComment(_) => Key::ErrorUnknownComment.get(language).to_string(),
+        SessionError::EmptyComment => Key::ErrorEmptyComment.get(language).to_string(),
+        SessionError::NotANoteClip(_) => Key::ErrorNotANoteClip.get(language).to_string(),
         SessionError::UnknownNote { .. } => Key::ErrorUnknownNote.get(language).to_string(),
         // The one vocal error a person can *fix* gets the sentence naming the fix; the others
         // carry the loader's or the frontend's own words, which name the folder or the text.
@@ -1011,6 +1016,9 @@ mod tests {
             SessionError::UnknownPlugin("auris.fx.nope".into()),
             SessionError::UnknownTrack(1),
             SessionError::UnknownClip(2),
+            SessionError::UnknownComment(4),
+            SessionError::EmptyComment,
+            SessionError::NotANoteClip(5),
             SessionError::CannotSplit(3),
             SessionError::GenerationPositionOccupied,
             SessionError::NoPath,

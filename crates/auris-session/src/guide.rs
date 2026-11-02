@@ -583,6 +583,14 @@ pub mod architecture {
     //! door can produce a song with words and no lines. `edit_lyrics` writes explicit lines or
     //! rebuilds them from a singer track ([`Session::annotate_lyrics_from_vocals`](crate::Session::annotate_lyrics_from_vocals));
     //! nothing rewrites the annotation behind a person's back, and editing it never moves a note.
+    //! Comments are the source-code habit brought to a score: text pinned to a place that
+    //! nothing plays. A track holds them in song time along its lane and a note clip in its own
+    //! time, optionally on a piano-roll row, so they move, copy and split with the notes they are
+    //! about ([`Comment`](auris_core::Comment)). The session's comment commands
+    //! ([`Session::add_comment`](crate::Session::add_comment) and its neighbours) are undoable and
+    //! touch nothing audible. `inspect_project` lists every comment for an agent and
+    //! `edit_comments` writes them; the instructions tell a model to read the comments in a
+    //! passage before editing it and never to remove a person's without being asked.
     //! Bar-addressed harmony follows the meter map independently of the pointer editing grid.
     //! A supplied key replaces internal modulations; the range restores its previous key and
     //! chord (including silence) at the end, leaving outside harmony intact.

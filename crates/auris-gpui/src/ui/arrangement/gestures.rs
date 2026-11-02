@@ -418,7 +418,7 @@ impl AurisApp {
                 Some((track_id, _)) => {
                     let under_pointer = self.clip_at(track_id, tick);
                     self.select_track_for_press(track_id, under_pointer.map(|(id, _, _)| id));
-                    match under_pointer {
+                    let menu = match under_pointer {
                         Some((clip_id, _, _)) => {
                             // A right-click on a clip selects it, so Split at Playhead and the
                             // inspector are talking about the clip the menu is titled after — but a
@@ -432,7 +432,17 @@ impl AurisApp {
                             self.clip_menu(event.position, clip_id)
                         }
                         None => self.lane_menu(event.position, track_id, tick.max_zero()),
-                    }
+                    };
+                    // A note about the part can be pinned anywhere along its lane, over a clip
+                    // as well as between them.
+                    menu.separator().item(
+                        self.t(auris_i18n::Key::MenuAddCommentHere),
+                        crate::ui::context_menu::MenuCommand::AddCommentAt {
+                            host: CommentHost::Track(track_id),
+                            at: self.snap(tick).max_zero(),
+                            pitch: None,
+                        },
+                    )
                 }
                 None => self.arrangement_menu(event.position),
             }

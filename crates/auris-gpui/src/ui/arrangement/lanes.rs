@@ -70,6 +70,7 @@ impl AurisApp {
         let edge_zones = self.clip_edge_zones(&lanes);
         let peaks = self.waveform_map();
         let band = self.rubber_band(crate::app::BandSurface::Lanes);
+        let comment_tags = self.lane_comment_tags(cx);
 
         div()
             .flex()
@@ -169,6 +170,7 @@ impl AurisApp {
                     ScrollPanel::Lanes,
                     div()
                         .id("lanes")
+                        .relative()
                         .overflow_hidden()
                         .child({
                             let theme = theme.clone();
@@ -305,6 +307,8 @@ impl AurisApp {
                                 this.begin_lane_drag(event, cx);
                             }),
                         )
+                        // Over the canvas, so a press on a comment reaches the comment first.
+                        .children(comment_tags)
                         .on_mouse_down(
                             MouseButton::Right,
                             cx.listener(|this, event: &MouseDownEvent, _, cx| {

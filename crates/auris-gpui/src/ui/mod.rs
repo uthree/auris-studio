@@ -18,6 +18,7 @@ pub mod automation;
 pub(crate) mod chat_commands;
 pub(crate) mod colour_picker;
 pub mod commands;
+pub(crate) mod comments;
 pub mod context_menu;
 mod convert;
 #[cfg(test)]

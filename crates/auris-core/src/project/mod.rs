@@ -33,6 +33,8 @@
 //! so nothing a caller writes changes.
 
 mod clip;
+mod comment;
+pub use comment::{Comment, CommentId, Comments};
 mod composition;
 pub use composition::{CompositionBaseline, CompositionClipBaseline, CompositionTrackBaseline};
 mod curve;

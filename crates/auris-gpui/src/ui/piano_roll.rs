@@ -622,6 +622,8 @@ impl AurisApp {
         };
 
         let clip_start = clip.start;
+        // Comments are text over the score, shown whichever view of it is open.
+        let comment_tags = self.roll_comment_tags(cx);
         let source = self.source_score();
         let editable = self.editable_score();
         let overlay = self.overlay_score();
@@ -887,6 +889,7 @@ impl AurisApp {
                     .child(
                         div()
                             .id("roll")
+                            .relative()
                             .flex_1()
                             .min_w_0()
                             .h_full()
@@ -1079,6 +1082,7 @@ impl AurisApp {
                                     this.begin_note_drag(event, cx);
                                 }),
                             )
+                            .children(comment_tags)
                             .on_mouse_down(
                                 MouseButton::Right,
                                 cx.listener(|this, event: &MouseDownEvent, _, cx| {
@@ -2123,16 +2127,22 @@ impl AurisApp {
             self.selected_notes.insert(index);
         }
 
-        let menu = self.roll_menu(
-            event.position,
-            under_pointer,
-            pitch,
-            (self
-                .note_snap(tick, gpui::Modifiers::none(), true)
-                .position(tick)
-                - clip_start)
-                .max_zero(),
-        );
+        let snapped = (self
+            .note_snap(tick, gpui::Modifiers::none(), true)
+            .position(tick)
+            - clip_start)
+            .max_zero();
+        let mut menu = self.roll_menu(event.position, under_pointer, pitch, snapped);
+        if let Some(clip) = self.selected_clip {
+            menu = menu.separator().item(
+                self.t(auris_i18n::Key::MenuAddCommentHere),
+                crate::ui::context_menu::MenuCommand::AddCommentAt {
+                    host: CommentHost::Clip(clip),
+                    at: snapped,
+                    pitch: Some(pitch),
+                },
+            );
+        }
         self.open_menu(menu);
         cx.notify();
     }

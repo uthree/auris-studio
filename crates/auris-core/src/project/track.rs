@@ -435,6 +435,11 @@ pub struct Track {
     /// Copies of this track's signal, fed to buses alongside its own output.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sends: Vec<AuxSend>,
+    /// Notes for the reader pinned along the track's lane, in song time; nothing plays them.
+    ///
+    /// See [`Comment`](super::Comment).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub comments: Vec<super::Comment>,
 }
 
 fn default_outputs() -> Vec<Output> {
@@ -556,6 +561,7 @@ impl Project {
             mixer: MixerStrip::default(),
             outputs: default_outputs(),
             sends: Vec::new(),
+            comments: Vec::new(),
         });
         id
     }

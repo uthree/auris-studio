@@ -270,6 +270,10 @@ pub enum Edit {
     SetLyricLine,
     /// A lyric line moved along the timeline.
     MoveLyricLine,
+    /// A comment was pinned, retyped or taken off.
+    SetComment,
+    /// A comment moved.
+    MoveComment,
     /// A named progression was written across a range of bars.
     StampProgression,
     /// A clip was written from the harmony under it.

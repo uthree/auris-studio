@@ -2,6 +2,7 @@
 
 use crate::{Session, prelude::*};
 pub mod automation;
+pub mod comments;
 pub mod document_editing;
 pub mod file_jobs;
 pub mod harmony_suggestions;
@@ -343,6 +344,11 @@ pub enum Command {
     EditLyrics {
         /// from_vocals, write or clear.
         operation: lyric_annotation::Operation,
+    },
+    /// Pin, retype, move or remove comments: notes people and agents leave on a track's lane (song time) or inside a note clip (optionally on a piano-roll pitch row). Comments never sound or change notes. inspect_project lists every comment; read the ones in a passage before editing it. Positions are 1-based song bar/beat. Never remove or rewrite the user's comments unless asked. One Undo.
+    EditComments {
+        /// add, edit or remove.
+        operation: comments::Operation,
     },
     /// Discover installed singing voices in pages of 16 without loading their models. Copy a returned voice path into set_singer_voice. Discovery is not validation; no models are downloaded.
     ListVoices {
@@ -953,6 +959,7 @@ impl Session {
                 )
             }
             Command::EditLyrics { operation } => self.agent_edit_lyrics(operation),
+            Command::EditComments { operation } => self.agent_edit_comments(operation),
             Command::InspectSinger {
                 track,
                 offset,
@@ -1066,7 +1073,7 @@ impl Session {
                     "document_instance":self.document_instance(), "session_revision":self.revision(),
                     "verification_regions":crate::production_record::verification_regions(project),
                     "sample_rate":project.sample_rate,"duration_seconds":project.duration_seconds(), "harmony":project.harmony,
-                    "sections":project.sections, "lyrics":lyric_annotation::lyric_lines_json(project), "tempo_map":project.tempo_map, "signatures":project.signatures, "loop_region":project.loop_region, "loop_enabled":project.loop_enabled, "ticks_per_quarter":Ticks::QUARTER.raw()})
+                    "sections":project.sections, "lyrics":lyric_annotation::lyric_lines_json(project), "comments":comments::comments_json(project), "tempo_map":project.tempo_map, "signatures":project.signatures, "loop_region":project.loop_region, "loop_enabled":project.loop_enabled, "ticks_per_quarter":Ticks::QUARTER.raw()})
                 .to_string())
             }
             Command::InspectAudio {
