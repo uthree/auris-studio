@@ -14,11 +14,13 @@ use auris_core::{
 };
 use auris_dsp::Adsr;
 
+use crate::observe::{Observer, recent_voices};
 use crate::params::{ParamBank, finite_or};
 use crate::render::{
     SegmentRenderer, StereoImage, downmix_to_extra_channels, pan_gains, render_segments,
 };
-use crate::voice::VoiceAllocator;
+use crate::voice::{VoiceAllocator, VoiceState};
+use auris_core::motion::{MotionFrame, MotionGeometry, TOUCH_CONTROLLER};
 
 const VOICES: usize = 24;
 const MODES: usize = 24;
@@ -62,6 +64,8 @@ struct Voice {
     age: usize,
     coupling: f32,
     envelope: Adsr,
+    /// Where the hammer struck, from the bridge.
+    contact: f32,
 }
 
 impl Voice {
@@ -79,6 +83,7 @@ impl Voice {
             age: 0,
             coupling: 0.0,
             envelope,
+            contact: 0.12,
         }
     }
 
@@ -112,6 +117,9 @@ pub struct HammeredDulcimer {
     expression_coeff: f32,
     /// One-pole coefficient by which a voice's pan follows the width control.
     pan_step: f32,
+    observer: Observer,
+    /// Where a frontend touched the course, waiting for the hammer it brings down.
+    touch: Option<f32>,
 }
 
 impl Default for HammeredDulcimer {
@@ -166,6 +174,8 @@ impl HammeredDulcimer {
             expression_current: 1.0,
             expression_coeff: 0.0,
             pan_step: 1.0,
+            observer: Observer::default(),
+            touch: None,
         };
         instrument.refresh();
         instrument
@@ -189,10 +199,14 @@ impl HammeredDulcimer {
         let base_pitch = f32::from(pitch);
         let frequency = pitch_to_hz(base_pitch + self.bend);
         let hardness = self.params.at(P_HARDNESS).clamp(0.0, 1.0);
-        let position = self.params.at(P_POSITION).clamp(0.01, 0.49);
+        let position = match self.touch.take() {
+            Some(at) => crate::physical::touch_position(at).clamp(0.01, 0.49),
+            None => self.params.at(P_POSITION).clamp(0.01, 0.49),
+        };
         let stiffness = self.params.at(P_STIFFNESS).clamp(0.0, 0.002);
         let detune = self.params.at(P_DETUNE).clamp(0.0, 12.0);
         voice.pitch = base_pitch;
+        voice.contact = position;
         voice.velocity = finite_or(velocity, 0.0).clamp(0.0, 1.0);
         voice.strings = if frequency < 110.0 { 2 } else { 3 };
         voice.contact_frames = ((0.00015 + 0.0018 * (1.0 - hardness).powi(2)) * self.rate)
@@ -228,6 +242,65 @@ impl HammeredDulcimer {
         voice.position = IMAGE.position(f32::from(pitch));
         voice.pan = voice.position * self.params.at(P_WIDTH);
         voice.envelope.trigger();
+    }
+
+    /// The newest courses: each one's displacement along its length, the sum of its modes'
+    /// shapes, with the three strings of a course averaged as the bridge couples them.
+    fn publish_motion(&mut self) {
+        let mut frame = MotionFrame {
+            geometry: MotionGeometry::String,
+            active: self.allocator.active_count(),
+            expression: self.expression_current,
+            ..MotionFrame::default()
+        };
+        let voices = &self.voices;
+        let selected = recent_voices(&self.allocator, |index| voices[index].envelope.is_active());
+        for (observed, index) in frame.voices.iter_mut().zip(selected) {
+            let Some(index) = index else {
+                break;
+            };
+            let voice = &self.voices[index];
+            observed.pitch = voice.pitch + self.bend;
+            observed.level = voice.envelope.level();
+            observed.held = self
+                .allocator
+                .slot(index)
+                .is_some_and(|slot| slot.state == VoiceState::Held);
+            observed.contact = voice.contact;
+            observed.excitation = if voice.age < voice.contact_frames {
+                voice.velocity
+            } else {
+                0.0
+            };
+            let strings = voice.strings.max(1) as f32;
+            let mut shape = [0.0_f32; MODES];
+            for (amplitude, modes) in shape.iter_mut().zip(&voice.modes) {
+                *amplitude = modes[..voice.strings]
+                    .iter()
+                    .map(|mode| mode.real)
+                    .sum::<f32>()
+                    / strings;
+            }
+            let last = (observed.points.len() - 1) as f32;
+            for (index, point) in observed.points.iter_mut().enumerate() {
+                let x = index as f32 / last;
+                *point = shape
+                    .iter()
+                    .enumerate()
+                    .map(|(n, amplitude)| amplitude * (PI * (n + 1) as f32 * x).sin())
+                    .sum::<f32>()
+                    * observed.level;
+            }
+            for (magnitude, modes) in observed.modes.iter_mut().zip(&voice.modes) {
+                *magnitude = modes[..voice.strings]
+                    .iter()
+                    .map(|mode| mode.real.hypot(mode.imag))
+                    .sum::<f32>()
+                    / strings
+                    * observed.level;
+            }
+        }
+        self.observer.publish(&frame);
     }
 }
 
@@ -306,6 +379,11 @@ impl SegmentRenderer for HammeredDulcimer {
             NoteEvent::Controller {
                 number: 11, value, ..
             } => self.expression = finite_or(value, 1.0).clamp(0.0, 1.0),
+            NoteEvent::Controller {
+                number: TOUCH_CONTROLLER,
+                value,
+                ..
+            } => self.touch = Some(value),
             _ => {}
         }
     }
@@ -462,9 +540,18 @@ impl Instrument for HammeredDulcimer {
         self.channel_volume = 1.0;
         self.expression = 1.0;
         self.expression_current = 1.0;
+        self.touch = None;
+        self.observer.reset(MotionGeometry::String);
     }
     fn process(&mut self, events: &[NoteEvent], out: &mut AudioBuffer, ctx: &ProcessContext) {
-        render_segments(self, events, out, ctx.block_frames.min(out.frame_count()));
+        let frames = ctx.block_frames.min(out.frame_count());
+        render_segments(self, events, out, frames);
+        if self.observer.due(frames, self.rate) {
+            self.publish_motion();
+        }
+    }
+    fn motion_monitor(&self) -> Option<std::sync::Arc<auris_core::motion::MotionMonitor>> {
+        Some(self.observer.monitor())
     }
     fn active_voices(&self) -> usize {
         self.allocator.active_count()

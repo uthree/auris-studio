@@ -14,6 +14,16 @@ pub const MOTION_VOICES: usize = 4;
 pub const MOTION_POINTS: usize = 64;
 /// Low modes exposed alongside the spatial projection.
 pub const MOTION_MODES: usize = 8;
+/// The controller a frontend sends just before a note to excite the body at a chosen place.
+///
+/// Its value is where along the body the next note is struck, plucked or bowed, from zero at one
+/// end to one at the other — for a drum head, from the centre (zero) to the rim (one). It is a
+/// *touch*, not channel state: the next note-on consumes it and the one after that is excited
+/// wherever the instrument's own position control says again, so a pointer poking at a string
+/// never leaves the song's notes playing somewhere else. Number 20 is one MIDI leaves undefined.
+/// Instruments with no excitation position (a reed, a jet, a glottis) ignore it.
+pub const TOUCH_CONTROLLER: u8 = 20;
+
 const STRIDE: usize = 6 + MOTION_POINTS + MOTION_MODES;
 const WORDS: usize = 5 + MOTION_VOICES * STRIDE;
 
@@ -31,6 +41,11 @@ pub enum MotionGeometry {
     Membrane,
     /// Circular free-edge metal plate, sampled on an 8×8 Cartesian grid.
     Plate,
+    /// Air column from the mouthpiece (point zero) to the open end: points are acoustic pressure.
+    Bore,
+    /// Vocal tract from the glottis (point zero) to the lips: points are acoustic pressure, and
+    /// the eight `modes` are the cross-sections of its eight tubes, relative to the widest.
+    Tract,
 }
 
 /// One vibrating body, sampled from the live DSP state.
@@ -50,7 +65,8 @@ pub struct MotionVoice {
     pub held: bool,
     /// Relative spatial motion, before body filtering and output gain.
     pub points: [f32; MOTION_POINTS],
-    /// Relative magnitudes of the first eight modes; zero for delay-line models.
+    /// Relative magnitudes of the first eight modes; zero for delay-line models. A
+    /// [`MotionGeometry::Tract`] has no modes to show and carries its tube cross-sections here.
     pub modes: [f32; MOTION_MODES],
 }
 
@@ -123,6 +139,8 @@ impl MotionMonitor {
                     2 => MotionGeometry::Shell,
                     3 => MotionGeometry::Membrane,
                     4 => MotionGeometry::Plate,
+                    5 => MotionGeometry::Bore,
+                    6 => MotionGeometry::Tract,
                     _ => MotionGeometry::String,
                 },
                 active: words[1] as usize,
@@ -144,6 +162,8 @@ impl MotionMonitor {
                     3 => Some(MotionGeometry::Shell),
                     4 => Some(MotionGeometry::Membrane),
                     5 => Some(MotionGeometry::Plate),
+                    6 => Some(MotionGeometry::Bore),
+                    7 => Some(MotionGeometry::Tract),
                     _ => None,
                 };
                 for (i, point) in voice.points.iter_mut().enumerate() {
@@ -196,6 +216,8 @@ impl MotionCapture {
             MotionGeometry::Shell => 2,
             MotionGeometry::Membrane => 3,
             MotionGeometry::Plate => 4,
+            MotionGeometry::Bore => 5,
+            MotionGeometry::Tract => 6,
         };
         words[1] = frame.active as u32;
         words[2] = frame.expression.to_bits();
@@ -215,6 +237,8 @@ impl MotionCapture {
                 Some(MotionGeometry::Shell) => 3,
                 Some(MotionGeometry::Membrane) => 4,
                 Some(MotionGeometry::Plate) => 5,
+                Some(MotionGeometry::Bore) => 6,
+                Some(MotionGeometry::Tract) => 7,
             };
             for (i, point) in voice.points.iter().enumerate() {
                 words[start + 6 + i] = point.to_bits();
@@ -246,6 +270,8 @@ mod tests {
             MotionGeometry::Shell,
             MotionGeometry::Membrane,
             MotionGeometry::Plate,
+            MotionGeometry::Bore,
+            MotionGeometry::Tract,
         ] {
             let mut frame = MotionFrame {
                 geometry,
@@ -256,6 +282,8 @@ mod tests {
             frame.voices[0].points[27] = 0.12;
             frame.voices[1].geometry = Some(MotionGeometry::Plate);
             frame.voices[1].modes[7] = 0.03;
+            frame.voices[2].geometry = Some(MotionGeometry::Bore);
+            frame.voices[3].geometry = Some(MotionGeometry::Tract);
             writer.publish(&frame);
             assert_eq!(monitor.read(), Some(frame));
         }

@@ -2016,6 +2016,26 @@ mod tests {
     }
 
     #[test]
+    fn every_physical_model_has_a_body_to_watch() {
+        let mut session = session();
+        for id in [
+            "auris.physical.clarinet",
+            "auris.physical.tin_whistle",
+            "auris.physical.choir",
+            "auris.physical.hammered_dulcimer",
+        ] {
+            let track = session.add_instrument_track("Model", id).unwrap();
+            assert!(session.has_instrument_motion(track), "{id}");
+            // A touch outside the timeline edits nothing.
+            let before = session.project().clone();
+            session.touch_instrument(track, 60, 0.3, 0.8);
+            session.touch_instrument(track, 60, f32::NAN, 0.8);
+            session.note_off(track, 60);
+            assert_eq!(session.project(), &before);
+        }
+    }
+
+    #[test]
     fn mechanical_readers_follow_tracks_and_disable_retired_graphs() {
         let mut session = session();
         let violin = session
