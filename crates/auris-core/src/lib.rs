@@ -48,6 +48,7 @@ pub use param::{ParamDescriptor, ParamId, ParamTarget, ParamUnit, ParamValueCurv
 pub use plugin::{
     CC_EXPRESSION, CC_MODULATION, CONTROLLER_MAX, Effect, Instrument, NoteEvent, Parameterized,
     PluginCategory, PluginDescriptor, PluginKind, PluginState, PrepareContext, ProcessContext,
+    TailContext,
 };
 pub use project::{
     AudioClip, AudioSource, AudioSourceBank, AudioTrack, AuxSend, ClipId, ClipPreset, ClipRecipe,
@@ -76,6 +77,7 @@ pub mod prelude {
     pub use crate::plugin::{
         CC_EXPRESSION, CC_MODULATION, CONTROLLER_MAX, Effect, Instrument, NoteEvent, Parameterized,
         PluginCategory, PluginDescriptor, PluginKind, PluginState, PrepareContext, ProcessContext,
+        TailContext,
     };
     pub use crate::registry::PluginRegistry;
 }

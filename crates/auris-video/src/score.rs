@@ -1,6 +1,6 @@
 //! The notes a video draws, taken from the document once and kept in seconds.
 
-use auris_core::{Color, Project, Ticks, TrackKind};
+use auris_core::{Color, Project, Ticks};
 
 /// One sounding note, placed in time.
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -61,23 +61,20 @@ impl NoteScore {
     ///
     /// Singer tracks contribute their melody. Audio tracks and buses have no notes to show.
     pub fn from_project(project: &Project) -> Self {
-        let soloing = project.tracks.iter().any(|track| track.mixer.solo);
+        let audible = project.solo_resolution();
         let mut score = Self::default();
-        for track in &project.tracks {
-            if track.mixer.mute || (soloing && !track.mixer.solo) {
+        for (track, audible) in project.tracks.iter().zip(audible) {
+            if track.mixer.mute || !audible {
                 continue;
             }
-            let (clips, drum) = match &track.kind {
-                TrackKind::Instrument(instrument) => (&instrument.clips, false),
-                TrackKind::Drum(instrument) => (&instrument.clips, true),
-                TrackKind::Singer(singer) => (&singer.clips, false),
-                TrackKind::Audio(_) | TrackKind::Bus => continue,
+            let Some(played) = project.played_clips(track) else {
+                continue;
             };
             let index = score.tracks.len();
             let before = score.notes.len();
-            for clip in clips.iter().filter(|clip| !clip.muted) {
+            for clip in played.clips.iter().filter(|clip| !clip.muted) {
                 let bpm = project.tempo_map.bpm_at(clip.start);
-                for note in clip.sounding_notes_with_meter(bpm, project.signatures.clone()) {
+                for note in played.sounding_notes(clip, bpm, project.signatures.clone()) {
                     let start = clip.start + note.start;
                     let start_seconds = project.tempo_map.ticks_to_seconds(start).0;
                     let end_seconds = project.tempo_map.ticks_to_seconds(start + note.length).0;
@@ -97,7 +94,7 @@ impl NoteScore {
                 score.tracks.push(ScoreTrack {
                     name: track.name.clone(),
                     color: track.color,
-                    drum,
+                    drum: track.kind.is_drum(),
                 });
             }
         }
@@ -200,7 +197,10 @@ impl NoteScore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use auris_core::{ClipId, MidiClip, Note, TICKS_PER_QUARTER, Ticks};
+    use auris_core::{
+        AuxSend, ClipId, MidiClip, Note, NoteTransform, Output, SendId, TICKS_PER_QUARTER, Ticks,
+        TrackId,
+    };
 
     fn note(pitch: u8, start: i64, length: i64) -> Note {
         Note {
@@ -232,6 +232,159 @@ mod tests {
             track.kind.as_instrument_mut().unwrap().clips.push(clip);
         }
         project
+    }
+
+    fn add_part(project: &mut Project, name: &str, pitch: u8) -> TrackId {
+        let track = project.add_instrument_track(name, "test");
+        let clip = project
+            .add_midi_clip(track, name, Ticks::ZERO, Ticks::QUARTER)
+            .unwrap();
+        project.midi_clip_mut(clip).unwrap().notes = vec![note(pitch, 0, TICKS_PER_QUARTER)];
+        track
+    }
+
+    #[test]
+    fn a_layer_shows_its_performed_notes_independently_of_the_sources_mute_and_solo() {
+        let mut project = Project::default();
+        let source = add_part(&mut project, "Source", 60);
+        let clip = project.track(source).unwrap().kind.note_clips().unwrap()[0].id;
+        project
+            .midi_clip_mut(clip)
+            .unwrap()
+            .transforms
+            .push(NoteTransform::Transpose { semitones: 12 });
+        let layer = project.add_layer_track(source, "Octave", "test").unwrap();
+        let shape = &mut project
+            .track_mut(layer)
+            .unwrap()
+            .kind
+            .layer_mut()
+            .unwrap()
+            .shape;
+        shape.lowest = 72;
+        shape.transpose = 12;
+        shape.offset = Ticks::QUARTER;
+        shape.length = 0.5;
+        shape.velocity = 0.5;
+        project.track_mut(source).unwrap().mixer.mute = true;
+        project.track_mut(layer).unwrap().mixer.solo = true;
+
+        let score = NoteScore::from_project(&project);
+        assert_eq!(score.tracks.len(), 1);
+        assert_eq!(score.tracks[0].name, "Octave");
+        assert_eq!(score.notes.len(), 1);
+        assert_eq!(
+            score.notes[0].pitch, 84,
+            "source performance precedes layer shape"
+        );
+        assert_eq!(score.notes[0].track, 0);
+        assert!((score.notes[0].velocity - 0.4).abs() < 1e-6);
+        let beat = 60.0 / project.tempo_map.bpm_at(Ticks::ZERO);
+        assert!((score.notes[0].start - beat).abs() < 1e-9);
+        assert!((score.notes[0].end - beat * 1.5).abs() < 1e-9);
+
+        project.track_mut(layer).unwrap().mixer.mute = true;
+        assert!(NoteScore::from_project(&project).notes.is_empty());
+        project.track_mut(layer).unwrap().mixer.mute = false;
+        project.track_mut(layer).unwrap().mixer.solo = false;
+        project.track_mut(source).unwrap().mixer.solo = true;
+        assert!(
+            NoteScore::from_project(&project).notes.is_empty(),
+            "following notes does not make a layer an audio feeder of its soloed source"
+        );
+        project.track_mut(source).unwrap().mixer.solo = false;
+        project.midi_clip_mut(clip).unwrap().muted = true;
+        assert!(
+            NoteScore::from_project(&project).notes.is_empty(),
+            "muted clips stay muted on layers"
+        );
+    }
+
+    #[test]
+    fn solo_buses_include_their_feeders_but_a_soloed_feeder_does_not_include_its_siblings() {
+        let mut project = Project::default();
+        let lead = add_part(&mut project, "Lead", 60);
+        let backing = add_part(&mut project, "Backing", 48);
+        add_part(&mut project, "Unrelated", 90);
+        let bus = project.add_bus_track("Music");
+        for track in [lead, backing] {
+            project.track_mut(track).unwrap().outputs = vec![Output::Bus(bus)];
+        }
+        project.track_mut(bus).unwrap().mixer.solo = true;
+        let score = NoteScore::from_project(&project);
+        assert_eq!(
+            score.notes.iter().map(|n| n.pitch).collect::<Vec<_>>(),
+            [60, 48]
+        );
+        assert_eq!(
+            score.notes.iter().map(|n| n.track).collect::<Vec<_>>(),
+            [0, 1]
+        );
+        assert_eq!(
+            score
+                .tracks
+                .iter()
+                .map(|t| t.name.as_str())
+                .collect::<Vec<_>>(),
+            ["Lead", "Backing"]
+        );
+
+        project.track_mut(backing).unwrap().mixer.mute = true;
+        assert_eq!(NoteScore::from_project(&project).notes.len(), 1);
+        project.track_mut(backing).unwrap().mixer.mute = false;
+        project.track_mut(bus).unwrap().mixer.solo = false;
+        project.track_mut(lead).unwrap().mixer.solo = true;
+        let score = NoteScore::from_project(&project);
+        assert_eq!(score.notes.len(), 1);
+        assert_eq!(score.notes[0].pitch, 60);
+    }
+
+    #[test]
+    fn send_routes_share_audio_solo_resolution_and_keep_muted_senders_out() {
+        let mut project = Project::default();
+        let sent = add_part(&mut project, "Sent", 60);
+        let sibling = add_part(&mut project, "Sibling", 65);
+        let bus = project.add_bus_track("Aux");
+        for (index, track) in [sent, sibling].into_iter().enumerate() {
+            let mut send = AuxSend::new(SendId(index as u64 + 100), bus);
+            send.pre_fader = true;
+            project.track_mut(track).unwrap().sends.push(send);
+        }
+        project.track_mut(bus).unwrap().mixer.solo = true;
+        assert_eq!(NoteScore::from_project(&project).notes.len(), 2);
+        project.track_mut(sent).unwrap().mixer.mute = true;
+        let score = NoteScore::from_project(&project);
+        assert_eq!(score.notes.len(), 1);
+        assert_eq!(score.notes[0].pitch, 65);
+        assert_eq!(score.notes[0].track, 0);
+        project.track_mut(sent).unwrap().mixer.mute = false;
+        project.track_mut(bus).unwrap().mixer.solo = false;
+        project.track_mut(sent).unwrap().mixer.solo = true;
+        let score = NoteScore::from_project(&project);
+        assert_eq!(score.notes.len(), 1);
+        assert_eq!(score.notes[0].pitch, 60);
+    }
+
+    #[test]
+    fn dropping_drums_remaps_the_layer_track_index() {
+        let q = TICKS_PER_QUARTER;
+        let mut project = project_with(vec![note(60, 0, q)], vec![note(36, 0, q)]);
+        let source = project.tracks[0].id;
+        let kit = project.tracks[1].id;
+        project.add_layer_track(source, "Layer", "test").unwrap();
+        project.move_track(kit, 0);
+        project.track_mut(source).unwrap().mixer.mute = true;
+        let score = NoteScore::from_project(&project);
+        assert_eq!(
+            score.notes.iter().map(|n| n.track).collect::<Vec<_>>(),
+            [0, 1]
+        );
+        let pitched = score.without_drums();
+        assert_eq!(pitched.tracks.len(), 1);
+        assert_eq!(pitched.tracks[0].name, "Layer");
+        assert_eq!(pitched.notes.len(), 1);
+        assert_eq!(pitched.notes[0].pitch, 60);
+        assert_eq!(pitched.notes[0].track, 0);
     }
 
     #[test]

@@ -195,6 +195,18 @@ impl PrepareContext {
     }
 }
 
+/// Tempo bounds for planning an effect's tail before any audio has been processed.
+///
+/// The host includes every tempo that may occur during the input and its ring-out. Bounds are
+/// positive and finite, with `min_bpm <= max_bpm`; a constant-tempo render uses equal bounds.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct TailContext {
+    /// Slowest quarter-note tempo the effect may encounter.
+    pub min_bpm: f64,
+    /// Fastest quarter-note tempo the effect may encounter.
+    pub max_bpm: f64,
+}
+
 /// Per-block information handed to `process`.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct ProcessContext {
@@ -562,6 +574,17 @@ pub trait Effect: Parameterized + Send {
     /// reverb and delay tails are not cut off in the exported file.
     fn tail_frames(&self) -> usize {
         0
+    }
+
+    /// Bounds the tail for a planned render without processing audio or changing plugin state.
+    ///
+    /// Tempo-dependent effects override this so a fresh graph can size an export or cycle
+    /// warm-up before its first block supplies a tempo. The result must cover every tempo in
+    /// `context`; narrowing those bounds must not increase the result. Parameters and the
+    /// prepared sample rate are unchanged. The default preserves existing and hosted effects'
+    /// [`Self::tail_frames`] reports.
+    fn tail_frames_with_context(&self, _context: &TailContext) -> usize {
+        self.tail_frames()
     }
 
     /// Latency this effect introduces, in frames. Reported for future delay compensation;

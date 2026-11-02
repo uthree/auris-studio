@@ -93,7 +93,8 @@ pub fn layer_fraction(shape: &LayerShape, dial: LayerDial) -> f32 {
         LayerDial::Lowest => f32::from(shape.lowest) / 127.0,
         LayerDial::Highest => f32::from(shape.highest) / 127.0,
         LayerDial::Transpose => {
-            (shape.transpose + TRANSPOSE_RANGE) as f32 / (2 * TRANSPOSE_RANGE) as f32
+            (shape.transpose.clamp(-TRANSPOSE_RANGE, TRANSPOSE_RANGE) + TRANSPOSE_RANGE) as f32
+                / (2 * TRANSPOSE_RANGE) as f32
         }
         LayerDial::Velocity => shape.velocity / 2.0,
         // A doubling is the same distance at every length, so the slider is logarithmic: a
@@ -417,6 +418,18 @@ mod tests {
     }
 
     #[test]
+    fn the_inspector_can_read_transposes_beyond_its_slider_range() {
+        for (transpose, expected) in [(i32::MIN, 0.0), (i32::MAX, 1.0)] {
+            let shape = LayerShape {
+                transpose,
+                ..LayerShape::default()
+            };
+            assert_eq!(layer_fraction(&shape, LayerDial::Transpose), expected);
+            assert_eq!(layer_text(&shape, LayerDial::Transpose), signed(transpose));
+        }
+    }
+
+    #[test]
     fn the_ends_of_the_key_range_push_each_other_instead_of_crossing() {
         let shape = LayerShape {
             lowest: 40,
@@ -524,6 +537,66 @@ mod tests {
                     .note_clips()
                     .unwrap();
                 assert_eq!(clips.len(), 1);
+            });
+        }
+
+        #[gpui::test]
+        fn inspector_detach_preserves_performed_notes_and_undo(cx: &mut TestAppContext) {
+            let (app, cx, source, clip) = with_a_clip(cx);
+            let layer = app.update(cx, |this, _| {
+                this.session
+                    .add_note(clip, Note::new(60, Ticks::ZERO, Ticks(480)))
+                    .unwrap();
+                this.session
+                    .set_clip_transforms(clip, vec![NoteTransform::Transpose { semitones: 12 }])
+                    .unwrap();
+                this.add_layer_on(source);
+                let layer = this.selected_track.unwrap();
+                this.session
+                    .set_layer_shape(
+                        layer,
+                        LayerShape {
+                            lowest: 72,
+                            highest: 84,
+                            ..LayerShape::default()
+                        },
+                    )
+                    .unwrap();
+                this.session.forget_history();
+                layer
+            });
+            resize(&app, cx, size(px(1920.0), px(2000.0)));
+            crate::harness::click("layer-detach", cx);
+            paint(&app, cx);
+            app.read_with(cx, |this, _| {
+                assert_eq!(this.session.layer_source(layer), None);
+                let clips = this
+                    .project()
+                    .track(layer)
+                    .unwrap()
+                    .kind
+                    .note_clips()
+                    .unwrap();
+                assert_eq!(clips.len(), 1);
+                assert_eq!(clips[0].notes.len(), 1);
+                assert_eq!(clips[0].notes[0].pitch, 72);
+                assert!(clips[0].transforms.is_empty());
+                assert_eq!(this.session.midi_clip(clip).unwrap().notes[0].pitch, 60);
+            });
+            crate::harness::click("editing-undo", cx);
+            paint(&app, cx);
+            app.read_with(cx, |this, _| {
+                assert_eq!(this.session.layer_source(layer), Some(source));
+                assert_eq!(this.session.layer_shape(layer).unwrap().lowest, 72);
+                assert!(
+                    this.project()
+                        .track(layer)
+                        .unwrap()
+                        .kind
+                        .note_clips()
+                        .unwrap()
+                        .is_empty()
+                );
             });
         }
     }

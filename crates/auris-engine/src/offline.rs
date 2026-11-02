@@ -6,8 +6,10 @@
 //! was heard: there is no second code path that could drift from the first.
 
 use auris_core::AudioBuffer;
+use auris_core::plugin::TailContext;
 use auris_core::project::{AudioSourceBank, Project};
 use auris_core::registry::PluginRegistry;
+use auris_core::time::{Samples, TempoMap};
 
 use crate::error::EngineError;
 use crate::graph::{RENDER_CHANNELS, RenderGraph};
@@ -42,6 +44,28 @@ const MAX_BUFFERED_RENDER_BYTES: usize = 512 * 1024 * 1024;
 
 /// Largest block whose event offsets and scratch allocation remain practical and representable.
 const MAX_BLOCK_FRAMES: usize = 1_048_576;
+
+/// Tempos that can be read by the renderer over an inclusive frame interval.
+fn tail_context(tempo_map: &TempoMap, sample_rate: f64, start: u64, last: u64) -> TailContext {
+    let bpm_at = |frame| tempo_map.bpm_at(tempo_map.samples_to_ticks(Samples(frame), sample_rate));
+    let first_bpm = bpm_at(start);
+    let last_bpm = bpm_at(last);
+    let mut context = TailContext {
+        min_bpm: first_bpm.min(last_bpm),
+        max_bpm: first_bpm.max(last_bpm),
+    };
+    for point in tempo_map.points() {
+        let frame = tempo_map.ticks_to_samples(point.tick, sample_rate).raw();
+        if frame > last {
+            break;
+        }
+        if frame >= start {
+            context.min_bpm = context.min_bpm.min(point.bpm);
+            context.max_bpm = context.max_bpm.max(point.bpm);
+        }
+    }
+    context
+}
 
 fn buffered_render_bytes(frames: usize) -> Result<usize, EngineError> {
     let too_large = || EngineError::RenderBufferTooLarge {
@@ -368,8 +392,33 @@ impl OfflineRender {
             });
         }
 
+        let planned_tail = if options.include_tail || options.looping {
+            let last = if options.looping {
+                // The cycle end never plays: the next frame is its start again.
+                end_frames.saturating_sub(1).max(options.start_frames)
+            } else if options.end_frames.is_some() {
+                // A ranged export stops at its end, so the tail hears that frame's tempo.
+                end_frames
+            } else {
+                // A whole-project export keeps rolling during ring-out. First bound how far
+                // that can reach at any supported tempo, then inspect only that interval:
+                // a slow tempo point hours later must not pad an otherwise short export.
+                // Both queries are read-only; no dummy block advances a hosted plugin.
+                let maximum_tail = graph.tail_frames_with_context(&TailContext {
+                    min_bpm: TempoMap::MIN_BPM,
+                    max_bpm: TempoMap::MAX_BPM,
+                });
+                end_frames
+                    .saturating_add(u64::try_from(maximum_tail).unwrap_or(u64::MAX))
+                    .saturating_add(u64::try_from(graph.latency_frames()).unwrap_or(u64::MAX))
+            };
+            let context = tail_context(&project.tempo_map, sample_rate, options.start_frames, last);
+            graph.tail_frames_with_context(&context)
+        } else {
+            0
+        };
         let tail = if options.include_tail && !options.looping {
-            graph.tail_frames()
+            planned_tail
         } else {
             0
         };
@@ -395,8 +444,7 @@ impl OfflineRender {
         // what keeps an export lined up with what the arrangement shows.
         let warmup = if options.looping && span > 0 {
             let span = usize::try_from(span).map_err(|_| too_long())?;
-            graph
-                .tail_frames()
+            planned_tail
                 .max(span)
                 .div_ceil(span)
                 .checked_mul(span)
