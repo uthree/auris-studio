@@ -277,8 +277,18 @@ mod tests {
             .count()
     }
 
+    /// Whether an installed face can draw the Japanese the tests write. A machine with only
+    /// Latin faces (a bare CI runner) outlines nothing for them, which is the behaviour the
+    /// overlay promises, and nothing these tests can measure.
+    fn japanese_installed() -> bool {
+        lyric_fonts().iter().any(|font| {
+            ttf_parser::Face::parse(&font.bytes, font.index)
+                .is_ok_and(|face| ['桜', 'あ'].iter().all(|c| face.glyph_index(*c).is_some()))
+        })
+    }
+
     fn drawn(lyrics: bool, seconds: f64) -> Option<Pixmap> {
-        if lyric_fonts().is_empty() {
+        if !japanese_installed() {
             return None;
         }
         let renderer = FrameRenderer::with_background(&score(), &style(lyrics), None);
@@ -346,7 +356,7 @@ mod tests {
             .iter()
             .filter_map(|font| ttf_parser::Face::parse(&font.bytes, font.index).ok())
             .collect();
-        if faces.is_empty() {
+        if !japanese_installed() {
             return;
         }
         let line = outline(&faces, "Hello 春");
