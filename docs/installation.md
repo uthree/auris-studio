@@ -45,7 +45,11 @@ after the publisher and download source have been checked.
 
 ## macOS
 
-Open `auris-studio-v<version>-macos-universal.dmg` and drag `Auris Studio.app` to
+Auris Studio runs on Apple Silicon Macs; Intel Macs are no longer supported. Builds up to 0.18
+were universal and look for an update under the old `macos-universal` name, so updating from one
+of them is a manual download, once.
+
+Open `auris-studio-v<version>-macos-aarch64.dmg` and drag `Auris Studio.app` to
 **Applications**. The app contains matching command-line executables and the dictionary:
 
 ```sh

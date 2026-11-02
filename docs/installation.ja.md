@@ -23,7 +23,9 @@ Windows v0.10.0 と v0.11.0 は、v0.11.1 以降へ一度手動で更新する�
 <a id="macos"></a>
 ## macOS
 
-`auris-studio-v<version>-macos-universal.dmg` を開き、`Auris Studio.app` を **Applications** にドラッグします。アプリには対応するコマンドライン実行ファイルと辞書が含まれます。
+Auris Studio は Apple Silicon 搭載の Mac で動作し、Intel Mac には対応していません。0.18 までのビルドはユニバーサル版で、更新を古い `macos-universal` という名前で探すため、そこからの更新は一度だけ手動でダウンロードしてください。
+
+`auris-studio-v<version>-macos-aarch64.dmg` を開き、`Auris Studio.app` を **Applications** にドラッグします。アプリには対応するコマンドライン実行ファイルと辞書が含まれます。
 
 ```sh
 "/Applications/Auris Studio.app/Contents/MacOS/auris" help
