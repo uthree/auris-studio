@@ -7,7 +7,7 @@
 
 インストーラーで導入したデスクトップアプリは、起動直後と起動中の6時間ごとに更新を確認します。現在のプラットフォーム向けインストーラーを含む新しいリリースが見つかると、Auris Studio はバックグラウンドでダウンロードし、リリースメタデータに記載されたサイズと SHA-256 ダイジェストを照合します。プロンプトが表示されたら **Restart and Update** を選ぶか、通常の終了時に適用できるようダウンロード済みの更新を残します。更新ヘルパーは Auris Studio の終了後に更新を適用します。バックグラウンド更新は **Settings → General → Automatic Updates** で無効にできます。
 
-**Help → Check for Updates** を選ぶと、同じ確認をすぐに開始します。ポータブル版とソースからビルドした版では、置き換えの代わりに **Open Release Page** が表示されます。適切なインストーラーがない場合は、リリースページと以下のプラットフォーム別手順を使ってください。
+**Help → Check for Updates** を選ぶと、同じ確認をすぐに開始します。ポータブル版とソースからビルドした版では、置き換えの代わりに **Open Release Page** が表示されます。`cargo install` でインストールした版には、更新用のコマンドも表示されます。適切なインストーラーがない場合は、リリースページと以下のプラットフォーム別手順を使ってください。
 
 <a id="windows"></a>
 ## Windows
@@ -58,7 +58,16 @@ cargo install --locked --path crates/auris-cli
 cargo install --locked --path crates/auris-mcp
 ```
 
-Linux を含め、CLI だけが必要なら上記の `auris-cli` のコマンドだけを実行してください。Cargo はリリース用の実行ファイルをビルドし、既定では `~/.cargo/bin`（Windows は `%USERPROFILE%\.cargo\bin`）に配置します。このディレクトリが `PATH` に含まれていれば、`auris-studio`、`auris help`、`auris-mcp` を実行できます。アプリバンドルや OS のショートカットは作成されません。更新するには、使いたいリビジョンのソースを取得し、インストールコマンドを再実行します。
+Linux を含め、CLI だけが必要なら上記の `auris-cli` のコマンドだけを実行してください。Cargo はリリース用の実行ファイルをビルドし、既定では `~/.cargo/bin`（Windows は `%USERPROFILE%\.cargo\bin`）に配置します。このディレクトリが `PATH` に含まれていれば、`auris-studio`、`auris help`、`auris-mcp` を実行できます。チェックアウトせずに、リリースのタグから直接インストールすることもできます。
+
+```sh
+cargo install --locked --git https://github.com/uthree/auris-studio --tag v<version> \
+  auris-gpui auris-cli auris-mcp
+```
+
+Cargo がインストールするのは実行ファイルだけです。Cargo の bin ディレクトリから `auris-studio` を起動すると、スタート画面にアプリとして登録する案内が表示されます。登録先は macOS では `~/Applications/Auris Studio.app`、Windows ではスタートメニューのショートカット、Linux では `~/.local/share/applications` の `.desktop` エントリです。Windows と Linux のショートカットは Cargo の実行ファイルを直接開きます。macOS のバンドルには実行ファイルのコピーが入ります。アプリ名・アイコン・マイクの許可は、実行ファイルを含むバンドルによって決まるためです。後から `cargo install` で Cargo 側の実行ファイルが更新されると、次にバンドルから起動したときに新しいものが先にコピーされます。リリース版の `Auris Studio.app` など、この案内で作成していないものが同じ場所にある場合は置き換えません。
+
+Cargo でインストールした版は、アプリ内のアップデーターでは更新されません。新しいリリースが公開されると、スタート画面と **Help → Check for Updates** に、そのインストールを更新するコマンドとコピー用のボタンが表示されます。Git からインストールした場合は `cargo install … --tag v<version>`、チェックアウトからインストールした場合は `git pull` と同じ `cargo install --path` コマンドです。
 
 Cargo は日本語の歌詞用辞書をインストールしません。漢字の歌詞を使う場合は、[開発ガイド](development.ja.md#building-on-each-platform)の辞書の導入手順に従ってください。
 
