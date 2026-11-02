@@ -117,6 +117,11 @@ pub struct NoteRollStyle {
     /// ones recognised from its pitched notes. Drawn in [`Self::playhead_color`], which is the
     /// colour of everything in the frame that is not a note.
     pub chords: bool,
+    /// Show the line being sung as a subtitle along the bottom of the frame.
+    ///
+    /// The lines are the song-wide lyrics annotation, not the words on the notes: those are
+    /// what a voice sings, often a mora at a time or in kana, and this is what a person reads.
+    pub lyrics: bool,
 }
 
 impl Default for NoteRollStyle {
@@ -154,6 +159,7 @@ impl Default for NoteRollStyle {
             sink: 1.0,
             include_drums: false,
             chords: true,
+            lyrics: true,
         }
     }
 }

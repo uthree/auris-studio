@@ -538,6 +538,7 @@ impl AurisApp {
                     .on_action(Self::window_listener(cx, Self::on_toggle_agent))
                     .on_action(Self::window_listener(cx, Self::on_toggle_structure_lane))
                     .on_action(Self::window_listener(cx, Self::on_toggle_harmony_lane))
+                    .on_action(Self::window_listener(cx, Self::on_toggle_lyrics_lane))
                     .on_action(Self::window_listener(cx, Self::on_toggle_tempo_marks))
                     .on_action(Self::window_listener(cx, Self::on_toggle_bend_lane))
                     .on_action(Self::window_listener(cx, Self::on_toggle_modulation_lane))
@@ -1563,6 +1564,18 @@ impl AurisApp {
                     if let Some(Drag::SectionLabel { at, .. }) = &mut self.drag {
                         *at = landed;
                     }
+                }
+            }
+            Drag::LyricLine { at, grab_offset } => {
+                let x = event.position.x - self.timeline_origin().x;
+                let wanted = self
+                    .snap_unless_held(self.timeline.x_to_tick(x) - grab_offset, event.modifiers)
+                    .max_zero();
+                if wanted != at
+                    && self.session.move_lyric_line(at, wanted)
+                    && let Some(Drag::LyricLine { at, .. }) = &mut self.drag
+                {
+                    *at = wanted;
                 }
             }
             Drag::PanelScroll {
@@ -3617,6 +3630,17 @@ impl AurisApp {
         cx: &mut Context<Self>,
     ) {
         self.panels.lanes.harmony = !self.panels.lanes.harmony;
+        self.remember_layout();
+        cx.notify();
+    }
+
+    fn on_toggle_lyrics_lane(
+        &mut self,
+        _: &actions::ToggleLyricsLane,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.panels.lanes.lyrics = !self.panels.lanes.lyrics;
         self.remember_layout();
         cx.notify();
     }

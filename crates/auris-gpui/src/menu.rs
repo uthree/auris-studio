@@ -605,6 +605,12 @@ pub fn model(language: Language, panels: &PanelLayout, state: MenuState) -> Vec<
                 panels.lanes.harmony,
             ),
             toggle(
+                t(Key::CmdShowLyricsLane),
+                actions::ToggleLyricsLane,
+                "view.lyrics_lane",
+                panels.lanes.lyrics,
+            ),
+            toggle(
                 t(Key::CmdShowTempoMarks),
                 actions::ToggleTempoMarks,
                 "view.tempo_marks",

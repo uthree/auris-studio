@@ -231,6 +231,8 @@ pub fn edit_key(edit: Edit) -> Key {
         Edit::ClearHarmony => Key::EditClearHarmony,
         Edit::SetSection => Key::EditSetSection,
         Edit::MoveSection => Key::EditMoveSection,
+        Edit::SetLyricLine => Key::EditSetLyricLine,
+        Edit::MoveLyricLine => Key::EditMoveLyricLine,
         Edit::StampProgression => Key::EditStampProgression,
         Edit::GenerateClip => Key::EditGenerateClip,
         Edit::FreezeClip => Key::EditFreezeClip,

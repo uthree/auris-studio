@@ -1019,6 +1019,9 @@ strings! {
     VideoChordSection { en: "Chords", ja: "コード" }
     VideoChords { en: "Show chords", ja: "コード進行を表示" }
     VideoChordsHint { en: "The chord sounding now and the next one, in the top corner. Uses the chords written in the song, or reads them from the notes when none are written.", ja: "今鳴っているコードと次のコードを左上に表示します。曲に入力したコードを使い、未入力なら音符から読み取ります。" }
+    VideoLyricSection { en: "Lyrics", ja: "歌詞" }
+    VideoLyrics { en: "Show lyrics as subtitles", ja: "歌詞を字幕で表示" }
+    VideoLyricsHint { en: "The line being sung, along the bottom. Uses the song's lyrics lane, which the AI and song composition fill in as they write words.", ja: "歌っている行を画面下に表示します。曲の歌詞レーンの内容を使います（AIや自動作曲が歌詞を書くと自動で入ります）。" }
     VideoPreviewHint { en: "The preview shows the moment under the playhead. Move the playhead to see another.", ja: "プレビューは再生位置の瞬間です。再生位置を動かすと別の場面を確認できます。" }
     VideoFfmpegChecking { en: "Looking for ffmpeg…", ja: "ffmpeg を探しています…" }
     VideoFfmpegCopy { en: "Copy Command", ja: "コマンドをコピー" }
@@ -1092,6 +1095,7 @@ strings! {
     // "lane" — a person hides the chords, not a lane.
     CmdShowStructureLane { en: "Song Structure", ja: "曲の構成" }
     CmdShowHarmonyLane { en: "Key and Chords", ja: "キーとコード" }
+    CmdShowLyricsLane { en: "Lyrics", ja: "歌詞" }
     CmdShowTempoMarks { en: "Tempo Changes", ja: "テンポの変化" }
     CmdZoomIn { en: "Zoom In", ja: "拡大" }
     CmdZoomOut { en: "Zoom Out", ja: "縮小" }
@@ -1211,6 +1215,11 @@ strings! {
     MenuSetSectionHere { en: "Name Section Here…", ja: "ここからのセクション名を…" }
     MenuRemoveSectionHere { en: "Remove Section", ja: "セクションを削除" }
     MenuEndSectionsHere { en: "End Sections Here", ja: "ここで構造を終える" }
+    MenuSetLyricLineHere { en: "Type Lyrics Here…", ja: "ここに歌詞を入力…" }
+    MenuEditLyricLine { en: "Edit Lyric Line…", ja: "歌詞の行を編集…" }
+    MenuRemoveLyricLine { en: "Remove Lyric Line", ja: "歌詞の行を削除" }
+    MenuEndLyricLineHere { en: "End Line Here", ja: "ここで行を終える" }
+    MenuLyricsFromVocals { en: "Fill Lyrics from Vocal Tracks", ja: "ボーカルトラックから歌詞を取り込む" }
     MenuWriteProgression { en: "Write a Progression", ja: "コード進行を書き込む" }
     MenuGenerateClip { en: "Write a Part Here…", ja: "ここにパートを自動生成…" }
     MenuRerollClip { en: "Another Take", ja: "別のテイク" }
@@ -1435,6 +1444,7 @@ strings! {
     SetKeyTitle { en: "Key from here", ja: "ここからの調" }
     SetChordTitle { en: "Chord from here", ja: "ここからのコード" }
     SetSectionTitle { en: "Section from here", ja: "ここからのセクション" }
+    SetLyricLineTitle { en: "Lyrics from here", ja: "ここからの歌詞" }
     SetSeedTitle { en: "Seed for this part", ja: "このパートのシード" }
     SetTempoTitle { en: "Tempo", ja: "テンポ" }
     SetSignatureTitle { en: "Time signature", ja: "拍子" }
@@ -1856,6 +1866,8 @@ strings! {
     EditClearHarmony { en: "clearing the chords", ja: "コードの消去" }
     EditSetSection { en: "changing a section", ja: "セクションの変更" }
     EditMoveSection { en: "moving a section", ja: "セクションの移動" }
+    EditSetLyricLine { en: "changing the lyrics", ja: "歌詞の変更" }
+    EditMoveLyricLine { en: "moving a lyric line", ja: "歌詞の行の移動" }
     EditStampProgression { en: "writing a progression", ja: "コード進行の書き込み" }
     EditGenerateClip { en: "writing a clip", ja: "クリップの自動生成" }
     EditFreezeClip { en: "keeping a clip", ja: "クリップの確定" }
@@ -2076,6 +2088,7 @@ VIDEO OPTIONS (default: the look last chosen in the desktop application)
         --sink <amount>           How far sounding notes sink: 0 is still, 1 the usual
         --drums                   Draw drum tracks too
         --no-chords               Leave out the chord names in the corner
+        --no-lyrics               Leave out the lyric subtitles
 
 NEW OPTIONS
         --bpm <tempo>             Tempo of the new project (default: 120)
@@ -2166,6 +2179,7 @@ video のオプション（既定: デスクトップ版で最後に選んだ見
         --sink <amount>           演奏中のノートが沈み込む深さ（0 で動かない、1 が標準）
         --drums                   ドラムトラックも描く
         --no-chords               左上のコード名を表示しない
+        --no-lyrics               歌詞の字幕を表示しない
 
 new のオプション
         --bpm <tempo>             新規プロジェクトのテンポ（既定: 120）

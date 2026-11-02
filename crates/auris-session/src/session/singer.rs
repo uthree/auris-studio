@@ -397,32 +397,7 @@ impl Session {
         // Each note's new words, worked out in full before anything is recorded. The moras come
         // with their phonemes attached — asking `kana_phonemes` of each mora on its own would
         // lose ー its vowel, which only the mora before it knows.
-        let explicit = reading
-            .map(|reading| {
-                split_kana_lyric(reading.trim())
-                    .filter(|moras| !moras.is_empty() && !text.trim().is_empty())
-                    .ok_or_else(|| {
-                        SessionError::InvalidNotes(
-                            "Supply nonempty written lyrics and a nonempty kana reading".into(),
-                        )
-                    })
-            })
-            .transpose()?;
-        let mut portions: Vec<(String, Vec<String>)> =
-            match explicit.or_else(|| split_kana_lyric(text.trim())) {
-                Some(moras) => moras,
-                None => {
-                    let phonemes = lyric_phonemes(text, self.japanese.as_ref())?;
-                    phoneme_moras(&phonemes)
-                        .into_iter()
-                        .enumerate()
-                        .map(|(at, mora)| match at {
-                            0 => (text.trim().to_string(), mora),
-                            _ => (LYRIC_CONTINUATION.to_string(), mora),
-                        })
-                        .collect()
-                }
-            };
+        let mut portions = self.lyric_portions(text, reading)?;
 
         if portions.len() > order.len() {
             return Err(SessionError::InvalidNotes(format!(
@@ -465,6 +440,43 @@ impl Session {
         }
         self.sync_singer_clip_names();
         Ok(filled)
+    }
+
+    /// What each note of a phrase would be given by [`Self::write_lyrics_with_reading`]: its
+    /// lyric and its phonemes, one entry per note slot, before the surface is restored.
+    pub(crate) fn lyric_portions(
+        &self,
+        text: &str,
+        reading: Option<&str>,
+    ) -> Result<Vec<(String, Vec<String>)>, SessionError> {
+        let explicit = reading
+            .map(|reading| {
+                split_kana_lyric(reading.trim())
+                    .filter(|moras| !moras.is_empty() && !text.trim().is_empty())
+                    .ok_or_else(|| {
+                        SessionError::InvalidNotes(
+                            "Supply nonempty written lyrics and a nonempty kana reading".into(),
+                        )
+                    })
+            })
+            .transpose()?;
+        let portions: Vec<(String, Vec<String>)> =
+            match explicit.or_else(|| split_kana_lyric(text.trim())) {
+                Some(moras) => moras,
+                None => {
+                    let phonemes = lyric_phonemes(text, self.japanese.as_ref())?;
+                    phoneme_moras(&phonemes)
+                        .into_iter()
+                        .enumerate()
+                        .map(|(at, mora)| match at {
+                            0 => (text.trim().to_string(), mora),
+                            _ => (LYRIC_CONTINUATION.to_string(), mora),
+                        })
+                        .collect()
+                }
+            };
+
+        Ok(portions)
     }
 
     /// Pins one phoneme of one note to `seconds` of sung time, or hands it back to the rule.

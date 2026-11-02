@@ -625,6 +625,14 @@ pub enum MenuCommand {
     RemoveSectionAt(Ticks),
     /// Leave the song unnamed from a position onwards — how a structure ends.
     EndSectionsAt(Ticks),
+    /// Type the song-wide lyric line in force at a position, or start one there.
+    SetLyricLineAt(Ticks),
+    /// Remove the lyric line in force at a position.
+    RemoveLyricLineAt(Ticks),
+    /// Stop showing words from a position: the silence after a line.
+    EndLyricLineAt(Ticks),
+    /// Rewrite the song-wide lyrics from what the singer tracks sing.
+    LyricsFromVocals,
     /// Empty the chords over a range.
     ClearHarmony {
         /// Where the cleared stretch begins.
@@ -1556,6 +1564,12 @@ impl AurisApp {
             MenuCommand::SetSectionAt(tick) => self.prompt_for_section(tick),
             MenuCommand::RemoveSectionAt(tick) => self.session.remove_section(tick),
             MenuCommand::EndSectionsAt(tick) => self.session.set_section(tick, None),
+            MenuCommand::SetLyricLineAt(tick) => self.prompt_for_lyric_line(tick),
+            MenuCommand::RemoveLyricLineAt(tick) => self.session.remove_lyric_line(tick),
+            MenuCommand::EndLyricLineAt(tick) => self.session.set_lyric_line(tick, None),
+            MenuCommand::LyricsFromVocals => {
+                self.session.annotate_lyrics_from_vocals(None);
+            }
 
             MenuCommand::SetLoopStart(tick) => {
                 let end = self

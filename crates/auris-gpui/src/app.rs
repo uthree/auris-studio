@@ -638,6 +638,13 @@ pub enum Drag {
         /// to the pointer on the first move.
         grab_offset: Ticks,
     },
+    /// Dragging the start of a lyric line along the lyrics lane.
+    LyricLine {
+        /// The change being moved, by where it currently sits.
+        at: Ticks,
+        /// How far into the line the pointer took hold.
+        grab_offset: Ticks,
+    },
     /// Sweeping along the harmony lane with the button held, hearing each chord in turn.
     ///
     /// Carries nothing: what sounds is whatever is written under the pointer, which the document
@@ -860,6 +867,7 @@ impl Drag {
             Drag::AuditionHarmony => None,
             Drag::HarmonyChord { .. } => Some(Edit::MoveChord),
             Drag::SectionLabel { .. } => Some(Edit::MoveSection),
+            Drag::LyricLine { .. } => Some(Edit::MoveLyricLine),
             // How far in the view is zoomed is a property of the window, like a panel's width.
             Drag::TimeZoom { .. } => None,
             // Panel and window geometry is a property of the window, not the document: resizing
@@ -1325,6 +1333,8 @@ pub struct CanvasBounds {
     pub structure: Rc<Cell<Option<Bounds<Pixels>>>>,
     /// The chord strip between the structure lane and the clip lanes.
     pub harmony: Rc<Cell<Option<Bounds<Pixels>>>>,
+    /// The lyrics strip under the harmony.
+    pub lyrics: Rc<Cell<Option<Bounds<Pixels>>>>,
     /// The arrangement's clip lanes.
     pub lanes: Rc<Cell<Option<Bounds<Pixels>>>>,
     /// The piano roll's note grid.

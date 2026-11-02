@@ -153,6 +153,10 @@ Use automation for parameter curves. Static settings may be overridden by existi
 
 Choose a singer voice with list_voices/set_singer_voice and inspect_singer; write_lyrics then sing creates
 a real take. Confirm take_state current before completion. A guide voice or stale take is unfinished.
+Every song with words must carry the song-wide lyrics annotation (video captions and lyric sheets read it,
+never the clips): write_lyrics and compose write it for the lines they set; after editing sung notes or
+lyrics any other way, call edit_lyrics from_vocals or write explicit lines in the original spelling. Before
+finishing, inspect_project lyrics must cover every sung phrase; a song without it is unfinished.
 Transcription estimates are drafts. Inspect and explicitly accept them; never invent notes from a filename.
 
 Audio preview/export is not evidence of listening. inspect_audio/analyze measure levels and score data locally.

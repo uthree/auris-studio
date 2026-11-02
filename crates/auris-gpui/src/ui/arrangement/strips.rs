@@ -57,6 +57,7 @@ impl AurisApp {
                 Some(Drag::SectionLabel { at, .. }) => Some(at),
                 _ => None,
             },
+            accent: false,
         };
 
         div()
@@ -114,6 +115,127 @@ impl AurisApp {
             section_handle_at(&self.timeline, self.project().sections.points(), visible, x)
         {
             self.begin_drag(Drag::SectionLabel {
+                at,
+                grab_offset: tick - at,
+            });
+        }
+    }
+
+    /// The strip of lyric lines under the chords: the words sung at each moment, for the song.
+    ///
+    /// Drawn as the structure lane is — a block per line, a grab bar where it starts — because
+    /// it is the same kind of map. Last of the three because it is the finest: sections, chords,
+    /// then the words that ride them.
+    pub(super) fn render_lyrics_lane(
+        &mut self,
+        cx: &mut gpui::Context<Self>,
+    ) -> impl IntoElement + use<> {
+        let theme = self.theme.clone();
+        let view = self.timeline.clone();
+        let width = self
+            .canvas
+            .lyrics
+            .get()
+            .map_or(px(1200.0), |b| b.size.width);
+        let (from, to) = view.visible_range(width);
+        let lines = paint::StructurePaint {
+            spans: self
+                .project()
+                .lyrics
+                .spans_in(from, to)
+                .into_iter()
+                .map(|span| {
+                    let shown = span.text.clone();
+                    (
+                        SectionSpan {
+                            start: span.start,
+                            end: span.end,
+                            change: span.change,
+                            label: span.text,
+                            instance: 1,
+                        },
+                        shown,
+                    )
+                })
+                .collect(),
+            held: match self.drag {
+                Some(Drag::LyricLine { at, .. }) => Some(at),
+                _ => None,
+            },
+            accent: true,
+        };
+
+        div()
+            .id("lyrics-lane")
+            .h(Metrics::LYRICS_LANE_HEIGHT)
+            .w_full()
+            .child({
+                let recorded = self.canvas.lyrics.clone();
+                canvas(
+                    move |bounds, _, _| recorded.set(Some(bounds)),
+                    move |bounds, _, window, cx| {
+                        paint::clipped(window, bounds, |window| {
+                            paint::structure_lane(window, cx, bounds, &view, &lines, &theme);
+                        });
+                    },
+                )
+                .size_full()
+            })
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, event: &MouseDownEvent, _, cx| {
+                    this.press_lyrics_lane(event);
+                    cx.notify();
+                }),
+            )
+            .on_mouse_down(
+                MouseButton::Right,
+                AurisApp::opens_menu(cx, |this, at| {
+                    let x = at.x - this.timeline_origin().x;
+                    let tick = this.timeline.x_to_tick(x).max_zero();
+                    let placed = if this.project().lyrics.text_at(tick).is_some() {
+                        tick
+                    } else {
+                        this.snap(tick).max_zero()
+                    };
+                    this.lyrics_menu(at, placed)
+                }),
+            )
+            .on_scroll_wheel(cx.listener(|this, event: &gpui::ScrollWheelEvent, _, cx| {
+                this.scroll_timeline(event, cx);
+            }))
+    }
+
+    /// What a left press on the lyrics lane does: grab a line's start, or — doubled — open the
+    /// text sheet for the line under the pointer, or a new one on the grid there.
+    fn press_lyrics_lane(&mut self, event: &MouseDownEvent) {
+        let x = event.position.x - self.timeline_origin().x;
+        let tick = self.timeline.x_to_tick(x).max_zero();
+        if event.click_count >= 2 {
+            let at = if self.project().lyrics.text_at(tick).is_some() {
+                tick
+            } else {
+                self.snap(tick).max_zero()
+            };
+            self.prompt_for_lyric_line(at);
+            return;
+        }
+        let width = self
+            .canvas
+            .lyrics
+            .get()
+            .map_or(px(1200.0), |bounds| bounds.size.width);
+        let (from, to) = self.timeline.visible_range(width);
+        let handles: Vec<Ticks> = self
+            .project()
+            .lyrics
+            .points()
+            .iter()
+            .filter(|point| point.text.is_some() && point.tick >= from && point.tick <= to)
+            .map(|point| point.tick)
+            .collect();
+        if let Some(at) = chord_handle_at(&self.timeline, &handles, x) {
+            self.begin_drag(Drag::LyricLine {
                 at,
                 grab_offset: tick - at,
             });
