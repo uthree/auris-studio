@@ -67,6 +67,7 @@ pub mod tin_whistle;
 pub mod vocal;
 pub mod voice;
 
+mod observe;
 mod presence;
 
 #[cfg(test)]

@@ -262,8 +262,14 @@ impl Session {
             let phrase = index + 1;
             let explicit = overrides.get(&phrase);
             let read = match explicit {
-                Some(kana) => auris_vocal::kana_accent_phrase(kana)
-                    .map(|p| p.moras)
+                Some(kana) => auris_vocal::spoken_kana_lyric(kana, self.japanese.as_ref())
+                    .filter(|moras| !moras.is_empty())
+                    .map(|moras| {
+                        moras
+                            .into_iter()
+                            .map(|(text, phonemes)| SungMora { text, phonemes })
+                            .collect::<Vec<_>>()
+                    })
                     .ok_or_else(|| "Invalid explicit reading".to_string()),
                 None => lyrics::read_lyrics(text, self.japanese.as_ref())
                     .map(|p| p.into_iter().flat_map(|p| p.moras).collect())

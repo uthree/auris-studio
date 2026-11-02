@@ -115,7 +115,9 @@ pub use auris_analysis::{AnalysisControl, AnalysisError};
 /// Workspace-owned error variants exposed for frontend localisation.
 pub use auris_core::CoreError;
 /// Mechanical observations exposed through the session boundary.
-pub use auris_core::motion::{MotionFrame, MotionGeometry, MotionVoice};
+pub use auris_core::motion::{
+    MOTION_POINTS, MOTION_VOICES, MotionFrame, MotionGeometry, MotionVoice,
+};
 /// PCM-derived drum measurements, exposed without a frontend DSP dependency.
 pub use auris_dsp::drum_analysis::{AcousticCharacter, DrumAcoustics, DrumSpectrum};
 /// Upper bound on populated groups in a refined library timbre map.

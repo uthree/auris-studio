@@ -2022,6 +2022,18 @@ impl AurisApp {
             } => {
                 self.drag_volume_contour_point(clip, index, bounds, event.position);
             }
+            Drag::VideoColour {
+                channel,
+                start_fraction,
+                start_x,
+            } => {
+                let delta = crate::ui::widgets::fine_scaled(
+                    f32::from(event.position.x - start_x),
+                    event.modifiers,
+                );
+                let fraction = crate::ui::widgets::dragged(start_fraction, delta);
+                self.set_video_colour_channel(channel, fraction, false);
+            }
             Drag::TimeZoom {
                 start_fraction,
                 start_x,
@@ -2087,6 +2099,13 @@ impl AurisApp {
             Some(Drag::DrumLaneReorder { track, .. }) => Some(*track),
             _ => None,
         };
+        // A colour drag changed the look without writing it down on every move; this is the
+        // one write for the whole sweep.
+        if matches!(self.drag, Some(Drag::VideoColour { .. }))
+            && let Err(error) = self.save_settings()
+        {
+            log::warn!("could not save settings: {error}");
+        }
         self.stop_audition();
         // A key of the drawn keyboard pressed with the pointer is let go of here rather than on
         // the key itself, because the pointer may well have left it — or the panel — by now.

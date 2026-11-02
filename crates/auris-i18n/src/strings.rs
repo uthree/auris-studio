@@ -264,9 +264,6 @@ strings! {
     ToolbarVisualizer { en: "Audio visualizer", ja: "オーディオビジュアライザー" }
     ToolbarSpectrum { en: "Spectrum…", ja: "スペクトラム…" }
     PhysicalMotion { en: "Model motion", ja: "物理モデルの動き" }
-    PhysicalInstrumentView { en: "Instrument", ja: "楽器" }
-    PhysicalVoicesView { en: "Voices", ja: "声部" }
-    PhysicalDisplacement { en: "Displacement", ja: "変位" }
     PhysicalModes { en: "Resonant modes 1–8", ja: "共鳴モード 1–8" }
     PhysicalParameters { en: "Sound parameters", ja: "音色パラメーター" }
     PhysicalObserved { en: "Captured model state · amplitude enlarged", ja: "モデルの観測値 · 振幅を拡大表示" }
@@ -274,10 +271,15 @@ strings! {
     PhysicalFrozen { en: "Frozen", ja: "表示停止中" }
     PhysicalResume { en: "Resume display", ja: "表示を再開" }
     PhysicalWaiting { en: "Play a test note or start playback to see the model move", ja: "試奏または再生すると、モデルの動きを確認できます" }
-    PhysicalProjection { en: "Motion enlarged · Marker: contact · Bars: resonant modes", ja: "振動を拡大表示 · マーカー：接触位置 · 棒：共鳴モード" }
-    PhysicalStringProjection { en: "Strings: schematic fingering · Trails: recent motion", ja: "弦：推定運指 · 軌跡：直近の振動" }
-    PhysicalPianoProjection { en: "Strings: keyboard order · Trails: recent motion", ja: "弦：鍵盤の並び · 軌跡：直近の振動" }
-    PhysicalDrumProjection { en: "Kit stays visible · Mesh: membrane motion", ja: "膜・シンバルを常時表示 · 網目：振動" }
+    PhysicalTouchPluck { en: "Pull a string and let go to pluck it there · The farther you pull, the harder", ja: "弦を引っ張って放すと、その位置で弾きます · 大きく引くほど強く" }
+    PhysicalTouchStrike { en: "Press a string to strike it there · The farther from the string, the harder", ja: "弦を押すと、その位置を叩きます · 弦から離れた所ほど強く" }
+    PhysicalTouchHead { en: "Press a head to strike it there · Centre and rim sound different", ja: "面を押すと、その位置を叩きます · 中心と縁で音色が変わります" }
+    PhysicalTouchBow { en: "Hold on a string to bow it there · The farther from the string, the harder", ja: "弦を押さえている間、その位置を弓で弾きます · 弦から離れた所ほど強く" }
+    PhysicalTouchBlow { en: "Hold on the bore to blow into it · The farther from the centre line, the harder", ja: "管を押さえている間、息を吹き込みます · 中心線から離れた所ほど強く" }
+    PhysicalTouchSing { en: "Hold on the tract to sing · The farther from the centre line, the louder", ja: "声道を押さえている間、声を出します · 中心線から離れた所ほど大きく" }
+    PhysicalTract { en: "Vocal tract · glottis to lips", ja: "声道 · 声門から唇まで" }
+    PhysicalAudition { en: "Audition", ja: "試奏" }
+    PhysicalAuditionHint { en: "Choose the note a touch plays", ja: "触ったときに鳴らす音を選びます" }
     PhysicalPedal { en: "Sustain pedal", ja: "サステインペダル" }
     PhysicalHeld { en: "Held", ja: "持続中" }
     PhysicalReleased { en: "Releasing", ja: "余韻" }
@@ -997,6 +999,11 @@ strings! {
     VideoColorPitch { en: "By pitch", ja: "音の高さ" }
     VideoColorSingle { en: "One colour", ja: "単色" }
     VideoPaletteHint { en: "Click a colour to choose another. Tracks take them in order.", ja: "色をクリックして選び直せます。トラックの並び順に割り当てます。" }
+    VideoHue { en: "Hue", ja: "色相" }
+    VideoSaturation { en: "Saturation", ja: "彩度" }
+    VideoBrightness { en: "Brightness", ja: "明度" }
+    VideoCustomColour { en: "Custom…", ja: "カスタム…" }
+    VideoColourCode { en: "Colour code", ja: "カラーコード" }
     VideoHueLow { en: "Low notes", ja: "低い音" }
     VideoHueHigh { en: "High notes", ja: "高い音" }
     VideoBackground { en: "Background", ja: "背景" }
@@ -1018,6 +1025,7 @@ strings! {
     VideoDrums { en: "Include drums", ja: "ドラムも描く" }
     VideoChordSection { en: "Chords", ja: "コード" }
     VideoChords { en: "Show chords", ja: "コード進行を表示" }
+    VideoChordColour { en: "Caption colour", ja: "表示の色" }
     VideoChordsHint { en: "The chord sounding now and the next one, in the top corner. Uses the chords written in the song, or reads them from the notes when none are written.", ja: "今鳴っているコードと次のコードを左上に表示します。曲に入力したコードを使い、未入力なら音符から読み取ります。" }
     VideoPreviewHint { en: "The preview shows the moment under the playhead. Move the playhead to see another.", ja: "プレビューは再生位置の瞬間です。再生位置を動かすと別の場面を確認できます。" }
     VideoFfmpegChecking { en: "Looking for ffmpeg…", ja: "ffmpeg を探しています…" }
@@ -1466,6 +1474,10 @@ strings! {
     HintClipGain {
         en: "In decibels. 0 plays the clip as recorded; negative is quieter",
         ja: "デシベル単位。0で元の音量、負の値で小さく"
+    }
+    HintColour {
+        en: "Hexadecimal red, green and blue: #3D7BFF, or #38F for short",
+        ja: "赤・緑・青の16進数: #3D7BFF、短縮形なら #38F のように"
     }
     HintPosition {
         en: "Bar, beat, hundredth: 17, or 17.3, or 17.3.050",
