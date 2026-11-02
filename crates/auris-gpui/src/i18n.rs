@@ -204,6 +204,8 @@ pub fn edit_key(edit: Edit) -> Key {
         Edit::SetSingerVoice => Key::EditSetSingerVoice,
         Edit::SetSingerSpeaker => Key::EditSetSingerSpeaker,
         Edit::Sing => Key::EditSing,
+        Edit::LintFix => Key::EditLintFix,
+        Edit::LintSuppression => Key::EditLintSuppression,
         Edit::AddEffect => Key::EditAddEffect,
         Edit::RemoveEffect => Key::EditRemoveEffect,
         Edit::BypassEffect => Key::EditBypassEffect,
@@ -314,6 +316,7 @@ pub fn error_text(error: &SessionError, language: Language) -> String {
         },
         SessionError::UnknownTrack(_) => Key::ErrorUnknownTrack.get(language).to_string(),
         SessionError::UnknownClip(_) => Key::ErrorUnknownClip.get(language).to_string(),
+        SessionError::LintStale => Key::ErrorLintStale.get(language).to_string(),
         SessionError::UnknownNote { .. } => Key::ErrorUnknownNote.get(language).to_string(),
         // The one vocal error a person can *fix* gets the sentence naming the fix; the others
         // carry the loader's or the frontend's own words, which name the folder or the text.

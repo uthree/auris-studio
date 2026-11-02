@@ -77,6 +77,10 @@ enum Work {
         guard: crate::render::ExportGuard,
         path: PathBuf,
     },
+    Lint {
+        job: Box<crate::lint::AudioLintJob>,
+        request: super::lint::LintRequest,
+    },
     Verify {
         path: PathBuf,
         target_lufs: Option<f32>,
@@ -107,6 +111,7 @@ enum Outcome {
     Audio(Vec<StagedAudio>, Option<Box<analysis::Manifest>>),
     Midi(crate::MidiExportResult),
     Verified(String),
+    Linted(Box<crate::lint::AudioLintResult>, super::lint::LintRequest),
 }
 
 struct StagedAudio {
@@ -139,6 +144,10 @@ impl FileJob {
         };
         check()?;
         let outcome = match self.work {
+            Work::Lint { job, request } => Outcome::Linted(
+                Box::new(job.run(cancelled).map_err(|e| e.to_string())?),
+                request,
+            ),
             Work::ImportMidi { job, path, at } => {
                 let metadata = std::fs::metadata(&path).map_err(|e| e.to_string())?;
                 if !metadata.is_file() || metadata.len() > 32 * 1024 * 1024 {
@@ -545,6 +554,16 @@ impl Session {
                     ending_rms_max_db,
                 }
             }
+            Command::LintProject {
+                audio: true,
+                start_bar,
+                bars,
+                offset,
+                limit,
+            } => Work::Lint {
+                request: super::lint::LintRequest::new(start_bar, bars, offset, limit)?,
+                job: Box::new(self.audio_lint_job()),
+            },
             _ => return Err("Expected render, preview, export_midi or verify_render".into()),
         };
         Ok(FileJob {
@@ -609,6 +628,10 @@ impl Session {
                 self.adopt_agent_audio(file, prepared, name, at, bytes, provenance)
             }
             Outcome::Verified(text) => Ok(text),
+            Outcome::Linted(result, request) => {
+                self.lint_audio = Some(*result);
+                self.agent_lint_report(&request)
+            }
             Outcome::Midi(result) => {
                 let report = self
                     .continue_midi_export(result, cancelled)

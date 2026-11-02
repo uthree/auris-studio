@@ -70,6 +70,11 @@ impl AurisApp {
         let edge_zones = self.clip_edge_zones(&lanes);
         let peaks = self.waveform_map();
         let band = self.rubber_band(crate::app::BandSurface::Lanes);
+        // The linter's findings: a wash over each problem and a strip at the foot of its lane
+        // that answers the pointer. Painted on the canvas; the strips are elements, so gpui
+        // gives them a tooltip and a click without the arrangement tracking a hovered problem.
+        let lint_marks = self.lint_marks();
+        let painted_marks = lint_marks.clone();
 
         div()
             .flex()
@@ -169,6 +174,7 @@ impl AurisApp {
                     ScrollPanel::Lanes,
                     div()
                         .id("lanes")
+                        .relative()
                         .overflow_hidden()
                         .child({
                             let theme = theme.clone();
@@ -282,6 +288,43 @@ impl AurisApp {
                                             );
                                         }
 
+                                        for mark in &painted_marks {
+                                            let colour = crate::ui::lint::severity_colour(
+                                                mark.severity,
+                                                &theme,
+                                            );
+                                            let top = top_of(mark.top);
+                                            let x = bounds.origin.x + mark.left;
+                                            let wash = match (mark.focused, mark.mix) {
+                                                (true, _) => 0.22,
+                                                (false, true) => 0.06,
+                                                (false, false) => 0.12,
+                                            };
+                                            paint::rect(
+                                                window,
+                                                Bounds {
+                                                    origin: point(x, top),
+                                                    size: size(mark.width, mark.height),
+                                                },
+                                                colour.opacity(wash),
+                                            );
+                                            let strip_top = if mark.mix {
+                                                top
+                                            } else {
+                                                top + mark.height - crate::ui::lint::MARK_STRIP
+                                            };
+                                            paint::rect(
+                                                window,
+                                                Bounds {
+                                                    origin: point(x, strip_top),
+                                                    size: size(
+                                                        mark.width,
+                                                        crate::ui::lint::MARK_STRIP,
+                                                    ),
+                                                },
+                                                colour.opacity(0.85),
+                                            );
+                                        }
                                         paint::playhead(
                                             window,
                                             bounds,
@@ -299,6 +342,34 @@ impl AurisApp {
                             )
                             .size_full()
                         })
+                        .children(lint_marks.into_iter().enumerate().map(|(index, mark)| {
+                            let strip_top = if mark.mix {
+                                mark.top
+                            } else {
+                                mark.top + mark.height - crate::ui::lint::MARK_STRIP
+                            } - lane_scroll;
+                            let id = mark.id.clone();
+                            div()
+                                .id(("lint-mark", index))
+                                .debug_selector(move || format!("lint-mark-{index}"))
+                                .absolute()
+                                .left(mark.left)
+                                .top(strip_top)
+                                .w(mark.width)
+                                .h(crate::ui::lint::MARK_STRIP)
+                                .cursor_pointer()
+                                .tooltip(crate::ui::tooltip::keyed_tip(
+                                    mark.message.clone(),
+                                    "",
+                                    &theme,
+                                ))
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    AurisApp::opens_menu(cx, move |this, at| {
+                                        this.lint_menu(at, &id)
+                                    }),
+                                )
+                        }))
                         .on_mouse_down(
                             MouseButton::Left,
                             cx.listener(|this, event: &MouseDownEvent, _, cx| {

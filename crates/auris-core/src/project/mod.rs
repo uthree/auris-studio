@@ -42,8 +42,10 @@ mod expression;
 mod ghost;
 mod groove;
 mod layer;
+mod lint_suppression;
 pub use expression::Expression;
 pub use groove::{GroovePoint, GrooveTemplate};
+pub use lint_suppression::{LintScope, LintSuppression};
 mod strum;
 pub use strum::{Strum, StrumClock};
 mod ornament;
@@ -296,6 +298,9 @@ pub struct Project {
     /// Claims are retained for audit and do not certify a recognizer or its accuracy.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub transcription_provenance: BTreeMap<ClipId, String>,
+    /// Music-linter findings this song has chosen to ignore.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub lint_suppressions: Vec<LintSuppression>,
     next_id: u64,
 }
 
@@ -360,6 +365,7 @@ impl Project {
             creation_brief: None,
             composition_baseline: None,
             transcription_provenance: BTreeMap::new(),
+            lint_suppressions: Vec::new(),
             next_id: 1,
         }
     }
