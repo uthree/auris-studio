@@ -7,6 +7,7 @@ use tiny_skia::{BlendMode, FillRule, Paint, Path as SkPath, PathBuilder, Pixmap,
 
 use crate::chords::ChordOverlay;
 use crate::lyrics::LyricOverlay;
+use crate::meter::MeterOverlay;
 use crate::style::{NoteColoring, NoteRollStyle};
 use crate::{Ffmpeg, NoteScore, ScoreNote, VideoError, VideoWriter};
 
@@ -74,6 +75,8 @@ pub struct FrameRenderer {
     chords: Option<ChordOverlay>,
     /// The lyric lines, outlined, when the style shows them and there are any.
     lyrics: Option<LyricOverlay>,
+    /// The tempo and the beat counter, when the style shows either.
+    meter: Option<MeterOverlay>,
     /// Top and bottom of the drawn pitch range, with the margins.
     high: f64,
     lane: f64,
@@ -128,9 +131,11 @@ impl FrameRenderer {
         } else {
             None
         };
+        let meter = MeterOverlay::new(&score, &style);
         Self {
             chords,
             lyrics,
+            meter,
             longest: score.longest(),
             low_pitch: low + PITCH_MARGIN,
             pitch_span: (high - low - 2.0 * PITCH_MARGIN).max(1.0),
@@ -242,6 +247,9 @@ impl FrameRenderer {
         }
         if let Some(lyrics) = &self.lyrics {
             lyrics.draw(&self.score, &self.style, seconds, frame);
+        }
+        if let Some(meter) = &self.meter {
+            meter.draw(&self.score, &self.style, seconds, frame);
         }
     }
 
@@ -543,6 +551,8 @@ mod tests {
             ],
             chords: Vec::new(),
             lyrics: Vec::new(),
+            tempos: Vec::new(),
+            beats: Vec::new(),
         }
     }
 
@@ -561,6 +571,8 @@ mod tests {
             coloring: NoteColoring::Track,
             chords: false,
             lyrics: false,
+            tempo: false,
+            beat_counter: false,
             ..NoteRollStyle::default()
         }
     }

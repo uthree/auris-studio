@@ -1029,6 +1029,10 @@ strings! {
     VideoChordsHint { en: "The chord sounding now and the next one, in the top corner. Uses the chords written in the song, or reads them from the notes when none are written.", ja: "今鳴っているコードと次のコードを左上に表示します。曲に入力したコードを使い、未入力なら音符から読み取ります。" }
     VideoLyricSection { en: "Lyrics", ja: "歌詞" }
     VideoLyrics { en: "Show lyrics as subtitles", ja: "歌詞を字幕で表示" }
+    VideoMeterSection { en: "Tempo and beat", ja: "テンポと拍" }
+    VideoTempo { en: "Show the tempo (BPM)", ja: "テンポ（BPM）を表示" }
+    VideoBeatCounter { en: "Show the beat counter", ja: "拍子カウンターを表示" }
+    VideoMeterHint { en: "In the top right corner. The counter is a polygon with a corner for each beat of the bar: the beat sounding now lights up, and the outline is traced round as the bar goes by.", ja: "右上に表示します。拍子カウンターは1小節の拍の数だけ角を持つ正多角形で、今の拍の角が光り、小節が進むにつれて輪郭がなぞられていきます。" }
     VideoLyricsHint { en: "The line being sung, along the bottom. Uses the song's lyrics lane, which the AI and song composition fill in as they write words.", ja: "歌っている行を画面下に表示します。曲の歌詞レーンの内容を使います（AIや自動作曲が歌詞を書くと自動で入ります）。" }
     VideoPreviewHint { en: "The preview shows the moment under the playhead. Move the playhead to see another.", ja: "プレビューは再生位置の瞬間です。再生位置を動かすと別の場面を確認できます。" }
     VideoFfmpegChecking { en: "Looking for ffmpeg…", ja: "ffmpeg を探しています…" }
@@ -2101,6 +2105,8 @@ VIDEO OPTIONS (default: the look last chosen in the desktop application)
         --drums                   Draw drum tracks too
         --no-chords               Leave out the chord names in the corner
         --no-lyrics               Leave out the lyric subtitles
+        --no-tempo                Leave out the tempo in the corner
+        --no-beats                Leave out the beat counter in the corner
 
 NEW OPTIONS
         --bpm <tempo>             Tempo of the new project (default: 120)
@@ -2192,6 +2198,8 @@ video のオプション（既定: デスクトップ版で最後に選んだ見
         --drums                   ドラムトラックも描く
         --no-chords               左上のコード名を表示しない
         --no-lyrics               歌詞の字幕を表示しない
+        --no-tempo                右上のテンポ（BPM）を表示しない
+        --no-beats                右上の拍子カウンターを表示しない
 
 new のオプション
         --bpm <tempo>             新規プロジェクトのテンポ（既定: 120）
