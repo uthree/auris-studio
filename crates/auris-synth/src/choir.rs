@@ -18,9 +18,11 @@ use auris_core::{
 };
 use auris_dsp::Adsr;
 
+use crate::observe::{Observer, recent_voices};
 use crate::params::{ParamBank, finite_or};
 use crate::render::{SegmentRenderer, render_segments};
-use crate::voice::VoiceAllocator;
+use crate::voice::{VoiceAllocator, VoiceState};
+use auris_core::motion::{MotionFrame, MotionGeometry};
 
 mod source;
 mod tract;
@@ -147,6 +149,7 @@ pub struct Choir {
     expression: f32,
     output_gain: f32,
     target_gain: f32,
+    observer: Observer,
     #[cfg(feature = "choir-calibration")]
     calibration: ([[f32; 8]; 3], f32, [f32; 3]),
 }
@@ -183,6 +186,7 @@ impl Choir {
             expression: 1.0,
             output_gain: 1.0,
             target_gain: 1.0,
+            observer: Observer::default(),
             #[cfg(feature = "choir-calibration")]
             calibration: (tract::AREAS, tract::RADIATION_HZ, tract::OUTPUT_GAINS),
         };
@@ -276,7 +280,44 @@ impl Choir {
         }
         voice.envelope.trigger();
     }
+
+    /// The newest notes' first singers: pressure along the tract and the shape of it.
+    fn publish_motion(&mut self) {
+        let mut frame = MotionFrame {
+            geometry: MotionGeometry::Tract,
+            active: self.allocator.active_count(),
+            expression: self.expression,
+            pressure: self.params.at(P_BREATH),
+            ..MotionFrame::default()
+        };
+        let voices = &self.voices;
+        let selected = recent_voices(&self.allocator, |index| voices[index].envelope.is_active());
+        for (observed, index) in frame.voices.iter_mut().zip(selected) {
+            let Some(index) = index else {
+                break;
+            };
+            let voice = &self.voices[index];
+            observed.pitch = voice.pitch + self.bend;
+            observed.level = voice.envelope.level() * voice.velocity;
+            observed.held = self
+                .allocator
+                .slot(index)
+                .is_some_and(|slot| slot.state == VoiceState::Held);
+            observed.contact = 0.0;
+            observed.excitation = observed.level;
+            voice.singers[0]
+                .tract
+                .motion(&mut observed.points, &mut observed.modes);
+            for point in &mut observed.points {
+                *point *= TRACT_DISPLAY;
+            }
+        }
+        self.observer.publish(&frame);
+    }
 }
+
+/// Tract pressure swings near unity; the scale a string's displacement is published at.
+const TRACT_DISPLAY: f32 = 0.04;
 
 fn descriptors() -> Vec<ParamDescriptor> {
     vec![
@@ -438,10 +479,19 @@ impl Instrument for Choir {
             }
         }
         self.allocator.clear();
+        self.observer.reset(MotionGeometry::Tract);
     }
 
     fn process(&mut self, events: &[NoteEvent], out: &mut AudioBuffer, ctx: &ProcessContext) {
-        render_segments(self, events, out, ctx.block_frames.min(out.frame_count()));
+        let frames = ctx.block_frames.min(out.frame_count());
+        render_segments(self, events, out, frames);
+        if self.observer.due(frames, self.sound.sample_rate) {
+            self.publish_motion();
+        }
+    }
+
+    fn motion_monitor(&self) -> Option<std::sync::Arc<auris_core::motion::MotionMonitor>> {
+        Some(self.observer.monitor())
     }
 
     fn active_voices(&self) -> usize {

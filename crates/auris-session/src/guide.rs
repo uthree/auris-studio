@@ -1405,6 +1405,22 @@ pub mod plugins {
     //! use the same prepared bases as strike and pickup weights. Drum preview is a repeatable
     //! one-shot gesture, with pad selection instead of octave transposition.
     //!
+    //! Every physical model publishes a body. The reeds and whistles publish their bores as
+    //! acoustic pressure from the mouthpiece to the open end
+    //! ([`MotionGeometry::Bore`](auris_core::motion::MotionGeometry::Bore)), read out of the
+    //! very delay line the reed or jet drives; the choir publishes its first singer's tract,
+    //! glottis to lips, with the eight tube cross-sections in place of modes
+    //! ([`MotionGeometry::Tract`](auris_core::motion::MotionGeometry::Tract)); the dulcimer
+    //! publishes each course as the sum of its modes' shapes.
+    //!
+    //! A body can also be touched.
+    //! [`Session::touch_instrument`](crate::Session::touch_instrument) sends
+    //! [`TOUCH_CONTROLLER`](auris_core::motion::TOUCH_CONTROLLER) ahead of a note, and the
+    //! instrument excites that one note where the frontend says it was touched — along a string,
+    //! from the centre of a head — instead of where its position control says. The touch is
+    //! consumed by the note, not held as channel state: a pointer poking at a string never moves
+    //! where the song's own notes are played, and nothing reaches the document.
+    //!
     //! # A note-off names a pitch, not a note
     //!
     //! [`NoteEvent::NoteOff`](auris_core::plugin::NoteEvent) carries a pitch and a frame, and that

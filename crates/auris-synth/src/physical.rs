@@ -4,7 +4,9 @@
 //! travelling-wave string; violin drives two travelling waves through nonlinear bow friction.
 //! These are deliberately compact, expressive instruments rather than sampled replicas.
 
-use auris_core::motion::{MOTION_VOICES, MotionCapture, MotionFrame, MotionGeometry};
+use auris_core::motion::{
+    MOTION_VOICES, MotionCapture, MotionFrame, MotionGeometry, TOUCH_CONTROLLER,
+};
 use auris_core::param::db_to_gain;
 use auris_core::plugin::pitch_to_hz;
 use auris_core::{
@@ -276,6 +278,8 @@ pub struct Physical {
     gain: f32,
     motion: MotionCapture,
     motion_frames: usize,
+    /// Where a frontend touched the body, waiting for the note it excites.
+    touch: Option<f32>,
     legato: Legato,
     voicing: PianoVoicing,
     /// The piano's soundboard knock for one segment, mixed after radiation.
@@ -463,6 +467,7 @@ impl Physical {
             gain: db_to_gain(-12.0) * model.output_normalization(),
             motion: MotionCapture::default(),
             motion_frames: 0,
+            touch: None,
             legato: Legato::default(),
             voicing: VOICING,
             knock: Vec::new(),
@@ -656,7 +661,11 @@ impl Physical {
         let Some(assignment) = self.allocator.note_on(pitch.min(127), velocity) else {
             return;
         };
-        let settings = calibration::register(self.model, pitch, self.settings());
+        let mut settings = calibration::register(self.model, pitch, self.settings());
+        if let Some(at) = self.touch.take() {
+            // Along the length that sounds, which is the one a person sees and points at.
+            settings.position = touch_position(at);
+        }
         if self.is_legato() {
             self.legato.voice = Some(assignment.index);
         }
@@ -817,6 +826,13 @@ impl Parameterized for Physical {
     }
 }
 
+/// A touch anywhere along a string, folded onto the half the excitation position measures: a
+/// string fixed at both ends sounds the same struck at a quarter from either end.
+pub(crate) fn touch_position(at: f32) -> f32 {
+    let at = finite_or(at, 0.25).clamp(0.0, 1.0);
+    at.min(1.0 - at).clamp(0.02, 0.5)
+}
+
 impl SegmentRenderer for Physical {
     fn handle_event(&mut self, event: &NoteEvent) {
         match *event {
@@ -863,6 +879,7 @@ impl SegmentRenderer for Physical {
                         }
                     }
                     64 if self.model == Model::Piano => self.set_pedal(value >= 0.5),
+                    TOUCH_CONTROLLER => self.touch = Some(value),
                     _ => {}
                 }
             }
@@ -1016,6 +1033,7 @@ impl Instrument for Physical {
         self.pressure = 1.0;
         self.pedal = false;
         self.legato.clear();
+        self.touch = None;
         self.motion_frames = 0;
         self.publish_motion();
     }

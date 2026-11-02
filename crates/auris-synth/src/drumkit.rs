@@ -1,6 +1,8 @@
 //! A complete synthesized kit in one instrument and one voice pool.
 
-use auris_core::motion::{MOTION_VOICES, MotionCapture, MotionFrame, MotionGeometry};
+use auris_core::motion::{
+    MOTION_VOICES, MotionCapture, MotionFrame, MotionGeometry, TOUCH_CONTROLLER,
+};
 use auris_core::param::db_to_gain;
 use auris_core::{
     AudioBuffer, Instrument, NoteEvent, ParamDescriptor, ParamId, ParamUnit, Parameterized,
@@ -282,6 +284,8 @@ pub struct DrumKit {
     rate: f32,
     motion: MotionCapture,
     motion_frames: usize,
+    /// Where on the head a frontend touched, from the centre out, waiting for its strike.
+    touch: Option<f32>,
     pad_audio: [Vec<f32>; PAD_COUNT],
     radiation: [[Biquad; 12]; PAD_COUNT],
     radiation_kill: [usize; PAD_COUNT],
@@ -319,6 +323,7 @@ impl DrumKit {
             rate: 48_000.0,
             motion: MotionCapture::default(),
             motion_frames: 0,
+            touch: None,
             pad_audio: std::array::from_fn(|_| Vec::new()),
             radiation: std::array::from_fn(|_| std::array::from_fn(|_| Biquad::default())),
             radiation_kill: [0; PAD_COUNT],
@@ -366,7 +371,11 @@ impl DrumKit {
         voice.current.pitch = pitch;
         let calibrated = calibration::profile(pad);
         let hardness = (self.params.at(1) - 0.65 + calibrated.hardness).clamp(0.0, 1.0);
-        let position = (self.params.at(2) - 0.6 + calibrated.position).clamp(0.0, 1.0);
+        let position = match self.touch.take() {
+            // A touch says where the stick landed; the calibration only says where it usually does.
+            Some(at) => finite_or(at, 0.5).clamp(0.0, 0.95),
+            None => (self.params.at(2) - 0.6 + calibrated.position).clamp(0.0, 1.0),
+        };
         let damping = (self.params.at(3) - 0.35 + calibrated.damping).clamp(0.0, 1.0);
         voice.current.contact = position;
         let decay = self.params.at(4) * calibrated.decay;
@@ -465,6 +474,11 @@ impl SegmentRenderer for DrumKit {
                     voice.retiring.amplitude.kill();
                 }
             }
+            NoteEvent::Controller {
+                number: TOUCH_CONTROLLER,
+                value,
+                ..
+            } => self.touch = Some(value),
             NoteEvent::PitchBend { .. } | NoteEvent::Controller { .. } => {}
         }
     }
@@ -599,6 +613,7 @@ impl Instrument for DrumKit {
         for section in self.radiation.iter_mut().flatten() {
             section.reset();
         }
+        self.touch = None;
         self.strike = 0;
         self.motion_frames = 0;
         self.publish_motion();
