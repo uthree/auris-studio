@@ -1610,26 +1610,62 @@ fn copy_into_bus(channels: &mut [Vec<f32>], source: Option<&AudioBuffer>, frames
 }
 
 fn deliver(channels: &[Vec<f32>], target: &mut AudioBuffer, frames: usize, overwrite: bool) {
-    for (index, source) in channels.iter().enumerate().take(target.channel_count()) {
+    if channels.is_empty() {
+        if overwrite {
+            target.clear();
+        }
+        return;
+    }
+    // A mono insert replaces the entire signal. Leaving the other side dry would mix the
+    // original voice back into a singer strip when the engine folds its channels to mono.
+    for index in 0..target.channel_count() {
+        let source = &channels[index % channels.len()];
         let count = frames.min(source.len());
         target.channel_mut(index)[..count].copy_from_slice(&source[..count]);
-    }
-    if overwrite {
-        if channels.is_empty() {
-            target.clear();
-            return;
-        }
-        for index in channels.len()..target.channel_count() {
-            let source = &channels[index % channels.len()];
-            let count = frames.min(source.len());
-            target.channel_mut(index)[..count].copy_from_slice(&source[..count]);
-        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_mono_effect_replaces_both_channels_without_leaking_dry_audio() {
+        let wet = vec![vec![0.25; 8]];
+        let mut buffer = AudioBuffer::from_planar(vec![vec![0.9; 8]; 2], 48_000.0).unwrap();
+        deliver(&wet, &mut buffer, 8, false);
+        for channel in buffer.channels() {
+            assert_eq!(channel, &[0.25; 8], "only the wet signal remains");
+        }
+    }
+
+    #[test]
+    fn a_silent_mono_effect_silences_both_channels() {
+        let wet = vec![vec![0.0; 8]];
+        let mut buffer = AudioBuffer::from_planar(vec![vec![0.9; 8]; 2], 48_000.0).unwrap();
+        deliver(&wet, &mut buffer, 8, false);
+        assert_eq!(buffer.peak(), 0.0, "dry audio must not bypass the insert");
+    }
+
+    #[test]
+    fn a_stereo_effect_preserves_both_processed_channels() {
+        let wet = vec![vec![0.25; 8], vec![-0.5; 8]];
+        let mut buffer = AudioBuffer::from_planar(vec![vec![0.9; 8]; 2], 48_000.0).unwrap();
+        deliver(&wet, &mut buffer, 8, false);
+        assert_eq!(buffer.channels(), wet.as_slice());
+    }
+
+    #[test]
+    fn an_empty_output_silences_instruments_and_passes_effects_through() {
+        for overwrite in [false, true] {
+            let mut buffer = AudioBuffer::from_planar(vec![vec![0.9; 8]; 2], 48_000.0).unwrap();
+            deliver(&[], &mut buffer, 8, overwrite);
+            let expected = if overwrite { 0.0 } else { 0.9 };
+            for channel in buffer.channels() {
+                assert_eq!(channel, &[expected; 8]);
+            }
+        }
+    }
 
     #[test]
     fn parameter_descriptors_preserve_read_only_and_discrete_metadata() {
