@@ -31,8 +31,14 @@ arrangement. A local fix enters the phase that owns what is being fixed.
 
 The phase is conversation metadata, subject to the same write permission as
 other record updates, and survives context compaction and conversation restart.
-In modular mode the response and later project inspections carry only the
-current phase's instructions. Going back to an earlier phase keeps the later
+In modular mode the system prompt is only the common core: the rules that hold
+in every phase (addresses, revisions and units, failure recovery, scope and
+honesty). Each phase's own guidance, tool essentials and technique index come
+back as `phase_instructions` when a phase is entered and when the record is
+read, beside the record rather than inside its `read_report` pages; other
+record updates and project inspections leave them out. The technique index
+names headings of [composition techniques](composition-techniques.md), which
+`search_documentation` returns. Going back to an earlier phase keeps the later
 phases' work and lists them under `phase.revisit`. `phase.checks` reports the
 unmet structural conditions of the current and earlier phases, read from
 `inspect_project`'s `phase_facts`: sections covering the song, chords in every

@@ -10,16 +10,20 @@ pub(super) struct State {
     document: Value,
 }
 
-fn record_view(record: &Record, document: &Value) -> Result<Value, String> {
-    let mut view = record.view(document);
-    if toolbox::composition_workflows::enabled()
-        && let Some(state) = &record.phase
-    {
+/// The record as a tool answers with it, with the current phase's instructions when asked for.
+///
+/// The instructions go on after the record is paged, not inside it: a long record is cut into
+/// `read_report` pages, and the one text a model must not miss would otherwise be behind them.
+/// Only entering a phase and reading the record carry them; every `put` repeating several
+/// kilobytes the model already has would cost more than it tells.
+fn record_view(record: &Record, document: &Value, instructions: bool) -> Result<Value, String> {
+    let text = toolbox::present_domain_report(&record.view(document).to_string())?;
+    let mut view: Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+    if instructions && let Some(state) = &record.phase {
         view["phase_instructions"] =
             toolbox::composition_workflows::instructions(state.phase, state.writing_order).into();
     }
-    let text = toolbox::present_domain_report(&view.to_string())?;
-    serde_json::from_str(&text).map_err(|e| e.to_string())
+    Ok(view)
 }
 
 impl Bridge {
@@ -88,6 +92,8 @@ impl Bridge {
 
     pub(crate) fn production_record(&self, operation: Operation) -> Result<Value, String> {
         let write = !matches!(operation, Operation::Read);
+        let instructions = toolbox::composition_workflows::enabled()
+            && matches!(operation, Operation::Read | Operation::EnterPhase { .. });
         self.with_production(
             |state| {
                 if !state.document["revision"].is_string() {
@@ -96,7 +102,7 @@ impl Bridge {
                     );
                 }
                 state.record.update(operation)?;
-                let mut view = record_view(&state.record, &state.document)?;
+                let mut view = record_view(&state.record, &state.document, instructions)?;
                 view["persistence"] = json!(if state.history.is_some() {
                     "conversation"
                 } else {
@@ -112,7 +118,7 @@ impl Bridge {
         let view = self.with_production(
             |state| {
                 state.document = document.clone();
-                record_view(&state.record, &state.document)
+                record_view(&state.record, &state.document, false)
             },
             false,
         )?;
@@ -156,10 +162,30 @@ mod tests {
                 )
                 .unwrap();
         }
-        let view = record_view(&record, &json!({"revision":"today"})).unwrap();
+        let view = record_view(&record, &json!({"revision":"today"}), false).unwrap();
         assert!(view["report_id"].is_string());
         assert!(view.to_string().len() <= 8192);
         assert_eq!(record.entries.len(), 12);
+
+        // The phase's instructions arrive whole beside a paged record, never inside its pages.
+        record
+            .update(serde_json::from_value(json!({"kind":"set_roles","foreground":[1]})).unwrap())
+            .unwrap();
+        record
+            .update(
+                serde_json::from_value(
+                    json!({"kind":"enter_phase","phase":"arrangement","reason":"dress it"}),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let view = record_view(&record, &json!({"revision":"today"}), true).unwrap();
+        assert!(view["report_id"].is_string());
+        let instructions = view["phase_instructions"].as_str().unwrap();
+        assert!(instructions.starts_with("Arrangement phase"));
+        assert!(instructions.contains("Techniques"));
+        let quiet = record_view(&record, &json!({"revision":"today"}), false).unwrap();
+        assert!(quiet.get("phase_instructions").is_none());
     }
     #[test]
     fn records_resume_and_reset_rejects_a_late_writer() {

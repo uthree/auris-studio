@@ -258,6 +258,10 @@ pub mod search_documentation {
             include_str!("../../../docs/composition.md"),
         ),
         (
+            "docs/composition-techniques.md",
+            include_str!("../../../docs/composition-techniques.md"),
+        ),
+        (
             "docs/development.md",
             include_str!("../../../docs/development.md"),
         ),

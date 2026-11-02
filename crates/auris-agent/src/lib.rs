@@ -363,18 +363,22 @@ fn preamble() -> String {
     default_system_prompt()
 }
 
+/// The system prompt for one profile.
+///
+/// The phased profile carries only the common core: the rules that hold in every phase. What a
+/// phase asks for — its musical guidance, its tool essentials and its technique index — comes
+/// back from `enter_phase`, so a model carries the phase it is in and not the other two. The
+/// legacy profile is kept whole, as the baseline the phased one is measured against.
 fn preamble_for_profile(modular: bool) -> String {
-    let mut text = format!(
+    if modular {
+        return include_str!("prompts/core.md").to_owned();
+    }
+    format!(
         "{}\n{}\n{}",
         include_str!("prompts/composition.md"),
         MUSICAL_DESIGN_INSTRUCTIONS,
         include_str!("prompts/live-tools.md")
-    );
-    // Detailed musical/operation guidance is returned by tool_help when needed.
-    if modular {
-        text.push_str("\nWork in three phases recorded in production_record: score (form, chords, lyrics, foreground melody and its voice), arrangement (sounds, backing, drums, performance, transitions) and mix (balance, effects, loudness, delivery). Enter one with enter_phase and a reason before editing; for score choose writing_order harmony_first, melody_first or rhythm_first. Follow the returned phase_instructions, and enter an earlier phase explicitly when the user asks to change what it decided. A local fix enters the phase that owns what is being fixed and leaves everything else as it is.\n");
-    }
-    text
+    )
 }
 
 /// A tool's refusal, carried as an error the runtime can classify.
@@ -1506,8 +1510,15 @@ mod tests {
             .collect::<Vec<_>>();
         let modular = preamble_for_profile(true);
         let legacy = preamble_for_profile(false);
+        assert_eq!(legacy.matches(MUSICAL_DESIGN_INSTRUCTIONS).count(), 1);
+        // The phased core leaves the musical guidance to the phase instructions.
+        assert!(!modular.contains(MUSICAL_DESIGN_INSTRUCTIONS));
+        assert!(
+            modular.len() < 4500,
+            "The common core grew to {} bytes",
+            modular.len()
+        );
         for text in [&modular, &legacy] {
-            assert_eq!(text.matches(MUSICAL_DESIGN_INSTRUCTIONS).count(), 1);
             assert!(
                 text.len() < 16000,
                 "Shared prompt grew to {} bytes",
