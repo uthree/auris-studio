@@ -144,6 +144,10 @@ edit_clip_curve reads/merges/replaces/clears authored bend or MIDI controllers; 
 Writes require the revision returned by the lane read. Controller values are 0..1; bend uses semitones.
 edit_timeline reads or edits tempo/meter points without moving existing notes.
 Arrangement bar ranges start at 1; note/curve ticks start at 0 relative to their clip.
+Comments are notes pinned on a track's lane or inside a clip's piano roll; inspect_project lists them with bar, beat and pitch.
+They never sound. Before editing a passage, read its comments: a person's comment is their note or request for that place,
+so follow it unless the current message says otherwise, and say when you could not. edit_comments adds a short comment where
+a deliberate choice needs explaining or the user asks for one; never remove or rewrite the user's comments unless asked.
 
 mixer_graph has one operation object with an action tag. Read first and copy stable node IDs.
 set_strip changes only supplied gain_db/pan/mute/solo. set_outputs atomically replaces output destinations;

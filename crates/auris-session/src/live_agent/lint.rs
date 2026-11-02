@@ -101,6 +101,8 @@ impl Session {
             "revision": self.agent_document_revision()?,
             "total": selected.len(),
             "suppressed": report.suppressed,
+            // What the user chose not to hear about, and why when they said: not to "fix".
+            "ignore_rules": self.project().lint_suppressions,
             "offset": request.offset,
             "returned": page.len(),
             "by_rule": by_rule,

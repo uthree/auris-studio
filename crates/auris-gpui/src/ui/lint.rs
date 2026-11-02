@@ -509,6 +509,7 @@ impl AurisApp {
             LintSuppression {
                 rule: wire.clone(),
                 scope: LintScope::Song,
+                reason: String::new(),
             },
         )];
         let mut wide = Vec::new();
@@ -519,6 +520,7 @@ impl AurisApp {
                 LintSuppression {
                     rule: wire.clone(),
                     scope: LintScope::Track { track },
+                    reason: String::new(),
                 },
             ));
             wide.push((
@@ -526,6 +528,7 @@ impl AurisApp {
                 LintSuppression {
                     rule: None,
                     scope: LintScope::Track { track },
+                    reason: String::new(),
                 },
             ));
         }
@@ -536,6 +539,7 @@ impl AurisApp {
                 LintSuppression {
                     rule: wire.clone(),
                     scope: LintScope::Clip { clip },
+                    reason: String::new(),
                 },
             ));
             wide.push((
@@ -543,6 +547,7 @@ impl AurisApp {
                 LintSuppression {
                     rule: None,
                     scope: LintScope::Clip { clip },
+                    reason: String::new(),
                 },
             ));
         }
@@ -554,6 +559,7 @@ impl AurisApp {
                     scope: LintScope::Section {
                         label: label.clone(),
                     },
+                    reason: String::new(),
                 },
             ));
             wide.push((
@@ -562,6 +568,7 @@ impl AurisApp {
                 LintSuppression {
                     rule: None,
                     scope: LintScope::Section { label },
+                    reason: String::new(),
                 },
             ));
         }
@@ -597,11 +604,36 @@ impl AurisApp {
     }
 
     /// Adds an ignore rule to the project and re-lints at once.
+    ///
+    /// Then asks why, the way a code comment beside a disabled warning would: the reason is
+    /// optional, and Escape leaves the rule ignored without one.
     pub(crate) fn lint_ignore(&mut self, suppression: LintSuppression, cx: &mut Context<Self>) {
         let before = self.session.revision();
-        self.session.suppress_lint(suppression);
+        self.session.suppress_lint(suppression.clone());
         self.lint_suppressions_changed(before);
+        self.prompt_for_lint_reason(&suppression);
         cx.notify();
+    }
+
+    /// Opens the text sheet on an ignore rule's reason.
+    pub(crate) fn prompt_for_lint_reason(&mut self, suppression: &LintSuppression) {
+        let Some((index, kept)) = self
+            .session
+            .project()
+            .lint_suppressions
+            .iter()
+            .enumerate()
+            .find(|(_, kept)| kept.same_rule(suppression))
+        else {
+            return;
+        };
+        let current = kept.reason.clone();
+        let title = self.t(Key::ProblemsReasonTitle);
+        self.open_prompt(crate::ui::prompt::Prompt::new(
+            title,
+            crate::ui::prompt::PromptTarget::LintReason(index),
+            current,
+        ));
     }
 
     /// Removes an ignore rule and re-lints at once.
@@ -614,7 +646,7 @@ impl AurisApp {
 
     /// What ignoring changes is which findings are shown, not the sound: the audio pass of the
     /// revision before still holds, and this edit is no reason to render the song again.
-    fn lint_suppressions_changed(&mut self, before: u64) {
+    pub(crate) fn lint_suppressions_changed(&mut self, before: u64) {
         let now = self.session.revision();
         if now == before {
             return;
@@ -700,6 +732,9 @@ impl AurisApp {
                 .enumerate()
                 .map(|(index, suppression)| {
                     let removed = suppression.clone();
+                    let annotated = suppression.clone();
+                    let reason =
+                        (!suppression.reason.is_empty()).then(|| suppression.reason.clone());
                     div()
                         .flex()
                         .items_center()
@@ -710,12 +745,41 @@ impl AurisApp {
                         .debug_selector(move || format!("problems-ignore-rule-{index}"))
                         .child(
                             div()
+                                .flex()
+                                .flex_col()
                                 .flex_1()
                                 .min_w_0()
-                                .truncate()
-                                .text_color(theme.text_muted)
-                                .child(self.lint_suppression_label(suppression)),
+                                .child(
+                                    div()
+                                        .truncate()
+                                        .text_color(theme.text_muted)
+                                        .child(self.lint_suppression_label(suppression)),
+                                )
+                                .when_some(reason, |this, reason| {
+                                    this.child(
+                                        div()
+                                            .truncate()
+                                            .italic()
+                                            .text_color(theme.text_faint)
+                                            .debug_selector(move || {
+                                                format!("problems-ignore-reason-{index}")
+                                            })
+                                            .child(format!("— {reason}")),
+                                    )
+                                }),
                         )
+                        .child(button(
+                            ("problems-ignore-why", index),
+                            self.t(Key::ProblemsWriteReason),
+                            ButtonStyle::Ghost,
+                            false,
+                            theme.accent,
+                            &theme,
+                            cx.listener(move |this, _, _, cx| {
+                                this.prompt_for_lint_reason(&annotated);
+                                cx.notify();
+                            }),
+                        ))
                         .child(button(
                             ("problems-unignore", index),
                             self.t(Key::ProblemsUnignore),
@@ -1097,10 +1161,20 @@ mod tests {
             &MenuCommand::LintIgnore(LintSuppression {
                 rule: Some(Rule::DuplicateNote.name().into()),
                 scope: LintScope::Track { track },
+                reason: String::new(),
             }),
         );
+        // Ignoring asks why; Escape leaves the rule ignored without a reason.
+        assert!(app.read_with(cx, |this, _| this.prompt.is_some()));
+        cx.simulate_keystrokes("escape");
         harness::paint(&app, cx);
         app.read_with(cx, |this, _| {
+            assert!(this.prompt.is_none());
+            assert!(
+                this.session.project().lint_suppressions[0]
+                    .reason
+                    .is_empty()
+            );
             assert!(this.lint.report.diagnostics.is_empty());
             assert_eq!(this.lint.report.suppressed, 1);
             assert_eq!(this.session.project().lint_suppressions.len(), 1);
@@ -1116,6 +1190,46 @@ mod tests {
         app.read_with(cx, |this, _| {
             assert_eq!(this.lint.report.diagnostics.len(), 1);
             assert!(this.session.project().lint_suppressions.is_empty());
+        });
+    }
+
+    #[gpui::test]
+    fn ignoring_asks_why_and_the_reason_is_kept_with_the_rule(cx: &mut TestAppContext) {
+        let (app, cx, track) = with_a_duplicate(cx);
+        let rule = LintSuppression::new(
+            Some(Rule::DuplicateNote.name().into()),
+            LintScope::Track { track },
+        );
+        harness::click("problem-ignore-0", cx);
+        harness::choose(&app, cx, &MenuCommand::LintIgnore(rule.clone()));
+        cx.simulate_input("ユニゾンで厚みを出すため");
+        cx.simulate_keystrokes("enter");
+        harness::paint(&app, cx);
+        app.read_with(cx, |this, _| {
+            let kept = &this.session.project().lint_suppressions;
+            assert_eq!(kept.len(), 1);
+            assert_eq!(kept[0].reason, "ユニゾンで厚みを出すため");
+            assert!(this.lint.report.diagnostics.is_empty(), "still ignored");
+        });
+        harness::click("problems-ignore-rules", cx);
+        harness::paint(&app, cx);
+        assert!(cx.debug_bounds("problems-ignore-reason-0").is_some());
+
+        // Retyping the reason edits the one rule rather than adding a second.
+        harness::click("problems-ignore-why-0", cx);
+        cx.simulate_keystrokes("secondary-a backspace");
+        cx.simulate_input("deliberate");
+        cx.simulate_keystrokes("enter");
+        harness::paint(&app, cx);
+        app.update(cx, |this, _| {
+            let kept = &this.session.project().lint_suppressions;
+            assert_eq!(kept.len(), 1);
+            assert_eq!(kept[0].reason, "deliberate");
+            assert!(this.session.undo().is_some());
+            assert_eq!(
+                this.session.project().lint_suppressions[0].reason,
+                "ユニゾンで厚みを出すため"
+            );
         });
     }
 
@@ -1149,7 +1263,11 @@ mod tests {
                 (None, verse),
             ]
             .into_iter()
-            .map(|(rule, scope)| LintSuppression { rule, scope })
+            .map(|(rule, scope)| LintSuppression {
+                rule,
+                scope,
+                reason: String::new(),
+            })
             .collect();
             assert_eq!(options, expected);
         });

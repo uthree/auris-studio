@@ -703,6 +703,11 @@ impl Session {
             candidate.length_is_explicit = true;
             candidate.notes = notes;
             candidate.recipe = recipe;
+            // A comment is never dropped by a trim: one pinned to material cut away stays at the
+            // new front, where the person who wrote it will still find it.
+            for comment in &mut candidate.comments {
+                comment.at = (comment.at - by).max_zero();
+            }
             candidate.bend.retain_mut(|point| {
                 if point.at < by {
                     false
@@ -1158,7 +1163,7 @@ impl Session {
         }
     }
 
-    fn audio_clip_exists(&self, clip: ClipId) -> bool {
+    pub(super) fn audio_clip_exists(&self, clip: ClipId) -> bool {
         self.project.tracks.iter().any(|track| {
             track
                 .kind

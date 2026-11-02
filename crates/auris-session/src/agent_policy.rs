@@ -205,6 +205,7 @@ pub const OPERATIONS: &[&str] = &[
     "edit_project.set_singer_voice",
     "edit_project.write_lyrics",
     "edit_project.edit_lyrics",
+    "edit_project.edit_comments",
     "edit_project.sing",
     "read_report",
     "edit_project.import_transcription",
@@ -310,6 +311,7 @@ impl Operation {
                 || matches!(&parsed, crate::live_agent::Command::Checkpoints { operation, .. } if operation.is_mutating())
                 || matches!(&parsed, crate::live_agent::Command::History { .. } if mutating)
                 || matches!(&parsed, crate::live_agent::Command::EditClip { operation, .. } if operation.requires_confirmation())
+                || matches!(&parsed, crate::live_agent::Command::EditComments { operation } if operation.requires_confirmation())
                 || matches!(&parsed, crate::live_agent::Command::EditNotes { edits, .. } if edits.iter().any(crate::live_agent::note_editing::NoteEdit::requires_confirmation))
                 || matches!(
                     parsed,

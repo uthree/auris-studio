@@ -527,6 +527,15 @@ impl AurisApp {
             }),
             MenuCommand::NewNote { pitch, start },
         )
+        // Pinned to this row: a note about these notes, for a person or the agent.
+        .item(
+            self.t(Key::MenuAddCommentHere),
+            MenuCommand::AddCommentAt {
+                host: CommentHost::Clip(clip),
+                at: start,
+                pitch: Some(pitch),
+            },
+        )
         .item(self.t(Key::MenuSelectAllNotes), MenuCommand::SelectAllNotes)
         .separator()
         .item(self.t(Key::MenuRenameClip), MenuCommand::RenameClip(clip))

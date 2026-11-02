@@ -2421,7 +2421,33 @@ impl AurisApp {
                     .collect()
             })
             .unwrap_or_default();
+        // The comments a person can see beside what they selected: "do what the comment says"
+        // should not need a lookup first. Every other comment is in inspect_project.
+        let here: Vec<_> = self
+            .selected_track
+            .and_then(|id| project.track(id))
+            .into_iter()
+            .flat_map(|track| {
+                track.comments.iter().map(move |comment| {
+                    serde_json::json!({"track": track.id.0, "comment": comment.id.0,
+                        "bar": project.signatures.bar_of(comment.at), "text": comment.text})
+                })
+            })
+            .chain(
+                self.selected_clip
+                    .and_then(|id| project.midi_clip(id))
+                    .into_iter()
+                    .flat_map(|(_, clip)| {
+                        clip.comments.iter().map(move |comment| {
+                            serde_json::json!({"clip": clip.id.0, "comment": comment.id.0,
+                                "bar": project.signatures.bar_of(clip.start + comment.at),
+                                "pitch": comment.pitch, "text": comment.text})
+                        })
+                    }),
+            )
+            .collect();
         serde_json::json!({
+            "comments_on_selection": here,
             "selected_track": self.selected_track.and_then(|id| project.track(id)).map(|track| &track.name),
             "song_creation_reference": project.creation_brief,
             "selected_track_id": self.selected_track.map(|id| id.0),

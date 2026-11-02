@@ -2,6 +2,7 @@
 
 use crate::{Session, prelude::*};
 pub mod automation;
+pub mod comments;
 pub mod document_editing;
 pub mod file_jobs;
 pub mod harmony_suggestions;
@@ -349,6 +350,11 @@ pub enum Command {
         /// from_vocals, write or clear.
         operation: lyric_annotation::Operation,
     },
+    /// Pin, retype, move or remove comments: notes people and agents leave on a track's lane (song time) or inside a note clip (optionally on a piano-roll pitch row). Comments never sound or change notes. inspect_project lists every comment; read the ones in a passage before editing it. Positions are 1-based song bar/beat. Never remove or rewrite the user's comments unless asked. One Undo.
+    EditComments {
+        /// add, edit or remove.
+        operation: comments::Operation,
+    },
     /// Discover installed singing voices in pages of 16 without loading their models. Copy a returned voice path into set_singer_voice. Discovery is not validation; no models are downloaded.
     ListVoices {
         /// Zero-based page offset; follow next_offset.
@@ -418,7 +424,7 @@ pub enum Command {
     },
     /// Read the current arrangement and stable track/clip IDs. Use read_notes for note data.
     Inspect {},
-    /// Lint the song for mechanical problems with one right answer: too many notes struck at once, bars too dense to hear, held minor seconds, muddy low seconds, held notes outside both the written key and chord, avoid notes, duplicate or inaudible notes, impossible pitches, and bars that sound chords with no chord written (fix: the chords the notes spell, when one per bar is unambiguous). It also flags a singer asked for two notes at once and sung notes with no lyric. audio=true also renders the mix and each sounding track (seconds of work) to find clipping, a mix far too loud or quiet, tracks that play notes but make no sound, single notes that sound off their written pitch or with no pitch, and stretches that cancel when summed to mono. Returns diagnostics with stable ids, ticks/bars, note {clip,index} refs and an obvious fix when one exists; pass those ids to apply_lint_fixes. No edits. Passing lint is not musical quality, and a finding may be deliberate: judge it against the user's intent before changing anything.
+    /// Lint the song for mechanical problems with one right answer: too many notes struck at once, bars too dense to hear, held minor seconds, muddy low seconds, held notes outside both the written key and chord, avoid notes, duplicate or inaudible notes, impossible pitches, and bars that sound chords with no chord written (fix: the chords the notes spell, when one per bar is unambiguous). It also flags a singer asked for two notes at once and sung notes with no lyric. audio=true also renders the mix and each sounding track (seconds of work) to find clipping, a mix far too loud or quiet, tracks that play notes but make no sound, single notes that sound off their written pitch or with no pitch, and stretches that cancel when summed to mono. Returns diagnostics with stable ids, ticks/bars, note {clip,index} refs and an obvious fix when one exists; pass those ids to apply_lint_fixes. No edits. Passing lint is not musical quality, and a finding may be deliberate: judge it against the user's intent before changing anything. ignore_rules lists what the user chose to ignore, with their reason when written; never undo or work around those.
     LintProject {
         /// Also render and measure the audio. Default false.
         #[serde(default)]
@@ -985,6 +991,7 @@ impl Session {
                 )
             }
             Command::EditLyrics { operation } => self.agent_edit_lyrics(operation),
+            Command::EditComments { operation } => self.agent_edit_comments(operation),
             Command::InspectSinger {
                 track,
                 offset,
@@ -1110,7 +1117,7 @@ impl Session {
                     "document_instance":self.document_instance(), "session_revision":self.revision(),
                     "verification_regions":crate::production_record::verification_regions(project),
                     "sample_rate":project.sample_rate,"duration_seconds":project.duration_seconds(), "harmony":project.harmony,
-                    "sections":project.sections, "lyrics":lyric_annotation::lyric_lines_json(project), "tempo_map":project.tempo_map, "signatures":project.signatures, "loop_region":project.loop_region, "loop_enabled":project.loop_enabled, "ticks_per_quarter":Ticks::QUARTER.raw()})
+                    "sections":project.sections, "lyrics":lyric_annotation::lyric_lines_json(project), "comments":comments::comments_json(project), "tempo_map":project.tempo_map, "signatures":project.signatures, "loop_region":project.loop_region, "loop_enabled":project.loop_enabled, "ticks_per_quarter":Ticks::QUARTER.raw()})
                 .to_string())
             }
             Command::InspectAudio {

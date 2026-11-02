@@ -629,6 +629,29 @@ pub enum MenuCommand {
     SetLyricLineAt(Ticks),
     /// Remove the lyric line in force at a position.
     RemoveLyricLineAt(Ticks),
+    /// Type a new comment pinned at a position (and row, inside a clip).
+    AddCommentAt {
+        /// What will hold it.
+        host: CommentHost,
+        /// Song time on a track, clip time inside a clip.
+        at: Ticks,
+        /// The piano-roll row, inside a clip.
+        pitch: Option<u8>,
+    },
+    /// Retype a comment.
+    EditComment {
+        /// What holds it.
+        host: CommentHost,
+        /// Which comment.
+        id: CommentId,
+    },
+    /// Take a comment off.
+    RemoveComment {
+        /// What holds it.
+        host: CommentHost,
+        /// Which comment.
+        id: CommentId,
+    },
     /// Stop showing words from a position: the silence after a line.
     EndLyricLineAt(Ticks),
     /// Rewrite the song-wide lyrics from what the singer tracks sing.
@@ -1567,6 +1590,14 @@ impl AurisApp {
             MenuCommand::EndSectionsAt(tick) => self.session.set_section(tick, None),
             MenuCommand::SetLyricLineAt(tick) => self.prompt_for_lyric_line(tick),
             MenuCommand::RemoveLyricLineAt(tick) => self.session.remove_lyric_line(tick),
+            MenuCommand::AddCommentAt { host, at, pitch } => {
+                self.prompt_for_new_comment(host, at, pitch);
+            }
+            MenuCommand::EditComment { host, id } => self.prompt_for_comment(host, id),
+            // A stale menu over a comment already gone has nothing left to take off.
+            MenuCommand::RemoveComment { host, id } => {
+                let _ = self.session.remove_comment(host, id);
+            }
             MenuCommand::EndLyricLineAt(tick) => self.session.set_lyric_line(tick, None),
             MenuCommand::LyricsFromVocals => {
                 self.session.annotate_lyrics_from_vocals(None);
