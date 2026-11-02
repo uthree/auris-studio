@@ -197,7 +197,7 @@ pub enum Command {
         /// Required for writes; copied from the latest read.
         expected_revision: Option<String>,
     },
-    /// Inspect, partially edit or explicitly regenerate 1..16 generated clips. Writes preserve other clips and mix state; hand-edited generated notes require explicit replacement permission. Recipe controls change stored notes; performance controls are separate. Subdivision is a grid, not note duration: eighth, sixteenth, eighth-triplet or sixteenth-triplet. Rhythm must use repeating grid steps: x hit, X accent, o ghost, dot/tilde/hyphen rest (example x...x...); empty clears it. Adjust note count and held duration with density and gate, not subdivision.
+    /// Inspect, partially edit or explicitly regenerate 1..16 generated clips. Writes preserve other clips and mix state; hand-edited generated notes require explicit replacement permission. Recipe controls change stored notes; performance controls are separate. Subdivision is a grid, not note duration: eighth, sixteenth, eighth-triplet or sixteenth-triplet. Rhythm must use repeating grid steps: x hit, X accent, o ghost, dot/tilde/hyphen rest (example x...x...); empty clears it. Adjust note count and held duration with density and gate, not subdivision. For a piano-style chord comp, low_root adds the root under the voicing and strum staggers onsets upward by a note value (32 or 64).
     EditRecipe {
         /// Unique stable generated clip IDs.
         #[schemars(length(min = 1, max = 16))]

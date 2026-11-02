@@ -159,6 +159,8 @@ pub fn recipe_for(
         // octaves off its role would otherwise come back as a recipe nobody could edit back.
         octave: (part.octave - part.role.default_octave()).clamp(-2, 2),
         fill: settings.fill,
+        low_root: part.low_root,
+        strum: part.strum,
         // The composer describes what it asked for, not what came out: the digest of the notes
         // as written is the session's to stamp, at the moment the clip lands in a document.
         text_digest: 0,
@@ -349,6 +351,8 @@ pub fn write_phrase(
             // Keep articulation independent of role defaults when another dial moves.
             part.subdivision = recipe.subdivision;
             part.gate = recipe.gate;
+            part.low_root = recipe.low_root;
+            part.strum = recipe.strum;
             Some(part)
         })
         .collect();
@@ -858,6 +862,94 @@ mod tests {
                         .iter()
                         .all(|note| note.length > Ticks::ZERO && note.end() <= BAR * 4)
                 );
+            }
+        }
+    }
+
+    /// Chords with no push, so every strike sits inside the bar of the chord it plays.
+    fn square_chords(seed: u64, low_root: bool, strum: u16) -> Vec<Note> {
+        let mut recipe = ClipRecipe::new(ClipPreset::Chords, seed);
+        recipe.syncopation = 0.0;
+        recipe.low_root = low_root;
+        recipe.strum = strum;
+        write_phrase(&axis(), Ticks::ZERO, BAR * 4, four_four(), &recipe, None)
+    }
+
+    /// Notes grouped by where they start, lowest first in each group.
+    fn strikes(notes: &[Note]) -> std::collections::BTreeMap<Ticks, Vec<&Note>> {
+        let mut strikes = std::collections::BTreeMap::<Ticks, Vec<&Note>>::new();
+        for note in notes {
+            strikes.entry(note.start).or_default().push(note);
+        }
+        for notes in strikes.values_mut() {
+            notes.sort_by_key(|note| note.pitch);
+        }
+        strikes
+    }
+
+    #[test]
+    fn a_low_root_sounds_the_chords_root_an_octave_under_every_strike() {
+        // I V vi IV in C: the bass notes the four bars should stand on.
+        let roots = [0, 7, 9, 5];
+        for seed in 1..=8 {
+            let plain = square_chords(seed, false, 0);
+            let rooted = square_chords(seed, true, 0);
+            let (plain, rooted) = (strikes(&plain), strikes(&rooted));
+            assert_eq!(
+                plain.keys().collect::<Vec<_>>(),
+                rooted.keys().collect::<Vec<_>>(),
+                "the root changed the rhythm, seed {seed}"
+            );
+            for (start, notes) in &rooted {
+                let bar = (start.raw() / BAR.raw()) as usize;
+                let root = notes[0].pitch;
+                assert_eq!(i32::from(root) % 12, roots[bar], "seed {seed} at {start:?}");
+                assert!(root >= 28, "a root at {root} is rumble");
+                assert!(
+                    notes[1].pitch >= root + 12,
+                    "the root {root} is inside the voicing {:?}",
+                    notes.iter().map(|note| note.pitch).collect::<Vec<_>>()
+                );
+                // The voicing above it is the one the part would have played anyway.
+                let above: Vec<_> = notes[1..].iter().map(|note| note.pitch).collect();
+                let before: Vec<_> = plain[start].iter().map(|note| note.pitch).collect();
+                assert_eq!(above, before, "seed {seed} at {start:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_strum_delays_each_note_above_the_lowest_by_its_note_value_and_keeps_the_release() {
+        let thirty_second = Ticks::QUARTER.raw() / 8;
+        for seed in 1..=8 {
+            let plain = square_chords(seed, true, 0);
+            let together = strikes(&plain).into_iter().collect::<Vec<_>>();
+            let strummed = square_chords(seed, true, 32);
+            assert_eq!(
+                strummed.len(),
+                together.iter().map(|(_, notes)| notes.len()).sum::<usize>()
+            );
+            for (start, notes) in &together {
+                let length = notes[0].length.raw();
+                let step = thirty_second.min(length / 2 / (notes.len() as i64 - 1));
+                for (rank, note) in notes.iter().enumerate() {
+                    let delayed = *start + Ticks(rank as i64 * step);
+                    let found = strummed
+                        .iter()
+                        .find(|candidate| {
+                            candidate.pitch == note.pitch && candidate.start == delayed
+                        })
+                        .unwrap_or_else(|| {
+                            panic!("seed {seed}: {} not strummed to {delayed:?}", note.pitch)
+                        });
+                    assert_eq!(found.end(), note.end(), "the strum moved a release");
+                }
+            }
+            // And on the beat it is really a thirty-second apart, not merely ordered.
+            let first = strikes(&strummed);
+            let (_, opening) = together.first().unwrap();
+            if opening[0].length.raw() >= thirty_second * 2 * (opening.len() as i64 - 1) {
+                assert!(first.contains_key(&Ticks(thirty_second)), "seed {seed}");
             }
         }
     }

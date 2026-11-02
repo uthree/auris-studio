@@ -75,7 +75,10 @@ pub use curve::{
 pub use drum::{DrumLane, DrumMap, DrumRole};
 pub use ornament::{Fall, Scoop, Vibrato};
 pub use performance::{PerformanceContext, performed_note_slots, performed_notes};
-pub use recipe::{ClipPreset, ClipRecipe, DrumVoiceRecipe, PerformanceStyle, Subdivision};
+pub use recipe::{
+    ClipPreset, ClipRecipe, DrumVoiceRecipe, PerformanceStyle, STRUM_VALUES, Subdivision,
+    strum_ticks,
+};
 pub use routing::{AuxSend, EffectSlot, MixerStrip, Output};
 pub use track::{
     AudioTrack, Color, ConsonantLevels, ConsonantWidths, InstrumentTrack, SingerPitch, SingerTake,
