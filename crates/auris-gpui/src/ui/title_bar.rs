@@ -496,10 +496,12 @@ mod tests {
 
     #[gpui::test]
     fn closing_from_the_titlebar_keeps_unsaved_work_until_answered(cx: &mut TestAppContext) {
-        if cfg!(target_os = "macos") {
-            return; // macOS draws its own traffic lights outside the headless view tree.
-        }
         let (app, cx, _, clip) = with_a_clip(cx);
+        // macOS draws its traffic lights outside the view tree, and Linux leaves the buttons to
+        // the compositor whenever the window has server decorations, as every headless one does.
+        if !cx.update(|window, _| crate::titlebar::draws_caption_buttons(window)) {
+            return;
+        }
         click("window-close", cx);
         app.read_with(cx, |this, _| {
             assert!(this.prompt.is_some());

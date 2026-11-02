@@ -2385,7 +2385,9 @@ mod tests {
                 .unwrap();
         }
         assert!(cx.debug_bounds("settings-setup-guide").is_some());
-        if !cfg!(target_os = "macos") {
+        // Only a window that draws its own caption buttons has one to press: not macOS, and on
+        // Linux not one with server decorations, which is every headless window.
+        if cx.update(|window, _| titlebar::draws_caption_buttons(window)) {
             crate::harness::click("window-close", cx);
             assert!(handle.update(cx, |_, _, _| ()).is_err());
         }
