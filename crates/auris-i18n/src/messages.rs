@@ -857,6 +857,12 @@ messages! {
         ja: "`{text}` はゲインではありません — `-3` や `2.5` のように"
     }
 
+    /// The text typed into a colour prompt is not a colour code.
+    fn not_a_colour(text: &str) {
+        en: "`{text}` is not a colour code — try `#3D7BFF` or `#38F`",
+        ja: "`{text}` はカラーコードではありません — `#3D7BFF` や `#38F` のように"
+    }
+
     /// The text typed into a parameter's prompt is not a number at all.
     ///
     /// Separate from the gain message because a parameter is not always a gain, and suggesting

@@ -999,6 +999,11 @@ strings! {
     VideoColorPitch { en: "By pitch", ja: "音の高さ" }
     VideoColorSingle { en: "One colour", ja: "単色" }
     VideoPaletteHint { en: "Click a colour to choose another. Tracks take them in order.", ja: "色をクリックして選び直せます。トラックの並び順に割り当てます。" }
+    VideoHue { en: "Hue", ja: "色相" }
+    VideoSaturation { en: "Saturation", ja: "彩度" }
+    VideoBrightness { en: "Brightness", ja: "明度" }
+    VideoCustomColour { en: "Custom…", ja: "カスタム…" }
+    VideoColourCode { en: "Colour code", ja: "カラーコード" }
     VideoHueLow { en: "Low notes", ja: "低い音" }
     VideoHueHigh { en: "High notes", ja: "高い音" }
     VideoBackground { en: "Background", ja: "背景" }
@@ -1020,6 +1025,7 @@ strings! {
     VideoDrums { en: "Include drums", ja: "ドラムも描く" }
     VideoChordSection { en: "Chords", ja: "コード" }
     VideoChords { en: "Show chords", ja: "コード進行を表示" }
+    VideoChordColour { en: "Caption colour", ja: "表示の色" }
     VideoChordsHint { en: "The chord sounding now and the next one, in the top corner. Uses the chords written in the song, or reads them from the notes when none are written.", ja: "今鳴っているコードと次のコードを左上に表示します。曲に入力したコードを使い、未入力なら音符から読み取ります。" }
     VideoPreviewHint { en: "The preview shows the moment under the playhead. Move the playhead to see another.", ja: "プレビューは再生位置の瞬間です。再生位置を動かすと別の場面を確認できます。" }
     VideoFfmpegChecking { en: "Looking for ffmpeg…", ja: "ffmpeg を探しています…" }
@@ -1468,6 +1474,10 @@ strings! {
     HintClipGain {
         en: "In decibels. 0 plays the clip as recorded; negative is quieter",
         ja: "デシベル単位。0で元の音量、負の値で小さく"
+    }
+    HintColour {
+        en: "Hexadecimal red, green and blue: #3D7BFF, or #38F for short",
+        ja: "赤・緑・青の16進数: #3D7BFF、短縮形なら #38F のように"
     }
     HintPosition {
         en: "Bar, beat, hundredth: 17, or 17.3, or 17.3.050",
