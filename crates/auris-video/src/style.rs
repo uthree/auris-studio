@@ -124,6 +124,14 @@ pub struct NoteRollStyle {
     /// The lines are the song-wide lyrics annotation, not the words on the notes: those are
     /// what a voice sings, often a mora at a time or in kana, and this is what a person reads.
     pub lyrics: bool,
+    /// Show the tempo in the top right corner, in beats per minute.
+    pub tempo: bool,
+    /// Show where in the bar the music is as a regular polygon in the top right corner: a
+    /// corner for each beat of the bar, the corner of the beat sounding now lit, and the outline
+    /// traced round as the bar goes by.
+    pub beat_counter: bool,
+    /// Colour of the tempo and the beat counter.
+    pub meter_color: Color,
 }
 
 impl Default for NoteRollStyle {
@@ -163,6 +171,9 @@ impl Default for NoteRollStyle {
             chords: true,
             chord_color: Color(0xffffff),
             lyrics: true,
+            tempo: true,
+            beat_counter: true,
+            meter_color: Color(0xffffff),
         }
     }
 }

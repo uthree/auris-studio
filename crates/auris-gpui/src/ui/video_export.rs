@@ -109,6 +109,8 @@ pub enum VideoColourSlot {
     Background,
     /// The chord caption in the corner.
     Chords,
+    /// The tempo and the beat counter in the other corner.
+    Meter,
 }
 
 impl VideoColourSlot {
@@ -119,6 +121,7 @@ impl VideoColourSlot {
             VideoColourSlot::Single => Some(style.single_color),
             VideoColourSlot::Background => Some(style.background),
             VideoColourSlot::Chords => Some(style.chord_color),
+            VideoColourSlot::Meter => Some(style.meter_color),
         }
     }
 
@@ -133,6 +136,7 @@ impl VideoColourSlot {
             VideoColourSlot::Single => style.single_color = color,
             VideoColourSlot::Background => style.background = color,
             VideoColourSlot::Chords => style.chord_color = color,
+            VideoColourSlot::Meter => style.meter_color = color,
         }
     }
 
@@ -147,6 +151,7 @@ impl VideoColourSlot {
             VideoColourSlot::Single => style.coloring == NoteColoring::Single,
             VideoColourSlot::Background => true,
             VideoColourSlot::Chords => style.chords,
+            VideoColourSlot::Meter => style.tempo || style.beat_counter,
         }
     }
 
@@ -157,6 +162,7 @@ impl VideoColourSlot {
             VideoColourSlot::Single => "single".to_owned(),
             VideoColourSlot::Background => "background".to_owned(),
             VideoColourSlot::Chords => "chords".to_owned(),
+            VideoColourSlot::Meter => "meter".to_owned(),
         }
     }
 }
@@ -602,7 +608,8 @@ impl AurisApp {
             .child(self.video_background_section(&style, &theme, cx))
             .child(self.video_motion_section(&style, &theme, cx))
             .child(self.video_chords_section(&style, &theme, cx))
-            .child(self.video_lyrics_section(&style, &theme, cx));
+            .child(self.video_lyrics_section(&style, &theme, cx))
+            .child(self.video_meter_section(&style, &theme, cx));
 
         let body = if stacked {
             div()
@@ -1220,6 +1227,52 @@ impl AurisApp {
             .child(self.note(self.t(Key::VideoLyricsHint), theme))
     }
 
+    /// The tempo and the beat counter: two switches, since either is worth having alone, and
+    /// one colour for the corner they share.
+    fn video_meter_section(
+        &self,
+        style: &NoteRollStyle,
+        theme: &Theme,
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
+        let mut section = self
+            .section(Key::VideoMeterSection, theme)
+            .child(self.toggle(
+                "video-tempo",
+                Key::VideoTempo,
+                style.tempo,
+                theme,
+                cx,
+                |style| style.tempo = !style.tempo,
+            ))
+            .child(self.toggle(
+                "video-beat-counter",
+                Key::VideoBeatCounter,
+                style.beat_counter,
+                theme,
+                cx,
+                |style| style.beat_counter = !style.beat_counter,
+            ));
+        if style.tempo || style.beat_counter {
+            section = section
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(self.picker_swatch(
+                            VideoColourSlot::Meter,
+                            style.meter_color,
+                            theme,
+                            cx,
+                        ))
+                        .child(self.note(self.t(Key::VideoChordColour), theme)),
+                )
+                .children(self.video_colour_picker(VideoColourSlot::Meter, &CAPTIONS, theme, cx));
+        }
+        section.child(self.note(self.t(Key::VideoMeterHint), theme))
+    }
+
     fn video_background_section(
         &self,
         style: &NoteRollStyle,
@@ -1638,6 +1691,52 @@ mod tests {
         });
         harness::paint(&app, &mut cx);
         app.read_with(&cx, |app, _| assert_eq!(app.video_export.picking, None));
+        app.update(&mut cx, |app, _| {
+            app.edit_video_style(|style| *style = original);
+        });
+    }
+
+    #[gpui::test]
+    fn the_tempo_and_the_beat_counter_switch_on_and_off_on_their_own(cx: &mut TestAppContext) {
+        let (app, mut cx, original) = open_window(cx);
+        app.update(&mut cx, |app, _| {
+            app.edit_video_style(|style| {
+                style.tempo = true;
+                style.beat_counter = true;
+            });
+        });
+        // Tall enough that the last section of the settings is on screen.
+        harness::resize(&app, &mut cx, gpui::size(px(1100.), px(1800.)));
+        harness::click("video-tempo", &mut cx);
+        harness::paint(&app, &mut cx);
+        app.read_with(&cx, |app, _| {
+            assert!(!app.settings.video.tempo);
+            assert!(app.settings.video.beat_counter, "the counter stays on");
+        });
+        harness::click("video-beat-counter", &mut cx);
+        harness::paint(&app, &mut cx);
+        app.read_with(&cx, |app, _| {
+            assert!(!app.settings.video.beat_counter);
+            assert!(!app.settings.video.tempo, "and the tempo stays off");
+            // Debug bounds outlive a removed element, so ask the state rather than the tree.
+            assert!(
+                !VideoColourSlot::Meter.shown(&app.settings.video),
+                "with both off there is no colour to choose"
+            );
+        });
+        harness::click("video-tempo", &mut cx);
+        harness::paint(&app, &mut cx);
+        harness::click("video-swatch-meter", &mut cx);
+        harness::paint(&app, &mut cx);
+        harness::click("video-preset-meter-3", &mut cx);
+        harness::paint(&app, &mut cx);
+        app.read_with(&cx, |app, _| {
+            assert_eq!(app.settings.video.meter_color, CAPTIONS[3]);
+            assert_eq!(
+                app.settings.video.chord_color, original.chord_color,
+                "the chords keep their own colour"
+            );
+        });
         app.update(&mut cx, |app, _| {
             app.edit_video_style(|style| *style = original);
         });
