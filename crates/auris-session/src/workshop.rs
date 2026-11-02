@@ -49,6 +49,10 @@ pub struct Direction {
     /// Exact parent track IDs whose note clips must remain unchanged.
     #[serde(default)]
     pub protected_tracks: Vec<u64>,
+    /// Earlier candidates of this conversation, other than the parent, whose saved clips the
+    /// composer may restore exactly; for example the version a user asks to go back to.
+    #[serde(default)]
+    pub sources: Vec<u64>,
 }
 
 /// Persisted candidate identity; IDs also name private artifact directories.
@@ -934,6 +938,7 @@ mod tests {
                         description: "Piano".into(),
                         instructions: "Compose".into(),
                         protected_tracks: Vec::new(),
+                        sources: vec![],
                     },
                     ready,
                     error: None,
@@ -1220,6 +1225,7 @@ mod tests {
                 description: "Sparse".into(),
                 instructions: "Private production instructions".into(),
                 protected_tracks: vec![],
+                sources: vec![],
             }],
             chosen: 0,
         }

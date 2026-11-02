@@ -99,6 +99,7 @@ mod rhythm;
 mod shared_font_tests;
 mod singer;
 mod singer_names;
+pub mod source_material;
 mod spectrogram;
 mod timbre;
 mod tracks;
@@ -578,6 +579,9 @@ pub struct Session {
     /// Whether the shipped dictionary stands in while no folder is named — the option, kept
     /// so that clearing the setting returns to the shipped one instead of to nothing.
     shipped_dictionary: bool,
+    /// Earlier saved versions of this song the agent may restore clips from; see
+    /// [`source_material`].
+    sources: Vec<source_material::SourceProject>,
     /// The voice models behind singer tracks, by the file each was read from.
     ///
     /// Keyed by path rather than by track or document id, like `font_cache` and for the
@@ -821,6 +825,7 @@ impl Session {
             take: None,
             japanese: None,
             shipped_dictionary: options.shipped_dictionary,
+            sources: Vec::new(),
             voices: HashMap::new(),
             voice_load_generations: HashMap::new(),
             acceleration: auris_singer::Acceleration::default(),

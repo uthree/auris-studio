@@ -2768,6 +2768,7 @@ mod tests {
                                 description: song.idea.description.clone(),
                                 instructions: String::new(),
                                 protected_tracks: vec![],
+                                sources: vec![],
                             },
                         })
                         .collect(),
@@ -2847,6 +2848,7 @@ mod tests {
                         description: "静かなピアノ\n柔らかな弦楽器".into(),
                         instructions: "Private composer instructions".into(),
                         protected_tracks: vec![],
+                        sources: vec![],
                     },
                 }],
             });
@@ -2942,6 +2944,7 @@ mod tests {
                             description: "Piano and strings".into(),
                             instructions: String::new(),
                             protected_tracks: Vec::new(),
+                            sources: vec![],
                         },
                     })
                     .collect(),
@@ -3186,6 +3189,7 @@ mod tests {
                         description: "A melody being written".into(),
                         instructions: "Continue".into(),
                         protected_tracks: vec![],
+                        sources: vec![],
                     },
                 }],
             });

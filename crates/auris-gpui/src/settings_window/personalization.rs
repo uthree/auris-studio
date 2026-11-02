@@ -431,12 +431,14 @@ mod tests {
                     description: "Sparse piano".into(),
                     instructions: "Compose piano".into(),
                     protected_tracks: vec![],
+                    sources: vec![],
                 },
                 workshop::Direction {
                     title: "Strings".into(),
                     description: "Warm strings".into(),
                     instructions: "Compose strings".into(),
                     protected_tracks: vec![],
+                    sources: vec![],
                 },
             ],
         };

@@ -491,6 +491,15 @@ the assignment, every tool call with its arguments, every result with its text, 
 permissions, the model's prose between calls and how the attempt ended. Long values are
 cut and the file stops at 8 MiB. It is deleted with the conversation.
 
+A composer edits a copy of its parent candidate and sees no other version. When the user
+wants material back from an earlier one ("return the chorus to the previous melody"), the
+director lists those candidates in the direction's `sources`. The host loads their saved
+songs into the composer's session, read-only, and the `source_material` tool lists their
+note clips with whether each matches the current score, then restores named clips' notes,
+lyrics and phonemes exactly, as one Undo edit. Clip IDs carry over from a candidate to its
+children, so a clip restores into the same ID. Sources that are not saved, repeat the
+parent or name nothing are dropped, and at most four are kept.
+
 Settings → Agent includes a multiline **System prompt** editor shared by Codex,
 Claude Code and Rig models. It starts with the current standard prompt in full.
 Editing replaces the common prompt; it is not appended to the standard text.

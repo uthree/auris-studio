@@ -76,6 +76,7 @@ fn candidate(id: u64, parent: Option<u64>, ready: bool) -> Candidate {
             description: "Two-bar drum arrangement".into(),
             instructions: "Preserve the notes and apply only the requested timeline edit.".into(),
             protected_tracks: vec![1],
+            sources: vec![],
         },
         error: None,
         recoveries: 0,

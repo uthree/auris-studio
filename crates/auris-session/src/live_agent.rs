@@ -149,6 +149,11 @@ pub enum Command {
         #[serde(flatten)]
         request: crate::lyric_harness::RepairRequest,
     },
+    /// List or restore material from earlier versions of this song, supplied by the host (a workshop edit that names earlier candidates as sources). list shows each source's note clips with in_current and matches_current; restore copies the named clips' notes, lyrics and phonemes exactly into the current score as one Undo edit, keeping each clip's position and length. Clip IDs carry over between versions, so a clip restores into the same ID unless into names another. Use this instead of rewriting remembered notes; re-sing restored singer clips.
+    SourceMaterial {
+        /// List, or restore named clips from one source.
+        operation: crate::session::source_material::Operation,
+    },
     /// Read or undo/redo one complete user request in the live session. First use operation {"kind":"read"}; then supply its available_group and numeric revision. Human edits and open gestures are boundaries. Use this for "undo that change" instead of rewriting old notes. Does not save. Session-local; unavailable for saved-project calls.
     History {
         /// Read, undo or redo; reversal requires the exact group and revision.
@@ -593,6 +598,7 @@ impl Command {
             Self::RepairLyrics { request } => request.apply,
             Self::History { operation } => !matches!(operation, HistoryOperation::Read),
             Self::Checkpoints { operation, .. } => operation.is_mutating(),
+            Self::SourceMaterial { operation } => operation.is_mutating(),
             Self::Automation { operation, .. } => !operation.is_read_only(),
             Self::EditRecipe { operation, .. } => !operation.is_read_only(),
             Self::MixerGraph { operation } => !operation.is_read_only(),
@@ -1049,6 +1055,7 @@ impl Session {
                 expected_revision,
                 edits,
             } => self.agent_edit_notes(&expected_revision, edits),
+            Command::SourceMaterial { operation } => self.agent_source_material(operation),
             Command::Inspect {} => {
                 let project = self.project();
                 let tracks: Vec<_> = project

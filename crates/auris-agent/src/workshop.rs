@@ -659,7 +659,11 @@ impl Owner {
                         });
                         if !self.selection_followup && !answer.directions.is_empty() {
                             let mut candidates = Vec::new();
-                            for direction in answer.directions {
+                            for mut direction in answer.directions {
+                                direction.sources =
+                                    usable_sources(&direction.sources, self.planned_parent, |id| {
+                                        self.snapshot.candidates.contains_key(&id)
+                                    });
                                 self.snapshot.document.next_id += 1;
                                 candidates.push(Candidate {
                                     id: self.snapshot.document.next_id,
@@ -1489,6 +1493,20 @@ fn idea(direction: &Direction) -> SongIdea {
 /// SoundFonts at all, so without the shipped fonts and the user's library here a composer could
 /// only answer every such request with a built-in synthesiser and an apologetic track name.
 /// Tests leave both out for the reason [`SessionOptions::shipped_fonts`] gives.
+/// The earlier candidates a direction may restore from: saved ones, other than the parent,
+/// each once, at most [`auris_session::source_material::MAX_SOURCES`]. A model's guess at an
+/// ID that names nothing is dropped rather than failing the whole assignment.
+fn usable_sources(requested: &[u64], parent: Option<u64>, saved: impl Fn(u64) -> bool) -> Vec<u64> {
+    let mut sources = Vec::new();
+    for &id in requested {
+        if Some(id) != parent && saved(id) && !sources.contains(&id) {
+            sources.push(id);
+        }
+    }
+    sources.truncate(auris_session::source_material::MAX_SOURCES);
+    sources
+}
+
 fn candidate_options(settings: &Settings) -> SessionOptions {
     let installed = !cfg!(test);
     let mut options = SessionOptions::headless()
@@ -1608,10 +1626,27 @@ fn compose(
     session.begin_agent_request();
     let _ = sender.send(JobEvent::Progress(candidate.id, "planning".into()));
     let assignment = json!({"assignment":candidate.direction.instructions,
+    "sources":(!candidate.direction.sources.is_empty()).then(|| json!({
+        "candidates":candidate.direction.sources,
+        "instruction":"These earlier versions are loaded read-only. To bring material back, call source_material list, then restore the named clips exactly; never rewrite remembered notes. Re-sing restored singer clips."
+    })),
     "recovery":candidate.error.as_ref().map(|error| json!({
         "last_error":error,
         "instruction":"Inspect the restored score and current resources. Continue only unfinished work; do not duplicate successful edits. Correct the cause of the last failure before completing."
     }))});
+    // Earlier versions named by the director, beside this candidate's own folder.
+    for &source in &candidate.direction.sources {
+        let path = folder
+            .parent()
+            .unwrap_or(&folder)
+            .join(source.to_string())
+            .join("song/song.auris");
+        session
+            .add_source_project(source, &format!("candidate {source}"), &path)
+            .map_err(|e| {
+                AttemptError::permanent(format!("Source candidate {source} could not be read: {e}"))
+            })?;
+    }
     let mut log = composer_log::Log::open(&folder);
     log.note(
         "assignment",
@@ -2568,6 +2603,49 @@ mod tests {
         assert!(owner.planner.is_none());
     }
 
+    #[test]
+    fn sources_keep_saved_earlier_candidates_once_and_never_the_parent() {
+        let sources = usable_sources(&[3, 4, 3, 9, 1, 2, 5, 6], Some(4), |id| id != 9);
+        assert_eq!(sources, [3, 1, 2, 5]);
+    }
+
+    #[test]
+    fn a_composer_restores_from_a_named_source_candidate() {
+        let root = tempfile::tempdir().unwrap();
+        let mut earlier = Session::new(SessionOptions::headless()).unwrap();
+        let track = earlier.add_singer_track("Voice");
+        let clip = earlier
+            .add_midi_clip(
+                track,
+                "Chorus",
+                auris_session::prelude::Ticks::ZERO,
+                auris_session::prelude::Ticks::QUARTER,
+            )
+            .unwrap();
+        earlier
+            .add_note(
+                clip,
+                auris_session::prelude::Note::new(
+                    72,
+                    auris_session::prelude::Ticks::ZERO,
+                    auris_session::prelude::Ticks::QUARTER,
+                ),
+            )
+            .unwrap();
+        let saved = earlier
+            .save_as(&root.path().join("3/song/song.auris"))
+            .unwrap();
+        assert!(saved.document.ends_with("3/song/song.auris"));
+        let mut session = Session::new(SessionOptions::headless()).unwrap();
+        session
+            .add_source_project(3, "candidate 3", &saved.document)
+            .unwrap();
+        let listed = session
+            .agent_source_material(auris_session::source_material::Operation::List)
+            .unwrap();
+        assert!(listed.contains("\"in_current\":false"), "{listed}");
+    }
+
     fn assignment() -> Candidate {
         Candidate {
             id: 1,
@@ -2582,6 +2660,7 @@ mod tests {
                 description: "A short instrumental".into(),
                 instructions: "Create a short chiptune instrumental".into(),
                 protected_tracks: vec![],
+                sources: vec![],
             },
         }
     }
