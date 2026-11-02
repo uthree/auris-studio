@@ -453,6 +453,11 @@ impl AurisApp {
         move |event: &E, window: &mut Window, cx: &mut gpui::App| {
             let at = event.menu_at();
             view.update(cx, |this, cx| {
+                // A menu is drawn only in the window that last claimed input. A trigger in a
+                // utility window clicked straight after work in the main one would otherwise
+                // open its menu in the main window, out of sight — the plugin window's choices
+                // did exactly that until this claimed the window first.
+                this.claim_event_window(window);
                 let menu = build(this, at);
                 let opened = !menu.is_empty();
                 if opened && this.menu_focus_return.is_none() {
