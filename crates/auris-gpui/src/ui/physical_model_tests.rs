@@ -315,6 +315,76 @@ fn a_bow_and_a_breath_last_as_long_as_the_press(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+fn each_body_is_drawn_as_the_thing_it_is(cx: &mut gpui::TestAppContext) {
+    let (app, cx) = harness::open(cx);
+    for (id, geometry, cells) in [
+        ("auris.physical.piano", MotionGeometry::String, false),
+        ("auris.physical.mallet", MotionGeometry::Bar, false),
+        ("auris.physical.bell", MotionGeometry::Shell, true),
+        ("auris.physical.clarinet", MotionGeometry::Bore, false),
+        ("auris.physical.tin_whistle", MotionGeometry::Bore, false),
+        ("auris.physical.choir", MotionGeometry::Tract, false),
+    ] {
+        let (_, mut utility) = open_model(&app, cx, id);
+        // At rest, a bell is a row of rims and everything else a lane under another.
+        let first = utility.debug_bounds("physical-body-0").unwrap();
+        let second = utility.debug_bounds("physical-body-1").unwrap();
+        assert_eq!(
+            (second.top() - first.top()).abs() < px(1.),
+            cells,
+            "{id} lays its bodies out side by side"
+        );
+        app.update(&mut utility, |app, cx| {
+            let mut frame = MotionFrame {
+                geometry,
+                active: 2,
+                pedal: true,
+                ..Default::default()
+            };
+            for (index, voice) in frame.voices.iter_mut().take(2).enumerate() {
+                voice.pitch = 60. + index as f32 * 7.;
+                voice.level = 0.6;
+                voice.held = index == 0;
+                voice.contact = 0.2;
+                voice.excitation = 0.5;
+                for (n, point) in voice.points.iter_mut().enumerate() {
+                    *point = (n as f32 * 0.3).sin() * 0.04;
+                }
+                voice.modes = [0.9, 0.7, 0.5, 0.4, 0.6, 0.8, 0.6, 0.3];
+            }
+            app.physical_view.accept_frame(frame);
+            app.physical_view.frozen = true;
+            cx.notify();
+        });
+        harness::paint(&app, &mut utility);
+        assert!(utility.debug_bounds("physical-body-3").is_some(), "{id}");
+    }
+}
+
+#[gpui::test]
+fn a_bell_is_struck_around_its_rim(cx: &mut gpui::TestAppContext) {
+    let (app, cx) = harness::open(cx);
+    let (_, mut utility) = open_model(&app, cx, "auris.physical.bell");
+    let cell = utility.debug_bounds("physical-body-0").unwrap();
+    let (radius, _) = super::super::physical_bodies::ring_radius(cell);
+    let right = point(cell.center().x + radius, cell.center().y);
+    harness::press(&mut utility, right);
+    app.read_with(&utility, |app, _| {
+        let touch = app.physical_view.touch.expect("the rim is struck");
+        assert!(touch.sounding, "a bell sounds as it is struck");
+        assert!(
+            (touch.at - 0.25).abs() < 0.01,
+            "a quarter turn, {}",
+            touch.at
+        );
+    });
+    harness::release(&mut utility, right);
+    app.read_with(&utility, |app, _| {
+        assert_eq!(app.physical_view.ringing, Some(60), "and rings on");
+    });
+}
+
+#[gpui::test]
 fn a_drum_head_is_struck_where_it_is_pressed(cx: &mut gpui::TestAppContext) {
     let (app, cx) = harness::open(cx);
     let track = app.update(cx, |app, cx| {
