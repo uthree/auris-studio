@@ -27,6 +27,8 @@ The [whole-keyboard piano voicing](grand-piano-register.md) measures per-partial
 register level and soundboard knock from C1 to C8, and checks itself on that cohort's held-out notes.
 The [low-register correction](physical-low-register.md) measures bow-force continuity,
 bass-note periodicity and piano partial stretch, with paired audition files.
+The [piano stretch tuning](piano-stretch-tuning.md) measures each key's fundamental, heard
+pitch and octave beats against equal temperament.
 The [long-note/trajectory extension](physical-trajectories.md) adds 3/6-second notes, real
 violin glissandi, recorded performance guides and separate late-sustain/transition/release losses.
 The [physical-model experiments](physical-extensions.md) add causal radiation modes,

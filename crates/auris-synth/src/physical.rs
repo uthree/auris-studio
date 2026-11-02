@@ -542,6 +542,15 @@ impl Physical {
         }
     }
 
+    /// Semitones by which a key's string is tuned from equal temperament: the piano's stretch.
+    fn stretch(&self, pitch: u8) -> f32 {
+        if self.model == Model::Piano {
+            calibration::piano_stretch(pitch, self.settings()) / 100.0
+        } else {
+            0.0
+        }
+    }
+
     fn is_legato(&self) -> bool {
         self.model == Model::Violin && self.params.at(P_LEGATO) >= 0.5
     }
@@ -657,6 +666,7 @@ impl Physical {
             return;
         };
         let settings = calibration::register(self.model, pitch, self.settings());
+        let stretch = self.stretch(pitch);
         if self.is_legato() {
             self.legato.voice = Some(assignment.index);
         }
@@ -685,7 +695,7 @@ impl Physical {
         voice.contact = settings.position;
         voice.position = self.model.stereo_image().position(f32::from(pitch));
         voice.pan = voice.position * self.params.at(self.width_param);
-        let hz = pitch_to_hz(f32::from(pitch.min(127)) + self.bend).min(self.rate * 0.2);
+        let hz = pitch_to_hz(f32::from(pitch) + self.bend + stretch).min(self.rate * 0.2);
         if self.model.is_string() {
             voice
                 .string
