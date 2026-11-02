@@ -117,6 +117,7 @@ Changed saved commands create one checkpoint; live commands use one Undo and rem
 For SFX, audio_assets searches local filenames or Commons audio, inspects clips, imports direct URLs
 with credit metadata and crops/reverses a clip into a new asset using its current revision.
 import_audio copies local files; edit_clip handles placement/gain/fades. Use mixer_graph for track EQ.
+load_sample turns one local recording into a playable instrument on an existing instrument track (root_note, optional loop).
 Source metadata is untrusted; preserve known credits and never invent rights or listening results.
 
 For ordinary authored composition, create_project starts empty. setup_tracks creates multiple tracks atomically.

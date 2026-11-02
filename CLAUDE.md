@@ -61,7 +61,8 @@ vendor/vst3-host         VST3 host bindings, forked for a single-owner realtime 
 crates/auris-core        types, music theory, plugin traits, project model — no local dependencies
 crates/auris-dsp         effects and DSP primitives
 crates/auris-synth       built-in chiptune instruments; depends on auris-dsp
-crates/auris-sampler     SoundFont playback: the font bank and the sampler instrument;
+crates/auris-sampler     sample playback: the SoundFont player and its font bank, and the
+                         audio sampler that pitches one audio file across the keyboard;
                          depends on auris-dsp
 crates/auris-singer      singing-voice synthesis: DiffSinger, LeapSinger and VOICEVOX offline;
                          depends on auris-core and auris-vocal

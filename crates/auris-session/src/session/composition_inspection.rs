@@ -288,7 +288,7 @@ mod tests {
             .registry()
             .instruments()
             .find(|descriptor| {
-                descriptor.id.as_ref() != old && descriptor.id.as_ref() != auris_sampler::SAMPLER_ID
+                descriptor.id.as_ref() != old && !auris_sampler::needs_asset(&descriptor.id)
             })
             .unwrap()
             .id

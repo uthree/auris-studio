@@ -136,7 +136,7 @@ pub use library::{
     voice_source_kind,
 };
 pub use param::ParamTarget;
-pub use registry::{DEFAULT_INSTRUMENT, default_registry, plugin_catalogue};
+pub use registry::{DEFAULT_INSTRUMENT, default_registry, plugin_catalogue, registry_with_samples};
 pub use render::{ExportSummary, RenderJob, StemRenderFailure, StemSummary, stem_tracks};
 pub use session::InstalledPluginFiles;
 pub use session::NoteSelectionPreview;
@@ -368,7 +368,10 @@ pub mod prelude {
         AudioExportFormat, AudioExportSettings, Mp3Bitrate, SoundFontPreset, WavBitDepth,
         WavExportSettings,
     };
-    pub use auris_sampler::{SAMPLER_ENVELOPE_KEY, SAMPLER_ID};
+    pub use auris_sampler::{
+        AUDIO_SAMPLER_ID, AUDIO_SAMPLER_LOOP_KEY, AUDIO_SAMPLER_ROOT_KEY, SAMPLER_ENVELOPE_KEY,
+        SAMPLER_ID,
+    };
 
     pub use crate::{
         Acceleration, AccompanyReport, Arm, AudioPreferences, AutosaveJob, AutosaveResult,

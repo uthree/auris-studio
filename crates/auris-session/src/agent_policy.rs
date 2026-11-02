@@ -312,6 +312,7 @@ impl Operation {
                     parsed,
                     crate::live_agent::Command::Listen { .. }
                         | crate::live_agent::Command::ImportAudio { .. }
+                        | crate::live_agent::Command::LoadSample { .. }
                         | crate::live_agent::Command::ImportMidi { .. }
                         | crate::live_agent::Command::Render { .. }
                         | crate::live_agent::Command::ExportMidi { .. }

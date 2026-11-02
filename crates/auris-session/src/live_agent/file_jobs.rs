@@ -56,6 +56,15 @@ enum Work {
         rate: f64,
         render_rate: f64,
     },
+    LoadSample {
+        path: PathBuf,
+        folder: PathBuf,
+        track: TrackId,
+        root: Option<u8>,
+        looped: Option<bool>,
+        rate: f64,
+        render_rate: f64,
+    },
     ImportMidi {
         job: crate::MidiImportJob,
         path: PathBuf,
@@ -103,6 +112,14 @@ enum Outcome {
         bytes: u64,
         provenance: std::collections::BTreeMap<String, String>,
     },
+    LoadedSample {
+        staged: StagedSource,
+        folder: PathBuf,
+        track: TrackId,
+        name: String,
+        root: Option<u8>,
+        looped: Option<bool>,
+    },
     ImportedMidi(Box<crate::MidiImportResult>, Ticks),
     Audio(Vec<StagedAudio>, Option<Box<analysis::Manifest>>),
     Midi(crate::MidiExportResult),
@@ -117,6 +134,70 @@ struct StagedAudio {
     attenuation_db: f32,
     ceiling_db: f32,
     source_inspection: Option<crate::ExportInspection>,
+}
+
+/// An audio file copied into the project's audio folder and decoded, not yet in the document.
+pub(crate) struct StagedSource {
+    pub(crate) file: tempfile::NamedTempFile,
+    pub(crate) prepared: crate::PreparedAudioSource,
+    pub(crate) bytes: u64,
+    pub(crate) provenance: std::collections::BTreeMap<String, String>,
+}
+
+/// Copies `path` into `folder`'s audio directory under a private name, hashing as it goes, and
+/// decodes the copy — everything an import does that may take a while.
+fn stage_audio(
+    path: &std::path::Path,
+    folder: &std::path::Path,
+    rate: f64,
+    render_rate: f64,
+    check: &dyn Fn() -> Result<(), String>,
+) -> Result<StagedSource, String> {
+    use sha2::Digest;
+    use std::io::{Read, Write};
+    let mut digest = sha2::Sha256::new();
+    let mut input = std::fs::File::open(path).map_err(|e| e.to_string())?;
+    if !input.metadata().map_err(|e| e.to_string())?.is_file() {
+        return Err("Audio input must be a regular file".into());
+    }
+    let directory = folder.join(auris_io::AUDIO_DIR);
+    std::fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
+    let mut file = tempfile::Builder::new()
+        .prefix("import-")
+        .suffix(&format!(
+            ".{}",
+            path.extension().and_then(|e| e.to_str()).unwrap_or("audio")
+        ))
+        .tempfile_in(&directory)
+        .map_err(|e| e.to_string())?;
+    let mut chunk = [0u8; 65536];
+    let mut bytes = 0u64;
+    loop {
+        check()?;
+        let size = input.read(&mut chunk).map_err(|e| e.to_string())?;
+        if size == 0 {
+            break;
+        }
+        bytes += size as u64;
+        if bytes > 512 * 1024 * 1024 {
+            return Err("Audio input exceeds 512 MiB".into());
+        }
+        digest.update(&chunk[..size]);
+        file.write_all(&chunk[..size]).map_err(|e| e.to_string())?;
+    }
+    file.flush().map_err(|e| e.to_string())?;
+    let buffer = crate::decode_audio(file.path(), rate).map_err(|e| e.to_string())?;
+    let prepared = crate::prepare_audio_source(buffer, render_rate).map_err(|e| e.to_string())?;
+    check()?;
+    Ok(StagedSource {
+        file,
+        prepared,
+        bytes,
+        provenance: std::collections::BTreeMap::from([
+            ("source_path".into(), path.display().to_string()),
+            ("sha256".into(), hex::encode(digest.finalize())),
+        ]),
+    })
 }
 
 fn local_path(value: &str) -> Result<PathBuf, String> {
@@ -161,54 +242,39 @@ impl FileJob {
                 rate,
                 render_rate,
             } => {
-                use sha2::Digest;
-                use std::io::{Read, Write};
-                let mut digest = sha2::Sha256::new();
-                let mut input = std::fs::File::open(&path).map_err(|e| e.to_string())?;
-                if !input.metadata().map_err(|e| e.to_string())?.is_file() {
-                    return Err("Audio input must be a regular file".into());
-                }
-                let directory = folder.join(auris_io::AUDIO_DIR);
-                std::fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
-                let mut file = tempfile::Builder::new()
-                    .prefix("import-")
-                    .suffix(&format!(
-                        ".{}",
-                        path.extension().and_then(|e| e.to_str()).unwrap_or("audio")
-                    ))
-                    .tempfile_in(&directory)
-                    .map_err(|e| e.to_string())?;
-                let mut chunk = [0u8; 65536];
-                let mut bytes = 0u64;
-                loop {
-                    check()?;
-                    let size = input.read(&mut chunk).map_err(|e| e.to_string())?;
-                    if size == 0 {
-                        break;
-                    }
-                    bytes += size as u64;
-                    if bytes > 512 * 1024 * 1024 {
-                        return Err("Audio input exceeds 512 MiB".into());
-                    }
-                    digest.update(&chunk[..size]);
-                    file.write_all(&chunk[..size]).map_err(|e| e.to_string())?;
-                }
-                file.flush().map_err(|e| e.to_string())?;
-                let buffer = crate::decode_audio(file.path(), rate).map_err(|e| e.to_string())?;
-                let prepared =
-                    crate::prepare_audio_source(buffer, render_rate).map_err(|e| e.to_string())?;
-                check()?;
+                let staged = stage_audio(&path, &folder, rate, render_rate, &check)?;
                 Outcome::ImportedAudio {
-                    file,
-                    prepared,
+                    file: staged.file,
+                    prepared: staged.prepared,
                     folder,
                     name,
                     at,
-                    bytes,
-                    provenance: std::collections::BTreeMap::from([
-                        ("source_path".into(), path.display().to_string()),
-                        ("sha256".into(), hex::encode(digest.finalize())),
-                    ]),
+                    bytes: staged.bytes,
+                    provenance: staged.provenance,
+                }
+            }
+            Work::LoadSample {
+                path,
+                folder,
+                track,
+                root,
+                looped,
+                rate,
+                render_rate,
+            } => {
+                let staged = stage_audio(&path, &folder, rate, render_rate, &check)?;
+                let name = path
+                    .file_stem()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .into_owned();
+                Outcome::LoadedSample {
+                    staged,
+                    folder,
+                    track,
+                    name,
+                    root,
+                    looped,
                 }
             }
             Work::Audio {
@@ -346,6 +412,31 @@ impl Session {
                         .to_owned(),
                     name,
                     at: Ticks(at_tick),
+                    rate: self.project().sample_rate,
+                    render_rate: self.sample_rate(),
+                }
+            }
+            Command::LoadSample {
+                track,
+                path,
+                root_note,
+                looped,
+            } => {
+                let track = TrackId(track);
+                self.require_sampler_target(track)
+                    .map_err(|e| e.to_string())?;
+                if root_note.is_some_and(|note| note > 127) {
+                    return Err("root_note must be a MIDI note 0..127 (60 is C4)".into());
+                }
+                Work::LoadSample {
+                    path: local_path(&path)?,
+                    folder: self
+                        .project_folder()
+                        .ok_or("Missing project folder")?
+                        .to_owned(),
+                    track,
+                    root: root_note,
+                    looped,
                     rate: self.project().sample_rate,
                     render_rate: self.sample_rate(),
                 }
@@ -607,6 +698,19 @@ impl Session {
                     return Err("Document folder/rate changed during audio import".into());
                 }
                 self.adopt_agent_audio(file, prepared, name, at, bytes, provenance)
+            }
+            Outcome::LoadedSample {
+                staged,
+                folder,
+                track,
+                name,
+                root,
+                looped,
+            } => {
+                if self.project_folder() != Some(folder.as_path()) {
+                    return Err("Document folder/rate changed while loading the sample".into());
+                }
+                self.adopt_agent_sample(staged, track, name, root, looped)
             }
             Outcome::Verified(text) => Ok(text),
             Outcome::Midi(result) => {

@@ -318,6 +318,10 @@ pub enum SessionError {
         expected: &'static str,
     },
 
+    /// A file chosen for the sampler decoded to no audio at all.
+    #[error("{} holds no audio to sample", .0.display())]
+    EmptySample(PathBuf),
+
     /// The document has never been saved, so there is no path to save it back to.
     #[error("the project has no path yet; save it somewhere first")]
     NoPath,

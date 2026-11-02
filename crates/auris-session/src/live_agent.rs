@@ -171,6 +171,19 @@ pub enum Command {
         /// Optional track and clip name, up to 256 bytes; otherwise the source stem.
         name: Option<String>,
     },
+    /// Load a local audio file into an instrument track's sampler (auris.sampler.audio): the track plays that one recording across the keyboard, pitched by equal temperament from root_note, so a vocal chop, a hit, a texture or one note of a real instrument becomes a playable part. The file is copied into the project's Audio folder; nothing is placed on the timeline, so write notes with add_clip and edit_notes. root_note is the MIDI note the recording sounds at (60 is C4); omitted, a note name in the file name such as Piano_C3 is used, else 60. loop repeats the sample between loop_start and loop_end while the note is held (sustained pads, drones); otherwise each note plays to the end of the sample. Afterwards inspect_instrument and set_instrument_params reach root, tune, key_tracking (off plays every key at the recorded pitch, for one-shot hits), attack/decay/sustain/release, loop, loop_start and loop_end. A track arriving from another instrument loses that instrument's settings and automation. One Undo removes it.
+    LoadSample {
+        /// Stable instrument track ID; drum, audio, singer and bus tracks are refused.
+        track: u64,
+        /// Absolute local audio file path, up to 512 MiB; no network paths.
+        path: String,
+        /// MIDI note 0..127 the recording sounds at; 60 is C4.
+        #[schemars(range(min = 0, max = 127))]
+        root_note: Option<u8>,
+        /// Loop the sample while a note is held; omitted keeps the track's current setting (off for a new sampler).
+        #[serde(rename = "loop")]
+        looped: Option<bool>,
+    },
     /// Append a Standard MIDI File as new editable instrument/drum tracks. Keep the current tempo/meter maps and existing tracks. Notes, bends and controllers retain exact source ticks; playback instruments are defaults and need review. One Undo removes the whole import.
     ImportMidi {
         /// Absolute local .mid path, up to 32 MiB.
@@ -635,6 +648,7 @@ impl Command {
                 | Self::ExportMidi { .. }
                 | Self::VerifyRender { .. }
                 | Self::ImportAudio { .. }
+                | Self::LoadSample { .. }
                 | Self::ImportMidi { .. }
                 | Self::Checkpoints { .. }
         )
@@ -939,6 +953,7 @@ impl Session {
             | Command::ExportMidi { .. }
             | Command::VerifyRender { .. }
             | Command::ImportAudio { .. }
+            | Command::LoadSample { .. }
             | Command::ImportMidi { .. }
             | Command::Checkpoints { .. }
             | Command::Arrangement {

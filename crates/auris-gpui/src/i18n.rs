@@ -224,6 +224,7 @@ pub fn edit_key(edit: Edit) -> Key {
         Edit::ImportAudio => Key::EditImportAudio,
         Edit::RecordTake => Key::EditRecordTake,
         Edit::ImportSoundFont => Key::EditImportSoundFont,
+        Edit::LoadSample => Key::EditLoadSample,
         Edit::ChoosePreset | Edit::ApplySoundPreset => Key::EditChoosePreset,
         Edit::SetKey => Key::EditSetKey,
         Edit::SetChord => Key::EditSetChord,
@@ -366,6 +367,7 @@ pub fn error_text(error: &SessionError, language: Language) -> String {
         }
         SessionError::WrongTrackKind { .. } => Key::ErrorWrongTrackKind.get(language).to_string(),
         SessionError::NoPath => Key::ErrorNoPath.get(language).to_string(),
+        SessionError::EmptySample(_) => Key::ErrorEmptySample.get(language).to_string(),
         SessionError::RecordingNeedsFolder => {
             Key::ErrorRecordingNeedsFolder.get(language).to_string()
         }
@@ -1012,6 +1014,7 @@ mod tests {
             SessionError::CannotSplit(3),
             SessionError::GenerationPositionOccupied,
             SessionError::NoPath,
+            SessionError::EmptySample("silence.wav".into()),
             SessionError::AudioRestart("device gone".into()),
             SessionError::MissingAudio(vec!["a.wav".into()]),
             SessionError::RecordingInProgress,

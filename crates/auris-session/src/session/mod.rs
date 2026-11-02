@@ -93,6 +93,8 @@ mod readiness;
 mod recognition;
 mod record;
 mod rhythm;
+mod samples;
+pub use samples::parse_root_note;
 #[cfg(test)]
 mod shared_font_tests;
 mod singer;
@@ -186,11 +188,11 @@ use auris_engine::{
 };
 use auris_gpu::{GpuContext, WaveformPeaks};
 use auris_io::SoundFont;
-use auris_sampler::{SharedSoundFonts, SoundFontBank};
+use auris_sampler::{SampleBank, SharedSamples, SharedSoundFonts, SoundFontBank};
 
 use crate::error::SessionError;
 use crate::history::{Edit, History};
-use crate::registry::default_registry;
+use crate::registry::registry_with_samples;
 use crate::render::{RenderJob, bank_at_rate, fill_stretches};
 use crate::settings::AudioPreferences;
 
@@ -385,6 +387,12 @@ pub struct Session {
     /// Shared with the registry, whose sampler factory captured it — which is the only way sample
     /// data reaches an instrument the registry builds.
     fonts: SharedSoundFonts,
+    /// [`Self::bank`] again, as the audio sampler reads it.
+    ///
+    /// Shared with the registry for the reason [`Self::fonts`] is. Not kept in step at every
+    /// place the bank changes: [`Self::rebuild_graph`] restates it, because building a graph is
+    /// the only moment a sampler looks.
+    samples: SharedSamples,
     /// Separates discovery handles belonging to different unsaved sessions.
     sound_scope: String,
     pub(crate) listening: crate::audio_audition::ListeningContext,
@@ -700,7 +708,8 @@ impl Session {
     pub fn new(options: SessionOptions) -> Result<Self, SessionError> {
         let work_dir = autosave::create_session_workspace(options.autosave)?;
         let fonts = SoundFontBank::shared();
-        let registry = default_registry(Arc::clone(&fonts));
+        let samples = SampleBank::shared();
+        let registry = registry_with_samples(Arc::clone(&fonts), Arc::clone(&samples));
         let mut project = Project::new(Project::UNTITLED, options.sample_rate);
         if options.master_limiter {
             levels::install_master_limiter(
@@ -747,6 +756,7 @@ impl Session {
             render_bank: AudioSourceBank::new(),
             render_bank_rate,
             fonts,
+            samples,
             font_cache: HashMap::new(),
             shipped_library: options.shipped_fonts,
             soundfont_library: options.soundfont_library,
@@ -1716,6 +1726,9 @@ impl Session {
         // Every rebuild, not only after a rate change: what a clip's stretch is depends on the
         // tempo and on the clip, and both of those are edits that land here.
         fill_stretches(&self.project, &mut self.render_bank);
+        // The audio sampler reads the project-rate copy and resamples as it plays, so a change of
+        // device rate costs it nothing.
+        self.samples.replace_all(self.bank.iter());
         // Whatever the audio thread has handed back is dropped before the hosted plugins are
         // asked for their effects, so an instance whose graph has already been retired is reused
         // rather than replaced. Without this every rebuild would find its plugin still busy and

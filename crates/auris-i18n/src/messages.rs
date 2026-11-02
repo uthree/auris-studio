@@ -463,6 +463,12 @@ messages! {
         ja: "{path} を読み込みました"
     }
 
+    /// Confirmation that an audio file now plays on a track's sampler.
+    fn sample_loaded(name: &str) {
+        en: "Loaded {name} into the sampler",
+        ja: "{name} をサンプラーに読み込みました"
+    }
+
     /// Confirmation that a SoundFont was read, and how many sounds it brought with it.
     ///
     /// The count rather than the path, because a font goes on a shelf instead of onto a track:

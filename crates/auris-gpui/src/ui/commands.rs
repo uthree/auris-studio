@@ -2929,6 +2929,70 @@ impl AurisApp {
         .detach();
     }
 
+    /// Prompts for an audio file and loads it into a track's sampler.
+    ///
+    /// The other way an audio file enters a song: rather than a clip on the timeline, a sound the
+    /// track plays from its notes. Decoded on a worker, like every other import.
+    pub(crate) fn load_sample(&mut self, track: TrackId, cx: &mut Context<Self>) {
+        let extensions: Vec<String> = auris_session::supported_audio_extensions()
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let language = self.language();
+        cx.spawn(async move |this, cx| {
+            let extension_refs: Vec<&str> = extensions.iter().map(String::as_str).collect();
+            let handle = rfd::AsyncFileDialog::new()
+                .set_title(Key::DialogLoadSample.get(language))
+                .add_filter(Key::FilterAudio.get(language), &extension_refs)
+                .pick_file()
+                .await;
+            let Some(handle) = handle else { return };
+            let path = handle.path().to_path_buf();
+            let Ok(rate) = this.update(cx, |this, cx| {
+                let text = messages::importing(this.language(), &path.display().to_string());
+                this.set_status(text);
+                cx.notify();
+                this.project().sample_rate
+            }) else {
+                return;
+            };
+            let loaded = read_file(
+                cx.background_executor().clone(),
+                Reading::Audio { rate },
+                path.clone(),
+            )
+            .await;
+            let _ = this.update(cx, |this, cx| {
+                match loaded.and_then(|loaded| this.take_sample(track, &path, loaded)) {
+                    Ok(line) => this.set_status(line),
+                    Err(error) => {
+                        this.set_failed_status(this.failure(Key::SamplerLoadSample, &error))
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Gives decoded audio to a track's sampler, and says so.
+    pub(crate) fn take_sample(
+        &mut self,
+        track: TrackId,
+        path: &Path,
+        loaded: Loaded,
+    ) -> Result<String, SessionError> {
+        let Loaded::Audio(buffer) = loaded else {
+            return Err(SessionError::EmptySample(path.to_path_buf()));
+        };
+        self.session.place_sample(track, path, buffer)?;
+        let name = self
+            .session
+            .track_sample_name(track)
+            .unwrap_or_else(|| path.display().to_string());
+        Ok(messages::sample_loaded(self.language(), &name))
+    }
+
     /// Gives a file that has been read to the document, and says what happened.
     ///
     /// The file dialogs and a drop all land here, which is what stops them from drifting apart —
@@ -3694,7 +3758,7 @@ impl AurisApp {
 
 /// The command a dropped file would have been, so a failure names the same thing the menu does.
 /// A file read into memory on a worker thread, waiting to be given to the document.
-enum Loaded {
+pub(crate) enum Loaded {
     /// Audio, decoded and resampled to the project's rate.
     Audio(AudioBuffer),
     /// A SoundFont, read whole.
