@@ -173,6 +173,8 @@ pub struct TimelineLanes {
     pub structure: bool,
     /// The key and the chords.
     pub harmony: bool,
+    /// The song-wide lyrics: the line sung at each moment, under the chords.
+    pub lyrics: bool,
     /// Tempo changes, marked along the ruler's lower edge.
     ///
     /// Not a lane of its own — it is drawn *on* the ruler — so turning it off changes no height.
@@ -188,6 +190,7 @@ impl Default for TimelineLanes {
         Self {
             structure: true,
             harmony: true,
+            lyrics: true,
             tempo: true,
         }
     }
@@ -208,6 +211,9 @@ impl TimelineLanes {
         }
         if self.harmony {
             height += Metrics::HARMONY_LANE_HEIGHT;
+        }
+        if self.lyrics {
+            height += Metrics::LYRICS_LANE_HEIGHT;
         }
         height
     }
@@ -979,12 +985,16 @@ mod tests {
         let all = TimelineLanes::default();
         assert_eq!(
             all.header_height(),
-            Metrics::RULER_HEIGHT + Metrics::STRUCTURE_LANE_HEIGHT + Metrics::HARMONY_LANE_HEIGHT
+            Metrics::RULER_HEIGHT
+                + Metrics::STRUCTURE_LANE_HEIGHT
+                + Metrics::HARMONY_LANE_HEIGHT
+                + Metrics::LYRICS_LANE_HEIGHT
         );
 
         let bare = TimelineLanes {
             structure: false,
             harmony: false,
+            lyrics: false,
             tempo: false,
         };
         assert_eq!(

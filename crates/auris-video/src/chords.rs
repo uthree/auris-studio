@@ -38,16 +38,16 @@ const FAMILIES: [&str; 6] = [
 ];
 
 /// An installed font, read once per process.
-struct FontData {
-    bytes: Vec<u8>,
-    index: u32,
+pub(crate) struct FontData {
+    pub(crate) bytes: Vec<u8>,
+    pub(crate) index: u32,
 }
 
 /// The font chord names are drawn in, if the machine has any.
 ///
 /// Loading every installed face takes a noticeable moment, and a preview makes a renderer on
 /// every change of colour, so the answer is kept for the life of the process.
-fn system_font() -> Option<&'static FontData> {
+pub(crate) fn system_font() -> Option<&'static FontData> {
     static FONT: OnceLock<Option<FontData>> = OnceLock::new();
     FONT.get_or_init(|| {
         let mut database = fontdb::Database::new();
@@ -241,7 +241,7 @@ fn fill(frame: &mut Pixmap, path: &SkPath, style: &NoteRollStyle, opacity: f64, 
     frame.fill_path(path, &paint, FillRule::Winding, at, None);
 }
 
-fn unit_byte(value: f64) -> u8 {
+pub(crate) fn unit_byte(value: f64) -> u8 {
     (value.clamp(0.0, 1.0) * 255.0).round() as u8
 }
 

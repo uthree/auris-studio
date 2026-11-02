@@ -291,6 +291,9 @@ struct Catalog {
     generation: String,
     sounds: Vec<Sound>,
     errors: Vec<String>,
+    /// Fonts the document names but could not load, each with its reason; repeated in every
+    /// search page so a model looking for one of their sounds learns why it is not there.
+    unloaded_fonts: Vec<String>,
     inventory: Vec<serde_json::Value>,
     index: Mutex<IndexState>,
     completed: AtomicUsize,
@@ -992,6 +995,8 @@ pub struct SoundLibraryJob {
     sound_bytes: usize,
     base_truncated: bool,
     font_paths: Vec<(SoundFontId, PathBuf)>,
+    /// Fonts the document names whose samples are not loaded, each with the reason.
+    font_errors: Vec<String>,
     extra_paths: Vec<PathBuf>,
     scan_plugins: bool,
     isolated_plugin_discovery: bool,
@@ -1089,6 +1094,10 @@ impl Session {
             );
         }
         let mut font_paths = Vec::new();
+        let font_errors = self
+            .soundfonts()
+            .filter_map(|reference| self.soundfont_load_error(reference.id))
+            .collect();
         for reference in self.soundfonts() {
             if let Some(font) = self.fonts.get(reference.id) {
                 fonts.insert(reference.id, font);
@@ -1132,6 +1141,7 @@ impl Session {
             sound_bytes: budget.sound_bytes,
             base_truncated: budget.sounds_truncated,
             font_paths,
+            font_errors,
             extra_paths: extra_paths.to_vec(),
             scan_plugins: true,
             isolated_plugin_discovery: false,
@@ -1785,6 +1795,9 @@ impl SoundLibraryJob {
             errors_truncated: false,
         };
         let mut errors = Vec::new();
+        for error in &self.font_errors {
+            budget.push_error(&mut errors, error);
+        }
         let mut inventory = if self.scan_plugins {
             root_inventory(
                 &self.extra_paths,
@@ -1916,6 +1929,7 @@ impl SoundLibraryJob {
             generation,
             sounds,
             errors,
+            unloaded_fonts: self.font_errors.clone(),
             inventory,
             index: Mutex::new(IndexState::default()),
             completed: AtomicUsize::new(0),
@@ -2067,6 +2081,9 @@ fn sound_page(mut value: serde_json::Value) -> String {
 fn with_native_status(mut value: serde_json::Value, catalog: &Catalog) -> serde_json::Value {
     if let Some(status) = &catalog.native_status {
         value["native_plugins"] = status.value();
+    }
+    if !catalog.unloaded_fonts.is_empty() {
+        value["unloaded_soundfonts"] = catalog.unloaded_fonts.clone().into();
     }
     value
 }
@@ -2858,6 +2875,68 @@ mod tests {
     }
 
     #[test]
+    fn a_library_font_that_could_not_load_says_why_in_every_search_page() {
+        let _serial = serial_test();
+        let scratch = Scratch::new("unloaded-library-font");
+        let library = scratch.join("soundfonts.json");
+        let path = scratch.soundfont("Grand.sf2");
+        let with_library = || {
+            Session::new(crate::SessionOptions::headless().with_soundfont_library(&library))
+                .unwrap()
+        };
+        let font = with_library().import_soundfont(&path).unwrap();
+        // The file the library names goes away between launches, as a download folder's does.
+        std::fs::remove_file(&path).unwrap();
+        let session = with_library();
+        assert!(!session.soundfont_is_loaded(font));
+        let error = session.soundfont_load_error(font).unwrap();
+        assert!(
+            error.contains("Grand.sf2") && error.contains("not loaded"),
+            "{error}"
+        );
+
+        let response = isolated_job(&session)
+            .run(
+                SoundSearch::Text {
+                    query: "piano".into(),
+                    limit: 10,
+                    offset: 0,
+                    filter: SoundFilter::default(),
+                },
+                false,
+            )
+            .unwrap();
+        let response: serde_json::Value = serde_json::from_str(&response).unwrap();
+        assert_eq!(response["unloaded_soundfonts"][0], error.as_str());
+        assert!(response["scan_error_count"].as_u64().unwrap() >= 1);
+        let diagnostics = isolated_job(&session).diagnostics(0, 16).unwrap();
+        assert!(diagnostics.contains("not loaded"), "{diagnostics}");
+    }
+
+    #[test]
+    fn a_loaded_font_reports_no_error_and_is_shared_between_sessions() {
+        let _serial = serial_test();
+        let scratch = Scratch::new("shared-library-font");
+        let library = scratch.join("soundfonts.json");
+        let path = scratch.soundfont("Grand.sf2");
+        let with_library = || {
+            Session::new(crate::SessionOptions::headless().with_soundfont_library(&library))
+                .unwrap()
+        };
+        with_library().import_soundfont(&path).unwrap();
+        // Two sessions open beside each other, as the window and a workshop composer do.
+        let first = with_library();
+        let second = with_library();
+        let font = first.soundfonts().next().unwrap().id;
+        let other = second.soundfonts().next().unwrap().id;
+        assert_eq!(second.soundfont_load_error(other), None);
+        assert!(Arc::ptr_eq(
+            &first.fonts.get(font).unwrap(),
+            &second.fonts.get(other).unwrap()
+        ));
+    }
+
+    #[test]
     fn isolated_live_search_issues_selectable_metadata_without_loading_native_code() {
         let _serial = serial_test();
         let session = session();
@@ -3231,6 +3310,7 @@ mod tests {
             generation: format!("generation-{key}"),
             sounds: Vec::new(),
             errors: Vec::new(),
+            unloaded_fonts: Vec::new(),
             inventory: Vec::new(),
             index: Mutex::new(IndexState::default()),
             completed: AtomicUsize::new(0),

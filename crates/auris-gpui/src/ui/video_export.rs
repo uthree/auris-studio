@@ -601,7 +601,8 @@ impl AurisApp {
             .child(self.video_color_section(&style, &theme, cx))
             .child(self.video_background_section(&style, &theme, cx))
             .child(self.video_motion_section(&style, &theme, cx))
-            .child(self.video_chords_section(&style, &theme, cx));
+            .child(self.video_chords_section(&style, &theme, cx))
+            .child(self.video_lyrics_section(&style, &theme, cx));
 
         let body = if stacked {
             div()
@@ -1199,6 +1200,24 @@ impl AurisApp {
                 .children(self.video_colour_picker(VideoColourSlot::Chords, &CAPTIONS, theme, cx));
         }
         section.child(self.note(self.t(Key::VideoChordsHint), theme))
+    }
+
+    fn video_lyrics_section(
+        &self,
+        style: &NoteRollStyle,
+        theme: &Theme,
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
+        self.section(Key::VideoLyricSection, theme)
+            .child(self.toggle(
+                "video-lyrics",
+                Key::VideoLyrics,
+                style.lyrics,
+                theme,
+                cx,
+                |style| style.lyrics = !style.lyrics,
+            ))
+            .child(self.note(self.t(Key::VideoLyricsHint), theme))
     }
 
     fn video_background_section(

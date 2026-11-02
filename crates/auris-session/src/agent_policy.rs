@@ -204,6 +204,7 @@ pub const OPERATIONS: &[&str] = &[
     "edit_project.inspect_singer",
     "edit_project.set_singer_voice",
     "edit_project.write_lyrics",
+    "edit_project.edit_lyrics",
     "edit_project.sing",
     "read_report",
     "edit_project.import_transcription",

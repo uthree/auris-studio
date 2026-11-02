@@ -62,6 +62,8 @@ pub enum PromptTarget {
     Chord(Ticks),
     /// The name of the song section in force at a position on the timeline.
     Section(Ticks),
+    /// The song-wide lyric line in force at a position on the timeline, or a new one there.
+    LyricLine(Ticks),
     /// The lyric sung on one note.
     ///
     /// Return commits the word and walks on to the next note in sung order, so a verse can be
@@ -243,6 +245,7 @@ impl PromptTarget {
             | PromptTarget::Lyric { .. }
             | PromptTarget::Phonemes { .. }
             | PromptTarget::Lyrics { .. }
+            | PromptTarget::LyricLine(_)
             // No shared notation: every parameter is written in its own units, and the range
             // and the unit are in the prompt's title instead, where they can name this one.
             | PromptTarget::Param(_) => return None,
@@ -1090,6 +1093,18 @@ impl AurisApp {
             // job rather than an empty field's.
             PromptTarget::Section(at) => {
                 self.session.set_section(at, Some(text));
+                Ok(())
+            }
+            // Retyping a line keeps where it starts; typing over a silence starts a line there
+            // that runs until the next change.
+            PromptTarget::LyricLine(at) => {
+                let start = self
+                    .session
+                    .project()
+                    .lyrics
+                    .change_at(at)
+                    .filter(|change| self.session.project().lyrics.text_at(*change).is_some());
+                self.session.set_lyric_line(start.unwrap_or(at), Some(text));
                 Ok(())
             }
             PromptTarget::Seed(clip) => match text.parse::<u64>() {
@@ -2756,6 +2771,7 @@ mod tests {
             PromptTarget::Key(AT),
             PromptTarget::Chord(AT),
             PromptTarget::Section(AT),
+            PromptTarget::LyricLine(AT),
             PromptTarget::Lyric {
                 clip: ClipId(1),
                 index: 0,
@@ -2804,6 +2820,7 @@ mod tests {
                 | PromptTarget::Key(_)
                 | PromptTarget::Chord(_)
                 | PromptTarget::Section(_)
+                | PromptTarget::LyricLine(_)
                 | PromptTarget::Lyric { .. }
                 | PromptTarget::Phonemes { .. }
                 | PromptTarget::Lyrics { .. }

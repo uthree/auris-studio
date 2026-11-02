@@ -213,6 +213,14 @@ pub struct Project {
     /// it as a hint, so that material generated inside two stretches with the same label is
     /// recognisably the same material.
     pub sections: crate::structure::SectionMap,
+    /// The song's words over the timeline: the line being sung at each moment.
+    ///
+    /// Beside the sections rather than on a singer clip, because it belongs to the song: a
+    /// video caption, a lyric sheet and the agent planning the next verse ask what is sung
+    /// *here*, whichever clip holds the notes. The words on the notes are what is sung; this is
+    /// what is read. A new field, so a file from before it opens with none written.
+    #[serde(default, skip_serializing_if = "crate::lyrics::LyricMap::is_empty")]
+    pub lyrics: crate::lyrics::LyricMap,
     /// Parameter values that move along the timeline, one lane per automated parameter.
     ///
     /// The fifth timeline map, and the only one that is a collection: there is a curve per
@@ -333,6 +341,7 @@ impl Project {
             signatures: SignatureMap::default(),
             harmony: Harmony::default(),
             sections: crate::structure::SectionMap::default(),
+            lyrics: crate::lyrics::LyricMap::default(),
             automation: crate::automation::Automation::new(),
             tracks: Vec::new(),
             master: MixerStrip::default(),

@@ -1664,11 +1664,46 @@ impl Session {
         if let Some(font) = self.font_cache.get(path) {
             return Some(Arc::clone(&font.samples));
         }
-        let font = load_soundfont(path)
-            .inspect_err(|error| log::warn!("{}: {error}", path.display()))
-            .ok()?;
+        let font = match shared_library_font(path) {
+            Ok(font) => font,
+            Err(error) => {
+                log::warn!("{}: {error}", path.display());
+                self.font_errors.insert(path.to_path_buf(), error);
+                return None;
+            }
+        };
+        self.font_errors.remove(path);
         self.cache_font(path, Arc::clone(&font), true);
         Some(font)
+    }
+
+    /// Why the font a document names has no sounds in this session, or `None` when it has them.
+    pub fn soundfont_load_error(&self, id: SoundFontId) -> Option<String> {
+        if self.fonts.contains(id) {
+            return None;
+        }
+        let reference = self.project.soundfonts.get(&id)?;
+        let Some(path) = reference.path.resolve(self.project_folder()) else {
+            return Some(format!(
+                "SoundFont \"{}\" has no file location this project can resolve",
+                reference.name
+            ));
+        };
+        let reason =
+            self.font_errors
+                .get(&path)
+                .cloned()
+                .unwrap_or_else(|| match path.try_exists() {
+                    Ok(true) => "the file exists but was not loaded".to_string(),
+                    Ok(false) => "the file does not exist".to_string(),
+                    Err(error) => error.to_string(),
+                });
+        Some(format!(
+            "SoundFont \"{}\" (font {}, {}) is not loaded, so none of its sounds can be used: {reason}",
+            reference.name,
+            id.0,
+            path.display()
+        ))
     }
 
     /// Keeps the file identity alongside an id that a different history branch may reuse.
@@ -1929,6 +1964,51 @@ pub(super) fn project_write_lock_until(
             }
         }
     }
+}
+
+/// Library fonts already decoded by any session in this process, by path.
+///
+/// The song workshop runs up to three composer sessions beside the window's own, and every one
+/// of them adopts the same library. Without this each would decode its own copy of a font that can
+/// be hundreds of megabytes; with it they share one, and it is dropped when the last session
+/// holding it lets go. The file's size and modification time guard against a font replaced on
+/// disk under the same name.
+type SharedFonts = std::collections::HashMap<
+    PathBuf,
+    (
+        u64,
+        Option<std::time::SystemTime>,
+        std::sync::Weak<SoundFont>,
+    ),
+>;
+
+static SHARED_LIBRARY_FONTS: std::sync::OnceLock<std::sync::Mutex<SharedFonts>> =
+    std::sync::OnceLock::new();
+
+/// Reads a library font, or hands back the copy another session already decoded.
+fn shared_library_font(path: &Path) -> Result<Arc<SoundFont>, String> {
+    let stamp = std::fs::metadata(path)
+        .map(|metadata| (metadata.len(), metadata.modified().ok()))
+        .map_err(|error| format!("{}: {error}", path.display()))?;
+    let shared = SHARED_LIBRARY_FONTS.get_or_init(Default::default);
+    if let Ok(mut fonts) = shared.lock() {
+        fonts.retain(|_, (_, _, font)| font.strong_count() > 0);
+        if let Some(font) = fonts
+            .get(path)
+            .filter(|(len, modified, _)| (*len, *modified) == stamp)
+            .and_then(|(_, _, font)| font.upgrade())
+        {
+            return Ok(font);
+        }
+    }
+    let font = load_soundfont(path).map_err(|error| error.to_string())?;
+    if let Ok(mut fonts) = shared.lock() {
+        fonts.insert(
+            path.to_path_buf(),
+            (stamp.0, stamp.1, Arc::downgrade(&font)),
+        );
+    }
+    Ok(font)
 }
 
 #[cfg(test)]

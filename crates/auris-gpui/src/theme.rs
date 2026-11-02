@@ -1487,6 +1487,8 @@ impl Metrics {
     /// which is why it sits above: the stack reads from the largest division of the song down
     /// to the smallest.
     pub const STRUCTURE_LANE_HEIGHT: Pixels = px(18.0);
+    /// Height of the lyrics lane under the chords.
+    pub const LYRICS_LANE_HEIGHT: Pixels = px(18.0);
     /// Width of the track header column.
     ///
     /// Wide enough for the button row an *audio* track carries — mute, solo, arm and input

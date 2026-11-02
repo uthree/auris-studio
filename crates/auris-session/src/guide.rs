@@ -573,6 +573,14 @@ pub mod architecture {
     //! at 128 MiB per turn; this is an Auris budget, not a provider capability guarantee.
     //! Live agents write bounded harmony with `edit_harmony` and singer lyrics with
     //! `write_lyrics`; both are undoable document edits and never regenerate notes.
+    //! The song's words are kept twice, for two readers. A singer's notes carry what is *sung*,
+    //! a mora or a word at a time; [`Project::lyrics`](auris_core::Project::lyrics) carries what
+    //! is *read* — the line in force at each moment, as written — for video subtitles and the
+    //! lyrics lane. Song composition writes each phrase there as it writes the vocal, and the
+    //! agent's `write_lyrics` annotates the notes it fills in the same undo step, so neither
+    //! door can produce a song with words and no lines. `edit_lyrics` writes explicit lines or
+    //! rebuilds them from a singer track ([`Session::annotate_lyrics_from_vocals`](crate::Session::annotate_lyrics_from_vocals));
+    //! nothing rewrites the annotation behind a person's back, and editing it never moves a note.
     //! Bar-addressed harmony follows the meter map independently of the pointer editing grid.
     //! A supplied key replaces internal modulations; the range restores its previous key and
     //! chord (including silence) at the end, leaving outside harmony intact.

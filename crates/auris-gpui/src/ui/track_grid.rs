@@ -49,6 +49,7 @@ impl AurisApp {
             self.canvas.ruler.set(None);
             self.canvas.structure.set(None);
             self.canvas.harmony.set(None);
+            self.canvas.lyrics.set(None);
         } else {
             self.track_grid.frozen = false;
             self.track_grid.frames.clear();

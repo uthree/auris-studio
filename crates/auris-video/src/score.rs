@@ -39,6 +39,17 @@ pub struct ScoreChord {
     pub name: String,
 }
 
+/// A line of the song's words, shown as a caption while it is sung.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ScoreLyric {
+    /// When the line starts, in seconds from the start of the song.
+    pub start: f64,
+    /// When it stops being shown.
+    pub end: f64,
+    /// The words, as written.
+    pub text: String,
+}
+
 /// Every note a video draws, sorted by start, and the chords they make.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct NoteScore {
@@ -52,6 +63,8 @@ pub struct NoteScore {
     /// project with none written leaves it empty, and the session — which owns the recognition
     /// of chords from notes — may fill it with [`Self::set_chords`] instead.
     pub chords: Vec<ScoreChord>,
+    /// The song-wide lyrics, sorted and never overlapping, from the project's lyric annotation.
+    pub lyrics: Vec<ScoreLyric>,
 }
 
 impl NoteScore {
@@ -119,7 +132,27 @@ impl NoteScore {
                 )
             }),
         );
+
+        let until = project.end_tick().max(project.lyrics.end()) + Ticks(1);
+        for span in project.lyrics.spans_in(Ticks::ZERO, until) {
+            let start = project.tempo_map.ticks_to_seconds(span.start).0;
+            let end = project.tempo_map.ticks_to_seconds(span.end).0;
+            if start.is_finite() && end.is_finite() && end > start {
+                score.lyrics.push(ScoreLyric {
+                    start,
+                    end,
+                    text: span.text,
+                });
+            }
+        }
         score
+    }
+
+    /// The index into [`Self::lyrics`] of the line being sung at `seconds`, if any.
+    pub fn lyric_at(&self, seconds: f64) -> Option<usize> {
+        let after = self.lyrics.partition_point(|line| line.start <= seconds);
+        let index = after.checked_sub(1)?;
+        (seconds < self.lyrics[index].end).then_some(index)
     }
 
     /// Replaces the chord progression with `spans` — start and end in ticks, and the name to
@@ -173,6 +206,7 @@ impl NoteScore {
                 .filter_map(|note| remap[note.track].map(|track| ScoreNote { track, ..*note }))
                 .collect(),
             chords: self.chords.clone(),
+            lyrics: self.lyrics.clone(),
         }
     }
 
