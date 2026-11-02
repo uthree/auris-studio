@@ -33,6 +33,8 @@ impl Log {
     /// Appends to the candidate's log; a recovery continues the same file.
     pub(super) fn open(folder: &Path) -> Self {
         let path = folder.join(FILE);
+        // A new candidate's folder is made by its first checkpoint, after the log opens.
+        let _ = std::fs::create_dir_all(folder);
         let file = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
@@ -209,6 +211,14 @@ mod tests {
                 .ends_with("(5 more characters)")
         );
         assert!(lines.iter().all(|l| l["seconds"].is_number()));
+    }
+
+    #[test]
+    fn a_new_candidate_folder_is_made_for_its_log() {
+        let root = tempfile::tempdir().unwrap();
+        let folder = root.path().join("1");
+        Log::open(&folder).note("assignment", json!(1));
+        assert_eq!(lines(&folder).len(), 1);
     }
 
     #[test]

@@ -1792,6 +1792,16 @@ pub mod composition {
     //! The written spelling stays on the first note with `+` continuations; phonemes carry
     //! pronunciation. Workshop cards read that written score rather than the kana reading.
     //!
+    //! A mora is a unit of the language, not of the melody, and two kinds need no note of
+    //! their own: a held long vowel (ー, or the second あ of さあ) may end the note before it,
+    //! and っ is the rest after a note. [`Session::analyze_lyrics_fitted`](crate::Session::analyze_lyrics_fitted)
+    //! says which moras those are, the range of note counts a phrase can be sung on, and
+    //! whether it fits a given count — the check that keeps a line sung to a repeated motif
+    //! free of 字余り and 字足らず. It never merges or splits to force a fit. Its reading cut
+    //! into notes with `|` is what `write_lyrics_with_reading` accepts; a grouped っ sings no
+    //! closure, so the write is refused unless a rest follows that note. A reading without
+    //! `|`, and the composer, keep one mora to a note.
+    //!
     //! Kana is read a phrase at a time, never a mora at a time, because three kana are read
     //! by the words around them: the particles は and へ sing *wa* and *e*
     //! ([`spoken_kana_lyric`](auris_vocal::spoken_kana_lyric)). A space ends a word, and with

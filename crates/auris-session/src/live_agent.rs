@@ -124,13 +124,16 @@ pub enum Command {
         /// Inspect, validate or apply. Copy stable clip IDs and native parameter addresses from inspection.
         operation: crate::arrangement::Operation,
     },
-    /// Analyze Japanese lyrics into source-located phrases, readings and moras without editing. Explicit kana readings are diagnostic-only; use repair_lyrics to apply a pronunciation to existing note slots.
+    /// Analyze Japanese lyrics into source-located phrases, readings and moras without editing. Each mora's slot is note, hold (a long vowel, ー or the second あ of さあ, that may end the previous note) or rest (っ, sung as a rest after the previous note). Each phrase reports min_notes..max_notes and note_reading, the reading cut into notes with '|' for write_lyrics. Pass fit to check phrases against the note count of their melody (字余り/字足らず). Explicit kana readings are diagnostic-only; use repair_lyrics to apply a pronunciation to existing note slots.
     AnalyzeLyrics {
         /// Original Japanese lyric, up to 65536 UTF-8 bytes.
         text: String,
         /// Optional request-local readings, addressed by one-based musical phrase.
         #[serde(default)]
         readings: Vec<crate::lyric_harness::PhraseReading>,
+        /// Optional note counts each phrase must fit, addressed by one-based musical phrase.
+        #[serde(default)]
+        fit: Vec<crate::lyric_harness::PhraseFit>,
     },
     /// Diagnose lyrics before composition or compare explicit singer-clip phrases. Pass exactly one of spec (an .asong TOML document) or comparisons. Returns all independent complaints and the live document revision. No audio synthesis or document edits.
     DiagnoseSong {
@@ -377,7 +380,7 @@ pub enum Command {
         /// Original nonempty written phrase, e.g. 桜咲いた. Never replace it with its reading.
         #[schemars(length(min = 1, max = 16384))]
         text: String,
-        /// Optional nonempty kana pronunciation, e.g. さくらさいた; leaves the written text intact.
+        /// Optional nonempty kana pronunciation, e.g. さくらさいた; leaves the written text intact. Without '|' each mora takes one note. With '|' between notes (analyze_lyrics note_reading, e.g. さあ| いっ|しょ|に) a group may hold a long vowel or end in っ, which is sung as a rest: the next note must start at least a thirty-second note after that note ends.
         #[schemars(length(min = 1, max = 16384))]
         reading: Option<String>,
         /// Zero-based storage index from read_notes; notes from this position in time order receive lyrics.
@@ -739,10 +742,12 @@ impl Session {
                     | crate::arrangement::Operation::InspectBreathing { .. }
                     | crate::arrangement::Operation::Apply { .. }),
             } => self.agent_arrangement(operation),
-            Command::AnalyzeLyrics { text, readings } => {
-                serde_json::to_string(&self.analyze_lyrics(&text, &readings)?)
-                    .map_err(|e| e.to_string())
-            }
+            Command::AnalyzeLyrics {
+                text,
+                readings,
+                fit,
+            } => serde_json::to_string(&self.analyze_lyrics_fitted(&text, &readings, &fit)?)
+                .map_err(|e| e.to_string()),
             Command::DiagnoseSong { spec, comparisons } => {
                 if spec.is_some() == !comparisons.is_empty() {
                     return Err("Pass exactly one of spec or nonempty comparisons".into());

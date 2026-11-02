@@ -76,6 +76,7 @@ mod layers;
 mod levels;
 pub mod lyric_harness;
 mod lyric_lines;
+pub(crate) mod lyric_slots;
 mod lyrics;
 mod mixer;
 mod monitor;

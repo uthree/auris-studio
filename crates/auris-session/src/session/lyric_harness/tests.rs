@@ -12,6 +12,52 @@ fn verses(second: &str) -> SongSpec {
 }
 
 #[test]
+fn analysis_fits_phrases_to_note_counts() {
+    let session = session();
+    let text = "さあ いっしょに ゆこー\nさあ ゆこう";
+    let fits = [
+        PhraseFit {
+            phrase: 1,
+            notes: 6,
+        },
+        PhraseFit {
+            phrase: 2,
+            notes: 6,
+        },
+    ];
+    let analysis = session.analyze_lyrics_fitted(text, &[], &fits).unwrap();
+    let first = &analysis.phrases[0];
+    assert_eq!((first.min_notes, first.max_notes), (6, 8));
+    assert_eq!(first.moras[1].slot, MoraSlot::Hold);
+    assert_eq!(first.moras[3].slot, MoraSlot::Rest);
+    let fit = first.fit.as_ref().unwrap();
+    assert_eq!((fit.verdict, fit.excess), (FitVerdict::Fits, 0));
+    assert_eq!(
+        first.note_reading.as_deref(),
+        Some("さあ| いっ|しょ|に| ゆ|こー")
+    );
+    // ゆこう spelled in kana is う, not a held o: 5 moras, one hold, too few for 6 notes.
+    let second = &analysis.phrases[1];
+    assert_eq!((second.min_notes, second.max_notes), (4, 5));
+    let fit = second.fit.as_ref().unwrap();
+    assert_eq!((fit.verdict, fit.excess), (FitVerdict::TooFewMoras, -1));
+    assert_eq!(second.note_reading.as_deref(), Some("さ|あ| ゆ|こ|う"));
+
+    assert!(
+        session
+            .analyze_lyrics_fitted(
+                text,
+                &[],
+                &[PhraseFit {
+                    phrase: 3,
+                    notes: 4
+                }]
+            )
+            .is_err()
+    );
+}
+
+#[test]
 fn analysis_keeps_original_unicode_locations_and_special_moras() {
     let session = session();
     let text = " きゃっと、\r\n  コーヒー！\n漢字";
