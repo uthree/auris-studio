@@ -225,12 +225,13 @@ mod tests {
     fn harmony_event_limit_counts_changes_without_rounding_or_duplicates() {
         let session = Session::new(crate::SessionOptions::headless().with_balance(false)).unwrap();
         let mut project = session.project().clone();
-        let numeral = Numeral::parse("I").unwrap();
+        // Alternating, because a chord restating the one before it is not a change.
+        let numerals = [Numeral::parse("I").unwrap(), Numeral::parse("IV").unwrap()];
         for index in 0..200 {
             project
                 .harmony
                 .chords
-                .set_point(Ticks(index * 15), Some(numeral));
+                .set_point(Ticks(index * 15), Some(numerals[index as usize % 2]));
         }
         project
             .harmony

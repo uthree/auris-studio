@@ -139,10 +139,16 @@ mod tests {
             serde_json::from_str(&session.agent_command(command).unwrap()).unwrap();
         for offset in 0..8 {
             let at = session.project().signatures.bar_start(25 + offset);
-            assert_eq!(session.harmony().chords.change_at(at), Some(at));
+            // The two bars of V are one chord held across the bar line, not two changes.
+            let starts = if offset % 4 == 3 {
+                session.project().signatures.bar_start(24 + offset)
+            } else {
+                at
+            };
+            assert_eq!(session.harmony().chords.change_at(at), Some(starts));
             assert_eq!(
                 session.harmony().chords.change_at(at + Ticks::QUARTER),
-                Some(at)
+                Some(starts)
             );
             assert_eq!(
                 session.harmony().chord_at(at).unwrap().to_string(),
@@ -150,7 +156,7 @@ mod tests {
             );
         }
         assert_eq!(result["chart_bars"], 4);
-        assert_eq!(result["chord_changes"], 8);
+        assert_eq!(result["chord_changes"], 6);
         assert_eq!(session.project().tracks, before.tracks);
         let after = session.project().clone();
         session.undo();
