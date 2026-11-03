@@ -738,6 +738,7 @@ dependencies = [
  "cpal",
  "crossbeam-channel",
  "log",
+ "rayon",
  "thiserror 2.0.21",
 ]
 
