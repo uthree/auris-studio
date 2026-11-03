@@ -100,6 +100,9 @@ pub use spectrogram::Spectrogram;
 pub use spectrum::{SILENCE_DB, SpectrumAnalyzer, bands_from_bins};
 
 #[cfg(test)]
+mod performance_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
