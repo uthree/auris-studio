@@ -2047,6 +2047,17 @@ pub mod composition {
     //! while newer drafts arrive. Seeking a section or the waveform changes only the audition
     //! clock. Unnamed score gaps and rendered effect tails stay unnamed.
     //!
+    //! A loop song — looping on, with a region holding all the music — is auditioned as a loop.
+    //! [`RenderJob::render_audition`](crate::RenderJob::render_audition) renders the lead-in
+    //! before the region as written and then one warmed-up cycle of it, so what rings over the
+    //! loop's end already sounds at its start and the buffer ends exactly at the region's end.
+    //! The timeline's `loop_start_seconds` names the wrap point; it is recognised from the
+    //! buffer's length, so an ordinary render with a tail still plays once.
+    //! [`prepare_looping_output_preview`](crate::prepare_looping_output_preview) converts the cycle
+    //! with itself as context on both sides, and the callback wraps mid-block, so neither the rate
+    //! conversion nor the block boundary puts a click on the seam. A loop never completes; Stop
+    //! ends it. A region with bars still to come is somebody listening to a passage, and plays once.
+    //!
     //! # Two stages
     //!
     //! **The frame is planned first and then frozen.** Harmony, form, shared phrase boundaries
