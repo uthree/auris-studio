@@ -1071,7 +1071,7 @@ impl AurisApp {
                     .max(px(6.0));
                 Some(LintMark {
                     id: diagnostic.id(),
-                    message: self.lint_message(diagnostic),
+                    message: self.lint_hover(&[diagnostic]),
                     severity: diagnostic.severity,
                     left,
                     top,
@@ -1082,6 +1082,170 @@ impl AurisApp {
                 })
             })
             .collect()
+    }
+
+    /// What hovering a problem says: each problem in the interface language with its fix under
+    /// it when there is one, then what a click offers.
+    ///
+    /// One wording for the lanes and the piano roll, so a problem reads the same wherever the
+    /// pointer found it.
+    pub(crate) fn lint_hover(&self, diagnostics: &[&Diagnostic]) -> String {
+        let mut lines = Vec::new();
+        for diagnostic in diagnostics {
+            lines.push(self.lint_message(diagnostic));
+            if let Some(fix) = &diagnostic.fix {
+                lines.push(
+                    self.t(Key::ProblemsMarkFix)
+                        .replace("{fix}", &self.lint_fix_label(fix)),
+                );
+            }
+        }
+        lines.push(self.t(Key::ProblemsMarkHint).to_string());
+        lines.join("\n")
+    }
+
+    /// The notes of the clip in the piano roll that the linter flagged, each with every problem
+    /// it is part of, the most severe first, in the order the clip stores them.
+    pub(crate) fn roll_lint_notes(&self) -> Vec<RollLintNote> {
+        let Some(clip) = self.selected_clip else {
+            return Vec::new();
+        };
+        let mut flagged: Vec<RollLintNote> = Vec::new();
+        for diagnostic in self.lint.diagnostics() {
+            for note in diagnostic.notes.iter().filter(|note| note.clip == clip) {
+                match flagged.iter_mut().find(|entry| entry.index == note.index) {
+                    Some(entry) => {
+                        if !entry.ids.contains(&diagnostic.id()) {
+                            entry.ids.push(diagnostic.id());
+                            entry.severities.push(diagnostic.severity);
+                        }
+                    }
+                    None => flagged.push(RollLintNote {
+                        index: note.index,
+                        ids: vec![diagnostic.id()],
+                        severities: vec![diagnostic.severity],
+                    }),
+                }
+            }
+        }
+        for entry in &mut flagged {
+            let mut order: Vec<usize> = (0..entry.ids.len()).collect();
+            order.sort_by_key(|&at| std::cmp::Reverse(entry.severities[at]));
+            entry.ids = order.iter().map(|&at| entry.ids[at].clone()).collect();
+            entry.severities = order.iter().map(|&at| entry.severities[at]).collect();
+        }
+        flagged.sort_by_key(|entry| entry.index);
+        flagged
+    }
+
+    /// The hover strips over the squiggles under flagged notes, positioned in the roll's own
+    /// coordinates: the hover says what is wrong and how to fix it, and a click opens the menu a
+    /// mark on the lanes opens, for the most severe of the note's problems.
+    ///
+    /// Transparent and with no handler but the click, so the note above keeps every gesture it
+    /// had: a press anywhere on the note itself still lands on the roll.
+    pub(crate) fn roll_lint_strips(
+        &self,
+        flagged: &[RollLintNote],
+        notes: &[auris_session::prelude::Note],
+        clip_start: auris_session::prelude::Ticks,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
+        let theme = self.theme.clone();
+        flagged
+            .iter()
+            .filter_map(|entry| {
+                let note = notes.get(entry.index)?;
+                let diagnostics: Vec<&Diagnostic> = entry
+                    .ids
+                    .iter()
+                    .filter_map(|id| self.lint.report.find(id))
+                    .collect();
+                let first = entry.ids.first()?.clone();
+                let left = self.timeline.tick_to_x(clip_start + note.start);
+                let width = self.timeline.duration_to_width(note.length).max(px(2.0));
+                let bottom =
+                    squiggle_baseline(self.pitch.pitch_to_y(note.pitch), self.pitch.row_height);
+                let index = entry.index;
+                Some(
+                    div()
+                        .id(("roll-lint", index))
+                        .debug_selector(move || format!("roll-lint-{index}"))
+                        .absolute()
+                        .left(left)
+                        .top(bottom - SQUIGGLE_GRAB_ABOVE)
+                        .w(width)
+                        .h(SQUIGGLE_GRAB_ABOVE + SQUIGGLE_GRAB_BELOW)
+                        .cursor_pointer()
+                        .tooltip(crate::ui::tooltip::keyed_tip(
+                            self.lint_hover(&diagnostics),
+                            "",
+                            &theme,
+                        ))
+                        .on_mouse_down(
+                            gpui::MouseButton::Left,
+                            AurisApp::opens_menu(cx, move |this, at| this.lint_menu(at, &first)),
+                        )
+                        .into_any_element(),
+                )
+            })
+            .collect()
+    }
+}
+
+/// One note the linter flagged in the clip on the piano roll.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RollLintNote {
+    /// The note's index in the clip's stored notes.
+    pub index: usize,
+    /// The problems it is part of, most severe first.
+    pub ids: Vec<String>,
+    /// Their severities, in the same order.
+    pub severities: Vec<Severity>,
+}
+
+/// Where a flagged note's squiggle runs: the foot of the note, in the two pixels between its row
+/// and the next, so the line underlines the note rather than crossing out the one below it.
+///
+/// `top` is the top of the note's row and `row_height` its height, both in the roll's
+/// coordinates; the note itself is drawn a pixel inside each edge of the row.
+pub fn squiggle_baseline(top: Pixels, row_height: f32) -> Pixels {
+    top + px(row_height) - px(0.5)
+}
+
+/// How far above the squiggle's baseline its hover reaches: over the wave and the foot of the
+/// note, and no further, so the note keeps nearly all of its own height for its own gestures.
+const SQUIGGLE_GRAB_ABOVE: Pixels = px(2.5);
+/// How far below the baseline the hover reaches: over the wave and into the top two pixels of the
+/// row below, which is what a line two pixels from that row costs.
+const SQUIGGLE_GRAB_BELOW: Pixels = px(2.5);
+
+/// How high the squiggle swings each side of its baseline.
+pub const SQUIGGLE_AMPLITUDE: f32 = 1.5;
+/// How long one swing of the squiggle is, crest to crest.
+pub const SQUIGGLE_PERIOD: f32 = 4.0;
+
+/// The points of a squiggle from `left` to `right` around `baseline`: a zigzag of
+/// [`SQUIGGLE_PERIOD`] crest to crest and [`SQUIGGLE_AMPLITUDE`] each side, the shape a spelling
+/// checker draws, ending exactly at `right` however the width divides.
+pub fn squiggle_points(left: Pixels, right: Pixels, baseline: Pixels) -> Vec<Point<Pixels>> {
+    let half = SQUIGGLE_PERIOD / 2.0;
+    let span = f32::from(right - left).max(0.0);
+    let mut points = Vec::new();
+    let mut x = 0.0_f32;
+    let mut low = true;
+    loop {
+        let swing = if low {
+            SQUIGGLE_AMPLITUDE
+        } else {
+            -SQUIGGLE_AMPLITUDE
+        };
+        points.push(gpui::point(left + px(x.min(span)), baseline + px(swing)));
+        if x >= span {
+            return points;
+        }
+        x += half;
+        low = !low;
     }
 }
 
@@ -1190,6 +1354,101 @@ mod tests {
         app.read_with(cx, |this, _| {
             assert_eq!(this.lint.report.diagnostics.len(), 1);
             assert!(this.session.project().lint_suppressions.is_empty());
+        });
+    }
+
+    #[test]
+    fn a_squiggle_swings_both_sides_of_its_baseline_and_ends_at_the_note_end() {
+        let points = squiggle_points(px(10.0), px(21.0), px(50.0));
+        assert_eq!(points.first().unwrap().x, px(10.0));
+        assert_eq!(points.last().unwrap().x, px(21.0));
+        for pair in points.windows(2) {
+            assert!(pair[1].x > pair[0].x);
+            assert_eq!(
+                (pair[1].y - pair[0].y).abs(),
+                px(2.0 * SQUIGGLE_AMPLITUDE),
+                "every segment crosses the baseline crest to crest"
+            );
+        }
+        // Eleven pixels at two a swing: five whole swings and the half-step to the end.
+        assert_eq!(points.len(), 7);
+        // The line sits on the seam between the note's row and the next one: below the note's
+        // own body, which stops a pixel short of its row, and clear of the next row's note.
+        let top = px(100.0);
+        let row = 12.0;
+        let baseline = squiggle_baseline(top, row);
+        assert!(baseline + px(SQUIGGLE_AMPLITUDE) <= top + px(row) + px(1.0));
+        assert!(baseline - px(SQUIGGLE_AMPLITUDE) >= top + px(row) - px(2.5));
+    }
+
+    /// [`with_a_duplicate`] with its clip open in the piano roll, middle C in view.
+    fn with_a_duplicate_in_the_roll(
+        cx: &mut TestAppContext,
+    ) -> (
+        gpui::Entity<AurisApp>,
+        &mut gpui::VisualTestContext,
+        auris_session::prelude::ClipId,
+    ) {
+        let (app, cx, _) = with_a_duplicate(cx);
+        let clip = app.update(cx, |this, _| {
+            let clip = this.lint.report.diagnostics[0].notes[0].clip;
+            this.open_clip_in_editor(clip);
+            clip
+        });
+        harness::paint(&app, cx);
+        harness::show_pitch(&app, cx, 60);
+        (app, cx, clip)
+    }
+
+    #[gpui::test]
+    fn a_flagged_note_in_the_roll_is_underlined_and_its_squiggle_says_how_to_fix_it(
+        cx: &mut TestAppContext,
+    ) {
+        let (app, cx, clip) = with_a_duplicate_in_the_roll(cx);
+        let flagged = app.read_with(cx, |this, _| this.roll_lint_notes());
+        assert_eq!(
+            flagged.iter().map(|entry| entry.index).collect::<Vec<_>>(),
+            vec![0, 1],
+            "both copies of the note are part of the problem"
+        );
+        let hover = app.read_with(cx, |this, _| {
+            let diagnostic = &this.lint.report.diagnostics[0];
+            let hover = this.lint_hover(&[diagnostic]);
+            assert!(hover.starts_with(&this.lint_message(diagnostic)));
+            assert!(hover.contains(&this.lint_fix_label(diagnostic.fix.as_ref().unwrap())));
+            assert!(hover.ends_with(this.t(Key::ProblemsMarkHint)));
+            hover
+        });
+        assert_eq!(hover.lines().count(), 3);
+
+        // The strip lies along the foot of the note: below its middle, across its width.
+        let strip = cx
+            .debug_bounds("roll-lint-0")
+            .expect("a squiggle is drawn under the flagged note");
+        let middle = harness::roll_point(&app, cx, Ticks(240), 60);
+        let row = app.read_with(cx, |this, _| this.pitch.row_height);
+        assert!(strip.top() > middle.y);
+        assert!(strip.top() < middle.y + px(row / 2.0));
+        assert!(strip.left() < middle.x && strip.right() > middle.x);
+
+        // Clicking it opens the problem's menu, and its fix removes the copy.
+        harness::click("roll-lint-0", cx);
+        let id = app.read_with(cx, |this, _| this.lint.report.diagnostics[0].id());
+        harness::choose(&app, cx, &MenuCommand::LintFix(id));
+        app.read_with(cx, |this, _| {
+            assert_eq!(this.session.midi_clip(clip).unwrap().notes.len(), 1);
+        });
+    }
+
+    #[gpui::test]
+    fn a_press_on_the_body_of_a_flagged_note_still_selects_it(cx: &mut TestAppContext) {
+        let (app, cx, _) = with_a_duplicate_in_the_roll(cx);
+        let middle = harness::roll_point(&app, cx, Ticks(240), 60);
+        harness::press(cx, middle);
+        harness::release(cx, middle);
+        app.read_with(cx, |this, _| {
+            assert!(this.menu.is_none(), "the squiggle did not take the press");
+            assert_eq!(this.selected_notes.len(), 1);
         });
     }
 

@@ -2272,6 +2272,8 @@ new のオプション
     ProblemsScopeClip { en: "in {clip}", ja: "{clip}" }
     ProblemsScopeSection { en: "in every {section}", ja: "すべての{section}" }
     ProblemsDeleted { en: "(deleted)", ja: "（削除済み）" }
+    ProblemsMarkFix { en: "Fix: {fix}", ja: "修正案：{fix}" }
+    ProblemsMarkHint { en: "Click for the fix and ignore options", ja: "クリックで修正・無視のメニュー" }
     ProblemsThisClip { en: "this clip", ja: "このクリップ" }
     LintNameCrowdedOnset { en: "Too many notes at once", ja: "同時発音が多すぎる" }
     LintNameDenseNotes { en: "Too dense", ja: "音符が密集しすぎ" }
