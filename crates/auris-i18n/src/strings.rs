@@ -1033,6 +1033,11 @@ strings! {
     VideoTempo { en: "Show the tempo (BPM)", ja: "テンポ（BPM）を表示" }
     VideoBeatCounter { en: "Show the beat counter", ja: "拍子カウンターを表示" }
     VideoMeterHint { en: "In the top right corner. The counter is a polygon with a corner for each beat of the bar: the beat sounding now lights up, and the outline is traced round as the bar goes by.", ja: "右上に表示します。拍子カウンターは1小節の拍の数だけ角を持つ正多角形で、今の拍の角が光り、小節が進むにつれて輪郭がなぞられていきます。" }
+    VideoLyricColour { en: "Subtitle colour", ja: "字幕の色" }
+    VideoPadding { en: "Silence before and after", ja: "前後の余白" }
+    VideoLeadIn { en: "Before the music", ja: "演奏前" }
+    VideoTail { en: "After the music", ja: "演奏後" }
+    VideoPaddingHint { en: "The video starts this long before the first beat, with the notes already coming in, and goes on this long after the sound has died away.", ja: "最初の拍の前にこの秒数だけ無音を置き、ノートが流れてくるところから始めます。音が消えた後もこの秒数だけ続けます。" }
     VideoLyricsHint { en: "The line being sung, along the bottom. Uses the song's lyrics lane, which the AI and song composition fill in as they write words.", ja: "歌っている行を画面下に表示します。曲の歌詞レーンの内容を使います（AIや自動作曲が歌詞を書くと自動で入ります）。" }
     VideoPreviewHint { en: "The preview shows the moment under the playhead. Move the playhead to see another.", ja: "プレビューは再生位置の瞬間です。再生位置を動かすと別の場面を確認できます。" }
     VideoFfmpegChecking { en: "Looking for ffmpeg…", ja: "ffmpeg を探しています…" }
@@ -2125,6 +2130,8 @@ VIDEO OPTIONS (default: the look last chosen in the desktop application)
                                   How notes are coloured
         --background <image>      A PNG, JPEG or WebP behind the notes
         --seconds <n>             Seconds of music across the frame
+        --lead-in <seconds>       Silence before the music starts (default: 1)
+        --tail <seconds>          Silence after the music has ended (default: 2)
         --particles <amount>      Sparks where notes meet the playhead: 0 is none, 1 the usual
         --sink <amount>           How far sounding notes sink: 0 is still, 1 the usual
         --drums                   Draw drum tracks too
@@ -2218,6 +2225,8 @@ video のオプション（既定: デスクトップ版で最後に選んだ見
                                   ノートの色の付け方
         --background <image>      ノートの背後に敷く PNG・JPEG・WebP
         --seconds <n>             画面の幅に収める曲の秒数
+        --lead-in <seconds>       演奏が始まる前の無音の秒数（既定: 1）
+        --tail <seconds>          演奏が終わった後の無音の秒数（既定: 2）
         --particles <amount>      再生線でノートが散らす火花の量（0 でなし、1 が標準）
         --sink <amount>           演奏中のノートが沈み込む深さ（0 で動かない、1 が標準）
         --drums                   ドラムトラックも描く

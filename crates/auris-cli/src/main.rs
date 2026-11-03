@@ -1411,6 +1411,17 @@ fn video(args: &[String]) -> Result<(), String> {
                     .parse()
                     .map_err(|_| messages::unknown_option(LANGUAGE, &format!("{option} {text}")))?;
             }
+            "--lead-in" | "--tail" => {
+                let text = value(&mut index, option, Key::CliNeedsValue)?;
+                let seconds: f32 = text
+                    .parse()
+                    .map_err(|_| messages::unknown_option(LANGUAGE, &format!("{option} {text}")))?;
+                if option == "--lead-in" {
+                    style.lead_in = seconds;
+                } else {
+                    style.tail = seconds;
+                }
+            }
             "--sink" => {
                 let text = value(&mut index, option, Key::CliNeedsValue)?;
                 style.sink = text
