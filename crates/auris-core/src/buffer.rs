@@ -210,7 +210,7 @@ impl AudioBuffer {
     ///
     /// Extra channels on either side and frames beyond the shorter buffer are ignored, which
     /// makes summing a mono source into a stereo bus a no-op on the right channel rather than
-    /// an error. Use [`Self::mix_mono_to_all`] when you want a mono source spread everywhere.
+    /// an error.
     pub fn mix_from(&mut self, other: &AudioBuffer, gain: f32) {
         let channels = self.channel_count().min(other.channel_count());
         let frames = self.frame_count().min(other.frame_count());
@@ -218,19 +218,6 @@ impl AudioBuffer {
             let src = &other.channels[channel][..frames];
             let dst = &mut self.channels[channel][..frames];
             for (d, s) in dst.iter_mut().zip(src) {
-                *d += *s * gain;
-            }
-        }
-    }
-
-    /// Adds `other`'s first channel into every channel of `self`.
-    pub fn mix_mono_to_all(&mut self, other: &AudioBuffer, gain: f32) {
-        let frames = self.frame_count().min(other.frame_count());
-        let Some(src) = other.channels.first() else {
-            return;
-        };
-        for dst in &mut self.channels {
-            for (d, s) in dst[..frames].iter_mut().zip(&src[..frames]) {
                 *d += *s * gain;
             }
         }
