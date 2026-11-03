@@ -1175,7 +1175,7 @@ mod tests {
     fn a_relative_render_lands_in_the_workspace_and_a_sample_loads_back_from_it() {
         let mut live = fixture();
         let cancelled = AtomicBool::new(false);
-        let mut run = |live: &mut Session, command: Command| {
+        let run = |live: &mut Session, command: Command| {
             let result = live
                 .begin_agent_file_job(command)
                 .unwrap()
