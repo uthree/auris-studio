@@ -212,18 +212,28 @@ pub enum Command {
         /// Optional track and clip name, up to 256 bytes; otherwise the source stem.
         name: Option<String>,
     },
-    /// Load a local audio file into an instrument track's sampler (auris.sampler.audio): the track plays that one recording across the keyboard, pitched by equal temperament from root_note, so a vocal chop, a hit, a texture or one note of a real instrument becomes a playable part. The file is copied into the project's Audio folder; nothing is placed on the timeline, so write notes with add_clip and edit_notes. root_note is the MIDI note the recording sounds at (60 is C4); omitted, a note name in the file name such as Piano_C3 is used, else 60. loop repeats the sample between loop_start and loop_end while the note is held (sustained pads, drones); otherwise each note plays to the end of the sample. Afterwards inspect_instrument and set_instrument_params reach root, tune, key_tracking (off plays every key at the recorded pitch, for one-shot hits), attack/decay/sustain/release, loop, loop_start and loop_end. A track arriving from another instrument loses that instrument's settings and automation. One Undo removes it.
+    /// Load local audio files into an instrument track's sampler (auris.sampler.audio) as a multisample: each recording is a zone pitched by equal temperament from its root_note, so vocal chops, hits, textures or notes of a real instrument become a playable part. Each note plays the zone whose root is nearest, inside the velocity layer holding the note's velocity (low_velocity..high_velocity, normalized 0..1); give low_key/high_key only for a split other than nearest-root, e.g. one drum hit per key. Zones with the same root and layer alternate note by note (round robin). Pitching a recording far from its root sounds unnatural, so for a real instrument load one recording every few semitones. Files are copied into the project's Audio folder; nothing is placed on the timeline, so write notes with add_clip and edit_notes. root_note omitted uses a note name in the file name such as Piano_C3, else 60. append keeps the current zones; otherwise they are replaced. loop repeats each sample between loop_start and loop_end while held (pads, drones). Afterwards edit_sample_map changes zones, and set_instrument_params reaches tune, key_tracking (off plays every key at the recorded pitch), attack/decay/sustain/release, loop, loop_start and loop_end. A track arriving from another instrument loses that instrument's settings and automation. One Undo removes it.
     LoadSample {
         /// Stable instrument track ID; drum, audio, singer and bus tracks are refused.
         track: u64,
-        /// Absolute local audio file path, up to 512 MiB; no network paths.
-        path: String,
-        /// MIDI note 0..127 the recording sounds at; 60 is C4.
-        #[schemars(range(min = 0, max = 127))]
-        root_note: Option<u8>,
-        /// Loop the sample while a note is held; omitted keeps the track's current setting (off for a new sampler).
+        /// One to 128 recordings, each becoming one zone.
+        samples: Vec<crate::session::AgentSample>,
+        /// Add to the current zones instead of replacing them; default false.
+        append: Option<bool>,
+        /// Loop the samples while a note is held; omitted keeps the track's current setting (off for a new sampler).
         #[serde(rename = "loop")]
         looped: Option<bool>,
+    },
+    /// Change or remove zones of an audio sampler track's map, as one Undo. Indices are the zone numbers load_sample and inspect_instrument report, before this call, for edits and remove alike. Each zone reports plays, the keys it actually sounds on.
+    EditSampleMap {
+        /// Stable instrument track on auris.sampler.audio.
+        track: u64,
+        /// Changes to existing zones; omitted fields keep their value.
+        #[serde(default)]
+        edits: Vec<crate::session::SampleZoneEdit>,
+        /// Zone indices to remove.
+        #[serde(default)]
+        remove: Vec<usize>,
     },
     /// Append a Standard MIDI File as new editable instrument/drum tracks. Keep the current tempo/meter maps and existing tracks. Notes, bends and controllers retain exact source ticks; playback instruments are defaults and need review. One Undo removes the whole import.
     ImportMidi {
@@ -940,8 +950,23 @@ impl Session {
                     })
                     .collect();
                 let next = offset + parameters.len();
-                Ok(serde_json::json!({"track":track.0,"parameters":parameters,"total":descriptors.len(),"next_offset":(next < descriptors.len()).then_some(next)}).to_string())
+                let mut report = serde_json::json!({"track":track.0,"parameters":parameters,"total":descriptors.len(),"next_offset":(next < descriptors.len()).then_some(next)});
+                if offset == 0
+                    && self
+                        .project()
+                        .track(track)
+                        .and_then(|t| t.kind.as_instrument())
+                        .is_some_and(|i| i.instrument_id == auris_sampler::AUDIO_SAMPLER_ID)
+                {
+                    report["sample_map"] = self.agent_sample_map_report(track)["zones"].take();
+                }
+                Ok(report.to_string())
             }
+            Command::EditSampleMap {
+                track,
+                edits,
+                remove,
+            } => self.agent_edit_sample_map(TrackId(track), edits, remove),
             Command::SetInstrumentParams { edits } => {
                 let edits: Vec<_> = edits
                     .into_iter()

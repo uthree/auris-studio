@@ -318,13 +318,14 @@ impl Default for Project {
 
 impl Project {
     /// Schema version written into saved files and required when opening them.
+    /// Version 35 stores the audio sampler's samples as a map of zones rather than one sample.
     /// Version 34 adds the sustain transform, which holds every release on like a pedal.
     /// Version 33 adds layers: instrument tracks that follow another track's notes.
     /// Version 32 stores zero or more track outputs; older files' single outputs load as one route.
     /// Version 31 adds power, added-tone, 6/9 and thirteenth chord qualities to stored harmony.
     /// Version 30 adds eleventh chord qualities to stored harmony.
     /// Version 29 adds ordered, named manual drum lanes beside generation-role assignments.
-    pub const FORMAT_VERSION: u32 = 34;
+    pub const FORMAT_VERSION: u32 = 35;
 
     /// The name a document carries until somebody — a person or the agent — gives it one.
     pub const UNTITLED: &'static str = "Untitled";

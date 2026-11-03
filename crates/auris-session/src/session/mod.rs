@@ -100,7 +100,9 @@ mod recognition;
 mod record;
 mod rhythm;
 mod samples;
-pub use samples::parse_root_note;
+pub use samples::{
+    AgentSample, DEFAULT_SAMPLE_ROOT, SampleZoneEdit, SampleZoneView, parse_root_note,
+};
 #[cfg(test)]
 mod shared_font_tests;
 mod singer;

@@ -257,8 +257,10 @@ pub enum Edit {
     ImportSoundFont,
     /// A track was pointed at one of a SoundFont's sounds.
     ChoosePreset,
-    /// An audio file was loaded into a track's sampler.
+    /// Audio files were loaded into a track's sampler.
     LoadSample,
+    /// A sampler's map changed: a recording's root, keys, layer or level, or one removed.
+    EditSampleMap,
     /// The key changed somewhere on the timeline.
     SetKey,
     /// A chord changed somewhere on the timeline.

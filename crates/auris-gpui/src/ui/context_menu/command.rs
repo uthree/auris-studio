@@ -543,6 +543,17 @@ pub enum MenuCommand {
         /// The channels to read, or `None` to disarm it.
         input: Option<InputChannels>,
     },
+    /// Put one recording of a sampler's map in a velocity layer.
+    SetSampleVelocity {
+        /// The sampler's track.
+        track: TrackId,
+        /// Which zone of its map.
+        zone: usize,
+        /// Softest velocity answered, 0..1.
+        low: f32,
+        /// Hardest velocity answered, 0..1.
+        high: f32,
+    },
     /// Point one effect at a track to key from, or stop it listening to one.
     SetEffectSidechain {
         /// Strip the effect sits in, or `None` for the master bus.
@@ -1415,6 +1426,12 @@ impl AurisApp {
                 slot,
                 source,
             } => self.set_effect_sidechain(track, slot, source),
+            MenuCommand::SetSampleVelocity {
+                track,
+                zone,
+                low,
+                high,
+            } => self.set_sample_velocity(track, zone, low, high),
             MenuCommand::AddEffect { track, effect_id } => self.add_effect_to(track, &effect_id),
 
             MenuCommand::ShowProgressionPicker { at, anchor } => {

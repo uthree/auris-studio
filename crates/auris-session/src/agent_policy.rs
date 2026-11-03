@@ -235,6 +235,8 @@ pub const OPERATIONS: &[&str] = &[
     "edit_project.listen",
     "edit_project.checkpoints",
     "edit_project.import_audio",
+    "edit_project.load_sample",
+    "edit_project.edit_sample_map",
     "edit_project.audio_assets",
     "edit_project.import_midi",
     "edit_project.render",
