@@ -101,6 +101,8 @@ mod record;
 mod rhythm;
 mod samples;
 pub use samples::parse_root_note;
+mod workspace;
+pub use workspace::workspace_relative;
 #[cfg(test)]
 mod shared_font_tests;
 mod singer;
