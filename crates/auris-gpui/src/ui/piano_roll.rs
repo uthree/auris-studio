@@ -131,7 +131,7 @@ struct NoteEditTag {
     lines: [String; 3],
 }
 
-/// Which of a track's clips are drawn faintly behind the one being edited.
+/// Which of a track's clips are drawn, and can be edited, behind the one in hand.
 ///
 /// Every *other* clip on the track with any part of itself on screen. Not only the two touching
 /// it: the roll scrolls and zooms anywhere, so "the next clip along" stops being the next one the
@@ -147,6 +147,76 @@ fn ghosted(clips: &[(ClipId, Ticks, Ticks)], editing: ClipId, view: (Ticks, Tick
         .filter(|(id, start, end)| *id != editing && *end > from && *start < to)
         .map(|(id, _, _)| *id)
         .collect()
+}
+
+/// Which of a track's clips a press in the roll at `tick` acts on.
+///
+/// The roll shows the whole track, so it edits the whole track: a press on a neighbour's note
+/// takes that note, and a press on the empty stretch a neighbour covers writes into that
+/// neighbour. Without this the notes either side were pictures, and a phrase running over a clip
+/// boundary had to be written in two trips to the arrangement.
+///
+/// In order: the clip in hand when one of its own notes is under the pointer (its notes may sit
+/// outside its span, and a note drawn on top is the one grabbed); a neighbour when one of *its*
+/// notes is; the clip in hand when the tick is inside it; a neighbour whose span holds the tick;
+/// and otherwise the clip in hand, which is where a press on bare track has always written.
+/// `struck` lists the clips with a note under the pointer.
+fn press_target(
+    clips: &[(ClipId, Ticks, Ticks)],
+    editing: ClipId,
+    tick: Ticks,
+    struck: &[ClipId],
+) -> ClipId {
+    if struck.contains(&editing) {
+        return editing;
+    }
+    if let Some(clip) = struck.first() {
+        return *clip;
+    }
+    let inside = |(_, start, end): &&(ClipId, Ticks, Ticks)| *start <= tick && tick < *end;
+    if clips.iter().any(|span| span.0 == editing && inside(&span)) {
+        return editing;
+    }
+    clips
+        .iter()
+        .filter(|span| span.0 != editing)
+        .find(inside)
+        .map_or(editing, |(id, _, _)| *id)
+}
+
+/// How the stretch outside the clip in hand is shaded, as runs of `(from, to, neighbour)`.
+///
+/// `outside` is one side of the clip in hand, in pixels; `neighbours` the spans of the other
+/// clips. A neighbour's run is shaded lightly, since it can be written to from here, and a gap
+/// heavily, since a note there exists but is never played.
+fn shade_runs(outside: (f32, f32), neighbours: &[(f32, f32)]) -> Vec<(f32, f32, bool)> {
+    let (from, to) = outside;
+    let mut spans: Vec<(f32, f32)> = neighbours
+        .iter()
+        .map(|(a, b)| (a.max(from), b.min(to)))
+        .filter(|(a, b)| a < b)
+        .collect();
+    spans.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let mut runs = Vec::new();
+    let mut at = from;
+    for (a, b) in spans {
+        if b <= at {
+            continue;
+        }
+        if a > at {
+            runs.push((at, a, false));
+        }
+        let a = a.max(at);
+        match runs.last_mut() {
+            Some((_, end, true)) if *end >= a => *end = b,
+            _ => runs.push((a, b, true)),
+        }
+        at = b;
+    }
+    if at < to {
+        runs.push((at, to, false));
+    }
+    runs
 }
 
 /// How near a press must land to a phoneme boundary to take hold of it, in pixels.
@@ -474,7 +544,7 @@ fn note_pitch_contour(contour: &PitchContour, spans: &[(Ticks, Ticks)]) -> Pitch
 /// Draws the sung pitch contour over the notes.
 ///
 /// Trimmed to the edited clip's occupied note spans — the frames cover the whole track, and the
-/// neighbouring clips are already ghosts — with y at the centre of the row a note at that
+/// neighbouring clips are drawn behind it — with y at the centre of the row a note at that
 /// pitch would occupy, which is where the eye lines a curve up against a note.
 fn paint_f0_curve(
     window: &mut Window,
@@ -655,6 +725,14 @@ impl AurisApp {
         if editable {
             note_ends.extend(self.phoneme_divider_zones(clip_start, &notes));
         }
+        // A neighbour's notes are grabbed the same way, so their ends say so the same way.
+        for (start, _, notes) in &ghosts {
+            note_ends.extend(self.note_end_zones(*start, notes));
+        }
+        let neighbour_spans: Vec<(Ticks, Ticks)> = ghosts
+            .iter()
+            .map(|(start, end, _)| (*start, *end))
+            .collect();
         let selected: Vec<usize> = self
             .selected_notes
             .iter()
@@ -954,18 +1032,18 @@ impl AurisApp {
                                                     )
                                                 },
                                             );
-                                            paint_clip_extent(
+                                            paint_track_extent(
                                                 window,
                                                 bounds,
                                                 &view,
-                                                clip_start,
-                                                clip_length,
+                                                (clip_start, clip_length),
+                                                &neighbour_spans,
                                                 &theme,
                                             );
                                             // Under the clip in hand and over the shade, so the
-                                            // neighbours read as further away without being
-                                            // dimmed twice into invisibility.
-                                            paint_ghost_notes(
+                                            // neighbours read as a step further away without
+                                            // being dimmed twice into something not to touch.
+                                            paint_neighbour_notes(
                                                 window,
                                                 bounds,
                                                 &ghosts,
@@ -1364,16 +1442,18 @@ impl AurisApp {
 
     /// Starts a note gesture, using the configured create gesture on empty space.
     fn begin_note_drag(&mut self, event: &MouseDownEvent, cx: &mut gpui::Context<Self>) {
-        if !self.editable_score() {
+        if !self.editable_score() || self.selected_clip.is_none() {
             return;
         }
-        let Some(clip_id) = self.selected_clip else {
-            return;
-        };
         let origin = self.roll_origin();
         let tick = self.timeline.x_to_tick(event.position.x - origin.x);
         // Below MIDI 0 the grid is unpainted, so a click there must not act on pitch 0.
         let Some(pitch) = self.pitch.pitch_at(event.position.y - origin.y) else {
+            return;
+        };
+        // A press over a neighbouring clip edits that clip, so every gesture below — the lyric
+        // sheet, the tools, delete, create — is aimed at whatever the pointer is over.
+        let Some(clip_id) = self.retarget_roll_press(tick, pitch) else {
             return;
         };
         let Some(clip_start) = self.session.midi_clip(clip_id).map(|c| c.start) else {
@@ -1960,23 +2040,33 @@ impl AurisApp {
             .collect()
     }
 
-    /// The notes of the clips either side of the one being edited, each with its clip's start.
+    /// Every note clip on the track of the clip in the roll, as id, start and end.
     ///
     /// Gathered from the document rather than remembered, because a neighbour can be moved,
     /// trimmed or written to from the arrangement while the roll is open, and a cached copy would
-    /// show where a phrase used to be.
-    fn neighbouring_notes(&self) -> Vec<(Ticks, Vec<Note>)> {
-        let Some(editing) = self.selected_clip else {
+    /// show — and write into — where a phrase used to be.
+    fn roll_track_spans(&self) -> Vec<(ClipId, Ticks, Ticks)> {
+        let Some(track) = self
+            .selected_clip
+            .and_then(|editing| self.project().track_of_clip(editing))
+        else {
             return Vec::new();
         };
-        let Some(track) = self.project().track_of_clip(editing) else {
-            return Vec::new();
-        };
-        let Some(clips) = self
-            .project()
+        self.project()
             .track(track)
             .and_then(|track| track.kind.note_clips())
-        else {
+            .map(|clips| {
+                clips
+                    .iter()
+                    .map(|clip| (clip.id, clip.start, clip.start + clip.length))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// The other clips on the track with any part on screen: each one's start, end and notes.
+    fn neighbouring_notes(&self) -> Vec<(Ticks, Ticks, Vec<Note>)> {
+        let Some(editing) = self.selected_clip else {
             return Vec::new();
         };
         // The stretch of song on screen, from the grid as it was last painted. Before the first
@@ -1992,16 +2082,49 @@ impl AurisApp {
             self.timeline.x_to_tick(px(0.0)),
             self.timeline.x_to_tick(width),
         );
-        let spans: Vec<(ClipId, Ticks, Ticks)> = clips
-            .iter()
-            .map(|clip| (clip.id, clip.start, clip.start + clip.length))
-            .collect();
-        let drawn = ghosted(&spans, editing, view);
-        clips
-            .iter()
-            .filter(|clip| drawn.contains(&clip.id))
-            .map(|clip| (clip.start, clip.notes.clone()))
+        let spans = self.roll_track_spans();
+        ghosted(&spans, editing, view)
+            .into_iter()
+            .filter_map(|id| {
+                let clip = self.session.midi_clip(id)?;
+                Some((clip.start, clip.start + clip.length, clip.notes.clone()))
+            })
             .collect()
+    }
+
+    /// Points the roll at whichever of the track's clips a press at `tick` and `pitch` belongs
+    /// to, and answers it.
+    ///
+    /// Moving to a neighbour is the same selection the arrangement makes when that clip is
+    /// clicked there — kept, when the clip is already part of a wider selection — and drops the
+    /// note selection, whose indices belong to the clip that was in hand. The view stays where
+    /// it is: the press is aimed at something already on screen.
+    fn retarget_roll_press(&mut self, tick: Ticks, pitch: u8) -> Option<ClipId> {
+        let editing = self.selected_clip?;
+        let spans = self.roll_track_spans();
+        let struck: Vec<ClipId> = std::iter::once(editing)
+            .chain(
+                spans
+                    .iter()
+                    .map(|(id, _, _)| *id)
+                    .filter(|id| *id != editing),
+            )
+            .filter(|id| {
+                self.session
+                    .midi_clip(*id)
+                    .is_some_and(|clip| self.note_at(*id, tick - clip.start, pitch).is_some())
+            })
+            .collect();
+        let target = press_target(&spans, editing, tick, &struck);
+        if target != editing {
+            if self.selected_clips.contains(&target) {
+                self.selected_clip = Some(target);
+            } else {
+                self.select_clip(Some(target));
+            }
+            self.selected_notes.clear();
+        }
+        Some(target)
     }
 
     /// Whether the clip in the roll sits on a singer track.
@@ -2119,6 +2242,8 @@ impl AurisApp {
         let Some(pitch) = self.pitch.pitch_at(event.position.y - origin.y) else {
             return;
         };
+        // The menu is about what was pointed at, which may be a neighbour's note.
+        self.retarget_roll_press(tick, pitch);
         let clip_start = self
             .selected_clip
             .and_then(|clip| self.session.midi_clip(clip))
@@ -2194,44 +2319,63 @@ pub(super) fn paint_clip_extent(
     clip_length: Ticks,
     theme: &Theme,
 ) {
-    // Dim everything outside the clip: notes there exist but are never played.
-    let start_x = bounds.origin.x + view.tick_to_x(clip_start);
-    let end_x = bounds.origin.x + view.tick_to_x(clip_start + clip_length);
-    let shade = Theme::translucent(theme.background, 0.45);
-    if start_x > bounds.origin.x {
-        paint::rect(
-            window,
-            Bounds {
-                origin: bounds.origin,
-                size: size(start_x - bounds.origin.x, bounds.size.height),
-            },
-            shade,
-        );
+    paint_track_extent(window, bounds, view, (clip_start, clip_length), &[], theme);
+}
+
+/// How dark the stretch outside every clip is: notes there exist but are never played.
+const GAP_SHADE: f32 = 0.45;
+
+/// How dark a neighbouring clip's stretch is: another clip, but one a press writes into.
+const NEIGHBOUR_SHADE: f32 = 0.18;
+
+/// Shades the grid outside the clip in hand, lightly over the clips beside it and heavily over
+/// the bare track, and marks where each clip begins and ends.
+fn paint_track_extent(
+    window: &mut Window,
+    bounds: Bounds<Pixels>,
+    view: &TimelineView,
+    (clip_start, clip_length): (Ticks, Ticks),
+    neighbours: &[(Ticks, Ticks)],
+    theme: &Theme,
+) {
+    let left = f32::from(bounds.origin.x);
+    let right = left + f32::from(bounds.size.width);
+    let x = |tick: Ticks| f32::from(bounds.origin.x + view.tick_to_x(tick));
+    let start_x = x(clip_start);
+    let end_x = x(clip_start + clip_length);
+    let spans: Vec<(f32, f32)> = neighbours.iter().map(|(a, b)| (x(*a), x(*b))).collect();
+    let gap = Theme::translucent(theme.background, GAP_SHADE);
+    let beside = Theme::translucent(theme.background, NEIGHBOUR_SHADE);
+    for side in [(left, start_x.min(right)), (end_x.max(left), right)] {
+        for (from, to, neighbour) in shade_runs(side, &spans) {
+            paint::rect(
+                window,
+                Bounds {
+                    origin: point(px(from), bounds.origin.y),
+                    size: size(px(to - from), bounds.size.height),
+                },
+                if neighbour { beside } else { gap },
+            );
+        }
     }
-    let right_edge = bounds.origin.x + bounds.size.width;
-    if end_x < right_edge {
-        paint::rect(
-            window,
-            Bounds {
-                origin: point(end_x.max(bounds.origin.x), bounds.origin.y),
-                size: size(right_edge - end_x.max(bounds.origin.x), bounds.size.height),
-            },
-            shade,
-        );
+    let edge = Theme::translucent(theme.text_muted, 0.5);
+    for (from, to) in &spans {
+        paint::vline(window, bounds, px(*from), px(1.0), edge);
+        paint::vline(window, bounds, px(*to), px(1.0), edge);
     }
-    paint::vline(window, bounds, start_x, px(1.0), theme.accent);
-    paint::vline(window, bounds, end_x, px(1.0), theme.accent);
+    paint::vline(window, bounds, px(start_x), px(1.0), theme.accent);
+    paint::vline(window, bounds, px(end_x), px(1.0), theme.accent);
 }
 
 /// How solid a neighbouring clip's notes are drawn.
 ///
-/// Faint enough to read as another clip at a glance and not as something to reach for, solid
-/// enough to make out a phrase against the rows behind it.
-const GHOST_ALPHA: f32 = 0.34;
+/// In their own velocity colour, because they are notes a press takes hold of, and a step back
+/// from the clip in hand so which clip a selection belongs to still reads at a glance.
+const NEIGHBOUR_ALPHA: f32 = 0.6;
 
 /// How solid the performed score is over its editable source.
 ///
-/// Lower than neighbouring ghosts because this layer sits *over* opaque source notes. Where a
+/// Lower than neighbouring clips' notes because this layer sits *over* opaque source notes. Where a
 /// transform moves or adds a note it remains legible against the lane; where the result overlaps
 /// its source it stays subordinate and leaves the editable note's velocity colour visible.
 const PERFORMANCE_OVERLAY_ALPHA: f32 = 0.28;
@@ -2243,7 +2387,7 @@ fn paint_flat_notes(
     notes: &[Note],
     view: &TimelineView,
     pitch_view: &PitchView,
-    colour: gpui::Hsla,
+    colour: impl Fn(&Note) -> gpui::Hsla,
 ) {
     for note in notes {
         let x = bounds.origin.x + view.tick_to_x(clip_start + note.start);
@@ -2264,28 +2408,33 @@ fn paint_flat_notes(
                 size: size(width, px((pitch_view.row_height - 2.0).max(2.0))),
             },
             Metrics::RADIUS_XS,
-            colour,
+            colour(note),
         );
     }
 }
 
-/// The notes of the clips either side, drawn flat and faint.
+/// The notes of the other clips on the track, drawn flat and a step back.
 ///
-/// No velocity in the fill and no selection outline, both of which the clip in hand has: these
-/// cannot be edited from here, and a ghost that read like a note would be an invitation to try.
-/// What they are for is the shape on either side — where the phrase before this one ended, and
-/// what the next one starts on.
-fn paint_ghost_notes(
+/// Velocity in the fill, since they are notes a press takes hold of, but no velocity bar and no
+/// selection outline: a selection lives in one clip at a time, and that clip is the one in hand.
+fn paint_neighbour_notes(
     window: &mut Window,
     bounds: Bounds<Pixels>,
-    ghosts: &[(Ticks, Vec<Note>)],
+    neighbours: &[(Ticks, Ticks, Vec<Note>)],
     view: &TimelineView,
     pitch_view: &PitchView,
     theme: &Theme,
 ) {
-    let colour = Theme::translucent(theme.text_muted, GHOST_ALPHA);
-    for (clip_start, notes) in ghosts {
-        paint_flat_notes(window, bounds, *clip_start, notes, view, pitch_view, colour);
+    for (clip_start, _, notes) in neighbours {
+        paint_flat_notes(
+            window,
+            bounds,
+            *clip_start,
+            notes,
+            view,
+            pitch_view,
+            |note| Theme::translucent(theme.velocity_color(note.velocity), NEIGHBOUR_ALPHA),
+        );
     }
 }
 
@@ -2299,15 +2448,9 @@ fn paint_performance_overlay(
     pitch_view: &PitchView,
     theme: &Theme,
 ) {
-    paint_flat_notes(
-        window,
-        bounds,
-        clip_start,
-        notes,
-        view,
-        pitch_view,
-        Theme::translucent(theme.accent, PERFORMANCE_OVERLAY_ALPHA),
-    );
+    paint_flat_notes(window, bounds, clip_start, notes, view, pitch_view, |_| {
+        Theme::translucent(theme.accent, PERFORMANCE_OVERLAY_ALPHA)
+    });
 }
 
 /// Distance from a note's ends to the velocity bar inside it.
@@ -3461,6 +3604,58 @@ mod tests {
     }
 
     #[test]
+    fn a_press_goes_to_the_clip_whose_note_or_stretch_it_lands_on() {
+        let bar = Ticks::QUARTER * 4;
+        let id = ClipId;
+        let clips = [
+            (id(1), Ticks::ZERO, bar),
+            (id(2), bar, bar * 2),
+            (id(3), bar * 4, bar * 5),
+        ];
+        let half = Ticks::QUARTER * 2;
+
+        // Bare grid inside a neighbour writes into the neighbour; inside the clip in hand, into it.
+        assert_eq!(press_target(&clips, id(1), bar + half, &[]), id(2));
+        assert_eq!(press_target(&clips, id(1), half, &[]), id(1));
+        // A clip's end is the next one's start, and that tick belongs to the next one.
+        assert_eq!(press_target(&clips, id(1), bar, &[]), id(2));
+        // Bare track between clips stays with the clip in hand, as it always has.
+        assert_eq!(press_target(&clips, id(1), bar * 3, &[]), id(1));
+
+        // A note wins over the stretch it hangs into, the clip in hand's own note first of all.
+        assert_eq!(press_target(&clips, id(1), bar + half, &[id(1)]), id(1));
+        assert_eq!(press_target(&clips, id(1), half, &[id(2)]), id(2));
+        assert_eq!(press_target(&clips, id(1), half, &[id(2), id(1)]), id(1));
+    }
+
+    #[test]
+    fn neighbours_are_shaded_lightly_and_bare_track_heavily() {
+        // Nothing beside the clip: the whole side is a gap, the way the roll always shaded it.
+        assert_eq!(shade_runs((0.0, 100.0), &[]), vec![(0.0, 100.0, false)]);
+        // A neighbour in the middle of the side splits it, clipped to the side it is on.
+        assert_eq!(
+            shade_runs((0.0, 100.0), &[(20.0, 40.0), (90.0, 300.0)]),
+            vec![
+                (0.0, 20.0, false),
+                (20.0, 40.0, true),
+                (40.0, 90.0, false),
+                (90.0, 100.0, true),
+            ]
+        );
+        // Overlapping and touching neighbours are one light run, not a darker overlap.
+        assert_eq!(
+            shade_runs((0.0, 100.0), &[(30.0, 60.0), (10.0, 40.0), (60.0, 70.0)]),
+            vec![(0.0, 10.0, false), (10.0, 70.0, true), (70.0, 100.0, false)]
+        );
+        // A neighbour wholly off this side does not shade it, and an empty side has no runs.
+        assert_eq!(
+            shade_runs((50.0, 100.0), &[(0.0, 40.0)]),
+            vec![(50.0, 100.0, false)]
+        );
+        assert!(shade_runs((100.0, 100.0), &[(0.0, 400.0)]).is_empty());
+    }
+
+    #[test]
     fn a_note_can_always_be_moved_however_short_it_is() {
         // At a 1/32 grid a note is about eight pixels across. A fixed five-pixel handle either
         // side of its end covered the whole note, so it could be stretched and never dragged.
@@ -3864,8 +4059,8 @@ mod window_tests {
 
     use crate::gestures::PointerGesture;
     use crate::harness::{
-        click_at, creating, deleting, double_click, drag, drag_with, paint, press, release,
-        roll_point, show_pitch, with_a_clip, with_a_singer_clip,
+        CLIP_LENGTH, click_at, creating, deleting, double_click, drag, drag_with, paint, press,
+        release, roll_point, show_pitch, with_a_clip, with_a_singer_clip,
     };
     use crate::ui::context_menu::MenuCommand;
 
@@ -4712,6 +4907,76 @@ mod window_tests {
         assert_eq!(notes[0].pitch, MIDDLE_C);
         assert_eq!(notes[0].start, BEAT);
         assert_eq!(notes[0].end(), BEAT * 3, "stretched to where it was let go");
+    }
+
+    /// A second clip on the same track, straight after the fixture's, holding one note.
+    fn with_a_neighbour(
+        app: &gpui::Entity<crate::app::AurisApp>,
+        cx: &mut gpui::VisualTestContext,
+        clip: ClipId,
+    ) -> ClipId {
+        let next = app.update(cx, |this, _| {
+            let track = this.project().track_of_clip(clip).unwrap();
+            let next = this
+                .session
+                .add_midi_clip(track, "Next", CLIP_LENGTH, CLIP_LENGTH)
+                .unwrap();
+            this.session
+                .add_note(next, Note::new(MIDDLE_C + 4, BEAT, BEAT))
+                .unwrap();
+            next
+        });
+        paint(app, cx);
+        next
+    }
+
+    /// Writing over the next clip's stretch writes into the next clip, at its own position.
+    #[gpui::test]
+    fn a_note_drawn_over_the_next_clip_lands_in_it(cx: &mut TestAppContext) {
+        let (app, cx, clip) = with_the_roll_open(cx);
+        let next = with_a_neighbour(&app, cx, clip);
+        let from = roll_point(&app, cx, CLIP_LENGTH + BEAT * 2, MIDDLE_C);
+        let to = roll_point(&app, cx, CLIP_LENGTH + BEAT * 3, MIDDLE_C);
+
+        drag_with(cx, from, to, creating());
+
+        app.read_with(cx, |this, _| {
+            assert_eq!(this.selected_clip, Some(next), "the roll follows the press");
+            assert!(this.session.midi_clip(clip).unwrap().notes.is_empty());
+            let written = &this.session.midi_clip(next).unwrap().notes;
+            assert_eq!(written.len(), 2);
+            let drawn = written.iter().find(|note| note.pitch == MIDDLE_C).unwrap();
+            assert_eq!(drawn.start, BEAT * 2, "relative to the clip it went into");
+            assert_eq!(drawn.end(), BEAT * 3);
+        });
+
+        // And back again: the first clip's stretch is one press away, with no trip elsewhere.
+        let back = roll_point(&app, cx, BEAT, MIDDLE_C);
+        let end = roll_point(&app, cx, BEAT * 2, MIDDLE_C);
+        drag_with(cx, back, end, creating());
+        app.read_with(cx, |this, _| {
+            assert_eq!(this.selected_clip, Some(clip));
+            assert_eq!(this.session.midi_clip(clip).unwrap().notes.len(), 1);
+        });
+    }
+
+    /// A neighbour's note is grabbed and moved where it is drawn, and stays in its own clip.
+    #[gpui::test]
+    fn a_neighbours_note_can_be_dragged_where_it_is_drawn(cx: &mut TestAppContext) {
+        let (app, cx, clip) = with_the_roll_open(cx);
+        let next = with_a_neighbour(&app, cx, clip);
+        let from = roll_point(&app, cx, CLIP_LENGTH + BEAT + HALF_BEAT, MIDDLE_C + 4);
+        let to = roll_point(&app, cx, CLIP_LENGTH + BEAT * 2 + HALF_BEAT, MIDDLE_C + 2);
+
+        drag(cx, from, to);
+
+        app.read_with(cx, |this, _| {
+            assert_eq!(this.selected_clip, Some(next));
+            assert_eq!(this.selected_notes, [0].into());
+            let moved = &this.session.midi_clip(next).unwrap().notes[0];
+            assert_eq!((moved.pitch, moved.start), (MIDDLE_C + 2, BEAT * 2));
+            assert!(this.session.midi_clip(clip).unwrap().notes.is_empty());
+        });
     }
 
     /// Dragging a note sideways and upwards moves it in both axes at once, which is the gesture
