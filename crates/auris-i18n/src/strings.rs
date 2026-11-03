@@ -2804,14 +2804,6 @@ new のオプション
     ValueOn { en: "On", ja: "オン" }
     ValueOff { en: "Off", ja: "オフ" }
 
-    // ------------------------------------------------------------------ plugin warnings
-    // Shown while the sampler's envelope is switched on, because switching it on costs something
-    // a user cannot otherwise see: a shaped note needs a MIDI channel to itself.
-    SamplerEnvelopeOn {
-        en: "Envelope on: 14-note polyphony, and drum choke groups stop working.",
-        ja: "エンベロープ有効：同時発音は14音まで。ドラムのチョークグループも無効になります。"
-    }
-
     // ------------------------------------------------------------------ audio sampler
     // The row in the audio sampler's window naming the file it plays.
     SamplerSample { en: "Sample", ja: "サンプル" }

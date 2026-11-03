@@ -71,7 +71,4 @@ pub use audio::{
     register_audio_sampler, store_sample, stored_sample,
 };
 pub use bank::{SharedSoundFonts, SoundFontBank};
-pub use sampler::{
-    ENVELOPE_KEY as SAMPLER_ENVELOPE_KEY, SAMPLER_ID, Sampler, register_sampler, store_preset,
-    stored_preset,
-};
+pub use sampler::{SAMPLER_ID, Sampler, register_sampler, store_preset, stored_preset};

@@ -376,8 +376,7 @@ pub mod prelude {
         WavExportSettings,
     };
     pub use auris_sampler::{
-        AUDIO_SAMPLER_ID, AUDIO_SAMPLER_LOOP_KEY, AUDIO_SAMPLER_ROOT_KEY, SAMPLER_ENVELOPE_KEY,
-        SAMPLER_ID,
+        AUDIO_SAMPLER_ID, AUDIO_SAMPLER_LOOP_KEY, AUDIO_SAMPLER_ROOT_KEY, SAMPLER_ID,
     };
 
     pub use crate::{
