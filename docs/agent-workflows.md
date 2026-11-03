@@ -340,6 +340,13 @@ third higher on average, does not reach a higher peak, moves only by step, or wh
 highest note is outside every chorus. It reads the written notes, taking the top note where
 several sound together.
 
+`arrangement_shape` measures the backing against the form: the parts playing in each section and
+their notes per bar, how many different one-bar patterns each part plays, and how many bars of
+intro and outro surround the voice. It warns when every section has the same parts, when a
+chorus is no fuller than the section before it (neither another part nor 15% more notes a bar),
+when a drum part plays the same bar into a chorus as the bar before (no fill), and when the
+intro or outro is shorter than eight bars.
+
 For a new song, write its musical decisions into the document with `edit_harmony`, for example
 `{"start_bar":1,"bars":16,"key":"D major","chords":["I","IV V","vi","ii V"]}`.
 Each array entry is one bar, with one or more chords sharing it equally. In 4/4,

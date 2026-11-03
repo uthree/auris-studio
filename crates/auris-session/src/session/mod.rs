@@ -66,6 +66,7 @@ mod convert;
 mod drum_analysis;
 mod envelope;
 pub use envelope::{ENVELOPE_PITCHES, SoundEnvelope};
+pub mod arrangement_shape;
 mod drum_assignments;
 mod files;
 mod generated;

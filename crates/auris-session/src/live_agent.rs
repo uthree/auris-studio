@@ -172,6 +172,8 @@ pub enum Command {
         /// The track holding the melody, usually the lead singer.
         track: u64,
     },
+    /// Measure the arrangement against the form: which parts play in each section, how many different bars each part plays, whether the drums change in the bar before each chorus, and how many bars of intro and outro surround the voice. Warns when every section has the same parts, a chorus adds nothing to the section before it, no fill leads into a chorus, or the intro or outro is shorter than eight bars. Read it after writing the backing and act on its warnings; it measures the written notes, not how they sound.
+    ArrangementShape {},
     /// Workshop candidates only: tell the user, in one short line, what you are working on now. The candidate's card shows it while you work until the next one replaces it; elsewhere it is not shown. Call it when you start each new step, before that step's first tool call, in the language of the assignment. Keep it short, about 30 characters, since the card has room for two lines. Name the concrete musical work, such as "Fitting the chorus lyrics to the melody" or "Thinning the strings under the second verse", never a generic "Working" or a tool name. Changes nothing.
     ReportStatus {
         /// The line, 1-80 characters.
@@ -632,6 +634,7 @@ impl Command {
             Self::Inspect {}
             | Self::ReportStatus { .. }
             | Self::MelodyShape { .. }
+            | Self::ArrangementShape {}
             | Self::SuggestIssueReport { .. }
             | Self::OfferChoices { .. }
             | Self::ExecutionTrace { .. }
@@ -1082,6 +1085,9 @@ impl Session {
                 edits,
             } => self.agent_edit_notes(&expected_revision, edits),
             Command::SourceMaterial { operation } => self.agent_source_material(operation),
+            Command::ArrangementShape {} => Ok(
+                crate::session::arrangement_shape::arrangement_shape(self.project()).to_string(),
+            ),
             Command::MelodyShape { track } => {
                 crate::session::melody_shape::melody_shape(self.project(), TrackId(track))
                     .map(|report| report.to_string())
