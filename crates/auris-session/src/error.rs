@@ -158,6 +158,10 @@ pub enum SessionError {
     #[error("no clip with id {0}")]
     UnknownClip(u64),
 
+    /// A lint fix was found at another revision, or has no fix to apply; lint again.
+    #[error("the document changed since this problem was found; lint again before fixing it")]
+    LintStale,
+
     /// The clip exists but holds no note at that index.
     ///
     /// Most many-note commands quietly skip indices a stale selection no longer covers; the
@@ -170,6 +174,20 @@ pub enum SessionError {
         /// The index that named nothing.
         index: usize,
     },
+
+    /// The track or clip holds no comment with that id.
+    #[error("no comment with id {0} there")]
+    UnknownComment(u64),
+
+    /// A comment with no words was asked for; there is nothing to pin.
+    #[error("a comment needs some text")]
+    EmptyComment,
+
+    /// Comments are pinned inside note clips only; an audio clip has no piano roll to hold one.
+    #[error(
+        "clip {0} is not a note clip, so it cannot hold comments; pin the comment on its track"
+    )]
+    NotANoteClip(u64),
 
     /// The requested send does not exist on that track.
     #[error("track {track} has no send with id {send}")]

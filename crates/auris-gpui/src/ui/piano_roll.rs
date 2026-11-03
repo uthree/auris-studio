@@ -622,6 +622,8 @@ impl AurisApp {
         };
 
         let clip_start = clip.start;
+        // Comments are text over the score, shown whichever view of it is open.
+        let comment_tags = self.roll_comment_tags(cx);
         let source = self.source_score();
         let editable = self.editable_score();
         let overlay = self.overlay_score();
@@ -666,6 +668,14 @@ impl AurisApp {
             .find_map(|(clip, index)| {
                 (Some(clip) == self.selected_clip && editable).then_some(index)
             });
+        // The linter's notes in this clip, each underlined with a squiggle whose hover says what
+        // is wrong and how to fix it.
+        let lint_flagged = match editable {
+            true => self.roll_lint_notes(),
+            false => Vec::new(),
+        };
+        let lint_notes: Vec<usize> = lint_flagged.iter().map(|entry| entry.index).collect();
+        let lint_strips = self.roll_lint_strips(&lint_flagged, &notes, clip_start, cx);
         // After the last read of `clip`, whose borrow the cache lookup cannot share. What
         // the voice will sing, drawn over the notes: the pitch contour so a drawn slide
         // reads as the slide it is, and the phoneme cuts so the sixty milliseconds a
@@ -887,6 +897,7 @@ impl AurisApp {
                     .child(
                         div()
                             .id("roll")
+                            .relative()
                             .flex_1()
                             .min_w_0()
                             .h_full()
@@ -969,6 +980,7 @@ impl AurisApp {
                                                 &notes,
                                                 &selected,
                                                 failed_note,
+                                                &lint_notes,
                                                 velocity_tag,
                                                 clip_start,
                                                 &view,
@@ -1079,6 +1091,7 @@ impl AurisApp {
                                     this.begin_note_drag(event, cx);
                                 }),
                             )
+                            .children(comment_tags)
                             .on_mouse_down(
                                 MouseButton::Right,
                                 cx.listener(|this, event: &MouseDownEvent, _, cx| {
@@ -1089,7 +1102,9 @@ impl AurisApp {
                                 |this, event: &gpui::ScrollWheelEvent, _, cx| {
                                     this.scroll_roll(event, cx);
                                 },
-                            )),
+                            ))
+                            // Over the canvas, so a squiggle's hover is the squiggle's.
+                            .children(lint_strips),
                     ),
             )
             .child(
@@ -2123,16 +2138,12 @@ impl AurisApp {
             self.selected_notes.insert(index);
         }
 
-        let menu = self.roll_menu(
-            event.position,
-            under_pointer,
-            pitch,
-            (self
-                .note_snap(tick, gpui::Modifiers::none(), true)
-                .position(tick)
-                - clip_start)
-                .max_zero(),
-        );
+        let snapped = (self
+            .note_snap(tick, gpui::Modifiers::none(), true)
+            .position(tick)
+            - clip_start)
+            .max_zero();
+        let menu = self.roll_menu(event.position, under_pointer, pitch, snapped);
         self.open_menu(menu);
         cx.notify();
     }
@@ -2556,6 +2567,7 @@ fn paint_notes(
     notes: &[Note],
     selected: &[usize],
     failed_note: Option<usize>,
+    lint: &[usize],
     tag: Option<(usize, u8)>,
     clip_start: Ticks,
     view: &TimelineView,
@@ -2567,6 +2579,9 @@ fn paint_notes(
     // Where the tag goes, decided in the loop and drawn after it, so a note painted later cannot
     // land on top of the one thing on the canvas that is only there to be read.
     let mut tag_at = None;
+    // The linter's underlines, likewise drawn after every note: each runs into the gap above the
+    // next row, and the note there would otherwise paint over half of it.
+    let mut squiggles = Vec::new();
     for (index, note) in notes.iter().enumerate() {
         let x = bounds.origin.x + view.tick_to_x(clip_start + note.start);
         let width = view.duration_to_width(note.length).max(px(2.0));
@@ -2604,6 +2619,9 @@ fn paint_notes(
         if selected {
             paint::rounded_outline(window, note_bounds, Metrics::RADIUS_XS, px(2.0), theme.text);
         }
+        if lint.contains(&index) {
+            squiggles.push(note_bounds);
+        }
         if failed_note == Some(index) {
             paint::rounded_outline(
                 window,
@@ -2613,6 +2631,23 @@ fn paint_notes(
                 theme.danger,
             );
         }
+    }
+
+    for note_bounds in squiggles {
+        let baseline = crate::ui::lint::squiggle_baseline(
+            note_bounds.origin.y - px(1.0),
+            pitch_view.row_height,
+        );
+        paint::polyline(
+            window,
+            &crate::ui::lint::squiggle_points(
+                note_bounds.origin.x,
+                note_bounds.origin.x + note_bounds.size.width,
+                baseline,
+            ),
+            px(1.25),
+            theme.warning,
+        );
     }
 
     if let (Some(note_bounds), Some((_, midi))) = (tag_at, tag) {

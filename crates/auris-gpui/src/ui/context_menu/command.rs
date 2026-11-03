@@ -48,6 +48,14 @@ impl MenuCommand {
 /// What choosing a menu item does.
 #[derive(Clone, Debug, PartialEq)]
 pub enum MenuCommand {
+    /// Applies the obvious fix of the linter problem with this id.
+    LintFix(String),
+    /// Hands the linter problem with this id to the agent.
+    LintAskAgent(String),
+    /// Opens the Problems tab on the linter problem with this id.
+    LintShow(String),
+    /// Adds this ignore rule to the project.
+    LintIgnore(auris_session::lint::LintSuppression),
     /// Rename an exact project-local song conversation.
     WorkshopThreadRename(String),
     /// Archive or restore an exact project-local song conversation.
@@ -621,6 +629,29 @@ pub enum MenuCommand {
     SetLyricLineAt(Ticks),
     /// Remove the lyric line in force at a position.
     RemoveLyricLineAt(Ticks),
+    /// Type a new comment pinned at a position (and row, inside a clip).
+    AddCommentAt {
+        /// What will hold it.
+        host: CommentHost,
+        /// Song time on a track, clip time inside a clip.
+        at: Ticks,
+        /// The piano-roll row, inside a clip.
+        pitch: Option<u8>,
+    },
+    /// Retype a comment.
+    EditComment {
+        /// What holds it.
+        host: CommentHost,
+        /// Which comment.
+        id: CommentId,
+    },
+    /// Take a comment off.
+    RemoveComment {
+        /// What holds it.
+        host: CommentHost,
+        /// Which comment.
+        id: CommentId,
+    },
     /// Stop showing words from a position: the silence after a line.
     EndLyricLineAt(Ticks),
     /// Rewrite the song-wide lyrics from what the singer tracks sing.
@@ -823,6 +854,15 @@ impl AurisApp {
             return;
         }
         match command {
+            MenuCommand::LintFix(id) => self.apply_lint(&id, cx),
+            MenuCommand::LintAskAgent(id) => self.ask_agent_about_lint(&id, cx),
+            MenuCommand::LintIgnore(suppression) => self.lint_ignore(suppression, cx),
+            MenuCommand::LintShow(id) => {
+                self.lint.tab = crate::ui::lint::LogTab::Problems;
+                self.show_panel(crate::dock::Panel::Log);
+                self.reveal_lint(&id);
+                cx.notify();
+            }
             MenuCommand::CopyAgentMarkdown(text) => {
                 cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
             }
@@ -1550,6 +1590,14 @@ impl AurisApp {
             MenuCommand::EndSectionsAt(tick) => self.session.set_section(tick, None),
             MenuCommand::SetLyricLineAt(tick) => self.prompt_for_lyric_line(tick),
             MenuCommand::RemoveLyricLineAt(tick) => self.session.remove_lyric_line(tick),
+            MenuCommand::AddCommentAt { host, at, pitch } => {
+                self.prompt_for_new_comment(host, at, pitch);
+            }
+            MenuCommand::EditComment { host, id } => self.prompt_for_comment(host, id),
+            // A stale menu over a comment already gone has nothing left to take off.
+            MenuCommand::RemoveComment { host, id } => {
+                let _ = self.session.remove_comment(host, id);
+            }
             MenuCommand::EndLyricLineAt(tick) => self.session.set_lyric_line(tick, None),
             MenuCommand::LyricsFromVocals => {
                 self.session.annotate_lyrics_from_vocals(None);

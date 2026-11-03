@@ -378,6 +378,8 @@ const PARAMETERS: &[(&str, &str)] = &[
     ("Cabinet", "キャビネット"),
     ("Bow speed", "運弓速度"),
     ("Bow response", "運弓の応答時間"),
+    ("Live Quality", "再生時の演算精度"),
+    ("Render Quality", "書き出し時の演算精度"),
     ("Legato", "レガート"),
     ("Attack", "アタック"),
     ("Bit Depth", "ビット深度"),
@@ -660,6 +662,9 @@ const CHOICES: &[(&str, &str)] = &[
     ("Fold", "フォールド"),
     ("Bitcrush", "ビットクラッシュ"),
     ("Free", "フリー"),
+    ("Draft", "軽量"),
+    ("Standard", "標準"),
+    ("High", "高精度"),
     // The delay's note values read the same in any language; the entries exist so the
     // completeness test can tell a considered label from a forgotten one.
     ("1/1", "1/1"),

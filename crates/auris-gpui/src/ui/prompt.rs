@@ -64,6 +64,24 @@ pub enum PromptTarget {
     Section(Ticks),
     /// The song-wide lyric line in force at a position on the timeline, or a new one there.
     LyricLine(Ticks),
+    /// A new comment, pinned where the menu was opened.
+    NewComment {
+        /// What will hold it.
+        host: CommentHost,
+        /// Song time on a track, clip time inside a clip.
+        at: Ticks,
+        /// The piano-roll row, inside a clip.
+        pitch: Option<u8>,
+    },
+    /// Why an ignore rule exists, by its place in the project's list.
+    LintReason(usize),
+    /// An existing comment's text.
+    Comment {
+        /// What holds it.
+        host: CommentHost,
+        /// Which comment.
+        id: CommentId,
+    },
     /// The lyric sung on one note.
     ///
     /// Return commits the word and walks on to the next note in sung order, so a verse can be
@@ -246,6 +264,10 @@ impl PromptTarget {
             | PromptTarget::Phonemes { .. }
             | PromptTarget::Lyrics { .. }
             | PromptTarget::LyricLine(_)
+            // A comment is prose.
+            | PromptTarget::NewComment { .. }
+            | PromptTarget::Comment { .. }
+            | PromptTarget::LintReason(_)
             // No shared notation: every parameter is written in its own units, and the range
             // and the unit are in the prompt's title instead, where they can name this one.
             | PromptTarget::Param(_) => return None,
@@ -543,6 +565,16 @@ pub enum Question {
         current: String,
         /// Published version shown in the question.
         latest: String,
+    },
+    /// A newer version was found for a copy installed with `cargo install`, which the updater
+    /// cannot replace: the answer copies the command that upgrades it.
+    CargoUpgrade {
+        /// Installed version shown in the question.
+        current: String,
+        /// Published version shown in the question.
+        latest: String,
+        /// The terminal command shown and copied.
+        command: String,
     },
     /// Replaces an exact library entry with a snapshot captured before confirmation.
     OverwriteSound {
@@ -1107,6 +1139,18 @@ impl AurisApp {
                 self.session.set_lyric_line(start.unwrap_or(at), Some(text));
                 Ok(())
             }
+            PromptTarget::NewComment { host, at, pitch } => {
+                self.session.add_comment(host, at, pitch, &text).map(|_| ())
+            }
+            PromptTarget::Comment { host, id } => self.session.set_comment_text(host, id, &text),
+            PromptTarget::LintReason(index) => {
+                if let Some(rule) = self.session.project().lint_suppressions.get(index).cloned() {
+                    let before = self.session.revision();
+                    self.session.set_lint_suppression_reason(&rule, &text);
+                    self.lint_suppressions_changed(before);
+                }
+                Ok(())
+            }
             PromptTarget::Seed(clip) => match text.parse::<u64>() {
                 Ok(seed) => {
                     self.set_clip_seed(clip, seed);
@@ -1378,6 +1422,10 @@ impl AurisApp {
                 cx.open_url(crate::update_check::RELEASE_PAGE);
             }
             (Question::OpenUpdateRelease { .. }, Answer::Deny) => {}
+            (Question::CargoUpgrade { command, .. }, Answer::Confirm) => {
+                self.copy_upgrade_command(command, cx);
+            }
+            (Question::CargoUpgrade { .. }, Answer::Deny) => {}
             (
                 Question::OverwriteSound {
                     expected,
@@ -2309,6 +2357,22 @@ impl AurisApp {
                 self.t(Key::UpdateOpenRelease).into(),
                 None,
             ),
+            Question::CargoUpgrade {
+                current,
+                latest,
+                command,
+            } => (
+                format!(
+                    "{} {}\n\n{command}",
+                    self.t(Key::UpdateAvailable)
+                        .replace("{current}", current)
+                        .replace("{version}", latest),
+                    self.t(Key::CargoUpdateBody),
+                )
+                .into(),
+                self.t(Key::CargoUpdateCopy).into(),
+                None,
+            ),
             Question::OverwriteSound { source, .. } => (
                 messages::overwrite_sound_body(self.language(), source).into(),
                 self.t(Key::OverwriteSoundConfirm).into(),
@@ -2772,6 +2836,16 @@ mod tests {
             PromptTarget::Chord(AT),
             PromptTarget::Section(AT),
             PromptTarget::LyricLine(AT),
+            PromptTarget::NewComment {
+                host: CommentHost::Track(TrackId(1)),
+                at: AT,
+                pitch: None,
+            },
+            PromptTarget::Comment {
+                host: CommentHost::Clip(ClipId(1)),
+                id: CommentId(1),
+            },
+            PromptTarget::LintReason(0),
             PromptTarget::Lyric {
                 clip: ClipId(1),
                 index: 0,
@@ -2821,6 +2895,9 @@ mod tests {
                 | PromptTarget::Chord(_)
                 | PromptTarget::Section(_)
                 | PromptTarget::LyricLine(_)
+                | PromptTarget::NewComment { .. }
+                | PromptTarget::Comment { .. }
+                | PromptTarget::LintReason(_)
                 | PromptTarget::Lyric { .. }
                 | PromptTarget::Phonemes { .. }
                 | PromptTarget::Lyrics { .. }

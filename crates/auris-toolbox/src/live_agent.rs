@@ -602,7 +602,8 @@ mod tests {
         assert_eq!(settings["gate"]["minimum"], 0.05);
         assert_eq!(settings["swing_percent"]["minimum"], 50);
         assert_eq!(settings["swing_percent"]["maximum"], 75);
-        assert_eq!(settings["reset"]["maxItems"], 12);
+        assert_eq!(settings["reset"]["maxItems"], 13);
+        assert_eq!(settings["sustain_ticks"]["maximum"], 3840);
         let parsed = command(
             "set_performance",
             &serde_json::json!({"clip":2,"settings":{"gate":0.5,"expression":{"delay_ms":-12}}}),

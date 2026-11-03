@@ -205,6 +205,10 @@ pub enum Edit {
     SetSingerSpeaker,
     /// A singer track's take was rendered by its voice model.
     Sing,
+    /// A problem the music linter found was repaired by its obvious fix.
+    LintFix,
+    /// The music linter was told to ignore, or to report again, some of its findings.
+    LintSuppression,
     /// An effect was added to a chain.
     AddEffect,
     /// An effect was removed from a chain.
@@ -270,6 +274,10 @@ pub enum Edit {
     SetLyricLine,
     /// A lyric line moved along the timeline.
     MoveLyricLine,
+    /// A comment was pinned, retyped or taken off.
+    SetComment,
+    /// A comment moved.
+    MoveComment,
     /// A named progression was written across a range of bars.
     StampProgression,
     /// A clip was written from the harmony under it.

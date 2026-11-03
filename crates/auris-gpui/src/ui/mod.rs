@@ -18,6 +18,7 @@ pub mod automation;
 pub(crate) mod chat_commands;
 pub(crate) mod colour_picker;
 pub mod commands;
+pub(crate) mod comments;
 pub mod context_menu;
 mod convert;
 #[cfg(test)]
@@ -32,6 +33,7 @@ pub mod icons;
 pub mod inspector;
 pub mod layer;
 pub mod library;
+pub mod lint;
 pub mod log_panel;
 pub mod menu_bar;
 pub mod mixer;

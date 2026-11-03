@@ -323,6 +323,31 @@
 //! measures the actual mix or a selected track's solo routing. A fixed colour scale preserves
 //! gain differences. These representations intentionally answer different questions.
 //!
+//! # The music linter
+//!
+//! [`crate::lint`] finds problems with one right answer — a dozen notes struck on one tick, a
+//! held minor second, a sustained note outside both the written key and chord, a duplicate
+//! note, chords sounding under no chord symbol, a mix that clips, a track that plays notes and
+//! makes no sound, a lone note rendered off its written pitch — and leaves everything
+//! with more than one answer to people and agents. Score rules read the document
+//! ([`crate::lint::lint_score`]); audio rules render the mix and every sounding track once on a
+//! worker ([`crate::lint::AudioLintJob`]). A finding carries a [`crate::lint::Fix`] only when the
+//! repair is obvious, and [`crate::Session::apply_lint_fix`] applies it as one Undo step at the
+//! revision it was found at, refusing a stale one.
+//!
+//! The desktop re-lints the score after every edit and runs the audio pass in the background
+//! only after an edit, once the document holds still and nothing else is playing, rendering,
+//! singing or talking to a model. The agent lints only when it calls `lint_project` (with
+//! `audio=true` for the render), and applies fixes by id through `apply_lint_fixes`. A clean
+//! report is a mechanical check, never a claim about musical quality.
+//!
+//! What a song does on purpose is recorded in the document, not in anyone's settings:
+//! [`auris_core::project::LintSuppression`] names one rule or every rule, over the whole song,
+//! a track, a clip or every section with one label, and [`crate::Session::suppress_lint`] adds
+//! one as an Undo step. Suppressed findings are counted, not reported, at both doors. Ignoring
+//! changes what is shown and not what sounds, so it carries the last audio pass forward rather
+//! than asking for another render.
+//!
 //! # Auditory feedback on unsaved music
 //!
 //! The live `listen` operation captures the open document through
@@ -472,7 +497,9 @@ pub mod architecture {
     //! The chord caption follows the same rule: its names are outlined from an installed font
     //! rather than bundled, and the chords come from the written harmony or, when there is none,
     //! from the session's recogniser — which [`auris_video`] cannot name, so
-    //! [`crate::Session::note_score`] fills them in.
+    //! [`crate::Session::note_score`] fills them in. The tempo and the beat counter across from
+    //! it need no recogniser: the score carries the tempo map and every notated beat in seconds,
+    //! so the counter's polygon has as many corners as the signature in force has beats.
     //!
     //! **[`auris_engine`] does not depend on [`auris_dsp`] or [`auris_synth`].** It drives plugins
     //! purely through the `auris-core` traits. That is what keeps the plugin system honest: if the
@@ -581,6 +608,14 @@ pub mod architecture {
     //! door can produce a song with words and no lines. `edit_lyrics` writes explicit lines or
     //! rebuilds them from a singer track ([`Session::annotate_lyrics_from_vocals`](crate::Session::annotate_lyrics_from_vocals));
     //! nothing rewrites the annotation behind a person's back, and editing it never moves a note.
+    //! Comments are the source-code habit brought to a score: text pinned to a place that
+    //! nothing plays. A track holds them in song time along its lane and a note clip in its own
+    //! time, optionally on a piano-roll row, so they move, copy and split with the notes they are
+    //! about ([`Comment`](auris_core::Comment)). The session's comment commands
+    //! ([`Session::add_comment`](crate::Session::add_comment) and its neighbours) are undoable and
+    //! touch nothing audible. `inspect_project` lists every comment for an agent and
+    //! `edit_comments` writes them; the instructions tell a model to read the comments in a
+    //! passage before editing it and never to remove a person's without being asked.
     //! Bar-addressed harmony follows the meter map independently of the pointer editing grid.
     //! A supplied key replaces internal modulations; the range restores its previous key and
     //! chord (including silence) at the end, leaving outside harmony intact.
@@ -839,6 +874,17 @@ pub mod architecture {
     //! bridge on the right. A note's place is fixed when it starts, so a held note never moves,
     //! and the gains `1 - pan` and `1 + pan` keep the mono downmix identical to the centred
     //! instrument. A `width` parameter scales the spread from mono to twice the natural image.
+    //! The seven [`auris_synth::Physical`] models also carry two [`auris_synth::Quality`]
+    //! choices, `quality` for live playback and `render_quality` for any block the engine marks
+    //! [`is_offline`](auris_core::ProcessContext::is_offline) — export, freeze, bounce,
+    //! analysis. Draft trims the piano's partial budget to a third, which is what lets a dense
+    //! piano part play live on a slow machine; High runs the delay-line strings at twice the
+    //! host rate. Render defaults to High and live to Standard, the calibrated model, so an
+    //! export can sound a little finer than playback but never coarser. The level is taken
+    //! when a note is struck, so neither control allocates or disturbs a sounding note. The
+    //! GPU is deliberately not involved: the heaviest of these models is a few thousand
+    //! phasors a block, which a GPU round trip would cost more to schedule than to compute —
+    //! the reasoning is [`auris_gpu`]'s own, under "When the GPU is used".
     //! There is no sample asset behind these instruments. [`crate::DEFAULT_INSTRUMENT`] names
     //! the physical piano. SoundFont import uses the same worker/session boundary as before.
     //! [`auris_synth::Choir`] is a polyphonic instrument for wordless ensemble vowels. Each

@@ -61,6 +61,8 @@ mod choir_tests;
 mod chord_preview;
 mod clipboard;
 mod clips;
+mod comments;
+pub use comments::CommentHost;
 mod compose;
 mod convert;
 mod drum_analysis;
@@ -459,6 +461,9 @@ pub struct Session {
     /// an expensive question thirty times a second would otherwise have no cheap way to know the
     /// old answer still stands. Monotonic within a session, meaningless across two.
     revision: u64,
+    /// The last audio lint an agent asked for, kept so its fixes can be applied by id while
+    /// the revision it measured is still the document's.
+    pub(crate) lint_audio: Option<crate::lint::AudioLintResult>,
     pub(crate) execution_trace: std::cell::RefCell<crate::execution_trace::Recorder>,
     needs_rebuild: bool,
     /// Whether the meter has moved since the render graph was built.
@@ -790,6 +795,7 @@ impl Session {
             agent_request_serial: 0,
             transaction: None,
             revision: 0,
+            lint_audio: None,
             execution_trace: Default::default(),
             listening: Default::default(),
             needs_rebuild: false,
@@ -1670,6 +1676,19 @@ impl Session {
     /// Validate *before* calling this. Pushing a step clears the redo stack and marks the
     /// document dirty, so a command that records first and refuses after has already cost the
     /// user both — a phantom step that undoes nothing, and a redo branch that is simply gone.
+    /// The document's lint suppressions, recorded as one undoable edit. They change nothing that
+    /// plays, so the graph is left alone.
+    /// The chord timeline, for an edit made directly on it, recorded as one chord edit.
+    pub(crate) fn edit_chords(&mut self) -> &mut auris_core::harmony::ChordMap {
+        self.record(Edit::SetChord);
+        &mut self.project.harmony.chords
+    }
+
+    pub(crate) fn edit_suppressions(&mut self) -> &mut Vec<auris_core::project::LintSuppression> {
+        self.record(Edit::LintSuppression);
+        &mut self.project.lint_suppressions
+    }
+
     fn record(&mut self, edit: Edit) {
         self.trace_edit_boundary(&format!("{edit:?}"));
         if self.transaction.is_none() {
