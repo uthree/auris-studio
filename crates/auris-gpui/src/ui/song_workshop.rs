@@ -1182,24 +1182,14 @@ impl AurisApp {
                 }
             }
             if !snapshot.document.rounds.is_empty() {
-                transcript = transcript.child(
-                    div()
-                        .debug_selector(|| "song-more-candidates-panel".into())
-                        .w_full()
-                        .child(text_panel(
-                            Button::new(
-                                "song-more-candidates",
-                                self.t(Key::WorkshopMoreCandidates),
-                            )
-                            .disabled(s.busy())
-                            .on_click(cx.listener(
-                                |this, _, window, cx| {
-                                    this.request_more_song_candidates(window, cx);
-                                },
-                            )),
-                            &theme,
-                        )),
-                );
+                transcript = transcript.child(text_panel(
+                    Button::new("song-more-candidates", self.t(Key::WorkshopMoreCandidates))
+                        .disabled(s.busy())
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.request_more_song_candidates(window, cx);
+                        })),
+                    &theme,
+                ));
             }
             if snapshot.planning {
                 transcript = transcript.child(text_panel(
@@ -2522,7 +2512,7 @@ mod tests {
             let footer = cx.debug_bounds("song-workshop-footer").unwrap();
             let transcript = cx.debug_bounds("song-workshop-transcript").unwrap();
             let card = cx.debug_bounds("song-choices-17").unwrap();
-            let more = cx.debug_bounds("song-more-candidates-panel").unwrap();
+            let more = cx.debug_bounds("song-more-candidates").unwrap();
             let xxl = app.read_with(cx, |this, _| this.theme.atelier.spacing.xxl);
             let inner = body.size.width - xxl * 2.0;
             assert_eq!(transcript.size.width, inner.min(COLUMN_WIDTH), "at {width}");
