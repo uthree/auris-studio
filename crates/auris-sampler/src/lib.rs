@@ -10,6 +10,9 @@
 //! * [`SoundFontBank`] — every font this session has loaded, by the id the project names it
 //!   with. The document stores paths; this stores what those paths decoded to.
 //! * [`Sampler`] — an [`Instrument`](auris_core::Instrument) that plays one preset of one font.
+//! * [`AudioSampler`] — an instrument made from one audio file, pitched across the keyboard
+//!   from a root note. Its samples come from a [`SampleBank`] the same way fonts come from the
+//!   font bank; see [`audio`] for why they are the project's own audio sources.
 //!
 //! # Why a bank at all
 //!
@@ -55,12 +58,18 @@
 
 #![warn(missing_docs)]
 
+pub mod audio;
 pub mod bank;
 pub mod sampler;
 
 #[cfg(test)]
 mod test_support;
 
+pub use audio::{
+    AUDIO_SAMPLER_ID, AudioSampler, LOOP_KEY as AUDIO_SAMPLER_LOOP_KEY,
+    ROOT_KEY as AUDIO_SAMPLER_ROOT_KEY, SampleBank, SharedSamples, needs_asset,
+    register_audio_sampler, store_sample, stored_sample,
+};
 pub use bank::{SharedSoundFonts, SoundFontBank};
 pub use sampler::{
     ENVELOPE_KEY as SAMPLER_ENVELOPE_KEY, SAMPLER_ID, Sampler, register_sampler, store_preset,

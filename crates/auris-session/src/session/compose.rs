@@ -180,11 +180,11 @@ impl Session {
         let fallback = self
             .registry
             .default_instrument_id()
-            .filter(|id| *id != SAMPLER_ID)
+            .filter(|id| !auris_sampler::needs_asset(id))
             .or_else(|| {
                 self.registry
                     .instruments()
-                    .find(|d| d.id != SAMPLER_ID)
+                    .find(|d| !auris_sampler::needs_asset(&d.id))
                     .map(|d| d.id.as_ref())
             })
             .ok_or_else(|| SessionError::UnknownPlugin("<any instrument>".into()))?
@@ -313,7 +313,7 @@ impl Session {
             let kept_instrument = native.is_none()
                 && source.is_none()
                 && sound.is_none()
-                && track.instrument != SAMPLER_ID
+                && !auris_sampler::needs_asset(&track.instrument)
                 && self.registry.has_instrument(&track.instrument);
             let instrument = match (&source, &sound, &native) {
                 (Some(source), _, _) => source.instrument_id(),

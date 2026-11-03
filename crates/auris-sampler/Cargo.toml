@@ -1,6 +1,6 @@
 [package]
 name = "auris-sampler"
-description = "SoundFont playback for Auris Studio"
+description = "SoundFont and audio-file sample playback for Auris Studio"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
