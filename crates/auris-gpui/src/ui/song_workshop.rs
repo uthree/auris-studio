@@ -1036,10 +1036,12 @@ impl AurisApp {
             return div().into_any_element();
         };
         let mut transcript = div()
+            .debug_selector(|| "song-workshop-transcript".into())
             .flex()
             .flex_col()
             .gap(spacing.xl)
-            .w_full()
+            .flex_1()
+            .min_w_0()
             .max_w(COLUMN_WIDTH);
         if let Some(snapshot) = &s.snapshot {
             if snapshot.document.messages.is_empty() {
@@ -1180,14 +1182,24 @@ impl AurisApp {
                 }
             }
             if !snapshot.document.rounds.is_empty() {
-                transcript = transcript.child(text_panel(
-                    Button::new("song-more-candidates", self.t(Key::WorkshopMoreCandidates))
-                        .disabled(s.busy())
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.request_more_song_candidates(window, cx);
-                        })),
-                    &theme,
-                ));
+                transcript = transcript.child(
+                    div()
+                        .debug_selector(|| "song-more-candidates-panel".into())
+                        .w_full()
+                        .child(text_panel(
+                            Button::new(
+                                "song-more-candidates",
+                                self.t(Key::WorkshopMoreCandidates),
+                            )
+                            .disabled(s.busy())
+                            .on_click(cx.listener(
+                                |this, _, window, cx| {
+                                    this.request_more_song_candidates(window, cx);
+                                },
+                            )),
+                            &theme,
+                        )),
+                );
             }
             if snapshot.planning {
                 transcript = transcript.child(text_panel(
@@ -1239,8 +1251,14 @@ impl AurisApp {
             .py(spacing.xl)
             .flex()
             .flex_col()
-            .items_center()
-            .child(transcript);
+            // The column is centred across a row rather than in a centred column. The body
+            // scrolls by the height of what it holds, and a flex column works that height out by
+            // laying its child out at the child's percentage width *before* `max_w` narrows it:
+            // every wrapped message then measures a line or so shorter than it is drawn, and the
+            // newest entries end past the end of the scroll range, under the composer, where no
+            // scrolling reaches them. Across a row the width is the main axis, which the layout
+            // clamps first, so the height is measured at the width the column is drawn at.
+            .child(div().w_full().flex().justify_center().child(transcript));
         let memory = s.snapshot.as_ref().is_some_and(|s| s.preferences.enabled);
         // On a surface of its own for the same reason the transcript's text is: see `text_panel`.
         let options = div()
@@ -2436,6 +2454,98 @@ mod tests {
         crate::harness::paint(&app, cx);
         crate::harness::click("song-choices-1-option-2", cx);
         assert_eq!(sent_text(&commands), None);
+    }
+
+    #[gpui::test]
+    fn the_end_of_a_long_transcript_scrolls_clear_of_the_composer(cx: &mut gpui::TestAppContext) {
+        let (app, cx) = crate::harness::open(cx);
+        cx.update(|window, cx| {
+            app.update(cx, |this, cx| {
+                this.show_project_chooser(window, cx);
+                this.open_song_workshop(window, cx);
+            })
+        });
+        make_ready(&app, cx);
+        app.update(cx, |this, _| {
+            let s = this.song_workshop.as_mut().unwrap();
+            let mut snapshot = director_asks(false);
+            let filler = "a long line about the song, ".repeat(12);
+            let earlier = (0..16).map(|index| auris_session::workshop::Message {
+                choices: None,
+                attachments: Vec::new(),
+                user: index % 2 == 0,
+                text: filler.clone(),
+                references: Vec::new(),
+            });
+            snapshot.document.messages.splice(0..0, earlier);
+            // A round early on, so the transcript ends in the "more candidates" panel too.
+            snapshot
+                .document
+                .rounds
+                .push(auris_session::workshop::Round {
+                    after_message: 2,
+                    candidates: (0..3)
+                        .map(|id| auris_session::workshop::Candidate {
+                            id,
+                            parent: None,
+                            ready: false,
+                            error: None,
+                            recoveries: 0,
+                            tools: Default::default(),
+                            feedback: None,
+                            direction: auris_session::workshop::Direction {
+                                title: format!("Candidate {id}"),
+                                description: "Piano and strings".into(),
+                                instructions: String::new(),
+                                protected_tracks: Vec::new(),
+                                sources: Vec::new(),
+                            },
+                        })
+                        .collect(),
+                });
+            s.snapshot = Some(snapshot);
+        });
+        // Wide enough that the column stops at its own width, and narrow enough that the window
+        // decides it: the two ways the transcript's width can be settled.
+        for width in [1600.0, 820.0] {
+            crate::harness::resize(&app, cx, gpui::size(gpui::px(width), gpui::px(900.0)));
+            app.update(cx, |this, _| {
+                this.song_workshop
+                    .as_mut()
+                    .unwrap()
+                    .scroll
+                    .scroll_to_bottom();
+            });
+            crate::harness::paint(&app, cx);
+            crate::harness::paint(&app, cx);
+            let body = cx.debug_bounds("song-workshop-body").unwrap();
+            let footer = cx.debug_bounds("song-workshop-footer").unwrap();
+            let transcript = cx.debug_bounds("song-workshop-transcript").unwrap();
+            let card = cx.debug_bounds("song-choices-17").unwrap();
+            let more = cx.debug_bounds("song-more-candidates-panel").unwrap();
+            let xxl = app.read_with(cx, |this, _| this.theme.atelier.spacing.xxl);
+            let inner = body.size.width - xxl * 2.0;
+            assert_eq!(transcript.size.width, inner.min(COLUMN_WIDTH), "at {width}");
+            let left = transcript.left() - body.left();
+            let right = body.right() - transcript.right();
+            assert!(
+                (f32::from(left) - f32::from(right)).abs() < 1.0,
+                "at {width}: off centre"
+            );
+            assert!(
+                body.bottom() <= footer.top() + gpui::px(0.5),
+                "at {width}: the transcript runs under the composer: {body:?} against {footer:?}"
+            );
+            assert!(
+                more.bottom() <= transcript.bottom() + gpui::px(0.5),
+                "at {width}: the transcript is shorter than what it holds: {more:?} in {transcript:?}"
+            );
+            assert!(
+                card.bottom() <= more.top() && more.bottom() <= body.bottom() + gpui::px(0.5),
+                "at {width}: the end of the transcript is cut off: {card:?}, {more:?} in {body:?}"
+            );
+        }
+        crate::harness::click("song-choices-17-option-1", cx);
     }
 
     #[gpui::test]
