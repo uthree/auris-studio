@@ -6900,6 +6900,40 @@ mod tests {
     }
 
     #[gpui::test]
+    fn composer_undo_and_redo_are_field_local_and_do_not_edit_the_document(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, _| {
+            this.panels.show(crate::dock::Panel::Agent);
+            this.settings.agent.model = "offline-fixture".into();
+            this.agent_chat.configuring = false;
+            this.agent_chat.models_error = Some("offline fixture".into());
+        });
+        crate::harness::paint(&app, cx);
+        crate::harness::click("agent-input", cx);
+        crate::harness::paint(&app, cx);
+        // One platform text event keeps this test about routing rather than edit coalescing.
+        cx.simulate_input("x");
+        crate::harness::paint(&app, cx);
+        let revision = app.read_with(cx, |this, _| {
+            assert_eq!(this.agent_chat.input.content(), "x");
+            this.session.revision()
+        });
+
+        cx.simulate_keystrokes("secondary-z");
+        app.read_with(cx, |this, _| {
+            assert!(this.agent_chat.input.content().is_empty());
+            assert_eq!(this.session.revision(), revision);
+        });
+        cx.simulate_keystrokes("secondary-shift-z");
+        app.read_with(cx, |this, _| {
+            assert_eq!(this.agent_chat.input.content(), "x");
+            assert_eq!(this.session.revision(), revision);
+        });
+    }
+
+    #[gpui::test]
     fn live_transcription_import_respects_read_only_and_keyboard_undo(
         cx: &mut gpui::TestAppContext,
     ) {
