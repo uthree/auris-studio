@@ -70,7 +70,8 @@ pub enum Operation {
         /// 1..16 foreground track IDs: the melody or lead vocal the later phases keep intact.
         #[serde(default)]
         foreground: Vec<u64>,
-        /// Up to 16 guide track IDs the arrangement replaces or removes.
+        /// Up to 16 guide track IDs the arrangement replaces or removes. A guide stays
+        /// registered once named: leaving it out later does not replace it.
         #[serde(default)]
         guide: Vec<u64>,
         /// Instead of foreground: why this piece has no foreground melody.
@@ -228,9 +229,18 @@ impl Record {
             }
             Operation::SetRoles {
                 foreground,
-                guide,
+                mut guide,
                 no_foreground,
             } => {
+                // An agent in the arrangement once re-registered roles with no guide and kept
+                // the generated sketch as the finished part, which silenced guide_replaced
+                // without replacing anything. Only deleting or silencing the track retires it.
+                let earlier = self.roles.iter().flat_map(|roles| &roles.guide);
+                for id in earlier {
+                    if !guide.contains(id) && !foreground.contains(id) {
+                        guide.push(*id);
+                    }
+                }
                 let reason = no_foreground.filter(|r| !r.trim().is_empty());
                 if foreground.is_empty() == reason.is_none()
                     || foreground.len() > 16
@@ -708,6 +718,33 @@ mod tests {
         let muted = json!({"tracks":[{"track":2,"audible":false}]});
         let checks = phase_checks(Phase::Arrangement, Some(&roles), &[1, 2], &muted, &[]);
         assert!(checks.iter().all(|c| c["met"] == true));
+    }
+
+    #[test]
+    fn a_guide_stays_registered_when_roles_are_set_again_without_it() {
+        let mut record = Record::default();
+        let mut roles = |value: Value| record.update(serde_json::from_value(value).unwrap());
+        roles(json!({"kind":"set_roles","foreground":[1],"guide":[2]})).unwrap();
+        roles(json!({"kind":"set_roles","foreground":[1],"guide":[]})).unwrap();
+        roles(json!({"kind":"set_roles","foreground":[1],"guide":[4]})).unwrap();
+        assert_eq!(record.roles.as_ref().unwrap().guide, vec![4, 2]);
+        let facts = json!({"tracks":[{"track":1,"audible":true},{"track":2,"audible":true}]});
+        let checks = phase_checks(
+            Phase::Arrangement,
+            record.roles.as_ref(),
+            &[1, 2],
+            &facts,
+            &[],
+        );
+        assert_eq!(checks[1]["unmet"], json!([2]));
+        // Promoting the sketch to the foreground is a deliberate change, and allowed.
+        record
+            .update(
+                serde_json::from_value(json!({"kind":"set_roles","foreground":[1,2],"guide":[]}))
+                    .unwrap(),
+            )
+            .unwrap();
+        assert_eq!(record.roles.as_ref().unwrap().guide, vec![4]);
     }
 
     #[test]
