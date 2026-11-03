@@ -38,6 +38,23 @@ pub(super) fn envelope_controls(registry: &PluginRegistry, project: &Project, tr
     }).collect::<Vec<_>>())
 }
 
+/// What a SoundFont track can do instead, since it lists no native envelope: the font's own
+/// envelope plays, and the way to shape it is to turn one rendered note into an audio sample.
+pub(super) fn envelope_route(project: &Project, track: u64) -> Value {
+    let soundfont = project
+        .track(auris_core::TrackId(track))
+        .and_then(|t| t.kind.as_instrument())
+        .is_some_and(|source| source.instrument_id == auris_sampler::SAMPLER_ID);
+    if !soundfont {
+        return Value::Null;
+    }
+    json!(
+        "This SoundFont plays its font's own envelope. To shape attack/release, write one held note, \
+render stems and load_sample that track's WAV with that root_note, then set the \
+sampler's attack/decay/sustain/release with set_instrument_params. load_sample replaces the font."
+    )
+}
+
 fn window(start: i64, end: i64) -> Result<(), String> {
     if start < 0 || end <= start || end - start > 128 * 960 {
         return Err("Use a nonnegative passage of 1..122880 ticks (128 quarter notes)".into());

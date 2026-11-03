@@ -151,6 +151,9 @@ fn the_audio_sampler_lists_its_envelope_and_a_soundfont_does_not() {
         .add_instrument_track("Font", auris_sampler::SAMPLER_ID)
         .unwrap();
     assert!(envelope_controls(session.registry(), session.project(), font.0).is_null());
+    let route = envelope_route(session.project(), font.0);
+    assert!(route.as_str().unwrap().contains("load_sample"));
+    assert!(envelope_route(session.project(), audio.0).is_null());
 }
 
 #[test]
