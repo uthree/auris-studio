@@ -167,7 +167,7 @@ pub enum Command {
         /// List, or restore named clips from one source.
         operation: crate::session::source_material::Operation,
     },
-    /// Measure a melody section by section — register, range, leaps — and check that every chorus lifts above the section leading into it: at least a minor third higher on average, a higher peak, and at least one leap of a fourth or more. Read it after writing the melody and before lyrics are sung, and act on its warnings; it measures the written notes, not how they sound.
+    /// Measure a melody section by section — register, range, leaps — and check that every chorus lifts above the section leading into it: at least a minor third higher on average, a higher peak, and at least one leap of a fourth or more. Also reports the bars of intro before the melody and of outro after it, and warns under eight, while the form is still easy to change. Read it after writing the melody and before lyrics are sung, and act on its warnings; it measures the written notes, not how they sound.
     MelodyShape {
         /// The track holding the melody, usually the lead singer.
         track: u64,

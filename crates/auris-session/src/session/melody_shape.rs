@@ -7,6 +7,7 @@
 //! score done: each section's register and movement, and for every chorus the lift over the
 //! section that leads into it.
 
+use super::arrangement_shape::MIN_FRAME_BARS;
 use auris_core::theory::pitch::midi_name;
 use auris_core::{Project, Ticks, TrackId, loop_passes};
 use serde_json::{Value, json};
@@ -65,10 +66,13 @@ pub fn melody_shape(project: &Project, track: TrackId) -> Result<Value, String> 
         .note_clips()
         .ok_or("Choose an instrument or singer track holding the melody")?;
     let mut notes: Vec<(Ticks, i32)> = Vec::new();
+    let mut last_end = Ticks::ZERO;
     for clip in clips.iter().filter(|clip| !clip.muted) {
         for (offset, span) in loop_passes(clip.length, clip.loop_end) {
             for note in clip.playable_notes().filter(|note| note.start < span) {
-                notes.push((clip.start + offset + note.start, i32::from(note.pitch)));
+                let at = clip.start + offset + note.start;
+                notes.push((at, i32::from(note.pitch)));
+                last_end = last_end.max(at + note.length.min(span - note.start));
             }
         }
     }
@@ -165,6 +169,30 @@ pub fn melody_shape(project: &Project, track: TrackId) -> Result<Value, String> 
             peak.label
         ));
     }
+    // The frame around the melody, while the form is still the score's to change: an intro
+    // cannot be lengthened later without moving everything after it.
+    let bar = |at: Ticks| {
+        project
+            .signatures
+            .signature_at(at)
+            .ticks_per_bar()
+            .raw()
+            .max(1) as f64
+    };
+    let first = notes.first().map_or(Ticks::ZERO, |note| note.0);
+    let intro_bars = first.raw() as f64 / bar(Ticks::ZERO);
+    let song_end = project.sections.end().max(last_end);
+    let outro_bars = (song_end - last_end).raw().max(0) as f64 / bar(last_end);
+    if intro_bars < MIN_FRAME_BARS {
+        warnings.push(format!(
+            "The melody starts after {intro_bars:.1} bars; plan an intro of at least {MIN_FRAME_BARS} bars into the form now, before anything is written after it"
+        ));
+    }
+    if outro_bars < MIN_FRAME_BARS {
+        warnings.push(format!(
+            "The form ends {outro_bars:.1} bars after the melody; plan an outro of at least {MIN_FRAME_BARS} bars"
+        ));
+    }
     let report: Vec<Value> = sections
         .iter()
         .map(|section| {
@@ -180,6 +208,8 @@ pub fn melody_shape(project: &Project, track: TrackId) -> Result<Value, String> 
         .collect();
     Ok(json!({
         "track": track.0, "sections": report, "chorus_lifts": lifts, "warnings": warnings,
+        "intro_bars": (intro_bars * 10.0).round() / 10.0,
+        "outro_bars": (outro_bars * 10.0).round() / 10.0,
         "note": "Measured on written notes, highest note where several sound together. A lift is judged against the section just before each chorus.",
     }))
 }
@@ -189,17 +219,26 @@ mod tests {
     use super::*;
     use auris_core::Note;
 
-    fn song(verse: &[u8], chorus: &[u8]) -> (Project, TrackId) {
+    /// A one-bar pre-chorus and one-bar chorus, framed by `intro` and `outro` bars.
+    fn framed(verse: &[u8], chorus: &[u8], intro: i64, outro: i64) -> (Project, TrackId) {
         let mut project = Project::new("Song", 48_000.0);
         let track = project.add_singer_track("Lead", "auris.synth.vocal");
         let bar = Ticks::QUARTER * 4;
         project
             .sections
-            .set_point(Ticks::ZERO, Some("Bメロ".into()));
-        project.sections.set_point(bar, Some("サビ1".into()));
-        project.sections.set_point(bar * 2, None);
+            .set_point(Ticks::ZERO, Some("Intro".into()));
+        project
+            .sections
+            .set_point(bar * intro, Some("Bメロ".into()));
+        project
+            .sections
+            .set_point(bar * (intro + 1), Some("サビ1".into()));
+        project
+            .sections
+            .set_point(bar * (intro + 2), Some("Outro".into()));
+        project.sections.set_point(bar * (intro + 2 + outro), None);
         let clip = project
-            .add_midi_clip(track, "Lead", Ticks::ZERO, bar * 2)
+            .add_midi_clip(track, "Lead", bar * intro, bar * 2)
             .unwrap();
         let notes = verse
             .iter()
@@ -209,6 +248,29 @@ mod tests {
             .collect();
         project.midi_clip_mut(clip).unwrap().notes = notes;
         (project, track)
+    }
+
+    fn song(verse: &[u8], chorus: &[u8]) -> (Project, TrackId) {
+        framed(verse, chorus, 8, 8)
+    }
+
+    #[test]
+    fn a_short_frame_is_reported_while_the_form_can_still_change() {
+        let (project, track) = framed(&[60, 62, 64, 62], &[67, 72, 67, 74], 4, 2);
+        let report = melody_shape(&project, track).unwrap();
+        let warnings: Vec<&str> = report["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|w| w.as_str().unwrap())
+            .collect();
+        assert_eq!(report["intro_bars"], 4.0);
+        assert_eq!(report["outro_bars"], 2.0);
+        assert!(
+            warnings[0].contains("starts after 4.0 bars"),
+            "{warnings:?}"
+        );
+        assert!(warnings[1].contains("ends 2.0 bars after"), "{warnings:?}");
     }
 
     #[test]
