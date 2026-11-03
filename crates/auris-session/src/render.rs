@@ -605,19 +605,6 @@ impl RenderJob {
         Ok(summary)
     }
 
-    /// Encode privately without publishing; the owning session validates the staged result.
-    pub fn stage_audio_export(
-        &mut self,
-        path: &Path,
-        settings: &AudioExportSettings,
-        options: &OfflineOptions,
-        track: Option<TrackId>,
-        progress: &mut RenderProgress<'_>,
-    ) -> Result<auris_io::StagedAudioExport, SessionError> {
-        let (writer, _) = self.render_audio_writer(track, path, settings, options, progress)?;
-        Ok(writer.finish_staged()?)
-    }
-
     /// Capture exact stereo float samples, optionally priming effects from timeline zero.
     pub(crate) fn stage_analysis_export(
         &mut self,
@@ -892,17 +879,6 @@ impl RenderJob {
     ) -> Result<Vec<StemSummary>, SessionError> {
         self.render_audio_stems_with_partial(folder, settings, options, progress)
             .map_err(|failure| failure.error)
-    }
-
-    /// Like [`Self::render_stems`], retaining summaries for complete files when a later stem fails.
-    pub fn render_stems_with_partial(
-        &mut self,
-        folder: &Path,
-        settings: &WavExportSettings,
-        options: &OfflineOptions,
-        progress: &mut RenderProgress<'_>,
-    ) -> Result<Vec<StemSummary>, StemRenderFailure> {
-        self.render_audio_stems_with_partial(folder, &(*settings).into(), options, progress)
     }
 
     /// Like [`Self::render_audio_stems`], retaining completed files after a later failure.

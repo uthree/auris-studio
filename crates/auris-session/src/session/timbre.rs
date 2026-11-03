@@ -295,27 +295,6 @@ impl Session {
             }
         }
     }
-
-    /// Plays a cached, level-matched reference through the chosen track without changing it.
-    ///
-    /// The track's mute, inserts, fader and routing apply to audition, but never to analysis.
-    pub fn preview_timbre(
-        &mut self,
-        map: &TimbreMap,
-        index: usize,
-        track: TrackId,
-    ) -> Result<(), SessionError> {
-        self.require_track(track)?;
-        if (map.sample_rate - self.sample_rate()).abs() > 0.1 {
-            return Err(failure("the audio rate changed; rescan the library"));
-        }
-        let buffer = map
-            .previews
-            .get(index)
-            .ok_or_else(|| failure("unknown mapped sound"))?;
-        self.play_singer_preview(track, buffer);
-        Ok(())
-    }
 }
 
 impl TimbreMapJob {

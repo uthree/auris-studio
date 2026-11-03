@@ -25,13 +25,6 @@ pub fn deserialize<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<
     result.map_err(|e| serde::de::Error::custom(format!("pitch: {e}; use 60, \"60\", or \"C4\"")))
 }
 
-/// Deserialize either supported wire representation while retaining a string API.
-pub fn deserialize_string<'de, D: serde::Deserializer<'de>>(
-    deserializer: D,
-) -> Result<String, D::Error> {
-    deserialize(deserializer).map(|value| value.to_string())
-}
-
 /// Parse a scientific pitch name or a decimal MIDI number (0 through 127).
 pub fn parse(text: &str) -> Result<u8, String> {
     let text = text.trim();
