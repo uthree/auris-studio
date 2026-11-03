@@ -146,8 +146,7 @@ jobs:
           retention-days: 7
 
   # The feature the shipped Windows binaries are built with, alongside the default build rather
-  # than after it. Its own cache, since rust-cache keys by job and the two builds share little
-  # above cpal.
+  # than after it.
   windows-asio:
     name: Test on Windows with ASIO
     runs-on: windows-latest
@@ -159,12 +158,17 @@ jobs:
       - name: Install the toolchain
         run: rustup toolchain install stable --profile minimal --component clippy
 
+      # Restore the default Windows job's cache rather than keep one of its own: rust-cache
+      # keys by job, and a key of this job's own started cold on every pull request until main
+      # had saved it (52 minutes on the first run). Everything below cpal is the same build; only
+      # cpal, asio-sys and what depends on them compile again. Only the default job saves, so
+      # the two never race for the key.
       - name: Cache the build
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           prefix-key: v1-build-performance
-          cache-on-failure: true
-          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev' || github.event_name == 'workflow_dispatch' }}
+          shared-key: windows
+          save-if: false
 
       - name: Prepare LLVM for ASIO
         shell: pwsh

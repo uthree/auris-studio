@@ -156,7 +156,9 @@ the workspace crates, which no dependency cache holds.
 Three changes followed:
 
 * The ASIO build is its own job, `Test on Windows with ASIO`, running alongside the default
-  Windows build instead of after it. It costs another runner and nothing in coverage.
+  Windows build instead of after it. It costs another runner and nothing in coverage. It
+  restores the default job's cache (`shared-key: windows`) and never saves one: with a cache
+  of its own it built from nothing on the first run, Clippy and tests taking 52 minutes.
 * Tests run as `cargo test --tests`. Plain `cargo test` also links every example, more than two
   dozen executables that it then never runs; Clippy's `--all-targets` still type-checks them.
   On a 4-core Linux container with dependencies already built, the backend test build went from
