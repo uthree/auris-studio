@@ -96,6 +96,8 @@ uv run tools/eval/music.py --preset all --seeds 3 --workdir target/after --basel
 <a id="controlled-melody-listening"></a>
 曲全体の採点には、SongEval のほかに二つのモデルを使えます。`audiobox.py` は Meta の Audiobox Aesthetics を動かし、CE、CU、PC、PQ を1〜10で出します。`song_aesthetics.py` は Lv らの複数ステム型の楽曲美学モデルを動かし、Overall、Singing、Melody、Arrange、AudioQ を0〜100で出します。こちらは曲を Demucs `htdemucs` で歌と伴奏に分け、5秒おきに10秒の区間を切り出して MuQ で埋め込みます。歌か伴奏のどちらかが無音の区間は飛ばします。どちらも `songeval.py` と同じ形式のレポートを書きます。市販の曲と比べたとき、レンダリングした曲と市販の曲を分けられたのは後者だけでした。レンダリングした歌ものは、どれも市販の曲の最低点より下でした。Audiobox の PQ は、レンダリングのきれいな音を市販のマスターより高く評価します。インストでは分離器が主旋律を歌として聞き取るので、複数ステム型のモデルの点には意味がありません。
 
+`songeval.py` と `song_aesthetics.py` は `--device cuda:0` で GPU を使います（ROCm 版の PyTorch もこの名前で答えます）。Audiobox は GPU が見えれば自動で使います。GPU の点は、CPU の点と 0.001 以内で一致します。gfx1201 の ROCm 7.14 では memory-efficient と flash の attention カーネルが落ちるので、アダプタはこの二つを切ります。`song_aesthetics.py --precision bf16` は約1.6倍速くなりますが、点が最大 0.8 動きます。fp16 では MuQ の出力が NaN になります。
+
 ## 制御したメロディー聴取
 
 `melody_ab.py` は固定した伴奏に器楽リードを移植します。`melody_continuity_ab.py` はレンダーを固定し、レベルを一致させたコーラス抜粋を作ります。`melody_phrase_ab.py` はベースライン、ピッチ、リズム、統合バリアントを、明示的なアーティファクトハッシュとコンポーネント変更ガード付きで比較します。既存の音符、伴奏、ID、ミキサー、演奏変換は編集可能なプロジェクトに残ります。`structure.py`、`melody_continuity.py`、`seed_metrics.py` はモデルスコアとは独立に、書かれたスコアのリズム、フレーズ連続性、重なり、声部移動を検査します。

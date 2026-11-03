@@ -167,9 +167,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     checkpoint = Path(args.checkpoint).resolve()
     muq_path = Path(args.muq).resolve()
     config = OmegaConf.load(upstream / "config.yaml")
-    model = instantiate(config.generator).to("cpu").eval()
-    model.load_state_dict(load_file(str(checkpoint), device="cpu"), strict=True)
-    muq = MuQ.from_pretrained(str(muq_path), local_files_only=True).to("cpu").eval()
+    device = torch.device(args.device)
+    model = instantiate(config.generator).to(device).eval()
+    model.load_state_dict(load_file(str(checkpoint), device=str(device)), strict=True)
+    muq = MuQ.from_pretrained(str(muq_path), local_files_only=True).to(device).eval()
     source_files = {
         name: digest(upstream / name) for name in ("model.py", "eval.py", "config.yaml")
     }
@@ -185,7 +186,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         if (muq_path / name).is_file()
     }
     runtime = {
-        "device": "cpu", "torch_threads": torch.get_num_threads(),
+        "device": str(device), "torch_threads": torch.get_num_threads(),
         "upstream": "https://github.com/ASLP-lab/SongEval",
         "upstream_revision": git_revision, "requested_upstream_revision": args.upstream_revision,
         "artifacts": {"checkpoint": digest(checkpoint), "muq": muq_weights,
@@ -210,7 +211,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 raise ValueError("audio rejected by silence/empty diagnostic")
             wav, _ = librosa.load(current["path"], sr=24000, mono=True)
             with torch.no_grad():
-                hidden = muq(torch.tensor(wav, dtype=torch.float32).unsqueeze(0), output_hidden_states=True)["hidden_states"][6]
+                hidden = muq(torch.tensor(wav, dtype=torch.float32, device=device).unsqueeze(0), output_hidden_states=True)["hidden_states"][6]
                 values = model(hidden).squeeze(0).tolist()
             if len(values) != len(AXES):
                 raise ValueError(f"SongEval returned {len(values)} scores, expected {len(AXES)}")
@@ -254,6 +255,7 @@ def main() -> None:
     parser.add_argument("--muq")
     parser.add_argument("--upstream-revision")
     parser.add_argument("--threads", type=int, default=4)
+    parser.add_argument("--device", default="cpu", help="Torch device, such as cpu or cuda (ROCm builds use cuda too)")
     parser.add_argument("--max-seconds", type=float, default=120.0)
     args = parser.parse_args()
     config: dict[str, Any] = {}

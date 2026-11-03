@@ -203,6 +203,12 @@ every rendered vocal song scored below the lowest commercial one. Audiobox PQ ra
 above commercial masters. On an instrumental the separator hears the lead as a voice, so the
 multi-stem model's score there means nothing.
 
+`songeval.py` and `song_aesthetics.py` take `--device cuda:0`, which a ROCm build of PyTorch also
+answers. Audiobox takes the GPU whenever one is visible. On a GPU, scores match the CPU's to
+0.001. Under ROCm 7.14 on gfx1201 the memory-efficient and flash attention kernels fail, so the
+adapters turn both off. `song_aesthetics.py --precision bf16` is about 1.6 times faster but moves
+scores by up to 0.8; fp16 turns MuQ's output into NaN.
+
 ## Controlled melody listening
 
 The [2026-10-26 local evaluator trial](local-music-evaluators-2026-10-26.ja.md)

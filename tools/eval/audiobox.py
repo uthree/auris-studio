@@ -38,6 +38,12 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     from audiobox_aesthetics.infer import initialize_predictor
 
     torch.set_num_threads(args.threads)
+    if torch.cuda.is_available():
+        # The predictor takes the GPU whenever one is visible. On an RX 9070 XT (gfx1201) under
+        # ROCm 7.14 its attention fails with hipErrorInvalidValue in the memory-efficient and
+        # flash kernels, as Demucs does in song_aesthetics.py; the math kernel works.
+        torch.backends.cuda.enable_mem_efficient_sdp(False)
+        torch.backends.cuda.enable_flash_sdp(False)
     predictor = initialize_predictor()
     runtime = {
         "device": str(predictor.device),

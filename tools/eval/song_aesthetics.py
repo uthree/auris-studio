@@ -6,7 +6,9 @@ mixture, vocal and accompaniment segments: 10 seconds long, 5 seconds apart,
 mono at 24 kHz, each embedded with MuQ.  It reports five 0-100 scores.  Its
 authors separate the stems with a source separator; this adapter does the same
 with Demucs ``htdemucs`` for every input, rendered or recorded, so both kinds go
-through one front end.
+through one front end.  Demucs's random time shift is turned off: it draws from
+Python's unseeded ``random`` and moved an Arrange score by half a point between
+runs of the same file.
 
 Segments whose vocal or accompaniment is mostly silent are skipped, as in the
 official inference, so an instrumental has nothing to score and is reported as
@@ -19,6 +21,7 @@ the interpreter of the pinned environment in ``.local-evaluations``.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import os
 import subprocess
 import sys
@@ -76,14 +79,23 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     ).stdout.strip()
     if revision != args.upstream_revision:
         raise ValueError(f"source revision mismatch: expected {args.upstream_revision}, got {revision}")
-    model = AestheticScoringModel(device="cpu").to("cpu").eval()
-    state = torch.load(checkpoint, map_location="cpu")
+    device = torch.device(args.device)
+    if device.type == "cuda":
+        # On an RX 9070 XT (gfx1201) under ROCm 7.14 the memory-efficient attention kernel, and in
+        # half precision the flash kernel too, fail inside Demucs with hipErrorInvalidValue.
+        # The math kernel works at both precisions and costs Demucs almost nothing.
+        torch.backends.cuda.enable_mem_efficient_sdp(False)
+        torch.backends.cuda.enable_flash_sdp(False)
+    model = AestheticScoringModel(device=device).to(device).eval()
+    state = torch.load(checkpoint, map_location=device)
     model.load_state_dict(state.get("state_dict", state), strict=True)
-    muq = MuQ.from_pretrained(str(muq_path), local_files_only=True).to("cpu").eval()
-    separator = get_model("htdemucs").to("cpu").eval()
+    muq = MuQ.from_pretrained(str(muq_path), local_files_only=True).to(device).eval()
+    separator = get_model("htdemucs").to(device).eval()
     vocals = separator.sources.index("vocals")
     runtime = {
-        "device": "cpu",
+        "device": str(device),
+        "precision": args.precision,
+        "device_name": torch.cuda.get_device_name(device) if device.type == "cuda" else "cpu",
         "torch_threads": torch.get_num_threads(),
         "upstream": "https://github.com/yisan33/song-aesthetics-evaluation",
         "upstream_revision": revision,
@@ -93,8 +105,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "source": {n: digest(upstream / n) for n in ("inference.py", "core/model.py", "core/utils.py")},
         },
         "packages": {n: metadata.version(n) for n in ("torch", "torchaudio", "librosa", "muq", "numpy", "soundfile", "transformers", "demucs")},
-        "preprocessing_version": "song-aesthetics-adapter-v1",
-        "preprocessing": "Demucs htdemucs at 44.1 kHz stereo (vocals; accompaniment = the other stems); "
+        "preprocessing_version": "song-aesthetics-adapter-v2",
+        "preprocessing": "Demucs htdemucs at 44.1 kHz stereo, no random shift (vocals; accompaniment = the other stems); "
         "mono 24 kHz; whole 10 s segments every 5 s; official silence skip, interval aggregation and MuQ hidden states",
     }
     rows: list[dict[str, Any]] = []
@@ -112,9 +124,20 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         _json(report_path, report)
         return report
 
+    def amp() -> contextlib.AbstractContextManager[Any]:
+        """Half precision for the separator and the embedder when asked.
+
+        The scoring head stays in float32: in half precision its bin probabilities overflow,
+        no score interval survives and the official aggregation divides by zero.
+        """
+        if args.precision != "fp32":
+            return torch.autocast(device.type, dtype={"fp16": torch.float16, "bf16": torch.bfloat16}[args.precision])
+        return contextlib.nullcontext()
+
     def embed(wav: np.ndarray) -> torch.Tensor:
-        hidden = muq(torch.from_numpy(wav).float().unsqueeze(0), output_hidden_states=True).hidden_states
-        return torch.stack(hidden).squeeze(1)
+        with amp():
+            hidden = muq(torch.from_numpy(wav).float().unsqueeze(0).to(device), output_hidden_states=True).hidden_states
+        return torch.stack(hidden).squeeze(1).float().cpu()
 
     save()
     for row in manifest:
@@ -130,8 +153,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             wav = torch.from_numpy(stereo[:2]).float()
             reference = wav.mean(0)
             mean, std = reference.mean(), reference.std() + 1e-8
-            with torch.no_grad():
-                stems = apply_model(separator, ((wav - mean) / std)[None], device="cpu", progress=False)[0]
+            with torch.no_grad(), amp():
+                stems = apply_model(separator, ((wav - mean) / std)[None], shifts=0, device=device, progress=False)[0]
+            stems = stems.float().cpu()
             stems = stems * std + mean
             vocal = stems[vocals].mean(0).numpy()
             accompaniment = (stems.sum(0) - stems[vocals]).mean(0).numpy()
@@ -149,7 +173,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                     batches.append({"embeddings": batch[0], "embeddings_vocal": batch[1], "embeddings_inst": batch[2],
                                     "music_id": [current["id"]] * len(chunk)})
                 with tempfile.TemporaryDirectory() as scratch:
-                    Infer(model=model, dataset=batches, device="cpu", estim_dir=scratch).process()
+                    Infer(model=model, dataset=batches, device=device, estim_dir=scratch).process()
                     table = pd.read_excel(Path(scratch) / f"{current['id']}.xlsx")
             scores = {axis: round(float(table.iloc[0][axis]), 4) for axis in AXES}
             if not all(np.isfinite(list(scores.values()))):
@@ -173,6 +197,9 @@ def main() -> None:
     parser.add_argument("--muq", required=True, help="Local OpenMuQ/MuQ-large-msd-iter snapshot")
     parser.add_argument("--fast-transformers", help="Directory holding an importable fast_transformers")
     parser.add_argument("--threads", type=int, default=4)
+    parser.add_argument("--device", default="cpu", help="Torch device, such as cpu or cuda (ROCm builds use cuda too)")
+    parser.add_argument("--precision", choices=("fp32", "bf16", "fp16"), default="fp32",
+                        help="bf16 and fp16 run Demucs and MuQ under autocast; they need a GPU device")
     parser.add_argument("--max-seconds", type=float, default=600.0)
     args = parser.parse_args()
     args.audio = args.audio_paths or None
@@ -180,6 +207,8 @@ def main() -> None:
         parser.error("provide exactly one of --manifest or positional audio paths")
     if not 1 <= args.threads <= 16:
         parser.error("--threads must be between 1 and 16")
+    if args.precision != "fp32" and args.device == "cpu":
+        parser.error("--precision bf16 and fp16 need a GPU device")
     report = run(args)
     if any(row.get("status") != "scored" for row in report["rows"]):
         raise SystemExit(2)
