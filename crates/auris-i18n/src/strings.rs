@@ -105,6 +105,12 @@ strings! {
     PreferenceInvalid { en: "Enter a request and select an alternative.", ja: "依頼内容を入力し、候補を選んでください。" }
     PreferenceUnavailable { en: "Selected alternative is unavailable", ja: "選んだ候補が見つかりません" }
     PreferenceSaved { en: "Preferences saved", ja: "好みの履歴を保存しました" }
+    PreferenceDigestEdit { en: "Edit summary", ja: "要約を編集" }
+    PreferenceDigestSave { en: "Save summary", ja: "要約を保存" }
+    PreferenceDigestEditHelp { en: "Rewrite the summary in your own words. The workshop reads it beside your recent choices, and folds later choices into what you wrote. Leave it empty to remove the summary.", ja: "要約を自分の言葉で書き直せます。ワークショップは最近の選択と一緒にこれを読み、以降の選択もこの文章に追記する形でまとめます。空にすると要約を削除します。" }
+    PreferenceDigestEdited { en: "Edited by you", ja: "編集済み" }
+    AgentPreferencesLink { en: "Edit learned preferences…", ja: "学習した好みを編集…" }
+    AgentPreferencesLinkHelp { en: "What the AI workshop has learned from your choices, and its summary, is edited under Personalization.", ja: "AIワークショップが選択から学習した好みとその要約は「パーソナライズ」で確認・編集できます。" }
     WorkshopHarmonyProgress { en: "Writing the chord progression", ja: "コード進行を決めています" }
     WorkshopMelodyProgress { en: "Writing the melody", ja: "メロディラインを作っています" }
     WorkshopArrangeProgress { en: "Editing the arrangement", ja: "編曲を進めています" }

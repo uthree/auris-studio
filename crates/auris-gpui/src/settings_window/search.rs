@@ -67,6 +67,8 @@ impl Section {
                 Key::PreferenceHelp,
                 Key::WorkshopMemory,
                 Key::WorkshopForget,
+                Key::PreferenceDigest,
+                Key::PreferenceDigestEdit,
             ],
             Self::Agent => &[
                 Key::AgentPanel,
