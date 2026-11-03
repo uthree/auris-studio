@@ -2605,6 +2605,8 @@ pub mod documents {
     //!   MySong.auris
     //!   Audio/
     //!     kick.wav
+    //!   Workspace/
+    //!     renders/mix.wav
     //! ```
     //!
     //! [`Session::save_as`](crate::Session::save_as) creates that folder rather than trusting
@@ -2612,6 +2614,17 @@ pub mod documents {
     //! `MySong.auris` gives `MySong/MySong.auris`. The invariant being defended is **one folder,
     //! one project** — two documents sharing a folder would share its `Audio/`, and saving one
     //! under a new name would leave both pointing at the same files.
+    //!
+    //! `Workspace/` is the agents' half of the folder. A file tool given a path *relative* to it
+    //! — `render` to `renders/mix.wav`, `load_sample` from `samples/kick.wav` — runs without a
+    //! permission prompt, because [`workspace_relative`](crate::workspace_relative) and
+    //! [`Session::resolve_workspace_path`](crate::Session::resolve_workspace_path) together
+    //! guarantee it names nothing outside the folder, by `..` or by a link; an absolute path could
+    //! be anything on the machine and is still asked about. The document never refers into the
+    //! workspace: loading or importing from it copies the file into `Audio/` like any import, so
+    //! the user may tidy the workspace away without silencing a track. It belongs to the folder all
+    //! the same, so Save As and the move of an unsaved song into its recovery folder carry it — which
+    //! is also what keeps a workshop candidate's renders with it from checkpoint to finished song.
     //!
     //! # Why an asset reference is not a path
     //!

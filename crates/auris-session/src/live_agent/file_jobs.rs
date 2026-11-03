@@ -18,14 +18,14 @@ use std::{
 #[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum AudioDestination {
-    /// One encoded WAV mix at a new absolute path.
+    /// One encoded WAV mix at a new path.
     Mix {
-        /// Absolute new WAV file path.
+        /// New WAV file path, relative to the project workspace (renders/mix.wav) or absolute.
         path: String,
     },
     /// One WAV per source track; existing stem files are refused.
     Stems {
-        /// Absolute destination folder.
+        /// Destination folder, relative to the project workspace (stems/v1) or absolute.
         folder: String,
     },
 }
@@ -207,9 +207,24 @@ fn stage_audio(
 fn local_path(value: &str) -> Result<PathBuf, String> {
     let path = PathBuf::from(value);
     if !path.is_absolute() || value.starts_with("\\\\") || value.starts_with("//") {
-        return Err("Use an absolute local file path".into());
+        return Err("Use a path relative to the project workspace (renders/mix.wav) or an absolute local file path".into());
     }
     Ok(path)
+}
+
+impl Session {
+    /// An agent's file argument: relative names the project workspace, absolute anything local.
+    ///
+    /// The permission policy reads the same distinction from the text alone
+    /// ([`Command::uses_only_workspace`]), which is why a relative path is resolved here and
+    /// nowhere else: what was let through unasked must be what is opened.
+    pub(crate) fn agent_path(&self, value: &str) -> Result<PathBuf, String> {
+        if crate::workspace_relative(value).is_some() {
+            self.resolve_workspace_path(value)
+        } else {
+            local_path(value)
+        }
+    }
 }
 
 impl FileJob {
@@ -409,7 +424,7 @@ impl Session {
                         "Use nonnegative at_tick and a nonempty name up to 256 bytes".into(),
                     );
                 }
-                let path = local_path(&path)?;
+                let path = self.agent_path(&path)?;
                 let name = name.unwrap_or_else(|| {
                     path.file_stem()
                         .unwrap_or_default()
@@ -448,7 +463,7 @@ impl Session {
                 }
                 let samples = samples
                     .into_iter()
-                    .map(|sample| Ok((local_path(&sample.path)?, sample)))
+                    .map(|sample| Ok((self.agent_path(&sample.path)?, sample)))
                     .collect::<Result<Vec<_>, String>>()?;
                 Work::LoadSample {
                     samples,
@@ -467,7 +482,7 @@ impl Session {
                 if at_tick < 0 {
                     return Err("at_tick must be nonnegative".into());
                 }
-                let path = local_path(&path)?;
+                let path = self.agent_path(&path)?;
                 Work::ImportMidi {
                     job: self.begin_midi_import(&path).map_err(|e| e.to_string())?,
                     path,
@@ -536,9 +551,9 @@ impl Session {
                 };
                 let job = self.job_for_at(render_project, options.sample_rate);
                 let (mut targets, folder) = match destination {
-                    AudioDestination::Mix { path } => (vec![(local_path(&path)?, None)], None),
+                    AudioDestination::Mix { path } => (vec![(self.agent_path(&path)?, None)], None),
                     AudioDestination::Stems { folder } => {
-                        let folder = local_path(&folder)?;
+                        let folder = self.agent_path(&folder)?;
                         let tracks = job.stem_tracks();
                         if tracks.is_empty() {
                             return Err("No source tracks to export".into());
@@ -561,7 +576,7 @@ impl Session {
                         }
                         targets[0].1 = Some(TrackId(track));
                     }
-                    let path = local_path(&request.manifest_path)?;
+                    let path = self.agent_path(&request.manifest_path)?;
                     self.export_guard()
                         .check_file(&path)
                         .map_err(|e| e.to_string())?;
@@ -627,7 +642,7 @@ impl Session {
                 }
             }
             Command::ExportMidi { output } => {
-                let path = local_path(&output)?;
+                let path = self.agent_path(&output)?;
                 Work::Midi {
                     job: self.begin_midi_export(&path),
                     guard: self.export_guard(),
@@ -651,7 +666,7 @@ impl Session {
                     return Err("Invalid delivery target, tolerance or ending limit".into());
                 }
                 Work::Verify {
-                    path: local_path(&path)?,
+                    path: self.agent_path(&path)?,
                     target_lufs,
                     ceiling_db,
                     tolerance_lu,
@@ -754,6 +769,7 @@ impl Session {
                     .map_err(|e| e.to_string())?
                     .ok_or("MIDI export became stale")?;
                 Ok(serde_json::json!({
+                    "workspace_path": self.workspace_path_of(&report.path),
                     "path": report.path,
                     "notes": report.notes,
                     "duration_ticks": report.duration_ticks,
@@ -815,7 +831,7 @@ impl Session {
                     encoded.publish_noclobber().map_err(|e| {
                         format!("Publication failed: {e}; already published: {files:?}")
                     })?;
-                    files.push(serde_json::json!({"path":path,"encoded":inspection,"attenuation_db":attenuation_db,"source_true_peak_db":source_true_peak_db,"ceiling_db":if manifest.is_some(){None}else{Some(ceiling_db)},"source":source_inspection}));
+                    files.push(serde_json::json!({"path":path,"workspace_path":self.workspace_path_of(&path),"encoded":inspection,"attenuation_db":attenuation_db,"source_true_peak_db":source_true_peak_db,"ceiling_db":if manifest.is_some(){None}else{Some(ceiling_db)},"source":source_inspection}));
                 }
                 if let (Some(file), Some(manifest)) = (staged_manifest, &manifest) {
                     file.persist_noclobber(&manifest.path).map_err(|e| {
@@ -1165,6 +1181,62 @@ mod tests {
             ceiling_db: None,
             analysis: None,
         }
+    }
+
+    #[test]
+    fn a_relative_render_lands_in_the_workspace_and_a_sample_loads_back_from_it() {
+        let mut live = fixture();
+        let cancelled = AtomicBool::new(false);
+        let run = |live: &mut Session, command: Command| {
+            let result = live
+                .begin_agent_file_job(command)
+                .unwrap()
+                .run(&cancelled)
+                .unwrap();
+            live.continue_agent_file_job(result, &cancelled).unwrap()
+        };
+        let response: serde_json::Value = serde_json::from_str(&run(
+            &mut live,
+            render(std::path::Path::new("renders/mix.wav")),
+        ))
+        .unwrap();
+        assert_eq!(response["files"][0]["workspace_path"], "renders/mix.wav");
+        let rendered = live.workspace_folder().join("renders").join("mix.wav");
+        assert!(rendered.is_file());
+        // An escape is refused before anything is rendered.
+        assert!(
+            live.begin_agent_file_job(render(std::path::Path::new("../mix.wav")))
+                .is_err()
+        );
+        // The bounce plays back as an instrument, copied into Audio/ like any sample.
+        let track = live.project().tracks[0].id;
+        run(
+            &mut live,
+            Command::LoadSample {
+                track: track.0,
+                samples: vec![crate::session::AgentSample {
+                    path: "renders/mix.wav".into(),
+                    root_note: Some(60),
+                    low_key: None,
+                    high_key: None,
+                    low_velocity: None,
+                    high_velocity: None,
+                    tune: None,
+                    gain_db: None,
+                }],
+                append: None,
+                looped: None,
+            },
+        );
+        let source = live.project().audio_sources.values().next().unwrap();
+        assert!(source.path.is_inside());
+        assert!(
+            source
+                .path
+                .resolve(live.project_folder())
+                .unwrap()
+                .starts_with(live.project_folder().unwrap().join(auris_io::AUDIO_DIR))
+        );
     }
 
     #[test]

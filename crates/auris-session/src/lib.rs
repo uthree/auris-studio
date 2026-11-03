@@ -148,6 +148,7 @@ pub use session::accompaniment;
 pub use session::arrangement;
 pub use session::lyric_harness;
 pub use session::source_material;
+pub use session::workspace_relative;
 pub use session::{
     AccompanyReport, Arm, AudioStatus, AutosaveJob, AutosaveResult, BalanceReport, CEILING_DB,
     ChordPreview, ChordPreviewJob, Clipboard, CollectAssetsJob, CollectAssetsResult,
@@ -320,7 +321,7 @@ pub mod prelude {
         SoundFontId, SoundFontRef, SourceId, StrokeDirection, Subdivision, Track, TrackId,
         TrackKind, Vibrato, default_frame_hop, default_loop_end, loop_passes, sounding_length,
     };
-    pub use auris_core::{Comment, CommentId};
+    pub use auris_core::{Comment, CommentId, JoinRefusal};
     pub use auris_core::{
         Expression, GroovePoint, GrooveTemplate, PitchPerformance, Strum, StrumClock,
         VolumeContour, VolumeContourPreset,

@@ -28,6 +28,7 @@ impl MenuCommand {
             Self::DeleteClip(_) | Self::DeleteNotes => "edit.delete",
             Self::ToggleClipMute(_) => "clip.mute",
             Self::SplitClipAtPlayhead(_) => "clip.split",
+            Self::JoinClips(_) => "clip.join",
             Self::ToggleClipLoop(_) => "clip.loop",
             Self::DuplicateNotes => "edit.duplicate",
             Self::CutNotes => "edit.cut",
@@ -427,6 +428,8 @@ pub enum MenuCommand {
     ToggleClipMute(ClipId),
     /// Divide a clip at the playhead.
     SplitClipAtPlayhead(ClipId),
+    /// Join the selection a clip belongs to into one clip, or a lone clip with its neighbour.
+    JoinClips(ClipId),
     /// Set the cycle region to a clip's extent.
     LoopOverClip(ClipId),
     /// Repeat a clip out to the next one on its lane, or stop it repeating.
@@ -1278,6 +1281,7 @@ impl AurisApp {
                 let at = self.playhead_ticks();
                 self.split_clips_for_command(clip, at);
             }
+            MenuCommand::JoinClips(clip) => self.join_clips_for_command(clip),
             MenuCommand::LoopOverClip(clip) => {
                 // The *sounding* extent, repeats included: cycling over a looped clip and
                 // hearing only its first bar would be a cycle region nobody could explain.

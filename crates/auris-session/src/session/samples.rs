@@ -694,7 +694,7 @@ fn rounded(value: f32) -> f64 {
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AgentSample {
-    /// Absolute local audio file path, up to 512 MiB; no network paths.
+    /// Workspace-relative path (samples/kick.wav) or absolute local audio file path, up to 512 MiB; no network paths.
     pub path: String,
     /// MIDI note 0..127 the recording sounds at; omitted, a note name in the file name such as Piano_C3, else its measured pitch, else 60 (C4).
     #[schemars(range(min = 0, max = 127))]

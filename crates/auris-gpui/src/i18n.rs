@@ -172,6 +172,7 @@ pub fn edit_key(edit: Edit) -> Key {
         Edit::PasteClips => Key::EditPasteClips,
         Edit::DuplicateClip => Key::EditDuplicateClip,
         Edit::SplitClip => Key::EditSplitClip,
+        Edit::JoinClips => Key::EditJoinClips,
         Edit::RenameClip => Key::EditRenameClip,
         Edit::MuteClip => Key::EditMuteClip,
         Edit::MoveClip => Key::EditMoveClip,
@@ -368,6 +369,15 @@ pub fn error_text(error: &SessionError, language: Language) -> String {
         SessionError::LibraryMissing => Key::ErrorLibraryMissing.get(language).to_string(),
         SessionError::UnknownProgression(name) => messages::unknown_progression(language, name),
         SessionError::CannotSplit(_) => Key::ErrorCannotSplit.get(language).to_string(),
+        SessionError::CannotJoin(refusal) => match refusal {
+            JoinRefusal::TooFew => Key::ErrorJoinTooFew,
+            JoinRefusal::Audio => Key::ErrorJoinAudio,
+            JoinRefusal::DifferentTracks => Key::ErrorJoinDifferentTracks,
+            JoinRefusal::MixedMute => Key::ErrorJoinMixedMute,
+            JoinRefusal::DifferentTransforms => Key::ErrorJoinDifferentTransforms,
+        }
+        .get(language)
+        .to_string(),
         SessionError::GenerationPositionOccupied => Key::ErrorGenerationPositionOccupied
             .get(language)
             .to_string(),

@@ -175,6 +175,8 @@ pub struct SaveJob {
     audio: Vec<(SourceId, Option<PathBuf>)>,
     fonts: Vec<(SoundFontId, Option<PathBuf>)>,
     voices: Vec<VoiceConnectionCopy>,
+    /// The folder the document lived in, whose workspace Save As carries to the new one.
+    workspace_from: Option<PathBuf>,
 }
 
 struct VoiceConnectionCopy {
@@ -544,6 +546,15 @@ impl SaveJob {
                 }
             }
         }
+        if self.collect_assets
+            && let Some(from) = &self.workspace_from
+        {
+            let (completed, failed) = super::workspace::carry_workspace(from, &folder, cancelled)?;
+            if !completed {
+                return Ok(None);
+            }
+            uncollected.extend(failed);
+        }
         if cancelled.load(Ordering::Relaxed) {
             return Ok(None);
         }
@@ -890,6 +901,7 @@ impl Session {
     /// new reference, which leaves the project dirty. That is the point: the search happens once,
     /// and saving makes the repair permanent.
     pub fn open(&mut self, path: &Path) -> Result<Vec<PathBuf>, SessionError> {
+        let path = &document_path(path);
         let project = load_project(path)?;
         self.history.clear();
         self.clear_sources();
@@ -936,7 +948,7 @@ impl Session {
         OpenProjectJob {
             owner: Arc::clone(&self.registry),
             revision: self.revision,
-            path: path.to_path_buf(),
+            path: document_path(path),
             render_rate: self.engine.sample_rate(),
         }
     }
@@ -980,6 +992,7 @@ impl Session {
     /// The project folder becomes the directory holding `path`, so a caller choosing a fresh
     /// location wants [`Self::save_as`] instead — this one would leave the audio behind.
     pub fn save(&mut self, path: &Path) -> Result<(), SessionError> {
+        let path = &document_path(path);
         self.collect_hosted_state()?;
         save_project(path, &mut self.project)?;
         self.remember_sound_scope_before_saving_to(path);
@@ -1107,6 +1120,7 @@ impl Session {
             audio,
             fonts,
             voices,
+            workspace_from: self.project_folder().map(Path::to_path_buf),
         })
     }
 
@@ -1138,6 +1152,7 @@ impl Session {
             audio: Vec::new(),
             fonts: Vec::new(),
             voices: Vec::new(),
+            workspace_from: None,
         })
     }
 
@@ -1908,6 +1923,18 @@ fn same_font_file(left: &Path, right: &Path) -> bool {
 const WRITE_LOCK_POLL: std::time::Duration = std::time::Duration::from_millis(50);
 
 /// Opens the lock file beside a document, without taking the lock.
+/// The document path a session keeps: `path` made absolute against the current directory.
+///
+/// A bare file name has no directory part, so [`auris_io::project_folder`] cannot name its folder
+/// and [`Session::project_folder`] would fall back to the session's private working folder —
+/// which is how `auris render Song.auris`, typed inside the project folder, used to report every
+/// take in `Audio/` as missing and render the song without them. Anchoring the path once, at the
+/// door, also keeps the folder the same if the process later changes directory. Nothing is
+/// touched on disk; when the current directory cannot be read the path is kept as given.
+fn document_path(path: &Path) -> PathBuf {
+    std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
 fn open_write_lock_file(path: &Path) -> Result<(PathBuf, std::fs::File), SessionError> {
     let folder = path.parent().ok_or(SessionError::NoPath)?;
     let lock_path = folder.join(".auris-write.lock");
@@ -2014,6 +2041,22 @@ mod tests {
     use crate::session::fixtures::{Scratch, named_font, session};
     use auris_core::project::TrackKind;
     use auris_io::AUDIO_DIR;
+
+    #[test]
+    fn a_bare_document_name_is_anchored_to_the_current_directory() {
+        let bare = document_path(std::path::Path::new("Song.auris"));
+        assert!(bare.is_absolute());
+        assert_eq!(
+            bare.parent(),
+            Some(std::env::current_dir().unwrap().as_path())
+        );
+        assert!(
+            auris_io::project_folder(&bare).is_some(),
+            "a bare name must still have a folder for `Audio/` to resolve against"
+        );
+        let absolute = std::env::temp_dir().join("Song").join("Song.auris");
+        assert_eq!(document_path(&absolute), absolute);
+    }
 
     fn directory_entries(path: &Path) -> Vec<PathBuf> {
         let mut entries: Vec<_> = std::fs::read_dir(path)
