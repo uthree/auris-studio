@@ -360,6 +360,10 @@ The chart repeats over the requested bars. The previous key resumes after the ra
 supplied keys replace interior key changes. The operation edits the key/chord map, preserves notes
 and mix, and is one Undo step. Audible chord notes alone do not populate this map.
 `clear_chords:true` clears the selected range; omit `chords` when clearing.
+`clear_key:true` removes the key changes in the range so the key before it runs through
+(the song key at bar 1 always stays), and `clear_section:true` deletes the section names in
+the range, leaving it unnamed while the section after it is kept. Omit `key` or `section`
+when clearing it. A key or section change that restates what is already in force is dropped.
 
 `inspect_audio` reports `harmony_events` for the inspected range: the harmony in
 force at the start, then every chord or key change, including changes inside a
