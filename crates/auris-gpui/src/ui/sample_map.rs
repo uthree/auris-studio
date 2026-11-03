@@ -7,7 +7,7 @@
 //! level per recording are the agent's, through `edit_sample_map`, which is where anyone building
 //! a drum map by hand would rather say it than drag it.
 
-use auris_i18n::Key;
+use auris_i18n::{Key, messages};
 use auris_session::SampleZoneView;
 use auris_session::prelude::*;
 use gpui::{AnyElement, Pixels, Point, div, prelude::*, px};
@@ -44,6 +44,18 @@ pub(crate) fn velocity_label(range: VelocityRange) -> String {
     format!("{}–{}", midi(range.low), midi(range.high))
 }
 
+/// A root as the row prints it: the key, and the tune in cents when there is any.
+///
+/// The cents are what the pitch detector wrote, so a sung note between two keys reads as the key
+/// it was put on and how far it was pulled to get there.
+pub(crate) fn root_label(root: u8, tune: f32) -> String {
+    let cents = (tune * 100.0).round() as i32;
+    match cents {
+        0 => midi_name(i32::from(root)),
+        _ => format!("{} {cents:+}¢", midi_name(i32::from(root))),
+    }
+}
+
 /// A root moved by `delta` semitones, kept on the keyboard.
 pub(crate) fn nudged_root(root: u8, delta: i32) -> u8 {
     (i32::from(root) + delta).clamp(0, 127) as u8
@@ -78,17 +90,40 @@ impl AurisApp {
                     .text_color(theme.text_muted)
                     .child(self.t(Key::SamplerSamples)),
             )
-            .child(button(
-                "pw-sample",
-                add_label.to_string(),
-                ButtonStyle::Ghost,
-                true,
-                theme.accent_soft,
-                theme,
-                cx.listener(move |this, _, _, cx| {
-                    this.load_sample(track, cx);
-                }),
-            ));
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .when(!map.is_empty(), |buttons| {
+                        buttons.child(
+                            button(
+                                "pw-sample-detect",
+                                self.t(Key::SamplerDetectPitch).to_string(),
+                                ButtonStyle::Ghost,
+                                false,
+                                theme.accent_soft,
+                                theme,
+                                cx.listener(move |this, _, _, cx| {
+                                    this.detect_sample_roots(track);
+                                    cx.notify();
+                                }),
+                            )
+                            .tooltip(self.tip(Key::SamplerDetectPitchTip, "")),
+                        )
+                    })
+                    .child(button(
+                        "pw-sample",
+                        add_label.to_string(),
+                        ButtonStyle::Ghost,
+                        true,
+                        theme.accent_soft,
+                        theme,
+                        cx.listener(move |this, _, _, cx| {
+                            this.load_sample(track, cx);
+                        }),
+                    )),
+            );
         let rows: Vec<AnyElement> = map
             .iter()
             .enumerate()
@@ -183,11 +218,11 @@ impl AurisApp {
             )
             .child(
                 div()
-                    .w(px(32.0))
+                    .w(px(64.0))
                     .text_xs()
                     .text_center()
                     .text_color(theme.text)
-                    .child(midi_name(i32::from(zone.root))),
+                    .child(root_label(zone.root, zone.tune)),
             )
             .child(
                 chain_button(
@@ -290,6 +325,14 @@ impl AurisApp {
         }
     }
 
+    /// Measures every recording of the map and puts each on the pitch it sounds at.
+    pub(crate) fn detect_sample_roots(&mut self, track: TrackId) {
+        match self.session.detect_sample_roots(track) {
+            Ok(moved) => self.set_status(messages::sample_pitches_detected(self.language(), moved)),
+            Err(error) => self.set_failed_status(self.failure(Key::CmdEditSampleMap, &error)),
+        }
+    }
+
     /// Takes one recording out of the map.
     pub(crate) fn remove_sample_zone(&mut self, track: TrackId, zone: usize) {
         if let Err(error) = self.session.remove_sample_zone(track, zone) {
@@ -306,6 +349,13 @@ mod tests {
     fn velocity_reads_in_midi_steps() {
         assert_eq!(velocity_label(VelocityRange::FULL), "0–127");
         assert_eq!(velocity_label(VelocityRange::new(0.5, 1.0)), "64–127");
+    }
+
+    #[test]
+    fn a_root_reads_with_its_cents_only_when_it_has_some() {
+        assert_eq!(root_label(60, 0.0), "C4");
+        assert_eq!(root_label(60, -0.234), "C4 -23¢");
+        assert_eq!(root_label(69, 0.5), "A4 +50¢");
     }
 
     #[test]

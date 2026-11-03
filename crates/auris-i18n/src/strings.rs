@@ -2796,6 +2796,8 @@ new のオプション
     SamplerSamples { en: "Samples", ja: "サンプル" }
     SamplerNoSample { en: "Load samples…", ja: "サンプルを読み込む…" }
     SamplerAddSamples { en: "Add samples…", ja: "サンプルを追加…" }
+    SamplerDetectPitch { en: "Detect pitch", ja: "ピッチ検出" }
+    SamplerDetectPitchTip { en: "Measure each sample's pitch and set its root and tune, even between keys", ja: "各サンプルのピッチを測り、鍵盤の間の音でもルート音と微調整を合わせます" }
     SamplerRootDown { en: "Root note down a semitone", ja: "ルート音を半音下げる" }
     SamplerRootUp { en: "Root note up a semitone", ja: "ルート音を半音上げる" }
     SamplerPlays { en: "Keys this sample plays: the ones nearer its root than any other", ja: "このサンプルが鳴らす鍵盤（他よりルート音が近い範囲）" }

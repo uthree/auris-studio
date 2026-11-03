@@ -142,8 +142,11 @@ impl Session {
             {
                 log::warn!("could not collect {}: {error}", path.display());
             }
-            let root = root_note_in_name(&name).unwrap_or(DEFAULT_SAMPLE_ROOT);
-            zones.push(SampleZone::new(source, root));
+            let (root, tune) = placed(root_note_in_name(&name), detect_pitch(&buffer));
+            zones.push(SampleZone {
+                tune,
+                ..SampleZone::new(source, root)
+            });
             self.install_source(source, Arc::new(buffer));
             sources.push(source);
         }
@@ -284,6 +287,47 @@ impl Session {
         self.set_sample_zones(track, zones)
     }
 
+    /// Measures every recording in a track's map and moves each to the pitch it sounds at, as
+    /// one undo step.
+    ///
+    /// The root becomes the nearest key and the tune takes up the rest, so a voice that sang a
+    /// little flat, or between two keys altogether, still plays in tune. A recording with no
+    /// steady pitch — a hit, a breath, noise — keeps its root and tune. Answers how many moved.
+    pub fn detect_sample_roots(&mut self, track: TrackId) -> Result<usize, SessionError> {
+        let mut zones = self.track_sample_zones(track);
+        let mut moved = 0;
+        for zone in &mut zones {
+            let Some(detected) = self
+                .bank
+                .get(zone.source)
+                .and_then(|buffer| detect_pitch(buffer))
+            else {
+                continue;
+            };
+            let (root, tune) = placed(None, Some(detected));
+            if (root, tune) != (zone.root, zone.tune) {
+                zone.root = root;
+                zone.tune = tune;
+                moved += 1;
+            }
+        }
+        self.set_sample_zones(track, zones)?;
+        Ok(moved)
+    }
+
+    /// The pitch each recording of a track's map was measured at, zone for zone; `None` where it
+    /// has none or its audio is missing.
+    pub fn track_sample_pitches(&self, track: TrackId) -> Vec<Option<DetectedPitch>> {
+        self.track_sample_zones(track)
+            .iter()
+            .map(|zone| {
+                self.bank
+                    .get(zone.source)
+                    .and_then(|buffer| detect_pitch(buffer))
+            })
+            .collect()
+    }
+
     /// `true` when the track plays the audio sampler.
     fn track_is_on_sampler(&self, track: TrackId) -> bool {
         self.project
@@ -383,14 +427,17 @@ impl Session {
             if buffer.frame_count() == 0 || buffer.channel_count() == 0 {
                 return Err(format!("{name} holds no audio to sample"));
             }
-            let root = request
-                .root_note
-                .or_else(|| root_note_in_name(&name))
-                .unwrap_or(DEFAULT_SAMPLE_ROOT);
-            // The source id is not known yet; the zone is completed once it is.
-            let zone = request
-                .settings()
-                .apply(SampleZone::new(SourceId(0), root))?;
+            let detected = detect_pitch(buffer);
+            let (root, tune) = placed(
+                request.root_note.or_else(|| root_note_in_name(&name)),
+                detected,
+            );
+            // The source id is not known yet; the zone is completed once it is. A tune the model
+            // gave replaces the measured correction.
+            let zone = request.settings().apply(SampleZone {
+                tune,
+                ..SampleZone::new(SourceId(0), root)
+            })?;
             ready.push((staged, name, zone));
         }
         self.begin_transaction(Edit::LoadSample);
@@ -474,6 +521,14 @@ impl Session {
             if edit.auto_keys == Some(true) {
                 next.keys = None;
             }
+            if edit.detect_pitch == Some(true) {
+                let detected = self
+                    .bank
+                    .get(next.source)
+                    .and_then(|buffer| detect_pitch(buffer))
+                    .ok_or_else(|| format!("Zone {} has no steady pitch to measure", edit.zone))?;
+                (next.root, next.tune) = placed(edit.root_note, Some(detected));
+            }
             *zone = edit.settings().apply(next)?;
         }
         let mut remove = remove;
@@ -517,6 +572,7 @@ impl Session {
                 ),
             })
         };
+        let pitches = self.track_sample_pitches(track);
         let zones: Vec<serde_json::Value> = self
             .track_sample_map(track)
             .into_iter()
@@ -534,6 +590,7 @@ impl Session {
                     "low_velocity": rounded(view.zone.velocity.low),
                     "high_velocity": rounded(view.zone.velocity.high),
                     "tune": rounded(view.zone.tune),
+                    "measured_hz": pitches.get(index).copied().flatten().map(|p| rounded(p.hz)),
                     "gain_db": rounded(view.zone.gain_db),
                 })
             })
@@ -558,6 +615,76 @@ impl Session {
     }
 }
 
+/// The pitch a recording was measured at.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DetectedPitch {
+    /// Its fundamental, in hertz.
+    pub hz: f32,
+    /// The same as a fractional MIDI note: 60.5 is a quarter tone above middle C.
+    pub midi: f32,
+}
+
+/// The longest stretch of a recording measured, in seconds. The estimator reads eight frames of
+/// whatever it is given, so this bounds only the copy made to mix it to mono.
+const MEASURED_SECONDS: f64 = 4.0;
+
+/// The share of frames that must find a pitch before a recording counts as pitched.
+const VOICED_ENOUGH: f32 = 0.5;
+
+/// Measures a recording's pitch with YIN, or `None` when it has no steady one.
+pub fn detect_pitch(buffer: &AudioBuffer) -> Option<DetectedPitch> {
+    let channels = buffer.channel_count();
+    if channels == 0 || buffer.frame_count() == 0 {
+        return None;
+    }
+    let frames = buffer
+        .frame_count()
+        .min((MEASURED_SECONDS * buffer.sample_rate()) as usize);
+    let mono: Vec<f32> = (0..frames)
+        .map(|frame| {
+            (0..channels)
+                .map(|channel| buffer.channel(channel)[frame])
+                .sum::<f32>()
+                / channels as f32
+        })
+        .collect();
+    let found = auris_analysis::pitch::recording_pitch(&mono, buffer.sample_rate());
+    let hz = found.hz.filter(|_| found.voiced >= VOICED_ENOUGH)?;
+    let midi = 69.0 + 12.0 * (hz / 440.0).log2();
+    (0.0..=127.0)
+        .contains(&midi)
+        .then_some(DetectedPitch { hz, midi })
+}
+
+/// Where a recording goes on the keyboard: its root, and the tune that makes it sound there.
+///
+/// A named root — from the file name or a model — is kept, and the measured pitch only trims it:
+/// the fraction of a semitone the recording is off, counted modulo the octave so an estimator's
+/// octave slip cannot move a named sample. A measurement more than a semitone from the name is
+/// taken to mean the name and the recording disagree, and the name wins untouched. With no name
+/// the nearest key to the measurement is the root, and the tune carries the rest, which is what
+/// lets a sung note between two keys play in tune.
+fn placed(named: Option<u8>, detected: Option<DetectedPitch>) -> (u8, f32) {
+    match (named, detected) {
+        (Some(root), Some(detected)) => {
+            let off = detected.midi - f32::from(root);
+            let fraction = off - 12.0 * (off / 12.0).round();
+            let tune = if fraction.abs() <= 1.0 {
+                -fraction
+            } else {
+                0.0
+            };
+            (root, tune)
+        }
+        (None, Some(detected)) => {
+            let root = detected.midi.round().clamp(0.0, 127.0);
+            (root as u8, root - detected.midi)
+        }
+        (Some(root), None) => (root, 0.0),
+        (None, None) => (DEFAULT_SAMPLE_ROOT, 0.0),
+    }
+}
+
 /// An `f32` as a model should read it: four decimals, without the binary noise of widening.
 fn rounded(value: f32) -> f64 {
     (f64::from(value) * 10_000.0).round() / 10_000.0
@@ -569,7 +696,7 @@ fn rounded(value: f32) -> f64 {
 pub struct AgentSample {
     /// Absolute local audio file path, up to 512 MiB; no network paths.
     pub path: String,
-    /// MIDI note 0..127 the recording sounds at; omitted, a note name in the file name such as Piano_C3, else 60 (C4).
+    /// MIDI note 0..127 the recording sounds at; omitted, a note name in the file name such as Piano_C3, else its measured pitch, else 60 (C4).
     #[schemars(range(min = 0, max = 127))]
     pub root_note: Option<u8>,
     /// Lowest MIDI key it plays. Give low_key/high_key only for a split other than the automatic nearest-root one, e.g. one drum hit per key.
@@ -582,7 +709,7 @@ pub struct AgentSample {
     pub low_velocity: Option<f32>,
     /// Hardest normalized velocity 0..1 it answers; default 1.
     pub high_velocity: Option<f32>,
-    /// Fine tune of this recording, semitones -24..24.
+    /// Fine tune of this recording, semitones -24..24; omitted, set from its measured pitch so an off-key or microtonal recording plays in tune.
     pub tune: Option<f32>,
     /// Level of this recording, dB -60..12, to balance layers.
     pub gain_db: Option<f32>,
@@ -605,6 +732,8 @@ pub struct SampleZoneEdit {
     pub high_key: Option<u8>,
     /// true returns the zone to the automatic nearest-root split, dropping low_key/high_key.
     pub auto_keys: Option<bool>,
+    /// true measures the recording's pitch and sets root_note and tune from it, even between keys.
+    pub detect_pitch: Option<bool>,
     /// Softest normalized velocity 0..1 it answers.
     pub low_velocity: Option<f32>,
     /// Hardest normalized velocity 0..1 it answers.
@@ -995,6 +1124,7 @@ mod tests {
                     low_key: Some(0),
                     high_key: Some(52),
                     auto_keys: None,
+                    detect_pitch: None,
                     low_velocity: None,
                     high_velocity: None,
                     tune: None,
@@ -1055,6 +1185,103 @@ mod tests {
         session.undo();
         assert_eq!(session.track_sample_zones(track)[0].root, 40);
         assert!(session.remove_sample_zone(track, 5).is_err());
+    }
+
+    #[test]
+    fn an_unnamed_recording_is_placed_by_its_measured_pitch_even_between_keys() {
+        let directory = tempfile::tempdir().unwrap();
+        // Forty cents above A3, and a G4 a little flat: neither on a key, neither named.
+        let between = 220.0 * 2f64.powf(0.4 / 12.0);
+        let flat = 392.0 * 2f64.powf(-0.2 / 12.0);
+        let a = directory.path().join("take one.wav");
+        let b = directory.path().join("take two.wav");
+        write_sine(&a, between, 0.5);
+        write_sine(&b, flat, 0.5);
+        let mut session = session();
+        let track = session.add_default_instrument_track("Voice").unwrap();
+        session.load_samples(track, &[a, b], false).unwrap();
+        let zones = session.track_sample_zones(track);
+        // A3 pulled down forty cents; G4 pulled up twenty.
+        assert_eq!(zones[0].root, 57);
+        assert!((zones[0].tune + 0.4).abs() < 0.05, "{}", zones[0].tune);
+        assert_eq!(zones[1].root, 67);
+        assert!((zones[1].tune - 0.2).abs() < 0.05, "{}", zones[1].tune);
+        // Played on their roots they sound the key: measured pitch plus tune is the root.
+        let pitches = session.track_sample_pitches(track);
+        for (zone, pitch) in zones.iter().zip(&pitches) {
+            let sounding = pitch.unwrap().midi + zone.tune;
+            assert!((sounding - f32::from(zone.root)).abs() < 0.02, "{sounding}");
+        }
+    }
+
+    #[test]
+    fn a_named_root_is_only_trimmed_by_the_measurement() {
+        // Named C4 and sung 30 cents sharp: the name stays, the tune takes off the 30 cents.
+        let (root, tune) = placed(
+            Some(60),
+            Some(DetectedPitch {
+                hz: 0.0,
+                midi: 60.3,
+            }),
+        );
+        assert_eq!(root, 60);
+        assert!((tune + 0.3).abs() < 1e-4);
+        // An octave slip in the estimate still only trims.
+        let (root, tune) = placed(
+            Some(60),
+            Some(DetectedPitch {
+                hz: 0.0,
+                midi: 71.8,
+            }),
+        );
+        assert_eq!(root, 60);
+        assert!((tune - 0.2).abs() < 1e-4);
+        // A name the recording plainly contradicts wins untouched.
+        assert_eq!(
+            placed(
+                Some(60),
+                Some(DetectedPitch {
+                    hz: 0.0,
+                    midi: 64.0
+                })
+            ),
+            (60, 0.0)
+        );
+        assert_eq!(placed(None, None), (DEFAULT_SAMPLE_ROOT, 0.0));
+    }
+
+    #[test]
+    fn detecting_again_moves_a_misplaced_root_and_leaves_noise_alone() {
+        let directory = tempfile::tempdir().unwrap();
+        let tone = directory.path().join("Pad_C4.wav");
+        write_sine(&tone, 440.0, 0.5);
+        let noise = directory.path().join("hit.wav");
+        let mut state = 99u32;
+        let data: Vec<f32> = (0..24_000)
+            .map(|_| {
+                state ^= state << 13;
+                state ^= state >> 17;
+                state ^= state << 5;
+                (state as f32 / u32::MAX as f32 - 0.5) * 0.5
+            })
+            .collect();
+        let buffer = AudioBuffer::from_planar(vec![data], 48_000.0).unwrap();
+        auris_io::write_wav(&noise, &buffer, &Default::default()).unwrap();
+        let mut session = session();
+        let track = session.add_default_instrument_track("Pad").unwrap();
+        session.load_samples(track, &[tone, noise], false).unwrap();
+        // The name said C4 and the recording is A4: the name wins on load.
+        assert_eq!(session.track_sample_zones(track)[0].root, 60);
+        assert_eq!(
+            session.track_sample_zones(track)[1].root,
+            DEFAULT_SAMPLE_ROOT
+        );
+        assert_eq!(session.detect_sample_roots(track).unwrap(), 1);
+        let zones = session.track_sample_zones(track);
+        assert_eq!(zones[0].root, 69);
+        assert_eq!(zones[1].root, DEFAULT_SAMPLE_ROOT);
+        session.undo();
+        assert_eq!(session.track_sample_zones(track)[0].root, 60);
     }
 
     #[test]

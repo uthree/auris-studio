@@ -173,7 +173,7 @@ pub use session::{
 };
 pub use session::{CheckpointJob, CheckpointOperation, CheckpointResult};
 pub use session::{CompositionPreview, CompositionTrackPreview};
-pub use session::{DEFAULT_SAMPLE_ROOT, SampleZoneView};
+pub use session::{DEFAULT_SAMPLE_ROOT, DetectedPitch, SampleZoneView, detect_pitch};
 pub use session::{ENVELOPE_PITCHES, SoundEnvelope};
 pub use session::{prepare_looping_output_preview, prepare_output_preview};
 pub mod workshop;

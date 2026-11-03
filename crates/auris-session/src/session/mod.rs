@@ -101,7 +101,8 @@ mod record;
 mod rhythm;
 mod samples;
 pub use samples::{
-    AgentSample, DEFAULT_SAMPLE_ROOT, SampleZoneEdit, SampleZoneView, parse_root_note,
+    AgentSample, DEFAULT_SAMPLE_ROOT, DetectedPitch, SampleZoneEdit, SampleZoneView, detect_pitch,
+    parse_root_note,
 };
 #[cfg(test)]
 mod shared_font_tests;
