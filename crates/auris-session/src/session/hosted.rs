@@ -2609,6 +2609,41 @@ mod tests {
     }
 
     #[test]
+    fn a_headless_session_keeps_one_instance_across_many_edits() {
+        // A headless session has no audio thread, so nothing ever takes the graphs it sends and
+        // hands them back. Left in the queue, every graph kept its plugins' rendering halves out,
+        // and every edit after that instantiated each hosted plugin again — Surge XT once per
+        // track per `add_clip`, none of them ever freed (#147).
+        let (mut session, file) = session_with_instrument();
+        let track = session.add_default_instrument_track("Lead").unwrap();
+        session
+            .set_hosted_instrument(track, &file, TONE_ID)
+            .unwrap();
+        for bar in 0..12u32 {
+            session
+                .add_midi_clip(
+                    track,
+                    "Bar",
+                    Ticks::from_beats(f64::from(bar) * 4.0),
+                    Ticks::from_beats(4.0),
+                )
+                .unwrap();
+        }
+
+        let slot = &session.hosted.instruments[&track];
+        assert!(slot.live.is_some(), "the track still has its plugin");
+        assert!(
+            slot.spare.is_none(),
+            "with the previous graph handed back, the live instance is reused, not doubled"
+        );
+        assert!(
+            session.hosted.retiring.is_empty(),
+            "{} instances were left waiting for graphs that never come home",
+            session.hosted.retiring.len()
+        );
+    }
+
+    #[test]
     fn a_track_that_goes_back_to_a_built_in_lets_its_plugin_go() {
         let (mut session, file) = session_with_instrument();
         let track = session.add_default_instrument_track("Lead").unwrap();

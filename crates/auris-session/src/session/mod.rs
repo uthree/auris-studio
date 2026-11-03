@@ -1455,6 +1455,7 @@ impl Session {
         // that is already rendering keeps doing so: `place` hands out a second instance and takes
         // the first back when the export drops it.
         let rate = rate.unwrap_or(self.project.sample_rate);
+        self.take_back_graphs();
         let prepare = auris_core::plugin::PrepareContext::new(
             rate,
             self.engine.max_block(),
@@ -1773,7 +1774,7 @@ impl Session {
         // asked for their effects, so an instance whose graph has already been retired is reused
         // rather than replaced. Without this every rebuild would find its plugin still busy and
         // build a second one. See [`hosted`].
-        self.engine.collect_garbage();
+        self.take_back_graphs();
         let prepare = auris_core::plugin::PrepareContext::new(
             rate,
             self.engine.max_block(),
@@ -1838,6 +1839,25 @@ impl Session {
         self.graph_latency = graph.latency_frames();
         if let Err(error) = self.engine.set_graph(graph) {
             log::warn!("could not update the render graph: {error}");
+        }
+    }
+
+    /// Drops every graph the engine is finished with, so their hosted plugins come home.
+    ///
+    /// With an audio thread that means the graphs it has handed back. Without one — a headless
+    /// session, a suspended one, or a device that has died — nothing ever takes a graph off the
+    /// queue, so the graphs sent there are the finished ones and are dropped here instead. That
+    /// cannot wait for [`Self::poll`]: a headless frontend may never call it, and every graph left
+    /// queued keeps each hosted plugin's rendering half out, so the next rebuild would have to
+    /// instantiate the plugin again. An agent adding clips to a song with four Surge XT tracks
+    /// paid more than a second per edit for that and piled up instances until the process
+    /// crashed (#147).
+    fn take_back_graphs(&mut self) {
+        self.engine.collect_garbage();
+        if let Some(device) = &mut self.device
+            && !device.is_running()
+        {
+            device.discard_pending();
         }
     }
 
