@@ -7,6 +7,9 @@ A digital audio workstation written in Rust with a GPU-rendered
 music, compose from text specifications, record audio, host CLAP and VST3 plugins,
 and render singing voices. CLI, MCP and agent frontends share the desktop's editing commands.
 
+**[Visit the Auris Studio website →](https://uthree.github.io/auris-studio/)** for a tour of
+the features and direct downloads.
+
 ![The editor: arrangement, piano roll and the agent panel](docs/screenshots/readme/editor-en.png)
 
 | Start a project | Compose with the AI workshop |
