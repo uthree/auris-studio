@@ -31,21 +31,59 @@ pub struct NotePitch {
 
 /// Measures one note's pitch from its mono samples, searching around `expected` hertz.
 pub fn note_pitch(samples: &[f32], rate: f64, expected: f32) -> NotePitch {
-    let none = NotePitch {
+    let rate_f = rate as f32;
+    if expected <= 0.0 || rate_f <= 0.0 {
+        return NotePitch::NONE;
+    }
+    let lag_min = ((rate_f / (expected * REACH)).floor() as usize).max(2);
+    let lag_max = (rate_f / (expected / REACH)).ceil() as usize;
+    yin(samples, rate_f, lag_min, lag_max)
+}
+
+/// The lowest fundamental [`recording_pitch`] looks for: just under E1, a bass's open string.
+pub const LOWEST_HZ: f32 = 38.0;
+
+/// The highest fundamental [`recording_pitch`] looks for: C7, past the top of a piccolo's
+/// useful range and well past any voice.
+pub const HIGHEST_HZ: f32 = 2_093.0;
+
+/// Measures the pitch of a recording nobody has said the pitch of.
+///
+/// The same YIN as [`note_pitch`], over the whole range from [`LOWEST_HZ`] to [`HIGHEST_HZ`]
+/// rather than a fifth around a written note. YIN takes the *first* lag whose dip clears the
+/// threshold, which is what keeps a strong second harmonic from being read as the note: the
+/// period of the fundamental is never shorter than one of its harmonics', and the octave below
+/// it is only reached if the fundamental's own dip is shallower — which a pitched recording's is
+/// not. The cost is the frames' and not the file's: eight windows wherever the steady part is.
+pub fn recording_pitch(samples: &[f32], rate: f64) -> NotePitch {
+    let rate_f = rate as f32;
+    if rate_f <= 0.0 {
+        return NotePitch::NONE;
+    }
+    // A semitone of slack at the top, so the highest note's dip has a neighbour to bend toward.
+    let lag_min = ((rate_f / (HIGHEST_HZ * 1.06)).floor() as usize).max(2);
+    let lag_max = (rate_f / LOWEST_HZ).ceil() as usize;
+    yin(samples, rate_f, lag_min, lag_max)
+}
+
+impl NotePitch {
+    /// No frame had a pitch.
+    pub const NONE: Self = Self {
         voiced: 0.0,
         hz: None,
     };
-    let rate = rate as f32;
-    if expected <= 0.0 || rate <= 0.0 {
-        return none;
+}
+
+/// YIN over eight frames of the steady part, between two lags in samples.
+fn yin(samples: &[f32], rate: f32, lag_min: usize, lag_max: usize) -> NotePitch {
+    if lag_max <= lag_min + 1 {
+        return NotePitch::NONE;
     }
-    let lag_min = ((rate / (expected * REACH)).floor() as usize).max(2);
-    let lag_max = (rate / (expected / REACH)).ceil() as usize;
     let window = lag_max * 2;
     let first = (samples.len() as f64 * MEASURED.0) as usize;
     let last = (samples.len() as f64 * MEASURED.1) as usize;
     if last <= first || last - first < window + lag_max {
-        return none;
+        return NotePitch::NONE;
     }
     let span = last - first - window - lag_max;
     let mut found = Vec::with_capacity(FRAMES);
@@ -85,7 +123,7 @@ pub fn note_pitch(samples: &[f32], rate: f64, expected: f32) -> NotePitch {
         found.push(rate / (lag as f32 + shift));
     }
     if found.is_empty() {
-        return none;
+        return NotePitch::NONE;
     }
     let voiced = found.len() as f32 / FRAMES as f32;
     found.sort_by(f32::total_cmp);
@@ -139,6 +177,38 @@ mod tests {
     }
 
     #[test]
+    fn a_recording_with_no_written_pitch_measures_from_e1_to_c7() {
+        // The naive sawtooth stops at C6: at 24 kHz a C7 one is twelve samples a period, aliased
+        // into a different waveform every cycle, which no recording at a real rate resembles.
+        for pitch in [28, 40, 57, 69, 81, 84, 96] {
+            let hz = 440.0 * 2f32.powf((pitch as f32 - 69.0) / 12.0);
+            for sine in [true, false] {
+                if !sine && pitch > 84 {
+                    continue;
+                }
+                let found = recording_pitch(&tone(hz, sine), RATE);
+                assert!(found.voiced > 0.9, "{pitch} {sine} {found:?}");
+                assert!(cents(found, hz).abs() < 10.0, "{pitch} {sine} {found:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_strong_second_harmonic_is_not_read_as_the_note() {
+        // A fundamental at a third of the level of its octave, as a hollow reed or a voice on an
+        // open vowel can be: still the fundamental's period, not the octave's.
+        let hz = 196.0f32;
+        let samples: Vec<f32> = (0..(RATE * 0.5) as usize)
+            .map(|i| {
+                let t = i as f32 / RATE as f32 * std::f32::consts::TAU * hz;
+                0.1 * t.sin() + 0.3 * (2.0 * t).sin() + 0.1 * (3.0 * t).sin()
+            })
+            .collect();
+        let found = recording_pitch(&samples, RATE);
+        assert!(cents(found, hz).abs() < 10.0, "{found:?}");
+    }
+
+    #[test]
     fn white_noise_has_almost_no_pitch() {
         let mut state = 12345u32;
         let noise: Vec<f32> = (0..(RATE * 0.5) as usize)
@@ -150,6 +220,8 @@ mod tests {
             })
             .collect();
         let found = note_pitch(&noise, RATE, 220.0);
+        assert!(found.voiced < 0.3, "{found:?}");
+        let found = recording_pitch(&noise, RATE);
         assert!(found.voiced < 0.3, "{found:?}");
     }
 }

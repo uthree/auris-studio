@@ -49,7 +49,7 @@ pub use midi::{
     stage_midi_file, write_midi_bytes, write_midi_file,
 };
 pub use project_file::{
-    AUDIO_DIR, MAX_PROJECT_FILE_BYTES, PROJECT_EXTENSION, StagedFile, StagedProject,
+    AUDIO_DIR, MAX_PROJECT_FILE_BYTES, PROJECT_EXTENSION, StagedFile, StagedProject, WORKSPACE_DIR,
     document_in_folder, load_project, match_folder_permissions, project_folder, save_project,
     stage_file_bytes, stage_project,
 };

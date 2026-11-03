@@ -175,6 +175,8 @@ pub struct SaveJob {
     audio: Vec<(SourceId, Option<PathBuf>)>,
     fonts: Vec<(SoundFontId, Option<PathBuf>)>,
     voices: Vec<VoiceConnectionCopy>,
+    /// The folder the document lived in, whose workspace Save As carries to the new one.
+    workspace_from: Option<PathBuf>,
 }
 
 struct VoiceConnectionCopy {
@@ -543,6 +545,15 @@ impl SaveJob {
                     }
                 }
             }
+        }
+        if self.collect_assets
+            && let Some(from) = &self.workspace_from
+        {
+            let (completed, failed) = super::workspace::carry_workspace(from, &folder, cancelled)?;
+            if !completed {
+                return Ok(None);
+            }
+            uncollected.extend(failed);
         }
         if cancelled.load(Ordering::Relaxed) {
             return Ok(None);
@@ -1109,6 +1120,7 @@ impl Session {
             audio,
             fonts,
             voices,
+            workspace_from: self.project_folder().map(Path::to_path_buf),
         })
     }
 
@@ -1140,6 +1152,7 @@ impl Session {
             audio: Vec::new(),
             fonts: Vec::new(),
             voices: Vec::new(),
+            workspace_from: None,
         })
     }
 

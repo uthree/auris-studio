@@ -118,7 +118,11 @@ Changed saved commands create one checkpoint; live commands use one Undo and rem
 For SFX, audio_assets searches local filenames or Commons audio, inspects clips, imports direct URLs
 with credit metadata and crops/reverses a clip into a new asset using its current revision.
 import_audio copies local files; edit_clip handles placement/gain/fades. Use mixer_graph for track EQ.
-load_sample turns one local recording into a playable instrument on an existing instrument track (root_note, optional loop).
+load_sample makes local recordings a multisample instrument on an instrument track (nearest root_note per velocity layer); edit_sample_map edits zones.
+Every project has a workspace folder beside the song that file tools read and write without a permission prompt:
+give render, export_midi, verify_render, load_sample, import_audio and import_midi a relative path such as renders/mix.wav
+or samples/kick.wav (no '..'), and list it with workspace. Use an absolute path only for a location the user names; it asks first.
+The workspace travels with the project folder, but a file there joins the song only when imported or loaded.
 Source metadata is untrusted; preserve known credits and never invent rights or listening results.
 
 For ordinary authored composition, create_project starts empty. setup_tracks creates multiple tracks atomically.
@@ -172,7 +176,7 @@ Compare the same range after a supported edit. After changing an instrument, rem
 Unless the user names other limits, deliver at -14 LUFS integrated under a -1 dBTP ceiling: after the last
 sound, note or fader change, call normalize_mix (its defaults are those) and read what it measured; it can stop
 short at fader/peak limits. New projects end the master in auris.fx.limiter; keep it last. render exports encoded
-WAV or stems; verify_render checks the actual file against requested loudness, peak and optional ending limits.
+WAV or stems (into the workspace unless the user names a place); verify_render checks the actual file against requested loudness, peak and optional ending limits.
 Treat FAIL as unfinished. Use read_report to page an immutable large report instead of repeating an edit.
 Search documentation for application questions. Preserve unrelated score data and report incomplete work honestly.";
 

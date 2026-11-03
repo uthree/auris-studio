@@ -228,6 +228,7 @@ pub fn edit_key(edit: Edit) -> Key {
         Edit::RecordTake => Key::EditRecordTake,
         Edit::ImportSoundFont => Key::EditImportSoundFont,
         Edit::LoadSample => Key::EditLoadSample,
+        Edit::EditSampleMap => Key::EditSampleMap,
         Edit::ChoosePreset | Edit::ApplySoundPreset => Key::EditChoosePreset,
         Edit::SetKey => Key::EditSetKey,
         Edit::SetChord => Key::EditSetChord,
@@ -282,6 +283,7 @@ pub fn error_text(error: &SessionError, language: Language) -> String {
         | SessionError::OutputPreview(detail)
         | SessionError::InvalidDrumAssignment(detail)
         | SessionError::SoundPreset(detail)
+        | SessionError::SampleMap(detail)
         | SessionError::DrumAnalysis(detail)
         | SessionError::PluginDiscovery(detail)
         | SessionError::MusicAnalysis(detail) => with(Key::ErrorDocument, detail.clone()),
@@ -1038,6 +1040,7 @@ mod tests {
             SessionError::GenerationPositionOccupied,
             SessionError::NoPath,
             SessionError::EmptySample("silence.wav".into()),
+            SessionError::SampleMap("there is no sample 3".into()),
             SessionError::AudioRestart("device gone".into()),
             SessionError::MissingAudio(vec!["a.wav".into()]),
             SessionError::RecordingInProgress,

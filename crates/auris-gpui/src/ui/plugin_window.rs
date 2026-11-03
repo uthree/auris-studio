@@ -347,13 +347,9 @@ impl AurisApp {
             }
             _ => None,
         };
-        // The audio sampler's one setting that is not a number: which file it plays.
+        // The audio sampler's one setting that is not a number: which files it plays, and where.
         let sample = match subject {
-            PluginSubject::Instrument(track) if plugin_id == AUDIO_SAMPLER_ID => Some((
-                track,
-                self.session.track_sample_name(track),
-                self.session.track_sample_is_loaded(track),
-            )),
+            PluginSubject::Instrument(track) if plugin_id == AUDIO_SAMPLER_ID => Some(track),
             _ => None,
         };
         let wide = host_window.viewport_size().width >= host_window.rem_size() * 48.;
@@ -533,44 +529,7 @@ impl AurisApp {
                         ))
                         .into_any_element()
                 }))
-                .children(sample.map(|(track, name, loaded)| {
-                    let label = match (name, loaded) {
-                        (Some(name), true) => name,
-                        (Some(name), false) => {
-                            format!("{name} ({})", self.t(Key::SamplerSampleMissing))
-                        }
-                        (None, _) => self.t(Key::SamplerNoSample).to_string(),
-                    };
-                    div()
-                        .h(SIDECHAIN_HEIGHT)
-                        .w_full()
-                        .flex_shrink_0()
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .gap_1()
-                        .px_2()
-                        .border_b_1()
-                        .border_color(theme.border)
-                        .child(
-                            div()
-                                .text_xs()
-                                .text_color(theme.text_muted)
-                                .child(self.t(Key::SamplerSample)),
-                        )
-                        .child(button(
-                            "pw-sample",
-                            label,
-                            ButtonStyle::Ghost,
-                            true,
-                            theme.accent_soft,
-                            &theme,
-                            cx.listener(move |this, _, _, cx| {
-                                this.load_sample(track, cx);
-                            }),
-                        ))
-                        .into_any_element()
-                }))
+                .children(sample.map(|track| self.sample_map_section(track, &theme, cx)))
                 .child(body)
                 .into_any_element(),
         )

@@ -131,6 +131,32 @@ fn earlier_landing_can_release_before_its_old_attack_to_allow_a_long_tail() {
 }
 
 #[test]
+fn the_audio_sampler_lists_its_envelope_and_a_soundfont_does_not() {
+    let mut session = session();
+    let audio = session
+        .add_instrument_track("Sampled", auris_sampler::AUDIO_SAMPLER_ID)
+        .unwrap();
+    let controls = envelope_controls(session.registry(), session.project(), audio.0);
+    let entries = controls.as_array().unwrap();
+    let keys: Vec<_> = entries.iter().map(|c| c["key"].clone()).collect();
+    assert_eq!(keys, ["attack", "decay", "sustain", "release"]);
+    assert!((entries[3]["base_value"].as_f64().unwrap() - 0.1).abs() < 1e-5);
+    for entry in entries {
+        let address: automation::ControlTarget =
+            serde_json::from_value(entry["target"].clone()).unwrap();
+        assert!(session.agent_control_target(&address).is_ok());
+    }
+
+    let font = session
+        .add_instrument_track("Font", auris_sampler::SAMPLER_ID)
+        .unwrap();
+    assert!(envelope_controls(session.registry(), session.project(), font.0).is_null());
+    let route = envelope_route(session.project(), font.0);
+    assert!(route.as_str().unwrap().contains("load_sample"));
+    assert!(envelope_route(session.project(), audio.0).is_null());
+}
+
+#[test]
 fn ending_controls_use_registered_defaults_and_distinguish_instrument_decay() {
     for (id, family, release) in [
         ("auris.synth.chiptune", "synth", 0.15),

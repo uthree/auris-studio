@@ -1785,6 +1785,7 @@ strings! {
     EditReorderEffects { en: "reordering the effects", ja: "エフェクトの並べ替え" }
     EditSetEffectSidechain { en: "changing the sidechain", ja: "サイドチェインの変更" }
     CmdSetEffectSidechain { en: "key this effect from that track", ja: "エフェクトをそのトラックでキーする" }
+    CmdEditSampleMap { en: "change the sample map", ja: "サンプルマップを変更する" }
     MenuSidechain { en: "Sidechain", ja: "サイドチェイン" }
     MenuSidechainNone { en: "None", ja: "なし" }
     MenuRecordInput { en: "Record Input", ja: "録音入力" }
@@ -1905,6 +1906,7 @@ strings! {
     EditImportSoundFont { en: "importing a SoundFont", ja: "サウンドフォントの読み込み" }
     EditChoosePreset { en: "choosing a sound", ja: "音色の選択" }
     EditLoadSample { en: "loading a sample", ja: "サンプルの読み込み" }
+    EditSampleMap { en: "editing the sample map", ja: "サンプルマップの編集" }
     EditSetKey { en: "setting the key", ja: "調の変更" }
     EditSetChord { en: "setting a chord", ja: "コードの変更" }
     EditMoveChord { en: "moving a chord", ja: "コードの移動" }
@@ -2805,9 +2807,23 @@ new のオプション
     ValueOff { en: "Off", ja: "オフ" }
 
     // ------------------------------------------------------------------ audio sampler
-    // The row in the audio sampler's window naming the file it plays.
-    SamplerSample { en: "Sample", ja: "サンプル" }
-    SamplerNoSample { en: "Load a sample…", ja: "サンプルを読み込む…" }
+    // The audio sampler window's map: one row per recording it plays.
+    SamplerSamples { en: "Samples", ja: "サンプル" }
+    SamplerNoSample { en: "Load samples…", ja: "サンプルを読み込む…" }
+    SamplerAddSamples { en: "Add samples…", ja: "サンプルを追加…" }
+    SamplerDetectPitch { en: "Detect pitch", ja: "ピッチ検出" }
+    SamplerDetectPitchTip { en: "Measure each sample's pitch and set its root and tune, even between keys", ja: "各サンプルのピッチを測り、鍵盤の間の音でもルート音と微調整を合わせます" }
+    SamplerRootDown { en: "Root note down a semitone", ja: "ルート音を半音下げる" }
+    SamplerRootUp { en: "Root note up a semitone", ja: "ルート音を半音上げる" }
+    SamplerPlays { en: "Keys this sample plays: the ones nearer its root than any other", ja: "このサンプルが鳴らす鍵盤（他よりルート音が近い範囲）" }
+    SamplerVelocity { en: "Velocity layer", ja: "ベロシティレイヤー" }
+    SamplerVelocityAll { en: "Every velocity", ja: "すべての強さ" }
+    SamplerVelocitySoftHalf { en: "Soft half", ja: "弱い半分" }
+    SamplerVelocityHardHalf { en: "Hard half", ja: "強い半分" }
+    SamplerVelocitySoftThird { en: "Soft third", ja: "弱（3分割）" }
+    SamplerVelocityMediumThird { en: "Medium third", ja: "中（3分割）" }
+    SamplerVelocityHardThird { en: "Hard third", ja: "強（3分割）" }
+    SamplerRemoveSample { en: "Remove this sample", ja: "このサンプルを外す" }
     SamplerSampleMissing { en: "missing", ja: "見つかりません" }
     SamplerLoadSample { en: "Load sample", ja: "サンプルの読み込み" }
     DialogLoadSample { en: "Load a sample", ja: "サンプルを読み込む" }
