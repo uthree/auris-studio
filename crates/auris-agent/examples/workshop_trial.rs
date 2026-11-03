@@ -28,12 +28,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let document: Document =
         serde_json::from_slice(&std::fs::read(thread.join("conversation.json"))?)?;
-    let candidate: &Candidate = document
+    let (round, candidate): (_, &Candidate) = document
         .rounds
         .iter()
-        .flat_map(|round| &round.candidates)
-        .find(|candidate| candidate.id == id)
+        .find_map(|round| {
+            round
+                .candidates
+                .iter()
+                .find(|candidate| candidate.id == id)
+                .map(|candidate| (round, candidate))
+        })
         .ok_or("no such candidate in the thread")?;
+    // The conversation as it stood when the director planned this round.
+    let mut planned = document.clone();
+    planned.messages.truncate(round.after_message);
+    planned
+        .rounds
+        .retain(|earlier| earlier.after_message < round.after_message);
     let parent = candidate
         .parent
         .map(|parent| thread.join(parent.to_string()).join("song/song.auris"));
@@ -53,6 +64,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let started = std::time::Instant::now();
     let result = compose_trial(
         candidate.direction.clone(),
+        &planned,
         prefs,
         settings,
         output.clone(),

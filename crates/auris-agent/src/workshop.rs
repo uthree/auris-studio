@@ -1561,20 +1561,22 @@ fn candidate_options(settings: &Settings) -> SessionOptions {
 /// Composes one candidate from a direction, outside any conversation: development tooling for
 /// repeating a theme already in the workshop logs after a prompt or tool change.
 ///
-/// The candidate is made exactly as the workshop makes it — the same isolated session, the same
-/// composer, the same log in `folder` — so a trial's `composer-log.jsonl` compares line for
-/// line with a logged one. `parent` continues an earlier song; `progress` hears each stage, tool
-/// result and status line as it happens. It is not part of the application: nothing in the
-/// window calls it.
+/// The candidate is made exactly as the workshop makes it — the assignment carrying `document`'s
+/// conversation, the same isolated session and composer, the same automatic recovery from the
+/// checkpoint, the same log in `folder` — so a trial's `composer-log.jsonl` compares line for
+/// line with a logged one. Pass the conversation as it stood when the candidate was planned.
+/// `parent` continues an earlier song; `progress` hears each stage, tool result and status line
+/// as it happens. It is not part of the application: nothing in the window calls it.
 pub fn compose_trial(
     direction: Direction,
+    document: &Document,
     prefs: AgentPreferences,
     settings: Settings,
     folder: PathBuf,
     parent: Option<PathBuf>,
     mut progress: impl FnMut(String),
 ) -> Result<SongCandidate, String> {
-    let candidate = Candidate {
+    let mut candidate = Candidate {
         id: 1,
         parent: None,
         direction,
@@ -1584,21 +1586,32 @@ pub fn compose_trial(
         tools: Default::default(),
         feedback: None,
     };
+    candidate.direction.instructions = composition_assignment(&candidate, document);
     let (sender, receiver) = mpsc::channel();
     let cancel = AtomicBool::new(false);
     std::thread::scope(|scope| {
         let worker = scope.spawn(|| {
-            compose(
+            recover_candidate(
                 &candidate,
-                prefs,
-                settings,
-                folder,
-                parent,
                 &cancel,
                 &sender,
-                &[],
+                wait_for_recovery,
+                |candidate| {
+                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        compose(
+                            candidate,
+                            prefs.clone(),
+                            settings.clone(),
+                            folder.clone(),
+                            parent.clone(),
+                            &cancel,
+                            &sender,
+                            &[],
+                        )
+                    }))
+                    .unwrap_or_else(|_| Err(AttemptError::permanent("Candidate worker failed")))
+                },
             )
-            .map_err(|error| error.message)
         });
         while !worker.is_finished() {
             while let Ok(event) = receiver.try_recv() {
