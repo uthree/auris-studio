@@ -270,6 +270,12 @@ messages! {
         ja: "ノート {count} 個をクオンタイズしました"
     }
 
+    /// The status line after clips were joined into one.
+    fn joined_clips(count: usize) {
+        en: "joined {count} clips into one",
+        ja: "{count} 個のクリップを1つに結合しました"
+    }
+
     /// Title of a menu acting on more than one clip.
     fn clip_count(count: usize) {
         en: "{count} clips",

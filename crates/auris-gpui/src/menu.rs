@@ -426,6 +426,7 @@ pub fn model(language: Language, panels: &PanelLayout, state: MenuState) -> Vec<
             ),
             MenuRow::Separator,
             command(t(Key::CmdSplitClip), actions::SplitClip, "clip.split"),
+            command(t(Key::CmdJoinClips), actions::JoinClips, "clip.join"),
             command(
                 t(Key::CmdToggleClipMute),
                 actions::ToggleClipMute,

@@ -152,6 +152,8 @@ actions!(
         NudgeClipsRight,
         /// Cut the selected clip in two where the playhead is.
         SplitClip,
+        /// Join the selected clips on one track into one, or the selected clip with the next.
+        JoinClips,
         /// Mute or unmute the selected clip.
         ToggleClipMute,
         /// Repeat the selected clip out to the next one, or stop it repeating.
@@ -671,6 +673,8 @@ bindable! {
         // X is the scissors everywhere that has a pair. Not ⌘T, which Logic splits with and
         // which is the instrument track here.
         "clip.split",           GroupClip,      CmdSplitClip,          "alt-x"       => SplitClip;
+        // Logic's Join, and the pair of the scissors above it.
+        "clip.join",            GroupClip,      CmdJoinClips,          "secondary-j" => JoinClips;
         "clip.mute",            GroupClip,      CmdToggleClipMute,     ""            => ToggleClipMute;
         // Logic's own key for looping a region, and a bare letter is free here for the reason
         // `edit.next_tool` is: the arrangement is not a place anything types.

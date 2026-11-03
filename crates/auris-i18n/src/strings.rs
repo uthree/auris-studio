@@ -1715,6 +1715,9 @@ strings! {
     MenuFadeLinear { en: "Straight", ja: "直線" }
     MenuFadeEqualPower { en: "Equal Power", ja: "等パワー" }
     CmdCrossfade { en: "crossfade the clips", ja: "クリップをクロスフェード" }
+    EditJoinClips { en: "joining clips", ja: "クリップの結合" }
+    MenuJoinClips { en: "Join Clips", ja: "クリップを結合" }
+    CmdJoinClips { en: "Join Clips", ja: "クリップを結合" }
     EditSetClipTempo { en: "the clip's tempo", ja: "クリップのテンポ" }
     EditAddInstrumentTrack { en: "adding an instrument track", ja: "ソフト音源トラックの追加" }
     EditAddDrumTrack { en: "adding a drum track", ja: "ドラムトラックの追加" }
@@ -2008,6 +2011,26 @@ strings! {
     ErrorNotOverlapping {
         en: "those clips do not overlap on one track; drag one over the other first",
         ja: "そのクリップは重なっていません。片方をもう片方に重ねてください"
+    }
+    ErrorJoinTooFew {
+        en: "select two or more clips on one track to join",
+        ja: "結合するには同じトラックのクリップを2つ以上選んでください"
+    }
+    ErrorJoinAudio {
+        en: "audio clips cannot be joined; only note clips can",
+        ja: "オーディオクリップは結合できません（ノートのクリップのみ結合できます）"
+    }
+    ErrorJoinDifferentTracks {
+        en: "only clips on the same track can be joined",
+        ja: "結合できるのは同じトラックのクリップだけです"
+    }
+    ErrorJoinMixedMute {
+        en: "some of those clips are muted and some are not; match their mute first",
+        ja: "ミュートされたクリップとされていないクリップが混ざっています。先にミュートを揃えてください"
+    }
+    ErrorJoinDifferentTransforms {
+        en: "those clips are performed differently; give them the same note transforms or bake them first",
+        ja: "クリップごとに演奏の変換が異なります。変換を揃えるか、先に焼き込んでください"
     }
     ErrorNothingToStem {
         en: "there is nothing to export as stems; add a track that makes a sound",

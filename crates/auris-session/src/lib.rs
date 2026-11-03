@@ -319,7 +319,7 @@ pub mod prelude {
         SoundFontId, SoundFontRef, SourceId, StrokeDirection, Subdivision, Track, TrackId,
         TrackKind, Vibrato, default_frame_hop, default_loop_end, loop_passes, sounding_length,
     };
-    pub use auris_core::{Comment, CommentId};
+    pub use auris_core::{Comment, CommentId, JoinRefusal};
     pub use auris_core::{
         Expression, GroovePoint, GrooveTemplate, PitchPerformance, Strum, StrumClock,
         VolumeContour, VolumeContourPreset,
