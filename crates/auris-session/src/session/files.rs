@@ -817,14 +817,6 @@ impl Session {
         Ok(auris_io::write_midi_file(path, &self.project)?)
     }
 
-    /// Encodes and synchronises a private MIDI sibling for a caller-managed commit.
-    ///
-    /// Model-facing commands use this to put their cancellation boundary immediately before a
-    /// no-replace publication. Dropping the result leaves `path` untouched.
-    pub fn stage_midi_export(&self, path: &Path) -> Result<auris_io::StagedMidi, SessionError> {
-        Ok(auris_io::stage_midi_file(path, &self.project)?)
-    }
-
     /// Captures the open document for a worker-side MIDI export.
     pub fn begin_midi_export(&self, path: &Path) -> MidiExportJob {
         MidiExportJob {

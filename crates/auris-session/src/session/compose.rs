@@ -606,7 +606,10 @@ mod tests {
     #[test]
     fn composed_arrangement_survives_save_regeneration_retake_and_undo() {
         use auris_core::NoteTransform;
-        let mut session = session();
+        // Without the balancing render: this is about the bass clip's transforms, and measuring
+        // a whole city-pop arrangement in a debug build took two and a half minutes — the
+        // longest single test in the workspace.
+        let mut session = Session::new(SessionOptions::headless().with_balance(false)).unwrap();
         let spec = auris_compose::preset("city-pop").unwrap().spec();
         let draft = auris_compose::compose(&spec);
         session.compose(&draft).unwrap();
@@ -1583,7 +1586,8 @@ mod tests {
     fn a_composed_document_arrives_already_routed() {
         // The composer names a bus by its position, because it has no ids to name one by. This is
         // where the two meet, and getting it wrong would point every send at the wrong strip.
-        let mut session = session();
+        // Routing does not depend on the levels, so skip the render that would measure them.
+        let mut session = Session::new(SessionOptions::headless().with_balance(false)).unwrap();
         let spec = auris_compose::SongSpec::default();
         let piece = auris_compose::compose(&spec);
         session.compose(&piece).unwrap();
