@@ -59,8 +59,16 @@ jobs:
       - name: Lint
         run: cargo clippy --workspace --all-targets --locked
 
+      # `--tests` builds and runs every unit and integration test but leaves the examples alone.
+      # Plain `cargo test` also links every example — more than two dozen executables, each
+      # carrying the whole dependency graph — and runs nothing in them; Clippy's `--all-targets`
+      # above already type-checks them. Doctests are platform-independent, so they run here
+      # only, as their own step.
       - name: Test
-        run: cargo test --workspace --locked --timings
+        run: cargo test --workspace --tests --locked --timings
+
+      - name: Doctests
+        run: cargo test --workspace --doc --locked
 
       - name: Test the release update helper
         run: cargo test -p auris-update-helper --release --locked
@@ -92,8 +100,9 @@ jobs:
   # gpui's `platform` modifier is ⌘ on macOS and the Windows key on Windows, and half the
   # behaviour that follows from that is decided by `cfg!` rather than by types.
   #
-  # Exercise the default WASAPI build before preparing ASIO's optional LLVM dependency,
-  # then test the feature used by the shipped Windows binaries in the same cached job.
+  # This is the default WASAPI build, which needs no LLVM; the ASIO build the releases ship is
+  # the next job. They were one job, and since `asio` changes cpal's features every workspace
+  # crate compiled twice in a row on the slowest runner — the critical path of the whole run.
   windows:
     name: Test on Windows
     runs-on: windows-latest
@@ -118,13 +127,44 @@ jobs:
       # No audio device and no GPU on the runner; every test that needs either checks first and
       # skips. What this does exercise is every `cfg!(target_os = ...)` arm the other two jobs
       # never take — the key bindings, the pointer gestures, the menu bar and the locale.
+      # `--tests` skips linking the examples, as on macOS.
       - name: Test the default Windows build
-        run: cargo test --workspace --locked --timings
+        run: cargo test --workspace --tests --locked --timings
 
       # Unit tests run on test-runner threads with larger stacks. Launch the actual
       # optimized helper too, using the same main-thread stack as the shipped binary.
       - name: Test the release update helper
         run: cargo test -p auris-update-helper --release --locked
+
+      - name: Upload build timings
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cargo-timings-${{ runner.os }}-${{ runner.arch }}
+          path: target/cargo-timings/*.html
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # The feature the shipped Windows binaries are built with, alongside the default build rather
+  # than after it. Its own cache, since rust-cache keys by job and the two builds share little
+  # above cpal.
+  windows-asio:
+    name: Test on Windows with ASIO
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Install the toolchain
+        run: rustup toolchain install stable --profile minimal --component clippy
+
+      - name: Cache the build
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          prefix-key: v1-build-performance
+          cache-on-failure: true
+          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev' || github.event_name == 'workflow_dispatch' }}
 
       - name: Prepare LLVM for ASIO
         shell: pwsh
@@ -134,13 +174,13 @@ jobs:
         run: cargo clippy --workspace --all-targets --locked --features asio
 
       - name: Test with ASIO
-        run: cargo test --workspace --locked --features asio --timings
+        run: cargo test --workspace --tests --locked --features asio --timings
 
       - name: Upload build timings
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: cargo-timings-${{ runner.os }}-${{ runner.arch }}
+          name: cargo-timings-${{ runner.os }}-${{ runner.arch }}-asio
           path: target/cargo-timings/*.html
           if-no-files-found: ignore
           retention-days: 7
@@ -179,7 +219,7 @@ jobs:
       # The runner has no audio device and no GPU. Every test that needs either checks first and
       # skips, so this exercises the DSP, the document model and the whole render path.
       - name: Test
-        run: cargo test --workspace --exclude auris-gpui --locked --timings
+        run: cargo test --workspace --exclude auris-gpui --tests --locked --timings
 
       - name: Upload build timings
         if: always()
