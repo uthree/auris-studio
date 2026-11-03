@@ -477,6 +477,11 @@ fn hsv(hue: f32, saturation: f32, value: f32) -> (f32, f32, f32) {
 /// Draws `seconds` of `score` and encodes it with the audio in `audio` into an `.mp4` at
 /// `output`.
 ///
+/// The video is longer than the music by the style's [`NoteRollStyle::lead_in`] before it and
+/// [`NoteRollStyle::tail`] after it. During the lead-in the frames are the moments before the
+/// song starts, so the first notes are already in view and coming in, and the audio is
+/// silent until they reach the playhead.
+///
 /// The file is written beside `output` under a temporary name and moved into place only once
 /// ffmpeg has finished it, so a cancelled or failed export leaves whatever was there before.
 /// `progress` hears the fraction done before every frame and answers whether to go on; `false`
@@ -491,7 +496,9 @@ pub fn render_video(
 ) -> Result<u64, VideoError> {
     let style = renderer.style();
     let fps = style.fps;
-    let frames = ((seconds.max(0.0) * f64::from(fps)).ceil() as u64).max(1);
+    let lead_in = f64::from(style.lead_in);
+    let total = lead_in + seconds.max(0.0) + f64::from(style.tail);
+    let frames = ((total * f64::from(fps)).ceil() as u64).max(1);
     let folder = output
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
@@ -500,13 +507,13 @@ pub fn render_video(
         .prefix(".auris-video-")
         .suffix(".mp4")
         .tempfile_in(folder)?;
-    let mut writer = VideoWriter::start(ffmpeg, style.size, fps, audio, staging.path())?;
+    let mut writer = VideoWriter::start(ffmpeg, style.size, fps, audio, lead_in, staging.path())?;
     let mut frame = renderer.canvas();
     for index in 0..frames {
         if !progress(index as f32 / frames as f32) {
             return Err(VideoError::Cancelled);
         }
-        renderer.draw(index as f64 / f64::from(fps), &mut frame);
+        renderer.draw(index as f64 / f64::from(fps) - lead_in, &mut frame);
         writer.write_frame(frame.data())?;
     }
     writer.finish()?;
@@ -766,6 +773,8 @@ mod tests {
         let style = NoteRollStyle {
             fps: 10,
             chords: true,
+            lead_in: 0.0,
+            tail: 0.0,
             ..style()
         };
         let mut score = score();
@@ -800,5 +809,93 @@ mod tests {
         let result = render_video(&renderer, &ffmpeg, None, 2.0, &output, &mut |_| false);
         assert!(matches!(result, Err(VideoError::Cancelled)));
         assert_eq!(std::fs::read_dir(folder.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn a_padded_video_is_longer_by_its_lead_in_and_tail_and_its_audio_starts_late() {
+        let Ok(ffmpeg) = Ffmpeg::detect() else {
+            return;
+        };
+        let Some(probe) = ffprobe(&ffmpeg) else {
+            eprintln!("ffprobe is not installed; skipping the measurement");
+            return;
+        };
+        let folder = tempfile::tempdir().unwrap();
+        // One second of a tone, so where the sound starts can be read back.
+        let wav = folder.path().join("tone.wav");
+        let made = std::process::Command::new(ffmpeg.path())
+            .args([
+                "-v",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=440:duration=1",
+            ])
+            .args(["-ar", "8000", "-y"])
+            .arg(&wav)
+            .status()
+            .unwrap();
+        assert!(made.success());
+
+        let output = folder.path().join("padded.mp4");
+        let style = NoteRollStyle {
+            fps: 10,
+            lead_in: 1.5,
+            tail: 0.5,
+            ..style()
+        };
+        let renderer = FrameRenderer::with_background(&score(), &style, None);
+        let frames =
+            render_video(&renderer, &ffmpeg, Some(&wav), 1.0, &output, &mut |_| true).unwrap();
+        assert_eq!(frames, 30, "1.5 s + 1 s + 0.5 s at 10 fps");
+
+        let duration = |stream: &str| -> f64 {
+            let out = std::process::Command::new(&probe)
+                .args(["-v", "error", "-select_streams", stream])
+                .args(["-show_entries", "stream=duration", "-of", "csv=p=0"])
+                .arg(&output)
+                .output()
+                .unwrap();
+            String::from_utf8_lossy(&out.stdout).trim().parse().unwrap()
+        };
+        let video = duration("v:0");
+        let audio = duration("a:0");
+        assert!((video - 3.0).abs() < 0.05, "video {video}");
+        assert!(
+            (audio - 3.0).abs() < 0.15,
+            "audio padded to the end: {audio}"
+        );
+
+        // Decode the soundtrack and find the first loud sample.
+        let pcm = std::process::Command::new(ffmpeg.path())
+            .args(["-v", "error", "-i"])
+            .arg(&output)
+            .args([
+                "-map", "0:a:0", "-ac", "1", "-ar", "8000", "-f", "s16le", "-",
+            ])
+            .output()
+            .unwrap()
+            .stdout;
+        let first = pcm
+            .chunks_exact(2)
+            .position(|pair| i16::from_le_bytes([pair[0], pair[1]]).abs() > 1_000)
+            .expect("the tone is in the soundtrack");
+        let onset = first as f64 / 8000.0;
+        assert!(
+            (onset - 1.5).abs() < 0.08,
+            "the sound starts after the lead-in: {onset}"
+        );
+    }
+
+    /// The `ffprobe` installed beside `ffmpeg`, if there is one.
+    fn ffprobe(ffmpeg: &Ffmpeg) -> Option<std::path::PathBuf> {
+        let name = if cfg!(windows) {
+            "ffprobe.exe"
+        } else {
+            "ffprobe"
+        };
+        let path = ffmpeg.path().with_file_name(name);
+        path.exists().then_some(path)
     }
 }
