@@ -874,6 +874,8 @@ fn existing_generated_phrase_breaths_are_observed_without_regeneration() {
             chords: Some("| I | IV | V | I |".into()),
             section: None,
             clear_chords: false,
+            clear_key: false,
+            clear_section: false,
         })
         .unwrap();
     let track = session

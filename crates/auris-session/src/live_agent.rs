@@ -359,7 +359,7 @@ pub enum Command {
         /// Partial settings; omit every field that should stay unchanged.
         settings: Box<performance::PerformancePatch>,
     },
-    /// Write the document's key, Roman-numeral chord progression and/or section label across a bounded bar range. For a new song, write its harmony and named form (intro, verse, chorus, bridge, outro as appropriate) before adding notes. Changes metadata only; existing notes and mix are preserved. One Undo reverts the edit; persistence follows the host.
+    /// Write or clear the document's key, Roman-numeral chord progression and/or section label across a bounded bar range. For a new song, write its harmony and named form (intro, verse, chorus, bridge, outro as appropriate) before adding notes. Changes metadata only; existing notes and mix are preserved. One Undo reverts the edit; persistence follows the host.
     EditHarmony {
         /// First bar, 1-based.
         #[schemars(range(min = 1))]
@@ -378,6 +378,12 @@ pub enum Command {
         /// Clear this range instead of supplying chords.
         #[serde(default)]
         clear_chords: bool,
+        /// Remove the key changes in this range instead of supplying key, so the key in force before it runs through (from bar 1 the song key extends). Redundant same-key changes at the edges are dropped.
+        #[serde(default)]
+        clear_key: bool,
+        /// Remove the section names in this range instead of supplying section, leaving it unnamed; the section after the range is kept. Use it to delete a section label.
+        #[serde(default)]
+        clear_section: bool,
     },
     /// Write the song-wide lyrics annotation: the line sung at each moment, shown as video captions and read back by inspect_project. Required for every song with words, beside the clip lyrics: write_lyrics annotates the lines it fills automatically, and from_vocals rebuilds it from a singer's notes after note edits. Use write for explicit lines in original spelling, placed by 1-based bar/beat from the first sung word to where the line ends. Never changes notes. One Undo.
     EditLyrics {
@@ -949,13 +955,19 @@ impl Session {
                 chords,
                 section,
                 clear_chords,
-            } => self.agent_edit_harmony(
+                clear_key,
+                clear_section,
+            } => self.agent_edit_harmony_clearing(
                 start_bar,
                 bars,
-                key.as_deref(),
-                chords.as_deref(),
-                clear_chords,
-                section.as_deref(),
+                harmony::HarmonyWrite {
+                    key: key.as_deref(),
+                    chords: chords.as_deref(),
+                    section: section.as_deref(),
+                    clear_chords,
+                    clear_key,
+                    clear_section,
+                },
             ),
             Command::WriteLyrics {
                 clip,
