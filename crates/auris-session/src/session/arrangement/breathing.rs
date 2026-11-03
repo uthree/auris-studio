@@ -20,7 +20,12 @@ pub(super) fn envelope_controls(registry: &PluginRegistry, project: &Project, tr
         return Value::Null;
     };
     let id = source.instrument_id.as_str();
-    if !(id.starts_with("auris.physical.") || id == "auris.synth.chiptune") {
+    // The audio sampler shapes every note with the same `auris_dsp::Adsr` as the built-in voices,
+    // so its four controls mean what theirs do. A SoundFont plays the envelope its font wrote.
+    if !(id.starts_with("auris.physical.")
+        || id == "auris.synth.chiptune"
+        || id == auris_sampler::AUDIO_SAMPLER_ID)
+    {
         return Value::Null;
     }
     let Ok(instrument) = registry.create_instrument(id) else {
