@@ -152,7 +152,7 @@ pub use monitor::MonitorStatus;
 pub use musical_analysis::MusicalClipAnalysis;
 pub use note_preview::NoteSelectionPreview;
 pub use notes::{Quantize, quantized};
-pub use output_preview::prepare_output_preview;
+pub use output_preview::{prepare_looping_output_preview, prepare_output_preview};
 pub use plugin_discovery::InstalledPluginFiles;
 pub(crate) use plugin_discovery::scan_installed_plugin_files;
 pub use readiness::{PlaybackReadiness, PlaybackState};

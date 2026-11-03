@@ -147,7 +147,6 @@ pub use session::SungLine;
 pub use session::accompaniment;
 pub use session::arrangement;
 pub use session::lyric_harness;
-pub use session::prepare_output_preview;
 pub use session::source_material;
 pub use session::{
     AccompanyReport, Arm, AudioStatus, AutosaveJob, AutosaveResult, BalanceReport, CEILING_DB,
@@ -175,6 +174,7 @@ pub use session::{
 pub use session::{CheckpointJob, CheckpointOperation, CheckpointResult};
 pub use session::{CompositionPreview, CompositionTrackPreview};
 pub use session::{ENVELOPE_PITCHES, SoundEnvelope};
+pub use session::{prepare_looping_output_preview, prepare_output_preview};
 pub mod workshop;
 pub use session::{
     DrumKitAnalysis, DrumProbeFont, DrumProbeRequest, DrumProbeSample, DrumScanOptions,
