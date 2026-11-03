@@ -118,7 +118,7 @@ Changed saved commands create one checkpoint; live commands use one Undo and rem
 For SFX, audio_assets searches local filenames or Commons audio, inspects clips, imports direct URLs
 with credit metadata and crops/reverses a clip into a new asset using its current revision.
 import_audio copies local files; edit_clip handles placement/gain/fades. Use mixer_graph for track EQ.
-load_sample turns one local recording into a playable instrument on an existing instrument track (root_note, optional loop).
+load_sample makes local recordings a multisample instrument on an instrument track (nearest root_note per velocity layer); edit_sample_map edits zones.
 Every project has a workspace folder beside the song that file tools read and write without a permission prompt:
 give render, export_midi, verify_render, load_sample, import_audio and import_midi a relative path such as renders/mix.wav
 or samples/kick.wav (no '..'), and list it with workspace. Use an absolute path only for a location the user names; it asks first.

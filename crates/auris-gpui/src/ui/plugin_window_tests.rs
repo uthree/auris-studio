@@ -368,3 +368,62 @@ fn a_sample_loaded_from_the_window_puts_the_track_on_the_sampler(cx: &mut TestAp
         );
     });
 }
+
+#[gpui::test]
+fn several_samples_make_a_map_the_window_can_retune_layer_and_trim(cx: &mut TestAppContext) {
+    let (app, cx, track, _) = with_a_clip(cx);
+    let rate = app.read_with(cx, |this, _| this.project().sample_rate);
+    let tone = |hz: f64| {
+        let data: Vec<f32> = (0..4_800)
+            .map(|n| (std::f64::consts::TAU * hz * n as f64 / rate).sin() as f32)
+            .collect();
+        crate::ui::commands::Loaded::Audio(AudioBuffer::from_planar(vec![data], rate).unwrap())
+    };
+    let line = app.update(cx, |this, _| {
+        this.take_samples(
+            track,
+            vec![
+                ("/samples/Piano_C3.wav".into(), tone(130.81)),
+                ("/samples/Piano_C4.wav".into(), tone(261.63)),
+                ("/samples/Piano_C5.wav".into(), tone(523.25)),
+            ],
+        )
+        .unwrap()
+    });
+    assert!(line.contains('3'), "{line}");
+    app.update(cx, |this, _| {
+        let roots: Vec<u8> = this
+            .session
+            .track_sample_zones(track)
+            .iter()
+            .map(|zone| zone.root)
+            .collect();
+        assert_eq!(roots, [48, 60, 72]);
+        this.nudge_sample_root(track, 1, 1);
+        this.set_sample_velocity(track, 2, 0.5, 1.0);
+        this.remove_sample_zone(track, 0);
+        let zones = this.session.track_sample_zones(track);
+        assert_eq!(zones.len(), 2);
+        assert_eq!(zones[0].root, 61);
+        assert_eq!(zones[1].velocity, VelocityRange::new(0.5, 1.0));
+        let menu = this.sample_velocity_menu(gpui::point(px(0.), px(0.)), track, 1);
+        assert!(!menu.is_empty());
+        // Three edits, three undo steps, and the load before them a fourth.
+        this.session.undo();
+        assert_eq!(this.session.track_sample_zones(track).len(), 3);
+    });
+    // The window draws the map with the rest of the sampler's controls.
+    app.update(cx, |this, _| {
+        this.select_track(track);
+        this.panels.show(crate::dock::Panel::Inspector);
+    });
+    paint(&app, cx);
+    click("inst-open", cx);
+    paint(&app, cx);
+    app.read_with(cx, |this, _| {
+        assert_eq!(
+            this.plugin_window.unwrap().subject,
+            PluginSubject::Instrument(track)
+        );
+    });
+}

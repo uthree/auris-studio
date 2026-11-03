@@ -235,6 +235,8 @@ pub const OPERATIONS: &[&str] = &[
     "edit_project.listen",
     "edit_project.checkpoints",
     "edit_project.import_audio",
+    "edit_project.load_sample",
+    "edit_project.edit_sample_map",
     "edit_project.audio_assets",
     "edit_project.import_midi",
     "edit_project.render",
@@ -938,8 +940,9 @@ mod tests {
         let render = |path: &str| {
             parse(serde_json::json!({"action":"render","destination":{"kind":"mix","path":path}}))
         };
-        let sample =
-            |path: &str| parse(serde_json::json!({"action":"load_sample","track":1,"path":path}));
+        let sample = |path: &str| {
+            parse(serde_json::json!({"action":"load_sample","track":1,"samples":[{"path":path}]}))
+        };
         let edit = Policy::default();
         assert_eq!(edit.decide(&render("renders/mix.wav")), Decision::Allow);
         assert_eq!(edit.decide(&sample("samples/kick.wav")), Decision::Allow);

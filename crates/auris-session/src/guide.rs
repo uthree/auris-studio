@@ -1580,10 +1580,12 @@ pub mod plugins {
     //! through the state.
     //!
     //! The audio sampler, [`auris_sampler::AudioSampler`], is the second plugin built that way,
-    //! and the cheaper one, because its samples are not a new kind of asset at all. Loading a file
-    //! into it ([`crate::Session::load_sample`]) adds an ordinary audio source to the document —
+    //! and the cheaper one, because its samples are not a new kind of asset at all. Loading files
+    //! into it ([`crate::Session::load_samples`]) adds ordinary audio sources to the document —
     //! copied into the project folder, relocated, reported when missing — and places no clip; the
-    //! track's instrument state names the source by id. The session mirrors its decoded sources
+    //! track's instrument state holds a map of [`auris_sampler::SampleZone`]s naming the sources
+    //! by id. A note plays the zone with the nearest root inside its velocity layer, unless a zone
+    //! names its own keys; [`auris_sampler::zones`] gives the rule and why it is that one. The session mirrors its decoded sources
     //! into an [`auris_sampler::SampleBank`] in [`crate::Session::rebuild_graph`], the one moment
     //! a sampler reads it, so no edit has to remember to keep the two in step.
     //! [`auris_sampler::needs_asset`] names both samplers for whatever picks an instrument on

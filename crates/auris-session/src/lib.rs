@@ -174,6 +174,7 @@ pub use session::{
 };
 pub use session::{CheckpointJob, CheckpointOperation, CheckpointResult};
 pub use session::{CompositionPreview, CompositionTrackPreview};
+pub use session::{DEFAULT_SAMPLE_ROOT, DetectedPitch, SampleZoneView, detect_pitch};
 pub use session::{ENVELOPE_PITCHES, SoundEnvelope};
 pub use session::{prepare_looping_output_preview, prepare_output_preview};
 pub mod workshop;
@@ -377,8 +378,8 @@ pub mod prelude {
         WavExportSettings,
     };
     pub use auris_sampler::{
-        AUDIO_SAMPLER_ID, AUDIO_SAMPLER_LOOP_KEY, AUDIO_SAMPLER_ROOT_KEY, SAMPLER_ENVELOPE_KEY,
-        SAMPLER_ID,
+        AUDIO_SAMPLER_ID, AUDIO_SAMPLER_LOOP_KEY, KeyRange, MAX_SAMPLE_ZONES, SAMPLER_ENVELOPE_KEY,
+        SAMPLER_ID, SampleZone, VelocityRange,
     };
 
     pub use crate::{

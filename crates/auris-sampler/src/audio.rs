@@ -1,10 +1,12 @@
-//! Playing one recorded sound across the keyboard.
+//! Playing recorded sounds across the keyboard.
 //!
 //! [`AudioSampler`] is the other kind of sampler: where [`Sampler`](crate::Sampler) plays a
-//! SoundFont somebody else has already mapped, split and enveloped, this one takes a single audio
-//! file — a hit, a vocal chop, a note of somebody's own instrument — and makes an instrument out
-//! of it. The key the sound was recorded at is its *root note*; every other key plays it faster or
-//! slower by the equal-tempered ratio, exactly as a tape played at a different speed would.
+//! SoundFont somebody else has already mapped, split and enveloped, this one takes audio files —
+//! a hit, a vocal chop, notes of somebody's own instrument — and makes an instrument out of them.
+//! The key a sound was recorded at is its *root note*; every other key plays it faster or slower
+//! by the equal-tempered ratio, exactly as a tape played at a different speed would. With several
+//! recordings, which one a note plays is [`crate::zones`]' business: the nearest root, inside a
+//! velocity layer, unless a zone names its keys.
 //!
 //! # Where the audio comes from
 //!
@@ -17,8 +19,8 @@
 //!
 //! # Realtime behaviour
 //!
-//! The buffer is looked up in [`Instrument::prepare`] and held by `Arc` until the next one, so
-//! `process` never takes the bank's lock. Voices are a fixed pool built in [`AudioSampler::new`];
+//! The buffers are looked up in [`Instrument::prepare`] and held by `Arc` until the next one, so
+//! `process` never takes the bank's lock, and choosing a zone walks a slice built there. Voices are a fixed pool built in [`AudioSampler::new`];
 //! starting, stealing and releasing one is arithmetic on that pool.
 
 use std::collections::BTreeMap;
@@ -33,11 +35,10 @@ use auris_core::registry::PluginRegistry;
 use auris_core::{AudioBuffer, SourceId};
 use auris_dsp::{Adsr, SmoothedValue};
 
+use crate::zones::{MAX_ZONES, SampleZone, pick_zone, store_zones, stored_zones};
+
 /// The audio sampler's plugin id, as a project file stores it.
 pub const AUDIO_SAMPLER_ID: &str = "auris.sampler.audio";
-
-/// Where the chosen sample lives inside [`PluginState::extra`].
-const SAMPLE_KEY: &str = "sample";
 
 /// Voices one instance may sound at once.
 ///
@@ -56,21 +57,16 @@ const MIN_LOOP_FRAMES: usize = 16;
 const LEVEL_SMOOTHING_SECONDS: f32 = 0.020;
 
 const LEVEL: usize = 0;
-const ROOT: usize = 1;
-const TUNE: usize = 2;
-const KEY_TRACKING: usize = 3;
-const ATTACK: usize = 4;
-const DECAY: usize = 5;
-const SUSTAIN: usize = 6;
-const RELEASE: usize = 7;
-const LOOP: usize = 8;
-const LOOP_START: usize = 9;
-const LOOP_END: usize = 10;
-const PARAM_COUNT: usize = 11;
-
-/// The key of the root-note parameter, so a session command can set it without knowing where it
-/// sits.
-pub const ROOT_KEY: &str = "root";
+const TUNE: usize = 1;
+const KEY_TRACKING: usize = 2;
+const ATTACK: usize = 3;
+const DECAY: usize = 4;
+const SUSTAIN: usize = 5;
+const RELEASE: usize = 6;
+const LOOP: usize = 7;
+const LOOP_START: usize = 8;
+const LOOP_END: usize = 9;
+const PARAM_COUNT: usize = 10;
 
 /// The key of the loop switch.
 pub const LOOP_KEY: &str = "loop";
@@ -161,26 +157,6 @@ impl std::fmt::Debug for SampleBank {
     }
 }
 
-/// Writes the sample choice into the state a project stores for a track's instrument.
-pub fn store_sample(state: &mut PluginState, source: SourceId) {
-    let encoded = serde_json::Value::from(source.0);
-    match state.extra.as_object_mut() {
-        Some(map) => {
-            map.insert(SAMPLE_KEY.to_string(), encoded);
-        }
-        None => {
-            let mut map = serde_json::Map::new();
-            map.insert(SAMPLE_KEY.to_string(), encoded);
-            state.extra = serde_json::Value::Object(map);
-        }
-    }
-}
-
-/// Reads the sample choice back, or `None` when the state names none.
-pub fn stored_sample(state: &PluginState) -> Option<SourceId> {
-    state.extra.get(SAMPLE_KEY)?.as_u64().map(SourceId)
-}
-
 /// Registers the audio sampler, giving it the bank it will read samples from.
 pub fn register_audio_sampler(registry: &mut PluginRegistry, samples: SharedSamples) {
     registry.register_instrument(move || Box::new(AudioSampler::new(Arc::clone(&samples))));
@@ -195,12 +171,14 @@ pub fn needs_asset(instrument_id: &str) -> bool {
     instrument_id == crate::SAMPLER_ID || instrument_id == AUDIO_SAMPLER_ID
 }
 
-/// One sounding copy of the sample.
+/// One sounding copy of a sample.
 #[derive(Debug)]
 struct Voice {
     envelope: Adsr,
     /// The key that started it, or `None` when the voice is free.
     key: Option<u8>,
+    /// Which of the playable zones it reads.
+    zone: usize,
     /// Whether its key is still held; a released voice is fading and does not answer note-offs.
     held: bool,
     /// Read position in source frames, fractional.
@@ -217,6 +195,7 @@ impl Voice {
         Self {
             envelope: Adsr::new(),
             key: None,
+            zone: 0,
             held: false,
             position: 0.0,
             step: 1.0,
@@ -232,30 +211,41 @@ impl Voice {
     }
 }
 
-/// Plays one audio source across the keyboard, pitched from its root note.
+/// A zone whose audio was found, ready for the audio thread.
+struct Playable {
+    buffer: Arc<AudioBuffer>,
+    /// The zone's own level as a gain.
+    gain: f32,
+    /// Loop bounds in frames, `None` when looping is off or the region is too short.
+    loop_region: Option<(usize, usize)>,
+}
+
+/// Plays audio sources across the keyboard, each pitched from its root note.
 ///
 /// Velocity is linear, as it is for every other instrument here: a note at half velocity is the
-/// sample at half amplitude. With **Key Tracking** off every key plays the sound at the pitch it
+/// sample at half amplitude. With **Key Tracking** off every key plays its sound at the pitch it
 /// was recorded at — the usual way to play a drum hit or an effect from a sampler.
 ///
-/// The loop, when it is on, runs between two fractions of the sample's length for as long as the
-/// note is held *and* through its release, so the release time is what ends a looped note. Off,
-/// the sound plays to its end and the note is over there whatever the envelope says.
+/// The loop, when it is on, runs between two fractions of each sample's length for as long as
+/// the note is held *and* through its release, so the release time is what ends a looped note.
+/// Off, the sound plays to its end and the note is over there whatever the envelope says.
 pub struct AudioSampler {
     samples: SharedSamples,
     params: Vec<ParamDescriptor>,
     values: [f32; PARAM_COUNT],
     level: SmoothedValue,
-    /// Which source to play, from the saved state.
-    source: Option<SourceId>,
-    /// The audio resolved in `prepare`; `None` plays silence.
-    buffer: Option<Arc<AudioBuffer>>,
+    /// The map, from the saved state.
+    zones: Vec<SampleZone>,
+    /// The zones whose audio was found in `prepare`, as the notes choose among them.
+    map: Vec<SampleZone>,
+    /// The audio of each entry of `map`, index for index.
+    playable: Vec<Playable>,
     /// Output sample rate from the last `prepare`.
     rate: f64,
-    /// Loop bounds in frames, `None` when looping is off or the region is too short.
-    loop_region: Option<(usize, usize)>,
     voices: Vec<Voice>,
     clock: u64,
+    /// Notes started, which round-robin alternates take turns by.
+    turn: usize,
     /// Frequency ratio of the current pitch bend.
     bend: f64,
 }
@@ -265,8 +255,6 @@ impl AudioSampler {
     pub fn new(samples: SharedSamples) -> Self {
         let params = vec![
             ParamDescriptor::decibels(LEVEL as u32, "level", "Level", -60.0, 12.0, 0.0),
-            ParamDescriptor::new(ROOT as u32, ROOT_KEY, "Root Note", 0.0, 127.0, 60.0)
-                .with_steps(128),
             ParamDescriptor::new(TUNE as u32, "tune", "Fine Tune", -1.0, 1.0, 0.0)
                 .with_unit(ParamUnit::Semitones),
             ParamDescriptor::toggle(KEY_TRACKING as u32, "key_tracking", "Key Tracking", true),
@@ -294,26 +282,27 @@ impl AudioSampler {
             params,
             values,
             level: SmoothedValue::new(1.0, LEVEL_SMOOTHING_SECONDS, 48_000.0),
-            source: None,
-            buffer: None,
+            zones: Vec::new(),
+            map: Vec::new(),
+            playable: Vec::new(),
             rate: 48_000.0,
-            loop_region: None,
             voices: (0..VOICES).map(|_| Voice::new()).collect(),
             clock: 0,
+            turn: 0,
             bend: 1.0,
         };
         sampler.reshape();
         sampler
     }
 
-    /// Which source this sampler has been told to play.
-    pub fn source(&self) -> Option<SourceId> {
-        self.source
+    /// The map this sampler has been told to play.
+    pub fn zones(&self) -> &[SampleZone] {
+        &self.zones
     }
 
-    /// `true` once a sample has been found for it.
+    /// `true` once a sample has been found for at least one zone.
     pub fn has_sample(&self) -> bool {
-        self.buffer.is_some()
+        !self.playable.is_empty()
     }
 
     fn reshape(&mut self) {
@@ -328,32 +317,37 @@ impl AudioSampler {
         }
     }
 
-    /// Restates the loop region in frames from the current values and buffer.
+    /// Restates every zone's loop region in frames from the current values and its buffer.
     fn relocate_loop(&mut self) {
-        self.loop_region = None;
-        let Some(buffer) = &self.buffer else { return };
-        if self.values[LOOP] < 0.5 {
-            return;
-        }
-        let length = buffer.frame_count();
-        let start = (f64::from(self.values[LOOP_START]) * length as f64).floor() as usize;
-        let end = (f64::from(self.values[LOOP_END]) * length as f64).ceil() as usize;
-        let end = end.min(length);
-        if end > start && end - start >= MIN_LOOP_FRAMES {
-            self.loop_region = Some((start, end));
+        let (looped, from, to) = (
+            self.values[LOOP] >= 0.5,
+            f64::from(self.values[LOOP_START]),
+            f64::from(self.values[LOOP_END]),
+        );
+        for playable in &mut self.playable {
+            playable.loop_region = None;
+            if !looped {
+                continue;
+            }
+            let length = playable.buffer.frame_count();
+            let start = (from * length as f64).floor() as usize;
+            let end = ((to * length as f64).ceil() as usize).min(length);
+            if end > start && end - start >= MIN_LOOP_FRAMES {
+                playable.loop_region = Some((start, end));
+            }
         }
     }
 
-    /// Source frames per output frame for a key, before bending.
-    fn step_for(&self, key: u8) -> f64 {
-        let Some(buffer) = &self.buffer else {
+    /// Source frames per output frame for a key on one zone, before bending.
+    fn step_for(&self, zone: usize, key: u8) -> f64 {
+        let (Some(playable), Some(mapped)) = (self.playable.get(zone), self.map.get(zone)) else {
             return 1.0;
         };
         let rate = if self.rate > 0.0 { self.rate } else { 48_000.0 };
-        let base = buffer.sample_rate() / rate;
-        let tune = f64::from(self.values[TUNE]);
+        let base = playable.buffer.sample_rate() / rate;
+        let tune = f64::from(self.values[TUNE]) + f64::from(mapped.tune);
         let semitones = if self.values[KEY_TRACKING] >= 0.5 {
-            f64::from(key) - f64::from(self.values[ROOT]) + tune
+            f64::from(key) - f64::from(mapped.root) + tune
         } else {
             tune
         };
@@ -361,9 +355,10 @@ impl AudioSampler {
     }
 
     fn note_on(&mut self, key: u8, velocity: f32) {
-        if self.buffer.is_none() {
+        let Some(zone) = pick_zone(&self.map, key, velocity, self.turn) else {
             return;
-        }
+        };
+        self.turn = self.turn.wrapping_add(1);
         let index = self
             .voices
             .iter()
@@ -380,7 +375,8 @@ impl AudioSampler {
             })
             .map_or(0, |(index, _)| index);
         self.clock += 1;
-        let step = self.step_for(key);
+        let step = self.step_for(zone, key);
+        let gain = self.playable[zone].gain;
         let voice = &mut self.voices[index];
         // A fresh copy starts from silence; a stolen one starts from where it was, which is what
         // keeps a steal from clicking.
@@ -388,10 +384,11 @@ impl AudioSampler {
             voice.envelope.silence();
         }
         voice.key = Some(key);
+        voice.zone = zone;
         voice.held = true;
         voice.position = 0.0;
         voice.step = step;
-        voice.gain = velocity.clamp(0.0, 1.0);
+        voice.gain = velocity.clamp(0.0, 1.0) * gain;
         voice.started = self.clock;
         voice.envelope.trigger();
     }
@@ -437,13 +434,6 @@ impl AudioSampler {
 
     /// Renders `[from, to)` of `out`, adding every voice into it.
     fn render_range(&mut self, out: &mut AudioBuffer, from: usize, to: usize) {
-        let Some(buffer) = self.buffer.as_ref() else {
-            return;
-        };
-        let length = buffer.frame_count();
-        let left = buffer.channel(0);
-        let right = buffer.channel(buffer.channel_count().min(2) - 1);
-        let region = self.loop_region;
         let channels = out.channel_count();
         for frame in from..to {
             let level = self.level.next_value();
@@ -453,6 +443,15 @@ impl AudioSampler {
                 if voice.key.is_none() {
                     continue;
                 }
+                let Some(playable) = self.playable.get(voice.zone) else {
+                    voice.free();
+                    continue;
+                };
+                let buffer = &playable.buffer;
+                let length = buffer.frame_count();
+                let left = buffer.channel(0);
+                let right = buffer.channel(buffer.channel_count().min(2) - 1);
+                let region = playable.loop_region;
                 let envelope = voice.envelope.process();
                 if voice.envelope.is_finished() {
                     voice.free();
@@ -558,8 +557,8 @@ impl Parameterized for AudioSampler {
                 .collect(),
             extra: serde_json::Value::Null,
         };
-        if let Some(source) = self.source {
-            store_sample(&mut state, source);
+        if !self.zones.is_empty() {
+            store_zones(&mut state, &self.zones);
         }
         state
     }
@@ -568,7 +567,7 @@ impl Parameterized for AudioSampler {
         for (key, value) in &state.params {
             self.set_param_by_key(key, *value);
         }
-        self.source = stored_sample(state);
+        self.zones = stored_zones(state);
     }
 }
 
@@ -577,7 +576,7 @@ impl Instrument for AudioSampler {
         PluginDescriptor::instrument(
             AUDIO_SAMPLER_ID,
             "Sampler",
-            "Plays an audio file across the keyboard",
+            "Plays audio files across the keyboard",
             PluginCategory::Sampler,
         )
     }
@@ -596,15 +595,27 @@ impl Instrument for AudioSampler {
             voice.free();
         }
         self.bend = 1.0;
-        // A source with no frames is no sample: there is nothing to pitch.
-        self.buffer = self
-            .source
-            .and_then(|source| self.samples.get(source))
-            .filter(|buffer| buffer.frame_count() > 0 && buffer.channel_count() > 0);
-        if self.buffer.is_none()
-            && let Some(source) = self.source
-        {
-            log::warn!("sampler: no audio loaded for source {}", source.0);
+        self.turn = 0;
+        // A zone whose audio is missing drops out of the map, so its keys go to the nearest zone
+        // that can sound rather than to silence. A source with no frames is no sample at all.
+        self.map.clear();
+        self.playable.clear();
+        for zone in self.zones.iter().take(MAX_ZONES) {
+            match self
+                .samples
+                .get(zone.source)
+                .filter(|buffer| buffer.frame_count() > 0 && buffer.channel_count() > 0)
+            {
+                Some(buffer) => {
+                    self.map.push(*zone);
+                    self.playable.push(Playable {
+                        buffer,
+                        gain: db_to_gain(zone.gain_db),
+                        loop_region: None,
+                    });
+                }
+                None => log::warn!("sampler: no audio loaded for source {}", zone.source.0),
+            }
         }
         self.relocate_loop();
     }
@@ -614,12 +625,13 @@ impl Instrument for AudioSampler {
             voice.free();
         }
         self.bend = 1.0;
+        self.turn = 0;
         self.level.snap_to(db_to_gain(self.values[LEVEL]));
     }
 
     fn process(&mut self, events: &[NoteEvent], out: &mut AudioBuffer, ctx: &ProcessContext) {
         out.clear();
-        if self.buffer.is_none() {
+        if self.playable.is_empty() {
             return;
         }
         let frames = out.frame_count().min(ctx.block_frames);
@@ -656,7 +668,7 @@ impl Instrument for AudioSampler {
 impl std::fmt::Debug for AudioSampler {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AudioSampler")
-            .field("source", &self.source)
+            .field("zones", &self.zones.len())
             .field("has_sample", &self.has_sample())
             .field("active_voices", &self.active_voices())
             .finish()
@@ -680,11 +692,24 @@ mod tests {
     }
 
     fn sampler_with(buffer: Arc<AudioBuffer>) -> AudioSampler {
+        sampler_with_root(buffer, 60)
+    }
+
+    fn sampler_with_root(buffer: Arc<AudioBuffer>, root: u8) -> AudioSampler {
+        mapped(vec![(buffer, SampleZone::new(SourceId(7), root))])
+    }
+
+    /// A sampler over several zones, each with the audio its source should hold.
+    fn mapped(zones: Vec<(Arc<AudioBuffer>, SampleZone)>) -> AudioSampler {
         let bank = SampleBank::shared();
-        bank.insert(SourceId(7), buffer);
+        let mut map = Vec::new();
+        for (buffer, zone) in zones {
+            bank.insert(zone.source, buffer);
+            map.push(zone);
+        }
         let mut sampler = AudioSampler::new(bank);
         let mut state = sampler.save_state();
-        store_sample(&mut state, SourceId(7));
+        store_zones(&mut state, &map);
         sampler.load_state(&state);
         sampler.prepare(&PrepareContext::new(RATE, 512, 2));
         sampler
@@ -768,13 +793,119 @@ mod tests {
     }
 
     #[test]
-    fn the_root_note_parameter_moves_the_mapping() {
-        let mut sampler = sampler_with(sine(440.0, 1.0));
-        sampler.set_param_by_key(ROOT_KEY, 69.0);
+    fn the_root_note_moves_the_mapping() {
+        let mut sampler = sampler_with_root(sine(440.0, 1.0), 69);
         // A 440 Hz recording declared as A4 plays 440 on A4 and 220 on A3.
         let out = render(&mut sampler, &[note(57, 1.0)], 40);
         let measured = frequency(&out[4_800..19_200]);
         assert!((measured - 220.0).abs() < 1.0, "{measured} Hz");
+    }
+
+    /// Three recordings an octave apart, each a different waveform level so which one sounded
+    /// can be read off the peak: C3 at 0.2, C4 at 0.5, C5 at 0.8.
+    fn three_octaves() -> AudioSampler {
+        let tone = |hz: f64, level: f32| {
+            let data: Vec<f32> = (0..48_000)
+                .map(|n| (std::f64::consts::TAU * hz * n as f64 / RATE).sin() as f32 * level)
+                .collect();
+            Arc::new(AudioBuffer::from_planar(vec![data], RATE).unwrap())
+        };
+        mapped(vec![
+            (tone(130.81, 0.2), SampleZone::new(SourceId(1), 48)),
+            (tone(261.63, 0.5), SampleZone::new(SourceId(2), 60)),
+            (tone(523.25, 0.8), SampleZone::new(SourceId(3), 72)),
+        ])
+    }
+
+    #[test]
+    fn each_note_plays_the_recording_nearest_its_pitch_at_the_right_pitch() {
+        // E4 is nearer C4 than C5: the C4 recording, pitched up four semitones.
+        let mut sampler = three_octaves();
+        let out = render(&mut sampler, &[note(64, 1.0)], 40);
+        let expected = 261.63 * (4.0f64 / 12.0).exp2();
+        let measured = frequency(&out[4_800..19_200]);
+        assert!(
+            (measured - expected).abs() < 1.0,
+            "{measured} vs {expected}"
+        );
+        assert!((peak(&out[1_000..]) - 0.5).abs() < 0.02);
+        // A4 is nearer C5: the C5 recording, pitched down three semitones.
+        let mut sampler = three_octaves();
+        let out = render(&mut sampler, &[note(69, 1.0)], 40);
+        let measured = frequency(&out[4_800..19_200]);
+        assert!((measured - 440.0).abs() < 1.0, "{measured} Hz");
+        assert!((peak(&out[1_000..]) - 0.8).abs() < 0.02);
+        // Far below everything, the lowest recording.
+        let mut sampler = three_octaves();
+        let out = render(&mut sampler, &[note(36, 1.0)], 40);
+        assert!((peak(&out[1_000..]) - 0.2).abs() < 0.02);
+    }
+
+    #[test]
+    fn velocity_layers_play_different_recordings_of_one_key() {
+        let soft = SampleZone {
+            velocity: crate::zones::VelocityRange::new(0.0, 0.5),
+            ..SampleZone::new(SourceId(1), 60)
+        };
+        let hard = SampleZone {
+            velocity: crate::zones::VelocityRange::new(0.5, 1.0),
+            gain_db: -6.0,
+            ..SampleZone::new(SourceId(2), 60)
+        };
+        let quiet = sine(440.0, 1.0);
+        let bright = sine(880.0, 1.0);
+        let mut sampler = mapped(vec![(quiet.clone(), soft), (bright.clone(), hard)]);
+        let out = render(&mut sampler, &[note(60, 0.4)], 40);
+        assert!((frequency(&out[4_800..19_200]) - 440.0).abs() < 1.0);
+        let mut sampler = mapped(vec![(quiet, soft), (bright, hard)]);
+        let out = render(&mut sampler, &[note(60, 1.0)], 40);
+        assert!((frequency(&out[4_800..19_200]) - 880.0).abs() < 2.0);
+        // The zone's own level: -6 dB on a 0.5 sine at full velocity.
+        let expected = 0.5 * db_to_gain(-6.0);
+        assert!((peak(&out[1_000..]) - expected).abs() < 0.01);
+    }
+
+    #[test]
+    fn a_zone_whose_audio_is_missing_leaves_its_keys_to_the_others() {
+        let bank = SampleBank::shared();
+        bank.insert(SourceId(1), sine(440.0, 1.0));
+        let mut sampler = AudioSampler::new(bank);
+        let mut state = sampler.save_state();
+        store_zones(
+            &mut state,
+            &[
+                SampleZone::new(SourceId(1), 69),
+                SampleZone::new(SourceId(2), 81),
+            ],
+        );
+        sampler.load_state(&state);
+        sampler.prepare(&PrepareContext::new(RATE, 512, 2));
+        assert!(sampler.has_sample());
+        // A5 belonged to the missing recording; it now plays A4's, an octave up.
+        let out = render(&mut sampler, &[note(81, 1.0)], 40);
+        let measured = frequency(&out[2_400..12_000]);
+        assert!((measured - 880.0).abs() < 2.0, "{measured} Hz");
+        // Both zones are still in the saved state, for when the file is found again.
+        assert_eq!(stored_zones(&sampler.save_state()).len(), 2);
+    }
+
+    #[test]
+    fn identical_zones_alternate_note_by_note() {
+        let a = SampleZone::new(SourceId(1), 60);
+        let b = SampleZone::new(SourceId(2), 60);
+        let mut sampler = mapped(vec![(sine(440.0, 1.0), a), (sine(660.0, 1.0), b)]);
+        let mut out = AudioBuffer::new(2, 512, RATE);
+        let ctx = ProcessContext::realtime(RATE, 512, 0, 120.0, true);
+        sampler.process(&[note(60, 1.0)], &mut out, &ctx);
+        sampler.process(&[note(60, 1.0)], &mut out, &ctx);
+        let zones: Vec<usize> = sampler
+            .voices
+            .iter()
+            .filter(|voice| voice.key.is_some())
+            .map(|voice| voice.zone)
+            .collect();
+        assert_eq!(zones.len(), 2);
+        assert_ne!(zones[0], zones[1]);
     }
 
     #[test]
@@ -870,14 +1001,14 @@ mod tests {
 
     #[test]
     fn the_sample_choice_survives_a_save_and_load() {
-        let mut sampler = sampler_with(sine(440.0, 0.1));
-        sampler.set_param_by_key(ROOT_KEY, 48.0);
+        let mut sampler = sampler_with_root(sine(440.0, 0.1), 48);
+        sampler.set_param_by_key("tune", 0.5);
         let state = sampler.save_state();
-        assert_eq!(stored_sample(&state), Some(SourceId(7)));
+        assert_eq!(stored_zones(&state), vec![SampleZone::new(SourceId(7), 48)]);
         let mut copy = AudioSampler::new(SampleBank::shared());
         copy.load_state(&state);
-        assert_eq!(copy.source(), Some(SourceId(7)));
-        assert_eq!(copy.param_by_key(ROOT_KEY), Some(48.0));
+        assert_eq!(copy.zones(), &[SampleZone::new(SourceId(7), 48)]);
+        assert_eq!(copy.param_by_key("tune"), Some(0.5));
     }
 
     #[test]

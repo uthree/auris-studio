@@ -344,6 +344,10 @@ pub enum SessionError {
     #[error("{} holds no audio to sample", .0.display())]
     EmptySample(PathBuf),
 
+    /// A change to a sampler's map was refused: a zone that is not there, or more than it holds.
+    #[error("sample map: {0}")]
+    SampleMap(String),
+
     /// The document has never been saved, so there is no path to save it back to.
     #[error("the project has no path yet; save it somewhere first")]
     NoPath,

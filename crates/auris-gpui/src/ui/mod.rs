@@ -57,6 +57,7 @@ pub(crate) mod reasoning_picker;
 pub(crate) mod reference_piano_roll;
 pub(crate) mod rhythm_grid;
 pub mod root;
+pub(crate) mod sample_map;
 pub(crate) mod score_layer;
 pub mod scrollbars;
 pub mod selection;
