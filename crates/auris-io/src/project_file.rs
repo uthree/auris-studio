@@ -99,6 +99,13 @@ pub const MAX_PROJECT_FILE_BYTES: usize = 64 * 1024 * 1024;
 /// Sub-folder of a project folder holding the audio that project owns.
 pub const AUDIO_DIR: &str = "Audio";
 
+/// Sub-folder of a project folder that agents may read and write without asking.
+///
+/// Nothing in the document refers into it, so it is never an asset: a file the project should
+/// keep is copied into [`AUDIO_DIR`] the way any import is. It travels with the folder all the
+/// same, so renders and stems made for one song stay beside it.
+pub const WORKSPACE_DIR: &str = "Workspace";
+
 /// The folder a document lives in, which is what its relative asset paths resolve against.
 ///
 /// `None` only for a bare file name with no directory part at all.
