@@ -220,6 +220,10 @@ pub enum SessionError {
     #[error("clip {0} cannot be split there")]
     CannotSplit(u64),
 
+    /// The named clips cannot become one clip, and the refusal says why.
+    #[error("{}", join_refusal_text(*.0))]
+    CannotJoin(auris_core::JoinRefusal),
+
     /// The clip holds notes rather than audio, so it has no gain or fades of its own.
     ///
     /// A note clip's loudness is its velocities; offering to fade one here would quietly do
@@ -468,5 +472,20 @@ impl SessionError {
                 | SessionError::Io(auris_io::IoError::ExportCancelled)
                 | SessionError::Video(auris_video::VideoError::Cancelled)
         )
+    }
+}
+
+fn join_refusal_text(refusal: auris_core::JoinRefusal) -> &'static str {
+    use auris_core::JoinRefusal;
+    match refusal {
+        JoinRefusal::TooFew => "name two or more clips on one track to join",
+        JoinRefusal::Audio => "audio clips cannot be joined; only note clips can",
+        JoinRefusal::DifferentTracks => "only clips on the same track can be joined",
+        JoinRefusal::MixedMute => {
+            "some of those clips are muted and some are not; match their mute first"
+        }
+        JoinRefusal::DifferentTransforms => {
+            "those clips are performed differently; give them the same note transforms or bake them first"
+        }
     }
 }

@@ -508,6 +508,7 @@ impl AurisApp {
                     .on_action(Self::window_listener(cx, Self::on_select_all_clips))
                     .on_action(Self::window_listener(cx, Self::on_duplicate_clip))
                     .on_action(Self::window_listener(cx, Self::on_split_clip))
+                    .on_action(Self::window_listener(cx, Self::on_join_clips))
                     .on_action(Self::window_listener(cx, Self::on_toggle_clip_mute))
                     .on_action(Self::window_listener(cx, Self::on_toggle_clip_loop))
                     .on_action(Self::window_listener(cx, Self::on_set_tempo))
@@ -3330,6 +3331,18 @@ impl AurisApp {
     ) {
         if let Some(clip) = self.selected_clip {
             self.run_menu_command(MenuCommand::SplitClipAtPlayhead(clip), cx);
+        }
+        cx.notify();
+    }
+
+    fn on_join_clips(
+        &mut self,
+        _: &actions::JoinClips,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(clip) = self.selected_clip {
+            self.run_menu_command(MenuCommand::JoinClips(clip), cx);
         }
         cx.notify();
     }

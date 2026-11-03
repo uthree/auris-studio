@@ -124,6 +124,8 @@ pub enum Edit {
     DuplicateClip,
     /// A clip was divided in two.
     SplitClip,
+    /// Clips on one track were joined into one.
+    JoinClips,
     /// A clip was renamed.
     RenameClip,
     /// A clip was muted or unmuted.
