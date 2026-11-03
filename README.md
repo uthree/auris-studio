@@ -64,4 +64,7 @@ See [Agent skills](docs/agent-skills.md) for updates, paths, and MCP configurati
 - [Development](docs/development.md) and [composition evaluation](docs/evaluation.md)
 - [Changelog and compatibility policy](CHANGELOG.md)
 
+Contributions are welcome, including ones made with generative AI. See
+[Contributing](CONTRIBUTING.md).
+
 Licensed under [Apache-2.0](LICENSE).
