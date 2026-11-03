@@ -322,7 +322,7 @@ mod tests {
         let mut frame = renderer.canvas();
         renderer.draw(1.0, &mut frame);
         let (mut red, mut green) = (0, 0);
-        for pixel in frame.data().chunks_exact(4) {
+        for pixel in frame.data().as_chunks::<4>().0 {
             if pixel[0] > 200 && pixel[1] < 80 {
                 red += 1;
             }

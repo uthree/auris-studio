@@ -878,8 +878,10 @@ mod tests {
             .unwrap()
             .stdout;
         let first = pcm
-            .chunks_exact(2)
-            .position(|pair| i16::from_le_bytes([pair[0], pair[1]]).abs() > 1_000)
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .position(|pair| i16::from_le_bytes(*pair).abs() > 1_000)
             .expect("the tone is in the soundtrack");
         let onset = first as f64 / 8000.0;
         assert!(
