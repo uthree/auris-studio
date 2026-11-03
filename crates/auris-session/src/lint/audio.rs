@@ -10,6 +10,9 @@ use auris_engine::{OfflineOptions, RenderProgress};
 use super::{Diagnostic, Fix, Rule, Severity, sort};
 use crate::{RenderJob, Session, SessionError};
 
+#[cfg(test)]
+mod performance_tests;
+
 /// The rate the lint renders at. Every rule here reads levels, and none of them needs the top
 /// octave of hearing, so half the work buys the same answer.
 pub const AUDIO_LINT_RATE: f64 = 24_000.0;
@@ -114,8 +117,8 @@ impl Session {
     /// [`AudioLintJob::run`].
     pub fn audio_lint_job(&mut self) -> AudioLintJob {
         let project = self.project();
-        let tracks = checked_tracks(project);
         let events = super::score::events(project);
+        let tracks = checked_tracks(project, &events);
         let has_notes = !events.is_empty();
         let pitched = tracks
             .iter()
@@ -182,14 +185,11 @@ fn pitch_notes(
         .filter(|event| event.track == track && !event.drum)
         .collect();
     let tempo = &project.tempo_map;
+    let alone = alone_flags(&own);
     let mut notes = Vec::new();
     let mut seconds = 0.0;
     for (index, event) in own.iter().enumerate() {
-        let alone = own
-            .iter()
-            .enumerate()
-            .all(|(other, e)| other == index || e.end <= event.start || e.start >= event.end);
-        if !alone || !(PITCH_NOTES.0..=PITCH_NOTES.1).contains(&event.pitch) {
+        if !alone[index] || !(PITCH_NOTES.0..=PITCH_NOTES.1).contains(&event.pitch) {
             continue;
         }
         let from = tempo.ticks_to_seconds(event.start).0;
@@ -213,9 +213,68 @@ fn pitch_notes(
     notes
 }
 
+/// Returns whether each interval has no overlap with any other interval.
+///
+/// `score::events` normally produces positive, start-sorted spans, but keeping this helper valid
+/// for arbitrary input makes the optimization safe for malformed/synthetic event lists too. The
+/// strict comparisons mirror the original pairwise predicate exactly, including zero and negative
+/// spans.
+fn alone_flags(events: &[&super::score::Event]) -> Vec<bool> {
+    if events.iter().all(|event| event.start < event.end)
+        && events.windows(2).all(|pair| pair[0].start <= pair[1].start)
+    {
+        // Normal score events are positive and start-sorted. Only the maximum previous end and
+        // the next start can overlap each note, so this common path needs one linear scan.
+        let mut previous_end = i64::MIN;
+        return events
+            .iter()
+            .enumerate()
+            .map(|(index, event)| {
+                let alone = previous_end <= event.start.raw()
+                    && events
+                        .get(index + 1)
+                        .is_none_or(|next| next.start >= event.end);
+                previous_end = previous_end.max(event.end.raw());
+                alone
+            })
+            .collect();
+    }
+    let mut order: Vec<usize> = (0..events.len()).collect();
+    order.sort_unstable_by_key(|&index| (events[index].start.raw(), index));
+
+    // Keep the two largest ends in every prefix. A query must exclude the current event, which
+    // is itself in the prefix for a positive span; retaining the runner-up avoids a scan while
+    // preserving the original pairwise predicate exactly.
+    let mut prefix = vec![[(i64::MIN, usize::MAX); 2]; order.len() + 1];
+    for (sorted, &index) in order.iter().enumerate() {
+        prefix[sorted + 1] = prefix[sorted];
+        let end = events[index].end.raw();
+        if end >= prefix[sorted + 1][0].0 {
+            prefix[sorted + 1][1] = prefix[sorted + 1][0];
+            prefix[sorted + 1][0] = (end, index);
+        } else if end > prefix[sorted + 1][1].0 {
+            prefix[sorted + 1][1] = (end, index);
+        }
+    }
+
+    events
+        .iter()
+        .enumerate()
+        .map(|(index, event)| {
+            let limit = order.partition_point(|&other| events[other].start.raw() < event.end.raw());
+            let candidates = prefix[limit];
+            let max_end = if candidates[0].1 == index {
+                candidates[1].0
+            } else {
+                candidates[0].0
+            };
+            max_end <= event.start.raw()
+        })
+        .collect()
+}
+
 /// Unmuted note tracks that can make a sound at all, with where their notes play.
-fn checked_tracks(project: &Project) -> Vec<CheckedTrack> {
-    let events = super::score::events(project);
+fn checked_tracks(project: &Project, events: &[super::score::Event]) -> Vec<CheckedTrack> {
     let mut tracks = Vec::new();
     for track in &project.tracks {
         if track.mixer.mute {
