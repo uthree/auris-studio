@@ -255,6 +255,13 @@ other stages retain their order. Stored notes, generation recipes, authored cont
 and automatic volume contour shapes remain intact. The live host groups changed calls by
 user request; repeating current settings adds no history. The result reads back settings.
 
+Swing is one decision for the whole song. A swung clip moves every position on its half-step
+grid in proportion (eighth swing carries the sixteenths between the eighths), and a sung clip
+is sung swung too, both ends of each note moving so a legato line stays legato. When a
+`set_performance` call changes swing and the song's parts then disagree about it, the result
+carries `swing_warning` naming the tracks on each setting: a part swung alone plays its
+offbeats late against the rest, which is heard as the part dragging.
+
 `note_effects` measures the first loop pass through the actual performer, with at most
 2048 notes and 32 stages. It reports changed onsets, durations, velocities and pitches,
 added/removed notes, simultaneous chord groups, warnings and explicit truncation.
@@ -325,6 +332,20 @@ Use `import_transcription` to accept externally prepared note JSON, supplied as 
 one inline `transcription` or absolute JSON `path`. Optional `at_tick` controls placement
 and `name` names the piano track. Notes remain estimates; review timing and timbres.
 See the [external note API](transcription-api.md) for its validation and permission contract.
+
+`melody_shape` measures a melody track section by section — low and high note, average pitch,
+leaps of a fourth or more — and compares every section labelled as a chorus (サビ, chorus,
+hook, refrain) with the section just before it. It warns when a chorus sits less than a minor
+third higher on average, does not reach a higher peak, moves only by step, or when the song's
+highest note is outside every chorus. It reads the written notes, taking the top note where
+several sound together.
+
+`arrangement_shape` measures the backing against the form: the parts playing in each section and
+their notes per bar, how many different one-bar patterns each part plays, and how many bars of
+intro and outro surround the voice. It warns when every section has the same parts, when a
+chorus is no fuller than the section before it (neither another part nor 15% more notes a bar),
+when a drum part plays the same bar into a chorus as the bar before (no fill), and when the
+intro or outro is shorter than eight bars.
 
 For a new song, write its musical decisions into the document with `edit_harmony`, for example
 `{"start_bar":1,"bars":16,"key":"D major","chords":["I","IV V","vi","ii V"]}`.
@@ -479,10 +500,36 @@ The production sequence lives in `crates/auris-agent/src/prompts/composition.md`
 `prompts/live-tools.md` retains essential operation contracts such as IDs, revisions,
 note units, lyrics, singer takes and final-render verification. Exact schemas and
 detailed task guidance are obtained through discovery and `tool_help` when needed.
-The experimental modular profile additionally selects a production-record workflow.
+The experimental modular profile additionally enters production phases
+([composition-workflows.md](composition-workflows.md)).
 The editor panel and workshop composers resolve the same shared prompt; the workshop
 adds its private-session and host-owned export constraints. Codex and Claude Code
-receive the same resolved composition prompt.
+receive the same resolved composition prompt. A composer's policy denies the shell and
+file operations, so CLI backends start it without their own shell and file tools.
+
+Each workshop candidate's folder holds `composer-log.jsonl`, one JSON object per line:
+the assignment, every tool call with its arguments, every result with its text, refused
+permissions, the model's prose between calls and how the attempt ended. Long values are
+cut and the file stops at 8 MiB. It is deleted with the conversation.
+
+Each candidate card shows a label: the round counted from 1, then the candidate's place in
+that round as a letter, so `1B` is the second song of the first round. The director receives
+the same label in `candidate_history`, so the user can ask for "1B's chorus" and be understood,
+and the selection and feedback messages name the label too.
+
+While a candidate is composed, its card shows what the composer says it is doing: the
+composer calls `report_status` with one short line in the assignment's language as it starts
+each step. Until the first line, and while the host plans, renders, stops or recovers it, the
+card shows the host's own label for that stage instead.
+
+A composer edits a copy of its parent candidate and sees no other version. When the user
+wants material back from an earlier one ("return the chorus to the previous melody"), the
+director lists those candidates in the direction's `sources`. The host loads their saved
+songs into the composer's session, read-only, and the `source_material` tool lists their
+note clips with whether each matches the current score, then restores named clips' notes,
+lyrics and phonemes exactly, as one Undo edit. Clip IDs carry over from a candidate to its
+children, so a clip restores into the same ID. Sources that are not saved, repeat the
+parent or name nothing are dropped, and at most four are kept.
 
 Settings → Agent includes a multiline **System prompt** editor shared by Codex,
 Claude Code and Rig models. It starts with the current standard prompt in full.

@@ -30,6 +30,51 @@ Unreadable phrases retain their text and error and make `complete` false. A read
 override is kana-only, addresses one existing phrase and lasts only for that request.
 It does not change a subsequent composition's pronunciation.
 
+Kana spells a long o as おう and a long e as えい (りょうて, せんせい), and the kana table sings
+what is spelt. When a dictionary is installed and reads the written text to the same moras
+as the reading, differing only where the reading spells う or い after that vowel, the
+dictionary's held vowel is sung and the reading's spelling is kept: 両手 with the reading
+りょうて sings *ryo-o-te*. Any other difference makes the reading a deliberate alternative,
+sung as spelt. Without a dictionary, spell the long vowel with ー (りょーて). `write_lyrics`
+reads its `reading` the same way.
+
+## Fit a phrase to its notes
+
+A mora is a unit of the language, not of the melody. Each mora's `slot` says what it asks
+of the notes:
+
+- `note` needs a note of its own. That includes `ん`.
+- `hold` is a held long vowel: `ー`, or a vowel repeating the one before it inside a word,
+  as in `さあ`. It may take its own note or be sung as the end of the previous one.
+- `rest` is `っ`. It takes no note; it is the rest after the previous note.
+
+So a phrase can be sung on any count from `min_notes` (every long vowel held) to
+`max_notes` (every long vowel on its own note). The dictionary reads 東京 as トーキョー, so a
+dictionary long vowel is a hold; a kana spelling such as `ゆこう` is read as written, and
+`ゆこー` is how a reading asks for the hold.
+
+Pass `fit` with the note count each phrase must be sung on, for example the notes of the
+motif it repeats:
+
+```json
+{
+  "text": "さあ いっしょに ゆこー",
+  "fit": [{"phrase": 1, "notes": 6}]
+}
+```
+
+Each fitted phrase gets `fit.verdict` (`fits`, `too_many_moras` for 字余り or
+`too_few_moras` for 字足らず) and `fit.excess`, the moras to remove (positive) or add
+(negative). Nothing is merged or split to force a fit. `note_reading` is the reading cut
+into notes with `|`, for the requested count when it fits and for `max_notes` otherwise.
+When long vowels must be held, the ones nearest the end of the phrase are held first.
+
+Pass `note_reading` to `write_lyrics` as its `reading`. A reading without `|` still puts
+one mora on each note. A grouped reading may put only a held long vowel or a final `っ` on a
+note with the mora before it; anything else is refused. A group ending in `っ` sings no
+closure phoneme, so the next note must start at least a thirty-second note (120 ticks) after
+that note ends.
+
 ## Diagnose a composition or existing phrases
 
 `check_spec` checks syntax and settings. Next call `diagnose_song` with `spec` containing

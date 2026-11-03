@@ -363,18 +363,22 @@ fn preamble() -> String {
     default_system_prompt()
 }
 
+/// The system prompt for one profile.
+///
+/// The phased profile carries only the common core: the rules that hold in every phase. What a
+/// phase asks for — its musical guidance, its tool essentials and its technique index — comes
+/// back from `enter_phase`, so a model carries the phase it is in and not the other two. The
+/// legacy profile is kept whole, as the baseline the phased one is measured against.
 fn preamble_for_profile(modular: bool) -> String {
-    let mut text = format!(
+    if modular {
+        return include_str!("prompts/core.md").to_owned();
+    }
+    format!(
         "{}\n{}\n{}",
         include_str!("prompts/composition.md"),
         MUSICAL_DESIGN_INSTRUCTIONS,
         include_str!("prompts/live-tools.md")
-    );
-    // Detailed musical/operation guidance is returned by tool_help when needed.
-    if modular {
-        text.push_str("\nFor music-making select production_record select_workflow (composition, accompaniment, vocals, local_edit or delivery), choose writing_order harmony_first, melody_first or rhythm_first, and follow the returned workflow.\n");
-    }
-    text
+    )
 }
 
 /// A tool's refusal, carried as an error the runtime can classify.
@@ -1506,10 +1510,17 @@ mod tests {
             .collect::<Vec<_>>();
         let modular = preamble_for_profile(true);
         let legacy = preamble_for_profile(false);
+        assert_eq!(legacy.matches(MUSICAL_DESIGN_INSTRUCTIONS).count(), 1);
+        // The phased core leaves the musical guidance to the phase instructions.
+        assert!(!modular.contains(MUSICAL_DESIGN_INSTRUCTIONS));
+        assert!(
+            modular.len() < 4500,
+            "The common core grew to {} bytes",
+            modular.len()
+        );
         for text in [&modular, &legacy] {
-            assert_eq!(text.matches(MUSICAL_DESIGN_INSTRUCTIONS).count(), 1);
             assert!(
-                text.len() < 9000,
+                text.len() < 16000,
                 "Shared prompt grew to {} bytes",
                 text.len()
             );
@@ -1524,7 +1535,7 @@ mod tests {
                 assert!(text.contains(contract), "Missing {contract}");
             }
         }
-        assert!(modular.contains("select_workflow"));
+        assert!(modular.contains("enter_phase"));
         assert_eq!(
             catalog,
             host::ToolHost::definitions()

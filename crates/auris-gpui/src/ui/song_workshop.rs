@@ -296,19 +296,25 @@ impl AurisApp {
         let Some(state) = &self.song_workshop else {
             return;
         };
-        let Some(candidate) = state.snapshot.as_ref().and_then(|snapshot| {
-            snapshot
-                .document
-                .rounds
-                .iter()
-                .flat_map(|r| &r.candidates)
-                .find(|c| c.id == id && c.ready)
-        }) else {
+        let Some(snapshot) = state.snapshot.as_ref() else {
+            return;
+        };
+        let Some(candidate) = snapshot
+            .document
+            .rounds
+            .iter()
+            .flat_map(|r| &r.candidates)
+            .find(|c| c.id == id && c.ready)
+        else {
             return;
         };
         let feedback = candidate.feedback.as_ref();
         let prompt = super::prompt::Prompt::new(
             self.t(Key::WorkshopFeedbackTitle)
+                .replace(
+                    "{label}",
+                    &snapshot.document.candidate_label(id).unwrap_or_default(),
+                )
                 .replace("{song}", &candidate.direction.title),
             super::prompt::PromptTarget::WorkshopFeedback {
                 workshop: state.identity,
@@ -767,7 +773,15 @@ impl AurisApp {
                 .flat_map(|round| &round.candidates)
                 .nth(index)
         {
-            let message = selection_request.replace("{song}", &candidate.direction.title);
+            let message = selection_request
+                .replace(
+                    "{label}",
+                    &snapshot
+                        .document
+                        .candidate_label(candidate.id)
+                        .unwrap_or_default(),
+                )
+                .replace("{song}", &candidate.direction.title);
             if s.send(Command::Select(
                 candidate.id,
                 Box::new(s.preferences.clone()),
@@ -1511,6 +1525,15 @@ impl AurisApp {
                     .group("workshop-copy")
                     .text_size(theme.atelier.typography.size_lg)
                     .font_weight(theme.atelier.typography.heading_weight)
+                    // The name the user and the director both call this song by, such as 1B.
+                    .when_some(snapshot.document.candidate_label(id), |row, label| {
+                        row.child(
+                            div()
+                                .flex_shrink_0()
+                                .text_color(theme.text_muted)
+                                .child(label),
+                        )
+                    })
                     .child(
                         div()
                             .flex_1()
@@ -1533,7 +1556,7 @@ impl AurisApp {
             .child(badges)
             .child(description);
         if let Some(stage) = snapshot.progress.get(&id) {
-            let label = self.t(match stage.as_str() {
+            let stage_label = self.t(match stage.as_str() {
                 "harmony" => Key::WorkshopHarmonyProgress,
                 "melody" => Key::WorkshopMelodyProgress,
                 "compose" => Key::WorkshopComposing,
@@ -1545,6 +1568,12 @@ impl AurisApp {
                 "recovering" => Key::WorkshopRecovering,
                 _ => Key::WorkshopArrangeProgress,
             });
+            // The composer's own words when it has said what it is doing.
+            let label = gpui::SharedString::from(
+                snapshot
+                    .status_line(id)
+                    .map_or_else(|| stage_label.to_string(), str::to_owned),
+            );
             card = card.child(
                 div()
                     .debug_selector(move || format!("song-candidate-activity-{index}"))
@@ -1555,10 +1584,22 @@ impl AurisApp {
                     .rounded(theme.atelier.shape.radius_md)
                     .bg(colors.surface)
                     .child(
-                        atelier::Spinner::new(("song-candidate-spinner", index))
-                            .color(colors.accent),
+                        div().flex_shrink_0().child(
+                            atelier::Spinner::new(("song-candidate-spinner", index))
+                                .color(colors.accent),
+                        ),
                     )
-                    .child(Label::new(label).size(TextSize::Small)),
+                    // The composer writes this line, so its length is not ours to choose: wrap it
+                    // inside the row, and cut a third line short rather than run past the card.
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .text_size(theme.atelier.typography.size_sm)
+                            .line_clamp(2)
+                            .text_ellipsis()
+                            .child(label),
+                    ),
             );
         }
         if !candidate.tools.is_empty() {
@@ -2294,6 +2335,7 @@ mod tests {
                 previews: Default::default(),
                 preview_errors: Default::default(),
                 progress: Default::default(),
+                status: Default::default(),
                 planning: false,
                 preferences: Default::default(),
                 error: None,
@@ -2322,6 +2364,7 @@ mod tests {
             previews: Default::default(),
             preview_errors: Default::default(),
             progress: Default::default(),
+            status: Default::default(),
             planning,
             preferences: Default::default(),
             error: None,
@@ -2768,6 +2811,7 @@ mod tests {
                                 description: song.idea.description.clone(),
                                 instructions: String::new(),
                                 protected_tracks: vec![],
+                                sources: vec![],
                             },
                         })
                         .collect(),
@@ -2847,6 +2891,7 @@ mod tests {
                         description: "静かなピアノ\n柔らかな弦楽器".into(),
                         instructions: "Private composer instructions".into(),
                         protected_tracks: vec![],
+                        sources: vec![],
                     },
                 }],
             });
@@ -2942,6 +2987,7 @@ mod tests {
                             description: "Piano and strings".into(),
                             instructions: String::new(),
                             protected_tracks: Vec::new(),
+                            sources: vec![],
                         },
                     })
                     .collect(),
@@ -3186,6 +3232,7 @@ mod tests {
                         description: "A melody being written".into(),
                         instructions: "Continue".into(),
                         protected_tracks: vec![],
+                        sources: vec![],
                     },
                 }],
             });

@@ -347,6 +347,9 @@ impl Session {
         voice: Option<&str>,
         patch: PerformancePatch,
     ) -> Result<String, String> {
+        let swing_changed = patch.swing_percent.is_some()
+            || patch.swing_grid.is_some()
+            || patch.reset.contains(&ResetStage::Swing);
         let outer = self.prepare_agent_performance(clip, voice, patch)?;
         self.begin_transaction(crate::Edit::SetClipTransforms(clip));
         let result = self
@@ -354,7 +357,16 @@ impl Session {
             .map_err(|e| e.to_string());
         self.end_transaction();
         result?;
-        self.agent_inspect_performance(clip, voice)
+        let report = self.agent_inspect_performance(clip, voice)?;
+        match swing_changed.then(|| mixed_swing(self.project())).flatten() {
+            Some(warning) => {
+                let mut report: serde_json::Value =
+                    serde_json::from_str(&report).map_err(|e| e.to_string())?;
+                report["swing_warning"] = warning.into();
+                Ok(report.to_string())
+            }
+            None => Ok(report),
+        }
     }
 
     pub(crate) fn prepare_agent_performance(
@@ -609,6 +621,48 @@ impl Session {
     }
 }
 
+/// Says which tracks are swung differently, when the song's parts disagree about swing.
+///
+/// Swing is one decision for the whole band: a part swung alone, or at another amount, plays
+/// its offbeats against the others' at a different time, and that is heard as the part being
+/// out of time rather than as a feel. A track counts by the swing on its clips that hold notes;
+/// a clip-level swing is the only one there is, so a track whose clips disagree counts twice.
+pub(crate) fn mixed_swing(project: &auris_core::Project) -> Option<String> {
+    let mut feels: std::collections::BTreeMap<String, Vec<&str>> = Default::default();
+    for track in &project.tracks {
+        let Some(clips) = track.kind.note_clips() else {
+            continue;
+        };
+        let mut seen = std::collections::BTreeSet::new();
+        for clip in clips.iter().filter(|clip| !clip.notes.is_empty()) {
+            let feel = clip
+                .transforms
+                .iter()
+                .find_map(|stage| match stage {
+                    NoteTransform::Swing {
+                        percent,
+                        subdivision,
+                    } if *percent > 50 => Some(format!("{percent}% {}", subdivision.name())),
+                    _ => None,
+                })
+                .unwrap_or_else(|| "straight".to_owned());
+            if seen.insert(feel.clone()) {
+                feels.entry(feel).or_default().push(&track.name);
+            }
+        }
+    }
+    (feels.len() > 1).then(|| {
+        let parts: Vec<String> = feels
+            .iter()
+            .map(|(feel, tracks)| format!("{feel}: {}", tracks.join(", ")))
+            .collect();
+        format!(
+            "Parts disagree about swing ({}). Give every part sharing the grid, vocal included, the same swing, or leave them all straight.",
+            parts.join("; ")
+        )
+    })
+}
+
 /// Edits selected controls without rewriting a clip's stored notes.
 #[derive(Debug, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
@@ -619,7 +673,11 @@ pub struct PerformancePatch {
     /// Combined timing/velocity wander, 0..1; individual expression fields override it.
     #[schemars(range(min = 0, max = 1))]
     pub humanize: Option<f32>,
-    /// Offbeat position, 50..75 percent; 50 is straight.
+    /// Offbeat position, 50..75 percent; 50 is straight. Swing is the song's feel, not
+    /// seasoning: leave a straight song (most pop, rock, J-pop and EDM) at 50. Where the genre
+    /// swings (shuffle, jazz, funk), give every part sharing the grid, vocal included, the same
+    /// percent and grid. A part swung alone plays its offbeats late against the rest: 57% eighth
+    /// swing is about 35 ms at 120 BPM, which a listener hears as the part dragging.
     #[schemars(range(min = 50, max = 75))]
     pub swing_percent: Option<u8>,
     /// Swing subdivision.

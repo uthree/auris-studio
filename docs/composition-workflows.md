@@ -1,9 +1,9 @@
-# Experimental composition workflows
+# Experimental production phases
 
 [日本語](composition-workflows.ja.md)
 
-Set `AURIS_COMPOSITION_WORKFLOWS=1` before starting Auris to test the compact
-common prompt and task-specific workflows. The complete tool catalog stays the
+Set `AURIS_COMPOSITION_WORKFLOWS=1` before starting Auris to test production in
+three phases: score, arrangement and mix. The complete tool catalog stays the
 same, so prompt experiments do not silently compare different tools. The default
 continues to use the existing prompt until listening evidence supports a change.
 Use `AURIS_COMPOSITION_CANDIDATES=1` independently to advertise candidate tools;
@@ -19,13 +19,32 @@ local edits keep their scope. The default profile therefore gets this behavior
 without enabling experimental workflows. See [live vocal production](agent-workflows.md#live-vocal-production)
 for section coverage and score readback.
 
-`production_record` accepts `select_workflow` with `workflow` (`composition`,
-`accompaniment`, `vocals`, `local_edit`, `delivery`) and `writing_order`
-(`harmony_first`, `melody_first`, `rhythm_first`). Selection is conversation
-metadata, subject to the same write permission as other record updates. It
-survives context compaction and conversation restart. The response, and later
-project inspections, provide only the selected task's instructions in modular
-mode. The agent may explicitly change the selection when the task changes.
+`production_record` accepts `enter_phase` with `phase` (`score`, `arrangement`,
+`mix`), a `reason` and, for the score phase, a `writing_order` (`harmony_first`,
+`melody_first`, `rhythm_first`). The score phase decides form, tempo, chords,
+lyrics, the foreground melody and its voice, and ends in a demo with a plain
+guide part; the arrangement phase chooses sounds and writes backing, drums,
+performance and transitions around that fixed score; the mix phase balances,
+processes and delivers. `set_roles` registers the foreground tracks and the
+guide tracks (or `no_foreground` with a reason), and is required before
+arrangement. A local fix enters the phase that owns what is being fixed.
+
+The phase is conversation metadata, subject to the same write permission as
+other record updates, and survives context compaction and conversation restart.
+In modular mode the system prompt is only the common core: the rules that hold
+in every phase (addresses, revisions and units, failure recovery, scope and
+honesty). Each phase's own guidance, tool essentials and technique index come
+back as `phase_instructions` when a phase is entered and when the record is
+read, beside the record rather than inside its `read_report` pages; other
+record updates and project inspections leave them out. The technique index
+names headings of [composition techniques](composition-techniques.md), which
+`search_documentation` returns. Going back to an earlier phase keeps the later
+phases' work and lists them under `phase.revisit`. `phase.checks` reports the
+unmet structural conditions of the current and earlier phases, read from
+`inspect_project`'s `phase_facts`: sections covering the song, chords in every
+section, registered roles, annotated lyrics and current vocal takes for the
+score; assigned drums and a replaced guide for the arrangement; a measured full
+mix for the mix. They are warnings, not refusals.
 
 The shared contract retains exact IDs, tick units, revision checks, source
 preservation, limits on exploration, and the distinction between measurements,

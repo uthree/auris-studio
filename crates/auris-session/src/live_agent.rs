@@ -41,6 +41,19 @@ pub enum HistoryOperation {
 }
 mod vocals;
 pub use vocals::{VocalJob, VocalResult, VocalStep};
+/// The line a [`Command::ReportStatus`] shows: one line, whitespace collapsed, 1-80 characters.
+///
+/// The host draws it on a single row, so a line break or a paragraph would be cut off where the
+/// user cannot see it; refusing says so to the model instead.
+pub fn report_status(status: &str) -> Result<String, String> {
+    let line = status.split_whitespace().collect::<Vec<_>>().join(" ");
+    match line.chars().count() {
+        0 => Err("status needs a short line of text".into()),
+        1..=80 => Ok(line),
+        _ => Err("status is limited to 80 characters; say only the step you are on".into()),
+    }
+}
+
 fn lint_limit() -> usize {
     32
 }
@@ -130,13 +143,16 @@ pub enum Command {
         /// Inspect, validate or apply. Copy stable clip IDs and native parameter addresses from inspection.
         operation: crate::arrangement::Operation,
     },
-    /// Analyze Japanese lyrics into source-located phrases, readings and moras without editing. Explicit kana readings are diagnostic-only; use repair_lyrics to apply a pronunciation to existing note slots.
+    /// Analyze Japanese lyrics into source-located phrases, readings and moras without editing. Each mora's slot is note, hold (a long vowel, ー or the second あ of さあ, that may end the previous note) or rest (っ, sung as a rest after the previous note). Each phrase reports min_notes..max_notes and note_reading, the reading cut into notes with '|' for write_lyrics. Pass fit to check phrases against the note count of their melody (字余り/字足らず). readings and fit number phrases from 1: the first line is phrase 1. Explicit kana readings are diagnostic-only; use repair_lyrics to apply a pronunciation to existing note slots.
     AnalyzeLyrics {
         /// Original Japanese lyric, up to 65536 UTF-8 bytes.
         text: String,
         /// Optional request-local readings, addressed by one-based musical phrase.
         #[serde(default)]
         readings: Vec<crate::lyric_harness::PhraseReading>,
+        /// Optional note counts each phrase must fit, addressed by one-based musical phrase.
+        #[serde(default)]
+        fit: Vec<crate::lyric_harness::PhraseFit>,
     },
     /// Diagnose lyrics before composition or compare explicit singer-clip phrases. Pass exactly one of spec (an .asong TOML document) or comparisons. Returns all independent complaints and the live document revision. No audio synthesis or document edits.
     DiagnoseSong {
@@ -151,6 +167,24 @@ pub enum Command {
         /// Bounded alternatives, immutable musical template, keywords and revision.
         #[serde(flatten)]
         request: crate::lyric_harness::RepairRequest,
+    },
+    /// List or restore material from earlier versions of this song, supplied by the host (a workshop edit that names earlier candidates as sources). list shows each source's note clips with in_current and matches_current; restore copies the named clips' notes, lyrics and phonemes exactly into the current score as one Undo edit, keeping each clip's position and length. Clip IDs carry over between versions, so a clip restores into the same ID unless into names another. Use this instead of rewriting remembered notes; re-sing restored singer clips.
+    SourceMaterial {
+        /// List, or restore named clips from one source.
+        operation: crate::session::source_material::Operation,
+    },
+    /// Measure a melody section by section — register, range, leaps — and check that every chorus lifts above the section leading into it: at least a minor third higher on average, a higher peak, and at least one leap of a fourth or more. Also reports the bars of intro before the melody and of outro after it, and warns under eight, while the form is still easy to change. Read it after writing the melody and before lyrics are sung, and act on its warnings; it measures the written notes, not how they sound.
+    MelodyShape {
+        /// The track holding the melody, usually the lead singer.
+        track: u64,
+    },
+    /// Measure the arrangement against the form: which parts play in each section, how many different bars each part plays, whether the drums change in the bar before each chorus, and how many bars of intro and outro surround the voice. Warns when every section has the same parts, a chorus adds nothing to the section before it, no fill leads into a chorus, or the intro or outro is shorter than eight bars. Read it after writing the backing and act on its warnings; it measures the written notes, not how they sound.
+    ArrangementShape {},
+    /// Workshop candidates only: tell the user, in one short line, what you are working on now. The candidate's card shows it while you work until the next one replaces it; elsewhere it is not shown. Call it when you start each new step, before that step's first tool call, in the language of the assignment. Keep it short, about 30 characters, since the card has room for two lines. Name the concrete musical work, such as "Fitting the chorus lyrics to the melody" or "Thinning the strings under the second verse", never a generic "Working" or a tool name. Changes nothing.
+    ReportStatus {
+        /// The line, 1-80 characters.
+        #[schemars(length(min = 1, max = 80))]
+        status: String,
     },
     /// Read or undo/redo one complete user request in the live session. First use operation {"kind":"read"}; then supply its available_group and numeric revision. Human edits and open gestures are boundaries. Use this for "undo that change" instead of rewriting old notes. Does not save. Session-local; unavailable for saved-project calls.
     History {
@@ -388,7 +422,7 @@ pub enum Command {
         /// Original nonempty written phrase, e.g. 桜咲いた. Never replace it with its reading.
         #[schemars(length(min = 1, max = 16384))]
         text: String,
-        /// Optional nonempty kana pronunciation, e.g. さくらさいた; leaves the written text intact.
+        /// Optional nonempty kana pronunciation, e.g. さくらさいた; leaves the written text intact. Without '|' each mora takes one note. With '|' between notes (analyze_lyrics note_reading, e.g. さあ| いっ|しょ|に) a group may hold a long vowel or end in っ, which is sung as a rest: the next note must start at least a thirty-second note after that note ends.
         #[schemars(length(min = 1, max = 16384))]
         reading: Option<String>,
         /// Zero-based storage index from read_notes; notes from this position in time order receive lyrics.
@@ -626,6 +660,7 @@ impl Command {
             Self::RepairLyrics { request } => request.apply,
             Self::History { operation } => !matches!(operation, HistoryOperation::Read),
             Self::Checkpoints { operation, .. } => operation.is_mutating(),
+            Self::SourceMaterial { operation } => operation.is_mutating(),
             Self::Automation { operation, .. } => !operation.is_read_only(),
             Self::EditRecipe { operation, .. } => !operation.is_read_only(),
             Self::MixerGraph { operation } => !operation.is_read_only(),
@@ -633,6 +668,9 @@ impl Command {
             Self::EditTimeline { operation } => !operation.is_read_only(),
             Self::Layer { operation } => !operation.is_read_only(),
             Self::Inspect {}
+            | Self::ReportStatus { .. }
+            | Self::MelodyShape { .. }
+            | Self::ArrangementShape {}
             | Self::LintProject { .. }
             | Self::SuggestIssueReport { .. }
             | Self::OfferChoices { .. }
@@ -777,10 +815,12 @@ impl Session {
                     | crate::arrangement::Operation::InspectBreathing { .. }
                     | crate::arrangement::Operation::Apply { .. }),
             } => self.agent_arrangement(operation),
-            Command::AnalyzeLyrics { text, readings } => {
-                serde_json::to_string(&self.analyze_lyrics(&text, &readings)?)
-                    .map_err(|e| e.to_string())
-            }
+            Command::AnalyzeLyrics {
+                text,
+                readings,
+                fit,
+            } => serde_json::to_string(&self.analyze_lyrics_fitted(&text, &readings, &fit)?)
+                .map_err(|e| e.to_string()),
             Command::DiagnoseSong { spec, comparisons } => {
                 if spec.is_some() == !comparisons.is_empty() {
                     return Err("Pass exactly one of spec or nonempty comparisons".into());
@@ -1095,6 +1135,16 @@ impl Session {
                 expected_revision,
                 edits,
             } => self.agent_edit_notes(&expected_revision, edits),
+            Command::SourceMaterial { operation } => self.agent_source_material(operation),
+            Command::ArrangementShape {} => Ok(
+                crate::session::arrangement_shape::arrangement_shape(self.project()).to_string(),
+            ),
+            Command::MelodyShape { track } => {
+                crate::session::melody_shape::melody_shape(self.project(), TrackId(track))
+                    .map(|report| report.to_string())
+            }
+            Command::ReportStatus { status } => report_status(&status)
+                .map(|status| serde_json::json!({ "shown": status }).to_string()),
             Command::Inspect {} => {
                 let project = self.project();
                 let tracks: Vec<_> = project
@@ -1116,6 +1166,7 @@ impl Session {
                 Ok(serde_json::json!({"title":project.name, "tracks":tracks, "revision":self.agent_document_revision()?,
                     "document_instance":self.document_instance(), "session_revision":self.revision(),
                     "verification_regions":crate::production_record::verification_regions(project),
+                    "phase_facts":crate::production_record::phase_facts(self),
                     "sample_rate":project.sample_rate,"duration_seconds":project.duration_seconds(), "harmony":project.harmony,
                     "sections":project.sections, "lyrics":lyric_annotation::lyric_lines_json(project), "comments":comments::comments_json(project), "tempo_map":project.tempo_map, "signatures":project.signatures, "loop_region":project.loop_region, "loop_enabled":project.loop_enabled, "ticks_per_quarter":Ticks::QUARTER.raw()})
                 .to_string())
@@ -1318,6 +1369,34 @@ mod tests {
 
     fn session() -> Session {
         Session::new(crate::SessionOptions::headless().with_balance(false)).unwrap()
+    }
+
+    #[test]
+    fn a_status_line_is_one_short_line_and_changes_nothing() {
+        let mut session = session();
+        let before = session.project().clone();
+        let command = |status: &str| Command::ReportStatus {
+            status: status.into(),
+        };
+        assert!(!command("x").is_mutating());
+        let shown: serde_json::Value = serde_json::from_str(
+            &session
+                .agent_command(command("  サビの歌詞を\nメロディに合わせています "))
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(shown["shown"], "サビの歌詞を メロディに合わせています");
+        assert_eq!(session.project(), &before);
+        assert!(!session.is_dirty());
+        assert!(session.agent_command(command(" \n ")).is_err());
+        assert!(session.agent_command(command(&"あ".repeat(81))).is_err());
+        assert!(
+            crate::agent_policy::Operation::parse(
+                "edit_project",
+                &serde_json::json!({"command":{"action":"report_status","status":"Writing"}}),
+            )
+            .is_ok_and(|op| op.name == "edit_project.report_status" && !op.mutating)
+        );
     }
 
     #[test]

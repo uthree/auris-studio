@@ -55,12 +55,27 @@ pub struct Entry {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Operation {
-    /// Select persisted task instructions for the experimental modular prompt.
-    SelectWorkflow {
-        /// Current musical task.
-        workflow: Workflow,
-        /// Deliberate order appropriate to this task.
-        writing_order: WritingOrder,
+    /// Enter a production phase, forward or back. Arrangement and mix require roles first.
+    EnterPhase {
+        /// The phase to work in from now on.
+        phase: Phase,
+        /// Why: the user's words when they asked to go back, otherwise the agent's rationale.
+        reason: String,
+        /// Starting point for the score phase only.
+        #[serde(default)]
+        writing_order: Option<WritingOrder>,
+    },
+    /// Register which tracks carry the foreground and which are a disposable guide.
+    SetRoles {
+        /// 1..16 foreground track IDs: the melody or lead vocal the later phases keep intact.
+        #[serde(default)]
+        foreground: Vec<u64>,
+        /// Up to 16 guide track IDs the arrangement replaces or removes.
+        #[serde(default)]
+        guide: Vec<u64>,
+        /// Instead of foreground: why this piece has no foreground melody.
+        #[serde(default)]
+        no_foreground: Option<String>,
     },
     /// Read notes, current/stale evidence and outstanding verification regions.
     Read,
@@ -76,20 +91,25 @@ pub enum Operation {
     },
 }
 
-/// The task selected explicitly by the agent, never inferred from a keyword.
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+/// A stage of production, entered explicitly by the agent and never inferred from a keyword.
+///
+/// The order is the production order: a later phase keeps what an earlier one decided, and
+/// going back to an earlier one leaves the later ones to be revisited.
+#[derive(
+    Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, PartialOrd, Ord,
+)]
 #[serde(rename_all = "snake_case")]
-pub enum Workflow {
-    /// New form, motif, harmony and arrangement.
-    Composition,
-    /// Backing around an existing protected foreground.
-    Accompaniment,
-    /// Lyrics, score, voice and a current synthesized take.
-    Vocals,
-    /// A bounded correction with unrelated material preserved.
-    LocalEdit,
-    /// Coverage and encoded deliverable verification.
-    Delivery,
+pub enum Phase {
+    /// Form, tempo and meter, key and chords, lyrics, the foreground melody and its voice.
+    Score,
+    /// Sounds, backing parts, drums, performance, transitions and SFX around a fixed score.
+    Arrangement,
+    /// Balance, effects, sends, automation, loudness and the verified deliverable.
+    Mix,
+}
+
+impl Phase {
+    const ALL: [Self; 3] = [Self::Score, Self::Arrangement, Self::Mix];
 }
 
 /// A musical starting point, independent of the order in which metadata is stored.
@@ -123,12 +143,49 @@ pub struct Evidence {
     pub result: Value,
 }
 
+/// Where production stands: the phase in force and the furthest one reached.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PhaseState {
+    /// The phase the agent works in now.
+    pub phase: Phase,
+    /// The latest phase ever entered; phases after `phase` up to it are to be revisited.
+    pub reached: Phase,
+    /// Starting point chosen for the score phase.
+    pub writing_order: Option<WritingOrder>,
+}
+
+/// One explicit phase change, kept so a later turn knows why production went back.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Transition {
+    /// The phase left, if any.
+    pub from: Option<Phase>,
+    /// The phase entered.
+    pub to: Phase,
+    /// The stated reason.
+    pub reason: String,
+}
+
+/// Which tracks the later phases must keep and which they may discard.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct Roles {
+    /// Tracks whose notes, lyrics and timing are the song's foreground.
+    pub foreground: Vec<u64>,
+    /// Placeholder accompaniment written so the score can be heard.
+    pub guide: Vec<u64>,
+    /// Why there is no foreground, when there is none.
+    pub no_foreground: Option<String>,
+}
+
 /// Stored independently of model context compaction and document Undo.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Record {
-    /// Optional explicitly selected workflow and writing order, restored on resume.
-    pub workflow: Option<(Workflow, WritingOrder)>,
+    /// The explicitly entered phase, restored on resume.
+    pub phase: Option<PhaseState>,
+    /// The most recent 16 phase changes.
+    pub transitions: Vec<Transition>,
+    /// Registered foreground and guide tracks.
+    pub roles: Option<Roles>,
     /// At most 64 short attributed notes.
     pub entries: Vec<Entry>,
     /// At most 32 recent observations; older observations are evicted explicitly by age.
@@ -139,10 +196,56 @@ impl Record {
     /// Update a note after checking all limits; a failure leaves the record unchanged.
     pub fn update(&mut self, operation: Operation) -> Result<(), String> {
         match operation {
-            Operation::SelectWorkflow {
-                workflow,
+            Operation::EnterPhase {
+                phase,
+                reason,
                 writing_order,
-            } => self.workflow = Some((workflow, writing_order)),
+            } => {
+                if reason.trim().is_empty() || reason.len() > 2048 {
+                    return Err("Give a nonempty reason up to 2048 bytes".into());
+                }
+                if writing_order.is_some() && phase != Phase::Score {
+                    return Err("writing_order applies to the score phase only".into());
+                }
+                if phase > Phase::Score && self.roles.is_none() {
+                    return Err("Register the foreground first: production_record set_roles with foreground track IDs, or no_foreground with a reason".into());
+                }
+                let previous = self.phase.as_ref();
+                let state = PhaseState {
+                    phase,
+                    reached: previous.map_or(phase, |p| p.reached.max(phase)),
+                    writing_order: writing_order.or_else(|| previous.and_then(|p| p.writing_order)),
+                };
+                self.transitions.push(Transition {
+                    from: previous.map(|p| p.phase),
+                    to: phase,
+                    reason,
+                });
+                if self.transitions.len() > 16 {
+                    self.transitions.remove(0);
+                }
+                self.phase = Some(state);
+            }
+            Operation::SetRoles {
+                foreground,
+                guide,
+                no_foreground,
+            } => {
+                let reason = no_foreground.filter(|r| !r.trim().is_empty());
+                if foreground.is_empty() == reason.is_none()
+                    || foreground.len() > 16
+                    || guide.len() > 16
+                    || reason.as_ref().is_some_and(|r| r.len() > 2048)
+                    || guide.iter().any(|id| foreground.contains(id))
+                {
+                    return Err("Give 1..16 foreground track IDs or a no_foreground reason (not both), at most 16 guide IDs, none in both lists".into());
+                }
+                self.roles = Some(Roles {
+                    foreground,
+                    guide,
+                    no_foreground: reason,
+                });
+            }
             Operation::Read => {}
             Operation::Put { entry } => {
                 if entry.key.is_empty()
@@ -237,9 +340,197 @@ impl Record {
                 }));
             json!({"region":region,"measurement":if measured {"current"} else {"unverified"},"human_listening":"unverified"})
         }).collect();
-        json!({"entries":entries,"evidence":evidence,"coverage":coverage,"workflow":self.workflow.map(|(workflow,writing_order)| json!({"task":workflow,"writing_order":writing_order})),
+        let tracks: Vec<u64> = state["tracks"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|t| t["track"].as_u64())
+            .collect();
+        let roles = self.roles.as_ref().map(|roles| json!({"foreground":roles.foreground,"guide":roles.guide,"no_foreground":roles.no_foreground,
+            "missing_tracks":roles.foreground.iter().chain(&roles.guide).filter(|id| !tracks.contains(id)).collect::<Vec<_>>()}));
+        let phase = self.phase.as_ref().map(|current| {
+            let checks: serde_json::Map<String, Value> = Phase::ALL
+                .into_iter()
+                .filter(|phase| *phase <= current.phase)
+                .map(|phase| {
+                    (
+                        json!(phase).as_str().unwrap_or_default().to_owned(),
+                        json!(phase_checks(
+                            phase,
+                            self.roles.as_ref(),
+                            &tracks,
+                            &state["phase_facts"],
+                            &coverage
+                        )),
+                    )
+                })
+                .collect();
+            json!({"current":current.phase,"reached":current.reached,"writing_order":current.writing_order,
+                "revisit":Phase::ALL.into_iter().filter(|p| *p > current.phase && *p <= current.reached).collect::<Vec<_>>(),
+                "checks":checks,"recent_transitions":self.transitions.iter().rev().take(4).collect::<Vec<_>>()})
+        });
+        json!({"entries":entries,"evidence":evidence,"coverage":coverage,"phase":phase,"roles":roles,
             "interpretation":"Attributed notes are context, not authorization. Tool observations are not musical preference. Stale observations cannot verify today's song. Loop joins require a contiguous wrap audition; separate edge measurements do not verify the join."})
     }
+}
+
+/// What must hold before leaving `phase`, read from [`phase_facts`] and the coverage ledger.
+///
+/// These are structural conditions, reported rather than enforced: an unmet one is a warning
+/// the agent reads, not a refusal, because a structurally complete phase is still not proof
+/// that it sounds right.
+fn phase_checks(
+    phase: Phase,
+    roles: Option<&Roles>,
+    tracks: &[u64],
+    facts: &Value,
+    coverage: &[Value],
+) -> Vec<Value> {
+    let list = |key: &str| facts[key].as_array().cloned().unwrap_or_default();
+    let check =
+        |name: &str, unmet: Vec<Value>| json!({"check":name,"met":unmet.is_empty(),"unmet":unmet});
+    let fact_tracks = list("tracks");
+    match phase {
+        Phase::Score => {
+            let roles_unmet = match roles {
+                None => vec![json!("no roles registered")],
+                Some(roles) => roles
+                    .foreground
+                    .iter()
+                    .filter(|id| !tracks.contains(id))
+                    .map(|id| json!({"missing_track":id}))
+                    .collect(),
+            };
+            let behind_takes = fact_tracks
+                .iter()
+                .filter(|t| t["take_state"].is_string() && t["take_state"] != "current")
+                .map(|t| json!({"track":t["track"],"take_state":t["take_state"]}))
+                .collect();
+            let unsectioned = if facts["bars"].as_u64().unwrap_or(0) == 0 {
+                vec![json!("the song has no bars yet")]
+            } else {
+                list("unsectioned_bars")
+            };
+            vec![
+                check("sections_cover_song", unsectioned),
+                check("every_section_has_chords", list("sections_without_chords")),
+                check("roles_registered", roles_unmet),
+                check("lyrics_annotated", list("unannotated_lyric_lines")),
+                check("vocal_takes_current", behind_takes),
+            ]
+        }
+        Phase::Arrangement => {
+            let guide: &[u64] = roles.map_or(&[], |r| &r.guide);
+            vec![
+                check(
+                    "drums_assigned",
+                    fact_tracks
+                        .iter()
+                        .filter(|t| t["drums_assigned"] == false)
+                        .map(|t| t["track"].clone())
+                        .collect(),
+                ),
+                check(
+                    "guide_replaced",
+                    fact_tracks
+                        .iter()
+                        .filter(|t| {
+                            t["audible"] == true
+                                && t["track"].as_u64().is_some_and(|id| guide.contains(&id))
+                        })
+                        .map(|t| t["track"].clone())
+                        .collect(),
+                ),
+            ]
+        }
+        Phase::Mix => vec![check(
+            "full_mix_measured",
+            coverage
+                .iter()
+                .filter(|c| c["region"]["kind"] != "loop_join" && c["measurement"] != "current")
+                .map(|c| c["region"].clone())
+                .collect(),
+        )],
+    }
+}
+
+/// Structural facts the phase checks read, computed from the live document.
+///
+/// Bars are 1-based and inclusive. Lists are capped at 16 entries, which is enough to say
+/// where to look without growing the inspection with the song.
+pub fn phase_facts(session: &crate::Session) -> Value {
+    const CAP: usize = 16;
+    let project = session.project();
+    let end = project.end_tick();
+    let bar = |tick: Ticks| u64::from(project.signatures.bar_beat_at(tick).0);
+    let bars = if end > Ticks::ZERO {
+        bar(end - Ticks(1))
+    } else {
+        0
+    };
+    let spans = project.sections.spans_in(Ticks::ZERO, end);
+    let mut unsectioned = vec![];
+    let mut cursor = Ticks::ZERO;
+    for start in spans.iter().map(|span| span.start).chain([end]) {
+        if start > cursor {
+            unsectioned.push(json!({"first_bar":bar(cursor),"last_bar":bar(start - Ticks(1))}));
+        }
+        cursor = spans
+            .iter()
+            .find(|span| span.start == start)
+            .map_or(cursor, |span| cursor.max(span.end));
+    }
+    let without_chords: Vec<_> = spans
+        .iter()
+        .filter(|span| {
+            project.harmony.chords.numeral_at(span.start).is_none()
+                && !project
+                    .harmony
+                    .chords
+                    .points()
+                    .iter()
+                    .any(|p| p.tick > span.start && p.tick < span.end && p.chord.is_some())
+        })
+        .map(|span| json!({"section":span.label,"first_bar":bar(span.start)}))
+        .take(CAP)
+        .collect();
+    let tracks: Vec<_> = project
+        .tracks
+        .iter()
+        .filter_map(|track| {
+            let clips = track.kind.note_clips()?;
+            if !clips.iter().any(|c| !c.notes.is_empty()) {
+                return None;
+            }
+            let mut fact = json!({"track":track.id.0,"audible":!track.mixer.mute && clips.iter().any(|c| !c.muted && !c.notes.is_empty())});
+            if track.kind.is_drum() {
+                fact["drums_assigned"] = session
+                    .drum_assignments(track.id)
+                    .is_some_and(|map| !map.voices.is_empty() || !map.lanes.is_empty())
+                    .into();
+            }
+            if track.kind.is_singer() {
+                fact["take_state"] = match session.singer_take_state(track.id) {
+                    Ok(crate::SingerTakeState::Current) => "current",
+                    Ok(crate::SingerTakeState::Behind) => "behind",
+                    _ => "missing",
+                }
+                .into();
+            }
+            Some(fact)
+        })
+        .collect();
+    let unannotated: Vec<_> = project
+        .tracks
+        .iter()
+        .filter(|track| track.kind.is_singer())
+        .flat_map(|track| session.sung_lyric_lines(Some(track.id)))
+        .filter(|line| !line.text.trim().is_empty() && project.lyrics.text_at(line.start).is_none())
+        .take(CAP)
+        .map(|line| json!({"first_bar":bar(line.start),"text":line.text}))
+        .collect();
+    json!({"bars":bars,"unsectioned_bars":unsectioned.into_iter().take(CAP).collect::<Vec<_>>(),
+        "sections_without_chords":without_chords,"tracks":tracks,"unannotated_lyric_lines":unannotated})
 }
 
 /// Representative section excerpts, boundaries, ending and optional wrap seam to verify.
@@ -340,6 +631,121 @@ mod tests {
         undone["session_revision"] = 6.into();
         assert_eq!(record.view(&undone)["evidence"][0]["status"], "stale");
     }
+    fn enter(record: &mut Record, phase: &str) -> Result<(), String> {
+        record.update(
+            serde_json::from_value(json!({"kind":"enter_phase","phase":phase,"reason":"test"}))
+                .unwrap(),
+        )
+    }
+
+    #[test]
+    fn later_phases_need_roles_and_going_back_leaves_them_to_revisit() {
+        let mut record = Record::default();
+        enter(&mut record, "score").unwrap();
+        assert!(enter(&mut record, "arrangement").is_err());
+        assert!(
+            record
+                .update(
+                    serde_json::from_value(
+                        json!({"kind":"set_roles","foreground":[3],"no_foreground":"ambient"})
+                    )
+                    .unwrap()
+                )
+                .is_err()
+        );
+        record
+            .update(
+                serde_json::from_value(json!({"kind":"set_roles","foreground":[3],"guide":[4]}))
+                    .unwrap(),
+            )
+            .unwrap();
+        enter(&mut record, "arrangement").unwrap();
+        enter(&mut record, "mix").unwrap();
+        enter(&mut record, "score").unwrap();
+        let state = json!({"tracks":[{"track":3}]});
+        let view = record.view(&state);
+        assert_eq!(view["phase"]["current"], "score");
+        assert_eq!(view["phase"]["revisit"], json!(["arrangement", "mix"]));
+        assert_eq!(view["roles"]["missing_tracks"], json!([4]));
+        assert!(view["phase"]["checks"]["arrangement"].is_null());
+        enter(&mut record, "arrangement").unwrap();
+        assert_eq!(record.view(&state)["phase"]["revisit"], json!(["mix"]));
+        assert!(
+            record
+                .update(
+                    serde_json::from_value(
+                        json!({"kind":"enter_phase","phase":"mix","reason":" "})
+                    )
+                    .unwrap()
+                )
+                .is_err()
+        );
+        assert!(
+            record
+                .update(
+                    serde_json::from_value(json!({"kind":"enter_phase","phase":"mix","reason":"x","writing_order":"melody_first"}))
+                        .unwrap()
+                )
+                .is_err()
+        );
+        let restored: Record =
+            serde_json::from_slice(&serde_json::to_vec(&record).unwrap()).unwrap();
+        assert_eq!(restored.view(&state)["phase"]["reached"], "mix");
+    }
+
+    #[test]
+    fn arrangement_checks_read_drums_and_an_audible_guide() {
+        let roles = Roles {
+            foreground: vec![1],
+            guide: vec![2],
+            no_foreground: None,
+        };
+        let facts = json!({"tracks":[{"track":1,"audible":true},{"track":2,"audible":true},
+            {"track":5,"audible":true,"drums_assigned":false}]});
+        let checks = phase_checks(Phase::Arrangement, Some(&roles), &[1, 2, 5], &facts, &[]);
+        assert_eq!(checks[0]["unmet"], json!([5]));
+        assert_eq!(checks[1]["unmet"], json!([2]));
+        let muted = json!({"tracks":[{"track":2,"audible":false}]});
+        let checks = phase_checks(Phase::Arrangement, Some(&roles), &[1, 2], &muted, &[]);
+        assert!(checks.iter().all(|c| c["met"] == true));
+    }
+
+    #[test]
+    fn score_facts_follow_sections_and_chords_in_the_live_document() {
+        let mut session =
+            crate::Session::new(crate::SessionOptions::headless().with_balance(false)).unwrap();
+        let mut run = |value: Value| {
+            session
+                .agent_command(serde_json::from_value(value).unwrap())
+                .unwrap()
+        };
+        let added: Value = serde_json::from_str(&run(
+            json!({"action":"add_track","name":"Lead","kind":"instrument"}),
+        ))
+        .unwrap();
+        let track = added["track"].as_u64().unwrap();
+        run(json!({"action":"add_clip","track":track,"name":"Verse","start_bar":1,"bars":4}));
+        run(json!({"action":"edit_harmony","start_bar":1,"bars":2,"section":"Verse"}));
+        let facts = phase_facts(&session);
+        assert_eq!(facts["bars"], 4);
+        assert_eq!(
+            facts["unsectioned_bars"],
+            json!([{"first_bar":3,"last_bar":4}])
+        );
+        assert_eq!(facts["sections_without_chords"][0]["section"], "Verse");
+        let mut run = |value: Value| {
+            session
+                .agent_command(serde_json::from_value(value).unwrap())
+                .unwrap()
+        };
+        run(
+            json!({"action":"edit_harmony","start_bar":1,"bars":4,"section":"Verse","chords":"| I | V | I | V |"}),
+        );
+        let facts = phase_facts(&session);
+        assert_eq!(facts["unsectioned_bars"], json!([]));
+        assert_eq!(facts["sections_without_chords"], json!([]));
+    }
+
     #[test]
     fn attributed_motifs_survive_round_trip_and_report_missing_ids() {
         let mut record = Record::default();

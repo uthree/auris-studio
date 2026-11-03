@@ -148,6 +148,7 @@ pub use session::accompaniment;
 pub use session::arrangement;
 pub use session::lyric_harness;
 pub use session::prepare_output_preview;
+pub use session::source_material;
 pub use session::{
     AccompanyReport, Arm, AudioStatus, AutosaveJob, AutosaveResult, BalanceReport, CEILING_DB,
     ChordPreview, ChordPreviewJob, Clipboard, CollectAssetsJob, CollectAssetsResult,

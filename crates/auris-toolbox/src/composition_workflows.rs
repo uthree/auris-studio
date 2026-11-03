@@ -1,6 +1,6 @@
-//! Shared vocal-song guidance and opt-in task-specific composition workflows.
+//! Shared vocal-song guidance and opt-in phase-specific composition instructions.
 
-use auris_session::production_record::{Workflow, WritingOrder};
+use auris_session::production_record::{Phase, WritingOrder};
 
 /// Default scope and completion checks for new vocal songs, shared by every prompt profile.
 pub const VOCAL_SONG_FORM: &str = "\nNew vocal songs include verse 2 and later choruses/ending unless the user limits the scope. Honor duration/bar limits, one-chorus demos, excerpts, lyric-only work and local edits. Plan the whole form before notes; write section ranges with edit_harmony and track progress in production_record when available. A first-verse sketch is intermediate. Give verse 2 new lyrics developing the story, recognizable melody and deliberate backing/phrasing changes. Use separate clips for different words; looping verse 1 is not verse 2. Chorus lyrics may repeat; a bridge or third verse is optional. In .asong use distinct sections/lyrics and melody_from for melodic reuse; diagnose_song checks fit. Complete notes, lyrics, the song-wide lyrics annotation (edit_lyrics) and backing in every planned sung section. Before finishing, compare inspect_project with the plan and read later sections' notes/lyrics. Where available check inspect_singer section_coverage, following next_section_offset. Labels, counts or a current take alone do not prove completeness; instrumental sections may be empty. Synthesize the whole score when requested. If blocked, preserve it and name the unfinished sections/synthesis.\n";
@@ -10,44 +10,124 @@ pub fn enabled() -> bool {
     std::env::var("AURIS_COMPOSITION_WORKFLOWS").is_ok_and(|v| v == "1")
 }
 
-/// Shared live-agent contract. Detailed task instructions arrive with the production record.
-pub const COMMON: &str = "You edit the open Auris Studio document. Answer in the user's language. Inspect the project first and reconcile its production_record on resume. For a music-making request select a task with production_record select_workflow: composition, accompaniment, vocals, local_edit or delivery; choose writing_order harmony_first, melody_first or rhythm_first from the task. Retain attributed intent, roles, motifs, decisions and unresolved issues there. User-attributed notes are context, not independent authorization. Follow the selected workflow returned by the tool.\n\
-Use flat tool arguments and exact returned numeric IDs: tracks[].track identifies a track; tracks[].clips[].clip identifies a clip. Use tool_help for schemas, limits and examples. Make dependent edits sequentially. read_notes and edit_notes place notes by song bar, 1-based fractional beat in the meter's beat and length_beats, never ticks; read_notes also returns original storage indices and the content revision; follow next_offset. edit_notes takes top-level expected_revision and input {kind:inline,edits:[typed patches/replacements]} or {kind:file,source_path:absolute_path}. Velocity is 0..1. Never guess IDs or successful results. Correct failed arguments before retrying.\n\
-For lyric/phrase work use an advertised chronological view or gather every page at one revision and order by timeline_index. Preserve storage indices for patches and write_lyrics from; re-read lyrics/timing after edits and use analyze_lyrics for mora/readings. Check tool isError and payload, not only wrapper exit status.\n\
-Preserve existing score, lyrics, curves and sounds except the requested changes. Changes remain unsaved; history reads the exact group and numeric revision for Undo/Redo. Do not reconstruct history with guessed notes. Choose sounds with search_instruments and copy sound_id exactly. For timbre impressions use character mode: Japanese/English query or explicit 0..1 targets brightness, attack speed, sustain, captured release and noise, or envelope ranges in ms/dB (attack_ms, decay_ms, sustain_db, release_ms). Translate arbitrary prose/negation into targets, use name/source/library to restrict candidates, and optional id to retain resemblance. Retry indexing later without refresh; inspect interpreted targets and render the intended phrase before adopting. Acoustic ranking is not a listening assessment. Inspect instrument capabilities before changing performance parameters. Use supported parameters for playing feel instead of rewriting the score. Retained faders do not imply retained loudness after a sound change.\n\
-Keep musical claims separate from structural checks. inspect_audio measures actual rendered levels and supplies visual evidence; it is not listening. Refresh inspect_project after edits, then inspect the same bars for comparisons. production_record coverage marks representative sections, transitions, ending and loop join; stale evidence cannot verify the current revision. A loop join requires a contiguous wrap audition. Human listening can guide later revisions; its absence does not block a structurally complete, verified delivery. Keep user comments separate from measurements. Complete ordinary composition using the current agent and Auris; do not discover, invoke or install external music evaluators. Evaluator experiments belong to explicitly requested development work. Verification mutes/solos/FX bypass belong in an isolated snapshot or advertised non-persistent override. Shared nonlinear processing makes independently rendered stems reference-only unless reconstruction is verified; never assume subtraction yields exact backing.\n\
-When candidates is advertised and the task warrants alternatives, it retains a baseline and at most three exact alternatives. State a purpose, read the differences, preview identical ranges, then adopt an explicitly supported choice or cancel only when the alternatives are discarded. If the user defers adoption, retain the pending round and its IDs for the next turn; never cancel merely to finish a turn or because no winner has been chosen. Stop at the round budget and record unresolved choices. Do not optimize a musical piece to note-count, rest, consonance or complexity quotas. Do not treat more variation as inherently better.\n\
-For transcription read tool_help, preserve actual source evidence, disclose the real method and uncertainty, and never invent notes or provenance from names. Never claim synthesis, exports, measurements or reviews succeeded without their tool results. Verify the final document and report any remaining uncertainty.";
+// Each phase is a paragraph of what to do, its guidance, then a technique index: names only,
+// each a heading of docs/composition-techniques.md, which search_documentation returns. The
+// index is there so a model knows the move exists; the page is there so the prompt need not
+// carry how to make it.
 
-/// Task instructions shown only for the selected workflow, with a deliberate writing order.
-pub fn instructions(workflow: Workflow, order: WritingOrder) -> String {
+const SCORE_BEFORE_ORDER: &str = "Score phase: decide what the song is. ";
+
+const SCORE: &str = "Record purpose, length, mood and constraints; distinguish stated requirements from assumptions. When inspect_project reports the title \"Untitled\", give a new song a short title in the user's language with rename_project. Set tempo/meter with edit_timeline, then named sections covering the whole song, including an intro and an outro of at least eight bars each, and the key/chords of each with edit_harmony; audible chord notes alone do not populate those maps. For a vocal song write lyrics in natural word groups first, and check every line against its melody's note count with analyze_lyrics fit, the same count wherever a motif repeats; prefer changing words to changing the motif, and split or merge a note only sparingly. Develop one short foreground motif before expanding the form, and complete every planned section. Author the melody note by note with add_clip, read_notes and edit_notes. Make every chorus lift: higher on average than the section before it, the song's highest notes, a hook that leaps. Read melody_shape for the lead and resolve its warnings before singing. Add one plain guide part (piano or pad chords, generate_phrase is fine) so the score can be heard, and register roles with production_record set_roles: the foreground tracks, the guide tracks, or no_foreground with a reason for a piece without a melody. Choose the voice, write_lyrics and sing every sung section; confirm take_state current and the song-wide lyrics annotation. For a new song from scratch, end the turn at this demo and ask with offer_choices whether to arrange it or revise the melody, lyrics or chords, unless the user asked for the whole song in one go. Sound choice, backing and mixing belong to later phases.
+Guidance
+- Give the foreground a recognizable rhythmic/contour motif, a phrase destination against the actual harmony, and room to release. Develop its answer, register or setting rather than introducing unrelated material everywhere. Repetition and repeated pitches can carry a hook; complexity is not a quality target.
+- Write each chorus as the song's arrival. Keep the verse and pre-chorus (Bメロ) lower and narrower so the chorus has somewhere to go: lift it a minor third to a fifth above the pre-chorus on average, give it the song's highest notes, and let its hook leap (a fifth, a sixth, an octave, even an octave jumped back and forth) where the pre-chorus moved by step. Prepare the entrance with a held note, a rest or a rising line, then land the chorus on a strong beat. Stay inside the voice's useful range; when the chorus cannot go higher, set the verse lower instead. A subdued ballad chorus may lift less, but by choice, not by default.
+- Japanese is counted in moras, and a line sung to a repeated motif must fit that motif's notes exactly: 字余り and 字足らず are heard at once. Adjust the words first: drop or add a particle (君を待つ/君待つ), use a word of another length, or hold a long vowel (ー, さあ) on one note. Only then, sparingly, split one note into two of the same pitch or merge two, keeping the motif's onsets, accents and contour recognisable. っ is the rest after its note; ん and every other mora take a note. Never squeeze two sung moras onto one note. Preserve fixed words, authored notes and a liked attack pattern.
+- New vocal songs include a second verse with new words that develop the story, and later choruses and an ending, unless the user limits the scope; a loop of verse 1 is not verse 2. Use separate clips for different words.
+- For edit_harmony, group chords by bar, e.g. chords:[\"I\",\"IV V\",\"vi\",\"ii V\"]. Each entry is a bar, not a chord; two chords in a 4/4 entry start on beats 1 and 3. Bare multi-chord strings are ambiguous.
+- edit_notes takes top-level expected_revision and input {\"kind\":\"inline\",\"edits\":[...]} with typed patch/replace edits; a new phrase needs add_clip, then read_notes, then edit_notes. Use time-order views, retaining storage indices for patches and write_lyrics from.
+- Keep original kanji/kana in write_lyrics text and give the kana pronunciation separately in reading. Before writing a line onto its notes, call analyze_lyrics with fit set to that phrase's note count; when it fits, pass its note_reading as the write_lyrics reading (| separates notes; a group ending in っ needs a rest after its note). When analyze_lyrics reports dictionary_available false, spell long vowels as sung with ー (りょーて, せんせー). With edit_notes set original lyrics and explicit phonemes together. Singer clip names follow written lyrics; do not rename them.
+- list_voices discovers installed voices; set_singer_voice selects one, sing makes playback, and inspect_singer verifies current takes and every sung section (follow coverage pages). Unavailable voices, stale takes and failed synthesis remain unresolved; do not truncate or resubmit unresolved inference.
+Techniques (search_documentation the name for detail): Section roles; Chorus lift; Motif repetition and development; The chorus hook in the intro; Drop chorus (落ちサビ); Last-chorus key change (ラスサビ転調); Singable range.";
+
+const ARRANGEMENT: &str = "Arrangement phase: dress the fixed score. Keep the foreground tracks' notes, lyrics and timing, the harmony, sections and tempo map; to change them, enter_phase score with the user's words as the reason. Read the foreground and harmony first. Before writing, plan the energy of the song section by section and record it with production_record: which parts play in each section and how busy they are, verses thinner than choruses, a bridge or drop chorus stripped back, the last chorus fullest. Choose each track's sound for its role with search_instruments, then write the parts around the foreground: bass, harmony, pulse and colour in complementary registers. Use accompaniment or generate_phrase for plain chords, pads, simple arpeggios and basic drum pulses; author counterlines, distinctive bass, fills and backing vocals note by note. Copy a finished pattern with edit_clip and vary the repeat rather than rewriting it. Use set_performance for feel without rewriting notes. Shape entrances, exits, transitions into each section and the ending. Replace or remove the guide part. A rough fader balance is fine here; inserts, sends, sidechains and normalize_mix belong to the mix phase. Read back the parts, read arrangement_shape and resolve its warnings, then inspect_audio representative sections, transitions and the ending.
+Guidance
+- Make sections differ for a reason: register, texture, rhythm, harmony or instrument handoff. Support the foreground with complementary registers and timing, and leave space for the actual instrument and effect decay at the ending.
+- Write the backing section by section: one clip per section on each track, the first written by hand and later ones copied with edit_clip and varied, never one clip running the whole song. Each chorus must be fuller than the section before it, with another part or busier playing.
+- Mark the way into each chorus and each new section with a drum fill in the bar before it and a crash on its first beat, and change the hats, ride or kick pattern between verse and chorus. A drum part that plays one bar for the whole song does not follow the form.
+- Give the song an intro of at least eight bars that sets up the groove and the hook before the voice, and an outro of at least eight bars that resolves rather than stops.
+- Search sounds with search_instruments request {\"mode\":\"text\",\"query\":\"piano\"} and copy sound_id exactly. For timbre impressions use mode character with a query such as \"ふんわり\" or 0..1 targets; translate prose and negation into targets. Preserve chosen sounds unless asked to change them.
+- Read inspect_performance before set_performance and verify the performed result after. Swing is the song's feel, not seasoning: a straight song stays at swing 50, and a swung song swings every part alike, vocal included.
+- Discover instrument parameter keys and units before setting them; hosted VST3 values are normalized 0..1, CLAP values use native ranges.
+Techniques (search_documentation the name for detail): Part roles and registers; Voicings out of the voice; Kick and bass together; Fills and crashes at transitions; Build-up and break; More in verse 2; Copy, then vary; Performance controls; Generators for scaffolding, authored notes for what is remembered.";
+
+const MIX: &str = "Mix phase: balance the finished arrangement. Keep every note, sound and performance; to change them, enter_phase arrangement (or score) with a reason. Read mixer_graph and set levels and panning for foreground intelligibility before adding processing. Use EQ, dynamics, reverb/delay sends, sidechains and automation each for a stated purpose; discover supported parameters first. Set explicit loudness and true-peak goals (-14 LUFS and -1 dBTP unless the user names others), finish with normalize_mix after the last sound or fader change and read what it measured. Measure representative sections, transitions and the ending of the full mix after the last edit; audition the loop wrap when relevant. For requested exports use render/export_midi with absolute new destinations and verify_render; a failing verdict is unfinished delivery. Report delivered paths, measurements and what still needs human listening.
+Guidance
+- Balance foreground, bass, pulse and harmony with the actual sounds before detailed effects. More notes, layers, processing or loudness do not establish improvement.
+- Read mixer_graph before editing and copy stable node and parameter IDs. Keep routing acyclic. Hosted VST3 values are normalized 0..1, CLAP values use native ranges; master normalization does not replace track balancing.
+- inspect_audio renders local measurements, not listening. Use bounded ranges during edits and the full current mix after the last change. Verification mutes, solos and bypasses belong in an isolated snapshot or an advertised non-persistent override.
+- For exports read render, export_midi and verify_render help, choose an explicit range and tail and new absolute destinations, and inspect PASS/FAIL and the actual files.
+Techniques (search_documentation the name for detail): Volume and pan first; Low cut on everything but the bass; Kick-triggered sidechain; Reverb and delay sends for the voice; Bus processing; Section automation; normalize_mix last.";
+
+/// What one phase asks of the agent, given the score phase's starting point.
+///
+/// Returned with the production record after `enter_phase`, so a model only carries the
+/// phase it is in. The rules that hold in every phase stay in the system prompt.
+pub fn instructions(phase: Phase, order: Option<WritingOrder>) -> String {
     let order = match order {
-        WritingOrder::HarmonyFirst => {
-            "Establish harmonic direction, then shape a memorable melody and supporting rhythm."
+        Some(WritingOrder::HarmonyFirst) => {
+            "Establish harmonic direction, then shape a memorable melody and supporting rhythm. "
         }
-        WritingOrder::MelodyFirst => {
-            "Establish the foreground motif and phrase arc first; derive compatible harmony and supporting rhythm from its actual notes."
+        Some(WritingOrder::MelodyFirst) => {
+            "Establish the foreground motif and phrase arc first; derive compatible harmony and supporting rhythm from its actual notes. "
         }
-        WritingOrder::RhythmFirst => {
-            "Establish the groove and phrase accents first; fit motif and harmonic pacing to that rhythmic identity."
+        Some(WritingOrder::RhythmFirst) => {
+            "Establish the groove and phrase accents first; fit motif and harmonic pacing to that rhythmic identity. "
         }
+        None => "",
     };
-    let task = match workflow {
-        Workflow::Composition => {
-            "Record purpose, length, instrumentation, mood and constraints; distinguish stated requirements from assumptions. Choose form and roles. Write named sections and the chosen key/chords with edit_harmony; audible chord notes alone do not populate those maps. Set tempo/meter with edit_timeline. Develop one short phrase before expanding the form. Preserve recognizable motif identity while changing register, texture, harmonic direction or density for a musical reason. Authored notes use setup_tracks/add_clip and edit_notes. The agent chooses pitch, onset, duration and velocity for every expressive part, including melody, counterlines, distinctive bass and fills. Code may serialize or copy authored motifs but must not calculate creative notes. Automatic writers are limited to plain chords/held pads, simple arps and basic drum pulses unless the user explicitly requests preset generation. Establish vocal lyrics before section harmony, then instrument clips, handoffs, purposeful SFX and a deliberate effects/volume-balance pass with actual voices. Finish with normalize_mix and measure the final full mix after edits. Read back section positions, notes and role balance; compare representative sections, transitions and ending."
+    match phase {
+        Phase::Score => format!("{SCORE_BEFORE_ORDER}{order}{SCORE}"),
+        Phase::Arrangement => ARRANGEMENT.into(),
+        Phase::Mix => MIX.into(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const TECHNIQUES: &str = include_str!("../../../docs/composition-techniques.md");
+    const INDEX: &str = "Techniques (search_documentation the name for detail): ";
+
+    #[test]
+    fn every_indexed_technique_is_a_heading_search_can_find() {
+        let headings: Vec<&str> = TECHNIQUES
+            .lines()
+            .filter_map(|line| line.strip_prefix("### "))
+            .collect();
+        for phase in [Phase::Score, Phase::Arrangement, Phase::Mix] {
+            let text = instructions(phase, None);
+            let index = text
+                .lines()
+                .find_map(|line| line.strip_prefix(INDEX))
+                .unwrap_or_else(|| panic!("{phase:?} has no technique index"));
+            let names: Vec<&str> = index.trim_end_matches('.').split("; ").collect();
+            assert!(names.len() >= 5, "{phase:?}: {names:?}");
+            for name in names {
+                assert!(
+                    headings.contains(&name),
+                    "{phase:?} names {name:?}, not a heading"
+                );
+            }
         }
-        Workflow::Accompaniment => {
-            "Read the existing foreground notes and record explicit foreground/protected clip IDs. Keep all protected notes, lyrics, curves and phrasing intact. Select backing roles and register around the actual melody; do not infer foreground from a recipe or track name. suggest_harmony provides explainable proposals, not automatic winners. Use accompaniment only for mechanical chord/pad backing, simple arpeggios and basic drum pulses; author counterlines, distinctive bass, voice leading and fills note by note. It may update only explicit backing targets and requested harmony. Compare with the original and verify the complete protected clips remain identical. Inspect foreground audibility and transitions in the full mix."
+    }
+
+    #[test]
+    fn each_phase_carries_the_guidance_that_left_the_system_prompt() {
+        let score = instructions(Phase::Score, Some(WritingOrder::MelodyFirst));
+        for needle in [
+            "melody_shape",
+            "字余り",
+            "note_reading",
+            "edit_harmony",
+            "inspect_singer",
+        ] {
+            assert!(score.contains(needle), "score lacks {needle}");
         }
-        Workflow::Vocals => {
-            "Read lyrics, notes and related phrases in time order while retaining storage indices. analyze_lyrics establishes readings; diagnose_song checks fit. repair_lyrics previews at most three bounded repairs with fixed target, reference and required keywords; apply only a current passing proposal, then check meaning and related phrases. Preserve word groups and rhythmic identity when repairing diction instead of spacing the entire line uniformly. Diagnostic readings do not persist. list_voices discovers real local voices; set_singer_voice selects one. write_lyrics fills existing slots. Check leading silence, seconds and frames against the backend's synthesis budget. Use supported bounded synthesis or isolated local-time phrases with explicit offsets; never truncate the requested score. A stopped client does not prove Engine inference stopped: resolve pending work before another heavy request. sing synthesizes playback; inspect_singer must confirm a current take. A mix-only edit does not require re-synthesis. Unavailable voices or failed synthesis are unresolved errors. Phrase rhythm, diction and emotional delivery require listening beyond structural fit."
+        let arrangement = instructions(Phase::Arrangement, None);
+        for needle in [
+            "search_instruments",
+            "swing 50",
+            "complementary registers",
+            "arrangement_shape",
+            "eight bars",
+            "fill",
+        ] {
+            assert!(arrangement.contains(needle), "arrangement lacks {needle}");
         }
-        Workflow::LocalEdit => {
-            "Read the target notes and record the requested range, protected motif and intended effect. The user's latest hand edits are the new baseline. When advertised, phrase_variation proposes exact pitches with fixed rhythm/opening or exact cadence pitch/length changes with protected notes; it does not apply them. Use candidates variation to compare immutable alternatives, or apply the returned patch through edit_notes. Use performance controls for playing feel. Keep unrelated clips and metadata unchanged. Read back the exact affected notes, verify protection and audition the same passage before accepting the musical claim."
+        let mix = instructions(Phase::Mix, None);
+        for needle in ["mixer_graph", "normalize_mix", "verify_render", "VST3"] {
+            assert!(mix.contains(needle), "mix lacks {needle}");
         }
-        Workflow::Delivery => {
-            "Inspect current verification coverage and outstanding issues. Measure representative sections, transitions and ending; audition the loop wrap when relevant. Check a requested silence and its first returning attack, distinguishing digital zero from a stated low-level threshold. Set explicit loudness and true-peak goals (-14 LUFS and -1 dBTP unless the user names others), finish with normalize_mix after the last sound or fader change, and read its results rather than assuming the target was reached. Locate peaks and inspect combined sources before choosing a control stage. render uses destination {kind:mix,path:absolute_new_wav} or {kind:stems,folder:absolute_new_folder}; export_midi writes the current score. verify_render checks the encoded file against explicit target, ceiling and ending limits. Treat a failing verdict as unfinished delivery. Verify that current vocals are synthesized and that verification mutes/solos/FX changes did not reach the delivery project. Report delivered paths, measured results and unresolved musical listening; files and MIDI alone do not establish quality."
-        }
-    };
-    format!("{order} {task}")
+    }
 }

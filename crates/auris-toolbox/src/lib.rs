@@ -143,7 +143,8 @@ FreezeRecipe drops a recipe; BakePerformance explicitly writes performance into 
 edit_clip_curve reads/merges/replaces/clears authored bend or MIDI controllers; sustain is controller 64.
 Writes require the revision returned by the lane read. Controller values are 0..1; bend uses semitones.
 edit_timeline reads or edits tempo/meter points without moving existing notes.
-Arrangement bar ranges start at 1; note/curve ticks start at 0 relative to their clip.
+Arrangement bar ranges start at 1. Only notes use bar/beat; clip, timeline and import positions are
+absolute ticks (960 per quarter note), curve points are ticks from 0 relative to their clip.
 Comments are notes pinned on a track's lane or inside a clip's piano roll; inspect_project lists them with bar, beat and pitch.
 They never sound. Before editing a passage, read its comments: a person's comment is their note or request for that place,
 so follow it unless the current message says otherwise, and say when you could not. edit_comments adds a short comment where
@@ -259,6 +260,10 @@ pub mod search_documentation {
         (
             "docs/composition.md",
             include_str!("../../../docs/composition.md"),
+        ),
+        (
+            "docs/composition-techniques.md",
+            include_str!("../../../docs/composition-techniques.md"),
         ),
         (
             "docs/development.md",

@@ -35,7 +35,7 @@
 //! Saved-project MCP registers and dispatches through the toolbox execution registry.
 //! Runtime discovery and help use the same enabled tool set as execution.
 //! Built-in backends share documentation search, discovery, help and capability tools.
-//! Saved and live tools share exact tick-based note editing, stable object references and
+//! Saved and live tools share exact note editing by song bar and beat, stable object references and
 //! content revisions. The single mixer_graph entry point dispatches typed graph operations.
 //! Arrangement, authored controller curves, timeline and performance commands live in the session;
 //! saved execution adds persistence, while the desktop retains document ownership and Undo.
@@ -1837,6 +1837,19 @@ pub mod composition {
     //! written lyrics and an independent kana pronunciation, including without a dictionary.
     //! The written spelling stays on the first note with `+` continuations; phonemes carry
     //! pronunciation. Workshop cards read that written score rather than the kana reading.
+    //! Kana spells a long o as おう, which the table sings as spelt; where a dictionary reads
+    //! the written text to the same moras and hears that vowel held, the held vowel is sung —
+    //! 両手 read りょうて sings *ryo-o-te* — and any other difference keeps the reading as it is.
+    //!
+    //! A mora is a unit of the language, not of the melody, and two kinds need no note of
+    //! their own: a held long vowel (ー, or the second あ of さあ) may end the note before it,
+    //! and っ is the rest after a note. [`Session::analyze_lyrics_fitted`](crate::Session::analyze_lyrics_fitted)
+    //! says which moras those are, the range of note counts a phrase can be sung on, and
+    //! whether it fits a given count — the check that keeps a line sung to a repeated motif
+    //! free of 字余り and 字足らず. It never merges or splits to force a fit. Its reading cut
+    //! into notes with `|` is what `write_lyrics_with_reading` accepts; a grouped っ sings no
+    //! closure, so the write is refused unless a rest follows that note. A reading without
+    //! `|`, and the composer, keep one mora to a note.
     //!
     //! Kana is read a phrase at a time, never a mora at a time, because three kana are read
     //! by the words around them: the particles は and へ sing *wa* and *e*

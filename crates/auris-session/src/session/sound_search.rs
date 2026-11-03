@@ -969,8 +969,18 @@ fn resolve_sound(key: &str, id: &str) -> Result<Sound, String> {
     Ok(sound.as_ref().clone())
 }
 
-fn resolve_library_sound(key: &str, id: &str) -> Result<Sound, String> {
-    resolve_sound(key, id).or_else(|_| resolve_sound(&isolated_sound_library_key(key), id))
+/// Resolves a handle under the first of `keys` that issued it, each with its isolated twin.
+fn resolve_library_sound(keys: &[String], id: &str) -> Result<Sound, String> {
+    let mut error = String::from("No sound library scope to resolve in");
+    for key in keys {
+        match resolve_sound(key, id)
+            .or_else(|_| resolve_sound(&isolated_sound_library_key(key), id))
+        {
+            Ok(sound) => return Ok(sound),
+            Err(failed) => error = failed,
+        }
+    }
+    Err(error)
 }
 
 fn generated_sound_id(generation: &str, source_id: &str) -> String {
@@ -1036,18 +1046,66 @@ fn isolated_sound_library_key(key: &str) -> String {
     format!("{key}:isolated-native-metadata-v1")
 }
 
+/// What a sound library scope names the document by: its file when it has one, so sessions
+/// opening the same file share a snapshot, and otherwise this session's own token.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum DocumentScope {
+    Saved(String),
+    Live(String),
+}
+
+/// The most earlier identities one document keeps its handles under.
+const EARLIER_SCOPE_LIMIT: usize = 4;
+
 impl Session {
+    fn document_scope(&self) -> DocumentScope {
+        match self.path() {
+            Some(path) => DocumentScope::Saved(path_identity(path)),
+            None => DocumentScope::Live(self.sound_scope.clone()),
+        }
+    }
+
+    /// Keeps handles issued before this document moves to `next` usable afterwards.
+    ///
+    /// The scope names a saved document by its file, so the first Save As would otherwise expire
+    /// every sound found before it. A workshop candidate saves a checkpoint after its first edit,
+    /// which turned "search, add a track, choose the sound" into a refusal.
+    pub(super) fn remember_sound_scope_before_saving_to(&mut self, next: &Path) {
+        let current = self.document_scope();
+        if current == DocumentScope::Saved(path_identity(next)) {
+            return;
+        }
+        self.earlier_sound_scopes.retain(|scope| *scope != current);
+        self.earlier_sound_scopes.push(current);
+        if self.earlier_sound_scopes.len() > EARLIER_SCOPE_LIMIT {
+            self.earlier_sound_scopes.remove(0);
+        }
+    }
+
     fn sound_library_scope(&self, extra_paths: &[PathBuf]) -> String {
+        self.sound_library_scope_of(&self.document_scope(), extra_paths)
+    }
+
+    /// The current scope first, then the ones this same document had before it was saved
+    /// elsewhere — the scopes a selection may resolve a handle under.
+    fn sound_library_scopes(&self, extra_paths: &[PathBuf]) -> Vec<String> {
+        std::iter::once(self.document_scope())
+            .chain(self.earlier_sound_scopes.iter().rev().cloned())
+            .map(|scope| self.sound_library_scope_of(&scope, extra_paths))
+            .collect()
+    }
+
+    fn sound_library_scope_of(&self, document: &DocumentScope, extra_paths: &[PathBuf]) -> String {
         let mut digest = Sha256::new();
         digest.update(b"auris-sound-library-scope-v1");
-        match self.path() {
-            Some(path) => {
+        match document {
+            DocumentScope::Saved(path) => {
                 digest.update(b"saved");
-                hash_scope_part(&mut digest, &path_identity(path));
+                hash_scope_part(&mut digest, path);
             }
-            None => {
+            DocumentScope::Live(token) => {
                 digest.update(b"live");
-                hash_scope_part(&mut digest, &self.sound_scope);
+                hash_scope_part(&mut digest, token);
             }
         }
         digest.update(self.sample_rate().to_bits().to_le_bytes());
@@ -1165,10 +1223,10 @@ impl Session {
         {
             return Err("Choose an instrument or drum track".into());
         }
-        let key = self.sound_library_scope(paths);
+        let keys = self.sound_library_scopes(paths);
         // Selection can run on the UI thread. Resolve only metadata previously issued by a worker;
         // rebuilding a heavy catalog here would synchronously invoke every native provider.
-        let source = resolve_library_sound(&key, id)?;
+        let source = resolve_library_sound(&keys, id)?;
         let prepare = PrepareContext::new(self.sample_rate(), 512, 2);
         match source.source {
             Source::Builtin(instrument_id) => self
@@ -2963,7 +3021,7 @@ mod tests {
             response["native_plugins"]["acoustic_similarity"],
             "not_supported"
         );
-        let source = resolve_library_sound(&session.sound_library_scope(&[]), id).unwrap();
+        let source = resolve_library_sound(&session.sound_library_scopes(&[]), id).unwrap();
         assert!(isolated_native(&source));
         assert!(!measurable(&source));
         let diagnostics = session.sound_library_job(&[]).diagnostics(0, 10).unwrap();
@@ -3667,6 +3725,40 @@ mod tests {
             first.sound_library_job(&[plugin_b]).key
         );
         assert_ne!(key, first.sound_library_job(&[scratch.join("vendor")]).key);
+    }
+
+    #[test]
+    fn a_sound_found_before_the_first_save_can_still_be_chosen_after_it() {
+        // A workshop candidate searches, adds a track — its first edit, after which the host
+        // saves a checkpoint — and only then chooses the sound it found.
+        let _serial = serial_test();
+        let scratch = Scratch::new("sound-scope-save");
+        let mut session = session();
+        let result = query(&session, "auris", 1, 0, false).unwrap();
+        let id = result["sounds"][0]["id"].as_str().unwrap().to_owned();
+        let track = session.add_default_instrument_track("Lead").unwrap();
+        session.save_as(&scratch.join("First.auris")).unwrap();
+        session.use_library_sound(track, &id, &[]).unwrap();
+
+        // And again after the next Save As moves the same document once more.
+        let later = query(&session, "auris", 1, 0, false).unwrap();
+        let later = later["sounds"][0]["id"].as_str().unwrap().to_owned();
+        session.save_as(&scratch.join("Second.auris")).unwrap();
+        session.use_library_sound(track, &id, &[]).unwrap();
+        session.use_library_sound(track, &later, &[]).unwrap();
+
+        // Another document never inherits them, whether opened or started afresh.
+        let other = self::session()
+            .save_as(&scratch.join("Other.auris"))
+            .unwrap()
+            .document;
+        session.open(&other).unwrap();
+        let track = session.add_default_instrument_track("Lead").unwrap();
+        assert!(session.use_library_sound(track, &id, &[]).is_err());
+        assert!(session.use_library_sound(track, &later, &[]).is_err());
+        session.new_project();
+        let track = session.project().tracks[0].id;
+        assert!(session.use_library_sound(track, &later, &[]).is_err());
     }
     fn query(
         session: &Session,

@@ -49,6 +49,10 @@ pub struct Direction {
     /// Exact parent track IDs whose note clips must remain unchanged.
     #[serde(default)]
     pub protected_tracks: Vec<u64>,
+    /// Earlier candidates of this conversation, other than the parent, whose saved clips the
+    /// composer may restore exactly; for example the version a user asks to go back to.
+    #[serde(default)]
+    pub sources: Vec<u64>,
 }
 
 /// Persisted candidate identity; IDs also name private artifact directories.
@@ -279,6 +283,17 @@ impl Document {
         self.title = title.to_owned();
         Ok(())
     }
+    /// The name a person calls a candidate by, such as `1B` for the second song of the first
+    /// round; see [`candidate_label`]. `None` for an ID this conversation never offered.
+    pub fn candidate_label(&self, id: u64) -> Option<String> {
+        self.rounds.iter().enumerate().find_map(|(round, r)| {
+            r.candidates
+                .iter()
+                .position(|c| c.id == id)
+                .map(|position| candidate_label(round, position))
+        })
+    }
+
     /// Record or replace feedback only for a completed candidate in this conversation.
     pub fn record_feedback(&mut self, id: u64, feedback: Feedback) -> Result<(), String> {
         feedback.validate()?;
@@ -291,6 +306,24 @@ impl Document {
         candidate.feedback = Some(feedback);
         Ok(())
     }
+}
+
+/// A candidate's label: the round counted from 1, then its place in that round as a letter.
+///
+/// `1B` is the second song of the first round. A person can say "1B's chorus" where an ID would
+/// mean nothing to them, and the label stays the same when the conversation is reopened, because
+/// rounds and their candidates keep their order. Past `Z` the letters run on as `AA`, `AB`, the
+/// way spreadsheet columns do, though a round never offers that many.
+pub fn candidate_label(round: usize, position: usize) -> String {
+    let mut letters = Vec::new();
+    let mut rest = position + 1;
+    while rest > 0 {
+        rest -= 1;
+        letters.push(char::from(b'A' + (rest % 26) as u8));
+        rest /= 26;
+    }
+    letters.reverse();
+    format!("{}{}", round + 1, letters.into_iter().collect::<String>())
 }
 
 /// A choice is evidence of a relative preference, never a dislike of every other song.
@@ -934,6 +967,7 @@ mod tests {
                         description: "Piano".into(),
                         instructions: "Compose".into(),
                         protected_tracks: Vec::new(),
+                        sources: vec![],
                     },
                     ready,
                     error: None,
@@ -943,6 +977,26 @@ mod tests {
                 })
                 .collect(),
         }
+    }
+
+    #[test]
+    fn a_candidate_is_labelled_by_its_round_and_its_place_in_it() {
+        let document = Document {
+            rounds: vec![
+                round(&[1, 2], true),
+                round(&[3], true),
+                round(&[7, 5], true),
+            ],
+            ..Default::default()
+        };
+        let labels: Vec<_> = [1, 2, 3, 7, 5]
+            .into_iter()
+            .map(|id| document.candidate_label(id).unwrap())
+            .collect();
+        assert_eq!(labels, ["1A", "1B", "2A", "3A", "3B"]);
+        assert_eq!(document.candidate_label(4), None);
+        assert_eq!(candidate_label(0, 25), "1Z");
+        assert_eq!(candidate_label(9, 26), "10AA");
     }
 
     #[test]
@@ -1220,6 +1274,7 @@ mod tests {
                 description: "Sparse".into(),
                 instructions: "Private production instructions".into(),
                 protected_tracks: vec![],
+                sources: vec![],
             }],
             chosen: 0,
         }

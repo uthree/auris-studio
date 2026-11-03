@@ -68,6 +68,7 @@ mod convert;
 mod drum_analysis;
 mod envelope;
 pub use envelope::{ENVELOPE_PITCHES, SoundEnvelope};
+pub mod arrangement_shape;
 mod drum_assignments;
 mod files;
 mod generated;
@@ -78,7 +79,9 @@ mod layers;
 mod levels;
 pub mod lyric_harness;
 mod lyric_lines;
+pub(crate) mod lyric_slots;
 mod lyrics;
+pub mod melody_shape;
 mod mixer;
 mod monitor;
 mod multitrack_transcription;
@@ -100,6 +103,7 @@ mod rhythm;
 mod shared_font_tests;
 mod singer;
 mod singer_names;
+pub mod source_material;
 mod spectrogram;
 mod timbre;
 mod tracks;
@@ -391,6 +395,9 @@ pub struct Session {
     fonts: SharedSoundFonts,
     /// Separates discovery handles belonging to different unsaved sessions.
     sound_scope: String,
+    /// The scopes this same document had before a save moved it, oldest first, so a sound
+    /// found before the save can still be chosen after it. Emptied when the document is replaced.
+    earlier_sound_scopes: Vec<sound_search::DocumentScope>,
     pub(crate) listening: crate::audio_audition::ListeningContext,
     /// Decoded fonts, kept by the path they were read from as well as their document ids.
     ///
@@ -582,6 +589,9 @@ pub struct Session {
     /// Whether the shipped dictionary stands in while no folder is named — the option, kept
     /// so that clearing the setting returns to the shipped one instead of to nothing.
     shipped_dictionary: bool,
+    /// Earlier saved versions of this song the agent may restore clips from; see
+    /// [`source_material`].
+    sources: Vec<source_material::SourceProject>,
     /// The voice models behind singer tracks, by the file each was read from.
     ///
     /// Keyed by path rather than by track or document id, like `font_cache` and for the
@@ -826,10 +836,12 @@ impl Session {
             take: None,
             japanese: None,
             shipped_dictionary: options.shipped_dictionary,
+            sources: Vec::new(),
             voices: HashMap::new(),
             voice_load_generations: HashMap::new(),
             acceleration: auris_singer::Acceleration::default(),
             sound_scope: crate::transient_id::transient_id("session"),
+            earlier_sound_scopes: Vec::new(),
             hosted: hosted::HostedPlugins::default(),
             vst3: vst3::Vst3Plugins::default(),
             plugin_trust: plugin_trust::PluginTrust::new(&options.plugin_paths),
