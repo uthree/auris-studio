@@ -12,11 +12,19 @@
 //! falls back to [`compute_peaks_cpu`].
 
 use auris_core::AudioBuffer;
+use rayon::prelude::*;
 
 use crate::context::GpuContext;
 
+#[cfg(test)]
+mod cpu_tests;
+
 /// Pipeline cache key and debug label for the bucket kernel.
 const LABEL: &str = "auris-gpu.waveform_peaks";
+
+/// Keep short overviews off the worker pool and amortize each task over enough samples.
+const PARALLEL_SAMPLES: usize = 262_144;
+const SAMPLES_PER_TASK: usize = 16_384;
 
 /// WGSL source of the bucket kernel.
 const SHADER: &str = include_str!("shaders/waveform.wgsl");
@@ -109,7 +117,8 @@ impl WaveformPeaks {
 /// Reduces `buffer` to one min/max/RMS bucket per `samples_per_bucket` samples, on the CPU.
 ///
 /// This is the reference implementation: the GPU kernel is tested against it, and it is what
-/// runs whenever no GPU is available. A `samples_per_bucket` of 0 is treated as 1.
+/// runs whenever no GPU is available. Large buffers use Rayon across independent buckets;
+/// the sample order within each bucket is unchanged. A `samples_per_bucket` of 0 is treated as 1.
 pub fn compute_peaks_cpu(buffer: &AudioBuffer, samples_per_bucket: u32) -> WaveformPeaks {
     let stride = samples_per_bucket.max(1);
     let channel_count = buffer.channel_count();
@@ -121,15 +130,17 @@ pub fn compute_peaks_cpu(buffer: &AudioBuffer, samples_per_bucket: u32) -> Wavef
     let buckets = frames.div_ceil(stride as usize);
     let total = buckets * channel_count;
     let mut peaks = WaveformPeaks {
-        min: Vec::with_capacity(total),
-        max: Vec::with_capacity(total),
-        rms: Vec::with_capacity(total),
+        min: vec![0.0; total],
+        max: vec![0.0; total],
+        rms: vec![0.0; total],
         samples_per_bucket: stride,
         channel_count,
     };
 
     let stride = stride as usize;
-    for channel in 0..channel_count {
+    let write_bucket = |(index, ((min, max), rms)): (usize, ((&mut f32, &mut f32), &mut f32))| {
+        let channel = index / buckets;
+        let bucket = index % buckets;
         let samples = buffer.channel(channel);
         // `frames` describes the first channel. `AudioBuffer::channels_mut` lets a caller leave
         // the others a different length, and the channel-major layout only holds if every
@@ -137,21 +148,37 @@ pub fn compute_peaks_cpu(buffer: &AudioBuffer, samples_per_bucket: u32) -> Wavef
         // clamp the reads, instead of letting each channel's own length decide how many buckets
         // it produces. The GPU path is already rectangular for the same reason.
         let usable = samples.len().min(frames);
-        for bucket in 0..buckets {
-            let start = bucket * stride;
-            let end = (start + stride).min(usable);
-            let chunk = if start < end {
-                &samples[start..end]
-            } else {
-                &[]
-            };
-            let (min, max, sum_squares) = reduce(chunk);
-            peaks.min.push(min);
-            peaks.max.push(max);
-            peaks
-                .rms
-                .push((sum_squares / chunk.len().max(1) as f32).sqrt());
-        }
+        let start = bucket * stride;
+        let end = (start + stride).min(usable);
+        let chunk = if start < end {
+            &samples[start..end]
+        } else {
+            &[]
+        };
+        let (low, high, sum_squares) = reduce(chunk);
+        *min = low;
+        *max = high;
+        *rms = (sum_squares / chunk.len().max(1) as f32).sqrt();
+    };
+    if frames.saturating_mul(channel_count) >= PARALLEL_SAMPLES && total > 1 {
+        // Each output slot has one owner. Keeping the reduction inside that slot serial also
+        // preserves floating-point accumulation and channel-major output order exactly.
+        peaks
+            .min
+            .par_iter_mut()
+            .zip(&mut peaks.max)
+            .zip(&mut peaks.rms)
+            .enumerate()
+            .with_min_len((SAMPLES_PER_TASK / stride).max(1))
+            .for_each(write_bucket);
+    } else {
+        peaks
+            .min
+            .iter_mut()
+            .zip(&mut peaks.max)
+            .zip(&mut peaks.rms)
+            .enumerate()
+            .for_each(write_bucket);
     }
     peaks
 }
