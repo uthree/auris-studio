@@ -182,6 +182,7 @@ Search documentation for application questions. Preserve unrelated score data an
 
 /// Shared live/saved guidance for choosing and verifying non-destructive articulations.
 pub const PERFORMANCE_INSTRUCTIONS: &str = "\nFor playing-feel edits, inspect_performance first, set only the requested controls, then independently inspect_performance again.
+For a part's starting feel, performance_presets lists presets by instrument family; apply the one matching the part's instrument and genre, then tune with set_performance. Save a preset only when the user asks to keep a feel.
 Choose settings.slide for a brief discrete intermediate MIDI note between pitches; it is not continuous pitch bend. It needs an unambiguous single-note line, at least two semitones of movement, no overlap and no gap longer than one quarter note.
 Choose settings.pitch.glide_ms for a smooth continuous pitch connection. It follows the final performed notes: isolated notes must last at least 80 ms, the gap must be at most 60 ms and the interval at most 24 semitones. Gate, timing and overlaps can prevent a connection. Repeated pitches need no pitch movement. Do not enable both gestures unless the requested articulation calls for both.
 For guitar strokes, settings.strum spreads simultaneous pitches; it cannot turn a single-note arpeggio into chord strokes while preserving the score.
@@ -1037,6 +1038,8 @@ fn headless() -> Result<Session, String> {
     let mut options = SessionOptions::headless()
         .with_shipped_fonts(true)
         .with_soundfont_library(auris_session::config_dir().join("soundfonts.json"))
+        // The window's preset picker and this door keep one shared book of performance presets.
+        .with_performance_presets(auris_session::performance_presets::PerformancePresetBook::path())
         .with_shipped_dictionary(true)
         // A new project made here is the window's new project, limiter and all.
         .with_master_limiter(true)
@@ -1045,6 +1048,7 @@ fn headless() -> Result<Session, String> {
         .with_plugin_paths(auris_session::Settings::load().plugin_paths);
     if cfg!(test) {
         options.soundfont_library = None;
+        options.performance_presets = None;
     }
     Session::new(options).map_err(|error| error.to_string())
 }

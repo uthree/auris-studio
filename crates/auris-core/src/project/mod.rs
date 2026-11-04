@@ -52,6 +52,7 @@ mod strum;
 pub use strum::{Strum, StrumClock};
 mod ornament;
 mod performance;
+mod performance_preset;
 mod pitch_performance;
 mod volume_contour;
 pub use ghost::{GhostNotes, GhostPattern};
@@ -80,6 +81,9 @@ pub use curve::{
 pub use drum::{DrumLane, DrumMap, DrumRole};
 pub use ornament::{Fall, Scoop, Vibrato};
 pub use performance::{PerformanceContext, performed_note_slots, performed_notes};
+pub use performance_preset::{
+    PerformancePreset, PresetFamily, builtin_performance_preset, builtin_performance_presets,
+};
 pub use recipe::{
     ClipPreset, ClipRecipe, DrumVoiceRecipe, PerformanceStyle, STRUM_VALUES, Subdivision,
     strum_ticks,

@@ -135,6 +135,7 @@ pub fn tool_group(name: &str) -> &'static str {
         | "edit_timeline"
         | "inspect_performance"
         | "set_performance"
+        | "performance_presets"
         | "edit_notes"
         | "edit_harmony"
         | "set_drum_assignment" => "manual",

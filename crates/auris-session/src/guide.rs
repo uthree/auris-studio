@@ -2942,6 +2942,19 @@ pub mod harmony {
     //! a changed curve is not proof that an external instrument responds. Agents independently
     //! read back the measured effect and compare the same audio range before claiming an
     //! audible change. These diagnostics never bake performance into the score.
+    //!
+    //! A stack has a dozen controls, and most are answered the same way for every part of one
+    //! kind, so there are **presets**: a named stack filed under an instrument family
+    //! ([`PerformancePreset`](auris_core::PerformancePreset)). The built-ins are a catalogue in
+    //! `auris-core`; the ones a person saves from the panel, or an agent saves with
+    //! `performance_presets`, are one file in the configuration directory
+    //! ([`PerformancePresetBook`](crate::performance_presets::PerformancePresetBook)) shared by
+    //! every project and every door. Applying one
+    //! ([`apply_performance_preset`](crate::Session::apply_performance_preset)) *copies* its
+    //! stages into the clip, reseeded as that clip's own take, in one undo step; the clip keeps no
+    //! link to the preset, so a document stays portable and a preset edited later rewrites no
+    //! song — the same reason a kept chord progression is copied rather than quoted. No built-in
+    //! swings, because swing is the song's decision rather than one part's.
     //! Every wander draws from a seed
     //! the transform stores, through the same named streams the composer draws from
     //! ([`auris_core::rng`]), and it draws per loop pass — a repeated bar is loose differently
