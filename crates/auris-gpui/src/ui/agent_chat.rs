@@ -1160,6 +1160,8 @@ struct PendingSoundSearch {
 struct PendingAgentJob {
     revision: u64,
     operation: auris_session::agent_policy::Operation,
+    /// The phase lock in force when the job was asked for, which its publication is held to.
+    lock: Option<auris_session::phase::Lock>,
     cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
     receiver: Receiver<Result<auris_session::live_agent::AgentResult, String>>,
 }
@@ -1204,6 +1206,7 @@ fn spawn_agent_job(
     job: auris_session::live_agent::AgentJob,
     revision: u64,
     operation: auris_session::agent_policy::Operation,
+    lock: Option<auris_session::phase::Lock>,
 ) -> Result<PendingAgentJob, String> {
     let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let worker_cancel = cancel.clone();
@@ -1220,6 +1223,7 @@ fn spawn_agent_job(
     Ok(PendingAgentJob {
         revision,
         operation,
+        lock,
         cancel,
         receiver,
     })
@@ -3063,7 +3067,11 @@ impl AurisApp {
         Ok(())
     }
 
-    fn start_agent_job(&mut self, command: &serde_json::Value) -> Result<(), String> {
+    fn start_agent_job(
+        &mut self,
+        command: &serde_json::Value,
+        lock: Option<auris_session::phase::Lock>,
+    ) -> Result<(), String> {
         if self.agent_chat.bound_project.as_deref() != self.session.path() {
             return Err("The open document changed; start a new conversation".into());
         }
@@ -3089,7 +3097,7 @@ impl AurisApp {
         let job = self
             .session
             .begin_agent_job(command, self.settings.clone())?;
-        let pending = spawn_agent_job(job, self.session.revision(), operation)?;
+        let pending = spawn_agent_job(job, self.session.revision(), operation, lock)?;
         self.agent_chat
             .link
             .as_mut()
@@ -3114,11 +3122,18 @@ impl AurisApp {
             return;
         };
         let revision = self.session.revision();
-        let result =
-            result.and_then(|result| self.session.continue_agent_job(result, &pending.cancel));
+        let result = result.and_then(|result| {
+            self.session
+                .continue_agent_job_locked(result, pending.lock.as_ref(), &pending.cancel)
+        });
         let response = match result {
             Ok(auris_session::live_agent::AgentStep::Work(job)) => {
-                match spawn_agent_job(job, revision, pending.operation.clone()) {
+                match spawn_agent_job(
+                    job,
+                    revision,
+                    pending.operation.clone(),
+                    pending.lock.clone(),
+                ) {
                     Ok(next) => {
                         if let Some(link) = self.agent_chat.link.as_mut() {
                             link.job = Some(next);
@@ -3379,7 +3394,7 @@ impl AurisApp {
                 if serde_json::from_value::<auris_session::live_agent::Command>(command.clone())
                     .is_ok_and(|command| command.needs_worker())
                 {
-                    if let Err(error) = self.start_agent_job(&command)
+                    if let Err(error) = self.start_agent_job(&command, lock)
                         && let Some(link) = &self.agent_chat.link
                     {
                         let _ = link.send(
@@ -5978,6 +5993,7 @@ mod tests {
             let pending = PendingAgentJob {
                 revision: 1,
                 operation,
+                lock: None,
                 cancel: cancel.clone(),
                 receiver,
             };
@@ -6006,6 +6022,7 @@ mod tests {
         let pending = PendingAgentJob {
             revision: 1,
             operation,
+            lock: None,
             cancel: cancel.clone(),
             receiver,
         };

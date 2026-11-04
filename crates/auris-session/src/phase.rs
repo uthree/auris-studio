@@ -258,6 +258,186 @@ pub fn refusal(lock: &Lock, changes: &[Change]) -> String {
     .to_string()
 }
 
+/// FNV-1a, so a bar's digest means the same thing in every build that reads the record back.
+struct Fnv(u64);
+
+impl Fnv {
+    fn new() -> Self {
+        Self(0xcbf2_9ce4_8422_2325)
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        for byte in bytes {
+            self.0 ^= u64::from(*byte);
+            self.0 = self.0.wrapping_mul(0x0100_0000_01b3);
+        }
+        // A separator, so that ("ab","c") and ("a","bc") differ.
+        self.0 ^= 0xff;
+        self.0 = self.0.wrapping_mul(0x0100_0000_01b3);
+    }
+
+    fn hex(&self) -> String {
+        format!("{:08x}", self.0 as u32)
+    }
+}
+
+/// A digest of each bar of the score, for telling which bars a return to the score changed.
+///
+/// `global` holds one 8-hex-digit digest per bar of what every track obeys there — key, chord,
+/// section, tempo and meter, sampled every sixteenth. `tracks` holds one per bar for each note
+/// track, of the notes that start in the bar, or `--------` where the track is silent. Strings
+/// rather than arrays, because the record keeps them and they are written to disk in it.
+pub fn score_bars(project: &Project) -> serde_json::Value {
+    let end = project.end_tick();
+    if end <= Ticks::ZERO {
+        return serde_json::json!({"global":"","tracks":{}});
+    }
+    let bars = project.signatures.bar_beat_at(end - Ticks(1)).0;
+    let ranges: Vec<(i64, i64)> = (1..=bars)
+        .map(|bar| {
+            (
+                project.signatures.bar_start(bar).raw(),
+                project.signatures.bar_start(bar + 1).raw(),
+            )
+        })
+        .collect();
+    let step = (Ticks::QUARTER.raw() / 4).max(1);
+    let global: String = ranges
+        .iter()
+        .map(|&(start, end)| {
+            let mut hash = Fnv::new();
+            let mut tick = start;
+            while tick < end {
+                let at = Ticks(tick);
+                hash.write(format!("{:?}", project.harmony.key_at(at)).as_bytes());
+                hash.write(format!("{:?}", project.harmony.chord_at(at)).as_bytes());
+                hash.write(project.sections.label_at(at).unwrap_or_default().as_bytes());
+                hash.write(&project.tempo_map.bpm_at(at).to_bits().to_le_bytes());
+                hash.write(format!("{:?}", project.signatures.signature_at(at)).as_bytes());
+                tick += step;
+            }
+            hash.hex()
+        })
+        .collect();
+    let tracks: serde_json::Map<String, serde_json::Value> = project
+        .tracks
+        .iter()
+        .filter_map(|track| {
+            let clips = track.kind.note_clips()?;
+            let mut notes = Vec::new();
+            for clip in clips {
+                placed(clip, "", &mut notes);
+            }
+            let digests: String = ranges
+                .iter()
+                .map(|&(start, end)| {
+                    let sounding = notes
+                        .iter()
+                        .any(|n| n.start < end && n.start + n.length.max(1) > start);
+                    if !sounding {
+                        return "--------".to_owned();
+                    }
+                    let mut hash = Fnv::new();
+                    let mut starting: Vec<_> = notes
+                        .iter()
+                        .filter(|n| n.start >= start && n.start < end)
+                        .collect();
+                    starting.sort();
+                    for note in starting {
+                        hash.write(&(note.start - start).to_le_bytes());
+                        hash.write(&note.length.to_le_bytes());
+                        hash.write(&[note.pitch]);
+                        hash.write(&note.velocity.to_le_bytes());
+                        hash.write(note.lyric.as_bytes());
+                        hash.write(note.drum_voice.as_bytes());
+                    }
+                    hash.hex()
+                })
+                .collect();
+            Some((track.id.0.to_string(), serde_json::Value::String(digests)))
+        })
+        .collect();
+    serde_json::json!({"global":global,"tracks":tracks})
+}
+
+/// 1-based inclusive bar ranges from a sorted list of bars.
+fn bar_ranges(bars: &[u64]) -> Vec<[u64; 2]> {
+    let mut ranges: Vec<[u64; 2]> = Vec::new();
+    for &bar in bars {
+        match ranges.last_mut() {
+            Some(range) if range[1] + 1 == bar => range[1] = bar,
+            _ => ranges.push([bar, bar]),
+        }
+    }
+    ranges
+}
+
+/// What to look at again after a return to the score: the bars it changed, and every track
+/// outside the foreground that sounds in them.
+///
+/// `before` is [`score_bars`] as production left for the score, `after` as it came back. A bar
+/// changed when what every track obeys there changed, or a foreground track's notes did; a bar
+/// only one side has is a change too. Backing notes are not compared, because rewriting them is
+/// what the review asks for.
+pub fn review(
+    before: &serde_json::Value,
+    after: &serde_json::Value,
+    foreground: &[u64],
+) -> serde_json::Value {
+    let cells = |value: &serde_json::Value| -> Vec<String> {
+        let text = value.as_str().unwrap_or_default();
+        text.as_bytes()
+            .chunks(8)
+            .map(|cell| String::from_utf8_lossy(cell).into_owned())
+            .collect()
+    };
+    let (old, new) = (cells(&before["global"]), cells(&after["global"]));
+    let mut changed: Vec<u64> = (0..old.len().max(new.len()))
+        .filter(|&i| old.get(i) != new.get(i))
+        .map(|i| i as u64 + 1)
+        .collect();
+    for id in foreground {
+        let (old, new) = (
+            cells(&before["tracks"][id.to_string()]),
+            cells(&after["tracks"][id.to_string()]),
+        );
+        changed.extend(
+            (0..old.len().max(new.len()))
+                .filter(|&i| old.get(i) != new.get(i))
+                .map(|i| i as u64 + 1),
+        );
+    }
+    changed.sort_unstable();
+    changed.dedup();
+    let tracks: Vec<_> = after["tracks"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .filter_map(|(id, digests)| {
+            let id: u64 = id.parse().ok()?;
+            if foreground.contains(&id) {
+                return None;
+            }
+            let cells = cells(digests);
+            let bars: Vec<u64> = changed
+                .iter()
+                .copied()
+                .filter(|bar| {
+                    cells
+                        .get(*bar as usize - 1)
+                        .is_some_and(|cell| cell != "--------")
+                })
+                .collect();
+            (!bars.is_empty()).then(|| serde_json::json!({"track":id,"bars":bar_ranges(&bars)}))
+        })
+        .collect();
+    serde_json::json!({
+        "changed_bars": bar_ranges(&changed),
+        "tracks_to_review": tracks,
+        "instruction": "The score changed in these bars since production left the arrangement. Read each listed track over its bars and fix what no longer fits the new chords, melody or timing: regenerate generated parts, rewrite authored ones. Re-sing changed vocal takes.",
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -423,6 +603,69 @@ mod tests {
         session.end_agent_request();
         session.undo();
         assert_eq!(session.project(), &start);
+    }
+
+    #[test]
+    fn a_changed_melody_bar_lists_the_backing_that_plays_there() {
+        let (mut project, lead, pad) = song();
+        let before = score_bars(&project);
+        assert_eq!(before["global"].as_str().unwrap().len(), 16);
+        let lead_clip = project.tracks[0].kind.note_clips().unwrap()[0].id;
+        project.midi_clip_mut(lead_clip).unwrap().notes[6].pitch = 76;
+        let after = score_bars(&project);
+        let report = review(&before, &after, &[lead]);
+        assert_eq!(report["changed_bars"], serde_json::json!([[2, 2]]));
+        assert_eq!(
+            report["tracks_to_review"],
+            serde_json::json!([{"track":pad,"bars":[[2,2]]}])
+        );
+        // Rewriting the backing itself is what the review asks for, not a reason to list it.
+        let pad_clip = project.tracks[1].kind.note_clips().unwrap()[0].id;
+        project.midi_clip_mut(pad_clip).unwrap().notes[0].pitch = 62;
+        assert_eq!(
+            review(&after, &score_bars(&project), &[lead])["changed_bars"],
+            serde_json::json!([])
+        );
+    }
+
+    #[test]
+    fn a_withdrawn_job_or_step_is_undone_like_a_command() {
+        let mut session =
+            crate::Session::new(crate::SessionOptions::headless().with_balance(false)).unwrap();
+        let lead = session.add_default_instrument_track("Lead").unwrap();
+        session
+            .agent_command(crate::live_agent::Command::EditHarmony {
+                start_bar: 1,
+                bars: 2,
+                key: Some("C major".into()),
+                chords: Some("| I | V |".into()),
+                section: None,
+                clear_chords: false,
+                clear_key: false,
+                clear_section: false,
+            })
+            .unwrap();
+        let start = session.project().clone();
+        let lock = Lock::Arrangement {
+            foreground: vec![lead.0],
+        };
+        let phrase = || crate::live_agent::Command::GeneratePhrase {
+            track: lead.0,
+            part: "lead".into(),
+            start_bar: 1,
+            bars: 2,
+            seed: 42,
+        };
+        let error = session
+            .agent_locked(Some(&lock), |session| session.agent_command(phrase()))
+            .unwrap_err();
+        assert!(error.contains("withdrawn"), "{error}");
+        assert_eq!(session.project(), &start);
+        // Without a lock nothing is compared.
+        session
+            .agent_locked(None, |session| session.agent_command(phrase()))
+            .unwrap();
+        assert_ne!(session.project(), &start);
     }
 
     #[test]

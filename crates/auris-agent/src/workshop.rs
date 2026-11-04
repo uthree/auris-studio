@@ -2009,7 +2009,7 @@ fn execute(
         let mut job = session.begin_agent_vocal(command, settings.clone())?;
         loop {
             let result = job.run(cancel)?;
-            match session.continue_agent_vocal(result)? {
+            match session.agent_locked(lock, |session| session.continue_agent_vocal(result))? {
                 auris_session::live_agent::VocalStep::Work(next) => job = *next,
                 auris_session::live_agent::VocalStep::Done(text) => return Ok(text),
             }

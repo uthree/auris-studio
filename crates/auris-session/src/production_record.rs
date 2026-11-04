@@ -191,6 +191,11 @@ pub struct Record {
     pub entries: Vec<Entry>,
     /// At most 32 recent observations; older observations are evicted explicitly by age.
     pub evidence: Vec<Evidence>,
+    /// [`crate::phase::score_bars`] as production last went back to the score from a later
+    /// phase, kept until it comes forward again.
+    pub left_score: Option<Value>,
+    /// What coming forward from that return asked to look at again, until the next phase change.
+    pub review: Option<Value>,
 }
 
 impl Record {
@@ -208,6 +213,43 @@ impl Record {
             }),
             Phase::Mix => Some(crate::phase::Lock::Mix),
         }
+    }
+
+    /// [`Self::update`], remembering the score when production goes back to it and saying what
+    /// changed when production comes forward again.
+    ///
+    /// `document` is the inspection the update is made against; its `phase_facts.score_bars`
+    /// is what is remembered and compared. The snapshot is taken on the first step back and
+    /// kept across further steps, so a detour score, arrangement, score still compares with
+    /// the arrangement as first left.
+    pub fn update_with_document(
+        &mut self,
+        operation: Operation,
+        document: &Value,
+    ) -> Result<(), String> {
+        let entering = match &operation {
+            Operation::EnterPhase { phase, .. } => Some(*phase),
+            _ => None,
+        };
+        let from = self.phase.as_ref().map(|state| state.phase);
+        self.update(operation)?;
+        let Some(to) = entering else {
+            return Ok(());
+        };
+        let bars = &document["phase_facts"]["score_bars"];
+        self.review = None;
+        if to == Phase::Score {
+            if from.is_some_and(|from| from > Phase::Score)
+                && self.left_score.is_none()
+                && bars.is_object()
+            {
+                self.left_score = Some(bars.clone());
+            }
+        } else if let Some(before) = self.left_score.take() {
+            let foreground: &[u64] = self.roles.as_ref().map_or(&[], |r| &r.foreground);
+            self.review = Some(crate::phase::review(&before, bars, foreground));
+        }
+        Ok(())
     }
 
     /// Update a note after checking all limits; a failure leaves the record unchanged.
@@ -393,7 +435,8 @@ impl Record {
                 .collect();
             json!({"current":current.phase,"reached":current.reached,"writing_order":current.writing_order,
                 "revisit":Phase::ALL.into_iter().filter(|p| *p > current.phase && *p <= current.reached).collect::<Vec<_>>(),
-                "checks":checks,"recent_transitions":self.transitions.iter().rev().take(4).collect::<Vec<_>>()})
+                "checks":checks,"recent_transitions":self.transitions.iter().rev().take(4).collect::<Vec<_>>(),
+                "review":self.review})
         });
         json!({"entries":entries,"evidence":evidence,"coverage":coverage,"phase":phase,"roles":roles,
             "interpretation":"Attributed notes are context, not authorization. Tool observations are not musical preference. Stale observations cannot verify today's song. Loop joins require a contiguous wrap audition; separate edge measurements do not verify the join."})
@@ -556,7 +599,8 @@ pub fn phase_facts(session: &crate::Session) -> Value {
         .map(|line| json!({"first_bar":bar(line.start),"text":line.text}))
         .collect();
     json!({"bars":bars,"unsectioned_bars":unsectioned.into_iter().take(CAP).collect::<Vec<_>>(),
-        "sections_without_chords":without_chords,"tracks":tracks,"unannotated_lyric_lines":unannotated})
+        "sections_without_chords":without_chords,"tracks":tracks,"unannotated_lyric_lines":unannotated,
+        "score_bars":crate::phase::score_bars(project)})
 }
 
 /// Representative section excerpts, boundaries, ending and optional wrap seam to verify.
@@ -761,6 +805,48 @@ mod tests {
             )
             .unwrap();
         assert_eq!(record.roles.as_ref().unwrap().guide, vec![4]);
+    }
+
+    #[test]
+    fn coming_back_from_the_score_lists_the_backing_over_the_changed_bars() {
+        let facts = |global: &str, lead: &str, pad: &str| json!({"phase_facts":{"score_bars":{"global":global,"tracks":{"1":lead,"2":pad}}}});
+        let enter = |record: &mut Record, phase: &str, document: &Value| {
+            record
+                .update_with_document(
+                    serde_json::from_value(
+                        json!({"kind":"enter_phase","phase":phase,"reason":"test"}),
+                    )
+                    .unwrap(),
+                    document,
+                )
+                .unwrap();
+        };
+        let left = facts("aaaaaaaabbbbbbbb", "1111111122222222", "33333333--------");
+        let mut record = Record::default();
+        enter(&mut record, "score", &left);
+        record
+            .update(serde_json::from_value(json!({"kind":"set_roles","foreground":[1]})).unwrap())
+            .unwrap();
+        enter(&mut record, "arrangement", &left);
+        assert!(record.review.is_none(), "nothing went back yet");
+        enter(&mut record, "score", &left);
+        // The chords of bar 1 change; bar 2's melody changes, but no backing plays there.
+        let edited = facts("ccccccccbbbbbbbb", "1111111144444444", "33333333--------");
+        enter(&mut record, "score", &edited);
+        enter(&mut record, "arrangement", &edited);
+        let review = record.review.as_ref().unwrap();
+        assert_eq!(review["changed_bars"], json!([[1, 2]]));
+        assert_eq!(
+            review["tracks_to_review"],
+            json!([{"track":2,"bars":[[1,1]]}])
+        );
+        assert!(record.left_score.is_none());
+        assert_eq!(
+            record.view(&json!({}))["phase"]["review"]["changed_bars"],
+            json!([[1, 2]])
+        );
+        enter(&mut record, "mix", &edited);
+        assert!(record.review.is_none());
     }
 
     #[test]

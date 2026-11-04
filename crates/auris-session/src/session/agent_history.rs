@@ -43,16 +43,47 @@ impl Session {
         lock: Option<&crate::phase::Lock>,
         plugin_paths: &[std::path::PathBuf],
     ) -> Result<String, String> {
-        let Some(lock) = lock.filter(|_| {
+        let lock = lock.filter(|_| {
             command.is_mutating() && !matches!(command, crate::live_agent::Command::History { .. })
-        }) else {
-            return self.agent_command_with_plugin_paths(command, plugin_paths);
+        });
+        self.agent_locked(lock, |session| {
+            session.agent_command_with_plugin_paths(command, plugin_paths)
+        })
+    }
+
+    /// Publish a long job's result under a phase lock, as [`Self::agent_command_locked`] does
+    /// for a command: a job that wrote locked material is withdrawn when it publishes.
+    ///
+    /// A restored checkpoint is exempt for the reason the agent's undo is.
+    pub fn continue_agent_job_locked(
+        &mut self,
+        result: crate::live_agent::AgentResult,
+        lock: Option<&crate::phase::Lock>,
+        cancelled: &std::sync::atomic::AtomicBool,
+    ) -> Result<crate::live_agent::AgentStep, String> {
+        let lock = lock.filter(|_| !matches!(result, crate::live_agent::AgentResult::History(_)));
+        self.agent_locked(lock, |session| {
+            session.continue_agent_job(result, cancelled)
+        })
+    }
+
+    /// Run `apply`, then withdraw everything it did if it changed what `lock` holds fixed.
+    ///
+    /// The one place the comparison lives, for commands, job publications and the workshop's
+    /// direct vocal steps alike. With no lock it is `apply` and nothing more.
+    pub fn agent_locked<T>(
+        &mut self,
+        lock: Option<&crate::phase::Lock>,
+        apply: impl FnOnce(&mut Self) -> Result<T, String>,
+    ) -> Result<T, String> {
+        let Some(lock) = lock else {
+            return apply(self);
         };
         let printed = crate::phase::print(&self.project, lock);
         let before = self.project.clone();
         let dirty = self.dirty;
         let mark = self.history.mark();
-        let result = self.agent_command_with_plugin_paths(command, plugin_paths);
+        let result = apply(self);
         let changes =
             crate::phase::changes(&printed, &crate::phase::print(&self.project, lock), &before);
         if changes.is_empty() {

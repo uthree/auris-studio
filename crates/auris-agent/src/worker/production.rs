@@ -101,7 +101,9 @@ impl Bridge {
                         "Call inspect_project before reading or updating production_record".into(),
                     );
                 }
-                state.record.update(operation)?;
+                state
+                    .record
+                    .update_with_document(operation, &state.document)?;
                 let mut view = record_view(&state.record, &state.document, instructions)?;
                 view["persistence"] = json!(if state.history.is_some() {
                     "conversation"
@@ -127,6 +129,11 @@ impl Bridge {
             },
             false,
         )?;
+        // Per-bar digests are for the record to compare, not for the model to read: several
+        // kilobytes of hex in every inspection would crowd out what the model needs.
+        if let Some(facts) = document["phase_facts"].as_object_mut() {
+            facts.remove("score_bars");
+        }
         document["production_record"] = view;
         Ok(())
     }
