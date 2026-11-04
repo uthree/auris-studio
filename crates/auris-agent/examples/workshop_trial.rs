@@ -13,15 +13,25 @@
 //! A phased round is tried by overriding the logged direction: `AURIS_TRIAL_PHASE=score`
 //! composes it as a demo, and `AURIS_TRIAL_PHASE=finish` with `AURIS_TRIAL_PARENT` set to an
 //! earlier demo's output folder finishes that demo.
+//!
+//! A finished run writes `lint.json`, what the score linter still finds in the song.
+//! `workshop_trial --lint <song.auris>...` prints the same for songs made earlier.
 
 use std::path::PathBuf;
 
 use auris_agent::workshop::compose_trial;
-use auris_session::Settings;
+use auris_session::lint::Severity;
 use auris_session::workshop::{Candidate, Document, RoundPhase};
+use auris_session::{Session, SessionOptions, Settings};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut args = std::env::args().skip(1);
+    let mut args = std::env::args().skip(1).peekable();
+    if args.peek().map(String::as_str) == Some("--lint") {
+        for song in args.skip(1) {
+            println!("{song}\t{}", score_lint(std::path::Path::new(&song))?);
+        }
+        return Ok(());
+    }
     let usage = "usage: workshop_trial <thread folder> <candidate id> <output folder>";
     let thread = PathBuf::from(args.next().ok_or(usage)?);
     let id: u64 = args.next().ok_or(usage)?.parse()?;
@@ -86,8 +96,39 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 started.elapsed().as_secs_f64(),
                 output.display()
             );
+            let lint = score_lint(&output.join("song/song.auris"))?;
+            eprintln!("score lint: {lint}");
+            std::fs::write(output.join("lint.json"), lint.to_string())?;
             Ok(())
         }
         Err(error) => Err(error.into()),
     }
+}
+
+/// What the score linter still finds in the finished song: counts by severity and by rule,
+/// for comparing takes. The audio rules need a render and are left to the agent's own pass.
+fn score_lint(song: &std::path::Path) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+    let mut session = Session::new(SessionOptions::headless())?;
+    session.open(song)?;
+    let report = session.lint_score();
+    let mut by_rule = serde_json::Map::new();
+    let (mut errors, mut warnings, mut infos) = (0, 0, 0);
+    for diagnostic in &report.diagnostics {
+        match diagnostic.severity {
+            Severity::Error => errors += 1,
+            Severity::Warning => warnings += 1,
+            Severity::Info => infos += 1,
+        }
+        let count = by_rule
+            .entry(diagnostic.rule.name())
+            .or_insert(serde_json::json!(0));
+        *count = serde_json::json!(count.as_u64().unwrap_or(0) + 1);
+    }
+    Ok(serde_json::json!({
+        "errors": errors,
+        "warnings": warnings,
+        "infos": infos,
+        "suppressed": report.suppressed,
+        "by_rule": by_rule,
+    }))
 }
