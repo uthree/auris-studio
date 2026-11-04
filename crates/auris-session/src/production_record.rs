@@ -486,6 +486,8 @@ fn phase_checks(
                 check("roles_registered", roles_unmet),
                 check("lyrics_annotated", list("unannotated_lyric_lines")),
                 check("vocal_takes_current", behind_takes),
+                // Read again in every later phase, since an arrangement can add findings too.
+                check("lint_warnings_resolved", lint_unmet(facts)),
             ]
         }
         Phase::Arrangement => {
@@ -521,6 +523,16 @@ fn phase_checks(
                 .collect(),
         )],
     }
+}
+
+/// The score lint's unsuppressed warnings and errors, counted by rule, from [`phase_facts`].
+fn lint_unmet(facts: &Value) -> Vec<Value> {
+    facts["lint"]["by_rule"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .map(|(rule, count)| json!({"rule":rule,"count":count,"see":"lint_project"}))
+        .collect()
 }
 
 /// Structural facts the phase checks read, computed from the live document.
@@ -600,6 +612,7 @@ pub fn phase_facts(session: &crate::Session) -> Value {
         .collect();
     json!({"bars":bars,"unsectioned_bars":unsectioned.into_iter().take(CAP).collect::<Vec<_>>(),
         "sections_without_chords":without_chords,"tracks":tracks,"unannotated_lyric_lines":unannotated,
+        "lint":session.unresolved_lint_counts(),
         "score_bars":crate::phase::score_bars(project)})
 }
 

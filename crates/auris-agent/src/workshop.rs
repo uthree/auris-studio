@@ -1855,8 +1855,9 @@ fn compose(
         &json!({"say": assignment.to_string(),"policy":prefs.policy,"attachments":references})
             .to_string(),
     )?;
-    let deadline = Instant::now() + Duration::from_secs(900);
+    let mut deadline = Instant::now() + Duration::from_secs(900);
     let mut denials = 0;
+    let mut lint_sends = 0;
     let mut last_failure = String::new();
     let mut tool_calls = BTreeMap::new();
     let completion = loop {
@@ -1977,6 +1978,23 @@ fn compose(
             }
             "result" if event["ok"] == true => last_failure.clear(),
             "answer" => {
+                // A composer that reports done with warnings left is sent back to them, a
+                // bounded number of times: the instruction to lint alone is skipped by models
+                // that finish fast. What still remains after that is logged, not refused.
+                if let Some(unresolved) = session.unresolved_lint(LINT_SEND_BACK_FINDINGS) {
+                    if lint_sends < LINT_SEND_BACKS {
+                        lint_sends += 1;
+                        log.note("lint_send_back", unresolved.clone());
+                        let _ = sender.send(JobEvent::Progress(candidate.id, "arrange".into()));
+                        deadline += Duration::from_secs(300);
+                        worker.send(
+                            &json!({"say": lint_send_back(&unresolved).to_string(),"policy":prefs.policy})
+                                .to_string(),
+                        )?;
+                        continue;
+                    }
+                    log.note("lint_unresolved", unresolved);
+                }
                 break event["text"]
                     .as_str()
                     .unwrap_or_default()
@@ -2032,6 +2050,22 @@ fn compose(
     session
         .finish_workshop_candidate(&folder, idea(&candidate.direction), cancel)
         .map_err(Into::into)
+}
+
+/// How many times a composer is sent back to the linter's findings before its song is taken
+/// as it is.
+const LINT_SEND_BACKS: usize = 2;
+
+/// How many findings a send-back lists; the counts by rule cover the rest.
+const LINT_SEND_BACK_FINDINGS: usize = 12;
+
+/// The message that sends a composer back to the warnings its finished song still has.
+fn lint_send_back(unresolved: &serde_json::Value) -> serde_json::Value {
+    json!({
+        "host_check": "The host linted the song you reported finished and found warnings or errors that remain. Resolve them now within the phase in force, then finish with your final report again.",
+        "unresolved": unresolved,
+        "instruction": "Run lint_project for the full list with ids; apply_lint_fixes takes the obvious fixes, and a finding without one needs your own edit. A finding on locked material needs enter_phase to the phase that owns it, with this check as the reason. A warning you keep on purpose: name it and say why in your final report. Do not redo finished work.",
+    })
 }
 
 fn audio_gate(cancel: &AtomicBool) -> Result<std::sync::MutexGuard<'static, ()>, String> {

@@ -61,6 +61,14 @@ a `"phase": "finish"` assignment continues it in the arrangement phase, with its
 melody, lyrics and harmony locked, and finishes the mix. Each candidate keeps
 its production record beside its song, so a finish starts from its demo's roles.
 
+The score linter's warnings and errors are reported, not left to the prompt
+alone. Every `inspect_project` counts them under `phase_facts.lint`, and the
+score phase's checks list them as `lint_warnings_resolved`, which every later
+phase reads too. When a workshop composer reports a candidate finished with any
+left, the host sends it back with the first of them, at most twice; what remains
+after that is logged in `composer-log.jsonl` and the candidate is kept. Models
+that finish fast skip an instruction to lint; they do not skip a reply.
+
 The shared contract retains exact IDs, tick units, revision checks, source
 preservation, limits on exploration, and the distinction between measurements,
 critic reports and human listening. Workflow instructions are model guidance;

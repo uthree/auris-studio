@@ -36,6 +36,50 @@ impl LintRequest {
     }
 }
 
+/// One finding as a model reads it: where it is, what it is, and the fix it has, if any.
+fn agent_diagnostic(project: &auris_core::project::Project, d: &Diagnostic) -> serde_json::Value {
+    let signatures = &project.signatures;
+    let track = d.track.and_then(|id| project.track(id));
+    let (bar, beat, _) = signatures.bar_beat_at(d.start);
+    let end_bar = signatures.bar_of(d.end - Ticks(1));
+    serde_json::json!({
+        "id": d.id(),
+        "rule": d.rule.name(),
+        "severity": d.severity,
+        "track": d.track.map(|t| t.0),
+        "track_name": track.map(|t| t.name.as_str()),
+        "start_tick": d.start.raw(),
+        "end_tick": d.end.raw(),
+        "bar": bar,
+        "beat": beat,
+        "end_bar": end_bar,
+        "notes": d.notes.iter().map(|n| serde_json::json!({"clip": n.clip.0, "index": n.index})).collect::<Vec<_>>(),
+        "message": d.describe(),
+        "fix": d.describe_fix(),
+    })
+}
+
+/// The score lint's warnings and errors, unsuppressed: the findings a finished song may not keep
+/// without saying why. Infos are advice and are left out.
+fn unresolved(report: &LintReport) -> impl Iterator<Item = &Diagnostic> {
+    report
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity >= crate::lint::Severity::Warning)
+}
+
+/// Counts of the unresolved findings by rule, for a report that has no room for the findings.
+fn unresolved_counts(report: &LintReport) -> serde_json::Value {
+    let mut by_rule = serde_json::Map::new();
+    let mut total = 0;
+    for d in unresolved(report) {
+        total += 1;
+        let count = by_rule.entry(d.rule.name()).or_insert(serde_json::json!(0));
+        *count = serde_json::json!(count.as_u64().unwrap_or(0) + 1);
+    }
+    serde_json::json!({"warnings_and_errors": total, "by_rule": by_rule})
+}
+
 impl Session {
     /// The score lint plus the last audio lint, when that still describes this revision.
     pub(crate) fn current_lint(&self) -> LintReport {
@@ -75,26 +119,7 @@ impl Session {
             .iter()
             .skip(request.offset)
             .take(request.limit)
-            .map(|d| {
-                let track = d.track.and_then(|id| project.track(id));
-                let (bar, beat, _) = signatures.bar_beat_at(d.start);
-                let end_bar = signatures.bar_of(d.end - Ticks(1));
-                serde_json::json!({
-                    "id": d.id(),
-                    "rule": d.rule.name(),
-                    "severity": d.severity,
-                    "track": d.track.map(|t| t.0),
-                    "track_name": track.map(|t| t.name.as_str()),
-                    "start_tick": d.start.raw(),
-                    "end_tick": d.end.raw(),
-                    "bar": bar,
-                    "beat": beat,
-                    "end_bar": end_bar,
-                    "notes": d.notes.iter().map(|n| serde_json::json!({"clip": n.clip.0, "index": n.index})).collect::<Vec<_>>(),
-                    "message": d.describe(),
-                    "fix": d.describe_fix(),
-                })
-            })
+            .map(|d| agent_diagnostic(project, d))
             .collect();
         let audio = report.audio.as_ref();
         Ok(serde_json::json!({
@@ -116,6 +141,28 @@ impl Session {
             },
         })
         .to_string())
+    }
+
+    /// The score lint's unsuppressed warnings and errors, for a host checking a finished song:
+    /// their count by rule and the first `limit` of them as `lint_project` describes them.
+    /// `None` when there are none. Audio rules need a render and are not run.
+    pub fn unresolved_lint(&self, limit: usize) -> Option<serde_json::Value> {
+        let report = self.lint_score();
+        let project = self.project();
+        let mut summary = unresolved_counts(&report);
+        if summary["warnings_and_errors"] == 0 {
+            return None;
+        }
+        summary["diagnostics"] = unresolved(&report)
+            .take(limit)
+            .map(|d| agent_diagnostic(project, d))
+            .collect();
+        Some(summary)
+    }
+
+    /// Counts of the score lint's unsuppressed warnings and errors by rule, for an inspection.
+    pub(crate) fn unresolved_lint_counts(&self) -> serde_json::Value {
+        unresolved_counts(&self.lint_score())
     }
 
     pub(crate) fn agent_apply_lint_fixes(&mut self, ids: &[String]) -> Result<String, String> {

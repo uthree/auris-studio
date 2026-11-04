@@ -655,3 +655,62 @@ fn selected_song_revisions_accumulate_across_reopening() {
     );
     assert_eq!(song_bytes(&store, 1), original);
 }
+
+#[test]
+fn a_composer_that_finishes_with_lint_warnings_is_sent_back_a_bounded_number_of_times() {
+    use auris_session::prelude::{Note, Ticks};
+    let directory = tempfile::tempdir().unwrap();
+    let store = Store::new(directory.path().into());
+    seed(&store, Some(1));
+    // A duplicated note on a track the direction does not protect: a warning the composer
+    // never fixes here.
+    let mut parent = open_score(&store, 1);
+    let keys = parent.add_default_instrument_track("Keys").unwrap();
+    let clip = parent
+        .add_midi_clip(keys, "Chords", Ticks::ZERO, Ticks(3840))
+        .unwrap();
+    let note = Note::new(60, Ticks::ZERO, Ticks(480));
+    parent
+        .replace_notes(clip, vec![note.clone(), note])
+        .unwrap();
+    parent
+        .finish_workshop_candidate(
+            &store.candidate_path(1),
+            idea(&candidate(1, None, true).direction),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+    let (url, _) = crate::tests::mock_server(vec![
+        director(),
+        edit(json!({"kind":"set_tempo","at_tick":0,"bpm":90.0})),
+        answer(),
+        answer(),
+        answer(),
+    ]);
+    let running = Running::start(store.clone());
+    running
+        .commands
+        .send(Command::Send(
+            "Slow this song to 90 BPM.".into(),
+            Box::new(prefs(url)),
+            vec![],
+        ))
+        .unwrap();
+    let finished = running.finished(2);
+    let made = &finished.document.rounds[1].candidates[0];
+    assert!(made.ready, "{:?}", made.error);
+    let log =
+        std::fs::read_to_string(store.candidate_path(made.id).join(composer_log::FILE)).unwrap();
+    let kinds: Vec<String> = log
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .filter_map(|entry| entry["kind"].as_str().map(str::to_owned))
+        .filter(|kind| kind.starts_with("lint_"))
+        .collect();
+    assert_eq!(
+        kinds,
+        ["lint_send_back", "lint_send_back", "lint_unresolved"]
+    );
+    assert!(log.contains("duplicate_note"));
+    assert_eq!(open_score(&store, made.id).project().bpm(), 90.0);
+}
