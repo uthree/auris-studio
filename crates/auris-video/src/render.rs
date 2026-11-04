@@ -3,6 +3,7 @@
 use std::path::Path;
 
 use auris_core::Color;
+use rayon::prelude::*;
 use tiny_skia::{BlendMode, FillRule, Paint, Path as SkPath, PathBuilder, Pixmap, Rect, Transform};
 
 use crate::chords::ChordOverlay;
@@ -41,6 +42,8 @@ const SINK_OVERSHOOT: f64 = 0.6;
 const SINK_RELEASE: f64 = 0.07;
 /// How much a fully pressed note is squashed, as a fraction of its height.
 const SINK_SQUASH: f64 = 0.15;
+/// Keep small previews on the calling thread to avoid worker scheduling overhead.
+const PARALLEL_BACKDROP_PIXELS: u64 = 512 * 512;
 
 /// A background picture, decoded once and scaled to the frame when a renderer is made.
 #[derive(Clone, Debug)]
@@ -405,21 +408,31 @@ fn backdrop(style: &NoteRollStyle, background: Option<&BackgroundImage>) -> Pixm
     let (ox, oy) = ((sw - width) / 2, (sh - height) / 2);
     let dim = style.background_dim;
     let back = [f32::from(br), f32::from(bg), f32::from(bb)];
+    let pixels = u64::from(width) * u64::from(height);
     let data = pixmap.data_mut();
-    for y in 0..height {
-        for x in 0..width {
-            let source = scaled.get_pixel(x + ox, y + oy).0;
+    let write_row = |(y, row): (usize, &mut [u8])| {
+        for (x, pixel) in row.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+            let source = scaled.get_pixel(x as u32 + ox, y as u32 + oy).0;
+            // Over the background colour, then faded towards it: the frame stays opaque, so
+            // premultiplied and straight alpha are the same bytes.
             let alpha = f32::from(source[3]) / 255.0;
-            let at = ((y * width + x) * 4) as usize;
             for channel in 0..3 {
-                // Over the background colour, then faded towards it: the frame stays opaque, so
-                // premultiplied and straight alpha are the same bytes.
                 let over = f32::from(source[channel]) * alpha + back[channel] * (1.0 - alpha);
                 let faded = over * (1.0 - dim) + back[channel] * dim;
-                data[at + channel] = faded.round().clamp(0.0, 255.0) as u8;
+                pixel[channel] = faded.round().clamp(0.0, 255.0) as u8;
             }
-            data[at + 3] = 255;
+            pixel[3] = 255;
         }
+    };
+    let row_bytes = width as usize * 4;
+    if pixels >= PARALLEL_BACKDROP_PIXELS {
+        data.par_chunks_exact_mut(row_bytes)
+            .enumerate()
+            .for_each(write_row);
+    } else {
+        data.chunks_exact_mut(row_bytes)
+            .enumerate()
+            .for_each(write_row);
     }
     pixmap
 }
@@ -531,6 +544,8 @@ pub fn render_video(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    mod backdrop_tests;
     use crate::{ScoreTrack, VideoSize};
 
     fn score() -> NoteScore {

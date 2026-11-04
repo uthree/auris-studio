@@ -83,6 +83,8 @@ pollster = "1.0"
 # told which window to stay above, and this is the one vocabulary gpui and CLAP already share — so
 # a handle travels through `auris-session` without that crate learning what a UI toolkit is.
 raw-window-handle = "0.6"
+# Independent offline CPU work; per-output arithmetic keeps its sequential order.
+rayon = "1.12"
 # Planned real and complex FFTs for the spectrum and WSOLA search. Both versions are already in
 # the graph through `rubato`; naming them lets `auris-dsp` use their SIMD implementations directly.
 realfft = "3.5"

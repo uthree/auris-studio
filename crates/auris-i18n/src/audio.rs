@@ -343,8 +343,8 @@ const PLUGIN_DESCRIPTIONS: &[(&str, &str)] = &[
         "読み込んだサウンドフォントを再生します",
     ),
     (
-        "Plays an audio file across the keyboard",
-        "オーディオファイルを鍵盤全体に割り当てて、音程を変えて鳴らします",
+        "Plays audio files across the keyboard",
+        "オーディオファイルを鍵盤に割り当て、近いルート音のサンプルを音程を変えて鳴らします",
     ),
 ];
 

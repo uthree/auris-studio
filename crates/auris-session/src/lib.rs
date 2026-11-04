@@ -85,6 +85,7 @@ pub mod library;
 pub mod lint;
 pub mod mixer_graph;
 pub mod param;
+pub mod performance_presets;
 pub mod progressions;
 pub mod registry;
 pub mod render;
@@ -174,6 +175,7 @@ pub use session::{
 };
 pub use session::{CheckpointJob, CheckpointOperation, CheckpointResult};
 pub use session::{CompositionPreview, CompositionTrackPreview};
+pub use session::{DEFAULT_SAMPLE_ROOT, DetectedPitch, SampleZoneView, detect_pitch};
 pub use session::{ENVELOPE_PITCHES, SoundEnvelope};
 pub use session::{prepare_looping_output_preview, prepare_output_preview};
 pub mod workshop;
@@ -325,6 +327,7 @@ pub mod prelude {
         Expression, GroovePoint, GrooveTemplate, PitchPerformance, Strum, StrumClock,
         VolumeContour, VolumeContourPreset,
     };
+    pub use auris_core::{PerformancePreset, PresetFamily, builtin_performance_presets};
     /// Offline source analysis, prepared through [`Session::spectrogram_job`].
     pub use auris_dsp::Spectrogram;
     /// The equalizer's band table, the settings a display reads out of one, and the curve those
@@ -377,8 +380,8 @@ pub mod prelude {
         WavExportSettings,
     };
     pub use auris_sampler::{
-        AUDIO_SAMPLER_ID, AUDIO_SAMPLER_LOOP_KEY, AUDIO_SAMPLER_ROOT_KEY, SAMPLER_ENVELOPE_KEY,
-        SAMPLER_ID,
+        AUDIO_SAMPLER_ID, AUDIO_SAMPLER_LOOP_KEY, KeyRange, MAX_SAMPLE_ZONES, SAMPLER_ID,
+        SampleZone, VelocityRange,
     };
 
     pub use crate::{

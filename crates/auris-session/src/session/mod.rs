@@ -91,6 +91,7 @@ mod note_take;
 pub(crate) mod notes;
 mod output_preview;
 mod perform;
+mod performance_presets;
 mod physical_sounds;
 pub(crate) mod plugin_discovery;
 mod plugin_trust;
@@ -100,7 +101,10 @@ mod recognition;
 mod record;
 mod rhythm;
 mod samples;
-pub use samples::parse_root_note;
+pub use samples::{
+    AgentSample, DEFAULT_SAMPLE_ROOT, DetectedPitch, SampleZoneEdit, SampleZoneView, detect_pitch,
+    parse_root_note,
+};
 mod workspace;
 pub use workspace::workspace_relative;
 #[cfg(test)]
@@ -265,6 +269,12 @@ pub struct SessionOptions {
     /// A document's CLAP or VST3 plugin is loaded only from a plugin folder; anything else stays
     /// silent until its folder is listed here. See [`Session::set_plugin_paths`].
     pub plugin_paths: Vec<PathBuf>,
+    /// The performance presets this installation keeps. `None` keeps saved presets in memory
+    /// for the session's lifetime only.
+    ///
+    /// Defaults to `performance-presets.json` in the application configuration directory.
+    /// Headless tests opt out so they neither read nor change the user's presets.
+    pub performance_presets: Option<PathBuf>,
 }
 
 impl Default for SessionOptions {
@@ -282,6 +292,7 @@ impl Default for SessionOptions {
             autosave: true,
             shipped_dictionary: true,
             plugin_paths: Vec::new(),
+            performance_presets: Some(crate::performance_presets::PerformancePresetBook::path()),
         }
     }
 }
@@ -297,6 +308,7 @@ impl SessionOptions {
             gpu: false,
             shipped_fonts: false,
             soundfont_library: None,
+            performance_presets: None,
             autosave: false,
             shipped_dictionary: false,
             master_limiter: false,
@@ -313,6 +325,13 @@ impl SessionOptions {
     /// Uses the persistent application SoundFont catalog, including in a headless frontend.
     pub fn with_soundfont_library(mut self, path: impl Into<PathBuf>) -> Self {
         self.soundfont_library = Some(path.into());
+        self
+    }
+
+    /// Keeps performance presets in the file at `path`, shared with the window and every other
+    /// door, including in a headless frontend.
+    pub fn with_performance_presets(mut self, path: impl Into<PathBuf>) -> Self {
+        self.performance_presets = Some(path.into());
         self
     }
 
@@ -428,6 +447,8 @@ pub struct Session {
     shipped_library: bool,
     /// Persistent catalog shared across documents and application launches.
     soundfont_library: Option<PathBuf>,
+    /// Performance presets kept by this installation.
+    performance_presets: crate::performance_presets::PresetLibrary,
     /// Whether composing ends by measuring the piece — see [`SessionOptions::balance_composed`].
     balance_composed: bool,
     /// Whether a new document starts with a master limiter — see [`SessionOptions::master_limiter`].
@@ -786,6 +807,9 @@ impl Session {
             font_errors: HashMap::new(),
             shipped_library: options.shipped_fonts,
             soundfont_library: options.soundfont_library,
+            performance_presets: crate::performance_presets::PresetLibrary::new(
+                options.performance_presets,
+            ),
             balance_composed: options.balance_composed,
             master_limiter: options.master_limiter,
             registry,

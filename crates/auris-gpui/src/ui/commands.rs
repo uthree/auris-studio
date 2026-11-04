@@ -2929,10 +2929,11 @@ impl AurisApp {
         .detach();
     }
 
-    /// Prompts for an audio file and loads it into a track's sampler.
+    /// Prompts for audio files and adds them to a track's sampler map.
     ///
     /// The other way an audio file enters a song: rather than a clip on the timeline, a sound the
-    /// track plays from its notes. Decoded on a worker, like every other import.
+    /// track plays from its notes. Several may be chosen at once, each becoming a zone at the
+    /// root its name spells. Decoded on a worker, like every other import.
     pub(crate) fn load_sample(&mut self, track: TrackId, cx: &mut Context<Self>) {
         let extensions: Vec<String> = auris_session::supported_audio_extensions()
             .iter()
@@ -2941,29 +2942,42 @@ impl AurisApp {
         let language = self.language();
         cx.spawn(async move |this, cx| {
             let extension_refs: Vec<&str> = extensions.iter().map(String::as_str).collect();
-            let handle = rfd::AsyncFileDialog::new()
+            let handles = rfd::AsyncFileDialog::new()
                 .set_title(Key::DialogLoadSample.get(language))
                 .add_filter(Key::FilterAudio.get(language), &extension_refs)
-                .pick_file()
+                .pick_files()
                 .await;
-            let Some(handle) = handle else { return };
-            let path = handle.path().to_path_buf();
+            let Some(handles) = handles.filter(|handles| !handles.is_empty()) else {
+                return;
+            };
+            let paths: Vec<PathBuf> = handles
+                .iter()
+                .map(|handle| handle.path().to_path_buf())
+                .collect();
             let Ok(rate) = this.update(cx, |this, cx| {
-                let text = messages::importing(this.language(), &path.display().to_string());
+                let text = messages::importing(this.language(), &paths[0].display().to_string());
                 this.set_status(text);
                 cx.notify();
                 this.project().sample_rate
             }) else {
                 return;
             };
-            let loaded = read_file(
-                cx.background_executor().clone(),
-                Reading::Audio { rate },
-                path.clone(),
-            )
-            .await;
+            let mut loaded = Vec::with_capacity(paths.len());
+            for path in &paths {
+                let read = read_file(
+                    cx.background_executor().clone(),
+                    Reading::Audio { rate },
+                    path.clone(),
+                )
+                .await;
+                loaded.push((path.clone(), read));
+            }
             let _ = this.update(cx, |this, cx| {
-                match loaded.and_then(|loaded| this.take_sample(track, &path, loaded)) {
+                let decoded = loaded
+                    .into_iter()
+                    .map(|(path, read)| read.map(|read| (path, read)))
+                    .collect::<Result<Vec<_>, _>>();
+                match decoded.and_then(|decoded| this.take_samples(track, decoded)) {
                     Ok(line) => this.set_status(line),
                     Err(error) => {
                         this.set_failed_status(this.failure(Key::SamplerLoadSample, &error))
@@ -2976,21 +2990,40 @@ impl AurisApp {
     }
 
     /// Gives decoded audio to a track's sampler, and says so.
+    #[cfg(test)]
     pub(crate) fn take_sample(
         &mut self,
         track: TrackId,
         path: &Path,
         loaded: Loaded,
     ) -> Result<String, SessionError> {
-        let Loaded::Audio(buffer) = loaded else {
-            return Err(SessionError::EmptySample(path.to_path_buf()));
-        };
-        self.session.place_sample(track, path, buffer)?;
-        let name = self
-            .session
-            .track_sample_name(track)
-            .unwrap_or_else(|| path.display().to_string());
-        Ok(messages::sample_loaded(self.language(), &name))
+        self.take_samples(track, vec![(path.to_path_buf(), loaded)])
+    }
+
+    /// Adds several decoded files to a track's sampler map in one undo step, and says so.
+    pub(crate) fn take_samples(
+        &mut self,
+        track: TrackId,
+        loaded: Vec<(PathBuf, Loaded)>,
+    ) -> Result<String, SessionError> {
+        let samples = loaded
+            .into_iter()
+            .map(|(path, loaded)| match loaded {
+                Loaded::Audio(buffer) => Ok((path, buffer)),
+                _ => Err(SessionError::EmptySample(path)),
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let count = samples.len();
+        let first = samples
+            .first()
+            .and_then(|(path, _)| path.file_stem())
+            .map(|stem| stem.to_string_lossy().to_string())
+            .unwrap_or_default();
+        self.session.place_samples(track, samples, false)?;
+        Ok(match count {
+            1 => messages::sample_loaded(self.language(), &first),
+            _ => messages::samples_loaded(self.language(), count),
+        })
     }
 
     /// Gives a file that has been read to the document, and says what happened.

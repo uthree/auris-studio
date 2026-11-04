@@ -1580,10 +1580,12 @@ pub mod plugins {
     //! through the state.
     //!
     //! The audio sampler, [`auris_sampler::AudioSampler`], is the second plugin built that way,
-    //! and the cheaper one, because its samples are not a new kind of asset at all. Loading a file
-    //! into it ([`crate::Session::load_sample`]) adds an ordinary audio source to the document —
+    //! and the cheaper one, because its samples are not a new kind of asset at all. Loading files
+    //! into it ([`crate::Session::load_samples`]) adds ordinary audio sources to the document —
     //! copied into the project folder, relocated, reported when missing — and places no clip; the
-    //! track's instrument state names the source by id. The session mirrors its decoded sources
+    //! track's instrument state holds a map of [`auris_sampler::SampleZone`]s naming the sources
+    //! by id. A note plays the zone with the nearest root inside its velocity layer, unless a zone
+    //! names its own keys; [`auris_sampler::zones`] gives the rule and why it is that one. The session mirrors its decoded sources
     //! into an [`auris_sampler::SampleBank`] in [`crate::Session::rebuild_graph`], the one moment
     //! a sampler reads it, so no edit has to remember to keep the two in step.
     //! [`auris_sampler::needs_asset`] names both samplers for whatever picks an instrument on
@@ -1645,34 +1647,19 @@ pub mod plugins {
     //! `attack`, `decay`, `sustain` and `release` is drawn one, and dragging its corners writes
     //! those four parameters. All four or none — three of them is not an envelope with a piece
     //! missing but a different shape, and the drum synth's lone decay would be drawn as a ramp
-    //! with two corners invented for it. That is why [`auris_sampler`] gained the picture the day
-    //! it gained the parameters, without a line changing in the frontend.
+    //! with two corners invented for it. That is why a sampler gains the picture the day
+    //! it gains the parameters, without a line changing in the frontend.
     //!
     //! # An envelope over a sound that already has one
     //!
-    //! [`auris_sampler`] does not synthesise its own voices — a font's regions carry their own
-    //! volume envelopes, and rustysynth neither exposes them nor lets a caller reach a voice. The
-    //! one per-note gain there is, is *channel expression*, so a note that is to be faded on its
-    //! own has to be given a channel of its own: fifteen of the library's sixteen, one note each.
-    //!
-    //! That trade is real — fifteen notes instead of 128 voices, and a drum kit's choke groups
-    //! only work between notes sharing a channel — so the whole mechanism sits behind a switch:
-    //! an `envelope` toggle, off by default, and while it is off the sampler plays the font
-    //! exactly as it is written. Two rules came out of it, and both generalise:
-    //!
-    //! **A feature that costs something is switched on explicitly, not inferred.** An earlier
-    //! version turned the mechanism on when any of the four sliders left its default, which is
-    //! tidier and wrong: a control that arms itself when you nudge it to see what it does is a
-    //! control nobody can disarm with confidence. The test for "on" is a free function
-    //! (`auris_sampler`'s `shaping`), so it can be read and asserted on rather than inferred from
-    //! the audio.
-    //!
-    //! **A cost the user cannot see is a cost the window has to say out loud.** Missing polyphony
-    //! shows up as "the top note of my chord dropped out", which is the kind of symptom that gets
-    //! blamed on anything but the switch that caused it, so the plugin window carries a caution
-    //! strip for as long as the envelope is on. Which plugin warns, and about what, is decided in
-    //! `auris_gpui::ui::plugin_window::caution` — the frontend, for the same reason it decides
-    //! which plugin gets a curve.
+    //! The SoundFont player does not synthesise its own voices: a font's regions carry their own
+    //! volume envelopes, and rustysynth neither exposes them nor lets a caller reach a voice. It
+    //! once laid an envelope over them anyway, by giving each note a MIDI channel of its own and
+    //! fading that channel's expression, which cost the player all but fourteen notes of
+    //! polyphony and a drum kit's choke groups. That mechanism is gone. The player plays the font
+    //! as it was written, and a sound that needs a different attack or release is rendered and
+    //! played from the audio sampler, whose envelope is its own. The lesson generalises: when a
+    //! library does not offer a control, reshaping the *material* beats forcing the library.
     //!
     //! # Where a new plugin goes
     //!
@@ -2955,6 +2942,19 @@ pub mod harmony {
     //! a changed curve is not proof that an external instrument responds. Agents independently
     //! read back the measured effect and compare the same audio range before claiming an
     //! audible change. These diagnostics never bake performance into the score.
+    //!
+    //! A stack has a dozen controls, and most are answered the same way for every part of one
+    //! kind, so there are **presets**: a named stack filed under an instrument family
+    //! ([`PerformancePreset`](auris_core::PerformancePreset)). The built-ins are a catalogue in
+    //! `auris-core`; the ones a person saves from the panel, or an agent saves with
+    //! `performance_presets`, are one file in the configuration directory
+    //! ([`PerformancePresetBook`](crate::performance_presets::PerformancePresetBook)) shared by
+    //! every project and every door. Applying one
+    //! ([`apply_performance_preset`](crate::Session::apply_performance_preset)) *copies* its
+    //! stages into the clip, reseeded as that clip's own take, in one undo step; the clip keeps no
+    //! link to the preset, so a document stays portable and a preset edited later rewrites no
+    //! song — the same reason a kept chord progression is copied rather than quoted. No built-in
+    //! swings, because swing is the song's decision rather than one part's.
     //! Every wander draws from a seed
     //! the transform stores, through the same named streams the composer draws from
     //! ([`auris_core::rng`]), and it draws per loop pass — a repeated bar is loose differently

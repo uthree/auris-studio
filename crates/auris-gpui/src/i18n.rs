@@ -228,6 +228,7 @@ pub fn edit_key(edit: Edit) -> Key {
         Edit::RecordTake => Key::EditRecordTake,
         Edit::ImportSoundFont => Key::EditImportSoundFont,
         Edit::LoadSample => Key::EditLoadSample,
+        Edit::EditSampleMap => Key::EditSampleMap,
         Edit::ChoosePreset | Edit::ApplySoundPreset => Key::EditChoosePreset,
         Edit::SetKey => Key::EditSetKey,
         Edit::SetChord => Key::EditSetChord,
@@ -282,6 +283,7 @@ pub fn error_text(error: &SessionError, language: Language) -> String {
         | SessionError::OutputPreview(detail)
         | SessionError::InvalidDrumAssignment(detail)
         | SessionError::SoundPreset(detail)
+        | SessionError::SampleMap(detail)
         | SessionError::DrumAnalysis(detail)
         | SessionError::PluginDiscovery(detail)
         | SessionError::MusicAnalysis(detail) => with(Key::ErrorDocument, detail.clone()),
@@ -320,6 +322,22 @@ pub fn error_text(error: &SessionError, language: Language) -> String {
         },
         SessionError::UnknownTrack(_) => Key::ErrorUnknownTrack.get(language).to_string(),
         SessionError::UnknownClip(_) => Key::ErrorUnknownClip.get(language).to_string(),
+        SessionError::UnknownPerformancePreset(_) => {
+            Key::ErrorUnknownPerformancePreset.get(language).to_string()
+        }
+        SessionError::PerformancePreset(refusal) => {
+            use auris_session::performance_presets::KeepRefusal;
+            match refusal {
+                KeepRefusal::BadName => Key::ErrorPresetName,
+                KeepRefusal::BuiltinName => Key::ErrorPresetBuiltinName,
+                KeepRefusal::Exists => Key::ErrorPresetExists,
+                KeepRefusal::LongDescription => Key::ErrorPresetDescription,
+                KeepRefusal::Full => Key::ErrorPresetFull,
+                KeepRefusal::Builtin => Key::ErrorPresetBuiltin,
+            }
+            .get(language)
+            .to_string()
+        }
         SessionError::UnknownComment(_) => Key::ErrorUnknownComment.get(language).to_string(),
         SessionError::EmptyComment => Key::ErrorEmptyComment.get(language).to_string(),
         SessionError::NotANoteClip(_) => Key::ErrorNotANoteClip.get(language).to_string(),
@@ -1031,6 +1049,10 @@ mod tests {
             SessionError::UnknownPlugin("auris.fx.nope".into()),
             SessionError::UnknownTrack(1),
             SessionError::UnknownClip(2),
+            SessionError::UnknownPerformancePreset("gone".into()),
+            SessionError::PerformancePreset(
+                auris_session::performance_presets::KeepRefusal::Exists,
+            ),
             SessionError::UnknownComment(4),
             SessionError::EmptyComment,
             SessionError::NotANoteClip(5),
@@ -1038,6 +1060,7 @@ mod tests {
             SessionError::GenerationPositionOccupied,
             SessionError::NoPath,
             SessionError::EmptySample("silence.wav".into()),
+            SessionError::SampleMap("there is no sample 3".into()),
             SessionError::AudioRestart("device gone".into()),
             SessionError::MissingAudio(vec!["a.wav".into()]),
             SessionError::RecordingInProgress,

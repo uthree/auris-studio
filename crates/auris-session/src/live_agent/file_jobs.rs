@@ -57,10 +57,10 @@ enum Work {
         render_rate: f64,
     },
     LoadSample {
-        path: PathBuf,
+        samples: Vec<(PathBuf, crate::session::AgentSample)>,
         folder: PathBuf,
         track: TrackId,
-        root: Option<u8>,
+        append: bool,
         looped: Option<bool>,
         rate: f64,
         render_rate: f64,
@@ -117,11 +117,10 @@ enum Outcome {
         provenance: std::collections::BTreeMap<String, String>,
     },
     LoadedSample {
-        staged: StagedSource,
+        staged: Vec<(StagedSource, String, crate::session::AgentSample)>,
         folder: PathBuf,
         track: TrackId,
-        name: String,
-        root: Option<u8>,
+        append: bool,
         looped: Option<bool>,
     },
     ImportedMidi(Box<crate::MidiImportResult>, Ticks),
@@ -278,26 +277,30 @@ impl FileJob {
                 }
             }
             Work::LoadSample {
-                path,
+                samples,
                 folder,
                 track,
-                root,
+                append,
                 looped,
                 rate,
                 render_rate,
             } => {
-                let staged = stage_audio(&path, &folder, rate, render_rate, &check)?;
-                let name = path
-                    .file_stem()
-                    .unwrap_or_default()
-                    .to_string_lossy()
-                    .into_owned();
+                let mut staged = Vec::with_capacity(samples.len());
+                for (path, request) in samples {
+                    let source = stage_audio(&path, &folder, rate, render_rate, &check)
+                        .map_err(|e| format!("{}: {e}", path.display()))?;
+                    let name = path
+                        .file_stem()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .into_owned();
+                    staged.push((source, name, request));
+                }
                 Outcome::LoadedSample {
                     staged,
                     folder,
                     track,
-                    name,
-                    root,
+                    append,
                     looped,
                 }
             }
@@ -442,24 +445,34 @@ impl Session {
             }
             Command::LoadSample {
                 track,
-                path,
-                root_note,
+                samples,
+                append,
                 looped,
             } => {
                 let track = TrackId(track);
                 self.require_sampler_target(track)
                     .map_err(|e| e.to_string())?;
-                if root_note.is_some_and(|note| note > 127) {
+                if samples.is_empty() || samples.len() > 128 {
+                    return Err("Give 1..128 samples".into());
+                }
+                if samples
+                    .iter()
+                    .any(|sample| sample.root_note.is_some_and(|note| note > 127))
+                {
                     return Err("root_note must be a MIDI note 0..127 (60 is C4)".into());
                 }
+                let samples = samples
+                    .into_iter()
+                    .map(|sample| Ok((self.agent_path(&sample.path)?, sample)))
+                    .collect::<Result<Vec<_>, String>>()?;
                 Work::LoadSample {
-                    path: self.agent_path(&path)?,
+                    samples,
                     folder: self
                         .project_folder()
                         .ok_or("Missing project folder")?
                         .to_owned(),
                     track,
-                    root: root_note,
+                    append: append.unwrap_or(false),
                     looped,
                     rate: self.project().sample_rate,
                     render_rate: self.sample_rate(),
@@ -737,14 +750,13 @@ impl Session {
                 staged,
                 folder,
                 track,
-                name,
-                root,
+                append,
                 looped,
             } => {
                 if self.project_folder() != Some(folder.as_path()) {
-                    return Err("Document folder/rate changed while loading the sample".into());
+                    return Err("Document folder/rate changed while loading the samples".into());
                 }
-                self.adopt_agent_sample(staged, track, name, root, looped)
+                self.adopt_agent_samples(staged, track, append, looped)
             }
             Outcome::Verified(text) => Ok(text),
             Outcome::Linted(result, request) => {
@@ -1202,8 +1214,17 @@ mod tests {
             &mut live,
             Command::LoadSample {
                 track: track.0,
-                path: "renders/mix.wav".into(),
-                root_note: Some(60),
+                samples: vec![crate::session::AgentSample {
+                    path: "renders/mix.wav".into(),
+                    root_note: Some(60),
+                    low_key: None,
+                    high_key: None,
+                    low_velocity: None,
+                    high_velocity: None,
+                    tune: None,
+                    gain_db: None,
+                }],
+                append: None,
                 looped: None,
             },
         );
