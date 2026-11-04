@@ -1552,8 +1552,11 @@ fn candidate_options(settings: &Settings) -> SessionOptions {
         .with_shipped_dictionary(installed)
         .with_plugin_paths(settings.plugin_paths.clone());
     if installed {
-        options =
-            options.with_soundfont_library(auris_session::config_dir().join("soundfonts.json"));
+        options = options
+            .with_soundfont_library(auris_session::config_dir().join("soundfonts.json"))
+            .with_performance_presets(
+                auris_session::performance_presets::PerformancePresetBook::path(),
+            );
     }
     options
 }

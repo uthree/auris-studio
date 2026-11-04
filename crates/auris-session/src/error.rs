@@ -154,6 +154,14 @@ pub enum SessionError {
     #[error("no chord progression is named `{0}`")]
     UnknownProgression(String),
 
+    /// No performance preset, built in or kept, has this name.
+    #[error("no performance preset is named `{0}`")]
+    UnknownPerformancePreset(String),
+
+    /// A performance preset could not be kept or deleted, and why.
+    #[error("performance preset: {0}")]
+    PerformancePreset(crate::performance_presets::KeepRefusal),
+
     /// The requested clip does not exist.
     #[error("no clip with id {0}")]
     UnknownClip(u64),

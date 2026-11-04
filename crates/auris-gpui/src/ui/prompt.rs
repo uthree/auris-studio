@@ -48,6 +48,13 @@ pub enum PromptTarget {
     },
     /// A reusable sound captured from a track.
     SaveSound(TrackId),
+    /// The name of a performance preset kept from a clip's current performance.
+    SavePerformancePreset {
+        /// The clip whose performance is kept.
+        clip: ClipId,
+        /// The instrument family it is filed under.
+        family: PresetFamily,
+    },
     /// The saved user sound retained by this prompt.
     RenameSound,
     /// A new copy of the saved user sound retained by this prompt.
@@ -250,6 +257,7 @@ impl PromptTarget {
             PromptTarget::Position => Notation::Position,
             PromptTarget::VideoColour(_) => Notation::Colour,
             PromptTarget::SaveSound(_)
+            | PromptTarget::SavePerformancePreset { .. }
             | PromptTarget::WorkshopThreadName { .. }
             | PromptTarget::WorkshopFeedback { .. }
             | PromptTarget::AgentConversationName
@@ -1049,6 +1057,10 @@ impl AurisApp {
                     Err(error) => Err(error),
                 }
             }
+            PromptTarget::SavePerformancePreset { clip, family } => self
+                .session
+                .keep_clip_performance(clip, &text, family, "", false)
+                .map(|_| ()),
             PromptTarget::Track(track) => self.session.rename_track(track, text),
             PromptTarget::Clip(clip) => self.session.rename_clip(clip, text),
             PromptTarget::Lyric { clip, index } => {
@@ -1333,6 +1345,8 @@ impl AurisApp {
                 Key::EditSetDrumAssignment
             } else if matches!(target, PromptTarget::SaveSound(_)) {
                 Key::SaveSound
+            } else if matches!(target, PromptTarget::SavePerformancePreset { .. }) {
+                Key::PerformPresetSave
             } else if matches!(target, PromptTarget::DuplicateSound) {
                 Key::DuplicateSound
             } else {
@@ -1865,7 +1879,9 @@ impl AurisApp {
                     None,
                     // The default button names the edit the sheet will commit.
                     match target {
-                        PromptTarget::SaveSound(_) => self.t(Key::CmdSave).into(),
+                        PromptTarget::SaveSound(_) | PromptTarget::SavePerformancePreset { .. } => {
+                            self.t(Key::CmdSave).into()
+                        }
                         PromptTarget::WorkshopThreadName { .. } => self.t(Key::Rename).into(),
                         PromptTarget::WorkshopFeedback { .. } => {
                             self.t(Key::WorkshopFeedbackSend).into()
@@ -2830,6 +2846,10 @@ mod tests {
             PromptTarget::DuplicateSound,
             PromptTarget::RenameSound,
             PromptTarget::SaveSound(TrackId(1)),
+            PromptTarget::SavePerformancePreset {
+                clip: ClipId(1),
+                family: PresetFamily::Keys,
+            },
             PromptTarget::Track(TrackId(1)),
             PromptTarget::Clip(ClipId(1)),
             PromptTarget::Key(AT),
@@ -2883,6 +2903,7 @@ mod tests {
         for target in &representatives {
             match target {
                 PromptTarget::SaveSound(_)
+                | PromptTarget::SavePerformancePreset { .. }
                 | PromptTarget::AgentConversationName
                 | PromptTarget::AgentChordReference { .. }
                 | PromptTarget::WorkshopFeedback { .. }

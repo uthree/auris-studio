@@ -387,6 +387,11 @@ pub enum Command {
         /// Partial settings; omit every field that should stay unchanged.
         settings: Box<performance::PerformancePatch>,
     },
+    /// Named performance presets by instrument family: list, apply one to a clip as a starting feel (replaces its stages, own random take, one Undo; tune after with set_performance), save one from a clip or settings, or delete a kept one. Built-ins never swing. Kept presets are shared across projects and the user's picker.
+    PerformancePresets {
+        /// list, apply, save or delete.
+        operation: performance::presets::PresetOperation,
+    },
     /// Write or clear the document's key, Roman-numeral chord progression and/or section label across a bounded bar range. For a new song, write its harmony and named form (intro, verse, chorus, bridge, outro as appropriate) before adding notes. Changes metadata only; existing notes and mix are preserved. One Undo reverts the edit; persistence follows the host.
     EditHarmony {
         /// First bar, 1-based.
@@ -734,6 +739,7 @@ impl Command {
             Self::EditClipCurve { operation, .. } => !operation.is_read_only(),
             Self::EditTimeline { operation } => !operation.is_read_only(),
             Self::Layer { operation } => !operation.is_read_only(),
+            Self::PerformancePresets { operation } => operation.is_mutating(),
             Self::Inspect {}
             | Self::ReportStatus { .. }
             | Self::MelodyShape { .. }
@@ -1026,6 +1032,7 @@ impl Session {
                 drum_voice,
                 settings,
             } => self.agent_set_performance(ClipId(clip), drum_voice.as_deref(), *settings),
+            Command::PerformancePresets { operation } => self.agent_performance_presets(operation),
             Command::EditHarmony {
                 start_bar,
                 bars,

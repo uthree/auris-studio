@@ -271,6 +271,7 @@ pub const OPERATIONS: &[&str] = &[
     "edit_project.suggest_issue_report",
     "edit_project.offer_choices",
     "edit_project.set_performance",
+    "edit_project.performance_presets",
     "edit_project.set_loop",
     "search_instruments",
     "instrument_diagnostics",
@@ -319,6 +320,7 @@ impl Operation {
                 || matches!(&parsed, crate::live_agent::Command::History { .. } if mutating)
                 || matches!(&parsed, crate::live_agent::Command::EditClip { operation, .. } if operation.requires_confirmation())
                 || matches!(&parsed, crate::live_agent::Command::EditComments { operation } if operation.requires_confirmation())
+                || matches!(&parsed, crate::live_agent::Command::PerformancePresets { operation } if operation.requires_confirmation())
                 || matches!(&parsed, crate::live_agent::Command::EditNotes { edits, .. } if edits.iter().any(crate::live_agent::note_editing::NoteEdit::requires_confirmation))
                 // A local file is asked about because it could be anything on the machine; a
                 // project-workspace path cannot, so reading and writing there is free.

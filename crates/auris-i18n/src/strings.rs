@@ -1384,6 +1384,55 @@ strings! {
     PerformLowToHigh { en: "Low to high", ja: "低音から高音" }
     PerformHighToLow { en: "High to low", ja: "高音から低音" }
     PerformAlternate { en: "Alternating", ja: "交互" }
+    PerformPreset { en: "Preset", ja: "プリセット" }
+    PerformPresetMenu { en: "Performance presets", ja: "演奏プリセット" }
+    PerformPresetCustom { en: "Custom", ja: "カスタム" }
+    PerformPresetNone { en: "None", ja: "なし" }
+    PerformPresetSave { en: "Save Current Performance as Preset…", ja: "現在の演奏をプリセットとして保存…" }
+    PerformPresetSaveFamily { en: "Instrument family for the preset", ja: "保存する楽器ジャンル" }
+    PerformPresetName { en: "Preset name", ja: "プリセット名" }
+    PerformPresetDelete { en: "Delete a Saved Preset…", ja: "保存したプリセットを削除…" }
+    PerformPresetDeleteMenu { en: "Delete saved preset", ja: "保存したプリセットを削除" }
+    PresetFamilyKeys { en: "Keyboards", ja: "鍵盤楽器" }
+    PresetFamilyGuitar { en: "Guitar", ja: "ギター" }
+    PresetFamilyBass { en: "Bass", ja: "ベース" }
+    PresetFamilyDrums { en: "Drums", ja: "ドラム" }
+    PresetFamilyStrings { en: "Strings", ja: "弦楽器" }
+    PresetFamilyBrass { en: "Brass", ja: "金管楽器" }
+    PresetFamilyWoodwinds { en: "Woodwinds", ja: "木管楽器" }
+    PresetFamilySynth { en: "Synthesizer", ja: "シンセサイザー" }
+    PresetFamilyOther { en: "Other", ja: "その他" }
+    PresetPianoBallad { en: "Ballad piano", ja: "バラードピアノ" }
+    PresetPianoPopComp { en: "Pop piano comping", ja: "ポップスのピアノ伴奏" }
+    PresetJazzPianoComp { en: "Jazz piano comping", ja: "ジャズピアノのコンピング" }
+    PresetElectricPianoSoul { en: "Soul electric piano", ja: "ソウル系エレピ" }
+    PresetOrganSustain { en: "Organ", ja: "オルガン" }
+    PresetAcousticStrum { en: "Acoustic strumming", ja: "アコギのストローク" }
+    PresetRockRhythmGuitar { en: "Rock rhythm guitar", ja: "ロックのリズムギター" }
+    PresetFunkCuttingGuitar { en: "Funk cutting", ja: "ファンクのカッティング" }
+    PresetLeadGuitar { en: "Lead guitar", ja: "リードギター" }
+    PresetFingerBass { en: "Finger bass", ja: "指弾きベース" }
+    PresetFunkBass { en: "Funk bass", ja: "ファンクベース" }
+    PresetSynthBassTight { en: "Tight synth bass", ja: "タイトなシンセベース" }
+    PresetPopDrums { en: "Pop drums", ja: "ポップスのドラム" }
+    PresetFunkDrums { en: "Funk drums", ja: "ファンクのドラム" }
+    PresetJazzDrums { en: "Jazz drums", ja: "ジャズのドラム" }
+    PresetMachineDrums { en: "Drum machine", ja: "ドラムマシン" }
+    PresetStringLegato { en: "Legato strings", ja: "ストリングスのレガート" }
+    PresetStringPizzicato { en: "Pizzicato strings", ja: "ピチカート" }
+    PresetBrassSection { en: "Brass section", ja: "ブラスセクション" }
+    PresetWoodwindSolo { en: "Woodwind solo", ja: "木管ソロ" }
+    PresetSynthLead { en: "Synth lead", ja: "シンセリード" }
+    PresetSynthPad { en: "Synth pad", ja: "シンセパッド" }
+    PresetSynthArpTight { en: "Tight arpeggio", ja: "タイトなアルペジオ" }
+    PresetChiptune { en: "Chiptune", ja: "チップチューン" }
+    ErrorUnknownPerformancePreset { en: "That performance preset no longer exists.", ja: "その演奏プリセットはもうありません。" }
+    ErrorPresetName { en: "A preset name is 1 to 64 characters.", ja: "プリセット名は1〜64文字で入力してください。" }
+    ErrorPresetBuiltinName { en: "A built-in preset already uses that name. Choose another.", ja: "内蔵プリセットと同じ名前です。別の名前にしてください。" }
+    ErrorPresetExists { en: "A saved preset already uses that name. Delete it first or choose another.", ja: "同じ名前のプリセットが保存されています。先に削除するか、別の名前にしてください。" }
+    ErrorPresetDescription { en: "A preset description is at most 400 characters.", ja: "プリセットの説明は400文字以内です。" }
+    ErrorPresetFull { en: "256 presets are already saved. Delete one first.", ja: "保存できるプリセットは256個までです。先にどれかを削除してください。" }
+    ErrorPresetBuiltin { en: "A built-in preset cannot be deleted.", ja: "内蔵プリセットは削除できません。" }
     // Note values. Written as the fraction in both languages, because that is what is printed on
     // every other DAW's grid menu and the words for them are longer than the row is wide.
     SubdivisionEighth { en: "1/8", ja: "1/8" }
