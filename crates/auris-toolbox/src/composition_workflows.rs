@@ -1,14 +1,9 @@
-//! Shared vocal-song guidance and opt-in phase-specific composition instructions.
+//! Shared vocal-song guidance and the phase-specific composition instructions.
 
 use auris_session::production_record::{Phase, WritingOrder};
 
-/// Default scope and completion checks for new vocal songs, shared by every prompt profile.
+/// Default scope and completion checks for new vocal songs.
 pub const VOCAL_SONG_FORM: &str = "\nNew vocal songs include verse 2 and later choruses/ending unless the user limits the scope. Honor duration/bar limits, one-chorus demos, excerpts, lyric-only work and local edits. Plan the whole form before notes; write section ranges with edit_harmony and track progress in production_record when available. A first-verse sketch is intermediate. Give verse 2 new lyrics developing the story, recognizable melody and deliberate backing/phrasing changes. Use separate clips for different words; looping verse 1 is not verse 2. Chorus lyrics may repeat; a bridge or third verse is optional. In .asong use distinct sections/lyrics and melody_from for melodic reuse; diagnose_song checks fit. Complete notes, lyrics, the song-wide lyrics annotation (edit_lyrics) and backing in every planned sung section. Before finishing, compare inspect_project with the plan and read later sections' notes/lyrics. Where available check inspect_singer section_coverage, following next_section_offset. Labels, counts or a current take alone do not prove completeness; instrumental sections may be empty. Synthesize the whole score when requested. If blocked, preserve it and name the unfinished sections/synthesis.\n";
-
-/// Opt-in only until controlled listening demonstrates acceptable composition quality.
-pub fn enabled() -> bool {
-    std::env::var("AURIS_COMPOSITION_WORKFLOWS").is_ok_and(|v| v == "1")
-}
 
 // Each phase is a paragraph of what to do, its guidance, then a technique index: names only,
 // each a heading of docs/composition-techniques.md, which search_documentation returns. The

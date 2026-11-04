@@ -92,8 +92,7 @@ impl Bridge {
 
     pub(crate) fn production_record(&self, operation: Operation) -> Result<Value, String> {
         let write = !matches!(operation, Operation::Read);
-        let instructions = toolbox::composition_workflows::enabled()
-            && matches!(operation, Operation::Read | Operation::EnterPhase { .. });
+        let instructions = matches!(operation, Operation::Read | Operation::EnterPhase { .. });
         self.with_production(
             |state| {
                 if !state.document["revision"].is_string() {

@@ -221,7 +221,7 @@ def run(args) -> None:
         "manifest_sha256": digest(args.manifest),
         "model": args.model,
         "backend": getattr(args, "backend", "codex"),
-        "prompt_profile": getattr(args, "prompt_profile", "legacy"),
+        "prompt_profile": "phased",
         "candidate_tools_enabled": args.candidate_tools,
         "context_tokens": args.context_tokens,
         "runner_sha256": digest(Path(__file__)),
@@ -325,9 +325,6 @@ def run(args) -> None:
             environment = dict(
                 os.environ,
                 AURIS_COMPOSITION_EVAL=str(config_path),
-                AURIS_COMPOSITION_WORKFLOWS="1"
-                if provenance["prompt_profile"] == "modular"
-                else "0",
                 AURIS_ARRANGEMENT_HARNESS="0",
                 AURIS_COMPOSITION_CANDIDATES="1" if args.candidate_tools else "0",
             )
@@ -751,9 +748,6 @@ def main() -> None:
     runner.add_argument("--model", default="gpt-6.1-sol")
     runner.add_argument(
         "--backend", choices=["codex", "claude", "rig"], default="codex"
-    )
-    runner.add_argument(
-        "--prompt-profile", choices=["legacy", "modular"], default="legacy"
     )
     runner.add_argument(
         "--candidate-tools",

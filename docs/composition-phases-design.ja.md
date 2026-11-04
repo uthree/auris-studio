@@ -1,6 +1,6 @@
 # 作曲エージェントのフェーズ分割 設計案
 
-作曲エージェントの仕事を「作曲」「編曲」「MIX」の三段に分ける設計案です。9節の手順1〜3、5、6は実装済みで、`AURIS_COMPOSITION_WORKFLOWS=1` で有効になります。手順4の比較評価は3回まで終えています。
+作曲エージェントの仕事を「作曲」「編曲」「MIX」の三段に分ける設計案です。9節の手順はすべて実装済みで、フェーズ方式が既定です（環境変数での切り替えはなくなりました）。手順4の比較評価は3回まで終えています。
 
 ## 1. いまの状態
 
@@ -282,13 +282,16 @@ phased − legacy（各題材2本ずつの平均の差）：
 - 手順6：ワークショップのフェーズ別ラウンド（6節）。**実装済み。**
   - `Direction` に `phase`（`score` か `finish`）を足した。ないときは、今までどおり一度に完成品を作る。
   - 候補はそれぞれ、曲の隣に `production.json` として production record を残す（チェックポイントにも保存し、復旧ではそれを引き継ぐ）。デモは作曲フェーズから始まる。仕上げは親のデモの記録を引き継いで編曲フェーズから始まるので、デモの主旋律、harmony、テンポは手順5のロックで守られる。役割を登録しないまま終わったデモは失敗として返す。仕上げに要るため。
-  - ディレクターの指示は、`AURIS_COMPOSITION_WORKFLOWS=1` のときだけフェーズ別ラウンドの段落を足す（`auris_toolbox::workshop::director`）。新しい曲ではまずデモを2〜3本出し、選ばれたら仕上げるかメロ、歌詞、コードを直すかを選択肢で聞く。候補カードには「デモ」のバッジが付く。
+  - ディレクターの指示には、フェーズ別ラウンドの段落を足す（`auris_toolbox::workshop::director`）。新しい曲ではまずデモを2〜3本出し、選ばれたら仕上げるかメロ、歌詞、コードを直すかを選択肢で聞く。候補カードには「デモ」のバッジが付く。
   - 評価は11節の5回目。
-- 手順7：結果が良ければフェーズ方式を既定にし、legacy の指示（`composition.md`、`live-tools.md`）を消す。
+- 手順7：フェーズ方式を既定にした。**実装済み。**
+  - 判断の根拠は11節の評価。フェーズ方式の歌もの12本の SAE Arrange は平均76.6で、legacy の73.1を上回り、ロックでの取り消しは一度も起きなかった。
+  - legacy の指示（`composition.md`、`live-tools.md`）と `AURIS_COMPOSITION_WORKFLOWS` を消した。システムプロンプトは共通の核（`core.md`）だけになる。`musical-design.md` は曲案と歌詞の生成が使うので残す。
+  - 評価ランナー（`composition_quality.py`、`composition_refine.py`）の `--prompt-profile` も消した。記録には `prompt_profile: "phased"` が残るので、以前の legacy の結果とは区別できる。
 
 ### 評価の進め方
 
-- 作り直しは `cargo run --release -p auris-agent --example workshop_trial -- <スレッドのフォルダ> <候補ID> <出力フォルダ>`。ワークショップと同じ会話つきの指示と自動再開を使う。`AURIS_COMPOSITION_WORKFLOWS=1` でフェーズ方式になる。1本ずつ順番に動かす。
+- 作り直しは `cargo run --release -p auris-agent --example workshop_trial -- <スレッドのフォルダ> <候補ID> <出力フォルダ>`。ワークショップと同じ会話つきの指示と自動再開を使う。1本ずつ順番に動かす。
 - **VOICEVOX Engine を起動しておく。** 止まっていると歌の合成が失敗し、候補は最後の書き出しで止まる。デスクトップの VOICEVOX を開くか、`%APPDATA%/voicevox/vvpp-engines/<エンジン>/run.exe --host 127.0.0.1 --port 50021` を動かす。
 - 楽譜の確認は `cargo run --release -p auris-session --example song_shapes -- <song.auris>...`。集計と比較のスクリプトは評価フォルダの `scripts/` にある。
 - 自動評価は評価フォルダの `scripts/score-gpu.sh <manifest> <出力フォルダ>` で、SongEval、Audiobox Aesthetics、SAE を順に GPU（RX 9070 XT、Windows の ROCm 版 PyTorch）で動かす。1曲あたり SAE 約10秒、SongEval 数秒（初回はカーネルの準備で十数秒）、Audiobox 約1秒。CPU 版の `scripts/score.sh` は1曲あたり約3分半かかる。GPU と CPU の点の差は SongEval と Audiobox で 0.001 以下。結果がそろった評価器は飛ばすので、落ちたら同じコマンドで続きから再開できる。manifest の題材は `theme` に入れる（SongEval は `group` を修正前後の対として読み、同じ group に2曲あると止まる）。

@@ -8,8 +8,7 @@
 //! The thread folder is one under `<config>/workshop/threads/`. The direction is read from its
 //! `conversation.json`, the composer is the one in the user's settings, and the output folder
 //! receives `composer-log.jsonl` and `song/song.auris` exactly as a workshop candidate would.
-//! A candidate that continued a parent continues the same parent here. Set
-//! `AURIS_COMPOSITION_WORKFLOWS=1` to try the phased profile.
+//! A candidate that continued a parent continues the same parent here.
 //!
 //! A phased round is tried by overriding the logged direction: `AURIS_TRIAL_PHASE=score`
 //! composes it as a demo, and `AURIS_TRIAL_PHASE=finish` with `AURIS_TRIAL_PARENT` set to an
@@ -67,15 +66,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let settings = Settings::load();
     let prefs = settings.agent.clone();
     eprintln!(
-        "composing \"{}\" with {} {} ({} profile)",
-        candidate.direction.title,
-        prefs.backend,
-        prefs.model,
-        if auris_toolbox::composition_workflows::enabled() {
-            "phased"
-        } else {
-            "legacy"
-        }
+        "composing \"{}\" with {} {}",
+        candidate.direction.title, prefs.backend, prefs.model
     );
     let started = std::time::Instant::now();
     let result = compose_trial(

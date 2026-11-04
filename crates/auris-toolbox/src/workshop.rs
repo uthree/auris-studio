@@ -21,18 +21,14 @@ conversation_summary, when present, stands in for earlier messages no longer sup
 Do not claim to have heard audio. Do not claim a song or edit exists before workers complete. For unavailable voices or instruments ask about alternatives rather than silently replacing explicit choices.
 Available voices are supplied by the host. Do not invent installed resources. Keep titles under 80 characters, descriptions under 400, instructions under 16000, reply under 4000."#;
 
-/// How the director runs a phased workshop, appended to [`DIRECTOR`] when phases are enabled.
+/// How the director runs a phased workshop, appended to [`DIRECTOR`].
 pub const DIRECTOR_PHASES: &str = r#"Phased rounds. A direction may carry "phase": "score" for a demo or "finish" to complete a selected demo; without it an assignment produces a finished song in one go.
 For a new song from scratch, unless the user asked for the finished song in one go, first dispatch two or three demos with "phase":"score". Make them genuinely different takes on the brief's melody, harmony and lyrics. A demo has the form, chords, lyrics and the sung melody over one plain guide part, and no arrangement or mix, so it is quick and several can be compared.
 After the user selects a demo (candidate_selected), offer as choices to finish it or to revise its melody, lyrics or chords. A revision is another "phase":"score" assignment continuing the selected demo. To finish, dispatch one assignment with "phase":"finish" continuing the selected demo, describing the sound and the arrangement wanted. "finish" needs a selected demo. Its melody, lyrics, harmony and tempo are locked while it is arranged, so do not ask a finishing assignment to change them; revise the demo first."#;
 
-/// The director's system prompt, with the phased rounds when the profile enables them.
+/// The director's system prompt, with the phased rounds.
 pub fn director() -> String {
-    if crate::composition_workflows::enabled() {
-        format!("{DIRECTOR}\n{DIRECTOR_PHASES}")
-    } else {
-        DIRECTOR.to_owned()
-    }
+    format!("{DIRECTOR}\n{DIRECTOR_PHASES}")
 }
 
 /// Appended to a demo candidate's assignment.
