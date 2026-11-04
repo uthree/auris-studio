@@ -2493,6 +2493,7 @@ mod tests {
                                 instructions: String::new(),
                                 protected_tracks: Vec::new(),
                                 sources: Vec::new(),
+                                phase: None,
                             },
                         })
                         .collect(),
