@@ -71,10 +71,7 @@ pub use audio::{
     needs_asset, register_audio_sampler,
 };
 pub use bank::{SharedSoundFonts, SoundFontBank};
-pub use sampler::{
-    ENVELOPE_KEY as SAMPLER_ENVELOPE_KEY, SAMPLER_ID, Sampler, register_sampler, store_preset,
-    stored_preset,
-};
+pub use sampler::{SAMPLER_ID, Sampler, register_sampler, store_preset, stored_preset};
 pub use zones::{
     KeyRange, MAX_ZONES as MAX_SAMPLE_ZONES, SampleZone, VelocityRange, keys_played_by, pick_zone,
     store_zones, stored_zones,

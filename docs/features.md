@@ -810,27 +810,12 @@ happens off the audio thread; what runs on it allocates nothing.
 
 ### Shaping a font
 
-The sampler carries the same four controls the built-in instruments do — attack, decay, sustain,
-release — and the same draggable envelope above them. They sit *on top of* the font's own shape
-rather than replacing it: a piano's hammer is still a hammer, but you can fade it in, hold it
-under its own decay, or let it ring long after the key has gone.
-
-**It is off until you switch it on.** The `Envelope` toggle in the window is the whole of it, and
-while it is off the four sliders do nothing at all — the sampler is not multiplying every note by
-one, it is not running the mechanism. That matters because switching it on **costs** something:
-
-* **Polyphony drops to fifteen notes.** Channel expression is the only per-note gain the
-  synthesiser exposes and it applies to a whole MIDI channel, so a note that is to be faded on its
-  own needs a channel to itself. There are sixteen and one is reserved.
-* **A drum kit's choke groups stop working** — an open hi-hat is no longer cut off by a closed one.
-  The choke is only checked between notes sharing a channel, and now they do not.
-
-The window says so, in a strip under the graph, for as long as the switch is on. Turning it back
-off restores everything immediately, mid-note if need be.
-
-Once it is on, the envelope owns the note. A release of zero means the note stops when the key
-does, and the graph shows exactly that — a vertical drop with no tail. The default is a fifth of a
-second, which is close to how a General MIDI patch already behaves.
+The SoundFont player plays a font exactly as it was authored, its own envelope included; its one
+control is the level. It used to carry an attack, decay, sustain and release of its own, laid over
+the font through per-note MIDI channels, and that cost fourteen-note polyphony and a drum kit's
+choke groups for a fade the synthesiser was never built to take. To give a font sound a different
+attack or release — a piano cut off the moment the key lifts, say — render its notes to audio and
+play them from the audio sampler, whose envelope is its own.
 
 ## Built-in effects
 

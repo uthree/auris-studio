@@ -378,8 +378,8 @@ pub mod prelude {
         WavExportSettings,
     };
     pub use auris_sampler::{
-        AUDIO_SAMPLER_ID, AUDIO_SAMPLER_LOOP_KEY, KeyRange, MAX_SAMPLE_ZONES, SAMPLER_ENVELOPE_KEY,
-        SAMPLER_ID, SampleZone, VelocityRange,
+        AUDIO_SAMPLER_ID, AUDIO_SAMPLER_LOOP_KEY, KeyRange, MAX_SAMPLE_ZONES, SAMPLER_ID,
+        SampleZone, VelocityRange,
     };
 
     pub use crate::{

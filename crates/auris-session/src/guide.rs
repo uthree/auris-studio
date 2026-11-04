@@ -1647,34 +1647,19 @@ pub mod plugins {
     //! `attack`, `decay`, `sustain` and `release` is drawn one, and dragging its corners writes
     //! those four parameters. All four or none — three of them is not an envelope with a piece
     //! missing but a different shape, and the drum synth's lone decay would be drawn as a ramp
-    //! with two corners invented for it. That is why [`auris_sampler`] gained the picture the day
-    //! it gained the parameters, without a line changing in the frontend.
+    //! with two corners invented for it. That is why a sampler gains the picture the day
+    //! it gains the parameters, without a line changing in the frontend.
     //!
     //! # An envelope over a sound that already has one
     //!
-    //! [`auris_sampler`] does not synthesise its own voices — a font's regions carry their own
-    //! volume envelopes, and rustysynth neither exposes them nor lets a caller reach a voice. The
-    //! one per-note gain there is, is *channel expression*, so a note that is to be faded on its
-    //! own has to be given a channel of its own: fifteen of the library's sixteen, one note each.
-    //!
-    //! That trade is real — fifteen notes instead of 128 voices, and a drum kit's choke groups
-    //! only work between notes sharing a channel — so the whole mechanism sits behind a switch:
-    //! an `envelope` toggle, off by default, and while it is off the sampler plays the font
-    //! exactly as it is written. Two rules came out of it, and both generalise:
-    //!
-    //! **A feature that costs something is switched on explicitly, not inferred.** An earlier
-    //! version turned the mechanism on when any of the four sliders left its default, which is
-    //! tidier and wrong: a control that arms itself when you nudge it to see what it does is a
-    //! control nobody can disarm with confidence. The test for "on" is a free function
-    //! (`auris_sampler`'s `shaping`), so it can be read and asserted on rather than inferred from
-    //! the audio.
-    //!
-    //! **A cost the user cannot see is a cost the window has to say out loud.** Missing polyphony
-    //! shows up as "the top note of my chord dropped out", which is the kind of symptom that gets
-    //! blamed on anything but the switch that caused it, so the plugin window carries a caution
-    //! strip for as long as the envelope is on. Which plugin warns, and about what, is decided in
-    //! `auris_gpui::ui::plugin_window::caution` — the frontend, for the same reason it decides
-    //! which plugin gets a curve.
+    //! The SoundFont player does not synthesise its own voices: a font's regions carry their own
+    //! volume envelopes, and rustysynth neither exposes them nor lets a caller reach a voice. It
+    //! once laid an envelope over them anyway, by giving each note a MIDI channel of its own and
+    //! fading that channel's expression, which cost the player all but fourteen notes of
+    //! polyphony and a drum kit's choke groups. That mechanism is gone. The player plays the font
+    //! as it was written, and a sound that needs a different attack or release is rendered and
+    //! played from the audio sampler, whose envelope is its own. The lesson generalises: when a
+    //! library does not offer a control, reshaping the *material* beats forcing the library.
     //!
     //! # Where a new plugin goes
     //!

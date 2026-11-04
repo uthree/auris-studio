@@ -3,6 +3,7 @@
 use super::*;
 use crate::auxiliary_window::Surface;
 use crate::harness::{choose, click, paint, resize, with_a_clip};
+use crate::theme::Theme;
 use gpui::{TestAppContext, size};
 
 fn selector(id: impl Into<gpui::ElementId>) -> &'static str {
