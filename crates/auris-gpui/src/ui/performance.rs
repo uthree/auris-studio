@@ -801,7 +801,7 @@ impl AurisApp {
             .and_then(|(track, _)| self.project().track(track))
             .is_some_and(|track| track.kind.is_drum());
 
-        let mut rows: Vec<AnyElement> = Vec::new();
+        let mut rows: Vec<AnyElement> = vec![self.perform_preset_row(clip, &stack, cx)];
 
         for dial in PERFORM_DIALS {
             let dial = *dial;

@@ -1,5 +1,6 @@
 //! Typed, partial edits of the open clip's non-destructive performance.
 mod effects;
+pub mod presets;
 #[cfg(test)]
 mod tests;
 use super::*;
@@ -381,7 +382,27 @@ impl Session {
                 "Supply at least one performance setting or an explicit reset stage".into(),
             );
         }
-        let (mut stack, melodic) = self.performance_scope(clip, voice)?;
+        let (stack, melodic) = self.performance_scope(clip, voice)?;
+        let stack = self.patched_stack(stack, melodic, clip.0, &patch)?;
+        let mut outer = self
+            .clip_transforms(clip)
+            .map_err(|e| e.to_string())?
+            .to_vec();
+        scope_into(&mut outer, voice, stack);
+        Ok(outer)
+    }
+
+    /// Applies a validated patch's edits to one stage list, which may be empty.
+    ///
+    /// `seed` is the take a newly installed random stage starts from; `melodic` false refuses
+    /// the pitch and octave controls.
+    pub(crate) fn patched_stack(
+        &self,
+        mut stack: Vec<NoteTransform>,
+        melodic: bool,
+        seed: u64,
+        patch: &PerformancePatch,
+    ) -> Result<Vec<NoteTransform>, String> {
         if !melodic
             && (patch.pitch.is_some()
                 || patch.octave_above.is_some()
@@ -397,7 +418,7 @@ impl Session {
                 .iter()
                 .any(|s| matches!(s, NoteTransform::Expression { .. }))
             {
-                let mut settings = expression(&stack, clip.0);
+                let mut settings = expression(&stack, seed);
                 let peak = settings.timing.max(settings.velocity);
                 if peak > 0.0 {
                     settings.timing *= amount / peak;
@@ -417,7 +438,7 @@ impl Session {
                     .find(|s| matches!(s, NoteTransform::Humanize { .. }))
                 {
                     Some(NoteTransform::Humanize { seed, .. }) => *seed,
-                    _ => clip.0,
+                    _ => seed,
                 };
                 replace(
                     &mut stack,
@@ -427,7 +448,7 @@ impl Session {
             }
         }
         if let Some(update) = &patch.expression {
-            let settings = merge(expression(&stack, clip.0), update)?;
+            let settings = merge(expression(&stack, seed), update)?;
             replace(
                 &mut stack,
                 ResetStage::Expression,
@@ -506,7 +527,7 @@ impl Session {
             );
         }
         if patch.brush.is_some() || patch.ghost.is_some() {
-            let mut settings = ghost(&stack, clip.0);
+            let mut settings = ghost(&stack, seed);
             if let Some(brush) = patch.brush {
                 settings.velocity = 0.3 * brush;
             }
@@ -584,40 +605,40 @@ impl Session {
                 }),
             );
         }
-        let mut outer = self
-            .clip_transforms(clip)
-            .map_err(|e| e.to_string())?
-            .to_vec();
-        if let Some(voice) = voice {
-            let at = outer.iter().position(
-                |s| matches!(s,NoteTransform::ForDrumVoice{voice:held,..} if held==voice),
-            );
-            match (at, stack.is_empty()) {
-                (Some(at), _) => {
-                    outer[at] = NoteTransform::ForDrumVoice {
+        Ok(stack)
+    }
+}
+
+/// Writes `stack` into `outer`: as the whole clip's stages, or as one drum writer's scope.
+fn scope_into(outer: &mut Vec<NoteTransform>, voice: Option<&str>, stack: Vec<NoteTransform>) {
+    if let Some(voice) = voice {
+        let at = outer
+            .iter()
+            .position(|s| matches!(s,NoteTransform::ForDrumVoice{voice:held,..} if held==voice));
+        match (at, stack.is_empty()) {
+            (Some(at), _) => {
+                outer[at] = NoteTransform::ForDrumVoice {
+                    voice: voice.into(),
+                    transforms: stack,
+                }
+            }
+            (None, false) => {
+                let at = outer
+                    .iter()
+                    .position(|s| rank(s) > 7)
+                    .unwrap_or(outer.len());
+                outer.insert(
+                    at,
+                    NoteTransform::ForDrumVoice {
                         voice: voice.into(),
                         transforms: stack,
-                    }
-                }
-                (None, false) => {
-                    let at = outer
-                        .iter()
-                        .position(|s| rank(s) > 7)
-                        .unwrap_or(outer.len());
-                    outer.insert(
-                        at,
-                        NoteTransform::ForDrumVoice {
-                            voice: voice.into(),
-                            transforms: stack,
-                        },
-                    );
-                }
-                (None, true) => {}
+                    },
+                );
             }
-        } else {
-            outer = stack;
+            (None, true) => {}
         }
-        Ok(outer)
+    } else {
+        *outer = stack;
     }
 }
 

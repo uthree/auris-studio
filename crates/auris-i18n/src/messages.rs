@@ -465,6 +465,18 @@ messages! {
         ja: "{name} をサンプラーに読み込みました"
     }
 
+    /// Confirmation that the sampler's recordings were measured and put on their pitches.
+    fn sample_pitches_detected(count: usize) {
+        en: "Detected the pitch of {count} sample(s)",
+        ja: "サンプル {count} 件のピッチを合わせました"
+    }
+
+    /// Confirmation that several audio files joined a track's sampler map.
+    fn samples_loaded(count: usize) {
+        en: "Loaded {count} samples into the sampler",
+        ja: "サンプル {count} 件をサンプラーに読み込みました"
+    }
+
     /// Confirmation that a SoundFont was read, and how many sounds it brought with it.
     ///
     /// The count rather than the path, because a font goes on a shelf instead of onto a track:

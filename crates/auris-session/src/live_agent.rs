@@ -212,18 +212,28 @@ pub enum Command {
         /// Optional track and clip name, up to 256 bytes; otherwise the source stem.
         name: Option<String>,
     },
-    /// Load a local audio file into an instrument track's sampler (auris.sampler.audio): the track plays that one recording across the keyboard, pitched by equal temperament from root_note, so a vocal chop, a hit, a texture or one note of a real instrument becomes a playable part. path is relative to the project workspace (samples/kick.wav, no permission prompt) or an absolute local path (asks first). The file is copied into the project's Audio folder, so it survives save and reopen; nothing is placed on the timeline, so write notes with add_clip and edit_notes. root_note is the MIDI note the recording sounds at (60 is C4); omitted, a note name in the file name such as Piano_C3 is used, else 60. loop repeats the sample between loop_start and loop_end while the note is held (sustained pads, drones); otherwise each note plays to the end of the sample. Afterwards inspect_instrument and set_instrument_params reach root, tune, key_tracking (off plays every key at the recorded pitch, for one-shot hits), attack/decay/sustain/release, loop, loop_start and loop_end. A track arriving from another instrument loses that instrument's settings and automation. One Undo removes it.
+    /// Load local audio files into an instrument track's sampler (auris.sampler.audio) as a multisample: each recording is a zone pitched by equal temperament from its root_note, so vocal chops, hits, textures or notes of a real instrument become a playable part. Each note plays the zone whose root is nearest, inside the velocity layer holding the note's velocity (low_velocity..high_velocity, normalized 0..1); give low_key/high_key only for a split other than nearest-root, e.g. one drum hit per key. Zones with the same root and layer alternate note by note (round robin). Pitching a recording far from its root sounds unnatural, so for a real instrument load one recording every few semitones. Each path is relative to the project workspace (samples/kick.wav, no permission prompt) or an absolute local path (asks first). Files are copied into the project's Audio folder, so they survive save and reopen; nothing is placed on the timeline, so write notes with add_clip and edit_notes. Each recording's pitch is measured (YIN): root_note omitted uses a note name in the file name such as Piano_C3, else the nearest key to the measured pitch, else 60, and tune corrects the measured offset so off-key, sung or microtonal recordings play in tune; each zone reports measured_hz. append keeps the current zones; otherwise they are replaced. loop repeats each sample between loop_start and loop_end while held (pads, drones). Afterwards edit_sample_map changes zones, and set_instrument_params reaches tune, key_tracking (off plays every key at the recorded pitch), attack/decay/sustain/release, loop, loop_start and loop_end. A track arriving from another instrument loses that instrument's settings and automation. One Undo removes it.
     LoadSample {
         /// Stable instrument track ID; drum, audio, singer and bus tracks are refused.
         track: u64,
-        /// Workspace-relative path (samples/kick.wav) or absolute local audio file path, up to 512 MiB; no network paths.
-        path: String,
-        /// MIDI note 0..127 the recording sounds at; 60 is C4.
-        #[schemars(range(min = 0, max = 127))]
-        root_note: Option<u8>,
-        /// Loop the sample while a note is held; omitted keeps the track's current setting (off for a new sampler).
+        /// One to 128 recordings, each becoming one zone.
+        samples: Vec<crate::session::AgentSample>,
+        /// Add to the current zones instead of replacing them; default false.
+        append: Option<bool>,
+        /// Loop the samples while a note is held; omitted keeps the track's current setting (off for a new sampler).
         #[serde(rename = "loop")]
         looped: Option<bool>,
+    },
+    /// Change or remove zones of an audio sampler track's map, as one Undo. Indices are the zone numbers load_sample and inspect_instrument report, before this call, for edits and remove alike. Each zone reports plays, the keys it actually sounds on.
+    EditSampleMap {
+        /// Stable instrument track on auris.sampler.audio.
+        track: u64,
+        /// Changes to existing zones; omitted fields keep their value.
+        #[serde(default)]
+        edits: Vec<crate::session::SampleZoneEdit>,
+        /// Zone indices to remove.
+        #[serde(default)]
+        remove: Vec<usize>,
     },
     /// Append a Standard MIDI File as new editable instrument/drum tracks. Keep the current tempo/meter maps and existing tracks. Notes, bends and controllers retain exact source ticks; playback instruments are defaults and need review. One Undo removes the whole import.
     ImportMidi {
@@ -376,6 +386,11 @@ pub enum Command {
         drum_voice: Option<String>,
         /// Partial settings; omit every field that should stay unchanged.
         settings: Box<performance::PerformancePatch>,
+    },
+    /// Named performance presets by instrument family: list, apply one to a clip as a starting feel (replaces its stages, own random take, one Undo; tune after with set_performance), save one from a clip or settings, or delete a kept one. Built-ins never swing. Kept presets are shared across projects and the user's picker.
+    PerformancePresets {
+        /// list, apply, save or delete.
+        operation: performance::presets::PresetOperation,
     },
     /// Write or clear the document's key, Roman-numeral chord progression and/or section label across a bounded bar range. For a new song, write its harmony and named form (intro, verse, chorus, bridge, outro as appropriate) before adding notes. Changes metadata only; existing notes and mix are preserved. One Undo reverts the edit; persistence follows the host.
     EditHarmony {
@@ -680,9 +695,11 @@ impl Command {
         let inside = |path: &str| crate::workspace_relative(path).is_some();
         match self {
             Self::ImportAudio { path, .. }
-            | Self::LoadSample { path, .. }
             | Self::ImportMidi { path, .. }
             | Self::VerifyRender { path, .. } => inside(path),
+            Self::LoadSample { samples, .. } => {
+                !samples.is_empty() && samples.iter().all(|sample| inside(&sample.path))
+            }
             Self::ExportMidi { output } => inside(output),
             Self::Render {
                 destination,
@@ -722,6 +739,7 @@ impl Command {
             Self::EditClipCurve { operation, .. } => !operation.is_read_only(),
             Self::EditTimeline { operation } => !operation.is_read_only(),
             Self::Layer { operation } => !operation.is_read_only(),
+            Self::PerformancePresets { operation } => operation.is_mutating(),
             Self::Inspect {}
             | Self::ReportStatus { .. }
             | Self::MelodyShape { .. }
@@ -977,8 +995,23 @@ impl Session {
                     })
                     .collect();
                 let next = offset + parameters.len();
-                Ok(serde_json::json!({"track":track.0,"parameters":parameters,"total":descriptors.len(),"next_offset":(next < descriptors.len()).then_some(next)}).to_string())
+                let mut report = serde_json::json!({"track":track.0,"parameters":parameters,"total":descriptors.len(),"next_offset":(next < descriptors.len()).then_some(next)});
+                if offset == 0
+                    && self
+                        .project()
+                        .track(track)
+                        .and_then(|t| t.kind.as_instrument())
+                        .is_some_and(|i| i.instrument_id == auris_sampler::AUDIO_SAMPLER_ID)
+                {
+                    report["sample_map"] = self.agent_sample_map_report(track)["zones"].take();
+                }
+                Ok(report.to_string())
             }
+            Command::EditSampleMap {
+                track,
+                edits,
+                remove,
+            } => self.agent_edit_sample_map(TrackId(track), edits, remove),
             Command::SetInstrumentParams { edits } => {
                 let edits: Vec<_> = edits
                     .into_iter()
@@ -999,6 +1032,7 @@ impl Session {
                 drum_voice,
                 settings,
             } => self.agent_set_performance(ClipId(clip), drum_voice.as_deref(), *settings),
+            Command::PerformancePresets { operation } => self.agent_performance_presets(operation),
             Command::EditHarmony {
                 start_bar,
                 bars,

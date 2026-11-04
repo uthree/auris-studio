@@ -15,7 +15,7 @@ use auris_session::prelude::*;
 use gpui::{AnyElement, Pixels, div, prelude::*, px};
 
 use crate::app::AurisApp;
-use crate::theme::{Metrics, Theme};
+use crate::theme::Metrics;
 use crate::ui::context_menu::{ContextMenu, MenuCommand, MenuEntry};
 use crate::ui::icons::Icon;
 use crate::ui::plugin_editor::plugin_header;
@@ -78,47 +78,8 @@ impl PluginSubject {
     }
 }
 
-/// How tall the caution strip is drawn.
-const CAUTION_HEIGHT: Pixels = px(30.0);
-
 /// How tall the row naming the track an effect is keyed from is drawn.
 const SIDECHAIN_HEIGHT: Pixels = px(28.0);
-
-/// What a plugin's window has to warn about, given the state of its switch.
-///
-/// One plugin and one switch, and both are named here rather than asked of the plugin, for the
-/// reason `auris_session::guide::plugins` gives about the equalizer's curve: a `warning` method on
-/// the `Instrument` trait would put a frontend's concern into the plugin contract, and the
-/// sentence is a frontend's to translate in any case.
-///
-/// Why it exists at all: turning the sampler's envelope on is the one control in the application
-/// that *takes something away* — polyphony, and a drum kit's choke groups — and it takes it away
-/// somewhere the person who flipped the switch cannot see. A cost that only shows up as "the
-/// sixteenth note of my chord went missing" is a cost that gets blamed on the wrong thing.
-pub fn caution(plugin_id: &str, envelope_on: bool) -> Option<Key> {
-    match plugin_id == SAMPLER_ID && envelope_on {
-        true => Some(Key::SamplerEnvelopeOn),
-        false => None,
-    }
-}
-
-/// The caution strip, under whatever picture the window is carrying.
-fn caution_strip(text: &'static str, theme: &Theme) -> AnyElement {
-    div()
-        .h(CAUTION_HEIGHT)
-        .w_full()
-        .flex_shrink_0()
-        .flex()
-        .items_center()
-        .px_2()
-        .border_b_1()
-        .border_color(theme.border)
-        .bg(Theme::translucent(theme.warning, 0.12))
-        .text_xs()
-        .text_color(theme.warning)
-        .child(text)
-        .into_any_element()
-}
 
 /// An open plugin editor.
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -351,10 +312,6 @@ impl AurisApp {
         }
         let analyser = equalizer.map(|view| self.analyser_display(subject, view, cx));
         let envelope = self.envelope_of(subject, &plugin_id);
-        let caution = caution(
-            &plugin_id,
-            self.switch_is_on(subject, &plugin_id, SAMPLER_ENVELOPE_KEY),
-        );
 
         let theme = self.theme.clone();
         // Asked by *slot* rather than by plugin id wherever there is one. The registry cannot
@@ -390,13 +347,9 @@ impl AurisApp {
             }
             _ => None,
         };
-        // The audio sampler's one setting that is not a number: which file it plays.
+        // The audio sampler's one setting that is not a number: which files it plays, and where.
         let sample = match subject {
-            PluginSubject::Instrument(track) if plugin_id == AUDIO_SAMPLER_ID => Some((
-                track,
-                self.session.track_sample_name(track),
-                self.session.track_sample_is_loaded(track),
-            )),
+            PluginSubject::Instrument(track) if plugin_id == AUDIO_SAMPLER_ID => Some(track),
             _ => None,
         };
         let wide = host_window.viewport_size().width >= host_window.rem_size() * 48.;
@@ -576,63 +529,10 @@ impl AurisApp {
                         ))
                         .into_any_element()
                 }))
-                .children(sample.map(|(track, name, loaded)| {
-                    let label = match (name, loaded) {
-                        (Some(name), true) => name,
-                        (Some(name), false) => {
-                            format!("{name} ({})", self.t(Key::SamplerSampleMissing))
-                        }
-                        (None, _) => self.t(Key::SamplerNoSample).to_string(),
-                    };
-                    div()
-                        .h(SIDECHAIN_HEIGHT)
-                        .w_full()
-                        .flex_shrink_0()
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .gap_1()
-                        .px_2()
-                        .border_b_1()
-                        .border_color(theme.border)
-                        .child(
-                            div()
-                                .text_xs()
-                                .text_color(theme.text_muted)
-                                .child(self.t(Key::SamplerSample)),
-                        )
-                        .child(button(
-                            "pw-sample",
-                            label,
-                            ButtonStyle::Ghost,
-                            true,
-                            theme.accent_soft,
-                            &theme,
-                            cx.listener(move |this, _, _, cx| {
-                                this.load_sample(track, cx);
-                            }),
-                        ))
-                        .into_any_element()
-                }))
-                .children(caution.map(|key| caution_strip(self.t(key), &theme)))
+                .children(sample.map(|track| self.sample_map_section(track, &theme, cx)))
                 .child(body)
                 .into_any_element(),
         )
-    }
-
-    /// Whether a named toggle parameter of this plugin is switched on.
-    ///
-    /// `false` when the plugin has no such parameter, which is every plugin but one.
-    fn switch_is_on(&mut self, subject: PluginSubject, plugin_id: &str, key: &str) -> bool {
-        let descriptors = self.session.param_descriptors(plugin_id);
-        descriptors
-            .iter()
-            .find(|descriptor| descriptor.key == key)
-            .is_some_and(|descriptor| {
-                self.session
-                    .param_value(subject.param_target(descriptor.id), descriptor)
-                    >= 0.5
-            })
     }
 
     /// The plugin id a subject names, and whether it is switched in.
@@ -889,15 +789,5 @@ mod tests {
             }
             .id_prefix()
         );
-    }
-
-    #[test]
-    fn the_only_switch_that_warns_is_the_one_that_costs_something() {
-        // The sampler's envelope takes polyphony and a drum kit's choke groups away from a user
-        // who cannot see either going. Every other toggle in the application does what it says.
-        assert_eq!(caution(SAMPLER_ID, true), Some(Key::SamplerEnvelopeOn));
-        assert_eq!(caution(SAMPLER_ID, false), None);
-        assert_eq!(caution("auris.synth.chiptune", true), None);
-        assert_eq!(caution("auris.fx.eq", true), None);
     }
 }

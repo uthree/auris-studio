@@ -342,7 +342,7 @@ pub fn stage_file_bytes(path: &Path, bytes: &[u8]) -> Result<StagedFile> {
 ///
 /// Every version bump must decide whether the version it replaces joins this range. Version 32
 /// forgot to, and a project saved the day before would not open at all.
-const READABLE_OLDER: std::ops::RangeInclusive<u32> = 27..=33;
+const READABLE_OLDER: std::ops::RangeInclusive<u32> = 27..=34;
 
 /// Reads a project from `path`.
 ///
