@@ -1489,6 +1489,72 @@ fn wait_for_recovery(count: u32, cancel: &AtomicBool) -> bool {
     !cancel.load(Ordering::Acquire)
 }
 
+/// A finished candidate's production record, beside its song, for a candidate continuing it.
+const RECORD: &str = "production.json";
+/// The record as of the latest checkpoint, which a recovery resumes.
+const CHECKPOINT_RECORD: &str = "checkpoint/production.json";
+
+/// The production record a candidate starts from, given its round and its parent's record.
+///
+/// A demo enters the score phase, keeping a parent demo's roles when it revises one. A finishing
+/// candidate enters the arrangement on its parent's record, so the demo's melody, harmony and
+/// tempo are locked while it is arranged; a parent with no registered roles cannot be finished.
+/// An assignment outside a phased round starts with no record, as before.
+fn round_record(
+    phase: Option<auris_session::workshop::RoundPhase>,
+    parent: Option<auris_session::production_record::Record>,
+) -> Result<Option<auris_session::production_record::Record>, String> {
+    use auris_session::production_record::{Operation, Phase};
+    use auris_session::workshop::RoundPhase;
+    let (mut record, phase, reason) = match phase {
+        None => return Ok(None),
+        Some(RoundPhase::Score) => (
+            parent.unwrap_or_default(),
+            Phase::Score,
+            "Workshop demo round: the user compares demos before one is arranged",
+        ),
+        Some(RoundPhase::Finish) => {
+            let record = parent
+                .filter(|record| record.roles.is_some())
+                .ok_or("Only a demo with registered roles can be finished; select a demo first")?;
+            (
+                record,
+                Phase::Arrangement,
+                "Workshop: the user selected this demo to be arranged and mixed",
+            )
+        }
+    };
+    record.update(Operation::EnterPhase {
+        phase,
+        reason: reason.into(),
+        writing_order: None,
+    })?;
+    Ok(Some(record))
+}
+
+/// Where a candidate's production record is, given the song file a child opens as its parent.
+fn parent_record_path(song: Option<&std::path::Path>) -> Option<PathBuf> {
+    Some(song?.parent()?.parent()?.join(RECORD))
+}
+
+fn read_record(
+    path: &std::path::Path,
+) -> Result<auris_session::production_record::Record, AttemptError> {
+    let bytes = std::fs::read(path).map_err(|e| AttemptError::permanent(e.to_string()))?;
+    serde_json::from_slice(&bytes)
+        .map_err(|e| AttemptError::permanent(format!("Production record is unreadable: {e}")))
+}
+
+fn keep_record(worker: &crate::Worker, path: &std::path::Path) -> Result<(), AttemptError> {
+    let record = worker.production_record()?;
+    let bytes = serde_json::to_vec(&record).map_err(|e| AttemptError::permanent(e.to_string()))?;
+    if let Some(folder) = path.parent() {
+        std::fs::create_dir_all(folder).map_err(|e| AttemptError::permanent(e.to_string()))?;
+    }
+    auris_session::settings::write_config_bytes(path, &bytes)
+        .map_err(|e| AttemptError::permanent(e.to_string()))
+}
+
 fn save_checkpoint(session: &mut Session, folder: &std::path::Path) -> Result<(), AttemptError> {
     let path = folder.join("checkpoint/checkpoint.auris");
     if session.path() == Some(path.as_path()) {
@@ -1661,8 +1727,8 @@ fn compose(
             .set_japanese_dictionary(Some(dictionary))
             .map_err(|e| e.to_string())?;
     }
-    if let Some(parent) = parent {
-        let missing = session.open(&parent).map_err(|e| e.to_string())?;
+    if let Some(parent) = &parent {
+        let missing = session.open(parent).map_err(|e| e.to_string())?;
         if !missing.is_empty() {
             return Err(AttemptError::permanent(
                 "Parent candidate has missing assets",
@@ -1693,10 +1759,10 @@ fn compose(
         Ok(())
     };
     let checkpoint = folder.join("checkpoint/checkpoint.auris");
-    if checkpoint
+    let checkpoint_exists = checkpoint
         .try_exists()
-        .map_err(|e| AttemptError::permanent(e.to_string()))?
-    {
+        .map_err(|e| AttemptError::permanent(e.to_string()))?;
+    if checkpoint_exists {
         let missing = session
             .open(&checkpoint)
             .map_err(|e| AttemptError::permanent(e.to_string()))?;
@@ -1725,6 +1791,22 @@ fn compose(
         auris_toolbox::workshop::COMPOSER
     );
     let worker = crate::Worker::spawn(prefs.clone(), None, true, None)?;
+    let kept = folder.join(CHECKPOINT_RECORD);
+    let record = if checkpoint_exists && kept.is_file() {
+        // A recovery resumes the record its checkpoint was saved with, phase and roles included.
+        Some(read_record(&kept)?)
+    } else {
+        // The parent's record sits beside its song: <candidate>/song/song.auris and
+        // <candidate>/production.json.
+        let parent_record = match parent_record_path(parent.as_deref()) {
+            Some(path) if path.is_file() => Some(read_record(&path)?),
+            _ => None,
+        };
+        round_record(candidate.direction.phase, parent_record).map_err(AttemptError::permanent)?
+    };
+    if let Some(record) = record {
+        worker.seed_production_record(record)?;
+    }
     let mut previews = preview::Renderer::start(candidate.id, sender.clone())?;
     if candidate.direction.protected_tracks.len() > 128
         || candidate
@@ -1743,6 +1825,10 @@ fn compose(
         "candidates":candidate.direction.sources,
         "instruction":"These earlier versions are loaded read-only. To bring material back, call source_material list, then restore the named clips exactly; never rewrite remembered notes. Re-sing restored singer clips."
     })),
+    "phase":candidate.direction.phase.map(|phase| match phase {
+        auris_session::workshop::RoundPhase::Score => auris_toolbox::workshop::DEMO_ROUND,
+        auris_session::workshop::RoundPhase::Finish => auris_toolbox::workshop::FINISH_ROUND,
+    }),
     "recovery":candidate.error.as_ref().map(|error| json!({
         "last_error":error,
         "instruction":"Inspect the restored score and current resources. Continue only unfinished work; do not duplicate successful edits. Correct the cause of the last failure before completing."
@@ -1869,6 +1955,7 @@ fn compose(
                 if result.is_ok() && session.is_dirty() {
                     validate_protected(&session)?;
                     save_checkpoint(&mut session, &folder)?;
+                    keep_record(&worker, &folder.join(CHECKPOINT_RECORD))?;
                 }
                 let reply = match result {
                     Ok(text) if action == "inspect_audio" => {
@@ -1918,6 +2005,14 @@ fn compose(
     drop(previews);
     session.end_agent_request();
     validate_protected(&session)?;
+    let record = worker.production_record()?;
+    if candidate.direction.phase == Some(auris_session::workshop::RoundPhase::Score)
+        && record.roles.is_none()
+    {
+        log.note("demo_without_roles", json!(null));
+        return Err("The demo did not register its foreground with production_record set_roles; finishing it needs the roles".into());
+    }
+    keep_record(&worker, &folder.join(RECORD))?;
     if session.project() == &before {
         log.note("unchanged", json!(null));
         return Err(format!(
@@ -2030,6 +2125,46 @@ mod tests {
             assert!(std::time::Instant::now() < deadline, "no snapshot");
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
+    }
+
+    #[test]
+    fn a_demo_starts_in_the_score_and_finishing_it_locks_its_melody() {
+        use auris_session::production_record::{Operation, Phase};
+        use auris_session::workshop::RoundPhase;
+        assert!(super::round_record(None, None).unwrap().is_none());
+
+        let demo = super::round_record(Some(RoundPhase::Score), None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(demo.phase.as_ref().unwrap().phase, Phase::Score);
+        assert_eq!(demo.lock(), None);
+        // A demo the composer never registered roles for cannot be finished.
+        assert!(super::round_record(Some(RoundPhase::Finish), Some(demo.clone())).is_err());
+        assert!(super::round_record(Some(RoundPhase::Finish), None).is_err());
+
+        let mut registered = demo;
+        registered
+            .update(Operation::SetRoles {
+                foreground: vec![2],
+                guide: vec![4],
+                no_foreground: None,
+            })
+            .unwrap();
+        let finish = super::round_record(Some(RoundPhase::Finish), Some(registered.clone()))
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            finish.lock(),
+            Some(auris_session::phase::Lock::Arrangement {
+                foreground: vec![2]
+            })
+        );
+        assert_eq!(finish.roles.as_ref().unwrap().guide, vec![4]);
+        // Revising a demo keeps its roles and stays unlocked.
+        let revised = super::round_record(Some(RoundPhase::Score), Some(registered))
+            .unwrap()
+            .unwrap();
+        assert!(revised.roles.is_some() && revised.lock().is_none());
     }
 
     #[test]
@@ -2810,6 +2945,7 @@ mod tests {
                 instructions: "Create a short chiptune instrumental".into(),
                 protected_tracks: vec![],
                 sources: vec![],
+                phase: None,
             },
         }
     }

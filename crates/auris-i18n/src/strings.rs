@@ -172,6 +172,7 @@ strings! {
     WorkshopPlanning { en: "Planning the next step…", ja: "作曲の進め方を考えています…" }
     WorkshopRendering { en: "Composing and preparing audio…", ja: "作曲・試聴音声を準備しています…" }
     WorkshopDraftPreview { en: "Work in progress", ja: "途中経過" }
+    WorkshopDemoBadge { en: "Demo", ja: "デモ" }
     WorkshopLatestPreview { en: "Play latest audio", ja: "最新の音源を聴く" }
     WorkshopListen { en: "Listen", ja: "試聴" }
     WorkshopStop { en: "Stop", ja: "停止" }

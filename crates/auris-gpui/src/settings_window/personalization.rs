@@ -432,6 +432,7 @@ mod tests {
                     instructions: "Compose piano".into(),
                     protected_tracks: vec![],
                     sources: vec![],
+                    phase: None,
                 },
                 workshop::Direction {
                     title: "Strings".into(),
@@ -439,6 +440,7 @@ mod tests {
                     instructions: "Compose strings".into(),
                     protected_tracks: vec![],
                     sources: vec![],
+                    phase: None,
                 },
             ],
         };

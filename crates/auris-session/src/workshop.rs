@@ -53,6 +53,20 @@ pub struct Direction {
     /// composer may restore exactly; for example the version a user asks to go back to.
     #[serde(default)]
     pub sources: Vec<u64>,
+    /// The production stage this assignment covers; absent for a finished song in one go.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phase: Option<RoundPhase>,
+}
+
+/// One stage of a phased workshop: demos are compared before one is finished.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RoundPhase {
+    /// A demo: form, harmony, lyrics, the foreground melody and its sung take over one plain
+    /// guide part, with no arrangement or mix, so several can be compared cheaply.
+    Score,
+    /// The selected demo arranged and mixed, its score locked as the arrangement phase locks it.
+    Finish,
 }
 
 /// Persisted candidate identity; IDs also name private artifact directories.
@@ -968,6 +982,7 @@ mod tests {
                         instructions: "Compose".into(),
                         protected_tracks: Vec::new(),
                         sources: vec![],
+                        phase: None,
                     },
                     ready,
                     error: None,
@@ -1275,6 +1290,7 @@ mod tests {
                 instructions: "Private production instructions".into(),
                 protected_tracks: vec![],
                 sources: vec![],
+                phase: None,
             }],
             chosen: 0,
         }

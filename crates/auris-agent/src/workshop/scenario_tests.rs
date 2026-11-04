@@ -77,6 +77,7 @@ fn candidate(id: u64, parent: Option<u64>, ready: bool) -> Candidate {
             instructions: "Preserve the notes and apply only the requested timeline edit.".into(),
             protected_tracks: vec![1],
             sources: vec![],
+            phase: None,
         },
         error: None,
         recoveries: 0,

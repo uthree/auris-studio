@@ -489,6 +489,7 @@ impl Bridge {
 
 /// A cancellable background conversation. Dropping it never waits on the UI thread.
 pub struct Worker {
+    bridge: Bridge,
     stopped: Arc<AtomicBool>,
     commands: async_mpsc::UnboundedSender<String>,
     events: mpsc::Receiver<serde_json::Value>,
@@ -563,6 +564,7 @@ impl Worker {
             recall: Default::default(),
         }));
         let (cancel, cancelled) = oneshot::channel();
+        let handle = bridge.clone();
         std::thread::Builder::new()
             .name("auris-agent".into())
             .spawn(move || {
@@ -594,11 +596,25 @@ impl Worker {
             })
             .map_err(|error| error.to_string())?;
         Ok(Self {
+            bridge: handle,
             stopped,
             commands,
             events,
             cancel: Some(cancel),
         })
+    }
+
+    /// The conversation's production record: its phase, roles and notes.
+    pub fn production_record(&self) -> Result<auris_session::production_record::Record, String> {
+        self.bridge.production_snapshot()
+    }
+
+    /// Start the conversation from a record a host kept, before sending the first request.
+    pub fn seed_production_record(
+        &self,
+        record: auris_session::production_record::Record,
+    ) -> Result<(), String> {
+        self.bridge.seed_production(record)
     }
 
     /// Cancel pending model and approval work without waiting for the worker thread.

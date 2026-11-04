@@ -33,7 +33,7 @@ impl SongPlanner {
         prefs.system_prompt = format!(
             "{}\n{}",
             crate::MUSICAL_DESIGN_INSTRUCTIONS,
-            auris_toolbox::workshop::DIRECTOR
+            auris_toolbox::workshop::director()
         );
         let worker = Worker::spawn(prefs.clone(), None, true, None)?;
         // Tool requests are denied by poll_text. Do not advertise a document planning mode:

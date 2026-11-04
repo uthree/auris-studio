@@ -116,6 +116,22 @@ impl Bridge {
         )
     }
 
+    /// The record as it stands, for a host that keeps it beside the document it describes.
+    pub(crate) fn production_snapshot(&self) -> Result<Record, String> {
+        self.with_production(|state| Ok(state.record.clone()), false)
+    }
+
+    /// Start from a record a host kept, before the model's first turn.
+    pub(crate) fn seed_production(&self, record: Record) -> Result<(), String> {
+        self.with_production(
+            |state| {
+                state.record = record;
+                Ok(())
+            },
+            false,
+        )
+    }
+
     /// What the phase in force keeps fixed, for the owner to hold an edit to.
     pub(crate) fn phase_lock(&self) -> Result<Option<auris_session::phase::Lock>, String> {
         self.with_production(|state| Ok(state.record.lock()), false)
