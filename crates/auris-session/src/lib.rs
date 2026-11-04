@@ -58,6 +58,7 @@ pub mod issue_report;
 pub mod live_agent;
 pub mod midi_reference;
 pub mod music_reference;
+pub mod phase;
 pub mod production_record;
 pub use export_inspection::{ExportInspection, inspect_export};
 pub mod note_pitch;

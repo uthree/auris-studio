@@ -114,6 +114,11 @@ impl Bridge {
         )
     }
 
+    /// What the phase in force keeps fixed, for the owner to hold an edit to.
+    pub(crate) fn phase_lock(&self) -> Result<Option<auris_session::phase::Lock>, String> {
+        self.with_production(|state| Ok(state.record.lock()), false)
+    }
+
     pub(crate) fn inspected_production_document(&self, document: &mut Value) -> Result<(), String> {
         let view = self.with_production(
             |state| {

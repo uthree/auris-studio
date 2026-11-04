@@ -28,6 +28,42 @@ impl Session {
         self.last_record = None;
     }
 
+    /// Run an agent's command under a phase lock, withdrawing it if it changed locked material.
+    ///
+    /// Withdrawn means gone: the document, the dirty flag and the undo history are as they were
+    /// before the call, so neither the screen nor Undo shows an edit the agent was not allowed to
+    /// make. The error the agent reads names what changed and the phase that may change it.
+    ///
+    /// Read-only commands skip the comparison. So does the agent's own undo and redo, which
+    /// moves history in a way a history mark cannot put back; the lock is on new
+    /// edits, not on stepping through ones already made.
+    pub fn agent_command_locked(
+        &mut self,
+        command: crate::live_agent::Command,
+        lock: Option<&crate::phase::Lock>,
+        plugin_paths: &[std::path::PathBuf],
+    ) -> Result<String, String> {
+        let Some(lock) = lock.filter(|_| {
+            command.is_mutating() && !matches!(command, crate::live_agent::Command::History { .. })
+        }) else {
+            return self.agent_command_with_plugin_paths(command, plugin_paths);
+        };
+        let printed = crate::phase::print(&self.project, lock);
+        let before = self.project.clone();
+        let dirty = self.dirty;
+        let mark = self.history.mark();
+        let result = self.agent_command_with_plugin_paths(command, plugin_paths);
+        let changes =
+            crate::phase::changes(&printed, &crate::phase::print(&self.project, lock), &before);
+        if changes.is_empty() {
+            return result;
+        }
+        self.history.rollback(mark);
+        self.restore_history_project(Edit::ExternalChanges, before);
+        self.dirty = dirty;
+        Err(crate::phase::refusal(lock, &changes))
+    }
+
     pub(crate) fn with_agent_history<T>(
         &mut self,
         apply: impl FnOnce(&mut Self) -> Result<T, String>,

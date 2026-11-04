@@ -1852,7 +1852,20 @@ fn compose(
                     _ => "arrange",
                 };
                 let _ = sender.send(JobEvent::Progress(candidate.id, stage.into()));
-                let result = execute(&mut session, event["command"].clone(), &settings, cancel);
+                let lock = match event.get("lock") {
+                    Some(lock) => Some(
+                        serde_json::from_value::<auris_session::phase::Lock>(lock.clone())
+                            .map_err(|e| e.to_string())?,
+                    ),
+                    None => None,
+                };
+                let result = execute(
+                    &mut session,
+                    event["command"].clone(),
+                    lock.as_ref(),
+                    &settings,
+                    cancel,
+                );
                 if result.is_ok() && session.is_dirty() {
                     validate_protected(&session)?;
                     save_checkpoint(&mut session, &folder)?;
@@ -1942,6 +1955,7 @@ fn audio_gate(cancel: &AtomicBool) -> Result<std::sync::MutexGuard<'static, ()>,
 fn execute(
     session: &mut Session,
     command: serde_json::Value,
+    lock: Option<&auris_session::phase::Lock>,
     settings: &Settings,
     cancel: &AtomicBool,
 ) -> Result<String, String> {
@@ -2001,7 +2015,7 @@ fn execute(
             }
         }
     }
-    session.agent_command_with_plugin_paths(command, &settings.plugin_paths)
+    session.agent_command_locked(command, lock, &settings.plugin_paths)
 }
 
 #[cfg(test)]
@@ -2417,6 +2431,7 @@ mod tests {
         execute(
             &mut session,
             json!({"action":"add_track","name":"Original drums","kind":"drum"}),
+            None,
             &Settings::default(),
             &cancel,
         )
@@ -2424,6 +2439,7 @@ mod tests {
         execute(
             &mut session,
             json!({"action":"generate_phrase","track":1,"part":"drums","start_bar":1,"bars":2,"seed":42}),
+            None,
             &Settings::default(),
             &cancel,
         ).unwrap();
@@ -2827,11 +2843,12 @@ mod tests {
         execute(
             &mut session,
             json!({"action":"add_track","name":"Kit","kind":"drum"}),
+            None,
             &Settings::default(),
             &cancel,
         )
         .unwrap();
-        execute(&mut session, json!({"action":"generate_phrase","track":1,"part":"drums","start_bar":1,"bars":2,"seed":42}), &Settings::default(), &cancel).unwrap();
+        execute(&mut session, json!({"action":"generate_phrase","track":1,"part":"drums","start_bar":1,"bars":2,"seed":42}), None, &Settings::default(), &cancel).unwrap();
         let song = session
             .finish_workshop_candidate(
                 &store.candidate_path(1),
@@ -3104,11 +3121,12 @@ mod tests {
         execute(
             &mut session,
             json!({"action":"add_track","name":"Kit","kind":"drum"}),
+            None,
             &Settings::default(),
             &cancel,
         )
         .unwrap();
-        execute(&mut session, json!({"action":"generate_phrase","track":1,"part":"drums","start_bar":1,"bars":2,"seed":42}), &Settings::default(), &cancel).unwrap();
+        execute(&mut session, json!({"action":"generate_phrase","track":1,"part":"drums","start_bar":1,"bars":2,"seed":42}), None, &Settings::default(), &cancel).unwrap();
         save_checkpoint(&mut session, &folder).unwrap();
         let original = session.project().tracks.clone();
         drop(session);
@@ -3386,6 +3404,7 @@ mod tests {
         let error = execute(
             &mut session,
             json!({"action":"render","path":"untrusted.wav"}),
+            None,
             &Settings::default(),
             &AtomicBool::new(false),
         )

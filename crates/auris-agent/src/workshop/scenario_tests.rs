@@ -91,11 +91,12 @@ fn seed(store: &Store, selected: Option<u64>) {
     execute(
         &mut session,
         json!({"action":"add_track","name":"Original drums","kind":"drum"}),
+        None,
         &Settings::default(),
         &cancel,
     )
     .unwrap();
-    execute(&mut session, json!({"action":"generate_phrase","track":1,"part":"drums","start_bar":1,"bars":2,"seed":42}), &Settings::default(), &cancel).unwrap();
+    execute(&mut session, json!({"action":"generate_phrase","track":1,"part":"drums","start_bar":1,"bars":2,"seed":42}), None, &Settings::default(), &cancel).unwrap();
     let first = candidate(1, None, true);
     session
         .finish_workshop_candidate(&store.candidate_path(1), idea(&first.direction), &cancel)

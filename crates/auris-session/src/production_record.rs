@@ -194,6 +194,22 @@ pub struct Record {
 }
 
 impl Record {
+    /// What the phase in force keeps fixed, if anything: nothing in the score phase, the score
+    /// in the arrangement, and every note, sound and performance besides in the mix.
+    pub fn lock(&self) -> Option<crate::phase::Lock> {
+        match self.phase.as_ref()?.phase {
+            Phase::Score => None,
+            Phase::Arrangement => Some(crate::phase::Lock::Arrangement {
+                foreground: self
+                    .roles
+                    .as_ref()
+                    .map(|roles| roles.foreground.clone())
+                    .unwrap_or_default(),
+            }),
+            Phase::Mix => Some(crate::phase::Lock::Mix),
+        }
+    }
+
     /// Update a note after checking all limits; a failure leaves the record unchanged.
     pub fn update(&mut self, operation: Operation) -> Result<(), String> {
         match operation {
@@ -745,6 +761,46 @@ mod tests {
             )
             .unwrap();
         assert_eq!(record.roles.as_ref().unwrap().guide, vec![4]);
+    }
+
+    #[test]
+    fn each_phase_locks_what_the_earlier_ones_decided() {
+        fn run(record: &mut Record, value: Value) {
+            record
+                .update(serde_json::from_value(value).unwrap())
+                .unwrap();
+        }
+        let mut record = Record::default();
+        run(
+            &mut record,
+            json!({"kind":"enter_phase","phase":"score","reason":"new song"}),
+        );
+        run(
+            &mut record,
+            json!({"kind":"set_roles","foreground":[3],"guide":[5]}),
+        );
+        assert_eq!(record.lock(), None);
+        run(
+            &mut record,
+            json!({"kind":"enter_phase","phase":"arrangement","reason":"demo approved"}),
+        );
+        assert_eq!(
+            record.lock(),
+            Some(crate::phase::Lock::Arrangement {
+                foreground: vec![3]
+            })
+        );
+        run(
+            &mut record,
+            json!({"kind":"enter_phase","phase":"mix","reason":"parts done"}),
+        );
+        assert_eq!(record.lock(), Some(crate::phase::Lock::Mix));
+        // Going back unlocks: the user asked for the change.
+        run(
+            &mut record,
+            json!({"kind":"enter_phase","phase":"score","reason":"「サビのメロを変えたい」"}),
+        );
+        assert_eq!(record.lock(), None);
     }
 
     #[test]
