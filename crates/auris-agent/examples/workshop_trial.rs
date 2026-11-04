@@ -18,7 +18,8 @@
 //! `AURIS_TRIAL_MODEL` replace the configured backend and model, and `AURIS_TRIAL_FAST=0` or
 //! `1` the faster service tier. The other agent preferences, effort among them, are kept.
 //!
-//! A finished run writes `lint.json`, what the score linter still finds in the song.
+//! A finished run writes `lint.json`: what the score linter still finds in the song, and the
+//! structural phase checks it leaves unmet, read against the `production.json` beside it.
 //! `workshop_trial --lint <song.auris>...` prints the same for songs made earlier.
 
 use std::path::PathBuf;
@@ -124,6 +125,23 @@ fn score_lint(song: &std::path::Path) -> Result<serde_json::Value, Box<dyn std::
     let mut session = Session::new(SessionOptions::headless())?;
     session.open(song)?;
     let report = session.lint_score();
+    // The record beside the song, as the workshop keeps it: `<output>/production.json`.
+    let structure = match song.parent().and_then(|dir| dir.parent()) {
+        Some(output) if output.join("production.json").is_file() => {
+            let record: auris_session::production_record::Record =
+                serde_json::from_slice(&std::fs::read(output.join("production.json"))?)?;
+            let mut unmet = auris_session::production_record::unmet_structure(&record, &session);
+            if record
+                .phase
+                .as_ref()
+                .is_some_and(|state| state.reached < auris_session::production_record::Phase::Mix)
+            {
+                unmet.push(serde_json::json!({"check":"mix_reached"}));
+            }
+            serde_json::json!(unmet)
+        }
+        _ => serde_json::Value::Null,
+    };
     let mut by_rule = serde_json::Map::new();
     let (mut errors, mut warnings, mut infos) = (0, 0, 0);
     for diagnostic in &report.diagnostics {
@@ -143,5 +161,6 @@ fn score_lint(song: &std::path::Path) -> Result<serde_json::Value, Box<dyn std::
         "infos": infos,
         "suppressed": report.suppressed,
         "by_rule": by_rule,
+        "structure": structure,
     }))
 }

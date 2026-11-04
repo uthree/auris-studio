@@ -705,12 +705,9 @@ fn a_composer_that_finishes_with_lint_warnings_is_sent_back_a_bounded_number_of_
         .lines()
         .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
         .filter_map(|entry| entry["kind"].as_str().map(str::to_owned))
-        .filter(|kind| kind.starts_with("lint_"))
+        .filter(|kind| kind == "send_back" || kind == "unresolved")
         .collect();
-    assert_eq!(
-        kinds,
-        ["lint_send_back", "lint_send_back", "lint_unresolved"]
-    );
+    assert_eq!(kinds, ["send_back", "send_back", "unresolved"]);
     assert!(log.contains("duplicate_note"));
     assert_eq!(open_score(&store, made.id).project().bpm(), 90.0);
 }

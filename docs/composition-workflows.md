@@ -68,6 +68,17 @@ phase reads too. When a workshop composer reports a candidate finished with any
 left, the host sends it back with the first of them, at most twice; what remains
 after that is logged in `composer-log.jsonl` and the candidate is kept. Models
 that finish fast skip an instruction to lint; they do not skip a reply.
+left, the host sends it back with the first of them, at most twice; what remains
+after that is logged in `composer-log.jsonl` and the candidate is kept. Models
+that finish fast skip an instruction to lint; they do not skip a reply.
+
+The same send-back covers a song that stops short. It lists the structural
+checks unmet in every phase the record reached, read from the live session:
+sections and chords covering the song, roles, lyrics, current takes, drums,
+the guide replaced, and a foreground sounding in at least half of the song's
+bars (`phase_facts.tracks[].bars_with_notes`). Anything but a demo must also
+have reached the mix phase. Listening coverage is left out, since every edit
+makes it stale, and so is a record that never entered a phase.
 
 The shared contract retains exact IDs, tick units, revision checks, source
 preservation, limits on exploration, and the distinction between measurements,

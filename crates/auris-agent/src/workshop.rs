@@ -1978,22 +1978,27 @@ fn compose(
             }
             "result" if event["ok"] == true => last_failure.clear(),
             "answer" => {
-                // A composer that reports done with warnings left is sent back to them, a
-                // bounded number of times: the instruction to lint alone is skipped by models
-                // that finish fast. What still remains after that is logged, not refused.
-                if let Some(unresolved) = session.unresolved_lint(LINT_SEND_BACK_FINDINGS) {
-                    if lint_sends < LINT_SEND_BACKS {
+                // A composer that reports done with warnings left, or with a song short of
+                // what its phases require, is sent back to them a bounded number of times:
+                // instructions alone are skipped by models that finish fast. What still remains
+                // after that is logged, not refused.
+                let structure =
+                    unmet_structure(&worker.production_record()?, &session, &candidate.direction);
+                let lint = session.unresolved_lint(LINT_SEND_BACK_FINDINGS);
+                if lint.is_some() || !structure.is_empty() {
+                    let unresolved = json!({"lint":lint,"structure":structure});
+                    if lint_sends < SEND_BACKS {
                         lint_sends += 1;
-                        log.note("lint_send_back", unresolved.clone());
+                        log.note("send_back", unresolved.clone());
                         let _ = sender.send(JobEvent::Progress(candidate.id, "arrange".into()));
                         deadline += Duration::from_secs(300);
                         worker.send(
-                            &json!({"say": lint_send_back(&unresolved).to_string(),"policy":prefs.policy})
+                            &json!({"say": send_back(&unresolved).to_string(),"policy":prefs.policy})
                                 .to_string(),
                         )?;
                         continue;
                     }
-                    log.note("lint_unresolved", unresolved);
+                    log.note("unresolved", unresolved);
                 }
                 break event["text"]
                     .as_str()
@@ -2052,19 +2057,39 @@ fn compose(
         .map_err(Into::into)
 }
 
-/// How many times a composer is sent back to the linter's findings before its song is taken
-/// as it is.
-const LINT_SEND_BACKS: usize = 2;
+/// How many times a composer is sent back to an unfinished song before it is taken as it is.
+const SEND_BACKS: usize = 2;
 
-/// How many findings a send-back lists; the counts by rule cover the rest.
+/// How many lint findings a send-back lists; the counts by rule cover the rest.
 const LINT_SEND_BACK_FINDINGS: usize = 12;
 
-/// The message that sends a composer back to the warnings its finished song still has.
-fn lint_send_back(unresolved: &serde_json::Value) -> serde_json::Value {
+/// What a song reported finished still lacks: the unmet structural checks of every phase its
+/// record reached, and, for anything but a demo, the mix phase itself.
+fn unmet_structure(
+    record: &auris_session::production_record::Record,
+    session: &Session,
+    direction: &Direction,
+) -> Vec<serde_json::Value> {
+    use auris_session::production_record::Phase;
+    let mut unmet = auris_session::production_record::unmet_structure(record, session);
+    let demo = direction.phase == Some(auris_session::workshop::RoundPhase::Score);
+    if !demo
+        && record
+            .phase
+            .as_ref()
+            .is_some_and(|state| state.reached < Phase::Mix)
+    {
+        unmet.push(json!({"check":"mix_reached","unmet":["the song was not arranged and mixed: enter the arrangement and mix phases"]}));
+    }
+    unmet
+}
+
+/// The message that sends a composer back to what its finished song still lacks.
+fn send_back(unresolved: &serde_json::Value) -> serde_json::Value {
     json!({
-        "host_check": "The host linted the song you reported finished and found warnings or errors that remain. Resolve them now within the phase in force, then finish with your final report again.",
+        "host_check": "The host checked the song you reported finished and found it incomplete: lint warnings or errors that remain, structural phase checks that are unmet, or both. Complete it now, then finish with your final report again.",
         "unresolved": unresolved,
-        "instruction": "Run lint_project for the full list with ids; apply_lint_fixes takes the obvious fixes, and a finding without one needs your own edit. A finding on locked material needs enter_phase to the phase that owns it, with this check as the reason. A warning you keep on purpose: name it and say why in your final report. Do not redo finished work.",
+        "instruction": "For structure, do the missing work the assignment asks for: write the remaining sections, melody and lyrics, replace the guide, arrange and mix; production_record read lists the phase checks. For lint, run lint_project for the full list with ids; apply_lint_fixes takes the obvious fixes, and a finding without one needs your own edit. A change to locked material needs enter_phase to the phase that owns it, with this check as the reason. A warning you keep on purpose: name it and say why in your final report. Do not redo finished work.",
     })
 }
 
@@ -3462,6 +3487,10 @@ mod tests {
             crate::tests::completion(&phrase, "tool_calls"),
             crate::tests::completion(&inspect, "tool_calls"),
             crate::tests::completion(&answer, "stop"),
+            // A two-bar drum sketch with no sections or roles is sent back twice for its
+            // structure, then kept as it is.
+            crate::tests::completion(&answer, "stop"),
+            crate::tests::completion(&answer, "stop"),
         ]);
         let prefs = AgentPreferences {
             provider: "openai".into(),
@@ -3484,8 +3513,9 @@ mod tests {
         .unwrap();
         assert!(result.audio.peak() > 1e-8);
         assert!(dir.path().join("1/song/song.auris").is_file());
-        assert_eq!(seen.lock().unwrap().len(), 6);
+        assert_eq!(seen.lock().unwrap().len(), 8);
         assert!(seen.lock().unwrap()[1].contains("worker_lifetime"));
+        assert!(seen.lock().unwrap()[6].contains("roles_registered"));
         let events: Vec<_> = receiver.try_iter().collect();
         let completed: Vec<_> = events
             .iter()
