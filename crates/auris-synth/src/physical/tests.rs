@@ -72,29 +72,75 @@ fn strings_are_tuned_across_their_playing_registers() {
     }
 }
 
+/// Cents from `hz` at which the spectrum peaks, searched within `range` in tenths of a cent.
+fn peak_cents(samples: &[f32], rate: f64, hz: f64, range: std::ops::RangeInclusive<i32>) -> f64 {
+    range
+        .map(|tenths| f64::from(tenths) * 0.1)
+        .max_by(|a, b| {
+            let strength = |cents: f64| goertzel(samples, rate, hz * (cents / 1200.0).exp2());
+            strength(*a).total_cmp(&strength(*b))
+        })
+        .unwrap()
+}
+
 #[test]
 fn piano_bass_overtones_do_not_have_tenor_register_stretch() {
-    for (pitch, maximum_cents) in [(24, 20), (36, 12)] {
+    for (pitch, maximum_cents) in [(24, 20.0), (36, 12.0)] {
         let mut piano = rig(Model::Piano, 48_000.0);
         let audio = piano.render(48_000, &[on(pitch, 0.8)]);
-        let harmonic = f64::from(pitch_to_hz(f32::from(pitch))) * 8.0;
-        let strongest = (0..=70)
-            .max_by(|a, b| {
-                let strength = |cents| {
-                    goertzel(
-                        &audio,
-                        48_000.0,
-                        harmonic * (f64::from(cents) / 1200.0).exp2(),
-                    )
-                };
-                strength(*a).total_cmp(&strength(*b))
-            })
-            .unwrap();
+        let hz = f64::from(pitch_to_hz(f32::from(pitch)));
+        // The key's stretch tuning moves the fundamental; the overtone is measured against it.
+        let fundamental = peak_cents(&audio, 48_000.0, hz, -400..=100);
+        let eighth = peak_cents(&audio, 48_000.0, hz * 8.0, -400..=700);
+        let stretch = eighth - fundamental;
         assert!(
-            strongest <= maximum_cents,
-            "MIDI {pitch}: eighth partial stretched {strongest} cents"
+            (0.0..=maximum_cents).contains(&stretch),
+            "MIDI {pitch}: eighth partial stretched {stretch:.1} cents"
         );
     }
+}
+
+#[test]
+fn piano_octaves_are_stretched_between_pure_two_one_and_four_two() {
+    // Every fundamental on equal temperament left the tenor's 4:2 octaves 7.6 cents wide.
+    let rate = 48_000.0;
+    let steady = |pitch: u8| {
+        let mut piano = rig(Model::Piano, rate);
+        let audio = piano.render(rate as usize * 2, &[on(pitch, 0.7)]);
+        audio[(rate * 0.3) as usize..].to_vec()
+    };
+    for low in [48_u8, 60, 72] {
+        let (lower, upper) = (steady(low), steady(low + 12));
+        let hz = f64::from(pitch_to_hz(f32::from(low)));
+        let partial = |audio: &[f32], hz: f64| peak_cents(audio, rate, hz, -300..=300);
+        let two_one = partial(&lower, hz * 2.0) - partial(&upper, hz * 2.0);
+        let four_two = partial(&lower, hz * 4.0) - partial(&upper, hz * 4.0);
+        assert!(
+            two_one < 0.0 && four_two > 0.0 && (two_one + four_two).abs() < 1.0,
+            "MIDI {low}: 2:1 {two_one:+.1} cents, 4:2 {four_two:+.1} cents"
+        );
+        assert!(
+            four_two < 4.0,
+            "MIDI {low}: 4:2 octave {four_two:+.1} cents wide"
+        );
+    }
+}
+
+#[test]
+fn piano_stretch_keeps_a4_and_vanishes_without_stiffness() {
+    let mut piano = Physical::new(Model::Piano);
+    assert_eq!(piano.stretch(69), 0.0);
+    assert!(piano.stretch(21) < -0.15 && piano.stretch(108) > 0.1);
+    // Around C2 the wound strings are far less stiff than the plain ones an octave up, which
+    // narrows those octaves; from A2 up the stiffness is one and the stretch only grows.
+    for pair in (45..=108).collect::<Vec<u8>>().windows(2) {
+        assert!(piano.stretch(pair[0]) < piano.stretch(pair[1]));
+    }
+    piano.set_param_by_key("stiffness", 0.0);
+    for pitch in [21, 48, 69, 96, 108] {
+        assert!(piano.stretch(pitch).abs() < 1e-6);
+    }
+    assert_eq!(Physical::new(Model::Mallet).stretch(21), 0.0);
 }
 
 #[test]
@@ -646,6 +692,8 @@ fn callback_and_parameter_changes_allocate_nothing_even_when_stealing() {
         let allocations = count_allocations(|| {
             for pitch in 36..96 {
                 instrument.set_param(ParamId(P_DAMPING), 0.5);
+                // Every level is struck in turn, the oversampled strings among them.
+                instrument.set_param_by_key("quality", f32::from(pitch % 3));
                 if model == Model::ElectricGuitar {
                     instrument.set_param(ParamId(P_PICKUP_POSITION), 0.1);
                     instrument.set_param(ParamId(P_TONE), 3200.0);
@@ -916,5 +964,192 @@ fn mallet_bars_are_tuned_like_a_marimba() {
     assert!(
         (strongest - 4.0).abs() < 0.02,
         "first overtone at {strongest}x"
+    );
+}
+
+fn quality_rig(model: Model, live: Quality) -> Rig {
+    let mut instrument = Physical::new(model);
+    instrument.set_param_by_key("body", 0.0);
+    instrument.set_param_by_key("quality", live.value());
+    Rig::new(Box::new(instrument), 48_000.0, 256, 2)
+}
+
+/// Renders one note through `process` directly, offline or live.
+fn render_note(instrument: &mut Physical, pitch: u8, frames: usize, offline: bool) -> Vec<f32> {
+    instrument.prepare(&PrepareContext::new(48_000.0, 256, 2));
+    let mut buffer = AudioBuffer::stereo(256, 48_000.0);
+    let ctx = ProcessContext {
+        is_offline: offline,
+        ..ProcessContext::realtime(48_000.0, 256, 0, 120.0, true)
+    };
+    let mut samples = Vec::with_capacity(frames);
+    for block in 0..frames.div_ceil(256) {
+        let events = if block == 0 {
+            vec![on(pitch, 0.8)]
+        } else {
+            Vec::new()
+        };
+        instrument.process(&events, &mut buffer, &ctx);
+        samples.extend_from_slice(buffer.channel(0));
+    }
+    samples
+}
+
+#[test]
+fn every_model_offers_a_live_and_a_render_quality() {
+    for model in Model::ALL {
+        let instrument = Physical::new(model);
+        let find = |key: &str| {
+            instrument
+                .parameters()
+                .iter()
+                .find(|descriptor| descriptor.key == key)
+                .cloned()
+                .unwrap_or_else(|| panic!("{model:?} has no `{key}`"))
+        };
+        let live = find("quality");
+        let render = find("render_quality");
+        assert_eq!(live.choices.len(), 3);
+        assert_eq!(render.choices.len(), 3);
+        assert_eq!(Quality::from_value(live.default), Quality::Standard);
+        assert_eq!(Quality::from_value(render.default), Quality::High);
+        assert_eq!(render.id.0, live.id.0 + 1, "{model:?}");
+        assert_eq!(instrument.quality(), Quality::Standard);
+    }
+}
+
+#[test]
+fn an_offline_block_strikes_at_the_render_quality_and_a_live_one_at_the_live_quality() {
+    for model in [Model::Piano, Model::Violin, Model::Bell] {
+        let mut split = Physical::new(model);
+        split.set_param_by_key("quality", Quality::Draft.value());
+        split.set_param_by_key("render_quality", Quality::High.value());
+        let mut high = Physical::new(model);
+        high.set_param_by_key("quality", Quality::High.value());
+        let mut draft = Physical::new(model);
+        draft.set_param_by_key("quality", Quality::Draft.value());
+
+        let offline = render_note(&mut split, 33, 12_000, true);
+        let live = render_note(&mut split, 33, 12_000, false);
+        assert_eq!(
+            offline,
+            render_note(&mut high, 33, 12_000, false),
+            "{model:?}"
+        );
+        assert_eq!(
+            live,
+            render_note(&mut draft, 33, 12_000, false),
+            "{model:?}"
+        );
+        if model != Model::Bell {
+            assert_ne!(offline, live, "{model:?} sounds the same at every quality");
+        }
+    }
+}
+
+#[test]
+fn draft_piano_stays_close_to_the_calibrated_strike() {
+    for (pitch, ceiling) in [(21, -28.0), (33, -35.0), (60, -48.0)] {
+        let render = |quality| quality_rig(Model::Piano, quality).render(24_000, &[on(pitch, 0.9)]);
+        let (standard, draft) = (render(Quality::Standard), render(Quality::Draft));
+        let difference: Vec<f32> = draft.iter().zip(&standard).map(|(d, s)| d - s).collect();
+        let error = 20.0 * f64::from(rms(&difference) / rms(&standard)).log10();
+        assert!(
+            error < ceiling,
+            "MIDI {pitch}: draft differs by {error:.1} dB"
+        );
+        assert!(
+            error.is_finite(),
+            "MIDI {pitch}: draft is not cheaper than standard"
+        );
+    }
+}
+
+#[test]
+fn oversampled_strings_stay_tuned_across_their_playing_registers() {
+    for (model, pitches) in [
+        (Model::Guitar, [45, 60, 81]),
+        (Model::ElectricGuitar, [40, 64, 86]),
+        (Model::Bass, [28, 40, 55]),
+        (Model::Violin, [55, 69, 88]),
+    ] {
+        let mut rig = quality_rig(model, Quality::High);
+        for pitch in pitches {
+            rig.instrument.reset();
+            let samples = rig.render(48_000, &[on(pitch, 0.8)]);
+            let hz = f64::from(pitch_to_hz(f32::from(pitch)));
+            let steady = &samples[10_000..40_000];
+            let strongest = (-30_i32..=30)
+                .max_by(|a, b| {
+                    goertzel(steady, 48_000.0, hz * (f64::from(*a) / 1200.0).exp2()).total_cmp(
+                        &goertzel(steady, 48_000.0, hz * (f64::from(*b) / 1200.0).exp2()),
+                    )
+                })
+                .unwrap();
+            assert!(
+                strongest.abs() <= 8,
+                "{model:?} MIDI {pitch} oversampled: {strongest} cents"
+            );
+            assert!(
+                goertzel(steady, 48_000.0, hz) > 0.0002,
+                "{model:?} MIDI {pitch} oversampled has no fundamental"
+            );
+        }
+    }
+}
+
+#[test]
+fn oversampling_keeps_a_plucked_strings_level_and_decay() {
+    for model in [Model::Guitar, Model::Bass, Model::ElectricGuitar] {
+        let render = |quality| quality_rig(model, quality).render(48_000, &[on(45, 0.8)]);
+        let (standard, high) = (render(Quality::Standard), render(Quality::High));
+        let level = |samples: &[f32]| level_db(&samples[2_400..9_600]);
+        let fall = |samples: &[f32]| level(samples) - level_db(&samples[36_000..43_200]);
+        assert!(
+            (level(&high) - level(&standard)).abs() < 1.5,
+            "{model:?} level {} vs {}",
+            level(&high),
+            level(&standard)
+        );
+        assert!(
+            (fall(&high) - fall(&standard)).abs() < 3.0,
+            "{model:?} decay {} vs {}",
+            fall(&high),
+            fall(&standard)
+        );
+    }
+}
+
+/// Tenths of a cent by which the `k`th harmonic of `hz` sits from `k × hz`.
+fn harmonic_offset(samples: &[f32], hz: f64, k: f64) -> i32 {
+    let at = |tenths: i32| {
+        goertzel(
+            samples,
+            48_000.0,
+            k * hz * (f64::from(tenths) / 12_000.0).exp2(),
+        )
+    };
+    (-300..=300)
+        .max_by(|a, b| at(*a).total_cmp(&at(*b)))
+        .unwrap()
+}
+
+#[test]
+fn oversampling_straightens_the_top_of_a_plucked_strings_harmonic_series() {
+    // E6 on the guitar: a 36-sample loop whose interpolation stretches each upper harmonic
+    // sharp at the host rate. Twice the rate takes the stretch out.
+    let hz = f64::from(pitch_to_hz(88.0));
+    let render = |quality| quality_rig(Model::Guitar, quality).render(36_000, &[on(88, 0.9)]);
+    let (standard, high) = (render(Quality::Standard), render(Quality::High));
+    let offsets =
+        |samples: &[f32]| [3.0, 4.0, 5.0].map(|k| harmonic_offset(&samples[12_000..36_000], hz, k));
+    let (standard, high) = (offsets(&standard), offsets(&high));
+    assert!(
+        standard.iter().all(|&tenths| tenths >= 10),
+        "standard {standard:?}"
+    );
+    assert!(
+        high.iter().all(|&tenths| tenths.abs() <= 3),
+        "high {high:?}"
     );
 }

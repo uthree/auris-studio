@@ -124,6 +124,8 @@ pub enum Edit {
     DuplicateClip,
     /// A clip was divided in two.
     SplitClip,
+    /// Clips on one track were joined into one.
+    JoinClips,
     /// A clip was renamed.
     RenameClip,
     /// A clip was muted or unmuted.
@@ -205,6 +207,10 @@ pub enum Edit {
     SetSingerSpeaker,
     /// A singer track's take was rendered by its voice model.
     Sing,
+    /// A problem the music linter found was repaired by its obvious fix.
+    LintFix,
+    /// The music linter was told to ignore, or to report again, some of its findings.
+    LintSuppression,
     /// An effect was added to a chain.
     AddEffect,
     /// An effect was removed from a chain.
@@ -253,6 +259,10 @@ pub enum Edit {
     ImportSoundFont,
     /// A track was pointed at one of a SoundFont's sounds.
     ChoosePreset,
+    /// Audio files were loaded into a track's sampler.
+    LoadSample,
+    /// A sampler's map changed: a recording's root, keys, layer or level, or one removed.
+    EditSampleMap,
     /// The key changed somewhere on the timeline.
     SetKey,
     /// A chord changed somewhere on the timeline.
@@ -265,6 +275,15 @@ pub enum Edit {
     SetSection,
     /// A section boundary moved along the timeline.
     MoveSection,
+    /// A line of the song-wide lyrics changed — written, retyped, removed or brought in from
+    /// the sung notes.
+    SetLyricLine,
+    /// A lyric line moved along the timeline.
+    MoveLyricLine,
+    /// A comment was pinned, retyped or taken off.
+    SetComment,
+    /// A comment moved.
+    MoveComment,
     /// A named progression was written across a range of bars.
     StampProgression,
     /// A clip was written from the harmony under it.

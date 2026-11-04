@@ -54,7 +54,7 @@ pub mod inspect_composition {
             "playback": session.playback_readiness(),
             "grooves": groove_catalog().iter().map(|groove| groove.name).collect::<Vec<_>>(),
             "harmony": project.harmony, "tempo": project.tempo_map,
-            "meter": project.signatures, "sections": project.sections, "tracks": tracks,
+            "meter": project.signatures, "sections": project.sections, "lyrics": project.lyrics, "tracks": tracks,
             "time_units": "Map positions are ticks; 960 ticks are one quarter note. Track and clip IDs are stable numeric document IDs."
         }))
     }

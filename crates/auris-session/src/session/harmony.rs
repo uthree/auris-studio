@@ -187,20 +187,50 @@ impl Session {
 
     /// Writes validated, bar-addressed agent harmony without pointer-grid snapping.
     /// The caller groups this with section edits in one transaction.
+    ///
+    /// A written key replaces the key changes inside the range; with no key, `clear_key`
+    /// instead returns the range to the key in force before it.
+    ///
+    /// `clear_key` removes every key change from the range's first bar up to its end, so the
+    /// key before the range runs through it; the song's own key at tick zero is never removed,
+    /// so clearing from bar 1 extends that key instead. Writing a key and clearing one at once
+    /// is a contradiction the caller refuses; here a written key wins.
+    ///
+    /// Whatever is written, the boundaries are left without redundant changes: a key change
+    /// restating the key already in force is removed, so clearing or rewriting a range never
+    /// leaves an invisible "C major → C major" marker that nothing can remove later.
     pub(crate) fn write_bounded_harmony(
         &mut self,
         start_bar: u32,
         bars: u32,
         key: Option<MusicalKey>,
+        clear_key: bool,
         chart: Option<&Chart>,
         clear_chords: bool,
     ) {
-        if key.is_none() && chart.is_none() && !clear_chords {
+        if key.is_none() && !clear_key && chart.is_none() && !clear_chords {
             return;
         }
         self.record(Edit::StampProgression);
         let start = self.project.signatures.bar_start(start_bar);
         let end = self.project.signatures.bar_start(start_bar + bars);
+        if key.is_none() && clear_key {
+            let resumes = self.project.harmony.key_at(end);
+            let changes = self
+                .project
+                .harmony
+                .keys
+                .points()
+                .iter()
+                .filter(|point| point.tick >= start && point.tick < end)
+                .map(|point| point.tick)
+                .collect::<Vec<_>>();
+            for tick in changes {
+                self.project.harmony.keys.remove_point(tick);
+            }
+            self.project.harmony.keys.set_point(end, resumes);
+            self.coalesce_key_change(end);
+        }
         if let Some(key) = key {
             let resumes = self.project.harmony.key_at(end);
             let internal = self
@@ -217,6 +247,8 @@ impl Session {
             }
             self.project.harmony.keys.set_point(start, key);
             self.project.harmony.keys.set_point(end, resumes);
+            self.coalesce_key_change(end);
+            self.coalesce_key_change(start);
         }
         if clear_chords || chart.is_some() {
             let resumes = self.project.harmony.numeral_at(end);
@@ -273,6 +305,34 @@ impl Session {
         self.project.sections.move_point(from, to)
     }
 
+    /// Removes the key change at `at` when it restates the key already in force before it.
+    ///
+    /// The anchor at tick zero is the song's key and always stays.
+    fn coalesce_key_change(&mut self, at: Ticks) {
+        let points = self.project.harmony.keys.points();
+        let Some(index) = points.iter().position(|point| point.tick == at) else {
+            return;
+        };
+        if index > 0 && points[index - 1].key == points[index].key {
+            self.project.harmony.keys.remove_point(at);
+        }
+    }
+
+    /// Removes the section change at `at` when it changes nothing: the same label as the
+    /// stretch before it, or an unnamed stretch where nothing was named.
+    pub(crate) fn coalesce_section_change(&mut self, at: Ticks) {
+        let points = self.project.sections.points();
+        let Some(index) = points.iter().position(|point| point.tick == at) else {
+            return;
+        };
+        let before = index
+            .checked_sub(1)
+            .and_then(|previous| points[previous].label.as_deref());
+        if before == points[index].label.as_deref() {
+            self.project.sections.remove_point(at);
+        }
+    }
+
     /// The start of the bar `at` falls in, which is the only place a section may begin.
     fn snap_section(&self, at: Ticks) -> Ticks {
         self.project.signatures.bar_floor(at)
@@ -316,6 +376,27 @@ impl Session {
                 velocity: velocity.clamp(0.0, 1.0),
             });
         }
+    }
+
+    /// Excites a track's instrument where a person touched its body, outside the timeline.
+    ///
+    /// `at` is the place along the body, from zero at one end to one at the other (for a drum
+    /// head, from the centre to the rim), and is what makes this more than [`Self::note_on`]: it
+    /// rides in just ahead of the note on the instrument's touch controller, which the note
+    /// consumes, so the next note — the song's, say — is excited wherever the instrument's own
+    /// position control puts it again. Nothing is written into the document. An instrument with
+    /// no place to touch (a reed, a jet) plays the note as `note_on` would; release it with
+    /// [`Self::note_off`].
+    pub fn touch_instrument(&mut self, track: TrackId, pitch: u8, at: f32, velocity: f32) {
+        if !at.is_finite() {
+            return self.note_on(track, pitch, velocity);
+        }
+        self.controller(
+            track,
+            auris_core::motion::TOUCH_CONTROLLER,
+            at.clamp(0.0, 1.0),
+        );
+        self.note_on(track, pitch, velocity);
     }
 
     /// Releases an auditioned note.

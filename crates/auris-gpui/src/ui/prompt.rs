@@ -48,6 +48,13 @@ pub enum PromptTarget {
     },
     /// A reusable sound captured from a track.
     SaveSound(TrackId),
+    /// The name of a performance preset kept from a clip's current performance.
+    SavePerformancePreset {
+        /// The clip whose performance is kept.
+        clip: ClipId,
+        /// The instrument family it is filed under.
+        family: PresetFamily,
+    },
     /// The saved user sound retained by this prompt.
     RenameSound,
     /// A new copy of the saved user sound retained by this prompt.
@@ -62,6 +69,26 @@ pub enum PromptTarget {
     Chord(Ticks),
     /// The name of the song section in force at a position on the timeline.
     Section(Ticks),
+    /// The song-wide lyric line in force at a position on the timeline, or a new one there.
+    LyricLine(Ticks),
+    /// A new comment, pinned where the menu was opened.
+    NewComment {
+        /// What will hold it.
+        host: CommentHost,
+        /// Song time on a track, clip time inside a clip.
+        at: Ticks,
+        /// The piano-roll row, inside a clip.
+        pitch: Option<u8>,
+    },
+    /// Why an ignore rule exists, by its place in the project's list.
+    LintReason(usize),
+    /// An existing comment's text.
+    Comment {
+        /// What holds it.
+        host: CommentHost,
+        /// Which comment.
+        id: CommentId,
+    },
     /// The lyric sung on one note.
     ///
     /// Return commits the word and walks on to the next note in sung order, so a verse can be
@@ -153,6 +180,11 @@ pub enum PromptTarget {
     ClipSourceTempo(ClipId),
     /// Where the playhead sits, as bar, beat and hundredth.
     Position,
+    /// One of the note-roll video's colours, as a code such as `#3D7BFF`.
+    ///
+    /// The picker's sliders find a colour by eye; this is for the one that is already known —
+    /// a brand colour, the same blue as last time.
+    VideoColour(crate::ui::video_export::VideoColourSlot),
 }
 
 /// Whether an empty field carries a target-specific meaning instead of being a missing name.
@@ -197,6 +229,8 @@ pub enum Notation {
     MidiNote,
     /// A place in the song, as bar, beat and hundredth.
     Position,
+    /// A colour code, `#3D7BFF`.
+    Colour,
 }
 
 impl PromptTarget {
@@ -221,7 +255,9 @@ impl PromptTarget {
             | PromptTarget::NewDrumLane(_)
             | PromptTarget::DrumLaneNote { .. } => Notation::MidiNote,
             PromptTarget::Position => Notation::Position,
+            PromptTarget::VideoColour(_) => Notation::Colour,
             PromptTarget::SaveSound(_)
+            | PromptTarget::SavePerformancePreset { .. }
             | PromptTarget::WorkshopThreadName { .. }
             | PromptTarget::WorkshopFeedback { .. }
             | PromptTarget::AgentConversationName
@@ -235,6 +271,11 @@ impl PromptTarget {
             | PromptTarget::Lyric { .. }
             | PromptTarget::Phonemes { .. }
             | PromptTarget::Lyrics { .. }
+            | PromptTarget::LyricLine(_)
+            // A comment is prose.
+            | PromptTarget::NewComment { .. }
+            | PromptTarget::Comment { .. }
+            | PromptTarget::LintReason(_)
             // No shared notation: every parameter is written in its own units, and the range
             // and the unit are in the prompt's title instead, where they can name this one.
             | PromptTarget::Param(_) => return None,
@@ -270,6 +311,7 @@ impl Notation {
             Notation::Gain => Key::HintClipGain,
             Notation::MidiNote => Key::HintMidiNote,
             Notation::Position => Key::HintPosition,
+            Notation::Colour => Key::HintColour,
         }
     }
 
@@ -289,7 +331,8 @@ impl Notation {
             | Notation::Tempo
             | Notation::Gain
             | Notation::MidiNote
-            | Notation::Position => &[],
+            | Notation::Position
+            | Notation::Colour => &[],
         }
     }
 
@@ -530,6 +573,16 @@ pub enum Question {
         current: String,
         /// Published version shown in the question.
         latest: String,
+    },
+    /// A newer version was found for a copy installed with `cargo install`, which the updater
+    /// cannot replace: the answer copies the command that upgrades it.
+    CargoUpgrade {
+        /// Installed version shown in the question.
+        current: String,
+        /// Published version shown in the question.
+        latest: String,
+        /// The terminal command shown and copied.
+        command: String,
     },
     /// Replaces an exact library entry with a snapshot captured before confirmation.
     OverwriteSound {
@@ -1004,6 +1057,10 @@ impl AurisApp {
                     Err(error) => Err(error),
                 }
             }
+            PromptTarget::SavePerformancePreset { clip, family } => self
+                .session
+                .keep_clip_performance(clip, &text, family, "", false)
+                .map(|_| ()),
             PromptTarget::Track(track) => self.session.rename_track(track, text),
             PromptTarget::Clip(clip) => self.session.rename_clip(clip, text),
             PromptTarget::Lyric { clip, index } => {
@@ -1080,6 +1137,30 @@ impl AurisApp {
             // job rather than an empty field's.
             PromptTarget::Section(at) => {
                 self.session.set_section(at, Some(text));
+                Ok(())
+            }
+            // Retyping a line keeps where it starts; typing over a silence starts a line there
+            // that runs until the next change.
+            PromptTarget::LyricLine(at) => {
+                let start = self
+                    .session
+                    .project()
+                    .lyrics
+                    .change_at(at)
+                    .filter(|change| self.session.project().lyrics.text_at(*change).is_some());
+                self.session.set_lyric_line(start.unwrap_or(at), Some(text));
+                Ok(())
+            }
+            PromptTarget::NewComment { host, at, pitch } => {
+                self.session.add_comment(host, at, pitch, &text).map(|_| ())
+            }
+            PromptTarget::Comment { host, id } => self.session.set_comment_text(host, id, &text),
+            PromptTarget::LintReason(index) => {
+                if let Some(rule) = self.session.project().lint_suppressions.get(index).cloned() {
+                    let before = self.session.revision();
+                    self.session.set_lint_suppression_reason(&rule, &text);
+                    self.lint_suppressions_changed(before);
+                }
                 Ok(())
             }
             PromptTarget::Seed(clip) => match text.parse::<u64>() {
@@ -1230,6 +1311,16 @@ impl AurisApp {
                     return;
                 }
             },
+            PromptTarget::VideoColour(slot) => match crate::ui::colour_picker::parse_hex(&text) {
+                Some(color) => {
+                    self.set_video_colour(slot, color);
+                    Ok(())
+                }
+                None => {
+                    self.reject_prompt(messages::not_a_colour(self.language(), &text));
+                    return;
+                }
+            },
             PromptTarget::Position => {
                 match crate::ui::transport_bar::parse_position(&text, &self.project().signatures) {
                     Some(at) => {
@@ -1254,6 +1345,8 @@ impl AurisApp {
                 Key::EditSetDrumAssignment
             } else if matches!(target, PromptTarget::SaveSound(_)) {
                 Key::SaveSound
+            } else if matches!(target, PromptTarget::SavePerformancePreset { .. }) {
+                Key::PerformPresetSave
             } else if matches!(target, PromptTarget::DuplicateSound) {
                 Key::DuplicateSound
             } else {
@@ -1343,6 +1436,10 @@ impl AurisApp {
                 cx.open_url(crate::update_check::RELEASE_PAGE);
             }
             (Question::OpenUpdateRelease { .. }, Answer::Deny) => {}
+            (Question::CargoUpgrade { command, .. }, Answer::Confirm) => {
+                self.copy_upgrade_command(command, cx);
+            }
+            (Question::CargoUpgrade { .. }, Answer::Deny) => {}
             (
                 Question::OverwriteSound {
                     expected,
@@ -1782,7 +1879,9 @@ impl AurisApp {
                     None,
                     // The default button names the edit the sheet will commit.
                     match target {
-                        PromptTarget::SaveSound(_) => self.t(Key::CmdSave).into(),
+                        PromptTarget::SaveSound(_) | PromptTarget::SavePerformancePreset { .. } => {
+                            self.t(Key::CmdSave).into()
+                        }
                         PromptTarget::WorkshopThreadName { .. } => self.t(Key::Rename).into(),
                         PromptTarget::WorkshopFeedback { .. } => {
                             self.t(Key::WorkshopFeedbackSend).into()
@@ -2274,6 +2373,22 @@ impl AurisApp {
                 self.t(Key::UpdateOpenRelease).into(),
                 None,
             ),
+            Question::CargoUpgrade {
+                current,
+                latest,
+                command,
+            } => (
+                format!(
+                    "{} {}\n\n{command}",
+                    self.t(Key::UpdateAvailable)
+                        .replace("{current}", current)
+                        .replace("{version}", latest),
+                    self.t(Key::CargoUpdateBody),
+                )
+                .into(),
+                self.t(Key::CargoUpdateCopy).into(),
+                None,
+            ),
             Question::OverwriteSound { source, .. } => (
                 messages::overwrite_sound_body(self.language(), source).into(),
                 self.t(Key::OverwriteSoundConfirm).into(),
@@ -2731,11 +2846,26 @@ mod tests {
             PromptTarget::DuplicateSound,
             PromptTarget::RenameSound,
             PromptTarget::SaveSound(TrackId(1)),
+            PromptTarget::SavePerformancePreset {
+                clip: ClipId(1),
+                family: PresetFamily::Keys,
+            },
             PromptTarget::Track(TrackId(1)),
             PromptTarget::Clip(ClipId(1)),
             PromptTarget::Key(AT),
             PromptTarget::Chord(AT),
             PromptTarget::Section(AT),
+            PromptTarget::LyricLine(AT),
+            PromptTarget::NewComment {
+                host: CommentHost::Track(TrackId(1)),
+                at: AT,
+                pitch: None,
+            },
+            PromptTarget::Comment {
+                host: CommentHost::Clip(ClipId(1)),
+                id: CommentId(1),
+            },
+            PromptTarget::LintReason(0),
             PromptTarget::Lyric {
                 clip: ClipId(1),
                 index: 0,
@@ -2768,10 +2898,12 @@ mod tests {
             },
             PromptTarget::ClipSourceTempo(ClipId(1)),
             PromptTarget::Position,
+            PromptTarget::VideoColour(crate::ui::video_export::VideoColourSlot::Single),
         ];
         for target in &representatives {
             match target {
                 PromptTarget::SaveSound(_)
+                | PromptTarget::SavePerformancePreset { .. }
                 | PromptTarget::AgentConversationName
                 | PromptTarget::AgentChordReference { .. }
                 | PromptTarget::WorkshopFeedback { .. }
@@ -2783,6 +2915,10 @@ mod tests {
                 | PromptTarget::Key(_)
                 | PromptTarget::Chord(_)
                 | PromptTarget::Section(_)
+                | PromptTarget::LyricLine(_)
+                | PromptTarget::NewComment { .. }
+                | PromptTarget::Comment { .. }
+                | PromptTarget::LintReason(_)
                 | PromptTarget::Lyric { .. }
                 | PromptTarget::Phonemes { .. }
                 | PromptTarget::Lyrics { .. }
@@ -2798,7 +2934,8 @@ mod tests {
                 | PromptTarget::DrumLaneName { .. }
                 | PromptTarget::DrumLaneNote { .. }
                 | PromptTarget::ClipSourceTempo(_)
-                | PromptTarget::Position => {}
+                | PromptTarget::Position
+                | PromptTarget::VideoColour(_) => {}
             }
         }
         representatives

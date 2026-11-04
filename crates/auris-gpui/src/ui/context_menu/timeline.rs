@@ -205,6 +205,68 @@ impl AurisApp {
             )
     }
 
+    /// Opens the text sheet for the lyric line in force at `tick`, or a new line there.
+    pub(crate) fn prompt_for_lyric_line(&mut self, tick: Ticks) {
+        let current = self
+            .project()
+            .lyrics
+            .text_at(tick)
+            .map(str::to_string)
+            .unwrap_or_default();
+        let title = self.t(Key::SetLyricLineTitle);
+        self.open_prompt(Prompt::new(title, PromptTarget::LyricLine(tick), current));
+    }
+
+    /// The menu for the lyrics lane: headed by the line under the pointer when there is one.
+    ///
+    /// `tick` is already snapped to the grid: a new line starts on a grid position, and the
+    /// line items act on the line in force there wherever the press landed inside it.
+    pub(crate) fn lyrics_menu(&self, anchor: Point<Pixels>, tick: Ticks) -> ContextMenu {
+        let lyrics = &self.project().lyrics;
+        let sung = lyrics.text_at(tick);
+        let title = sung.map_or_else(
+            || self.t(Key::SetLyricLineTitle).to_string(),
+            |text| {
+                // A heading, not a lyric sheet: long lines are cut where they would wrap.
+                let mut heading: String = text.chars().take(24).collect();
+                if heading.len() < text.len() {
+                    heading.push('…');
+                }
+                heading
+            },
+        );
+        let has_vocals = self
+            .project()
+            .tracks
+            .iter()
+            .any(|track| track.kind.is_singer());
+        ContextMenu::new(anchor, title)
+            .item(
+                self.t(if sung.is_some() {
+                    Key::MenuEditLyricLine
+                } else {
+                    Key::MenuSetLyricLineHere
+                }),
+                MenuCommand::SetLyricLineAt(tick),
+            )
+            .item_if(
+                sung.is_some(),
+                self.t(Key::MenuRemoveLyricLine),
+                MenuCommand::RemoveLyricLineAt(tick),
+            )
+            .item_if(
+                sung.is_some(),
+                self.t(Key::MenuEndLyricLineHere),
+                MenuCommand::EndLyricLineAt(tick),
+            )
+            .separator()
+            .item_greyed_unless(
+                has_vocals,
+                self.t(Key::MenuLyricsFromVocals),
+                MenuCommand::LyricsFromVocals,
+            )
+    }
+
     /// The menu for the harmony lane, aimed at whatever the pointer is over.
     ///
     /// `tick` is where the pointer is, unrounded. What the chord items act on is the chord *in

@@ -69,16 +69,6 @@ pub fn physical_activity(
     }
 }
 
-/// How the song workshop's current round stands, beside its title.
-pub fn workshop_round(language: Language, candidates: usize, generating: usize) -> String {
-    match (language, generating) {
-        (Language::English, 0) => format!("{candidates} candidates"),
-        (Language::English, _) => format!("{candidates} candidates · {generating} generating"),
-        (Language::Japanese, 0) => format!("{candidates}案"),
-        (Language::Japanese, _) => format!("{candidates}案 · {generating}案を生成中"),
-    }
-}
-
 macro_rules! messages {
     ($(
         $(#[$doc:meta])*
@@ -268,6 +258,12 @@ messages! {
     fn notes_quantised(count: usize) {
         en: "Quantised {count} notes",
         ja: "ノート {count} 個をクオンタイズしました"
+    }
+
+    /// The status line after clips were joined into one.
+    fn joined_clips(count: usize) {
+        en: "joined {count} clips into one",
+        ja: "{count} 個のクリップを1つに結合しました"
     }
 
     /// Title of a menu acting on more than one clip.
@@ -461,6 +457,24 @@ messages! {
     fn imported(path: &str) {
         en: "Imported {path}",
         ja: "{path} を読み込みました"
+    }
+
+    /// Confirmation that an audio file now plays on a track's sampler.
+    fn sample_loaded(name: &str) {
+        en: "Loaded {name} into the sampler",
+        ja: "{name} をサンプラーに読み込みました"
+    }
+
+    /// Confirmation that the sampler's recordings were measured and put on their pitches.
+    fn sample_pitches_detected(count: usize) {
+        en: "Detected the pitch of {count} sample(s)",
+        ja: "サンプル {count} 件のピッチを合わせました"
+    }
+
+    /// Confirmation that several audio files joined a track's sampler map.
+    fn samples_loaded(count: usize) {
+        en: "Loaded {count} samples into the sampler",
+        ja: "サンプル {count} 件をサンプラーに読み込みました"
     }
 
     /// Confirmation that a SoundFont was read, and how many sounds it brought with it.
@@ -855,6 +869,12 @@ messages! {
     fn not_a_gain(text: &str) {
         en: "`{text}` is not a gain — try `-3` or `2.5`",
         ja: "`{text}` はゲインではありません — `-3` や `2.5` のように"
+    }
+
+    /// The text typed into a colour prompt is not a colour code.
+    fn not_a_colour(text: &str) {
+        en: "`{text}` is not a colour code — try `#3D7BFF` or `#38F`",
+        ja: "`{text}` はカラーコードではありません — `#3D7BFF` や `#38F` のように"
     }
 
     /// The text typed into a parameter's prompt is not a number at all.

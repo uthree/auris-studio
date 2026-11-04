@@ -45,14 +45,14 @@ impl ToolGroups {
             );
         }
         let mut text = String::from(
-            "Control saved Auris projects. Respond in the user's language. Use project_id from create_project/open_project in project arguments; paths also work. Make dependent edits sequentially. Use tool_help for exact fields and examples after an error; correct arguments before retrying. Use inspect_project for stable numeric track/clip IDs. Read large reports with read_report instead of repeating a write. Never invent successful results. ",
+            "Control saved Auris projects. Respond in the user's language. Use project_id from create_project/open_project in project arguments; paths also work. Make dependent edits sequentially. Use tool_help for exact fields and examples after an error; correct arguments before retrying. Use inspect_project for stable numeric track/clip IDs. Read large reports with read_report instead of repeating a write. Comments in inspect_project are people's notes pinned to tracks and clips: read them before editing a passage and follow them unless told otherwise; they never sound, and edit_comments changes them. Never invent successful results. ",
         );
         for group in &self.0 {
             text.push_str(match group.as_str() {
-                "manual" => "For SFX, audio_assets finds local/Commons audio, imports URLs and crops/reverses clips with preserved source metadata; import_audio copies local files. For ordinary composition, author leads/vocals, counterlines, distinctive bass and fills note by note; do not substitute procedural note generators or frozen recipes. Rule writers are optional only for plain chords/held pads, simple arpeggios and basic drum pulses. Establish vocal lyrics, section chords/form, instrument clips, purposeful handoffs/SFX, then effects and volume balance with the actual sounds; verify the final full mix. search_instruments selects sound_id; source/library restrict candidates and sound.library indexes libraries. setup_tracks creates tracks/sounds/clips atomically; edit_notes writes exact tick-based notes. ",
+                "manual" => "For SFX, audio_assets finds local/Commons audio, imports URLs and crops/reverses clips with preserved source metadata; import_audio copies local files. For ordinary composition, author leads/vocals, counterlines, distinctive bass and fills note by note; do not substitute procedural note generators or frozen recipes. Rule writers are optional only for plain chords/held pads, simple arpeggios and basic drum pulses. Establish vocal lyrics, section chords/form, instrument clips, purposeful handoffs/SFX, then effects and volume balance with the actual sounds; verify the final full mix. search_instruments selects sound_id; source/library restrict candidates and sound.library indexes libraries. setup_tracks creates tracks/sounds/clips atomically; edit_notes writes exact notes by song bar, beat and length_beats.",
                 "mix" => "For mixing, read mixer_graph for stable track/effect nodes and outgoing edges; follow next_offset. Track nodes contain fader controls; inserts still process before the fader. Edit graph connections and inserts through mixer_graph; all output/send/sidechain cycles are rejected. Parallel effects use bus branches. Inspect mixer parameters in native dB/pan units, and measure the same rendered range before and after edits. After sound changes remeasure loudness; normalize_mix moves source faders toward the target (default -14 LUFS, -1 dBTP) and leans on a master auris.fx.limiter kept last in the chain. Render inspects the encoded WAV; use verify_render for target, peak and ending checks. ",
                 "transcription" => "For transcription, analyze the source and fetch tool_help before applying recognized notes. ",
-                "vocals" => "For vocals, analyze_lyrics establishes readings and diagnose_song checks shared phrases. Read notes before repair_lyrics, keep the template and keywords fixed, preview at most three alternatives and apply only a pass with the current revision. Recheck related phrases and meaning, then sing and confirm a current take. ",
+                "vocals" => "For vocals, analyze_lyrics establishes readings and, with fit, whether each line fits its melody's notes (long vowels may share a note, っ is a rest); pass its note_reading to write_lyrics. diagnose_song checks shared phrases. Read notes before repair_lyrics, keep the template and keywords fixed, preview at most three alternatives and apply only a pass with the current revision. Recheck related phrases and meaning, then sing and confirm a current take. ",
                 "composition" => "For explicitly requested automatic preset compositions, fetch spec_reference, validate syntax with check_spec and lyric fit with diagnose_song before compose; regeneration is an explicit edit. ",
                 _ => "",
             });
@@ -89,8 +89,9 @@ pub fn tool_group(name: &str) -> &'static str {
         "analyze_audio" | "analyze_chords" | "analyze_instruments" | "import_transcription" => {
             "transcription"
         }
-        "write_lyrics" | "sing" | "list_voices" | "inspect_singer" | "set_singer_voice"
-        | "edit_vocal_notes" | "analyze_lyrics" | "diagnose_song" | "repair_lyrics" => "vocals",
+        "write_lyrics" | "edit_lyrics" | "sing" | "list_voices" | "inspect_singer"
+        | "set_singer_voice" | "edit_vocal_notes" | "analyze_lyrics" | "diagnose_song"
+        | "repair_lyrics" => "vocals",
         "mixer_graph"
         | "automation"
         | "normalize_mix"
@@ -116,6 +117,9 @@ pub fn tool_group(name: &str) -> &'static str {
         | "create_project"
         | "audio_assets"
         | "import_audio"
+        | "load_sample"
+        | "edit_sample_map"
+        | "workspace"
         | "import_midi"
         | "setup_tracks"
         | "add_track"
@@ -131,6 +135,7 @@ pub fn tool_group(name: &str) -> &'static str {
         | "edit_timeline"
         | "inspect_performance"
         | "set_performance"
+        | "performance_presets"
         | "edit_notes"
         | "edit_harmony"
         | "set_drum_assignment" => "manual",

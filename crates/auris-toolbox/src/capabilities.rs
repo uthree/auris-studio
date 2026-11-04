@@ -7,7 +7,7 @@ pub mod capabilities {
     /// The wire name.
     pub const NAME: &str = "capabilities";
     /// The model-facing description.
-    pub const DESCRIPTION: &str = "Reports General MIDI availability, installed voice paths from the desktop's library settings, and optional project playback readiness and selected voice metadata. Voice discovery does not load or validate models. Guide vocals are temporary synthesis; stale takes need sing again. Audio preview creates a playable file; it does not imply that the connected language model can hear audio.";
+    pub const DESCRIPTION: &str = "Reports the running Auris version, build and OS, General MIDI availability, installed voice paths from the desktop's library settings, and optional project playback readiness and selected voice metadata. Voice discovery does not load or validate models. Guide vocals are temporary synthesis; stale takes need sing again. Audio preview creates a playable file; it does not imply that the connected language model can hear audio.";
     /// Optional project whose instruments and vocals should be inspected.
     #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
     pub struct Args {
@@ -38,7 +38,7 @@ pub mod capabilities {
                 "note":"For explicitly requested evaluator development experiments only, not ordinary composition. listen sends rendered WAV bytes to a separate audio model; configured does not establish audible-review quality"}),
             Err(error) => serde_json::json!({"tool":"listen","configured":false,"error":error}),
         };
-        Ok(serde_json::json!({"general_midi_available":session.general_midi_available(),"voices":voices,
+        Ok(serde_json::json!({"auris":crate::environment::Environment::current().json(),"general_midi_available":session.general_midi_available(),"voices":voices,
             "playback":session.playback_readiness(),"selected_voices":selected,
             "audio_reviewer":audio_reviewer,
             "preview":"playable audio file; model audio input support depends on the provider and model"}).to_string())

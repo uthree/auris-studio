@@ -10,6 +10,7 @@ pub mod transcription;
 pub mod audio;
 pub mod chords;
 pub mod instruments;
+pub mod pitch;
 
 use std::sync::{
     Arc,

@@ -16,6 +16,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+mod composer_log;
 mod digest;
 mod preview;
 #[cfg(test)]
@@ -87,6 +88,9 @@ pub struct Snapshot {
     pub preview_errors: BTreeMap<u64, String>,
     /// Real current stages; absence means the job is not running.
     pub progress: BTreeMap<u64, String>,
+    /// The composer's own latest account of what it is doing, from its report_status calls.
+    /// Shown only while its stage is the composer's; see [`Snapshot::status_line`].
+    pub status: BTreeMap<u64, String>,
     /// The director is responding.
     pub planning: bool,
     /// Preference evidence the user may inspect or clear.
@@ -100,6 +104,24 @@ pub struct Workshop {
     sender: mpsc::Sender<Command>,
     receiver: mpsc::Receiver<Snapshot>,
     stopped: Arc<AtomicBool>,
+}
+
+impl Snapshot {
+    /// The line a running candidate shows: the composer's own words while it is composing,
+    /// `None` when the host's stage should be shown instead.
+    ///
+    /// Planning, rendering, stopping and recovery are the host's work, which the composer cannot
+    /// see, so its last line would be stale there; those stages always show the host's label.
+    pub fn status_line(&self, id: u64) -> Option<&str> {
+        let composing = matches!(
+            self.progress.get(&id).map(String::as_str),
+            Some("harmony" | "melody" | "sing" | "compose" | "arrange")
+        );
+        composing
+            .then(|| self.status.get(&id))
+            .flatten()
+            .map(String::as_str)
+    }
 }
 
 impl Workshop {
@@ -138,6 +160,7 @@ impl Workshop {
                         previews: BTreeMap::new(),
                         preview_errors: BTreeMap::new(),
                         progress: BTreeMap::new(),
+                        status: BTreeMap::new(),
                         planning: false,
                         preferences: Preferences::default(),
                         error: Some(error),
@@ -464,6 +487,7 @@ fn numbered_choices(reply: &str) -> Option<(String, auris_session::choices::Choi
 enum JobEvent {
     Tool(u64, String, Option<bool>),
     Progress(u64, String),
+    Status(u64, String),
     Preview(u64, Result<Preview, String>),
     Recovering(u64, u32, String),
     Done(u64, Result<Arc<SongCandidate>, String>),
@@ -593,6 +617,7 @@ impl Owner {
                 previews: BTreeMap::new(),
                 preview_errors: BTreeMap::new(),
                 progress: BTreeMap::new(),
+                status: BTreeMap::new(),
                 planning: false,
                 preferences,
                 error,
@@ -619,6 +644,7 @@ impl Owner {
             previews: self.snapshot.previews.clone(),
             preview_errors: self.snapshot.preview_errors.clone(),
             progress: self.snapshot.progress.clone(),
+            status: self.snapshot.status.clone(),
             planning: self.planner.is_some(),
             preferences: self.snapshot.preferences.clone(),
             error: self.snapshot.error.clone(),
@@ -658,7 +684,11 @@ impl Owner {
                         });
                         if !self.selection_followup && !answer.directions.is_empty() {
                             let mut candidates = Vec::new();
-                            for direction in answer.directions {
+                            for mut direction in answer.directions {
+                                direction.sources =
+                                    usable_sources(&direction.sources, self.planned_parent, |id| {
+                                        self.snapshot.candidates.contains_key(&id)
+                                    });
                                 self.snapshot.document.next_id += 1;
                                 candidates.push(Candidate {
                                     id: self.snapshot.document.next_id,
@@ -736,10 +766,19 @@ impl Owner {
                             candidate.error = Some(error);
                         }
                         self.snapshot.progress.insert(id, "recovering".into());
+                        // A new attempt has not said what it is doing yet.
+                        self.snapshot.status.remove(&id);
                         self.publish(true);
                     }
                     JobEvent::Progress(id, stage) if self.jobs.contains_key(&id) => {
+                        if stage == "planning" {
+                            self.snapshot.status.remove(&id);
+                        }
                         self.snapshot.progress.insert(id, stage);
+                        self.publish(false);
+                    }
+                    JobEvent::Status(id, status) if self.jobs.contains_key(&id) => {
+                        self.snapshot.status.insert(id, status);
                         self.publish(false);
                     }
                     JobEvent::Done(id, result) => {
@@ -748,6 +787,7 @@ impl Owner {
                             .remove(&id)
                             .is_none_or(|c| c.load(Ordering::Acquire));
                         self.snapshot.progress.remove(&id);
+                        self.snapshot.status.remove(&id);
                         // A single completed edit advances the selected song. Comparisons,
                         // older recovery jobs and a selection changed during production do not.
                         let advance_selection = !cancelled
@@ -986,9 +1026,9 @@ impl Owner {
                 });
                 let selected = self.snapshot.document.continuation_candidate();
                 let voices = auris_session::library::voices_with_settings(&self.settings);
-                let candidate_history: Vec<_> = self.snapshot.document.rounds.iter().map(|round| {
-                    json!({"after_message": round.after_message, "candidates": round.candidates.iter().map(|candidate| {
-                        json!({"id": candidate.id, "parent": candidate.parent,
+                let candidate_history: Vec<_> = self.snapshot.document.rounds.iter().enumerate().map(|(round_index, round)| {
+                    json!({"after_message": round.after_message, "candidates": round.candidates.iter().enumerate().map(|(position, candidate)| {
+                        json!({"id": candidate.id, "label": auris_session::workshop::candidate_label(round_index, position), "parent": candidate.parent,
                             "title": candidate.direction.title, "description": candidate.direction.description,
                             "feedback": candidate.feedback})
                     }).collect::<Vec<_>>()})
@@ -1481,6 +1521,123 @@ fn idea(direction: &Direction) -> SongIdea {
     }
 }
 
+/// The private session one composer works in: the sounds the window has, and nothing more.
+///
+/// A composer is asked for "the Yamaha Grand Piano out of Fluid R3" in the user's words, and the
+/// only place it can look is `search_instruments` on this session. A headless session has no
+/// SoundFonts at all, so without the shipped fonts and the user's library here a composer could
+/// only answer every such request with a built-in synthesiser and an apologetic track name.
+/// Tests leave both out for the reason [`SessionOptions::shipped_fonts`] gives.
+/// The earlier candidates a direction may restore from: saved ones, other than the parent,
+/// each once, at most [`auris_session::source_material::MAX_SOURCES`]. A model's guess at an
+/// ID that names nothing is dropped rather than failing the whole assignment.
+fn usable_sources(requested: &[u64], parent: Option<u64>, saved: impl Fn(u64) -> bool) -> Vec<u64> {
+    let mut sources = Vec::new();
+    for &id in requested {
+        if Some(id) != parent && saved(id) && !sources.contains(&id) {
+            sources.push(id);
+        }
+    }
+    sources.truncate(auris_session::source_material::MAX_SOURCES);
+    sources
+}
+
+fn candidate_options(settings: &Settings) -> SessionOptions {
+    let installed = !cfg!(test);
+    let mut options = SessionOptions::headless()
+        .with_balance(false)
+        .with_shipped_fonts(installed)
+        // An empty dictionary setting means the shipped one, as it does in the window; a
+        // headless session would otherwise read kanji lyrics with nothing at all.
+        .with_shipped_dictionary(installed)
+        .with_plugin_paths(settings.plugin_paths.clone());
+    if installed {
+        options = options
+            .with_soundfont_library(auris_session::config_dir().join("soundfonts.json"))
+            .with_performance_presets(
+                auris_session::performance_presets::PerformancePresetBook::path(),
+            );
+    }
+    options
+}
+
+/// Composes one candidate from a direction, outside any conversation: development tooling for
+/// repeating a theme already in the workshop logs after a prompt or tool change.
+///
+/// The candidate is made exactly as the workshop makes it — the assignment carrying `document`'s
+/// conversation, the same isolated session and composer, the same automatic recovery from the
+/// checkpoint, the same log in `folder` — so a trial's `composer-log.jsonl` compares line for
+/// line with a logged one. Pass the conversation as it stood when the candidate was planned.
+/// `parent` continues an earlier song; `progress` hears each stage, tool result and status line
+/// as it happens. It is not part of the application: nothing in the window calls it.
+pub fn compose_trial(
+    direction: Direction,
+    document: &Document,
+    prefs: AgentPreferences,
+    settings: Settings,
+    folder: PathBuf,
+    parent: Option<PathBuf>,
+    mut progress: impl FnMut(String),
+) -> Result<SongCandidate, String> {
+    let mut candidate = Candidate {
+        id: 1,
+        parent: None,
+        direction,
+        ready: false,
+        error: None,
+        recoveries: 0,
+        tools: Default::default(),
+        feedback: None,
+    };
+    candidate.direction.instructions = composition_assignment(&candidate, document);
+    let (sender, receiver) = mpsc::channel();
+    let cancel = AtomicBool::new(false);
+    std::thread::scope(|scope| {
+        let worker = scope.spawn(|| {
+            recover_candidate(
+                &candidate,
+                &cancel,
+                &sender,
+                wait_for_recovery,
+                |candidate| {
+                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        compose(
+                            candidate,
+                            prefs.clone(),
+                            settings.clone(),
+                            folder.clone(),
+                            parent.clone(),
+                            &cancel,
+                            &sender,
+                            &[],
+                        )
+                    }))
+                    .unwrap_or_else(|_| Err(AttemptError::permanent("Candidate worker failed")))
+                },
+            )
+        });
+        while !worker.is_finished() {
+            while let Ok(event) = receiver.try_recv() {
+                match event {
+                    JobEvent::Progress(_, stage) => progress(format!("stage {stage}")),
+                    JobEvent::Status(_, status) => progress(format!("status {status}")),
+                    JobEvent::Tool(_, name, Some(ok)) => {
+                        progress(format!("tool {name} {}", if ok { "ok" } else { "FAILED" }))
+                    }
+                    JobEvent::Recovering(_, count, error) => {
+                        progress(format!("recovering ({count}): {error}"))
+                    }
+                    _ => {}
+                }
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        worker
+            .join()
+            .map_err(|_| "The composer panicked".to_owned())?
+    })
+}
+
 // Render and voice inference share a conservative process-wide gate; model turns remain parallel.
 static AUDIO_WORK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -1501,12 +1658,7 @@ fn compose(
     if cancel.load(Ordering::Acquire) {
         return Err("Cancelled".into());
     }
-    let mut session = Session::new(
-        SessionOptions::headless()
-            .with_balance(false)
-            .with_plugin_paths(settings.plugin_paths.clone()),
-    )
-    .map_err(|e| e.to_string())?;
+    let mut session = Session::new(candidate_options(&settings)).map_err(|e| e.to_string())?;
     if let Some(dictionary) = &settings.japanese_dictionary {
         session
             .set_japanese_dictionary(Some(dictionary))
@@ -1560,7 +1712,15 @@ fn compose(
     prefs.policy = auris_session::agent_policy::Policy {
         mode: auris_session::agent_policy::Mode::Edit,
         allow: vec![],
-        deny: vec!["search_internet".into(), "edit_project.listen".into()],
+        // Denying the shell outright starts CLI runtimes without their own shell and file
+        // tools, so a composer is never offered one only to have it refused.
+        deny: vec![
+            "search_internet".into(),
+            "edit_project.listen".into(),
+            "cli_command".into(),
+            "cli_file_change".into(),
+            "cli_file_read".into(),
+        ],
     };
     prefs.system_prompt = format!(
         "{}\n{}",
@@ -1580,12 +1740,37 @@ fn compose(
     }
     session.begin_agent_request();
     let _ = sender.send(JobEvent::Progress(candidate.id, "planning".into()));
+    let assignment = json!({"assignment":candidate.direction.instructions,
+    "status":"The user watches this candidate's card and sees only your report_status lines while you work. Call report_status with one short line in the assignment's language each time you start a new step, naming the concrete musical work.",
+    "sources":(!candidate.direction.sources.is_empty()).then(|| json!({
+        "candidates":candidate.direction.sources,
+        "instruction":"These earlier versions are loaded read-only. To bring material back, call source_material list, then restore the named clips exactly; never rewrite remembered notes. Re-sing restored singer clips."
+    })),
+    "recovery":candidate.error.as_ref().map(|error| json!({
+        "last_error":error,
+        "instruction":"Inspect the restored score and current resources. Continue only unfinished work; do not duplicate successful edits. Correct the cause of the last failure before completing."
+    }))});
+    // Earlier versions named by the director, beside this candidate's own folder.
+    for &source in &candidate.direction.sources {
+        let path = folder
+            .parent()
+            .unwrap_or(&folder)
+            .join(source.to_string())
+            .join("song/song.auris");
+        session
+            .add_source_project(source, &format!("candidate {source}"), &path)
+            .map_err(|e| {
+                AttemptError::permanent(format!("Source candidate {source} could not be read: {e}"))
+            })?;
+    }
+    let mut log = composer_log::Log::open(&folder);
+    log.note(
+        "assignment",
+        json!({"message":assignment,"backend":prefs.backend,"model":prefs.model}),
+    );
     worker.send(
-        &json!({"say": json!({"assignment":candidate.direction.instructions,
-            "recovery":candidate.error.as_ref().map(|error| json!({
-                "last_error":error,
-                "instruction":"Inspect the restored score and current resources. Continue only unfinished work; do not duplicate successful edits. Correct the cause of the last failure before completing."
-            }))}).to_string(),"policy":prefs.policy,"attachments":references}).to_string(),
+        &json!({"say": assignment.to_string(),"policy":prefs.policy,"attachments":references})
+            .to_string(),
     )?;
     let deadline = Instant::now() + Duration::from_secs(900);
     let mut denials = 0;
@@ -1593,9 +1778,11 @@ fn compose(
     let mut tool_calls = BTreeMap::new();
     let completion = loop {
         if cancel.load(Ordering::Acquire) {
+            log.note("cancelled", json!(null));
             return Err("Cancelled".into());
         }
         if Instant::now() > deadline {
+            log.note("timed_out", json!(null));
             return Err("Candidate production timed out".into());
         }
         // Capturing is cheap; rendering happens separately while the model keeps composing.
@@ -1609,6 +1796,7 @@ fn compose(
             Err(_) => return Err("Candidate worker stopped".into()),
         };
         observe_tool_event(candidate.id, &event, &mut tool_calls, sender);
+        log.observe(&event);
         match event["event"].as_str().unwrap_or_default() {
             "permission" => {
                 let allowed = auris_session::agent_policy::Operation::parse(
@@ -1628,6 +1816,7 @@ fn compose(
                 // A refusal is an answer the composer can act on: CLI runtimes reach for their
                 // own shell and file tools (Claude Code reads oversized tool output back from a
                 // file), and one such reach should not discard the whole candidate.
+                log.permission(event["tool"].as_str().unwrap_or_default(), allowed);
                 worker.send(&json!({"event":"permission_result","id":event["id"],"ok":allowed,
                     "reason":"Isolated candidate: only Auris music tools are available. Do not use shell or file tools; continue with the Auris tools."}).to_string())?;
                 if !allowed {
@@ -1639,6 +1828,22 @@ fn compose(
                         )));
                     }
                 }
+            }
+            "edit" if event["command"]["action"] == "report_status" => {
+                // The composer's own words replace the stage guessed from its tool calls.
+                let result = auris_session::live_agent::report_status(
+                    event["command"]["status"].as_str().unwrap_or_default(),
+                );
+                if let Ok(status) = &result {
+                    let _ = sender.send(JobEvent::Status(candidate.id, status.clone()));
+                }
+                let reply = match result {
+                    Ok(status) => {
+                        json!({"event":"edit_result","ok":true,"text":json!({"shown":status}).to_string()})
+                    }
+                    Err(error) => json!({"event":"edit_result","ok":false,"text":error}),
+                };
+                worker.send(&reply.to_string())?;
             }
             "edit" => {
                 let action = event["command"]["action"].as_str().unwrap_or_default();
@@ -1704,14 +1909,18 @@ fn compose(
     session.end_agent_request();
     validate_protected(&session)?;
     if session.project() == &before {
+        log.note("unchanged", json!(null));
         return Err(format!(
             "The composer did not make the requested music changes. {completion} {last_failure}"
         )
         .into());
     }
     if !last_failure.is_empty() {
+        log.note("unresolved_failure", json!(last_failure));
         return Err(format!("The last tool failure remains unresolved: {last_failure}").into());
     }
+    log.note("finished", json!(null));
+    drop(log);
     let _ = sender.send(JobEvent::Progress(candidate.id, "render_wait".into()));
     let _gate = audio_gate(cancel)?;
     let _ = sender.send(JobEvent::Progress(candidate.id, "render".into()));
@@ -1740,26 +1949,36 @@ fn execute(
     cancel: &AtomicBool,
 ) -> Result<String, String> {
     let action = command["action"].as_str().unwrap_or_default();
+    // A file tool aimed only at the candidate's own project workspace stays inside the private
+    // candidate, so it is a child capability like any edit; anywhere else on disk is not.
+    let workspace_file =
+        matches!(
+            action,
+            "render" | "export_midi" | "import_audio" | "import_midi" | "verify_render"
+        ) && serde_json::from_value::<auris_session::live_agent::Command>(command.clone())
+            .is_ok_and(|command| command.uses_only_workspace());
     // File exports/imports, playback, nested jobs and network tools are not child capabilities.
-    if matches!(
-        action,
-        "render"
-            | "compose"
-            | "phrase_variation"
-            | "edit_recipe"
-            | "listen"
-            | "import_transcription"
-            | "preview"
-            | "export_midi"
-            | "import_audio"
-            | "import_midi"
-            | "audio_assets"
-            | "checkpoints"
-            | "verify_render"
-            | "candidates"
-            | "accompaniment"
-            | "arrangement"
-    ) {
+    if !workspace_file
+        && matches!(
+            action,
+            "render"
+                | "compose"
+                | "phrase_variation"
+                | "edit_recipe"
+                | "listen"
+                | "import_transcription"
+                | "preview"
+                | "export_midi"
+                | "import_audio"
+                | "import_midi"
+                | "audio_assets"
+                | "checkpoints"
+                | "verify_render"
+                | "candidates"
+                | "accompaniment"
+                | "arrangement"
+        )
+    {
         return Err("This operation is not available inside candidate production".into());
     }
     if action == "generate_phrase"
@@ -1783,6 +2002,11 @@ fn execute(
             .audio_inspection_job(start_bar, bars, track)?
             .run(cancel)?;
         return serde_json::to_string(&report).map_err(|e| e.to_string());
+    }
+    if workspace_file {
+        // Rendering shares the audio budget with the other candidates' inspections.
+        let _gate = audio_gate(cancel)?;
+        return session.agent_command_with_plugin_paths(command, &settings.plugin_paths);
     }
     if vocal {
         let _gate = audio_gate(cancel)?;
@@ -2376,6 +2600,10 @@ mod tests {
         assert_eq!(owner.snapshot.document.rounds.len(), 1);
         let requests = seen.lock().unwrap();
         assert!(requests[0].contains("candidate_history"));
+        // The director is told the label the user sees, so "1A" means the same to both.
+        assert!(
+            requests[0].contains(r#""label":"1A""#) || requests[0].contains(r#"\"label\":\"1A\""#)
+        );
         assert!(requests[0].contains("Earlier piano idea"));
         assert!(requests[0].contains("Sparse piano over a steady pulse"));
         assert!(requests[0].contains("LYRIC_REFERENCE_夜の雨"));
@@ -2526,6 +2754,49 @@ mod tests {
         assert!(owner.planner.is_none());
     }
 
+    #[test]
+    fn sources_keep_saved_earlier_candidates_once_and_never_the_parent() {
+        let sources = usable_sources(&[3, 4, 3, 9, 1, 2, 5, 6], Some(4), |id| id != 9);
+        assert_eq!(sources, [3, 1, 2, 5]);
+    }
+
+    #[test]
+    fn a_composer_restores_from_a_named_source_candidate() {
+        let root = tempfile::tempdir().unwrap();
+        let mut earlier = Session::new(SessionOptions::headless()).unwrap();
+        let track = earlier.add_singer_track("Voice");
+        let clip = earlier
+            .add_midi_clip(
+                track,
+                "Chorus",
+                auris_session::prelude::Ticks::ZERO,
+                auris_session::prelude::Ticks::QUARTER,
+            )
+            .unwrap();
+        earlier
+            .add_note(
+                clip,
+                auris_session::prelude::Note::new(
+                    72,
+                    auris_session::prelude::Ticks::ZERO,
+                    auris_session::prelude::Ticks::QUARTER,
+                ),
+            )
+            .unwrap();
+        let saved = earlier
+            .save_as(&root.path().join("3/song/song.auris"))
+            .unwrap();
+        assert!(saved.document.ends_with("3/song/song.auris"));
+        let mut session = Session::new(SessionOptions::headless()).unwrap();
+        session
+            .add_source_project(3, "candidate 3", &saved.document)
+            .unwrap();
+        let listed = session
+            .agent_source_material(auris_session::source_material::Operation::List)
+            .unwrap();
+        assert!(listed.contains("\"in_current\":false"), "{listed}");
+    }
+
     fn assignment() -> Candidate {
         Candidate {
             id: 1,
@@ -2540,6 +2811,7 @@ mod tests {
                 description: "A short instrumental".into(),
                 instructions: "Create a short chiptune instrumental".into(),
                 protected_tracks: vec![],
+                sources: vec![],
             },
         }
     }
@@ -2993,9 +3265,15 @@ mod tests {
         let record = call(
             "record-1",
             "production_record",
-            json!({"operation":{"kind":"select_workflow","workflow":"composition","writing_order":"rhythm_first"}}),
+            json!({"operation":{"kind":"enter_phase","phase":"score","reason":"new song","writing_order":"rhythm_first"}}),
         );
         let setup = call("setup-1", "add_track", json!({"name":"Kit","kind":"drum"}));
+        let status = call(
+            "status-1",
+            "report_status",
+            json!({"status":"ドラムの基本パターンを
+書いています"}),
+        );
         let phrase = call(
             "phrase-1",
             "generate_phrase",
@@ -3010,6 +3288,7 @@ mod tests {
         let (url, seen) = crate::tests::mock_server(vec![
             crate::tests::completion(&record, "tool_calls"),
             crate::tests::completion(&setup, "tool_calls"),
+            crate::tests::completion(&status, "tool_calls"),
             crate::tests::completion(&phrase, "tool_calls"),
             crate::tests::completion(&inspect, "tool_calls"),
             crate::tests::completion(&answer, "stop"),
@@ -3035,7 +3314,7 @@ mod tests {
         .unwrap();
         assert!(result.audio.peak() > 1e-8);
         assert!(dir.path().join("1/song/song.auris").is_file());
-        assert_eq!(seen.lock().unwrap().len(), 5);
+        assert_eq!(seen.lock().unwrap().len(), 6);
         assert!(seen.lock().unwrap()[1].contains("worker_lifetime"));
         let events: Vec<_> = receiver.try_iter().collect();
         let completed: Vec<_> = events
@@ -3050,6 +3329,7 @@ mod tests {
             vec![
                 ("production_record", true),
                 ("add_track", true),
+                ("report_status", true),
                 ("generate_phrase", true),
                 ("inspect_audio", true)
             ]
@@ -3059,6 +3339,47 @@ mod tests {
                 .iter()
                 .any(|e| matches!(e, JobEvent::Progress(_, stage) if stage == "compose"))
         );
+        // The composer's own line reaches the card as one line, and is not mistaken for a stage.
+        let statuses: Vec<_> = events
+            .iter()
+            .filter_map(|event| match event {
+                JobEvent::Status(_, status) => Some(status.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(statuses, ["ドラムの基本パターンを 書いています"]);
+    }
+
+    #[test]
+    fn the_card_shows_the_composers_words_only_while_it_composes() {
+        let mut snapshot = Snapshot {
+            threads: Vec::new(),
+            document: Document::default(),
+            candidates: BTreeMap::new(),
+            previews: BTreeMap::new(),
+            preview_errors: BTreeMap::new(),
+            progress: BTreeMap::new(),
+            status: BTreeMap::new(),
+            planning: false,
+            preferences: Preferences::default(),
+            error: None,
+        };
+        snapshot.progress.insert(1, "melody".into());
+        assert_eq!(snapshot.status_line(1), None);
+        snapshot.status.insert(1, "サビの歌詞を当てています".into());
+        assert_eq!(snapshot.status_line(1), Some("サビの歌詞を当てています"));
+        for host in [
+            "planning",
+            "render_wait",
+            "render",
+            "stopping",
+            "recovering",
+        ] {
+            snapshot.progress.insert(1, host.into());
+            assert_eq!(snapshot.status_line(1), None, "{host}");
+        }
+        snapshot.progress.remove(&1);
+        assert_eq!(snapshot.status_line(1), None);
     }
     #[test]
     fn cancellation_prevents_model_work_and_output() {

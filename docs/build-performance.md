@@ -141,9 +141,35 @@ profile change starts a new cache generation, so the first CI run can still be e
 Cache retention and repository storage limits also affect reuse.
 
 Every platform uploads the test-build timing reports as `cargo-timings-<OS>-<architecture>`
-artifacts, retained for seven days, including reports available after a failure. Windows
-retains reports for both default and ASIO builds. Formatting, Clippy, tests, the release update
-helper and documentation checks retain their existing coverage.
+artifacts, retained for seven days, including reports available after a failure. The Windows
+ASIO job uploads its own as `cargo-timings-Windows-X64-asio`.
+
+### Where the time goes (2026-11-03)
+
+Measured from the step timings of the runs before this layout, a CI run took 24 to 41 minutes,
+and Windows was always the last job to finish: Clippy, the default test build, then Clippy and
+the test build again with `asio`. The feature changes cpal's features, so every workspace crate
+above it compiled twice in a row. macOS took 16 to 20 minutes and Linux 12. Restoring the cache
+took 20 to 90 seconds; the test steps were the rest, and they are mostly compiling and linking
+the workspace crates, which no dependency cache holds.
+
+Three changes followed:
+
+* The ASIO build is its own job, `Test on Windows with ASIO`, running alongside the default
+  Windows build instead of after it. It costs another runner and nothing in coverage. It
+  restores the default job's cache (`shared-key: windows`) and never saves one: with a cache
+  of its own it built from nothing on the first run, Clippy and tests taking 52 minutes.
+* Tests run as `cargo test --tests`. Plain `cargo test` also links every example, more than two
+  dozen executables that it then never runs; Clippy's `--all-targets` still type-checks them.
+  On a 4-core Linux container with dependencies already built, the backend test build went from
+  6m50s to 6m05s. Doctests run once, on macOS, as their own step.
+* Two `auris-session` tests about routing and clip transforms no longer balance the composed
+  mix, which renders the whole song: one of them took 2m28s alone, the longest test in the
+  workspace, and the `auris-session` unit tests went from 176 to 90 seconds there.
+
+`cargo test` runs one test executable at a time, so a single long test is a floor under the whole
+step. When adding a test that composes a full song through `Session::compose`, prefer
+`SessionOptions::headless().with_balance(false)` unless the levels are what it is about.
 
 ## Investigation baseline
 

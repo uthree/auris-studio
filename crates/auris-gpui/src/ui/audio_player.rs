@@ -53,6 +53,7 @@ impl PlayerState {
         auris_session::OutputPreviewOptions {
             position_seconds: if position >= duration { 0.0 } else { position },
             volume: if self.muted { 0.0 } else { self.volume },
+            loop_start_seconds: None,
         }
     }
 

@@ -35,7 +35,7 @@
 //! Saved-project MCP registers and dispatches through the toolbox execution registry.
 //! Runtime discovery and help use the same enabled tool set as execution.
 //! Built-in backends share documentation search, discovery, help and capability tools.
-//! Saved and live tools share exact tick-based note editing, stable object references and
+//! Saved and live tools share exact note editing by song bar and beat, stable object references and
 //! content revisions. The single mixer_graph entry point dispatches typed graph operations.
 //! Arrangement, authored controller curves, timeline and performance commands live in the session;
 //! saved execution adds persistence, while the desktop retains document ownership and Undo.
@@ -323,6 +323,31 @@
 //! measures the actual mix or a selected track's solo routing. A fixed colour scale preserves
 //! gain differences. These representations intentionally answer different questions.
 //!
+//! # The music linter
+//!
+//! [`crate::lint`] finds problems with one right answer — a dozen notes struck on one tick, a
+//! held minor second, a sustained note outside both the written key and chord, a duplicate
+//! note, chords sounding under no chord symbol, a mix that clips, a track that plays notes and
+//! makes no sound, a lone note rendered off its written pitch — and leaves everything
+//! with more than one answer to people and agents. Score rules read the document
+//! ([`crate::lint::lint_score`]); audio rules render the mix and every sounding track once on a
+//! worker ([`crate::lint::AudioLintJob`]). A finding carries a [`crate::lint::Fix`] only when the
+//! repair is obvious, and [`crate::Session::apply_lint_fix`] applies it as one Undo step at the
+//! revision it was found at, refusing a stale one.
+//!
+//! The desktop re-lints the score after every edit and runs the audio pass in the background
+//! only after an edit, once the document holds still and nothing else is playing, rendering,
+//! singing or talking to a model. The agent lints only when it calls `lint_project` (with
+//! `audio=true` for the render), and applies fixes by id through `apply_lint_fixes`. A clean
+//! report is a mechanical check, never a claim about musical quality.
+//!
+//! What a song does on purpose is recorded in the document, not in anyone's settings:
+//! [`auris_core::project::LintSuppression`] names one rule or every rule, over the whole song,
+//! a track, a clip or every section with one label, and [`crate::Session::suppress_lint`] adds
+//! one as an Undo step. Suppressed findings are counted, not reported, at both doors. Ignoring
+//! changes what is shown and not what sounds, so it carries the last audio pass forward rather
+//! than asking for another render.
+//!
 //! # Auditory feedback on unsaved music
 //!
 //! The live `listen` operation captures the open document through
@@ -472,7 +497,9 @@ pub mod architecture {
     //! The chord caption follows the same rule: its names are outlined from an installed font
     //! rather than bundled, and the chords come from the written harmony or, when there is none,
     //! from the session's recogniser — which [`auris_video`] cannot name, so
-    //! [`crate::Session::note_score`] fills them in.
+    //! [`crate::Session::note_score`] fills them in. The tempo and the beat counter across from
+    //! it need no recogniser: the score carries the tempo map and every notated beat in seconds,
+    //! so the counter's polygon has as many corners as the signature in force has beats.
     //!
     //! **[`auris_engine`] does not depend on [`auris_dsp`] or [`auris_synth`].** It drives plugins
     //! purely through the `auris-core` traits. That is what keeps the plugin system honest: if the
@@ -573,6 +600,22 @@ pub mod architecture {
     //! at 128 MiB per turn; this is an Auris budget, not a provider capability guarantee.
     //! Live agents write bounded harmony with `edit_harmony` and singer lyrics with
     //! `write_lyrics`; both are undoable document edits and never regenerate notes.
+    //! The song's words are kept twice, for two readers. A singer's notes carry what is *sung*,
+    //! a mora or a word at a time; [`Project::lyrics`](auris_core::Project::lyrics) carries what
+    //! is *read* — the line in force at each moment, as written — for video subtitles and the
+    //! lyrics lane. Song composition writes each phrase there as it writes the vocal, and the
+    //! agent's `write_lyrics` annotates the notes it fills in the same undo step, so neither
+    //! door can produce a song with words and no lines. `edit_lyrics` writes explicit lines or
+    //! rebuilds them from a singer track ([`Session::annotate_lyrics_from_vocals`](crate::Session::annotate_lyrics_from_vocals));
+    //! nothing rewrites the annotation behind a person's back, and editing it never moves a note.
+    //! Comments are the source-code habit brought to a score: text pinned to a place that
+    //! nothing plays. A track holds them in song time along its lane and a note clip in its own
+    //! time, optionally on a piano-roll row, so they move, copy and split with the notes they are
+    //! about ([`Comment`](auris_core::Comment)). The session's comment commands
+    //! ([`Session::add_comment`](crate::Session::add_comment) and its neighbours) are undoable and
+    //! touch nothing audible. `inspect_project` lists every comment for an agent and
+    //! `edit_comments` writes them; the instructions tell a model to read the comments in a
+    //! passage before editing it and never to remove a person's without being asked.
     //! Bar-addressed harmony follows the meter map independently of the pointer editing grid.
     //! A supplied key replaces internal modulations; the range restores its previous key and
     //! chord (including silence) at the end, leaving outside harmony intact.
@@ -831,6 +874,17 @@ pub mod architecture {
     //! bridge on the right. A note's place is fixed when it starts, so a held note never moves,
     //! and the gains `1 - pan` and `1 + pan` keep the mono downmix identical to the centred
     //! instrument. A `width` parameter scales the spread from mono to twice the natural image.
+    //! The seven [`auris_synth::Physical`] models also carry two [`auris_synth::Quality`]
+    //! choices, `quality` for live playback and `render_quality` for any block the engine marks
+    //! [`is_offline`](auris_core::ProcessContext::is_offline) — export, freeze, bounce,
+    //! analysis. Draft trims the piano's partial budget to a third, which is what lets a dense
+    //! piano part play live on a slow machine; High runs the delay-line strings at twice the
+    //! host rate. Render defaults to High and live to Standard, the calibrated model, so an
+    //! export can sound a little finer than playback but never coarser. The level is taken
+    //! when a note is struck, so neither control allocates or disturbs a sounding note. The
+    //! GPU is deliberately not involved: the heaviest of these models is a few thousand
+    //! phasors a block, which a GPU round trip would cost more to schedule than to compute —
+    //! the reasoning is [`auris_gpu`]'s own, under "When the GPU is used".
     //! There is no sample asset behind these instruments. [`crate::DEFAULT_INSTRUMENT`] names
     //! the physical piano. SoundFont import uses the same worker/session boundary as before.
     //! [`auris_synth::Choir`] is a polyphonic instrument for wordless ensemble vowels. Each
@@ -1414,6 +1468,22 @@ pub mod plugins {
     //! use the same prepared bases as strike and pickup weights. Drum preview is a repeatable
     //! one-shot gesture, with pad selection instead of octave transposition.
     //!
+    //! Every physical model publishes a body. The reeds and whistles publish their bores as
+    //! acoustic pressure from the mouthpiece to the open end
+    //! ([`MotionGeometry::Bore`](auris_core::motion::MotionGeometry::Bore)), read out of the
+    //! very delay line the reed or jet drives; the choir publishes its first singer's tract,
+    //! glottis to lips, with the eight tube cross-sections in place of modes
+    //! ([`MotionGeometry::Tract`](auris_core::motion::MotionGeometry::Tract)); the dulcimer
+    //! publishes each course as the sum of its modes' shapes.
+    //!
+    //! A body can also be touched.
+    //! [`Session::touch_instrument`](crate::Session::touch_instrument) sends
+    //! [`TOUCH_CONTROLLER`](auris_core::motion::TOUCH_CONTROLLER) ahead of a note, and the
+    //! instrument excites that one note where the frontend says it was touched — along a string,
+    //! from the centre of a head — instead of where its position control says. The touch is
+    //! consumed by the note, not held as channel state: a pointer poking at a string never moves
+    //! where the song's own notes are played, and nothing reaches the document.
+    //!
     //! # A note-off names a pitch, not a note
     //!
     //! [`NoteEvent::NoteOff`](auris_core::plugin::NoteEvent) carries a pitch and a frame, and that
@@ -1518,6 +1588,18 @@ pub mod plugins {
     //! inside a plugin can be built the same way; what must not happen is the resource travelling
     //! through the state.
     //!
+    //! The audio sampler, [`auris_sampler::AudioSampler`], is the second plugin built that way,
+    //! and the cheaper one, because its samples are not a new kind of asset at all. Loading files
+    //! into it ([`crate::Session::load_samples`]) adds ordinary audio sources to the document —
+    //! copied into the project folder, relocated, reported when missing — and places no clip; the
+    //! track's instrument state holds a map of [`auris_sampler::SampleZone`]s naming the sources
+    //! by id. A note plays the zone with the nearest root inside its velocity layer, unless a zone
+    //! names its own keys; [`auris_sampler::zones`] gives the rule and why it is that one. The session mirrors its decoded sources
+    //! into an [`auris_sampler::SampleBank`] in [`crate::Session::rebuild_graph`], the one moment
+    //! a sampler reads it, so no edit has to remember to keep the two in step.
+    //! [`auris_sampler::needs_asset`] names both samplers for whatever picks an instrument on
+    //! somebody's behalf: each is registered, and each is silent until a file is chosen.
+    //!
     //! SoundFont imports also register their absolute file identity in the application's
     //! `soundfonts.json` catalog. Every new or opened document adopts these library entries
     //! without creating an undo step or making the project dirty. The file itself stays at its
@@ -1574,34 +1656,19 @@ pub mod plugins {
     //! `attack`, `decay`, `sustain` and `release` is drawn one, and dragging its corners writes
     //! those four parameters. All four or none — three of them is not an envelope with a piece
     //! missing but a different shape, and the drum synth's lone decay would be drawn as a ramp
-    //! with two corners invented for it. That is why [`auris_sampler`] gained the picture the day
-    //! it gained the parameters, without a line changing in the frontend.
+    //! with two corners invented for it. That is why a sampler gains the picture the day
+    //! it gains the parameters, without a line changing in the frontend.
     //!
     //! # An envelope over a sound that already has one
     //!
-    //! [`auris_sampler`] does not synthesise its own voices — a font's regions carry their own
-    //! volume envelopes, and rustysynth neither exposes them nor lets a caller reach a voice. The
-    //! one per-note gain there is, is *channel expression*, so a note that is to be faded on its
-    //! own has to be given a channel of its own: fifteen of the library's sixteen, one note each.
-    //!
-    //! That trade is real — fifteen notes instead of 128 voices, and a drum kit's choke groups
-    //! only work between notes sharing a channel — so the whole mechanism sits behind a switch:
-    //! an `envelope` toggle, off by default, and while it is off the sampler plays the font
-    //! exactly as it is written. Two rules came out of it, and both generalise:
-    //!
-    //! **A feature that costs something is switched on explicitly, not inferred.** An earlier
-    //! version turned the mechanism on when any of the four sliders left its default, which is
-    //! tidier and wrong: a control that arms itself when you nudge it to see what it does is a
-    //! control nobody can disarm with confidence. The test for "on" is a free function
-    //! (`auris_sampler`'s `shaping`), so it can be read and asserted on rather than inferred from
-    //! the audio.
-    //!
-    //! **A cost the user cannot see is a cost the window has to say out loud.** Missing polyphony
-    //! shows up as "the top note of my chord dropped out", which is the kind of symptom that gets
-    //! blamed on anything but the switch that caused it, so the plugin window carries a caution
-    //! strip for as long as the envelope is on. Which plugin warns, and about what, is decided in
-    //! `auris_gpui::ui::plugin_window::caution` — the frontend, for the same reason it decides
-    //! which plugin gets a curve.
+    //! The SoundFont player does not synthesise its own voices: a font's regions carry their own
+    //! volume envelopes, and rustysynth neither exposes them nor lets a caller reach a voice. It
+    //! once laid an envelope over them anyway, by giving each note a MIDI channel of its own and
+    //! fading that channel's expression, which cost the player all but fourteen notes of
+    //! polyphony and a drum kit's choke groups. That mechanism is gone. The player plays the font
+    //! as it was written, and a sound that needs a different attack or release is rendered and
+    //! played from the audio sampler, whose envelope is its own. The lesson generalises: when a
+    //! library does not offer a control, reshaping the *material* beats forcing the library.
     //!
     //! # Where a new plugin goes
     //!
@@ -1776,6 +1843,25 @@ pub mod composition {
     //! written lyrics and an independent kana pronunciation, including without a dictionary.
     //! The written spelling stays on the first note with `+` continuations; phonemes carry
     //! pronunciation. Workshop cards read that written score rather than the kana reading.
+    //! Kana spells a long o as おう, which the table sings as spelt; where a dictionary reads
+    //! the written text to the same moras and hears that vowel held, the held vowel is sung —
+    //! 両手 read りょうて sings *ryo-o-te* — and any other difference keeps the reading as it is.
+    //!
+    //! A mora is a unit of the language, not of the melody, and two kinds need no note of
+    //! their own: a held long vowel (ー, or the second あ of さあ) may end the note before it,
+    //! and っ is the rest after a note. [`Session::analyze_lyrics_fitted`](crate::Session::analyze_lyrics_fitted)
+    //! says which moras those are, the range of note counts a phrase can be sung on, and
+    //! whether it fits a given count — the check that keeps a line sung to a repeated motif
+    //! free of 字余り and 字足らず. It never merges or splits to force a fit. Its reading cut
+    //! into notes with `|` is what `write_lyrics_with_reading` accepts; a grouped っ sings no
+    //! closure, so the write is refused unless a rest follows that note. A reading without
+    //! `|`, and the composer, keep one mora to a note.
+    //!
+    //! Kana is read a phrase at a time, never a mora at a time, because three kana are read
+    //! by the words around them: the particles は and へ sing *wa* and *e*
+    //! ([`spoken_kana_lyric`](auris_vocal::spoken_kana_lyric)). A space ends a word, and with
+    //! a dictionary its own word boundaries count too; the note keeps the は as written and
+    //! the phonemes carry the *wa*. を needs no context, being nothing but the particle.
     //!
     //! Existing singer phrases are compared through explicit
     //! [`ClipComparison`](crate::lyric_harness::ClipComparison) relationships. Each selected span
@@ -1967,6 +2053,17 @@ pub mod composition {
     //! while newer drafts arrive. Seeking a section or the waveform changes only the audition
     //! clock. Unnamed score gaps and rendered effect tails stay unnamed.
     //!
+    //! A loop song — looping on, with a region holding all the music — is auditioned as a loop.
+    //! [`RenderJob::render_audition`](crate::RenderJob::render_audition) renders the lead-in
+    //! before the region as written and then one warmed-up cycle of it, so what rings over the
+    //! loop's end already sounds at its start and the buffer ends exactly at the region's end.
+    //! The timeline's `loop_start_seconds` names the wrap point; it is recognised from the
+    //! buffer's length, so an ordinary render with a tail still plays once.
+    //! [`prepare_looping_output_preview`](crate::prepare_looping_output_preview) converts the cycle
+    //! with itself as context on both sides, and the callback wraps mid-block, so neither the rate
+    //! conversion nor the block boundary puts a click on the seam. A loop never completes; Stop
+    //! ends it. A region with bars still to come is somebody listening to a passage, and plays once.
+    //!
     //! # Two stages
     //!
     //! **The frame is planned first and then frozen.** Harmony, form, shared phrase boundaries
@@ -2140,6 +2237,16 @@ pub mod composition {
     //! Rhythmic chord clips use one chord preset. Density above 75% fills the chosen subdivision;
     //! at 100% it strikes every step, while gate independently controls note length. The
     //! foreground-arrangement pass preserves this dense rhythm, and authored rests stay intact.
+    //!
+    //! Chords and pad clips also take a left hand and a strum, the piano-comp texture of a root
+    //! under a voicing rolled upward. [`ClipRecipe::low_root`](auris_core::ClipRecipe::low_root)
+    //! strikes the chord's root (its slash bass) at least an octave under the voicing without
+    //! joining the voice leading; [`ClipRecipe::strum`](auris_core::ClipRecipe::strum) delays each
+    //! note above the lowest by a note value, written into the score, with every release left
+    //! where the strike would have ended. That is the difference from the stroke performance
+    //! transform, which spreads in milliseconds and leaves the text alone. Both reach the agent
+    //! through the recipe patch (`edit_recipe`, `accompaniment`) and a song part's `low_root` and
+    //! `strum` fields.
     //!
     //! Each clip a piece arrives with carries a [`ClipRecipe`](auris_core::ClipRecipe), derived by
     //! [`recipe_for`](auris_compose::recipe_for) from the part *as that section played it* — a
@@ -2492,6 +2599,8 @@ pub mod documents {
     //!   MySong.auris
     //!   Audio/
     //!     kick.wav
+    //!   Workspace/
+    //!     renders/mix.wav
     //! ```
     //!
     //! [`Session::save_as`](crate::Session::save_as) creates that folder rather than trusting
@@ -2499,6 +2608,17 @@ pub mod documents {
     //! `MySong.auris` gives `MySong/MySong.auris`. The invariant being defended is **one folder,
     //! one project** — two documents sharing a folder would share its `Audio/`, and saving one
     //! under a new name would leave both pointing at the same files.
+    //!
+    //! `Workspace/` is the agents' half of the folder. A file tool given a path *relative* to it
+    //! — `render` to `renders/mix.wav`, `load_sample` from `samples/kick.wav` — runs without a
+    //! permission prompt, because [`workspace_relative`](crate::workspace_relative) and
+    //! [`Session::resolve_workspace_path`](crate::Session::resolve_workspace_path) together
+    //! guarantee it names nothing outside the folder, by `..` or by a link; an absolute path could
+    //! be anything on the machine and is still asked about. The document never refers into the
+    //! workspace: loading or importing from it copies the file into `Audio/` like any import, so
+    //! the user may tidy the workspace away without silencing a track. It belongs to the folder all
+    //! the same, so Save As and the move of an unsaved song into its recovery folder carry it — which
+    //! is also what keeps a workshop candidate's renders with it from checkpoint to finished song.
     //!
     //! # Why an asset reference is not a path
     //!
@@ -2831,6 +2951,19 @@ pub mod harmony {
     //! a changed curve is not proof that an external instrument responds. Agents independently
     //! read back the measured effect and compare the same audio range before claiming an
     //! audible change. These diagnostics never bake performance into the score.
+    //!
+    //! A stack has a dozen controls, and most are answered the same way for every part of one
+    //! kind, so there are **presets**: a named stack filed under an instrument family
+    //! ([`PerformancePreset`](auris_core::PerformancePreset)). The built-ins are a catalogue in
+    //! `auris-core`; the ones a person saves from the panel, or an agent saves with
+    //! `performance_presets`, are one file in the configuration directory
+    //! ([`PerformancePresetBook`](crate::performance_presets::PerformancePresetBook)) shared by
+    //! every project and every door. Applying one
+    //! ([`apply_performance_preset`](crate::Session::apply_performance_preset)) *copies* its
+    //! stages into the clip, reseeded as that clip's own take, in one undo step; the clip keeps no
+    //! link to the preset, so a document stays portable and a preset edited later rewrites no
+    //! song — the same reason a kept chord progression is copied rather than quoted. No built-in
+    //! swings, because swing is the song's decision rather than one part's.
     //! Every wander draws from a seed
     //! the transform stores, through the same named streams the composer draws from
     //! ([`auris_core::rng`]), and it draws per loop pass — a repeated bar is loose differently

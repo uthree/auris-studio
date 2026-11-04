@@ -1386,6 +1386,9 @@ fn video(args: &[String]) -> Result<(), String> {
             }
             "--drums" => style.include_drums = true,
             "--no-chords" => style.chords = false,
+            "--no-lyrics" => style.lyrics = false,
+            "--no-tempo" => style.tempo = false,
+            "--no-beats" => style.beat_counter = false,
             "--size" => {
                 let text = value(&mut index, option, Key::CliNeedsValue)?;
                 let (width, height) = text
@@ -1407,6 +1410,17 @@ fn video(args: &[String]) -> Result<(), String> {
                 style.seconds_visible = text
                     .parse()
                     .map_err(|_| messages::unknown_option(LANGUAGE, &format!("{option} {text}")))?;
+            }
+            "--lead-in" | "--tail" => {
+                let text = value(&mut index, option, Key::CliNeedsValue)?;
+                let seconds: f32 = text
+                    .parse()
+                    .map_err(|_| messages::unknown_option(LANGUAGE, &format!("{option} {text}")))?;
+                if option == "--lead-in" {
+                    style.lead_in = seconds;
+                } else {
+                    style.tail = seconds;
+                }
             }
             "--sink" => {
                 let text = value(&mut index, option, Key::CliNeedsValue)?;

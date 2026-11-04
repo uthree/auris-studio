@@ -14,7 +14,7 @@
 
 use auris_core::theory::contour::Contour;
 
-use crate::kana::split_kana_lyric;
+use crate::kana::spoken_moras;
 
 /// One mora of a sung phrase: the text a note shows, and the phonemes it sings.
 #[derive(Clone, Debug, PartialEq)]
@@ -74,9 +74,11 @@ pub fn accent_contour(moras: usize, accent: usize) -> Vec<Contour> {
 ///
 /// `None` where the text is not all kana — that text needs the dictionary for its phonemes,
 /// never mind its accent. The phrase's `accent` is `None` rather than a guess, because a
-/// guessed nucleus would *constrain* the melody toward a contour nobody verified.
+/// guessed nucleus would *constrain* the melody toward a contour nobody verified. The phonemes
+/// are the phrase's spoken ones — a word-final は sings *wa* — by the same rule as
+/// [`spoken_kana_lyric`](crate::spoken_kana_lyric) without a dictionary.
 pub fn kana_accent_phrase(text: &str) -> Option<AccentPhrase> {
-    let moras = split_kana_lyric(text)?
+    let moras = spoken_moras(text, None)?
         .into_iter()
         .map(|(text, phonemes)| SungMora { text, phonemes })
         .collect::<Vec<_>>();

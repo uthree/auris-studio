@@ -2,11 +2,14 @@
 
 use crate::{Session, prelude::*};
 pub mod automation;
+pub mod comments;
 pub mod document_editing;
 pub mod file_jobs;
 pub mod harmony_suggestions;
 mod jobs;
 pub mod layers;
+mod lint;
+pub mod lyric_annotation;
 pub mod recipes;
 pub mod vocal_editing;
 pub use jobs::{AgentJob, AgentResult, AgentStep};
@@ -38,6 +41,23 @@ pub enum HistoryOperation {
 }
 mod vocals;
 pub use vocals::{VocalJob, VocalResult, VocalStep};
+/// The line a [`Command::ReportStatus`] shows: one line, whitespace collapsed, 1-80 characters.
+///
+/// The host draws it on a single row, so a line break or a paragraph would be cut off where the
+/// user cannot see it; refusing says so to the model instead.
+pub fn report_status(status: &str) -> Result<String, String> {
+    let line = status.split_whitespace().collect::<Vec<_>>().join(" ");
+    match line.chars().count() {
+        0 => Err("status needs a short line of text".into()),
+        1..=80 => Ok(line),
+        _ => Err("status is limited to 80 characters; say only the step you are on".into()),
+    }
+}
+
+fn lint_limit() -> usize {
+    32
+}
+
 fn sound_search_limit() -> usize {
     10
 }
@@ -123,13 +143,16 @@ pub enum Command {
         /// Inspect, validate or apply. Copy stable clip IDs and native parameter addresses from inspection.
         operation: crate::arrangement::Operation,
     },
-    /// Analyze Japanese lyrics into source-located phrases, readings and moras without editing. Explicit kana readings are diagnostic-only; use repair_lyrics to apply a pronunciation to existing note slots.
+    /// Analyze Japanese lyrics into source-located phrases, readings and moras without editing. Each mora's slot is note, hold (a long vowel, ー or the second あ of さあ, that may end the previous note) or rest (っ, sung as a rest after the previous note). Each phrase reports min_notes..max_notes and note_reading, the reading cut into notes with '|' for write_lyrics. Pass fit to check phrases against the note count of their melody (字余り/字足らず). readings and fit number phrases from 1: the first line is phrase 1. Explicit kana readings are diagnostic-only; use repair_lyrics to apply a pronunciation to existing note slots.
     AnalyzeLyrics {
         /// Original Japanese lyric, up to 65536 UTF-8 bytes.
         text: String,
         /// Optional request-local readings, addressed by one-based musical phrase.
         #[serde(default)]
         readings: Vec<crate::lyric_harness::PhraseReading>,
+        /// Optional note counts each phrase must fit, addressed by one-based musical phrase.
+        #[serde(default)]
+        fit: Vec<crate::lyric_harness::PhraseFit>,
     },
     /// Diagnose lyrics before composition or compare explicit singer-clip phrases. Pass exactly one of spec (an .asong TOML document) or comparisons. Returns all independent complaints and the live document revision. No audio synthesis or document edits.
     DiagnoseSong {
@@ -144,6 +167,24 @@ pub enum Command {
         /// Bounded alternatives, immutable musical template, keywords and revision.
         #[serde(flatten)]
         request: crate::lyric_harness::RepairRequest,
+    },
+    /// List or restore material from earlier versions of this song, supplied by the host (a workshop edit that names earlier candidates as sources). list shows each source's note clips with in_current and matches_current; restore copies the named clips' notes, lyrics and phonemes exactly into the current score as one Undo edit, keeping each clip's position and length. Clip IDs carry over between versions, so a clip restores into the same ID unless into names another. Use this instead of rewriting remembered notes; re-sing restored singer clips.
+    SourceMaterial {
+        /// List, or restore named clips from one source.
+        operation: crate::session::source_material::Operation,
+    },
+    /// Measure a melody section by section — register, range, leaps — and check that every chorus lifts above the section leading into it: at least a minor third higher on average, a higher peak, and at least one leap of a fourth or more. Also reports the bars of intro before the melody and of outro after it, and warns under eight, while the form is still easy to change. Read it after writing the melody and before lyrics are sung, and act on its warnings; it measures the written notes, not how they sound.
+    MelodyShape {
+        /// The track holding the melody, usually the lead singer.
+        track: u64,
+    },
+    /// Measure the arrangement against the form: which parts play in each section, how many different bars each part plays, whether the drums change in the bar before each chorus, and how many bars of intro and outro surround the voice. Warns when every section has the same parts, a chorus adds nothing to the section before it, no fill leads into a chorus, or the intro or outro is shorter than eight bars. Read it after writing the backing and act on its warnings; it measures the written notes, not how they sound.
+    ArrangementShape {},
+    /// Workshop candidates only: tell the user, in one short line, what you are working on now. The candidate's card shows it while you work until the next one replaces it; elsewhere it is not shown. Call it when you start each new step, before that step's first tool call, in the language of the assignment. Keep it short, about 30 characters, since the card has room for two lines. Name the concrete musical work, such as "Fitting the chorus lyrics to the melody" or "Thinning the strings under the second verse", never a generic "Working" or a tool name. Changes nothing.
+    ReportStatus {
+        /// The line, 1-80 characters.
+        #[schemars(length(min = 1, max = 80))]
+        status: String,
     },
     /// Read or undo/redo one complete user request in the live session. First use operation {"kind":"read"}; then supply its available_group and numeric revision. Human edits and open gestures are boundaries. Use this for "undo that change" instead of rewriting old notes. Does not save. Session-local; unavailable for saved-project calls.
     History {
@@ -164,16 +205,39 @@ pub enum Command {
     },
     /// Import a local audio file as a new track at an absolute tick position. Existing music and tempo are preserved. Copy and decode run off the UI thread; cancellation or document changes discard the staged import. One Undo removes it.
     ImportAudio {
-        /// Absolute local source path, up to 512 MiB; no network paths.
+        /// Workspace-relative path (samples/loop.wav) or absolute local path, up to 512 MiB; no network paths.
         path: String,
         /// Nonnegative absolute timeline position in ticks.
         at_tick: i64,
         /// Optional track and clip name, up to 256 bytes; otherwise the source stem.
         name: Option<String>,
     },
+    /// Load local audio files into an instrument track's sampler (auris.sampler.audio) as a multisample: each recording is a zone pitched by equal temperament from its root_note, so vocal chops, hits, textures or notes of a real instrument become a playable part. Each note plays the zone whose root is nearest, inside the velocity layer holding the note's velocity (low_velocity..high_velocity, normalized 0..1); give low_key/high_key only for a split other than nearest-root, e.g. one drum hit per key. Zones with the same root and layer alternate note by note (round robin). Pitching a recording far from its root sounds unnatural, so for a real instrument load one recording every few semitones. Each path is relative to the project workspace (samples/kick.wav, no permission prompt) or an absolute local path (asks first). Files are copied into the project's Audio folder, so they survive save and reopen; nothing is placed on the timeline, so write notes with add_clip and edit_notes. Each recording's pitch is measured (YIN): root_note omitted uses a note name in the file name such as Piano_C3, else the nearest key to the measured pitch, else 60, and tune corrects the measured offset so off-key, sung or microtonal recordings play in tune; each zone reports measured_hz. append keeps the current zones; otherwise they are replaced. loop repeats each sample between loop_start and loop_end while held (pads, drones). Afterwards edit_sample_map changes zones, and set_instrument_params reaches tune, key_tracking (off plays every key at the recorded pitch), attack/decay/sustain/release, loop, loop_start and loop_end. A track arriving from another instrument loses that instrument's settings and automation. One Undo removes it.
+    LoadSample {
+        /// Stable instrument track ID; drum, audio, singer and bus tracks are refused.
+        track: u64,
+        /// One to 128 recordings, each becoming one zone.
+        samples: Vec<crate::session::AgentSample>,
+        /// Add to the current zones instead of replacing them; default false.
+        append: Option<bool>,
+        /// Loop the samples while a note is held; omitted keeps the track's current setting (off for a new sampler).
+        #[serde(rename = "loop")]
+        looped: Option<bool>,
+    },
+    /// Change or remove zones of an audio sampler track's map, as one Undo. Indices are the zone numbers load_sample and inspect_instrument report, before this call, for edits and remove alike. Each zone reports plays, the keys it actually sounds on.
+    EditSampleMap {
+        /// Stable instrument track on auris.sampler.audio.
+        track: u64,
+        /// Changes to existing zones; omitted fields keep their value.
+        #[serde(default)]
+        edits: Vec<crate::session::SampleZoneEdit>,
+        /// Zone indices to remove.
+        #[serde(default)]
+        remove: Vec<usize>,
+    },
     /// Append a Standard MIDI File as new editable instrument/drum tracks. Keep the current tempo/meter maps and existing tracks. Notes, bends and controllers retain exact source ticks; playback instruments are defaults and need review. One Undo removes the whole import.
     ImportMidi {
-        /// Absolute local .mid path, up to 32 MiB.
+        /// Workspace-relative (midi/idea.mid) or absolute local .mid path, up to 32 MiB.
         path: String,
         /// Nonnegative absolute insertion tick, added to all source positions.
         at_tick: i64,
@@ -197,7 +261,7 @@ pub enum Command {
         /// Required for writes; copied from the latest read.
         expected_revision: Option<String>,
     },
-    /// Inspect, partially edit or explicitly regenerate 1..16 generated clips. Writes preserve other clips and mix state; hand-edited generated notes require explicit replacement permission. Recipe controls change stored notes; performance controls are separate. Subdivision is a grid, not note duration: eighth, sixteenth, eighth-triplet or sixteenth-triplet. Rhythm must use repeating grid steps: x hit, X accent, o ghost, dot/tilde/hyphen rest (example x...x...); empty clears it. Adjust note count and held duration with density and gate, not subdivision.
+    /// Inspect, partially edit or explicitly regenerate 1..16 generated clips. Writes preserve other clips and mix state; hand-edited generated notes require explicit replacement permission. Recipe controls change stored notes; performance controls are separate. Subdivision is a grid, not note duration: eighth, sixteenth, eighth-triplet or sixteenth-triplet. Rhythm must use repeating grid steps: x hit, X accent, o ghost, dot/tilde/hyphen rest (example x...x...); empty clears it. Adjust note count and held duration with density and gate, not subdivision. For a piano-style chord comp, low_root adds the root under the voicing and strum staggers onsets upward by a note value (32 or 64).
     EditRecipe {
         /// Unique stable generated clip IDs.
         #[schemars(length(min = 1, max = 16))]
@@ -225,7 +289,7 @@ pub enum Command {
         #[serde(default)]
         remap_clips: bool,
     },
-    /// Render an immutable snapshot to a new WAV mix or stems, then measure the encoded files. Default delivery mode attenuates only when needed for ceiling_db (default -1 dBTP) before encoding; stems share one gain. Read attenuation_db, source and encoded measurements. Opt into analysis for an exact 1-frame..300-second range at an explicit rate, stereo float32 with zero protective gain, source/state/environment identities and a persistent manifest. Analysis has its own seconds/frame range and optional source/bus, dry routing, causal context or cycle warmup. Existing outputs are never replaced. No save or document edit; cancellation/stale documents discard private stages.
+    /// Render an immutable snapshot to a new WAV mix or stems, then measure the encoded files. Default delivery mode attenuates only when needed for ceiling_db (default -1 dBTP) before encoding; stems share one gain. Read attenuation_db, source and encoded measurements. Opt into analysis for an exact 1-frame..300-second range at an explicit rate, stereo float32 with zero protective gain, source/state/environment identities and a persistent manifest. Analysis has its own seconds/frame range and optional source/bus, dry routing, causal context or cycle warmup. Destinations relative to the project workspace (renders/mix.wav, stems/v1) need no permission prompt and report workspace_path; absolute paths ask first and must not be in the Audio folder. Existing outputs are never replaced. No save or document edit; cancellation/stale documents discard private stages.
     Render {
         /// Explicit mix file or stem folder destination.
         destination: file_jobs::AudioDestination,
@@ -249,12 +313,12 @@ pub enum Command {
     },
     /// Export instrumental MIDI with trailing rests. Uses the unsaved score. Never overwrites or saves the project. Returns note count, duration in ticks/seconds and PPQ.
     ExportMidi {
-        /// Absolute new local MIDI file path.
+        /// New workspace-relative (midi/song.mid) or absolute local MIDI file path.
         output: String,
     },
     /// Measure an existing encoded WAV and return PASS/FAIL against supplied delivery limits. A failed verdict is an unfinished delivery, not a successful listening check.
     VerifyRender {
-        /// Absolute local WAV path to inspect.
+        /// Workspace-relative (renders/mix.wav) or absolute local WAV path to inspect.
         path: String,
         /// Optional target loudness, -60..-6 LUFS.
         target_lufs: Option<f32>,
@@ -264,6 +328,11 @@ pub enum Command {
         tolerance_lu: Option<f32>,
         /// Optional final half-second RMS limit, -120..0 dBFS.
         ending_rms_max_db: Option<f32>,
+    },
+    /// List the files in the project workspace, the folder beside the song where agent tools read and write without a permission prompt. Every file tool (render, export_midi, verify_render, load_sample, import_audio, import_midi) takes a path relative to it, such as renders/mix.wav or samples/kick.wav; folders are created on demand and '..' is refused. The workspace travels with the project folder on save, but nothing in it is part of the song until it is imported or loaded, which copies it into the project's Audio folder. Returns at most 256 files with their workspace paths and sizes.
+    Workspace {
+        /// Optional subfolder to list, relative to the workspace; omitted lists all of it.
+        folder: Option<String>,
     },
     /// Read or edit positioned tempo/meter changes without moving existing notes. Read returns native bounds and the current document revision.
     EditTimeline {
@@ -318,7 +387,12 @@ pub enum Command {
         /// Partial settings; omit every field that should stay unchanged.
         settings: Box<performance::PerformancePatch>,
     },
-    /// Write the document's key, Roman-numeral chord progression and/or section label across a bounded bar range. For a new song, write its harmony and named form (intro, verse, chorus, bridge, outro as appropriate) before adding notes. Changes metadata only; existing notes and mix are preserved. One Undo reverts the edit; persistence follows the host.
+    /// Named performance presets by instrument family: list, apply one to a clip as a starting feel (replaces its stages, own random take, one Undo; tune after with set_performance), save one from a clip or settings, or delete a kept one. Built-ins never swing. Kept presets are shared across projects and the user's picker.
+    PerformancePresets {
+        /// list, apply, save or delete.
+        operation: performance::presets::PresetOperation,
+    },
+    /// Write or clear the document's key, Roman-numeral chord progression and/or section label across a bounded bar range. For a new song, write its harmony and named form (intro, verse, chorus, bridge, outro as appropriate) before adding notes. Changes metadata only; existing notes and mix are preserved. One Undo reverts the edit; persistence follows the host.
     EditHarmony {
         /// First bar, 1-based.
         #[schemars(range(min = 1))]
@@ -337,6 +411,22 @@ pub enum Command {
         /// Clear this range instead of supplying chords.
         #[serde(default)]
         clear_chords: bool,
+        /// Remove the key changes in this range instead of supplying key, so the key in force before it runs through (from bar 1 the song key extends). Redundant same-key changes at the edges are dropped.
+        #[serde(default)]
+        clear_key: bool,
+        /// Remove the section names in this range instead of supplying section, leaving it unnamed; the section after the range is kept. Use it to delete a section label.
+        #[serde(default)]
+        clear_section: bool,
+    },
+    /// Write the song-wide lyrics annotation: the line sung at each moment, shown as video captions and read back by inspect_project. Required for every song with words, beside the clip lyrics: write_lyrics annotates the lines it fills automatically, and from_vocals rebuilds it from a singer's notes after note edits. Use write for explicit lines in original spelling, placed by 1-based bar/beat from the first sung word to where the line ends. Never changes notes. One Undo.
+    EditLyrics {
+        /// from_vocals, write or clear.
+        operation: lyric_annotation::Operation,
+    },
+    /// Pin, retype, move or remove comments: notes people and agents leave on a track's lane (song time) or inside a note clip (optionally on a piano-roll pitch row). Comments never sound or change notes. inspect_project lists every comment; read the ones in a passage before editing it. Positions are 1-based song bar/beat. Never remove or rewrite the user's comments unless asked. One Undo.
+    EditComments {
+        /// add, edit or remove.
+        operation: comments::Operation,
     },
     /// Discover installed singing voices in pages of 16 without loading their models. Copy a returned voice path into set_singer_voice. Discovery is not validation; no models are downloaded.
     ListVoices {
@@ -364,14 +454,14 @@ pub enum Command {
         /// Exact speaker name; omit for the voice's default. Unknown names are refused with available names.
         speaker: Option<String>,
     },
-    /// Write original lyrics (graphemes, not readings) across a singer clip's notes in time order. Keep original kanji/kana spelling in text for display; supply optional kana reading separately for pronunciation, including without a dictionary. The clip name becomes its complete written lyrics without abbreviation. Optional from is a zero-based storage index from read_notes; omit to start at the earliest note. Without reading, kana is split into moras and other text requires the installed Japanese dictionary. Insufficient note slots are refused without editing; later unfilled notes keep their words. Returns filled count, available notes and full clip name; one transaction. Use read_notes to verify before sing.
+    /// Write original lyrics (graphemes, not readings) across a singer clip's notes in time order. Keep original kanji/kana spelling in text for display; supply optional kana reading separately for pronunciation, including without a dictionary. The clip name becomes its complete written lyrics without abbreviation. Optional from is a zero-based storage index from read_notes; omit to start at the earliest note. Without reading, kana is split into moras and other text requires the installed Japanese dictionary. Kana is read as a phrase: particles は/へ sing wa/e where they end a space-separated word or the dictionary identifies them, so separate words with spaces (きみは わらう); write わ/え in reading only to force it. Insufficient note slots are refused without editing; later unfilled notes keep their words. Also writes the filled notes' span into the song-wide lyrics annotation in original spelling, one line per text line when each line's moras fill its notes; edit_lyrics refines it. Returns filled count, available notes, full clip name and annotated lines; one transaction. Use read_notes to verify before sing.
     WriteLyrics {
         /// Stable singer clip ID.
         clip: u64,
         /// Original nonempty written phrase, e.g. 桜咲いた. Never replace it with its reading.
         #[schemars(length(min = 1, max = 16384))]
         text: String,
-        /// Optional nonempty kana pronunciation, e.g. さくらさいた; leaves the written text intact.
+        /// Optional nonempty kana pronunciation, e.g. さくらさいた; leaves the written text intact. Without '|' each mora takes one note. With '|' between notes (analyze_lyrics note_reading, e.g. さあ| いっ|しょ|に) a group may hold a long vowel or end in っ, which is sung as a rest: the next note must start at least a thirty-second note after that note ends.
         #[schemars(length(min = 1, max = 16384))]
         reading: Option<String>,
         /// Zero-based storage index from read_notes; notes from this position in time order receive lyrics.
@@ -407,6 +497,31 @@ pub enum Command {
     },
     /// Read the current arrangement and stable track/clip IDs. Use read_notes for note data.
     Inspect {},
+    /// Lint the song for mechanical problems with one right answer: too many notes struck at once, bars too dense to hear, held minor seconds, muddy low seconds, held notes outside both the written key and chord, avoid notes, duplicate or inaudible notes, impossible pitches, and bars that sound chords with no chord written (fix: the chords the notes spell, when one per bar is unambiguous). It also flags a singer asked for two notes at once and sung notes with no lyric. audio=true also renders the mix and each sounding track (seconds of work) to find clipping, a mix far too loud or quiet, tracks that play notes but make no sound, single notes that sound off their written pitch or with no pitch, and stretches that cancel when summed to mono. Returns diagnostics with stable ids, ticks/bars, note {clip,index} refs and an obvious fix when one exists; pass those ids to apply_lint_fixes. No edits. Passing lint is not musical quality, and a finding may be deliberate: judge it against the user's intent before changing anything. ignore_rules lists what the user chose to ignore, with their reason when written; never undo or work around those.
+    LintProject {
+        /// Also render and measure the audio. Default false.
+        #[serde(default)]
+        audio: bool,
+        /// Optional first one-based bar to report.
+        #[schemars(range(min = 1))]
+        start_bar: Option<u32>,
+        /// Optional number of bars to report from start_bar.
+        #[schemars(range(min = 1))]
+        bars: Option<u32>,
+        /// Zero-based first diagnostic, for paging.
+        #[serde(default)]
+        offset: usize,
+        /// Page size, 1..64; default 32.
+        #[serde(default = "lint_limit")]
+        #[schemars(range(min = 1, max = 64))]
+        limit: usize,
+    },
+    /// Apply the obvious fixes of diagnostics returned by lint_project, by id, as one Undo step. Only diagnostics that still exist in the current document are fixed; audio diagnostics need a lint_project audio=true at the current revision. Returns what was applied and what was not. Diagnostics without a fix need a musical decision: edit the notes yourself instead.
+    ApplyLintFixes {
+        /// 1..64 diagnostic ids from lint_project.
+        #[schemars(length(min = 1, max = 64))]
+        ids: Vec<String>,
+    },
     /// Read bounded scan/measurement failures after searching. Does not rescan.
     InstrumentDiagnostics {
         /// Zero-based first diagnostic.
@@ -571,6 +686,39 @@ pub enum Command {
 }
 
 impl Command {
+    /// Whether every local file this command names is a project-workspace path.
+    ///
+    /// The permission policy lets such a file operation run without asking, so this reads only
+    /// the text, exactly as [`Session::agent_path`](crate::Session) will: a path is a workspace
+    /// path when [`crate::workspace_relative`] accepts it. `false` for commands without files.
+    pub fn uses_only_workspace(&self) -> bool {
+        let inside = |path: &str| crate::workspace_relative(path).is_some();
+        match self {
+            Self::ImportAudio { path, .. }
+            | Self::ImportMidi { path, .. }
+            | Self::VerifyRender { path, .. } => inside(path),
+            Self::LoadSample { samples, .. } => {
+                !samples.is_empty() && samples.iter().all(|sample| inside(&sample.path))
+            }
+            Self::ExportMidi { output } => inside(output),
+            Self::Render {
+                destination,
+                analysis,
+                ..
+            } => {
+                let destination = match destination {
+                    file_jobs::AudioDestination::Mix { path } => path,
+                    file_jobs::AudioDestination::Stems { folder } => folder,
+                };
+                inside(destination)
+                    && analysis
+                        .as_ref()
+                        .is_none_or(|request| inside(&request.manifest_path))
+            }
+            _ => false,
+        }
+    }
+
     /// Whether this operation can change the document; file output alone does not change it.
     pub fn is_mutating(&self) -> bool {
         match self {
@@ -584,13 +732,19 @@ impl Command {
             Self::RepairLyrics { request } => request.apply,
             Self::History { operation } => !matches!(operation, HistoryOperation::Read),
             Self::Checkpoints { operation, .. } => operation.is_mutating(),
+            Self::SourceMaterial { operation } => operation.is_mutating(),
             Self::Automation { operation, .. } => !operation.is_read_only(),
             Self::EditRecipe { operation, .. } => !operation.is_read_only(),
             Self::MixerGraph { operation } => !operation.is_read_only(),
             Self::EditClipCurve { operation, .. } => !operation.is_read_only(),
             Self::EditTimeline { operation } => !operation.is_read_only(),
             Self::Layer { operation } => !operation.is_read_only(),
+            Self::PerformancePresets { operation } => operation.is_mutating(),
             Self::Inspect {}
+            | Self::ReportStatus { .. }
+            | Self::MelodyShape { .. }
+            | Self::ArrangementShape {}
+            | Self::LintProject { .. }
             | Self::SuggestIssueReport { .. }
             | Self::OfferChoices { .. }
             | Self::ExecutionTrace { .. }
@@ -610,7 +764,8 @@ impl Command {
             | Self::Render { .. }
             | Self::Preview { .. }
             | Self::ExportMidi { .. }
-            | Self::VerifyRender { .. } => false,
+            | Self::VerifyRender { .. }
+            | Self::Workspace { .. } => false,
             _ => true,
         }
     }
@@ -634,7 +789,9 @@ impl Command {
                 | Self::Preview { .. }
                 | Self::ExportMidi { .. }
                 | Self::VerifyRender { .. }
+                | Self::LintProject { audio: true, .. }
                 | Self::ImportAudio { .. }
+                | Self::LoadSample { .. }
                 | Self::ImportMidi { .. }
                 | Self::Checkpoints { .. }
         )
@@ -733,10 +890,12 @@ impl Session {
                     | crate::arrangement::Operation::InspectBreathing { .. }
                     | crate::arrangement::Operation::Apply { .. }),
             } => self.agent_arrangement(operation),
-            Command::AnalyzeLyrics { text, readings } => {
-                serde_json::to_string(&self.analyze_lyrics(&text, &readings)?)
-                    .map_err(|e| e.to_string())
-            }
+            Command::AnalyzeLyrics {
+                text,
+                readings,
+                fit,
+            } => serde_json::to_string(&self.analyze_lyrics_fitted(&text, &readings, &fit)?)
+                .map_err(|e| e.to_string()),
             Command::DiagnoseSong { spec, comparisons } => {
                 if spec.is_some() == !comparisons.is_empty() {
                     return Err("Pass exactly one of spec or nonempty comparisons".into());
@@ -836,8 +995,23 @@ impl Session {
                     })
                     .collect();
                 let next = offset + parameters.len();
-                Ok(serde_json::json!({"track":track.0,"parameters":parameters,"total":descriptors.len(),"next_offset":(next < descriptors.len()).then_some(next)}).to_string())
+                let mut report = serde_json::json!({"track":track.0,"parameters":parameters,"total":descriptors.len(),"next_offset":(next < descriptors.len()).then_some(next)});
+                if offset == 0
+                    && self
+                        .project()
+                        .track(track)
+                        .and_then(|t| t.kind.as_instrument())
+                        .is_some_and(|i| i.instrument_id == auris_sampler::AUDIO_SAMPLER_ID)
+                {
+                    report["sample_map"] = self.agent_sample_map_report(track)["zones"].take();
+                }
+                Ok(report.to_string())
             }
+            Command::EditSampleMap {
+                track,
+                edits,
+                remove,
+            } => self.agent_edit_sample_map(TrackId(track), edits, remove),
             Command::SetInstrumentParams { edits } => {
                 let edits: Vec<_> = edits
                     .into_iter()
@@ -858,6 +1032,7 @@ impl Session {
                 drum_voice,
                 settings,
             } => self.agent_set_performance(ClipId(clip), drum_voice.as_deref(), *settings),
+            Command::PerformancePresets { operation } => self.agent_performance_presets(operation),
             Command::EditHarmony {
                 start_bar,
                 bars,
@@ -865,13 +1040,19 @@ impl Session {
                 chords,
                 section,
                 clear_chords,
-            } => self.agent_edit_harmony(
+                clear_key,
+                clear_section,
+            } => self.agent_edit_harmony_clearing(
                 start_bar,
                 bars,
-                key.as_deref(),
-                chords.as_deref(),
-                clear_chords,
-                section.as_deref(),
+                harmony::HarmonyWrite {
+                    key: key.as_deref(),
+                    chords: chords.as_deref(),
+                    section: section.as_deref(),
+                    clear_chords,
+                    clear_key,
+                    clear_section,
+                },
             ),
             Command::WriteLyrics {
                 clip,
@@ -916,14 +1097,39 @@ impl Session {
                     .transpose()?
                     .unwrap_or(0);
                 let indices = &indices[first..];
-                let filled = self
-                    .write_lyrics_with_reading(ClipId(clip), indices, &text, reading.as_deref())
-                    .map_err(error)?;
+                self.begin_transaction(crate::Edit::WriteLyrics);
+                let filled = match self.write_lyrics_with_reading(
+                    ClipId(clip),
+                    indices,
+                    &text,
+                    reading.as_deref(),
+                ) {
+                    Ok(filled) => filled,
+                    Err(failure) => {
+                        self.end_transaction();
+                        return Err(error(failure));
+                    }
+                };
+                // The song-wide lyrics follow every lyric an agent writes, so a caption or a
+                // lyric sheet never depends on the agent remembering a second call.
+                let lines = self.written_lyric_lines(
+                    ClipId(clip),
+                    &indices[..filled.min(indices.len())],
+                    &text,
+                    reading.as_deref(),
+                );
+                self.annotate_written_lines(&lines);
+                self.end_transaction();
                 Ok(
-                    serde_json::json!({"filled":filled,"available":indices.len(),"clip_name":self.midi_clip(ClipId(clip)).map(|clip| &clip.name),"unsaved":true})
+                    serde_json::json!({"filled":filled,"available":indices.len(),"clip_name":self.midi_clip(ClipId(clip)).map(|clip| &clip.name),
+                        "lyric_annotation":lines.iter().map(|line| serde_json::json!({"text":line.text,"start_tick":line.start.raw(),"end_tick":line.end.raw()})).collect::<Vec<_>>(),
+                        "unsaved":true})
                         .to_string(),
                 )
             }
+            Command::EditLyrics { operation } => self.agent_edit_lyrics(operation),
+            Command::EditComments { operation } => self.agent_edit_comments(operation),
+            Command::Workspace { folder } => self.agent_list_workspace(folder.as_deref()),
             Command::InspectSinger {
                 track,
                 offset,
@@ -938,7 +1144,9 @@ impl Session {
             | Command::Preview { .. }
             | Command::ExportMidi { .. }
             | Command::VerifyRender { .. }
+            | Command::LintProject { audio: true, .. }
             | Command::ImportAudio { .. }
+            | Command::LoadSample { .. }
             | Command::ImportMidi { .. }
             | Command::Checkpoints { .. }
             | Command::Arrangement {
@@ -1005,6 +1213,17 @@ impl Session {
             Command::MixerGraph { operation } => self
                 .apply_mixer_graph(&operation)
                 .map(|report| report.to_string()),
+            Command::LintProject {
+                audio: false,
+                start_bar,
+                bars,
+                offset,
+                limit,
+            } => {
+                let request = lint::LintRequest::new(start_bar, bars, offset, limit)?;
+                self.agent_lint_report(&request)
+            }
+            Command::ApplyLintFixes { ids } => self.agent_apply_lint_fixes(&ids),
             Command::InstrumentDiagnostics { offset, limit } => self
                 .sound_library_job(plugin_paths)
                 .diagnostics(offset, limit),
@@ -1015,6 +1234,16 @@ impl Session {
                 expected_revision,
                 edits,
             } => self.agent_edit_notes(&expected_revision, edits),
+            Command::SourceMaterial { operation } => self.agent_source_material(operation),
+            Command::ArrangementShape {} => Ok(
+                crate::session::arrangement_shape::arrangement_shape(self.project()).to_string(),
+            ),
+            Command::MelodyShape { track } => {
+                crate::session::melody_shape::melody_shape(self.project(), TrackId(track))
+                    .map(|report| report.to_string())
+            }
+            Command::ReportStatus { status } => report_status(&status)
+                .map(|status| serde_json::json!({ "shown": status }).to_string()),
             Command::Inspect {} => {
                 let project = self.project();
                 let tracks: Vec<_> = project
@@ -1036,8 +1265,9 @@ impl Session {
                 Ok(serde_json::json!({"title":project.name, "tracks":tracks, "revision":self.agent_document_revision()?,
                     "document_instance":self.document_instance(), "session_revision":self.revision(),
                     "verification_regions":crate::production_record::verification_regions(project),
+                    "phase_facts":crate::production_record::phase_facts(self),
                     "sample_rate":project.sample_rate,"duration_seconds":project.duration_seconds(), "harmony":project.harmony,
-                    "sections":project.sections, "tempo_map":project.tempo_map, "signatures":project.signatures, "loop_region":project.loop_region, "loop_enabled":project.loop_enabled, "ticks_per_quarter":Ticks::QUARTER.raw()})
+                    "sections":project.sections, "lyrics":lyric_annotation::lyric_lines_json(project), "comments":comments::comments_json(project), "tempo_map":project.tempo_map, "signatures":project.signatures, "loop_region":project.loop_region, "loop_enabled":project.loop_enabled, "ticks_per_quarter":Ticks::QUARTER.raw()})
                 .to_string())
             }
             Command::InspectAudio {
@@ -1238,6 +1468,34 @@ mod tests {
 
     fn session() -> Session {
         Session::new(crate::SessionOptions::headless().with_balance(false)).unwrap()
+    }
+
+    #[test]
+    fn a_status_line_is_one_short_line_and_changes_nothing() {
+        let mut session = session();
+        let before = session.project().clone();
+        let command = |status: &str| Command::ReportStatus {
+            status: status.into(),
+        };
+        assert!(!command("x").is_mutating());
+        let shown: serde_json::Value = serde_json::from_str(
+            &session
+                .agent_command(command("  サビの歌詞を\nメロディに合わせています "))
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(shown["shown"], "サビの歌詞を メロディに合わせています");
+        assert_eq!(session.project(), &before);
+        assert!(!session.is_dirty());
+        assert!(session.agent_command(command(" \n ")).is_err());
+        assert!(session.agent_command(command(&"あ".repeat(81))).is_err());
+        assert!(
+            crate::agent_policy::Operation::parse(
+                "edit_project",
+                &serde_json::json!({"command":{"action":"report_status","status":"Writing"}}),
+            )
+            .is_ok_and(|op| op.name == "edit_project.report_status" && !op.mutating)
+        );
     }
 
     #[test]

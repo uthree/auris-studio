@@ -81,6 +81,14 @@ pub enum ClipOperation {
         /// Stable other audio clip ID.
         other: u64,
     },
+    /// Join this MIDI clip with other MIDI clips on the same track into one clip, returning the
+    /// joined clip ID (the earliest clip's). Every note keeps its timeline position, gaps become
+    /// rest, loops are written out and curves and comments carry over; a recipe does not. All
+    /// pieces must share mute state and note transforms.
+    Join {
+        /// Stable IDs of the other clips to join with this one, in any order.
+        others: Vec<u64>,
+    },
 }
 
 impl ClipOperation {
@@ -414,6 +422,11 @@ impl Session {
                 ClipOperation::Crossfade { other } => {
                     self.crossfade_clips(clip, ClipId(other)).map_err(error)?;
                 }
+                ClipOperation::Join { others } => {
+                    let mut pieces = vec![clip];
+                    pieces.extend(others.into_iter().map(ClipId));
+                    result_clip = self.join_clips(&pieces).map_err(error)?;
+                }
             }
             let mut result = serde_json::json!({"clip":result_clip.0});
             if let (Some(start), Some(content), Some(sounding)) = (
@@ -573,6 +586,56 @@ mod tests {
     }
 
     #[test]
+    fn a_join_glues_clips_on_one_track_and_is_one_undo_step() {
+        let (mut session, track, clip) = fixture();
+        let next = session
+            .add_midi_clip(track, "Answer", Ticks(5760), Ticks(3840))
+            .unwrap();
+        session
+            .replace_notes(next, vec![Note::new(67, Ticks(0), Ticks(480))])
+            .unwrap();
+        let before = session.project().clone();
+        let reply: serde_json::Value = serde_json::from_str(
+            &session
+                .agent_edit_clip(
+                    clip.0,
+                    ClipOperation::Join {
+                        others: vec![next.0],
+                    },
+                )
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(reply["clip"], clip.0);
+        let joined = session.project().midi_clip(clip).unwrap().1;
+        assert_eq!(joined.length.raw(), 9600);
+        let mut starts: Vec<_> = joined
+            .notes
+            .iter()
+            .map(|n| (n.pitch, n.start.raw()))
+            .collect();
+        starts.sort();
+        assert_eq!(starts, vec![(60, 13), (64, 1920), (67, 5760)]);
+        session.undo();
+        assert_eq!(session.project(), &before);
+
+        let other = session.add_default_instrument_track("Bass").unwrap();
+        let elsewhere = session
+            .add_midi_clip(other, "Bass", Ticks(0), Ticks(3840))
+            .unwrap();
+        assert!(
+            session
+                .agent_edit_clip(
+                    clip.0,
+                    ClipOperation::Join {
+                        others: vec![elsewhere.0]
+                    }
+                )
+                .is_err()
+        );
+    }
+
+    #[test]
     fn a_loop_repeats_one_pass_out_to_the_tick_asked_for_and_is_one_undo_step() {
         let (mut session, track, clip) = fixture();
         let before = session.project().clone();
@@ -689,6 +752,8 @@ mod tests {
                 chords: Some("| I | IV | V | I |".into()),
                 section: None,
                 clear_chords: false,
+                clear_key: false,
+                clear_section: false,
             })
             .unwrap();
         let generated: serde_json::Value = serde_json::from_str(

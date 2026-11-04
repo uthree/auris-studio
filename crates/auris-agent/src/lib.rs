@@ -269,7 +269,7 @@ fn parse_args(
         return Err("--max-turns must be positive".into());
     }
     Ok(Command::Run(Options {
-        system_prompt: system_prompt(prefs),
+        system_prompt: live_system_prompt(prefs),
         context_tokens,
         output_tokens,
         thinking,
@@ -333,6 +333,9 @@ pub fn default_system_prompt() -> String {
 }
 
 /// Resolves the user's replacement prompt, preserving its text exactly unless blank.
+///
+/// This is the *editable* text Settings shows; what a model receives is
+/// [`live_system_prompt`], which follows it with the environment.
 pub fn system_prompt(prefs: &auris_session::AgentPreferences) -> String {
     if prefs.system_prompt.trim().is_empty() {
         default_system_prompt()
@@ -341,23 +344,41 @@ pub fn system_prompt(prefs: &auris_session::AgentPreferences) -> String {
     }
 }
 
+/// [`system_prompt`] followed by the running build's environment: what a live agent receives.
+///
+/// The environment line follows a replacement prompt too. It is facts about this process
+/// (version, build, platform), not instructions, and a model asked "which version is this?"
+/// should not have to guess because the user rewrote the musical guidance. It is kept out of
+/// [`system_prompt`] so that Settings never shows it, and saving never stores it.
+pub fn live_system_prompt(prefs: &auris_session::AgentPreferences) -> String {
+    format!(
+        "{}\n{}",
+        system_prompt(prefs),
+        toolbox::environment::Environment::current().prompt_note()
+    )
+}
+
 #[cfg(test)]
 fn preamble() -> String {
     default_system_prompt()
 }
 
+/// The system prompt for one profile.
+///
+/// The phased profile carries only the common core: the rules that hold in every phase. What a
+/// phase asks for — its musical guidance, its tool essentials and its technique index — comes
+/// back from `enter_phase`, so a model carries the phase it is in and not the other two. The
+/// legacy profile is kept whole, as the baseline the phased one is measured against.
 fn preamble_for_profile(modular: bool) -> String {
-    let mut text = format!(
+    if modular {
+        return include_str!("prompts/core.md").to_owned();
+    }
+    format!(
         "{}\n{}\n{}",
         include_str!("prompts/composition.md"),
         MUSICAL_DESIGN_INSTRUCTIONS,
         include_str!("prompts/live-tools.md")
-    );
-    // Detailed musical/operation guidance is returned by tool_help when needed.
-    if modular {
-        text.push_str("\nFor music-making select production_record select_workflow (composition, accompaniment, vocals, local_edit or delivery), choose writing_order harmony_first, melody_first or rhythm_first, and follow the returned workflow.\n");
-    }
-    text
+    )
 }
 
 /// A tool's refusal, carried as an error the runtime can classify.
@@ -1427,8 +1448,11 @@ mod tests {
         let body: serde_json::Value = serde_json::from_str(&requests[0]).unwrap();
         assert_eq!(
             body["messages"][0]["content"],
-            serde_json::json!([{"type":"text", "text":default_system_prompt()}])
+            serde_json::json!([{"type":"text", "text":live_system_prompt(&prefs)}])
         );
+        let sent = body["messages"][0]["content"][0]["text"].as_str().unwrap();
+        assert!(sent.starts_with(&default_system_prompt()));
+        assert!(sent.contains(&format!("Auris Studio {}", env!("CARGO_PKG_VERSION"))));
         assert!(default_system_prompt().contains(MUSICAL_DESIGN_INSTRUCTIONS));
     }
 
@@ -1458,8 +1482,21 @@ mod tests {
         assert_eq!(body["messages"][0]["role"], "system");
         assert_eq!(
             body["messages"][0]["content"],
-            serde_json::json!([{"type":"text", "text":custom}])
+            serde_json::json!([{"type":"text", "text":live_system_prompt(&prefs)}])
         );
+        // The replacement is sent verbatim, followed only by the environment's facts.
+        let sent = body["messages"][0]["content"][0]["text"].as_str().unwrap();
+        assert_eq!(
+            sent.strip_prefix(custom)
+                .and_then(|rest| rest.strip_prefix('\n')),
+            Some(
+                toolbox::environment::Environment::current()
+                    .prompt_note()
+                    .as_str()
+            )
+        );
+        // Settings edits the instructions alone, so saving never stores the environment.
+        assert_eq!(system_prompt(&prefs), custom);
         let mut defaults = prefs;
         defaults.system_prompt = " \n ".into();
         assert_eq!(system_prompt(&defaults), default_system_prompt());
@@ -1473,10 +1510,17 @@ mod tests {
             .collect::<Vec<_>>();
         let modular = preamble_for_profile(true);
         let legacy = preamble_for_profile(false);
+        assert_eq!(legacy.matches(MUSICAL_DESIGN_INSTRUCTIONS).count(), 1);
+        // The phased core leaves the musical guidance to the phase instructions.
+        assert!(!modular.contains(MUSICAL_DESIGN_INSTRUCTIONS));
+        assert!(
+            modular.len() < 4500,
+            "The common core grew to {} bytes",
+            modular.len()
+        );
         for text in [&modular, &legacy] {
-            assert_eq!(text.matches(MUSICAL_DESIGN_INSTRUCTIONS).count(), 1);
             assert!(
-                text.len() < 9000,
+                text.len() < 16000,
                 "Shared prompt grew to {} bytes",
                 text.len()
             );
@@ -1491,7 +1535,7 @@ mod tests {
                 assert!(text.contains(contract), "Missing {contract}");
             }
         }
-        assert!(modular.contains("select_workflow"));
+        assert!(modular.contains("enter_phase"));
         assert_eq!(
             catalog,
             host::ToolHost::definitions()

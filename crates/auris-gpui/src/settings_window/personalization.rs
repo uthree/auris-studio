@@ -10,6 +10,9 @@ pub(super) struct Personalization {
     confirming: bool,
     error: Option<String>,
     original: Option<Selection>,
+    /// The summary as it was read when its editor opened; the text being typed is the shared
+    /// preference field, so the editor keys work as they do for a choice.
+    digest: Option<String>,
     chosen: usize,
     pub(super) viewport: std::rc::Rc<std::cell::RefCell<crate::ui::text_area::ProseViewport>>,
 }
@@ -17,6 +20,7 @@ pub(super) struct Personalization {
 impl SettingsWindow {
     pub(super) fn cancel_preference(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.personalization.original = None;
+        self.personalization.digest = None;
         self.personalization.error = None;
         self.agent.active = None;
         self.editing_search = true;
@@ -45,6 +49,7 @@ impl SettingsWindow {
                     Ok(preferences) => {
                         this.personalization.preferences = Some(preferences);
                         this.personalization.original = None;
+                        this.personalization.digest = None;
                         if save {
                             this.status = this.t(Key::PreferenceSaved).to_owned();
                             let _ = this.app.update(cx, |app, cx| {
@@ -66,6 +71,17 @@ impl SettingsWindow {
     }
 
     pub(super) fn save_preference(&mut self, cx: &mut Context<Self>) {
+        if let Some(original) = self.personalization.digest.clone() {
+            let revised = self.agent.fields[agent::AgentSettings::PREFERENCE_FIELD]
+                .content()
+                .to_owned();
+            self.preference_operation(
+                true,
+                move || workshop::revise_preference_digest(&original, &revised),
+                cx,
+            );
+            return;
+        }
         let Some(original) = self.personalization.original.clone() else {
             return;
         };
@@ -147,7 +163,8 @@ impl SettingsWindow {
             self.preference_operation(false, workshop::load_preferences, cx);
         }
         let busy = self.personalization.busy || self.personalization.confirming;
-        let editing = self.personalization.original.is_some();
+        let editing =
+            self.personalization.original.is_some() || self.personalization.digest.is_some();
         let spacing = self.theme.atelier.spacing;
         let mut body = div()
             .flex()
@@ -201,18 +218,11 @@ impl SettingsWindow {
         );
         if let Some(original) = self.personalization.original.clone() {
             body = body.child(self.render_preference_editor(&original, busy, cx));
+        } else if self.personalization.digest.is_some() {
+            body = body.child(self.render_digest_editor(busy, cx));
         } else {
             if !preferences.digest.is_empty() {
-                body = body.child(
-                    FormGroup::new(self.t(Key::PreferenceDigest))
-                        .description(self.t(Key::PreferenceDigestHelp))
-                        .child(
-                            div()
-                                .text_size(self.theme.atelier.typography.size_sm)
-                                .text_color(self.theme.text_muted)
-                                .child(preferences.digest.trim().to_owned()),
-                        ),
-                );
+                body = body.child(self.render_digest(&preferences, busy, cx));
             }
             if !preferences.selections.is_empty() || preferences.digest.is_empty() {
                 body = body.child(self.render_preference_history(&preferences, busy, cx));
@@ -234,6 +244,104 @@ impl SettingsWindow {
             ),
         );
         body.into_any_element()
+    }
+
+    /// The summary of earlier choices, read-only, with the button that opens its editor.
+    fn render_digest(
+        &mut self,
+        preferences: &Preferences,
+        busy: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let theme = &self.theme;
+        let spacing = theme.atelier.spacing;
+        let typography = &theme.atelier.typography;
+        let digest = preferences.digest.clone();
+        FormGroup::new(self.t(Key::PreferenceDigest))
+            .description(self.t(Key::PreferenceDigestHelp))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .min_w_0()
+                    .gap(spacing.xs)
+                    .child(
+                        div()
+                            .text_size(typography.size_sm)
+                            .text_color(theme.text_muted)
+                            .child(digest.trim().to_owned()),
+                    )
+                    .children(preferences.digest_edited.then(|| {
+                        div()
+                            .text_size(typography.size_sm)
+                            .text_color(theme.text_faint)
+                            .child(self.t(Key::PreferenceDigestEdited).to_owned())
+                    }))
+                    .child(
+                        div().flex().pt(spacing.xxs).child(
+                            Button::new(
+                                "preference-digest-edit",
+                                self.t(Key::PreferenceDigestEdit),
+                            )
+                            .ghost()
+                            .size(ControlSize::Small)
+                            .disabled(busy)
+                            .on_click(cx.listener(
+                                move |this, _, window, cx| {
+                                    let field = agent::AgentSettings::PREFERENCE_FIELD;
+                                    this.agent.fields[field] = TextField::new(digest.clone());
+                                    this.agent.fields[field].place_caret(0, false);
+                                    this.personalization.digest = Some(digest.clone());
+                                    this.agent.active = Some(field);
+                                    this.editing_search = false;
+                                    this.personalization.viewport.borrow_mut().follow_caret();
+                                    window.focus(&this.agent.focus[field]);
+                                    cx.notify();
+                                },
+                            )),
+                        ),
+                    ),
+            )
+            .into_any_element()
+    }
+
+    /// The summary's editor: the same text area as a choice's request, with Cancel and Save.
+    fn render_digest_editor(&mut self, busy: bool, cx: &mut Context<Self>) -> AnyElement {
+        let prompt = self.agent_prompt(agent::AgentSettings::PREFERENCE_FIELD, cx);
+        div()
+            .flex()
+            .flex_col()
+            .gap(self.theme.atelier.spacing.md)
+            .child(
+                FormGroup::new(self.t(Key::PreferenceDigestEdit))
+                    .description(self.t(Key::PreferenceDigestEditHelp))
+                    .child(FormField::new(self.t(Key::PreferenceDigest)).child(prompt)),
+            )
+            .child(
+                div()
+                    .flex()
+                    .justify_end()
+                    .gap(self.theme.atelier.spacing.sm)
+                    .child(
+                        Button::new("preference-digest-cancel", self.t(Key::Cancel))
+                            .ghost()
+                            .disabled(busy)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.cancel_preference(window, cx)
+                            })),
+                    )
+                    .child(
+                        Button::new("preference-digest-save", self.t(Key::PreferenceDigestSave))
+                            .disabled(busy)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.save_preference(cx);
+                                if this.personalization.busy {
+                                    window.focus(&this.search_focus);
+                                }
+                            })),
+                    ),
+            )
+            .into_any_element()
     }
 
     /// The correction form for one recorded choice: the request above, the alternative below,
@@ -416,8 +524,12 @@ mod tests {
     use super::*;
     use gpui::{TestAppContext, VisualTestContext};
 
+    /// Both tests write the one preference file of this run's configuration directory.
+    static PREFERENCE_FILE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[gpui::test]
     fn preference_history_can_be_corrected_removed_and_reset(cx: &mut TestAppContext) {
+        let _file = PREFERENCE_FILE.lock().unwrap_or_else(|e| e.into_inner());
         let (app, cx) = crate::harness::open(cx);
         let original = Selection {
             conversation: "settings-test".into(),
@@ -431,12 +543,14 @@ mod tests {
                     description: "Sparse piano".into(),
                     instructions: "Compose piano".into(),
                     protected_tracks: vec![],
+                    sources: vec![],
                 },
                 workshop::Direction {
                     title: "Strings".into(),
                     description: "Warm strings".into(),
                     instructions: "Compose strings".into(),
                     protected_tracks: vec![],
+                    sources: vec![],
                 },
             ],
         };
@@ -543,5 +657,76 @@ mod tests {
         handle
             .read_with(cx, |this, _| assert!(this.personalization.error.is_none()))
             .unwrap();
+    }
+
+    #[gpui::test]
+    fn the_summary_of_earlier_choices_can_be_rewritten(cx: &mut TestAppContext) {
+        let _file = PREFERENCE_FILE.lock().unwrap_or_else(|e| e.into_inner());
+        let (app, cx) = crate::harness::open(cx);
+        workshop::update_preferences(|p| {
+            *p = Preferences::default();
+            p.digest = "Prefers warm keys".into();
+            p.digested = 8;
+        })
+        .unwrap();
+        app.update(cx, |this, cx| this.open_settings(cx));
+        let handle = app.read_with(cx, |this, _| this.settings_window.unwrap());
+        let cx = &mut VisualTestContext::from_window(handle.into(), cx);
+        cx.simulate_resize(gpui::size(px(1200.0), px(1800.0)));
+        // The agent page points at where the learned preferences live.
+        crate::harness::click("tab-agent", cx);
+        crate::harness::click("agent-preferences-link", cx);
+        cx.run_until_parked();
+        handle
+            .read_with(cx, |this, _| {
+                assert_eq!(this.tab, SettingsTab::Personalization)
+            })
+            .unwrap();
+        // Escape leaves the stored summary alone.
+        crate::harness::click("preference-digest-edit", cx);
+        cx.simulate_keystrokes("secondary-a");
+        cx.simulate_input("Discard this");
+        cx.simulate_keystrokes("escape");
+        handle
+            .read_with(cx, |this, _| assert!(this.personalization.digest.is_none()))
+            .unwrap();
+        assert_eq!(
+            workshop::load_preferences().unwrap().digest,
+            "Prefers warm keys"
+        );
+        crate::harness::click("preference-digest-edit", cx);
+        cx.simulate_keystrokes("secondary-a");
+        cx.simulate_input("短調のバラードが好き");
+        cx.simulate_keystrokes("enter");
+        cx.simulate_input("Avoid brass.");
+        crate::harness::click("preference-digest-save", cx);
+        cx.run_until_parked();
+        let preferences = workshop::load_preferences().unwrap();
+        assert_eq!(preferences.digest, "短調のバラードが好き\nAvoid brass.");
+        assert!(preferences.digest_edited);
+        assert_eq!(preferences.digested, 8);
+        handle
+            .read_with(cx, |this, _| {
+                assert!(this.personalization.digest.is_none());
+                assert!(this.personalization.error.is_none());
+            })
+            .unwrap();
+        // A summary rewritten elsewhere meanwhile is not overwritten.
+        crate::harness::click("preference-digest-edit", cx);
+        workshop::update_preferences(|p| p.digest = "Written by the workshop".into()).unwrap();
+        cx.simulate_keystrokes("secondary-a");
+        cx.simulate_input("Mine");
+        cx.simulate_keystrokes("secondary-enter");
+        cx.run_until_parked();
+        handle
+            .read_with(cx, |this, _| {
+                assert!(this.personalization.digest.is_some());
+                assert!(this.personalization.error.is_some());
+            })
+            .unwrap();
+        assert_eq!(
+            workshop::load_preferences().unwrap().digest,
+            "Written by the workshop"
+        );
     }
 }

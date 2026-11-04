@@ -35,7 +35,8 @@ pub fn ffmpeg_install_page() -> &'static str {
 /// What a video export produced.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct VideoSummary {
-    /// Length in seconds, the effect tail included.
+    /// Length in seconds: the mix with its effect tail, and the style's lead-in and tail of
+    /// silence around it.
     pub seconds: f64,
     /// Frames encoded.
     pub frames: u64,
@@ -173,8 +174,9 @@ impl VideoJob {
                 },
             )
         })?;
+        let style = renderer.style();
         Ok(VideoSummary {
-            seconds: audio.seconds,
+            seconds: f64::from(style.lead_in) + audio.seconds + f64::from(style.tail),
             frames,
             codec: ffmpeg.codec(),
         })
@@ -266,6 +268,21 @@ mod tests {
             .map(|chord| chord.name.clone())
             .collect();
         assert_eq!(names, ["F"]);
+    }
+
+    #[test]
+    fn the_song_wide_lyrics_become_subtitles_in_seconds() {
+        let mut session = Session::new(SessionOptions::headless()).unwrap();
+        let bar = Ticks(TICKS_PER_QUARTER * 4);
+        session.write_lyric_line(bar, bar * 2, "桜咲いた");
+        let score = session.note_score();
+        assert_eq!(score.lyrics.len(), 1);
+        assert_eq!(score.lyrics[0].text, "桜咲いた");
+        let seconds_per_bar = 4.0 * 60.0 / session.project().tempo_map.bpm_at(Ticks::ZERO);
+        assert!((score.lyrics[0].start - seconds_per_bar).abs() < 1e-6);
+        assert!((score.lyrics[0].end - 2.0 * seconds_per_bar).abs() < 1e-6);
+        assert_eq!(score.lyric_at(seconds_per_bar * 1.5), Some(0));
+        assert_eq!(score.lyric_at(seconds_per_bar * 2.5), None);
     }
 
     #[test]

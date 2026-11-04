@@ -508,6 +508,7 @@ impl AurisApp {
                     .on_action(Self::window_listener(cx, Self::on_select_all_clips))
                     .on_action(Self::window_listener(cx, Self::on_duplicate_clip))
                     .on_action(Self::window_listener(cx, Self::on_split_clip))
+                    .on_action(Self::window_listener(cx, Self::on_join_clips))
                     .on_action(Self::window_listener(cx, Self::on_toggle_clip_mute))
                     .on_action(Self::window_listener(cx, Self::on_toggle_clip_loop))
                     .on_action(Self::window_listener(cx, Self::on_set_tempo))
@@ -538,6 +539,7 @@ impl AurisApp {
                     .on_action(Self::window_listener(cx, Self::on_toggle_agent))
                     .on_action(Self::window_listener(cx, Self::on_toggle_structure_lane))
                     .on_action(Self::window_listener(cx, Self::on_toggle_harmony_lane))
+                    .on_action(Self::window_listener(cx, Self::on_toggle_lyrics_lane))
                     .on_action(Self::window_listener(cx, Self::on_toggle_tempo_marks))
                     .on_action(Self::window_listener(cx, Self::on_toggle_bend_lane))
                     .on_action(Self::window_listener(cx, Self::on_toggle_modulation_lane))
@@ -1565,6 +1567,23 @@ impl AurisApp {
                     }
                 }
             }
+            Drag::LyricLine { at, grab_offset } => {
+                let x = event.position.x - self.timeline_origin().x;
+                let wanted = self
+                    .snap_unless_held(self.timeline.x_to_tick(x) - grab_offset, event.modifiers)
+                    .max_zero();
+                if wanted != at
+                    && self.session.move_lyric_line(at, wanted)
+                    && let Some(Drag::LyricLine { at, .. }) = &mut self.drag
+                {
+                    *at = wanted;
+                }
+            }
+            Drag::Comment {
+                host,
+                id,
+                grab_offset,
+            } => self.drag_comment(host, id, grab_offset, event),
             Drag::PanelScroll {
                 panel,
                 start,
@@ -2022,6 +2041,18 @@ impl AurisApp {
             } => {
                 self.drag_volume_contour_point(clip, index, bounds, event.position);
             }
+            Drag::VideoColour {
+                channel,
+                start_fraction,
+                start_x,
+            } => {
+                let delta = crate::ui::widgets::fine_scaled(
+                    f32::from(event.position.x - start_x),
+                    event.modifiers,
+                );
+                let fraction = crate::ui::widgets::dragged(start_fraction, delta);
+                self.set_video_colour_channel(channel, fraction, false);
+            }
             Drag::TimeZoom {
                 start_fraction,
                 start_x,
@@ -2087,6 +2118,13 @@ impl AurisApp {
             Some(Drag::DrumLaneReorder { track, .. }) => Some(*track),
             _ => None,
         };
+        // A colour drag changed the look without writing it down on every move; this is the
+        // one write for the whole sweep.
+        if matches!(self.drag, Some(Drag::VideoColour { .. }))
+            && let Err(error) = self.save_settings()
+        {
+            log::warn!("could not save settings: {error}");
+        }
         self.stop_audition();
         // A key of the drawn keyboard pressed with the pointer is let go of here rather than on
         // the key itself, because the pointer may well have left it — or the panel — by now.
@@ -3297,6 +3335,18 @@ impl AurisApp {
         cx.notify();
     }
 
+    fn on_join_clips(
+        &mut self,
+        _: &actions::JoinClips,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(clip) = self.selected_clip {
+            self.run_menu_command(MenuCommand::JoinClips(clip), cx);
+        }
+        cx.notify();
+    }
+
     fn on_toggle_clip_mute(
         &mut self,
         _: &actions::ToggleClipMute,
@@ -3617,6 +3667,17 @@ impl AurisApp {
         cx: &mut Context<Self>,
     ) {
         self.panels.lanes.harmony = !self.panels.lanes.harmony;
+        self.remember_layout();
+        cx.notify();
+    }
+
+    fn on_toggle_lyrics_lane(
+        &mut self,
+        _: &actions::ToggleLyricsLane,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.panels.lanes.lyrics = !self.panels.lanes.lyrics;
         self.remember_layout();
         cx.notify();
     }

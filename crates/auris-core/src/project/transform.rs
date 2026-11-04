@@ -161,7 +161,27 @@ pub enum NoteTransform {
         /// A note never shrinks below one tick.
         amount: f32,
     },
+    /// Holds every note past its written release, the way a sustain pedal keeps a struck string
+    /// ringing after the key comes up.
+    ///
+    /// The opposite of [`Gate`](Self::Gate), and only that: the attacks stay where they are and
+    /// nothing is added. A held note stops where the same key is struck again, as a re-struck
+    /// string would, so a repeated pitch never overlaps itself; and like every performed note it
+    /// ends at the clip's (or the loop pass's) end. A phrase stage, since the next strike of the
+    /// key is a neighbour's business, so [`performed`] leaves it alone and
+    /// [`performed_notes`](super::performed_notes) applies it.
+    Sustain {
+        /// Ticks added to every release, read clamped to 0..=[`SUSTAIN_MAX_TICKS`]. In ticks
+        /// for the reason [`Lean`](Self::Lean) is: how long a chord rings is felt against the
+        /// bar, so it scales with the music's grid rather than with the clock.
+        ticks: i64,
+    },
 }
+
+/// The longest [`NoteTransform::Sustain`] is read as: a whole note, four quarters.
+///
+/// Further than a bar of 4/4 stops being a pedal held through a chord and becomes a drone.
+pub const SUSTAIN_MAX_TICKS: i64 = 4 * TICKS_PER_QUARTER;
 
 /// The pitch order of a chord stroke.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -184,7 +204,7 @@ pub enum StrokeDirection {
 /// them.
 ///
 /// An empty stack is the identity, bit for bit. This single-note helper applies only local
-/// transforms; expression, strum, stroke, ghost, mute, brush and slide require
+/// transforms; expression, strum, stroke, ghost, mute, brush, slide and sustain require
 /// [`super::performed_notes`] instead.
 pub fn performed(mut note: Note, transforms: &[NoteTransform], pass: u64, bpm: f64) -> Note {
     for transform in transforms {
@@ -197,7 +217,8 @@ pub fn performed(mut note: Note, transforms: &[NoteTransform], pass: u64, bpm: f
             | NoteTransform::Ghost { .. }
             | NoteTransform::Mute { .. }
             | NoteTransform::Brush { .. }
-            | NoteTransform::Slide { .. } => note,
+            | NoteTransform::Slide { .. }
+            | NoteTransform::Sustain { .. } => note,
             NoteTransform::ForDrumVoice { voice, transforms } => {
                 if note.drum_voice == *voice {
                     performed(note, transforms, pass, bpm)
@@ -307,17 +328,39 @@ fn leaned(mut note: Note, ticks: i64) -> Note {
 
 /// The delay, applied to exact offbeat hits only.
 fn swung(mut note: Note, percent: u8, subdivision: Subdivision) -> Note {
+    note.start = swing_position(note.start, percent, subdivision);
+    note
+}
+
+/// Where swing puts a position written on its grid.
+///
+/// Each pair of steps is stretched and squeezed as one: the first step grows until the offbeat
+/// lands at `percent` of the pair, and the second shrinks to make up for it, so everything
+/// written inside the pair moves in proportion. Eighth swing therefore carries the sixteenths
+/// between the eighths with it. Moving only the offbeat itself left them where they were, and a
+/// part of sixteenths came out unevenly spaced — 240, 307, 173 ticks apart at 57%, which reads
+/// as a band that cannot keep time rather than as a feel.
+///
+/// Only positions on the half-step grid move (sixteenths under eighth swing). A note anywhere
+/// else was placed by a player, not by the grid, and stays where it was played.
+pub fn swing_position(position: Ticks, percent: u8, subdivision: Subdivision) -> Ticks {
     if subdivision.is_triplet() {
-        return note;
+        return position;
     }
     let percent = percent.clamp(50, 75);
     let step = TICKS_PER_QUARTER / i64::from(subdivision.steps_per_beat());
     let pair = step * 2;
-    if note.start.raw().rem_euclid(pair) == step {
-        let landed = (pair as f32 * f32::from(percent) / 100.0).round() as i64;
-        note.start += Ticks(landed - step);
+    let within = position.raw().rem_euclid(pair);
+    if within % (step / 2).max(1) != 0 {
+        return position;
     }
-    note
+    let landed = (pair as f64 * f64::from(percent) / 100.0).round();
+    let moved = if within <= step {
+        within as f64 * landed / step as f64
+    } else {
+        landed + (within - step) as f64 * (pair as f64 - landed) / step as f64
+    };
+    Ticks(position.raw() - within + moved.round() as i64)
 }
 
 /// The interval, clamped at the ends of the MIDI range.
@@ -521,6 +564,26 @@ mod tests {
         // A note already off the grid belongs to the player and does not move.
         let played = performed(note(60, 500, 240), &stack, 0, 120.0);
         assert_eq!(played.start, Ticks(500));
+    }
+
+    #[test]
+    fn eighth_swing_carries_the_sixteenths_between_the_eighths() {
+        let stack = [NoteTransform::Swing {
+            percent: 57,
+            subdivision: Subdivision::Eighth,
+        }];
+        let starts: Vec<_> = [0, 240, 480, 720, 960]
+            .into_iter()
+            .map(|start| {
+                performed(note(60, start, 120), &stack, 0, 120.0)
+                    .start
+                    .raw()
+            })
+            .collect();
+        // The offbeat lands at 547; the sixteenths keep their order and share each half evenly.
+        assert_eq!(starts, [0, 274, 547, 754, 960]);
+        let gaps: Vec<_> = starts.windows(2).map(|w| w[1] - w[0]).collect();
+        assert_eq!(gaps, [274, 273, 207, 206]);
     }
 
     #[test]

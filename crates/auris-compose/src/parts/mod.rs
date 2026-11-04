@@ -171,13 +171,17 @@ pub fn write_parts(settings: &ScoreSettings, roster: &[PartSpec], frame: &Frame)
                     draft.notes.extend(coda(settings, section, index, part));
                     continue;
                 }
+                // The accompaniment plays its own figure in every bar, not once per chord: a
+                // chord held over a bar line is one chord in the chart, and still two bars of
+                // comping. See `SectionPlan::bar_by_bar`.
+                let barred = || section.bar_by_bar(frame.grid.bar_ticks());
                 let notes = match part.role {
                     Role::Melody => melody(settings, frame, section, index, part),
                     Role::Chords | Role::Pad | Role::Stab => {
-                        comp(settings, frame, section, index, part)
+                        comp(settings, frame, &barred(), index, part)
                     }
-                    Role::Arp => arp(settings, frame, section, index, part),
-                    Role::Bass => bass(settings, frame, section, index, part),
+                    Role::Arp => arp(settings, frame, &barred(), index, part),
+                    Role::Bass => bass(settings, frame, &barred(), index, part),
                     // Written against the joins of the form rather than against a groove: each is
                     // handed a section and asks whether an arrival is worth marking, which is a
                     // question no bar-long pattern can answer. The crash marks the arrival

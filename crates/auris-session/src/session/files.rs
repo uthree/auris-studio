@@ -175,6 +175,8 @@ pub struct SaveJob {
     audio: Vec<(SourceId, Option<PathBuf>)>,
     fonts: Vec<(SoundFontId, Option<PathBuf>)>,
     voices: Vec<VoiceConnectionCopy>,
+    /// The folder the document lived in, whose workspace Save As carries to the new one.
+    workspace_from: Option<PathBuf>,
 }
 
 struct VoiceConnectionCopy {
@@ -544,6 +546,15 @@ impl SaveJob {
                 }
             }
         }
+        if self.collect_assets
+            && let Some(from) = &self.workspace_from
+        {
+            let (completed, failed) = super::workspace::carry_workspace(from, &folder, cancelled)?;
+            if !completed {
+                return Ok(None);
+            }
+            uncollected.extend(failed);
+        }
         if cancelled.load(Ordering::Relaxed) {
             return Ok(None);
         }
@@ -817,14 +828,6 @@ impl Session {
         Ok(auris_io::write_midi_file(path, &self.project)?)
     }
 
-    /// Encodes and synchronises a private MIDI sibling for a caller-managed commit.
-    ///
-    /// Model-facing commands use this to put their cancellation boundary immediately before a
-    /// no-replace publication. Dropping the result leaves `path` untouched.
-    pub fn stage_midi_export(&self, path: &Path) -> Result<auris_io::StagedMidi, SessionError> {
-        Ok(auris_io::stage_midi_file(path, &self.project)?)
-    }
-
     /// Captures the open document for a worker-side MIDI export.
     pub fn begin_midi_export(&self, path: &Path) -> MidiExportJob {
         MidiExportJob {
@@ -898,6 +901,7 @@ impl Session {
     /// new reference, which leaves the project dirty. That is the point: the search happens once,
     /// and saving makes the repair permanent.
     pub fn open(&mut self, path: &Path) -> Result<Vec<PathBuf>, SessionError> {
+        let path = &document_path(path);
         let project = load_project(path)?;
         self.history.clear();
         self.clear_sources();
@@ -944,7 +948,7 @@ impl Session {
         OpenProjectJob {
             owner: Arc::clone(&self.registry),
             revision: self.revision,
-            path: path.to_path_buf(),
+            path: document_path(path),
             render_rate: self.engine.sample_rate(),
         }
     }
@@ -988,8 +992,10 @@ impl Session {
     /// The project folder becomes the directory holding `path`, so a caller choosing a fresh
     /// location wants [`Self::save_as`] instead — this one would leave the audio behind.
     pub fn save(&mut self, path: &Path) -> Result<(), SessionError> {
+        let path = &document_path(path);
         self.collect_hosted_state()?;
         save_project(path, &mut self.project)?;
+        self.remember_sound_scope_before_saving_to(path);
         self.path = Some(path.to_path_buf());
         self.dirty = false;
         // Every write restarts the autosave clock, so saving by hand postpones the next automatic
@@ -1114,6 +1120,7 @@ impl Session {
             audio,
             fonts,
             voices,
+            workspace_from: self.project_folder().map(Path::to_path_buf),
         })
     }
 
@@ -1145,6 +1152,7 @@ impl Session {
             audio: Vec::new(),
             fonts: Vec::new(),
             voices: Vec::new(),
+            workspace_from: None,
         })
     }
 
@@ -1184,6 +1192,7 @@ impl Session {
         drop(_lock);
 
         self.project = project;
+        self.remember_sound_scope_before_saving_to(&document);
         self.path = Some(document.clone());
         let cached_fonts: Vec<_> = self
             .project
@@ -1664,11 +1673,46 @@ impl Session {
         if let Some(font) = self.font_cache.get(path) {
             return Some(Arc::clone(&font.samples));
         }
-        let font = load_soundfont(path)
-            .inspect_err(|error| log::warn!("{}: {error}", path.display()))
-            .ok()?;
+        let font = match shared_library_font(path) {
+            Ok(font) => font,
+            Err(error) => {
+                log::warn!("{}: {error}", path.display());
+                self.font_errors.insert(path.to_path_buf(), error);
+                return None;
+            }
+        };
+        self.font_errors.remove(path);
         self.cache_font(path, Arc::clone(&font), true);
         Some(font)
+    }
+
+    /// Why the font a document names has no sounds in this session, or `None` when it has them.
+    pub fn soundfont_load_error(&self, id: SoundFontId) -> Option<String> {
+        if self.fonts.contains(id) {
+            return None;
+        }
+        let reference = self.project.soundfonts.get(&id)?;
+        let Some(path) = reference.path.resolve(self.project_folder()) else {
+            return Some(format!(
+                "SoundFont \"{}\" has no file location this project can resolve",
+                reference.name
+            ));
+        };
+        let reason =
+            self.font_errors
+                .get(&path)
+                .cloned()
+                .unwrap_or_else(|| match path.try_exists() {
+                    Ok(true) => "the file exists but was not loaded".to_string(),
+                    Ok(false) => "the file does not exist".to_string(),
+                    Err(error) => error.to_string(),
+                });
+        Some(format!(
+            "SoundFont \"{}\" (font {}, {}) is not loaded, so none of its sounds can be used: {reason}",
+            reference.name,
+            id.0,
+            path.display()
+        ))
     }
 
     /// Keeps the file identity alongside an id that a different history branch may reuse.
@@ -1879,6 +1923,18 @@ fn same_font_file(left: &Path, right: &Path) -> bool {
 const WRITE_LOCK_POLL: std::time::Duration = std::time::Duration::from_millis(50);
 
 /// Opens the lock file beside a document, without taking the lock.
+/// The document path a session keeps: `path` made absolute against the current directory.
+///
+/// A bare file name has no directory part, so [`auris_io::project_folder`] cannot name its folder
+/// and [`Session::project_folder`] would fall back to the session's private working folder —
+/// which is how `auris render Song.auris`, typed inside the project folder, used to report every
+/// take in `Audio/` as missing and render the song without them. Anchoring the path once, at the
+/// door, also keeps the folder the same if the process later changes directory. Nothing is
+/// touched on disk; when the current directory cannot be read the path is kept as given.
+fn document_path(path: &Path) -> PathBuf {
+    std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
 fn open_write_lock_file(path: &Path) -> Result<(PathBuf, std::fs::File), SessionError> {
     let folder = path.parent().ok_or(SessionError::NoPath)?;
     let lock_path = folder.join(".auris-write.lock");
@@ -1931,6 +1987,51 @@ pub(super) fn project_write_lock_until(
     }
 }
 
+/// Library fonts already decoded by any session in this process, by path.
+///
+/// The song workshop runs up to three composer sessions beside the window's own, and every one
+/// of them adopts the same library. Without this each would decode its own copy of a font that can
+/// be hundreds of megabytes; with it they share one, and it is dropped when the last session
+/// holding it lets go. The file's size and modification time guard against a font replaced on
+/// disk under the same name.
+type SharedFonts = std::collections::HashMap<
+    PathBuf,
+    (
+        u64,
+        Option<std::time::SystemTime>,
+        std::sync::Weak<SoundFont>,
+    ),
+>;
+
+static SHARED_LIBRARY_FONTS: std::sync::OnceLock<std::sync::Mutex<SharedFonts>> =
+    std::sync::OnceLock::new();
+
+/// Reads a library font, or hands back the copy another session already decoded.
+fn shared_library_font(path: &Path) -> Result<Arc<SoundFont>, String> {
+    let stamp = std::fs::metadata(path)
+        .map(|metadata| (metadata.len(), metadata.modified().ok()))
+        .map_err(|error| format!("{}: {error}", path.display()))?;
+    let shared = SHARED_LIBRARY_FONTS.get_or_init(Default::default);
+    if let Ok(mut fonts) = shared.lock() {
+        fonts.retain(|_, (_, _, font)| font.strong_count() > 0);
+        if let Some(font) = fonts
+            .get(path)
+            .filter(|(len, modified, _)| (*len, *modified) == stamp)
+            .and_then(|(_, _, font)| font.upgrade())
+        {
+            return Ok(font);
+        }
+    }
+    let font = load_soundfont(path).map_err(|error| error.to_string())?;
+    if let Ok(mut fonts) = shared.lock() {
+        fonts.insert(
+            path.to_path_buf(),
+            (stamp.0, stamp.1, Arc::downgrade(&font)),
+        );
+    }
+    Ok(font)
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::{Arc, Barrier};
@@ -1940,6 +2041,22 @@ mod tests {
     use crate::session::fixtures::{Scratch, named_font, session};
     use auris_core::project::TrackKind;
     use auris_io::AUDIO_DIR;
+
+    #[test]
+    fn a_bare_document_name_is_anchored_to_the_current_directory() {
+        let bare = document_path(std::path::Path::new("Song.auris"));
+        assert!(bare.is_absolute());
+        assert_eq!(
+            bare.parent(),
+            Some(std::env::current_dir().unwrap().as_path())
+        );
+        assert!(
+            auris_io::project_folder(&bare).is_some(),
+            "a bare name must still have a folder for `Audio/` to resolve against"
+        );
+        let absolute = std::env::temp_dir().join("Song").join("Song.auris");
+        assert_eq!(document_path(&absolute), absolute);
+    }
 
     fn directory_entries(path: &Path) -> Vec<PathBuf> {
         let mut entries: Vec<_> = std::fs::read_dir(path)

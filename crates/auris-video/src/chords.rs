@@ -38,16 +38,16 @@ const FAMILIES: [&str; 6] = [
 ];
 
 /// An installed font, read once per process.
-struct FontData {
-    bytes: Vec<u8>,
-    index: u32,
+pub(crate) struct FontData {
+    pub(crate) bytes: Vec<u8>,
+    pub(crate) index: u32,
 }
 
 /// The font chord names are drawn in, if the machine has any.
 ///
 /// Loading every installed face takes a noticeable moment, and a preview makes a renderer on
 /// every change of colour, so the answer is kept for the life of the process.
-fn system_font() -> Option<&'static FontData> {
+pub(crate) fn system_font() -> Option<&'static FontData> {
     static FONT: OnceLock<Option<FontData>> = OnceLock::new();
     FONT.get_or_init(|| {
         let mut database = fontdb::Database::new();
@@ -71,9 +71,9 @@ fn system_font() -> Option<&'static FontData> {
 }
 
 /// A chord name outlined in font units: x from the left of the name, y up from the baseline.
-struct Label {
-    path: Option<SkPath>,
-    advance: f64,
+pub(crate) struct Label {
+    pub(crate) path: Option<SkPath>,
+    pub(crate) advance: f64,
 }
 
 /// The overlay for one score, with every name it will show already outlined.
@@ -91,10 +91,7 @@ impl ChordOverlay {
         }
         let font = system_font()?;
         let face = ttf_parser::Face::parse(&font.bytes, font.index).ok()?;
-        let cap = face
-            .capital_height()
-            .filter(|height| *height > 0)
-            .map_or(f64::from(face.units_per_em()) * 0.7, f64::from);
+        let cap = capital_height(&face);
         let mut labels = HashMap::new();
         for chord in &score.chords {
             labels
@@ -212,6 +209,13 @@ impl ChordOverlay {
     }
 }
 
+/// Height of a capital in font units, which is what caption text is sized by.
+pub(crate) fn capital_height(face: &ttf_parser::Face<'_>) -> f64 {
+    face.capital_height()
+        .filter(|height| *height > 0)
+        .map_or(f64::from(face.units_per_em()) * 0.7, f64::from)
+}
+
 fn rect(
     frame: &mut Pixmap,
     style: &NoteRollStyle,
@@ -221,16 +225,18 @@ fn rect(
     height: f64,
     opacity: f64,
 ) {
-    if let Some(rect) = Rect::from_xywh(x as f32, y as f32, width as f32, height as f32) {
-        let (r, g, b) = style.playhead_color.rgb();
-        let mut paint = Paint::default();
-        paint.set_color_rgba8(r, g, b, unit_byte(opacity));
-        frame.fill_rect(rect, &paint, Transform::identity(), None);
+    if let Some(rect) = Rect::from_xywh(x as f32, y as f32, width as f32, height as f32)
+        .filter(|rect| rect.width() > 0.0 && rect.height() > 0.0)
+    {
+        // tiny-skia 0.11's AA rectangle fast path asserts when a narrow bar straddles a
+        // pixel boundary with no whole pixel inside. The path rasteriser handles that coverage.
+        let path = PathBuilder::from_rect(rect);
+        fill(frame, &path, style, opacity, Transform::identity());
     }
 }
 
 fn fill(frame: &mut Pixmap, path: &SkPath, style: &NoteRollStyle, opacity: f64, at: Transform) {
-    let (r, g, b) = style.playhead_color.rgb();
+    let (r, g, b) = style.chord_color.rgb();
     let mut paint = Paint {
         anti_alias: true,
         ..Paint::default()
@@ -239,7 +245,7 @@ fn fill(frame: &mut Pixmap, path: &SkPath, style: &NoteRollStyle, opacity: f64, 
     frame.fill_path(path, &paint, FillRule::Winding, at, None);
 }
 
-fn unit_byte(value: f64) -> u8 {
+pub(crate) fn unit_byte(value: f64) -> u8 {
     (value.clamp(0.0, 1.0) * 255.0).round() as u8
 }
 
@@ -247,7 +253,7 @@ fn unit_byte(value: f64) -> u8 {
 ///
 /// In a chord symbol `b` and `#` are only ever accidentals — no suffix spells a word with a `b`
 /// in it — so both can be swapped for the real signs without reading the symbol.
-fn outline(face: &ttf_parser::Face<'_>, name: &str) -> Label {
+pub(crate) fn outline(face: &ttf_parser::Face<'_>, name: &str) -> Label {
     let mut builder = Outline {
         path: PathBuilder::new(),
         x: 0.0,
@@ -357,6 +363,30 @@ mod tests {
     }
 
     #[test]
+    fn a_subpixel_progress_bar_covers_both_sides_of_a_pixel_boundary() {
+        let mut frame = Pixmap::new(16, 16).unwrap();
+        rect(&mut frame, &style(true), 4.5, 4.5, 1.0, 3.0, 1.0);
+        let alpha = |x: usize| frame.data()[(5 * 16 + x) * 4 + 3];
+        assert!(alpha(4) > 0 && alpha(5) > 0);
+        assert!(alpha(4) < 255 && alpha(5) < 255);
+        assert_eq!(alpha(3), 0);
+        assert_eq!(alpha(6), 0);
+    }
+
+    #[test]
+    fn the_first_video_frames_draw_a_narrow_chord_progress_bar() {
+        if system_font().is_none() {
+            return;
+        }
+        let renderer = FrameRenderer::with_background(&score(), &NoteRollStyle::default(), None);
+        let mut frame = renderer.canvas();
+        for index in 0..4 {
+            renderer.draw(f64::from(index) / 60.0, &mut frame);
+        }
+        assert!(lit(&frame, 0, 200) > 0);
+    }
+
+    #[test]
     fn the_current_chord_is_written_in_the_corner_with_the_next_beside_it() {
         let Some(frame) = drawn(true, 1.0) else {
             eprintln!("no font installed; skipping the overlay");
@@ -405,6 +435,30 @@ mod tests {
             lit(&full, 0, 640),
             "a frame is the same however often it is drawn"
         );
+    }
+
+    #[test]
+    fn the_caption_is_drawn_in_its_own_colour() {
+        if system_font().is_none() {
+            return;
+        }
+        let green = NoteRollStyle {
+            chord_color: Color(0x00ff00),
+            ..style(true)
+        };
+        let renderer = FrameRenderer::with_background(&score(), &green, None);
+        let mut frame = renderer.canvas();
+        renderer.draw(1.0, &mut frame);
+        let greens = (0..frame.height() / 3)
+            .flat_map(|y| (0..frame.width()).map(move |x| (x, y)))
+            .filter(|&(x, y)| {
+                let at = ((y * frame.width() + x) * 4) as usize;
+                let pixel = &frame.data()[at..at + 3];
+                pixel[1] > 128 && pixel[0] < 64 && pixel[2] < 64
+            })
+            .count();
+        assert!(greens > 50, "the caption is green: {greens}");
+        assert_eq!(lit(&frame, 0, 640), 0, "and not the playhead's white");
     }
 
     #[test]
