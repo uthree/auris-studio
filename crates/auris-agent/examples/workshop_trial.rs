@@ -14,6 +14,10 @@
 //! composes it as a demo, and `AURIS_TRIAL_PHASE=finish` with `AURIS_TRIAL_PARENT` set to an
 //! earlier demo's output folder finishes that demo.
 //!
+//! Another composer is tried without touching the settings: `AURIS_TRIAL_BACKEND` and
+//! `AURIS_TRIAL_MODEL` replace the configured backend and model, and `AURIS_TRIAL_FAST=0` or
+//! `1` the faster service tier. The other agent preferences, effort among them, are kept.
+//!
 //! A finished run writes `lint.json`, what the score linter still finds in the song.
 //! `workshop_trial --lint <song.auris>...` prints the same for songs made earlier.
 
@@ -74,7 +78,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Err(_) => {}
     }
     let settings = Settings::load();
-    let prefs = settings.agent.clone();
+    let mut prefs = settings.agent.clone();
+    if let Ok(backend) = std::env::var("AURIS_TRIAL_BACKEND") {
+        prefs.backend = backend;
+    }
+    if let Ok(model) = std::env::var("AURIS_TRIAL_MODEL") {
+        prefs.model = model;
+    }
+    if let Ok(fast) = std::env::var("AURIS_TRIAL_FAST") {
+        prefs.fast_mode = fast == "1";
+    }
     eprintln!(
         "composing \"{}\" with {} {}",
         candidate.direction.title, prefs.backend, prefs.model
