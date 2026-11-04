@@ -154,6 +154,14 @@ pub enum SessionError {
     #[error("no chord progression is named `{0}`")]
     UnknownProgression(String),
 
+    /// No performance preset, built in or kept, has this name.
+    #[error("no performance preset is named `{0}`")]
+    UnknownPerformancePreset(String),
+
+    /// A performance preset could not be kept or deleted, and why.
+    #[error("performance preset: {0}")]
+    PerformancePreset(crate::performance_presets::KeepRefusal),
+
     /// The requested clip does not exist.
     #[error("no clip with id {0}")]
     UnknownClip(u64),
@@ -219,6 +227,10 @@ pub enum SessionError {
     /// The clip cannot be divided at the requested position.
     #[error("clip {0} cannot be split there")]
     CannotSplit(u64),
+
+    /// The named clips cannot become one clip, and the refusal says why.
+    #[error("{}", join_refusal_text(*.0))]
+    CannotJoin(auris_core::JoinRefusal),
 
     /// The clip holds notes rather than audio, so it has no gain or fades of its own.
     ///
@@ -335,6 +347,14 @@ pub enum SessionError {
         /// What the operation needed.
         expected: &'static str,
     },
+
+    /// A file chosen for the sampler decoded to no audio at all.
+    #[error("{} holds no audio to sample", .0.display())]
+    EmptySample(PathBuf),
+
+    /// A change to a sampler's map was refused: a zone that is not there, or more than it holds.
+    #[error("sample map: {0}")]
+    SampleMap(String),
 
     /// The document has never been saved, so there is no path to save it back to.
     #[error("the project has no path yet; save it somewhere first")]
@@ -464,5 +484,20 @@ impl SessionError {
                 | SessionError::Io(auris_io::IoError::ExportCancelled)
                 | SessionError::Video(auris_video::VideoError::Cancelled)
         )
+    }
+}
+
+fn join_refusal_text(refusal: auris_core::JoinRefusal) -> &'static str {
+    use auris_core::JoinRefusal;
+    match refusal {
+        JoinRefusal::TooFew => "name two or more clips on one track to join",
+        JoinRefusal::Audio => "audio clips cannot be joined; only note clips can",
+        JoinRefusal::DifferentTracks => "only clips on the same track can be joined",
+        JoinRefusal::MixedMute => {
+            "some of those clips are muted and some are not; match their mute first"
+        }
+        JoinRefusal::DifferentTransforms => {
+            "those clips are performed differently; give them the same note transforms or bake them first"
+        }
     }
 }

@@ -205,16 +205,39 @@ pub enum Command {
     },
     /// Import a local audio file as a new track at an absolute tick position. Existing music and tempo are preserved. Copy and decode run off the UI thread; cancellation or document changes discard the staged import. One Undo removes it.
     ImportAudio {
-        /// Absolute local source path, up to 512 MiB; no network paths.
+        /// Workspace-relative path (samples/loop.wav) or absolute local path, up to 512 MiB; no network paths.
         path: String,
         /// Nonnegative absolute timeline position in ticks.
         at_tick: i64,
         /// Optional track and clip name, up to 256 bytes; otherwise the source stem.
         name: Option<String>,
     },
+    /// Load local audio files into an instrument track's sampler (auris.sampler.audio) as a multisample: each recording is a zone pitched by equal temperament from its root_note, so vocal chops, hits, textures or notes of a real instrument become a playable part. Each note plays the zone whose root is nearest, inside the velocity layer holding the note's velocity (low_velocity..high_velocity, normalized 0..1); give low_key/high_key only for a split other than nearest-root, e.g. one drum hit per key. Zones with the same root and layer alternate note by note (round robin). Pitching a recording far from its root sounds unnatural, so for a real instrument load one recording every few semitones. Each path is relative to the project workspace (samples/kick.wav, no permission prompt) or an absolute local path (asks first). Files are copied into the project's Audio folder, so they survive save and reopen; nothing is placed on the timeline, so write notes with add_clip and edit_notes. Each recording's pitch is measured (YIN): root_note omitted uses a note name in the file name such as Piano_C3, else the nearest key to the measured pitch, else 60, and tune corrects the measured offset so off-key, sung or microtonal recordings play in tune; each zone reports measured_hz. append keeps the current zones; otherwise they are replaced. loop repeats each sample between loop_start and loop_end while held (pads, drones). Afterwards edit_sample_map changes zones, and set_instrument_params reaches tune, key_tracking (off plays every key at the recorded pitch), attack/decay/sustain/release, loop, loop_start and loop_end. A track arriving from another instrument loses that instrument's settings and automation. One Undo removes it.
+    LoadSample {
+        /// Stable instrument track ID; drum, audio, singer and bus tracks are refused.
+        track: u64,
+        /// One to 128 recordings, each becoming one zone.
+        samples: Vec<crate::session::AgentSample>,
+        /// Add to the current zones instead of replacing them; default false.
+        append: Option<bool>,
+        /// Loop the samples while a note is held; omitted keeps the track's current setting (off for a new sampler).
+        #[serde(rename = "loop")]
+        looped: Option<bool>,
+    },
+    /// Change or remove zones of an audio sampler track's map, as one Undo. Indices are the zone numbers load_sample and inspect_instrument report, before this call, for edits and remove alike. Each zone reports plays, the keys it actually sounds on.
+    EditSampleMap {
+        /// Stable instrument track on auris.sampler.audio.
+        track: u64,
+        /// Changes to existing zones; omitted fields keep their value.
+        #[serde(default)]
+        edits: Vec<crate::session::SampleZoneEdit>,
+        /// Zone indices to remove.
+        #[serde(default)]
+        remove: Vec<usize>,
+    },
     /// Append a Standard MIDI File as new editable instrument/drum tracks. Keep the current tempo/meter maps and existing tracks. Notes, bends and controllers retain exact source ticks; playback instruments are defaults and need review. One Undo removes the whole import.
     ImportMidi {
-        /// Absolute local .mid path, up to 32 MiB.
+        /// Workspace-relative (midi/idea.mid) or absolute local .mid path, up to 32 MiB.
         path: String,
         /// Nonnegative absolute insertion tick, added to all source positions.
         at_tick: i64,
@@ -266,7 +289,7 @@ pub enum Command {
         #[serde(default)]
         remap_clips: bool,
     },
-    /// Render an immutable snapshot to a new WAV mix or stems, then measure the encoded files. Default delivery mode attenuates only when needed for ceiling_db (default -1 dBTP) before encoding; stems share one gain. Read attenuation_db, source and encoded measurements. Opt into analysis for an exact 1-frame..300-second range at an explicit rate, stereo float32 with zero protective gain, source/state/environment identities and a persistent manifest. Analysis has its own seconds/frame range and optional source/bus, dry routing, causal context or cycle warmup. Existing outputs are never replaced. No save or document edit; cancellation/stale documents discard private stages.
+    /// Render an immutable snapshot to a new WAV mix or stems, then measure the encoded files. Default delivery mode attenuates only when needed for ceiling_db (default -1 dBTP) before encoding; stems share one gain. Read attenuation_db, source and encoded measurements. Opt into analysis for an exact 1-frame..300-second range at an explicit rate, stereo float32 with zero protective gain, source/state/environment identities and a persistent manifest. Analysis has its own seconds/frame range and optional source/bus, dry routing, causal context or cycle warmup. Destinations relative to the project workspace (renders/mix.wav, stems/v1) need no permission prompt and report workspace_path; absolute paths ask first and must not be in the Audio folder. Existing outputs are never replaced. No save or document edit; cancellation/stale documents discard private stages.
     Render {
         /// Explicit mix file or stem folder destination.
         destination: file_jobs::AudioDestination,
@@ -290,12 +313,12 @@ pub enum Command {
     },
     /// Export instrumental MIDI with trailing rests. Uses the unsaved score. Never overwrites or saves the project. Returns note count, duration in ticks/seconds and PPQ.
     ExportMidi {
-        /// Absolute new local MIDI file path.
+        /// New workspace-relative (midi/song.mid) or absolute local MIDI file path.
         output: String,
     },
     /// Measure an existing encoded WAV and return PASS/FAIL against supplied delivery limits. A failed verdict is an unfinished delivery, not a successful listening check.
     VerifyRender {
-        /// Absolute local WAV path to inspect.
+        /// Workspace-relative (renders/mix.wav) or absolute local WAV path to inspect.
         path: String,
         /// Optional target loudness, -60..-6 LUFS.
         target_lufs: Option<f32>,
@@ -305,6 +328,11 @@ pub enum Command {
         tolerance_lu: Option<f32>,
         /// Optional final half-second RMS limit, -120..0 dBFS.
         ending_rms_max_db: Option<f32>,
+    },
+    /// List the files in the project workspace, the folder beside the song where agent tools read and write without a permission prompt. Every file tool (render, export_midi, verify_render, load_sample, import_audio, import_midi) takes a path relative to it, such as renders/mix.wav or samples/kick.wav; folders are created on demand and '..' is refused. The workspace travels with the project folder on save, but nothing in it is part of the song until it is imported or loaded, which copies it into the project's Audio folder. Returns at most 256 files with their workspace paths and sizes.
+    Workspace {
+        /// Optional subfolder to list, relative to the workspace; omitted lists all of it.
+        folder: Option<String>,
     },
     /// Read or edit positioned tempo/meter changes without moving existing notes. Read returns native bounds and the current document revision.
     EditTimeline {
@@ -358,6 +386,11 @@ pub enum Command {
         drum_voice: Option<String>,
         /// Partial settings; omit every field that should stay unchanged.
         settings: Box<performance::PerformancePatch>,
+    },
+    /// Named performance presets by instrument family: list, apply one to a clip as a starting feel (replaces its stages, own random take, one Undo; tune after with set_performance), save one from a clip or settings, or delete a kept one. Built-ins never swing. Kept presets are shared across projects and the user's picker.
+    PerformancePresets {
+        /// list, apply, save or delete.
+        operation: performance::presets::PresetOperation,
     },
     /// Write or clear the document's key, Roman-numeral chord progression and/or section label across a bounded bar range. For a new song, write its harmony and named form (intro, verse, chorus, bridge, outro as appropriate) before adding notes. Changes metadata only; existing notes and mix are preserved. One Undo reverts the edit; persistence follows the host.
     EditHarmony {
@@ -653,6 +686,39 @@ pub enum Command {
 }
 
 impl Command {
+    /// Whether every local file this command names is a project-workspace path.
+    ///
+    /// The permission policy lets such a file operation run without asking, so this reads only
+    /// the text, exactly as [`Session::agent_path`](crate::Session) will: a path is a workspace
+    /// path when [`crate::workspace_relative`] accepts it. `false` for commands without files.
+    pub fn uses_only_workspace(&self) -> bool {
+        let inside = |path: &str| crate::workspace_relative(path).is_some();
+        match self {
+            Self::ImportAudio { path, .. }
+            | Self::ImportMidi { path, .. }
+            | Self::VerifyRender { path, .. } => inside(path),
+            Self::LoadSample { samples, .. } => {
+                !samples.is_empty() && samples.iter().all(|sample| inside(&sample.path))
+            }
+            Self::ExportMidi { output } => inside(output),
+            Self::Render {
+                destination,
+                analysis,
+                ..
+            } => {
+                let destination = match destination {
+                    file_jobs::AudioDestination::Mix { path } => path,
+                    file_jobs::AudioDestination::Stems { folder } => folder,
+                };
+                inside(destination)
+                    && analysis
+                        .as_ref()
+                        .is_none_or(|request| inside(&request.manifest_path))
+            }
+            _ => false,
+        }
+    }
+
     /// Whether this operation can change the document; file output alone does not change it.
     pub fn is_mutating(&self) -> bool {
         match self {
@@ -673,6 +739,7 @@ impl Command {
             Self::EditClipCurve { operation, .. } => !operation.is_read_only(),
             Self::EditTimeline { operation } => !operation.is_read_only(),
             Self::Layer { operation } => !operation.is_read_only(),
+            Self::PerformancePresets { operation } => operation.is_mutating(),
             Self::Inspect {}
             | Self::ReportStatus { .. }
             | Self::MelodyShape { .. }
@@ -697,7 +764,8 @@ impl Command {
             | Self::Render { .. }
             | Self::Preview { .. }
             | Self::ExportMidi { .. }
-            | Self::VerifyRender { .. } => false,
+            | Self::VerifyRender { .. }
+            | Self::Workspace { .. } => false,
             _ => true,
         }
     }
@@ -723,6 +791,7 @@ impl Command {
                 | Self::VerifyRender { .. }
                 | Self::LintProject { audio: true, .. }
                 | Self::ImportAudio { .. }
+                | Self::LoadSample { .. }
                 | Self::ImportMidi { .. }
                 | Self::Checkpoints { .. }
         )
@@ -926,8 +995,23 @@ impl Session {
                     })
                     .collect();
                 let next = offset + parameters.len();
-                Ok(serde_json::json!({"track":track.0,"parameters":parameters,"total":descriptors.len(),"next_offset":(next < descriptors.len()).then_some(next)}).to_string())
+                let mut report = serde_json::json!({"track":track.0,"parameters":parameters,"total":descriptors.len(),"next_offset":(next < descriptors.len()).then_some(next)});
+                if offset == 0
+                    && self
+                        .project()
+                        .track(track)
+                        .and_then(|t| t.kind.as_instrument())
+                        .is_some_and(|i| i.instrument_id == auris_sampler::AUDIO_SAMPLER_ID)
+                {
+                    report["sample_map"] = self.agent_sample_map_report(track)["zones"].take();
+                }
+                Ok(report.to_string())
             }
+            Command::EditSampleMap {
+                track,
+                edits,
+                remove,
+            } => self.agent_edit_sample_map(TrackId(track), edits, remove),
             Command::SetInstrumentParams { edits } => {
                 let edits: Vec<_> = edits
                     .into_iter()
@@ -948,6 +1032,7 @@ impl Session {
                 drum_voice,
                 settings,
             } => self.agent_set_performance(ClipId(clip), drum_voice.as_deref(), *settings),
+            Command::PerformancePresets { operation } => self.agent_performance_presets(operation),
             Command::EditHarmony {
                 start_bar,
                 bars,
@@ -1044,6 +1129,7 @@ impl Session {
             }
             Command::EditLyrics { operation } => self.agent_edit_lyrics(operation),
             Command::EditComments { operation } => self.agent_edit_comments(operation),
+            Command::Workspace { folder } => self.agent_list_workspace(folder.as_deref()),
             Command::InspectSinger {
                 track,
                 offset,
@@ -1060,6 +1146,7 @@ impl Session {
             | Command::VerifyRender { .. }
             | Command::LintProject { audio: true, .. }
             | Command::ImportAudio { .. }
+            | Command::LoadSample { .. }
             | Command::ImportMidi { .. }
             | Command::Checkpoints { .. }
             | Command::Arrangement {

@@ -124,6 +124,8 @@ pub enum Edit {
     DuplicateClip,
     /// A clip was divided in two.
     SplitClip,
+    /// Clips on one track were joined into one.
+    JoinClips,
     /// A clip was renamed.
     RenameClip,
     /// A clip was muted or unmuted.
@@ -257,6 +259,10 @@ pub enum Edit {
     ImportSoundFont,
     /// A track was pointed at one of a SoundFont's sounds.
     ChoosePreset,
+    /// Audio files were loaded into a track's sampler.
+    LoadSample,
+    /// A sampler's map changed: a recording's root, keys, layer or level, or one removed.
+    EditSampleMap,
     /// The key changed somewhere on the timeline.
     SetKey,
     /// A chord changed somewhere on the timeline.

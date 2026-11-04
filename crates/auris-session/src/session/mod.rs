@@ -91,6 +91,7 @@ mod note_take;
 pub(crate) mod notes;
 mod output_preview;
 mod perform;
+mod performance_presets;
 mod physical_sounds;
 pub(crate) mod plugin_discovery;
 mod plugin_trust;
@@ -99,6 +100,13 @@ mod readiness;
 mod recognition;
 mod record;
 mod rhythm;
+mod samples;
+pub use samples::{
+    AgentSample, DEFAULT_SAMPLE_ROOT, DetectedPitch, SampleZoneEdit, SampleZoneView, detect_pitch,
+    parse_root_note,
+};
+mod workspace;
+pub use workspace::workspace_relative;
 #[cfg(test)]
 mod shared_font_tests;
 mod singer;
@@ -152,7 +160,7 @@ pub use monitor::MonitorStatus;
 pub use musical_analysis::MusicalClipAnalysis;
 pub use note_preview::NoteSelectionPreview;
 pub use notes::{Quantize, quantized};
-pub use output_preview::prepare_output_preview;
+pub use output_preview::{prepare_looping_output_preview, prepare_output_preview};
 pub use plugin_discovery::InstalledPluginFiles;
 pub(crate) use plugin_discovery::scan_installed_plugin_files;
 pub use readiness::{PlaybackReadiness, PlaybackState};
@@ -194,11 +202,11 @@ use auris_engine::{
 };
 use auris_gpu::{GpuContext, WaveformPeaks};
 use auris_io::SoundFont;
-use auris_sampler::{SharedSoundFonts, SoundFontBank};
+use auris_sampler::{SampleBank, SharedSamples, SharedSoundFonts, SoundFontBank};
 
 use crate::error::SessionError;
 use crate::history::{Edit, History};
-use crate::registry::default_registry;
+use crate::registry::registry_with_samples;
 use crate::render::{RenderJob, bank_at_rate, fill_stretches};
 use crate::settings::AudioPreferences;
 
@@ -261,6 +269,12 @@ pub struct SessionOptions {
     /// A document's CLAP or VST3 plugin is loaded only from a plugin folder; anything else stays
     /// silent until its folder is listed here. See [`Session::set_plugin_paths`].
     pub plugin_paths: Vec<PathBuf>,
+    /// The performance presets this installation keeps. `None` keeps saved presets in memory
+    /// for the session's lifetime only.
+    ///
+    /// Defaults to `performance-presets.json` in the application configuration directory.
+    /// Headless tests opt out so they neither read nor change the user's presets.
+    pub performance_presets: Option<PathBuf>,
 }
 
 impl Default for SessionOptions {
@@ -278,6 +292,7 @@ impl Default for SessionOptions {
             autosave: true,
             shipped_dictionary: true,
             plugin_paths: Vec::new(),
+            performance_presets: Some(crate::performance_presets::PerformancePresetBook::path()),
         }
     }
 }
@@ -293,6 +308,7 @@ impl SessionOptions {
             gpu: false,
             shipped_fonts: false,
             soundfont_library: None,
+            performance_presets: None,
             autosave: false,
             shipped_dictionary: false,
             master_limiter: false,
@@ -309,6 +325,13 @@ impl SessionOptions {
     /// Uses the persistent application SoundFont catalog, including in a headless frontend.
     pub fn with_soundfont_library(mut self, path: impl Into<PathBuf>) -> Self {
         self.soundfont_library = Some(path.into());
+        self
+    }
+
+    /// Keeps performance presets in the file at `path`, shared with the window and every other
+    /// door, including in a headless frontend.
+    pub fn with_performance_presets(mut self, path: impl Into<PathBuf>) -> Self {
+        self.performance_presets = Some(path.into());
         self
     }
 
@@ -393,6 +416,12 @@ pub struct Session {
     /// Shared with the registry, whose sampler factory captured it — which is the only way sample
     /// data reaches an instrument the registry builds.
     fonts: SharedSoundFonts,
+    /// [`Self::bank`] again, as the audio sampler reads it.
+    ///
+    /// Shared with the registry for the reason [`Self::fonts`] is. Not kept in step at every
+    /// place the bank changes: [`Self::rebuild_graph`] restates it, because building a graph is
+    /// the only moment a sampler looks.
+    samples: SharedSamples,
     /// Separates discovery handles belonging to different unsaved sessions.
     sound_scope: String,
     /// The scopes this same document had before a save moved it, oldest first, so a sound
@@ -418,6 +447,8 @@ pub struct Session {
     shipped_library: bool,
     /// Persistent catalog shared across documents and application launches.
     soundfont_library: Option<PathBuf>,
+    /// Performance presets kept by this installation.
+    performance_presets: crate::performance_presets::PresetLibrary,
     /// Whether composing ends by measuring the piece — see [`SessionOptions::balance_composed`].
     balance_composed: bool,
     /// Whether a new document starts with a master limiter — see [`SessionOptions::master_limiter`].
@@ -723,7 +754,8 @@ impl Session {
     pub fn new(options: SessionOptions) -> Result<Self, SessionError> {
         let work_dir = autosave::create_session_workspace(options.autosave)?;
         let fonts = SoundFontBank::shared();
-        let registry = default_registry(Arc::clone(&fonts));
+        let samples = SampleBank::shared();
+        let registry = registry_with_samples(Arc::clone(&fonts), Arc::clone(&samples));
         let mut project = Project::new(Project::UNTITLED, options.sample_rate);
         if options.master_limiter {
             levels::install_master_limiter(
@@ -770,10 +802,14 @@ impl Session {
             render_bank: AudioSourceBank::new(),
             render_bank_rate,
             fonts,
+            samples,
             font_cache: HashMap::new(),
             font_errors: HashMap::new(),
             shipped_library: options.shipped_fonts,
             soundfont_library: options.soundfont_library,
+            performance_presets: crate::performance_presets::PresetLibrary::new(
+                options.performance_presets,
+            ),
             balance_composed: options.balance_composed,
             master_limiter: options.master_limiter,
             registry,
@@ -1756,6 +1792,9 @@ impl Session {
         // Every rebuild, not only after a rate change: what a clip's stretch is depends on the
         // tempo and on the clip, and both of those are edits that land here.
         fill_stretches(&self.project, &mut self.render_bank);
+        // The audio sampler reads the project-rate copy and resamples as it plays, so a change of
+        // device rate costs it nothing.
+        self.samples.replace_all(self.bank.iter());
         // Whatever the audio thread has handed back is dropped before the hosted plugins are
         // asked for their effects, so an instance whose graph has already been retired is reused
         // rather than replaced. Without this every rebuild would find its plugin still busy and

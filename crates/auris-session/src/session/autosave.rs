@@ -711,7 +711,17 @@ fn migrate_private_assets_with_cancel(
         }
         fs::copy(&source, &destination).map_err(|error| io_error(&destination, error))?;
     }
-    Ok(!cancelled.load(Ordering::Relaxed))
+    // The agent workspace is not an asset, but it belongs to the document all the same: an
+    // unsaved song's renders must survive the move into a registered recovery folder.
+    let (completed, failed) = super::workspace::carry_workspace(from, to, cancelled)?;
+    if let Some(path) = failed.first() {
+        log::warn!(
+            "could not carry {} workspace file(s), first {}",
+            failed.len(),
+            path.display()
+        );
+    }
+    Ok(completed)
 }
 
 fn workspace_prepared_for_autosave(workspace: &Path) -> bool {

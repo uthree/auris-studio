@@ -166,6 +166,10 @@ impl Session {
                 )?;
                 value["ending_guidance"]["envelope_controls"] =
                     breathing::envelope_controls(self.registry(), &self.project, track);
+                let route = breathing::envelope_route(&self.project, track);
+                if !route.is_null() {
+                    value["ending_guidance"]["envelope_route"] = route;
+                }
                 value["revision"] = self.agent_document_revision()?.into();
                 Ok(value.to_string())
             }

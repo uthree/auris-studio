@@ -534,6 +534,53 @@ impl RenderJob {
         })
     }
 
+    /// Renders what a listener auditions, at `rate`, and where its playback wraps to.
+    ///
+    /// A song that plays once is rendered whole, with its tail when `include_tail` asks. A loop
+    /// song — looping on, and a region holding all the music — is the lead-in before the region
+    /// rendered as written, followed by exactly one cycle captured the way
+    /// [`loop_options`](Self::loop_options) captures it: warmed up first, so the reverb and the
+    /// releases ringing over the loop's end are already sounding at its start. Wrapping from the
+    /// last frame back to the returned start is then seamless, which a whole-song render with its
+    /// tail never is. The lead-in is what keeps an intro heard before the loop takes over.
+    pub fn render_audition(
+        &mut self,
+        rate: f64,
+        include_tail: bool,
+        progress: &mut RenderProgress<'_>,
+    ) -> Result<(AudioBuffer, Option<f64>), SessionError> {
+        let whole = OfflineOptions {
+            sample_rate: Some(rate),
+            include_tail,
+            ..Default::default()
+        };
+        let cycle = crate::audition::audition_loop(&self.project)
+            .and_then(|_| self.loop_options(whole.clone()));
+        let Some(cycle) = cycle else {
+            return Ok((self.render(&whole, progress)?, None));
+        };
+        let lead_frames = cycle.start_frames;
+        let looped = self.render(&cycle, progress)?;
+        if lead_frames == 0 {
+            return Ok((looped, Some(0.0)));
+        }
+        let lead = self.render(
+            &OfflineOptions {
+                include_tail: false,
+                ..whole.with_range(0, lead_frames)
+            },
+            progress,
+        )?;
+        let channels = lead
+            .channels()
+            .iter()
+            .zip(looped.channels())
+            .map(|(lead, cycle)| lead.iter().chain(cycle).copied().collect())
+            .collect();
+        let audio = AudioBuffer::from_planar(channels, rate)?;
+        Ok((audio, Some(lead_frames as f64 / rate)))
+    }
+
     /// Renders to a buffer, reporting progress and taking a cancellation through `progress`.
     ///
     /// An export can be asked for any rate, including one the sources were never decoded at, so
@@ -603,19 +650,6 @@ impl RenderJob {
         writer.finish_with_commit(|| progress.begin_commit())?;
         progress.report(1.0);
         Ok(summary)
-    }
-
-    /// Encode privately without publishing; the owning session validates the staged result.
-    pub fn stage_audio_export(
-        &mut self,
-        path: &Path,
-        settings: &AudioExportSettings,
-        options: &OfflineOptions,
-        track: Option<TrackId>,
-        progress: &mut RenderProgress<'_>,
-    ) -> Result<auris_io::StagedAudioExport, SessionError> {
-        let (writer, _) = self.render_audio_writer(track, path, settings, options, progress)?;
-        Ok(writer.finish_staged()?)
     }
 
     /// Capture exact stereo float samples, optionally priming effects from timeline zero.
@@ -892,17 +926,6 @@ impl RenderJob {
     ) -> Result<Vec<StemSummary>, SessionError> {
         self.render_audio_stems_with_partial(folder, settings, options, progress)
             .map_err(|failure| failure.error)
-    }
-
-    /// Like [`Self::render_stems`], retaining summaries for complete files when a later stem fails.
-    pub fn render_stems_with_partial(
-        &mut self,
-        folder: &Path,
-        settings: &WavExportSettings,
-        options: &OfflineOptions,
-        progress: &mut RenderProgress<'_>,
-    ) -> Result<Vec<StemSummary>, StemRenderFailure> {
-        self.render_audio_stems_with_partial(folder, &(*settings).into(), options, progress)
     }
 
     /// Like [`Self::render_audio_stems`], retaining completed files after a later failure.

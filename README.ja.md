@@ -53,4 +53,6 @@ npx skills add uthree/auris-studio --skill auris-composition -a codex -g -y
 - [開発](docs/development.ja.md)と[作曲の評価](docs/evaluation.ja.md)
 - [変更履歴と互換性ポリシー](CHANGELOG.md)
 
+生成 AI を使ったものも含め、コントリビュートを歓迎します。[コントリビューションガイド](CONTRIBUTING.ja.md)を参照してください。
+
 ライセンスは [Apache-2.0](LICENSE) です。

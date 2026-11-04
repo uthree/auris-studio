@@ -117,6 +117,9 @@ pub fn tool_group(name: &str) -> &'static str {
         | "create_project"
         | "audio_assets"
         | "import_audio"
+        | "load_sample"
+        | "edit_sample_map"
+        | "workspace"
         | "import_midi"
         | "setup_tracks"
         | "add_track"
@@ -132,6 +135,7 @@ pub fn tool_group(name: &str) -> &'static str {
         | "edit_timeline"
         | "inspect_performance"
         | "set_performance"
+        | "performance_presets"
         | "edit_notes"
         | "edit_harmony"
         | "set_drum_assignment" => "manual",

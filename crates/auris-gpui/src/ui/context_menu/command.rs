@@ -28,6 +28,7 @@ impl MenuCommand {
             Self::DeleteClip(_) | Self::DeleteNotes => "edit.delete",
             Self::ToggleClipMute(_) => "clip.mute",
             Self::SplitClipAtPlayhead(_) => "clip.split",
+            Self::JoinClips(_) => "clip.join",
             Self::ToggleClipLoop(_) => "clip.loop",
             Self::DuplicateNotes => "edit.duplicate",
             Self::CutNotes => "edit.cut",
@@ -427,6 +428,8 @@ pub enum MenuCommand {
     ToggleClipMute(ClipId),
     /// Divide a clip at the playhead.
     SplitClipAtPlayhead(ClipId),
+    /// Join the selection a clip belongs to into one clip, or a lone clip with its neighbour.
+    JoinClips(ClipId),
     /// Set the cycle region to a clip's extent.
     LoopOverClip(ClipId),
     /// Repeat a clip out to the next one on its lane, or stop it repeating.
@@ -542,6 +545,17 @@ pub enum MenuCommand {
         track: TrackId,
         /// The channels to read, or `None` to disarm it.
         input: Option<InputChannels>,
+    },
+    /// Put one recording of a sampler's map in a velocity layer.
+    SetSampleVelocity {
+        /// The sampler's track.
+        track: TrackId,
+        /// Which zone of its map.
+        zone: usize,
+        /// Softest velocity answered, 0..1.
+        low: f32,
+        /// Hardest velocity answered, 0..1.
+        high: f32,
     },
     /// Point one effect at a track to key from, or stop it listening to one.
     SetEffectSidechain {
@@ -739,6 +753,43 @@ pub enum MenuCommand {
         /// The grid whose offbeats the swing delays.
         subdivision: Subdivision,
     },
+    /// Replace a clip's performance with a preset's stages.
+    ApplyPerformPreset {
+        /// Clip whose performance is being shaped.
+        clip: ClipId,
+        /// The preset's name, built in or kept.
+        name: String,
+    },
+    /// Open one instrument family's presets.
+    ShowPerformPresetFamily {
+        /// Clip whose performance is being shaped.
+        clip: ClipId,
+        /// The family to list.
+        family: PresetFamily,
+        /// Where the menu stays anchored.
+        at: Point<Pixels>,
+    },
+    /// Ask which family to keep the clip's performance under.
+    ShowPerformPresetSave {
+        /// Clip whose performance is kept.
+        clip: ClipId,
+        /// Where the menu stays anchored.
+        at: Point<Pixels>,
+    },
+    /// Name a preset kept from the clip's performance.
+    SavePerformPreset {
+        /// Clip whose performance is kept.
+        clip: ClipId,
+        /// The family it is filed under.
+        family: PresetFamily,
+    },
+    /// List the kept presets for deletion.
+    ShowPerformPresetDelete {
+        /// Where the menu stays anchored.
+        at: Point<Pixels>,
+    },
+    /// Delete a kept preset.
+    DeletePerformPreset(String),
     /// Set the pitch order of a chord stroke.
     SetPerformStrokeDirection {
         /// Clip whose performance is being shaped.
@@ -1267,6 +1318,7 @@ impl AurisApp {
                 let at = self.playhead_ticks();
                 self.split_clips_for_command(clip, at);
             }
+            MenuCommand::JoinClips(clip) => self.join_clips_for_command(clip),
             MenuCommand::LoopOverClip(clip) => {
                 // The *sounding* extent, repeats included: cycling over a looped clip and
                 // hearing only its first bar would be a cycle region nobody could explain.
@@ -1415,6 +1467,12 @@ impl AurisApp {
                 slot,
                 source,
             } => self.set_effect_sidechain(track, slot, source),
+            MenuCommand::SetSampleVelocity {
+                track,
+                zone,
+                low,
+                high,
+            } => self.set_sample_velocity(track, zone, low, high),
             MenuCommand::AddEffect { track, effect_id } => self.add_effect_to(track, &effect_id),
 
             MenuCommand::ShowProgressionPicker { at, anchor } => {
@@ -1519,6 +1577,31 @@ impl AurisApp {
             }
             MenuCommand::SetPerformStrokeDirection { clip, direction } => {
                 self.set_perform_stroke_direction(clip, direction)
+            }
+            MenuCommand::ApplyPerformPreset { clip, name } => {
+                if let Err(error) = self.session.apply_performance_preset(clip, &name) {
+                    self.set_status(crate::i18n::error_text(&error, self.language()));
+                }
+            }
+            MenuCommand::ShowPerformPresetFamily { clip, family, at } => {
+                let menu = self.perform_preset_family_menu(at, clip, family);
+                self.open_menu(menu);
+            }
+            MenuCommand::ShowPerformPresetSave { clip, at } => {
+                let menu = self.perform_preset_save_menu(at, clip);
+                self.open_menu(menu);
+            }
+            MenuCommand::SavePerformPreset { clip, family } => {
+                self.prompt_for_perform_preset(clip, family)
+            }
+            MenuCommand::ShowPerformPresetDelete { at } => {
+                let menu = self.perform_preset_delete_menu(at);
+                self.open_menu(menu);
+            }
+            MenuCommand::DeletePerformPreset(name) => {
+                if let Err(error) = self.session.forget_performance_preset(&name) {
+                    self.set_status(crate::i18n::error_text(&error, self.language()));
+                }
             }
             MenuCommand::SetParamChoice { target, value } => self.session.set_param(target, value),
             MenuCommand::ResetParam(target) => self.reset_param(target),

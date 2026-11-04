@@ -750,6 +750,7 @@ dependencies = [
  "bytemuck",
  "log",
  "pollster 1.0.1",
+ "rayon",
  "wgpu 30.0.1",
 ]
 
@@ -838,6 +839,7 @@ dependencies = [
  "auris-dsp",
  "log",
  "rustysynth",
+ "serde",
  "serde_json",
 ]
 
@@ -944,6 +946,7 @@ dependencies = [
  "auris-core",
  "fontdb 0.23.0",
  "image",
+ "rayon",
  "serde",
  "serde_json",
  "tempfile",

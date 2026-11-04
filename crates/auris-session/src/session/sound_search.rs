@@ -1139,7 +1139,7 @@ impl Session {
         for descriptor in self
             .registry()
             .instruments()
-            .filter(|descriptor| descriptor.id != SAMPLER_ID)
+            .filter(|descriptor| !auris_sampler::needs_asset(&descriptor.id))
         {
             let _ = budget.push_sound(
                 &mut sounds,

@@ -105,6 +105,12 @@ strings! {
     PreferenceInvalid { en: "Enter a request and select an alternative.", ja: "依頼内容を入力し、候補を選んでください。" }
     PreferenceUnavailable { en: "Selected alternative is unavailable", ja: "選んだ候補が見つかりません" }
     PreferenceSaved { en: "Preferences saved", ja: "好みの履歴を保存しました" }
+    PreferenceDigestEdit { en: "Edit summary", ja: "要約を編集" }
+    PreferenceDigestSave { en: "Save summary", ja: "要約を保存" }
+    PreferenceDigestEditHelp { en: "Rewrite the summary in your own words. The workshop reads it beside your recent choices, and folds later choices into what you wrote. Leave it empty to remove the summary.", ja: "要約を自分の言葉で書き直せます。ワークショップは最近の選択と一緒にこれを読み、以降の選択もこの文章に追記する形でまとめます。空にすると要約を削除します。" }
+    PreferenceDigestEdited { en: "Edited by you", ja: "編集済み" }
+    AgentPreferencesLink { en: "Edit learned preferences…", ja: "学習した好みを編集…" }
+    AgentPreferencesLinkHelp { en: "What the AI workshop has learned from your choices, and its summary, is edited under Personalization.", ja: "AIワークショップが選択から学習した好みとその要約は「パーソナライズ」で確認・編集できます。" }
     WorkshopHarmonyProgress { en: "Writing the chord progression", ja: "コード進行を決めています" }
     WorkshopMelodyProgress { en: "Writing the melody", ja: "メロディラインを作っています" }
     WorkshopArrangeProgress { en: "Editing the arrangement", ja: "編曲を進めています" }
@@ -1379,6 +1385,55 @@ strings! {
     PerformLowToHigh { en: "Low to high", ja: "低音から高音" }
     PerformHighToLow { en: "High to low", ja: "高音から低音" }
     PerformAlternate { en: "Alternating", ja: "交互" }
+    PerformPreset { en: "Preset", ja: "プリセット" }
+    PerformPresetMenu { en: "Performance presets", ja: "演奏プリセット" }
+    PerformPresetCustom { en: "Custom", ja: "カスタム" }
+    PerformPresetNone { en: "None", ja: "なし" }
+    PerformPresetSave { en: "Save Current Performance as Preset…", ja: "現在の演奏をプリセットとして保存…" }
+    PerformPresetSaveFamily { en: "Instrument family for the preset", ja: "保存する楽器ジャンル" }
+    PerformPresetName { en: "Preset name", ja: "プリセット名" }
+    PerformPresetDelete { en: "Delete a Saved Preset…", ja: "保存したプリセットを削除…" }
+    PerformPresetDeleteMenu { en: "Delete saved preset", ja: "保存したプリセットを削除" }
+    PresetFamilyKeys { en: "Keyboards", ja: "鍵盤楽器" }
+    PresetFamilyGuitar { en: "Guitar", ja: "ギター" }
+    PresetFamilyBass { en: "Bass", ja: "ベース" }
+    PresetFamilyDrums { en: "Drums", ja: "ドラム" }
+    PresetFamilyStrings { en: "Strings", ja: "弦楽器" }
+    PresetFamilyBrass { en: "Brass", ja: "金管楽器" }
+    PresetFamilyWoodwinds { en: "Woodwinds", ja: "木管楽器" }
+    PresetFamilySynth { en: "Synthesizer", ja: "シンセサイザー" }
+    PresetFamilyOther { en: "Other", ja: "その他" }
+    PresetPianoBallad { en: "Ballad piano", ja: "バラードピアノ" }
+    PresetPianoPopComp { en: "Pop piano comping", ja: "ポップスのピアノ伴奏" }
+    PresetJazzPianoComp { en: "Jazz piano comping", ja: "ジャズピアノのコンピング" }
+    PresetElectricPianoSoul { en: "Soul electric piano", ja: "ソウル系エレピ" }
+    PresetOrganSustain { en: "Organ", ja: "オルガン" }
+    PresetAcousticStrum { en: "Acoustic strumming", ja: "アコギのストローク" }
+    PresetRockRhythmGuitar { en: "Rock rhythm guitar", ja: "ロックのリズムギター" }
+    PresetFunkCuttingGuitar { en: "Funk cutting", ja: "ファンクのカッティング" }
+    PresetLeadGuitar { en: "Lead guitar", ja: "リードギター" }
+    PresetFingerBass { en: "Finger bass", ja: "指弾きベース" }
+    PresetFunkBass { en: "Funk bass", ja: "ファンクベース" }
+    PresetSynthBassTight { en: "Tight synth bass", ja: "タイトなシンセベース" }
+    PresetPopDrums { en: "Pop drums", ja: "ポップスのドラム" }
+    PresetFunkDrums { en: "Funk drums", ja: "ファンクのドラム" }
+    PresetJazzDrums { en: "Jazz drums", ja: "ジャズのドラム" }
+    PresetMachineDrums { en: "Drum machine", ja: "ドラムマシン" }
+    PresetStringLegato { en: "Legato strings", ja: "ストリングスのレガート" }
+    PresetStringPizzicato { en: "Pizzicato strings", ja: "ピチカート" }
+    PresetBrassSection { en: "Brass section", ja: "ブラスセクション" }
+    PresetWoodwindSolo { en: "Woodwind solo", ja: "木管ソロ" }
+    PresetSynthLead { en: "Synth lead", ja: "シンセリード" }
+    PresetSynthPad { en: "Synth pad", ja: "シンセパッド" }
+    PresetSynthArpTight { en: "Tight arpeggio", ja: "タイトなアルペジオ" }
+    PresetChiptune { en: "Chiptune", ja: "チップチューン" }
+    ErrorUnknownPerformancePreset { en: "That performance preset no longer exists.", ja: "その演奏プリセットはもうありません。" }
+    ErrorPresetName { en: "A preset name is 1 to 64 characters.", ja: "プリセット名は1〜64文字で入力してください。" }
+    ErrorPresetBuiltinName { en: "A built-in preset already uses that name. Choose another.", ja: "内蔵プリセットと同じ名前です。別の名前にしてください。" }
+    ErrorPresetExists { en: "A saved preset already uses that name. Delete it first or choose another.", ja: "同じ名前のプリセットが保存されています。先に削除するか、別の名前にしてください。" }
+    ErrorPresetDescription { en: "A preset description is at most 400 characters.", ja: "プリセットの説明は400文字以内です。" }
+    ErrorPresetFull { en: "256 presets are already saved. Delete one first.", ja: "保存できるプリセットは256個までです。先にどれかを削除してください。" }
+    ErrorPresetBuiltin { en: "A built-in preset cannot be deleted.", ja: "内蔵プリセットは削除できません。" }
     // Note values. Written as the fraction in both languages, because that is what is printed on
     // every other DAW's grid menu and the words for them are longer than the row is wide.
     SubdivisionEighth { en: "1/8", ja: "1/8" }
@@ -1716,6 +1771,9 @@ strings! {
     MenuFadeLinear { en: "Straight", ja: "直線" }
     MenuFadeEqualPower { en: "Equal Power", ja: "等パワー" }
     CmdCrossfade { en: "crossfade the clips", ja: "クリップをクロスフェード" }
+    EditJoinClips { en: "joining clips", ja: "クリップの結合" }
+    MenuJoinClips { en: "Join Clips", ja: "クリップを結合" }
+    CmdJoinClips { en: "Join Clips", ja: "クリップを結合" }
     EditSetClipTempo { en: "the clip's tempo", ja: "クリップのテンポ" }
     EditAddInstrumentTrack { en: "adding an instrument track", ja: "ソフト音源トラックの追加" }
     EditAddDrumTrack { en: "adding a drum track", ja: "ドラムトラックの追加" }
@@ -1783,6 +1841,7 @@ strings! {
     EditReorderEffects { en: "reordering the effects", ja: "エフェクトの並べ替え" }
     EditSetEffectSidechain { en: "changing the sidechain", ja: "サイドチェインの変更" }
     CmdSetEffectSidechain { en: "key this effect from that track", ja: "エフェクトをそのトラックでキーする" }
+    CmdEditSampleMap { en: "change the sample map", ja: "サンプルマップを変更する" }
     MenuSidechain { en: "Sidechain", ja: "サイドチェイン" }
     MenuSidechainNone { en: "None", ja: "なし" }
     MenuRecordInput { en: "Record Input", ja: "録音入力" }
@@ -1902,6 +1961,8 @@ strings! {
     EditRecordTake { en: "recording a take", ja: "録音" }
     EditImportSoundFont { en: "importing a SoundFont", ja: "サウンドフォントの読み込み" }
     EditChoosePreset { en: "choosing a sound", ja: "音色の選択" }
+    EditLoadSample { en: "loading a sample", ja: "サンプルの読み込み" }
+    EditSampleMap { en: "editing the sample map", ja: "サンプルマップの編集" }
     EditSetKey { en: "setting the key", ja: "調の変更" }
     EditSetChord { en: "setting a chord", ja: "コードの変更" }
     EditMoveChord { en: "moving a chord", ja: "コードの移動" }
@@ -1988,6 +2049,10 @@ strings! {
         en: "the dictionary did not load",
         ja: "辞書を読み込めませんでした"
     }
+    ErrorEmptySample {
+        en: "that file holds no audio to sample",
+        ja: "このファイルにはサンプルにできる音声がありません"
+    }
     ErrorNoPath {
         en: "the project has no path yet; save it somewhere first",
         ja: "保存先が未設定です。先に保存してください"
@@ -2004,6 +2069,26 @@ strings! {
     ErrorNotOverlapping {
         en: "those clips do not overlap on one track; drag one over the other first",
         ja: "そのクリップは重なっていません。片方をもう片方に重ねてください"
+    }
+    ErrorJoinTooFew {
+        en: "select two or more clips on one track to join",
+        ja: "結合するには同じトラックのクリップを2つ以上選んでください"
+    }
+    ErrorJoinAudio {
+        en: "audio clips cannot be joined; only note clips can",
+        ja: "オーディオクリップは結合できません（ノートのクリップのみ結合できます）"
+    }
+    ErrorJoinDifferentTracks {
+        en: "only clips on the same track can be joined",
+        ja: "結合できるのは同じトラックのクリップだけです"
+    }
+    ErrorJoinMixedMute {
+        en: "some of those clips are muted and some are not; match their mute first",
+        ja: "ミュートされたクリップとされていないクリップが混ざっています。先にミュートを揃えてください"
+    }
+    ErrorJoinDifferentTransforms {
+        en: "those clips are performed differently; give them the same note transforms or bake them first",
+        ja: "クリップごとに演奏の変換が異なります。変換を揃えるか、先に焼き込んでください"
     }
     ErrorNothingToStem {
         en: "there is nothing to export as stems; add a track that makes a sound",
@@ -2777,13 +2862,27 @@ new のオプション
     ValueOn { en: "On", ja: "オン" }
     ValueOff { en: "Off", ja: "オフ" }
 
-    // ------------------------------------------------------------------ plugin warnings
-    // Shown while the sampler's envelope is switched on, because switching it on costs something
-    // a user cannot otherwise see: a shaped note needs a MIDI channel to itself.
-    SamplerEnvelopeOn {
-        en: "Envelope on: 14-note polyphony, and drum choke groups stop working.",
-        ja: "エンベロープ有効：同時発音は14音まで。ドラムのチョークグループも無効になります。"
-    }
+    // ------------------------------------------------------------------ audio sampler
+    // The audio sampler window's map: one row per recording it plays.
+    SamplerSamples { en: "Samples", ja: "サンプル" }
+    SamplerNoSample { en: "Load samples…", ja: "サンプルを読み込む…" }
+    SamplerAddSamples { en: "Add samples…", ja: "サンプルを追加…" }
+    SamplerDetectPitch { en: "Detect pitch", ja: "ピッチ検出" }
+    SamplerDetectPitchTip { en: "Measure each sample's pitch and set its root and tune, even between keys", ja: "各サンプルのピッチを測り、鍵盤の間の音でもルート音と微調整を合わせます" }
+    SamplerRootDown { en: "Root note down a semitone", ja: "ルート音を半音下げる" }
+    SamplerRootUp { en: "Root note up a semitone", ja: "ルート音を半音上げる" }
+    SamplerPlays { en: "Keys this sample plays: the ones nearer its root than any other", ja: "このサンプルが鳴らす鍵盤（他よりルート音が近い範囲）" }
+    SamplerVelocity { en: "Velocity layer", ja: "ベロシティレイヤー" }
+    SamplerVelocityAll { en: "Every velocity", ja: "すべての強さ" }
+    SamplerVelocitySoftHalf { en: "Soft half", ja: "弱い半分" }
+    SamplerVelocityHardHalf { en: "Hard half", ja: "強い半分" }
+    SamplerVelocitySoftThird { en: "Soft third", ja: "弱（3分割）" }
+    SamplerVelocityMediumThird { en: "Medium third", ja: "中（3分割）" }
+    SamplerVelocityHardThird { en: "Hard third", ja: "強（3分割）" }
+    SamplerRemoveSample { en: "Remove this sample", ja: "このサンプルを外す" }
+    SamplerSampleMissing { en: "missing", ja: "見つかりません" }
+    SamplerLoadSample { en: "Load sample", ja: "サンプルの読み込み" }
+    DialogLoadSample { en: "Load a sample", ja: "サンプルを読み込む" }
 
 }
 

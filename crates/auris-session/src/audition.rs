@@ -50,6 +50,12 @@ pub struct AuditionTimeline {
     pub sections: Vec<AuditionSection>,
     /// Duration of the exact buffer, including any rendered tail.
     pub duration_seconds: f64,
+    /// Where playback wraps to on reaching the end, when the buffer is a loop song's audition.
+    ///
+    /// Such a buffer is the lead-in before the loop region followed by exactly one seamless
+    /// cycle of it, and so ends at the region's end with no tail; see
+    /// [`RenderJob::render_audition`](crate::RenderJob::render_audition). `None` plays once.
+    pub loop_start_seconds: Option<f64>,
 }
 
 impl AuditionTimeline {
@@ -84,12 +90,32 @@ impl AuditionTimeline {
             peaks,
             sections,
             duration_seconds,
+            loop_start_seconds: None,
         }
     }
 
+    /// Measure an audition of `project`, recognising a loop song's seamless cycle by its length.
+    ///
+    /// The length is what decides rather than the document alone, so a buffer rendered the
+    /// ordinary way — an older saved audition, say — still plays once instead of wrapping a tail.
     pub(crate) fn from_project(project: &Project, audio: &AudioBuffer) -> Self {
+        let loop_start = audition_loop(project).and_then(|(start, end)| {
+            let rate = audio.sample_rate();
+            let frames = |ticks| project.tempo_map.ticks_to_samples(ticks, rate).raw();
+            ((audio.frame_count() as u64).abs_diff(frames(end)) <= 1)
+                .then(|| frames(start) as f64 / rate)
+        });
         Self::from_audio(audio, sections_for_project(project))
             .with_tracks(tracks_for_project(project))
+            .with_loop_start(loop_start)
+    }
+
+    /// Mark the buffer as a loop song's audition that wraps to `seconds` at its end.
+    pub fn with_loop_start(mut self, seconds: Option<f64>) -> Self {
+        self.loop_start_seconds = seconds
+            .filter(|seconds| seconds.is_finite() && *seconds >= 0.0)
+            .filter(|seconds| *seconds < self.duration_seconds);
+        self
     }
 
     /// Attach a captured score, clipping note spans to the exact audio buffer.
@@ -111,6 +137,21 @@ impl AuditionTimeline {
         self.tracks = tracks;
         self
     }
+}
+
+/// The loop region a loop song's audition repeats, or `None` for a song that plays once.
+///
+/// A song is a loop when looping is on and its region holds all the music: game BGM written with
+/// `ending: loop`, or an agent's `set_loop` over the whole form. A region that ends with bars still
+/// to come is somebody listening to a passage, and auditioning it forever would hide the rest of
+/// the song, so that plays once. A beat of grace allows a release that rings past the region.
+pub(crate) fn audition_loop(project: &Project) -> Option<(Ticks, Ticks)> {
+    if !project.loop_enabled {
+        return None;
+    }
+    let (start, end) = project.loop_region?;
+    let (start, end) = (start.max_zero(), end.max_zero());
+    (end > start && project.end_tick() <= end + Ticks::QUARTER).then_some((start, end))
 }
 
 fn tracks_for_project(project: &Project) -> Vec<AuditionTrack> {
@@ -177,6 +218,120 @@ impl crate::Session {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use auris_engine::RenderProgress;
+
+    /// Largest step between neighbouring frames, the wrap from the last frame to `wrap_to`
+    /// included when there is one.
+    fn steepest_step(audio: &AudioBuffer, wrap_to: Option<usize>) -> (f32, f32) {
+        let channel = audio.channel(0);
+        let inside = channel
+            .windows(2)
+            .map(|pair| (pair[1] - pair[0]).abs())
+            .fold(0.0, f32::max);
+        let wrap = wrap_to.map_or(0.0, |start| {
+            (channel[start] - channel[channel.len() - 1]).abs()
+        });
+        (inside, wrap)
+    }
+
+    fn looping_song(region: (Ticks, Ticks)) -> crate::Session {
+        use auris_core::Note;
+        let mut session = crate::Session::new(crate::SessionOptions::headless()).unwrap();
+        let lead = session.add_default_instrument_track("Lead").unwrap();
+        let bar = Ticks::QUARTER * 4;
+        let clip = session
+            .add_midi_clip(lead, "Tune", Ticks::ZERO, bar * 4)
+            .unwrap();
+        // The last note is still sounding when the loop comes round, which is the case a
+        // whole-song render gets wrong: its tail rings on after the loop's end, not over its start.
+        session
+            .replace_notes(
+                clip,
+                (0..4)
+                    .map(|n| Note::new(60 + n as u8 * 2, bar * n, bar))
+                    .collect(),
+            )
+            .unwrap();
+        session.set_loop_enabled(true);
+        session.set_loop_region(region.0, region.1);
+        session
+    }
+
+    #[test]
+    fn a_loop_song_auditions_as_one_seamless_cycle_and_plays_once_otherwise() {
+        let bar = Ticks::QUARTER * 4;
+        let rate = 22_050.0;
+        let mut session = looping_song((Ticks::ZERO, bar * 4));
+        let frames = |session: &crate::Session, ticks| {
+            session
+                .project()
+                .tempo_map
+                .ticks_to_samples(ticks, rate)
+                .raw() as usize
+        };
+        let (audio, loop_start) = session
+            .render_job_at(Some(rate))
+            .render_audition(rate, true, &mut RenderProgress::default())
+            .unwrap();
+        assert_eq!(loop_start, Some(0.0));
+        assert_eq!(
+            audio.frame_count(),
+            frames(&session, bar * 4),
+            "no tail after a cycle"
+        );
+        assert!(audio.peak() > 0.01);
+        let timeline = AuditionTimeline::from_project(session.project(), &audio);
+        assert_eq!(timeline.loop_start_seconds, Some(0.0));
+        let (inside, wrap) = steepest_step(&audio, Some(0));
+        assert!(
+            wrap <= inside,
+            "the wrap ({wrap}) is no steeper than the music ({inside})"
+        );
+
+        // An intro before the region is heard once, then the region repeats.
+        let mut intro = looping_song((bar, bar * 4));
+        let (audio, loop_start) = intro
+            .render_job_at(Some(rate))
+            .render_audition(rate, true, &mut RenderProgress::default())
+            .unwrap();
+        let lead = frames(&intro, bar);
+        assert_eq!(loop_start, Some(lead as f64 / rate));
+        assert_eq!(audio.frame_count(), frames(&intro, bar * 4));
+        let timeline = AuditionTimeline::from_project(intro.project(), &audio);
+        assert_eq!(timeline.loop_start_seconds, loop_start);
+        let (inside, wrap) = steepest_step(&audio, Some(lead));
+        assert!(
+            wrap <= inside,
+            "the wrap ({wrap}) is no steeper than the music ({inside})"
+        );
+
+        // A region with music still to come is a passage being listened to, not a loop song.
+        let mut passage = looping_song((Ticks::ZERO, bar * 2));
+        let (audio, loop_start) = passage
+            .render_job_at(Some(rate))
+            .render_audition(rate, true, &mut RenderProgress::default())
+            .unwrap();
+        assert_eq!(loop_start, None);
+        assert!(
+            audio.frame_count() >= frames(&passage, bar * 4),
+            "the whole song"
+        );
+
+        // Looping off plays once, and so does an ordinary render of a loop song read back later.
+        let mut once = looping_song((Ticks::ZERO, bar * 4));
+        once.set_loop_enabled(false);
+        let (_, loop_start) = once
+            .render_job_at(Some(rate))
+            .render_audition(rate, true, &mut RenderProgress::default())
+            .unwrap();
+        assert_eq!(loop_start, None);
+        let tailed = AudioBuffer::stereo(frames(&session, bar * 4) + 2_205, rate);
+        assert_eq!(
+            AuditionTimeline::from_project(session.project(), &tailed).loop_start_seconds,
+            None,
+            "a buffer with a tail is not a cycle, whatever the document says"
+        );
+    }
     #[test]
     fn all_track_notes_share_the_render_clock_across_tempo_changes_and_clip_loops() {
         use auris_core::Note;

@@ -1618,8 +1618,11 @@ fn candidate_options(settings: &Settings) -> SessionOptions {
         .with_shipped_dictionary(installed)
         .with_plugin_paths(settings.plugin_paths.clone());
     if installed {
-        options =
-            options.with_soundfont_library(auris_session::config_dir().join("soundfonts.json"));
+        options = options
+            .with_soundfont_library(auris_session::config_dir().join("soundfonts.json"))
+            .with_performance_presets(
+                auris_session::performance_presets::PerformancePresetBook::path(),
+            );
     }
     options
 }
@@ -2114,26 +2117,36 @@ fn execute(
     cancel: &AtomicBool,
 ) -> Result<String, String> {
     let action = command["action"].as_str().unwrap_or_default();
+    // A file tool aimed only at the candidate's own project workspace stays inside the private
+    // candidate, so it is a child capability like any edit; anywhere else on disk is not.
+    let workspace_file =
+        matches!(
+            action,
+            "render" | "export_midi" | "import_audio" | "import_midi" | "verify_render"
+        ) && serde_json::from_value::<auris_session::live_agent::Command>(command.clone())
+            .is_ok_and(|command| command.uses_only_workspace());
     // File exports/imports, playback, nested jobs and network tools are not child capabilities.
-    if matches!(
-        action,
-        "render"
-            | "compose"
-            | "phrase_variation"
-            | "edit_recipe"
-            | "listen"
-            | "import_transcription"
-            | "preview"
-            | "export_midi"
-            | "import_audio"
-            | "import_midi"
-            | "audio_assets"
-            | "checkpoints"
-            | "verify_render"
-            | "candidates"
-            | "accompaniment"
-            | "arrangement"
-    ) {
+    if !workspace_file
+        && matches!(
+            action,
+            "render"
+                | "compose"
+                | "phrase_variation"
+                | "edit_recipe"
+                | "listen"
+                | "import_transcription"
+                | "preview"
+                | "export_midi"
+                | "import_audio"
+                | "import_midi"
+                | "audio_assets"
+                | "checkpoints"
+                | "verify_render"
+                | "candidates"
+                | "accompaniment"
+                | "arrangement"
+        )
+    {
         return Err("This operation is not available inside candidate production".into());
     }
     if action == "generate_phrase"
@@ -2157,6 +2170,11 @@ fn execute(
             .audio_inspection_job(start_bar, bars, track)?
             .run(cancel)?;
         return serde_json::to_string(&report).map_err(|e| e.to_string());
+    }
+    if workspace_file {
+        // Rendering shares the audio budget with the other candidates' inspections.
+        let _gate = audio_gate(cancel)?;
+        return session.agent_command_with_plugin_paths(command, &settings.plugin_paths);
     }
     if vocal {
         let _gate = audio_gate(cancel)?;
