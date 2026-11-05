@@ -157,6 +157,7 @@ pub fn edit_key(edit: Edit) -> Key {
         Edit::RenameProject => Key::EditRenameProject,
         Edit::RenameTrack => Key::EditRenameTrack,
         Edit::SetTrackColor => Key::EditSetTrackColor,
+        Edit::SetTrackColors => Key::EditSetTrackColors,
         Edit::SetTrackHeight => Key::EditSetTrackHeight,
         Edit::MuteTrack => Key::EditMuteTrack,
         Edit::SoloTrack => Key::EditSoloTrack,

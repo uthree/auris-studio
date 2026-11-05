@@ -174,6 +174,26 @@ impl AurisApp {
                     )
                 });
 
+        // A sound the timbre map measured can take its cluster's colour. Before any map exists
+        // the row is offered on every melodic track it might apply to, and choosing it scans.
+        let measurable =
+            matches!(&entry.kind, TrackKind::Instrument(inner) if inner.file.is_none());
+        let by_timbre = self.t(Key::MenuTrackColorByTimbre);
+        let menu = match (self.timbre_map_ready(), self.timbre_track_color(track)) {
+            (_, Some(color)) => menu.colour(
+                by_timbre,
+                MenuCommand::ColorTrackByTimbre(track),
+                self.theme.track_color(color.0),
+                color == current_color,
+            ),
+            (false, None) => menu.item_if(
+                measurable,
+                by_timbre,
+                MenuCommand::ColorTrackByTimbre(track),
+            ),
+            (true, None) => menu,
+        };
+
         menu.separator()
             .item(
                 self.t(Key::MenuNewInstrumentTrack),
