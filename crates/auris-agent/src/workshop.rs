@@ -3857,6 +3857,8 @@ mod tests {
             planning: false,
             preferences: Preferences::default(),
             error: None,
+            working: BTreeSet::new(),
+            handled: 0,
         };
         snapshot.progress.insert(1, "melody".into());
         assert_eq!(snapshot.status_line(1), None);
