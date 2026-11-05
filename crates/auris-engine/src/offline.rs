@@ -2,8 +2,8 @@
 //!
 //! Export runs the *same* [`render_block`] the audio callback does, block by block, with the
 //! transport rolling. Cycle exports warm up the graph before capturing one repetition.
-//! That is what makes an exported file match what
-//! was heard: there is no second code path that could drift from the first.
+//! Track DSP is shared with playback. Independent tracks may run concurrently during export;
+//! stable generation-order mixing can differ from playback by floating-point roundoff.
 
 use auris_core::AudioBuffer;
 use auris_core::plugin::TailContext;

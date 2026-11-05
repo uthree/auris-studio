@@ -1084,9 +1084,79 @@ impl std::fmt::Debug for RenderJob {
 mod tests {
     use super::*;
     use crate::registry::plugin_catalogue;
+    use auris_core::project::Note;
     use auris_core::time::Ticks;
+    use auris_engine::{RenderGraph, Transport, render_block};
 
     const SOURCE: SourceId = SourceId(1);
+
+    #[test]
+    fn production_registry_parallel_offline_render_matches_serial_playback() {
+        let mut project = Project::new("Parallel registry render", 48_000.0);
+        project.master.gain_db = -18.0;
+        for index in 0..8 {
+            let instrument = [
+                "auris.synth.chiptune",
+                "auris.synth.fm2",
+                "auris.synth.noisedrum",
+                auris_synth::Clarinet::ID,
+            ][index % 4];
+            let track = project.add_instrument_track(format!("Built-in {index}"), instrument);
+            project.add_effect(Some(track), "auris.fx.eq");
+            project.add_effect(Some(track), "auris.fx.reverb");
+            let clip = project
+                .add_midi_clip(track, "note", Ticks::ZERO, Ticks::from_beats(1.0))
+                .expect("clip");
+            project
+                .midi_clip_mut(clip)
+                .expect("clip remains")
+                .notes
+                .push(Note::new(
+                    48 + index as u8,
+                    Ticks::ZERO,
+                    Ticks::from_beats(1.0),
+                ));
+        }
+        let registry = plugin_catalogue();
+        for track in &project.tracks {
+            if let auris_core::project::TrackKind::Instrument(instrument) = &track.kind {
+                assert!(registry.has_instrument(&instrument.instrument_id));
+            }
+        }
+        let bank = AudioSourceBank::new();
+        let mut parallel = RenderGraph::build(&project, &bank, &registry, 512);
+        let mut serial = RenderGraph::build(&project, &bank, &registry, 512);
+        let mut parallel_transport = Transport::playing_from(0);
+        let mut serial_transport = Transport::playing_from(0);
+        let mut parallel_out = AudioBuffer::new(2, 512, 48_000.0);
+        let mut serial_out = AudioBuffer::new(2, 512, 48_000.0);
+        let mut peak = 0.0_f32;
+
+        for _ in 0..10 {
+            render_block(
+                &mut parallel,
+                &mut parallel_transport,
+                &mut parallel_out,
+                true,
+            );
+            render_block(&mut serial, &mut serial_transport, &mut serial_out, false);
+            peak = peak.max(serial_out.peak());
+            for channel in 0..2 {
+                for (actual, expected) in parallel_out
+                    .channel(channel)
+                    .iter()
+                    .zip(serial_out.channel(channel))
+                {
+                    assert!(actual.is_finite() && expected.is_finite());
+                    assert!(
+                        actual.to_bits() == expected.to_bits(),
+                        "parallel registry render diverged: {actual} vs {expected}"
+                    );
+                }
+            }
+        }
+        assert!(peak > 1e-5, "fixture must render audible samples");
+    }
 
     /// A bank holding one second of steady 0.5 on two channels, at `rate`.
     fn bank_at(id: SourceId, rate: f64) -> AudioSourceBank {

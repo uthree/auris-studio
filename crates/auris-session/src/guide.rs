@@ -1086,8 +1086,15 @@ pub mod architecture {
     //!
     //! [`auris_engine::render_block`] is the single implementation of "produce N frames".
     //! Realtime playback calls it from the device callback; [`auris_engine::render_project`] calls
-    //! it in a loop as fast as the CPU allows. Because there is only one path, an export matches
-    //! what was heard, sample for sample — there is no second implementation that could drift.
+    //! it in a loop as fast as the CPU allows. Both execute the same track DSP, event scheduling,
+    //! automation and delay compensation. Offline rendering groups tracks into dependency
+    //! generations, including outputs, sends and sidechain keys, and uses Rayon for wide
+    //! generations. Workers only modify their own track; the caller then commits outputs in
+    //! stable order before the next generation starts. Reordering independent contributions
+    //! can introduce floating-point roundoff relative to playback, while output length and
+    //! sample timing remain unchanged. Caller-placed plugins stay on the rendering caller's
+    //! thread until their native worker-migration contracts are established. Realtime rendering
+    //! retains the serial routing order and never dispatches to or waits for Rayon.
     //!
     //! # How it gets there: outputs, buses and sends
     //!

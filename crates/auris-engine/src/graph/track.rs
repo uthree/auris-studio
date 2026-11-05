@@ -119,6 +119,9 @@ pub struct RenderTrack {
     /// stereo bus, the way it would on a mono channel in any mixer.
     pub(crate) mono: bool,
     pub(crate) strip: RenderStrip,
+    /// Caller-placed plugins stay on the rendering caller's thread. Their native thread
+    /// migration contracts have not been established for a work-stealing pool.
+    pub(crate) parallel_safe: bool,
     /// Every post-fader unity output branch.
     pub(crate) outputs: Vec<RenderOutput>,
     /// Copies of this track's signal, on their way to buses.

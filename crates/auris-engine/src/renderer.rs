@@ -1,8 +1,9 @@
 //! The block renderer shared by realtime playback and offline export.
 //!
 //! One function fills one output buffer. Realtime playback calls it from the device callback and
-//! the offline renderer calls it in a loop as fast as the CPU allows; both take exactly the same
-//! path, which is what makes an export sound like what was heard.
+//! the offline renderer calls it in a loop as fast as the CPU allows; both execute the same
+//! DSP operations. Offline rendering may schedule independent tracks concurrently; its stable
+//! generation order can differ from playback's summation order by floating-point roundoff.
 //!
 //! The output buffer's length is *not* the processing block size. [`render_block`] splits the
 //! request into segments so that no segment is longer than the size the graph was prepared for
@@ -12,6 +13,10 @@
 
 use auris_core::AudioBuffer;
 use auris_core::plugin::{NoteEvent, ProcessContext};
+use rayon::prelude::*;
+
+#[cfg(test)]
+mod parallel_tests;
 
 use crate::graph::{
     MonitorTap, PITCH_COUNT, RenderAudioClip, RenderGraph, RenderSend, RenderSource, RenderTrack,
@@ -24,11 +29,23 @@ use crate::transport::Transport;
 /// `out` is overwritten, not added to. The transport is advanced past everything rendered, so
 /// calling this in a loop walks the timeline. When the transport is stopped the sources fall
 /// silent but every effect still runs, letting reverb and delay tails ring out.
+/// Offline rendering may process independent tracks on Rayon workers. Realtime calls never
+/// dispatch to the pool; both modes use the same DSP and sample timeline.
 pub fn render_block(
     graph: &mut RenderGraph,
     transport: &mut Transport,
     out: &mut AudioBuffer,
     offline: bool,
+) {
+    render_block_impl(graph, transport, out, offline, offline);
+}
+
+fn render_block_impl(
+    graph: &mut RenderGraph,
+    transport: &mut Transport,
+    out: &mut AudioBuffer,
+    offline: bool,
+    parallel: bool,
 ) {
     out.clear();
     let total = out.frame_count();
@@ -48,7 +65,7 @@ pub fn render_block(
     let mut written = 0;
     while written < total {
         let frames = segment_frames(graph, transport, total - written);
-        render_segment(graph, transport, out, written, frames, offline);
+        render_segment(graph, transport, out, written, frames, offline, parallel);
         transport.advance(frames as u64);
         written += frames;
     }
@@ -88,6 +105,7 @@ fn render_segment(
     offset: usize,
     frames: usize,
     offline: bool,
+    parallel: bool,
 ) {
     let ramp_frames = graph.max_block();
     // Before anything is rendered, so the whole segment hears the values in force at its start.
@@ -145,153 +163,183 @@ fn render_segment(
     let signal_meters =
         (!offline && graph.signal_meters.is_watched()).then_some(graph.signal_meters.as_ref());
 
-    // The routing order rather than the track list: a bus cannot go through its own strip until
-    // everything routed into it has been mixed in, and only this order guarantees that.
+    // Realtime never enters Rayon. Offline workers only transform track-local buffers; the
+    // caller commits sends, taps and outputs after each generation's barrier. Contributions
+    // within a generation retain the original order, independently of worker completion order.
     let tracks = &mut graph.tracks;
-    for &index in &graph.order {
-        let Some(track) = tracks.get_mut(index) else {
-            continue;
-        };
-        // A track muted long enough to have finished fading out contributes nothing, so skip it
-        // entirely. One muted a moment ago still has a fade to slide down and must be rendered.
-        if track.strip.is_silent() {
-            // `render_source` is the only thing that drains the audition queue, and skipping the
-            // strip skips that too — so notes played into a muted track would pile up until the
-            // queue hit its cap and then start dropping whatever came next, note-offs included.
-            // Every note-on that outlived its lost note-off came back sounding on the unmute and
-            // stayed there. The track cannot be heard either way, so the notes are dropped here.
-            track.audition.clear();
-            // And a one-shot is silenced the same way, rather than left paused to blast out
-            // whenever the track is unmuted. Silenced, not freed: the buffer stays in its
-            // slot for the UI thread's next swap.
-            track.stop_one_shot();
-            // A skipped strip still needs to move its displayed history into silence.
-            if let Some(scope) = &track.overview_scope
-                && scope.watching() != crate::ScopeSource::Off
-            {
-                track.scratch.set_frame_count(frames);
-                track.scratch.clear();
+    let serial_order = std::slice::from_ref(&graph.order);
+    let parallel =
+        offline && parallel && frames >= 256 && graph.offline_plan.max_parallel_width >= 4;
+    let generations = if parallel {
+        &graph.offline_plan.generations[..]
+    } else {
+        serial_order
+    };
+    for (generation, order) in generations.iter().enumerate() {
+        let concurrent = parallel
+            && order
+                .iter()
+                .filter(|&&index| tracks[index].parallel_safe && !tracks[index].strip.is_silent())
+                .count()
+                >= 4;
+        if concurrent {
+            let generation_for_track = &graph.offline_plan.generation_for_track;
+            tracks
+                .par_iter_mut()
+                .enumerate()
+                .for_each(|(index, track)| {
+                    if generation_for_track[index] == generation
+                        && track.parallel_safe
+                        && !track.strip.is_silent()
+                    {
+                        prepare_track(
+                            track,
+                            index,
+                            bus_inputs,
+                            sidechain_taps,
+                            transport,
+                            &ctx,
+                            &[],
+                            None,
+                        );
+                    }
+                });
+        }
+        for &index in order {
+            let Some(track) = tracks.get_mut(index) else {
+                continue;
+            };
+            // A track muted long enough to have finished fading out contributes nothing, so skip it
+            // entirely. One muted a moment ago still has a fade to slide down and must be rendered.
+            if track.strip.is_silent() {
+                // `render_source` is the only thing that drains the audition queue, and skipping the
+                // strip skips that too — so notes played into a muted track would pile up until the
+                // queue hit its cap and then start dropping whatever came next, note-offs included.
+                // Every note-on that outlived its lost note-off came back sounding on the unmute and
+                // stayed there. The track cannot be heard either way, so the notes are dropped here.
+                track.audition.clear();
+                // And a one-shot is silenced the same way, rather than left paused to blast out
+                // whenever the track is unmuted. Silenced, not freed: the buffer stays in its
+                // slot for the UI thread's next swap.
+                track.stop_one_shot();
+                // A skipped strip still needs to move its displayed history into silence.
+                if let Some(scope) = &track.overview_scope
+                    && scope.watching() != crate::ScopeSource::Off
+                {
+                    track.scratch.set_frame_count(frames);
+                    track.scratch.clear();
+                    scope.publish_stereo(
+                        track.scratch.channel(0),
+                        track.scratch.channel(1),
+                        ctx.sample_rate,
+                    );
+                }
+                continue;
+            }
+            if !concurrent || !track.parallel_safe {
+                prepare_track(
+                    track,
+                    index,
+                    bus_inputs,
+                    sidechain_taps,
+                    transport,
+                    &ctx,
+                    monitors,
+                    signal_meters,
+                );
+            }
+
+            let RenderTrack {
+                scratch,
+                sends,
+                strip,
+                ..
+            } = track;
+            deliver_sends(sends, scratch, bus_inputs, true, ramp_frames, signal_meters);
+            strip.apply_gain_and_pan(scratch, ramp_frames);
+            strip.apply_mute(scratch);
+            deliver_sends(
+                sends,
+                scratch,
+                bus_inputs,
+                false,
+                ramp_frames,
+                signal_meters,
+            );
+
+            // `apply_mute` is what moves the fade, so this is the block it closed on and the last one
+            // this track renders until the mute opens again. Anything the instrument is still holding
+            // has to be let go of now: the note-off that would have released it arrives through the
+            // audition queue, which is cleared rather than delivered from here on, so the voice would
+            // otherwise be waiting at full level when the strip came back. Playback continuity is left
+            // alone deliberately — the skipped blocks make `continued_from` stale, so the notes the
+            // timeline holds across the mute are chased back in on the unmute.
+            if track.strip.is_silent() {
+                track.silence_voices();
+            }
+
+            // The key, if anything is listening: the signal this track puts into the mix, its chain,
+            // its fader and its pan applied and its mute honoured. Taken here rather than anywhere
+            // earlier so that turning a kick drum down ducks less and muting it stops the duck — a
+            // key is what the track is contributing, not what it would contribute if it were open.
+            //
+            // It is aligned with the track it keys exactly when nothing in the graph looks ahead,
+            // which is every graph without a lookahead plugin on a *track* — the master's limiter is
+            // past all of this and costs nothing here. Where one exists the key runs behind the audio
+            // it keys by the graph's own compensation, because the chain reading it has not been
+            // delayed yet and this signal has.
+            if let Some(tap) = track.tap.and_then(|tap| sidechain_taps.get_mut(tap)) {
+                tap.copy_from(&track.scratch);
+            }
+
+            for (channel, peak) in track.peaks.iter_mut().enumerate() {
+                *peak = peak.max(track.scratch.channel_peak(channel));
+            }
+            track.sides_differ |= sides_differ(track.scratch.channel(0), track.scratch.channel(1));
+            if let Some(scope) = &track.overview_scope {
                 scope.publish_stereo(
                     track.scratch.channel(0),
                     track.scratch.channel(1),
                     ctx.sample_rate,
                 );
             }
-            continue;
-        }
-        track.scratch.set_frame_count(frames);
-        render_source(track, bus_inputs, transport, &ctx);
-        // The live input joins here — after what the track plays and before everything that
-        // shapes it, which is what puts the player inside their own mix rather than beside it.
-        // Mixed rather than assigned, and unconditional on the transport: monitoring while the
-        // song is stopped is how somebody sets a level in the first place.
-        if let Some(tap) = monitors.iter().find(|tap| tap.track == index) {
-            tap.ring.read_into(&mut track.scratch, ctx.sample_rate);
-        }
-        track
-            .strip
-            .process_chain(&mut track.scratch, sidechain_taps, &ctx, signal_meters);
-        // Delay compensation sits between the chain and the fader: the chain is what runs late,
-        // and putting it here keeps the fader and the mute acting when they are moved rather
-        // than a few milliseconds afterwards. Every copy the track goes on to produce is taken
-        // after this, because this part of the delay belongs to all of them.
-        track.delay.process(&mut track.scratch);
-        // A mono channel becomes one signal again before anything leaves it, so the sends and
-        // the pan are handed a voice rather than a pair of sides.
-        if track.mono {
-            fold_to_mono(&mut track.scratch);
-        }
-
-        let RenderTrack {
-            scratch,
-            sends,
-            strip,
-            ..
-        } = track;
-        deliver_sends(sends, scratch, bus_inputs, true, ramp_frames, signal_meters);
-        strip.apply_gain_and_pan(scratch, ramp_frames);
-        strip.apply_mute(scratch);
-        deliver_sends(
-            sends,
-            scratch,
-            bus_inputs,
-            false,
-            ramp_frames,
-            signal_meters,
-        );
-
-        // `apply_mute` is what moves the fade, so this is the block it closed on and the last one
-        // this track renders until the mute opens again. Anything the instrument is still holding
-        // has to be let go of now: the note-off that would have released it arrives through the
-        // audition queue, which is cleared rather than delivered from here on, so the voice would
-        // otherwise be waiting at full level when the strip came back. Playback continuity is left
-        // alone deliberately — the skipped blocks make `continued_from` stale, so the notes the
-        // timeline holds across the mute are chased back in on the unmute.
-        if track.strip.is_silent() {
-            track.silence_voices();
-        }
-
-        // The key, if anything is listening: the signal this track puts into the mix, its chain,
-        // its fader and its pan applied and its mute honoured. Taken here rather than anywhere
-        // earlier so that turning a kick drum down ducks less and muting it stops the duck — a
-        // key is what the track is contributing, not what it would contribute if it were open.
-        //
-        // It is aligned with the track it keys exactly when nothing in the graph looks ahead,
-        // which is every graph without a lookahead plugin on a *track* — the master's limiter is
-        // past all of this and costs nothing here. Where one exists the key runs behind the audio
-        // it keys by the graph's own compensation, because the chain reading it has not been
-        // delayed yet and this signal has.
-        if let Some(tap) = track.tap.and_then(|tap| sidechain_taps.get_mut(tap)) {
-            tap.copy_from(&track.scratch);
-        }
-
-        for (channel, peak) in track.peaks.iter_mut().enumerate() {
-            *peak = peak.max(track.scratch.channel_peak(channel));
-        }
-        track.sides_differ |= sides_differ(track.scratch.channel(0), track.scratch.channel(1));
-        if let Some(scope) = &track.overview_scope {
-            scope.publish_stereo(
-                track.scratch.channel(0),
-                track.scratch.channel(1),
-                ctx.sample_rate,
-            );
-        }
-        // A spectrum display, if one is open on this strip, reads what the strip actually sends
-        // to the bus — the chain applied, the fader applied. The check is one relaxed load per
-        // block, hoisted out of the loop, so a graph nobody is looking at pays nothing.
-        if watching == crate::scope::ScopeSource::Track(index) {
-            scope.publish_from(
-                crate::scope::ScopeSource::Track(index),
-                track.scratch.channel(0),
-                track.scratch.channel(1),
-                ctx.sample_rate,
-            );
-        }
-        if visualizer_watching == crate::scope::ScopeSource::Track(index) {
-            visualizer_scope.publish_from(
-                crate::scope::ScopeSource::Track(index),
-                track.scratch.channel(0),
-                track.scratch.channel(1),
-                ctx.sample_rate,
-            );
-        }
-        // The output edge's own delay, after both taps so that each copy carries its own: zero in
-        // any graph where nothing looks ahead, which is why this is normally a return on the
-        // first line.
-        for output in &mut track.outputs {
-            let signal = if output.delay.frames() == 0 {
-                &track.scratch
-            } else {
-                output.scratch.copy_from(&track.scratch);
-                output.delay.process(&mut output.scratch);
-                &output.scratch
-            };
-            match output.target.and_then(|slot| bus_inputs.get_mut(slot)) {
-                Some(input) => input.mix_from(signal, 1.0),
-                None => master_scratch.mix_from(signal, 1.0),
+            // A spectrum display, if one is open on this strip, reads what the strip actually sends
+            // to the bus — the chain applied, the fader applied. The check is one relaxed load per
+            // block, hoisted out of the loop, so a graph nobody is looking at pays nothing.
+            if watching == crate::scope::ScopeSource::Track(index) {
+                scope.publish_from(
+                    crate::scope::ScopeSource::Track(index),
+                    track.scratch.channel(0),
+                    track.scratch.channel(1),
+                    ctx.sample_rate,
+                );
             }
-            if let Some(meters) = signal_meters {
-                meters.observe(output.meter, signal.peak());
+            if visualizer_watching == crate::scope::ScopeSource::Track(index) {
+                visualizer_scope.publish_from(
+                    crate::scope::ScopeSource::Track(index),
+                    track.scratch.channel(0),
+                    track.scratch.channel(1),
+                    ctx.sample_rate,
+                );
+            }
+            // The output edge's own delay, after both taps so that each copy carries its own: zero in
+            // any graph where nothing looks ahead, which is why this is normally a return on the
+            // first line.
+            for output in &mut track.outputs {
+                let signal = if output.delay.frames() == 0 {
+                    &track.scratch
+                } else {
+                    output.scratch.copy_from(&track.scratch);
+                    output.delay.process(&mut output.scratch);
+                    &output.scratch
+                };
+                match output.target.and_then(|slot| bus_inputs.get_mut(slot)) {
+                    Some(input) => input.mix_from(signal, 1.0),
+                    None => master_scratch.mix_from(signal, 1.0),
+                }
+                if let Some(meters) = signal_meters {
+                    meters.observe(output.meter, signal.peak());
+                }
             }
         }
     }
@@ -328,9 +376,8 @@ fn render_segment(
     // The click, last of all and never offline. Everything above it is the mix; this is a thing
     // laid over the top of the mix for somebody to play along to, so it is past the master fader,
     // past the master mute, past the meters and past the spectrum — none of which should move
-    // because a metronome is on, and none of which can turn it down or hide it. An export takes
-    // the same path as playback through this whole function, and this line is the only thing that
-    // makes the two differ: it is what guarantees a bounce cannot contain the click.
+    // because a metronome is on, and none of which can turn it down or hide it. Keeping it outside
+    // offline rendering guarantees a bounce cannot contain the click.
     if !offline {
         graph
             .metronome
@@ -338,6 +385,39 @@ fn render_segment(
     }
 
     write_segment(out, offset, master_scratch, frames);
+}
+
+/// Renders only state owned by this track, reading previously committed bus inputs and keys.
+/// No shared mix or observation tap is written here, so independent nodes can borrow these
+/// inputs concurrently. Playback and offline workers execute the same DSP operations.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "separate field borrows keep track ownership exclusive"
+)]
+fn prepare_track(
+    track: &mut RenderTrack,
+    index: usize,
+    bus_inputs: &[AudioBuffer],
+    sidechain_taps: &[AudioBuffer],
+    transport: &Transport,
+    ctx: &ProcessContext,
+    monitors: &[MonitorTap],
+    signal_meters: Option<&crate::SignalMeters>,
+) {
+    track.scratch.set_frame_count(ctx.block_frames);
+    render_source(track, bus_inputs, transport, ctx);
+    // Live input joins before the effects, fader and sends, including while transport is stopped.
+    if let Some(tap) = monitors.iter().find(|tap| tap.track == index) {
+        tap.ring.read_into(&mut track.scratch, ctx.sample_rate);
+    }
+    track
+        .strip
+        .process_chain(&mut track.scratch, sidechain_taps, ctx, signal_meters);
+    // Compensation belongs to every outgoing copy, while fader and mute respond immediately.
+    track.delay.process(&mut track.scratch);
+    if track.mono {
+        fold_to_mono(&mut track.scratch);
+    }
 }
 
 /// Feeds one tap of a track into the buses its sends name.
