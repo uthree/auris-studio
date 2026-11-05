@@ -408,6 +408,8 @@ strings! {
     TimbreMapRepresentativeNames { en: "Names from representative sounds", ja: "代表音色の名前を表示中" }
     TimbreMapAiNames { en: "AI-suggested names", ja: "AIが提案した名前を表示中" }
     TimbreMapResetNames { en: "Restore Representative Names", ja: "代表音色の名前に戻す" }
+    TimbreMapColorTracks { en: "Colour Tracks by Group", ja: "トラックをクラスタの色に" }
+    TimbreMapColorTracksHint { en: "Tint every track whose sound is on the map in its group's colour, as one undoable step. Drum kits, singers, audio, buses, hosted plugins and edited built-in patches keep their colour.", ja: "マップにある音色を使うトラックを、そのクラスタの色にまとめて塗ります（1回で元に戻せます）。ドラムキット・歌声・オーディオ・バス・外部プラグイン・設定を変えた内蔵音源は色を変えません。" }
     TimbreMapNamingFailed { en: "Could not name clusters", ja: "クラスタ名を取得できませんでした" }
     TimbreMapView3d { en: "3D", ja: "3D" }
     TimbreMapViewTop { en: "Top", ja: "上面" }
@@ -1945,6 +1947,7 @@ strings! {
     HintMidiNote { en: "Enter a whole MIDI note number from 0 to 127.", ja: "MIDIノート番号を0〜127の整数で入力してください。" }
     EditSetDrumAssignment { en: "Change Drum Assignment", ja: "ドラムの割り当てを変更" }
     MenuTrackColor { en: "Colour", ja: "カラー" }
+    MenuTrackColorByTimbre { en: "Colour: Sound Group", ja: "カラー: 音色クラスタ" }
     MenuAutomateVolume { en: "Automate Volume", ja: "ボリュームをオートメーション" }
     MenuAutomatePan { en: "Automate Pan", ja: "パンをオートメーション" }
     MenuClearAutomation { en: "Clear Automation", ja: "オートメーションを消去" }
@@ -1954,6 +1957,7 @@ strings! {
     MenuCurveLine { en: "Line", ja: "直線" }
     MenuCurveStep { en: "Step", ja: "ステップ" }
     EditSetTrackColor { en: "the track colour", ja: "トラックの色" }
+    EditSetTrackColors { en: "the track colours", ja: "トラックの色の一括変更" }
     EditSetTrackHeight { en: "the lane height", ja: "レーンの高さ" }
     EditWriteAutomation { en: "the automation point", ja: "オートメーションの点" }
     EditEraseAutomation { en: "erasing the automation point", ja: "オートメーションの点の削除" }

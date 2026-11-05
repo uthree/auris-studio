@@ -236,6 +236,8 @@ pub enum MenuCommand {
     ToggleTrackSolo(TrackId),
     /// Tint a track with a palette entry.
     SetTrackColor(TrackId, Color),
+    /// Tint a track in its sound's timbre-cluster colour, scanning the library first if need be.
+    ColorTrackByTimbre(TrackId),
     /// Open the clip content and spectrogram choices for a track.
     ShowAudioDisplayPicker {
         /// The track whose clips are drawn.
@@ -1111,6 +1113,7 @@ impl AurisApp {
             MenuCommand::SetTrackColor(track, color) => {
                 let _ = self.session.set_track_color(track, color);
             }
+            MenuCommand::ColorTrackByTimbre(track) => self.color_tracks_by_timbre(Some(track), cx),
             MenuCommand::ShowAudioDisplayPicker { track, at } => {
                 let menu = self.audio_display_menu(at, track);
                 self.open_menu(menu);
