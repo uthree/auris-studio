@@ -522,6 +522,16 @@ pub enum Command {
         #[schemars(length(min = 1, max = 64))]
         ids: Vec<String>,
     },
+    /// Ignore one lint_project finding the user agreed is deliberate or a false positive: its rule stops being reported in the chosen scope, with the reason recorded beside it, as one Undo step. Call it only after the user agreed in the conversation; the host still asks them to confirm. Never use it to make a song pass its checks, and never ignore a finding you could fix.
+    IgnoreLint {
+        /// The diagnostic id from lint_project.
+        id: String,
+        /// Where the rule stops being reported: clip (default: the finding's one clip), track (its track), section (the section it starts in) or song.
+        #[serde(default)]
+        scope: LintIgnoreScope,
+        /// Why it is kept, in the user's words where they gave them; 1..512 bytes.
+        reason: String,
+    },
     /// Read bounded scan/measurement failures after searching. Does not rescan.
     InstrumentDiagnostics {
         /// Zero-based first diagnostic.
@@ -796,6 +806,31 @@ impl Command {
                 | Self::Checkpoints { .. }
         )
     }
+}
+
+/// Where an ignored lint rule stops being reported, relative to the finding it was taken from.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum LintIgnoreScope {
+    /// The one clip the finding's notes are in.
+    #[default]
+    Clip,
+    /// The finding's track.
+    Track,
+    /// The section the finding starts in.
+    Section,
+    /// The whole song.
+    Song,
 }
 
 /// Types of empty tracks the agent can add.
@@ -1224,6 +1259,9 @@ impl Session {
                 self.agent_lint_report(&request)
             }
             Command::ApplyLintFixes { ids } => self.agent_apply_lint_fixes(&ids),
+            Command::IgnoreLint { id, scope, reason } => {
+                self.agent_ignore_lint(&id, scope, &reason)
+            }
             Command::InstrumentDiagnostics { offset, limit } => self
                 .sound_library_job(plugin_paths)
                 .diagnostics(offset, limit),

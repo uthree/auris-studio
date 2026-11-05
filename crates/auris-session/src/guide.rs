@@ -344,7 +344,9 @@
 //! What a song does on purpose is recorded in the document, not in anyone's settings:
 //! [`auris_core::project::LintSuppression`] names one rule or every rule, over the whole song,
 //! a track, a clip or every section with one label, and [`crate::Session::suppress_lint`] adds
-//! one as an Undo step. Suppressed findings are counted, not reported, at both doors. Ignoring
+//! one as an Undo step. The agent adds one only through `ignore_lint`, from a finding's id and
+//! with a reason, and the policy has it confirmed the way a removal is: silencing a check is
+//! the user's decision. Suppressed findings are counted, not reported, at both doors. Ignoring
 //! changes what is shown and not what sounds, so it carries the last audio pass forward rather
 //! than asking for another render.
 //!
