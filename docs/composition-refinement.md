@@ -2,8 +2,8 @@
 
 This source-checkout harness is for explicitly requested development experiments. Ordinary
 composition uses Codex/Claude Code and Auris through the distributed composition skill.
-Evaluator environments are developer-managed and are not a delivery requirement. See also
-[audio evaluator experiments](development-audio-evaluation.md) for the separate audio-critic path.
+Evaluator environments are developer-managed and are not a delivery requirement. An agent whose
+model takes audio input can also [hear the song itself](agent-listening.md).
 
 The development harness follows three steps: **compose, evaluate, optionally revise
 once**. It keeps the baseline and at most one local candidate. There is no automatic

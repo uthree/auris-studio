@@ -177,11 +177,6 @@ about intent. Measured note and PCM space increased, while natural phrasing was 
 That is not a musical pass: consider a held arrival or an explicitly scoped dynamic taper
 and compare again, rather than treating lower occupancy as a quality score.
 
-The opt-in session test `installed_audio_critic_compares_breathing_stem_and_mix` writes
-four 24 kHz WAV excerpts and the review to a fresh absolute directory supplied through
-`AURIS_BREATHING_REVIEW_OUTPUT`. It uses `AURIS_AUDIO_*` settings and sends actual audio;
-ordinary tests do not contact a critic. Raw local evidence remains outside Cargo cleanup.
-
 ### Follow-up ending comparison
 
 The [held-arrival comparison record](../tools/eval/references/phrase-ending-2026-10-23.json)
@@ -210,8 +205,5 @@ one earlier isolated answer preferred the shortening-only stem, while its mix co
 failed. No favorable model quality verdict is claimed. The comparison WAVs remain available
 for human audition.
 
-To reproduce, set `AURIS_BREATHING_REVIEW_OUTPUT` to a fresh absolute directory and run
-`cargo test -p auris-session --lib installed_audio_critic_compares_natural_phrase_endings -- --ignored --nocapture --test-threads=1`.
-The test writes continuous, shortening-only and revised stems, both mixes, the score/plan,
-50 ms RMS trajectories and raw review responses. Review transmission assertions do not
-assert musical preference.
+The tests that produced these records sent audio to a separate critic model, which has since
+been retired; the records remain as evidence of what was measured then.

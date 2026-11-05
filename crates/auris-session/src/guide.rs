@@ -350,37 +350,28 @@
 //! changes what is shown and not what sounds, so it carries the last audio pass forward rather
 //! than asking for another render.
 //!
-//! # Auditory feedback on unsaved music
+//! # Hearing unsaved music
 //!
-//! The live `listen` operation captures the open document through
-//! [`crate::Session::begin_listening`]. The desktop authorizes the network operation,
-//! renders and submits actual WAV bytes on a worker, then accepts the result through
-//! [`crate::Session::continue_listening`] only while the document revision still matches.
-//! Neither saving nor an audio output device is required; reviewing adds no Undo step.
-//! Local reviewer selection probes advertised audio-input capabilities before uploading.
-//! It prefers the configured endpoint, then the local audio bridge and installed Ollama models.
-//! Discovery is bounded and never downloads models or switches to a remote provider.
-//! Explicit remote endpoints remain fixed; results disclose the selected model and fallback.
-//! The critic has no editing tools. Its observations are untrusted, fallible evidence for
-//! the controller, which chooses a supported local edit, reads back the result and requests
-//! another audition of the same bars. Failed or uncertain reviews must remain explicit.
-//! Diagnosis accepts a descriptive focus. Comparison requires a typed aspect, rejects focus,
-//! and supplies anonymous A/B audio in randomized order. Reviews are short, untrusted prose;
-//! no structured verdict, confidence or preference is extracted. A backend may describe
-//! the excerpts independently. Successful delivery does not establish perceptual accuracy.
+//! The live `listen` operation lets the model in the conversation hear the open document
+//! itself. [`crate::Session::begin_listening`] snapshots it, a worker renders the bars and
+//! encodes exact 48 kHz 16-bit stereo WAV bytes, and [`crate::Session::continue_listening`]
+//! accepts the [`crate::audio_audition::Audition`] only while the document revision still
+//! matches. Neither saving nor an audio output device is required, and listening adds no Undo
+//! step. Nothing at this layer talks to a model: the frontend that dispatched the call hands
+//! the clips to the model that asked, as audio input. `auris-agent` places them in the request
+//! that follows the tool result, once, because neither rig's tool results nor an
+//! OpenAI-compatible tool message can carry audio; `auris-mcp` returns them as MCP audio
+//! content. A model that cannot take audio is never offered the tool, so no text stands in
+//! for listening.
 //!
 //! The session retains at most four immutable raw excerpts behind opaque IDs. A comparison
-//! requires identical bars and timing; replacing the document clears the IDs. Both excerpts
-//! receive one common attenuation when needed for the -1 dB estimated true-peak ceiling.
-//! Measurements describe both the source and the exact decoded 16-bit WAV; audition
-//! protection never changes project faders or conceals a source overload. Temporary files
-//! live only for the request, and encoded bytes are hashed. The true-peak estimate uses
-//! 4x FIR interpolation, not a certified BS.1770 meter.
-//!
-//! Cancellation is checked around render, encode and network stages. An HTTP request already
-//! in flight can finish up to its bounded timeout; stopped or stale work is never adopted.
-//! Saved-project MCP keeps its file-based `listen` workflow, using the same protected WAV
-//! encoder for previews. Its saved document is independent of the live unsaved snapshot.
+//! requires identical bars and timing and delivers the baseline (`before`) ahead of the
+//! current render (`after`); replacing the document clears the IDs. Both excerpts receive one
+//! common attenuation when needed for the -1 dB estimated true-peak ceiling, so their relative
+//! level is the mix's own. Measurements describe both the source and the exact decoded WAV;
+//! audition protection never changes project faders or conceals a source overload. The
+//! true-peak estimate uses 4x FIR interpolation, not a certified BS.1770 meter. Cancellation
+//! is checked around render and encode, and stopped or stale work is never adopted.
 //!
 //!
 //! # Offline music recognition
@@ -760,13 +751,12 @@ pub mod architecture {
     //! validates a whole parameter batch before making one undo step. Authored motif and rhythm
     //! travel with each clip recipe, so local regeneration keeps those musical choices.
     //!
-    //! Audio review is a separate session service, [`audio_review`](crate::audio_review): it
-    //! sends actual WAV excerpts to an audio-capable model through an OpenAI-compatible API.
-    //! The common `listen` command renders a short excerpt, optionally attaches a retained
-    //! immutable audition for comparison, and returns the critic's observations to the controlling
-    //! model. Saved calls retain an opaque listening context across fresh sessions; both adapters
-    //! share bounded excerpt retention and protective gain. Numeric inspection presents measurements
-    //! and a spectrogram without sending audio to a critic. Short preview files receive protective
+    //! The common `listen` command, [`audio_audition`](crate::audio_audition), renders a short
+    //! excerpt, optionally pairs it with a retained immutable audition for comparison, and
+    //! returns the WAV for the controlling model to hear itself (see "Hearing unsaved music").
+    //! Saved calls retain an opaque listening context across fresh sessions; both adapters
+    //! share bounded excerpt retention and protective gain. Numeric inspection presents
+    //! measurements and a spectrogram. Short preview files receive protective
     //! attenuation independently of ordinary delivery renders and never change project gain.
     //! MCP clients can therefore repeat listen, localized edit and listen,
     //! even when the controlling model accepts only text. The critic has no editing tools.

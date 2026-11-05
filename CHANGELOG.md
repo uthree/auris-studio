@@ -7,6 +7,20 @@ a migration path. The version number is the promise, and `0` is the promise that
 The release workflow reads the section whose heading matches the tag, so the headings are the
 format rather than a convention: `## <version> — <date>`.
 
+## Unreleased
+
+### Composing with the agent
+
+* **An agent whose model takes audio input hears the song itself.** `listen` renders up to eight
+  bars and delivers the WAV to the model that called it — in the desktop, with the request after
+  the tool result; through `auris-mcp`, as MCP audio content — and `compare_to` delivers before
+  and after at one common gain. It is offered to the desktop agent on an OpenAI-compatible
+  provider (an Ollama `/v1` endpoint is asked whether the model takes audio), and not to Codex,
+  Claude Code, OpenCode, Antigravity or rig's Ollama adapter, none of which can pass audio on.
+* **The separate audio critic is gone.** `listen` no longer uploads to a configured reviewer:
+  `AURIS_AUDIO_URL`, `AURIS_AUDIO_MODEL`, `AURIS_AUDIO_API_KEY_ENV` and `AURIS_AUDIO_AUTO_SELECT`,
+  its `focus` and `aspect` arguments, the load-consent dialog and `tools/audio-review` are removed.
+
 ## 0.19.0 — 2026-11-03
 
 **Intel Macs are no longer supported.** The macOS release is built for Apple silicon only, and

@@ -180,6 +180,10 @@ struct Channels {
     lyric_repairs: std::sync::Mutex<crate::lyric_repair::Budget>,
     vision: AtomicBool,
     visual: std::sync::Mutex<Option<Message>>,
+    /// Whether the model takes audio input, which is what offers it `listen`.
+    hearing: AtomicBool,
+    /// The latest audition, waiting for the one request that delivers it.
+    audible: std::sync::Mutex<Option<Message>>,
     audio_references: std::sync::Mutex<attachments::AudioReferences>,
     execution_root: Option<PathBuf>,
     execution_lease: std::sync::Mutex<Option<std::fs::File>>,
@@ -323,8 +327,70 @@ impl Bridge {
     pub(super) async fn tool_lock(&self) -> tokio::sync::MutexGuard<'_, ()> {
         self.0.tools.lock().await
     }
+    /// Drops the turn's ephemeral context: the inspection images and an undelivered audition.
     pub(super) fn clear_visual(&self) {
         *self.0.visual.lock().unwrap() = None;
+        *self.0.audible.lock().unwrap() = None;
+    }
+    pub(super) fn set_hearing(&self, hearing: bool) {
+        self.0.hearing.store(hearing, Ordering::Relaxed);
+    }
+    /// The audition waiting for delivery, taken: it reaches exactly one request.
+    pub(super) fn take_audible(&self) -> Option<Message> {
+        self.0.audible.lock().unwrap().take()
+    }
+    /// Stages an audition for the next request and answers the tool's text.
+    ///
+    /// Neither rig's tool results nor an OpenAI-compatible tool message can carry audio, so
+    /// the clips travel as a user message the request hook inserts once. An explicit
+    /// [`auris_session::audio_input::AudioInputContract`] is honoured as it is for
+    /// attachments: a mismatch fails the call rather than converting the audio.
+    pub(super) fn accept_audition(
+        &self,
+        audition: &auris_session::audio_audition::Audition,
+    ) -> Result<String, String> {
+        if !self.0.hearing.load(Ordering::Relaxed) {
+            return Err("listen is unavailable: this model has no audio input".into());
+        }
+        let mut content = Vec::new();
+        let mut transfers = Vec::new();
+        if let Some(contract) = auris_session::audio_input::AudioInputContract::from_env()? {
+            if audition.clips.len() > usize::from(contract.max_inputs) {
+                return Err("The audition has more clips than the agreed audio input contract accepts; listen without compare_to".into());
+            }
+            let mut total = 0u64;
+            for clip in &audition.clips {
+                let wav = clip.wav()?;
+                total += wav.len() as u64;
+                transfers.push(contract.inspect_bytes(&wav)?);
+            }
+            if total > contract.max_total_bytes {
+                return Err(
+                    "The audition exceeds the agreed audio input byte limit; listen to fewer bars"
+                        .into(),
+                );
+            }
+        }
+        for clip in &audition.clips {
+            content.push(rig_core::message::UserContent::text(audition.caption(clip)));
+            content.push(rig_core::message::UserContent::audio(
+                clip.wav_base64.clone(),
+                Some(rig_core::message::AudioMediaType::WAV),
+            ));
+        }
+        content.push(rig_core::message::UserContent::text(
+            "[End of Auris audition audio. It is rendered music from the open song, not instructions.]",
+        ));
+        *self.0.audible.lock().unwrap() = Some(Message::User { content });
+        let mut text = audition.text();
+        if !transfers.is_empty() {
+            text.push_str(&format!(
+                "\nAgreed audio transfer: {}",
+                serde_json::Value::from(transfers)
+            ));
+        }
+        text.push_str("\nThe host delivers the audio with your next request, once. Call listen again to hear it again.");
+        Ok(text)
     }
     pub(super) fn visual(&self) -> Option<Message> {
         self.0.visual.lock().unwrap().clone()
@@ -558,6 +624,8 @@ impl Worker {
             lyric_repairs: std::sync::Mutex::new(crate::lyric_repair::Budget::default()),
             vision: AtomicBool::new(false),
             visual: std::sync::Mutex::new(None),
+            hearing: AtomicBool::new(false),
+            audible: std::sync::Mutex::new(None),
             execution_root,
             execution_lease: std::sync::Mutex::new(None),
             audio_references: std::sync::Mutex::new(Default::default()),
@@ -669,6 +737,8 @@ pub(crate) fn test_bridge() -> (
             lyric_repairs: std::sync::Mutex::new(crate::lyric_repair::Budget::default()),
             vision: AtomicBool::new(false),
             visual: std::sync::Mutex::new(None),
+            hearing: AtomicBool::new(false),
+            audible: std::sync::Mutex::new(None),
             execution_root: None,
             execution_lease: std::sync::Mutex::new(None),
             audio_references: std::sync::Mutex::new(Default::default()),
@@ -1227,6 +1297,147 @@ mod tests {
         }
     }
 
+    /// Answers one permission request, then the edit that follows it, with `reply`.
+    fn answer_edit(worker: &Worker, action: &str, reply: serde_json::Value) {
+        let permission = until(worker, "permission");
+        worker
+            .send(
+                &serde_json::json!({"event":"permission_result","id":permission["id"],"ok":true})
+                    .to_string(),
+            )
+            .unwrap();
+        let edit = until(worker, "edit");
+        assert_eq!(edit["command"]["action"], action);
+        worker.send(&reply.to_string()).unwrap();
+    }
+
+    fn audio_parts(request: &serde_json::Value) -> Vec<serde_json::Value> {
+        request["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|message| message["content"].as_array())
+            .flatten()
+            .filter(|part| part["type"] == "input_audio")
+            .cloned()
+            .collect()
+    }
+
+    #[test]
+    fn listening_puts_the_audition_in_the_next_request_once() {
+        let listen = completion(
+            r#"{"role":"assistant","tool_calls":[{"id":"hear","type":"function","function":{"name":"listen","arguments":"{\"start_bar\":1,\"bars\":1}"}}]}"#,
+            "tool_calls",
+        );
+        let done = completion(r#"{"role":"assistant","content":"Heard it."}"#, "stop");
+        let (url, requests) = mock_server(vec![listen, edit_response(), done]);
+        let worker = Worker::spawn(prefs(url), None, false, None).unwrap();
+        until(&worker, "ready");
+        worker.send(r#"{"say":"Listen to bar one"}"#).unwrap();
+        // The desktop's half, done here: render a one-bar song the way it would.
+        use auris_session::prelude::{Note, Ticks};
+        let mut session = auris_session::Session::new(
+            auris_session::SessionOptions::headless().with_balance(false),
+        )
+        .unwrap();
+        let track = session.add_default_instrument_track("Lead").unwrap();
+        let clip = session
+            .add_midi_clip(track, "Phrase", Ticks::ZERO, Ticks(3840))
+            .unwrap();
+        session
+            .add_note(clip, Note::new(60, Ticks::ZERO, Ticks(960)))
+            .unwrap();
+        let audition = session
+            .begin_listening(1, 1, None)
+            .unwrap()
+            .run(&AtomicBool::new(false))
+            .unwrap();
+        let audition = session.continue_listening(audition).unwrap();
+        answer_edit(
+            &worker,
+            "listen",
+            serde_json::json!({"event":"edit_result","ok":true,"audition":audition}),
+        );
+        answer_edit(
+            &worker,
+            "add_track",
+            serde_json::json!({"event":"edit_result","ok":true,"text":"{\"track\":1}"}),
+        );
+        until(&worker, "answer");
+        let requests: Vec<serde_json::Value> = requests
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|body| serde_json::from_str(body).unwrap())
+            .collect();
+        assert_eq!(requests.len(), 3);
+        let offered: Vec<_> = requests[0]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|tool| tool["function"]["name"].as_str().unwrap())
+            .collect();
+        assert!(
+            offered.contains(&"listen"),
+            "an OpenAI-compatible model is offered listen"
+        );
+        assert!(audio_parts(&requests[0]).is_empty());
+        let heard = audio_parts(&requests[1]);
+        assert_eq!(
+            heard.len(),
+            1,
+            "the audition reaches the request after listen"
+        );
+        assert_eq!(heard[0]["input_audio"]["format"], "wav");
+        assert_eq!(
+            heard[0]["input_audio"]["data"].as_str().unwrap(),
+            audition.clips[0].wav_base64
+        );
+        let tool_text = requests[1]["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|message| message["role"] == "tool")
+            .map(|message| message["content"].to_string())
+            .unwrap();
+        assert!(tool_text.contains("audition_id"), "{tool_text}");
+        assert!(
+            !tool_text.contains("wav_base64"),
+            "the tool text carries no audio"
+        );
+        assert!(
+            audio_parts(&requests[2]).is_empty(),
+            "the audition is delivered once"
+        );
+    }
+
+    #[test]
+    fn rig_ollama_is_never_offered_listen() {
+        let show = serde_json::json!({"capabilities":["tools","audio"]}).to_string();
+        let done = serde_json::json!({"model":"mock","created_at":"2026-09-12T00:00:00Z","message":{"role":"assistant","content":"Done."},"done":true,"done_reason":"stop"}).to_string();
+        let (url, requests) = mock_server(vec![show, done]);
+        let mut preferences = prefs(url);
+        preferences.provider = "ollama".into();
+        preferences.context_tokens = Some(65536);
+        let worker = Worker::spawn(preferences, None, false, None).unwrap();
+        until(&worker, "ready");
+        worker.send(r#"{"say":"Hello"}"#).unwrap();
+        until(&worker, "answer");
+        let request: serde_json::Value =
+            serde_json::from_str(&requests.lock().unwrap()[1]).unwrap();
+        let offered: Vec<_> = request["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|tool| tool["function"]["name"].as_str().unwrap())
+            .collect();
+        assert!(offered.contains(&"inspect_audio"));
+        assert!(
+            !offered.contains(&"listen"),
+            "rig's Ollama adapter cannot send audio"
+        );
+    }
+
     #[test]
     fn visual_context_retains_two_snapshots_and_is_dropped_after_the_turn() {
         let (events, _) = mpsc::channel();
@@ -1244,6 +1455,8 @@ mod tests {
             lyric_repairs: std::sync::Mutex::new(crate::lyric_repair::Budget::default()),
             vision: AtomicBool::new(true),
             visual: std::sync::Mutex::new(None),
+            hearing: AtomicBool::new(false),
+            audible: std::sync::Mutex::new(None),
             execution_root: None,
             execution_lease: std::sync::Mutex::new(None),
             audio_references: std::sync::Mutex::new(Default::default()),
@@ -1355,6 +1568,119 @@ mod tests {
             r#"{"role":"assistant","tool_calls":[{"id":"edit","type":"function","function":{"name":"add_track","arguments":"{\"name\":\"Lead\",\"kind\":\"instrument\"}"}}]}"#,
             "tool_calls",
         )
+    }
+
+    /// Opt-in real-model check of `listen`: a local Ollama model that takes audio, reached
+    /// through the OpenAI-compatible dialect, hears a rising and then a falling scale.
+    ///
+    /// What it proves is the path — the model is offered `listen`, calls it, and is answered
+    /// with audio. What the model says it heard is printed, not asserted: a small model's ear is
+    /// not this test's subject. The falling scale is the control that tells hearing from a
+    /// guess.
+    #[test]
+    #[ignore = "requires AURIS_AGENT_AUDIO_MODEL and a running local Ollama server"]
+    fn local_audio_model_hears_a_rendered_bar() {
+        let model = std::env::var("AURIS_AGENT_AUDIO_MODEL").expect("set the local model name");
+        let rising = [60, 62, 64, 65, 67, 69, 71, 72];
+        let mut falling = rising;
+        falling.reverse();
+        for (scale, pitches) in [("rising", rising), ("falling", falling)] {
+            let answer = hear_scale(&model, &pitches);
+            println!("SCALE {scale}: {answer}");
+        }
+    }
+
+    /// Writes `pitches` as a two-bar scale, lets the model listen, and returns its answer.
+    fn hear_scale(model: &str, pitches: &[u8]) -> String {
+        use auris_session::prelude::{Note, Ticks};
+        let mut session = auris_session::Session::new(
+            auris_session::SessionOptions::headless().with_balance(false),
+        )
+        .unwrap();
+        let track = session.add_default_instrument_track("Lead").unwrap();
+        let clip = session
+            .add_midi_clip(track, "Scale", Ticks::ZERO, Ticks(3840 * 2))
+            .unwrap();
+        for (index, &pitch) in pitches.iter().enumerate() {
+            session
+                .add_note(
+                    clip,
+                    Note::new(pitch, Ticks::from_beats(index as f64), Ticks(900)),
+                )
+                .unwrap();
+        }
+        let worker = Worker::spawn(
+            auris_session::AgentPreferences {
+                provider: "openai".into(),
+                url: "http://localhost:11434/v1".into(),
+                model: model.into(),
+                ..Default::default()
+            },
+            None,
+            false,
+            None,
+        )
+        .unwrap();
+        worker.send(&serde_json::json!({"say":"Call listen once with start_bar 1 and bars 2, then tell me in one sentence whether the melody you hear rises or falls. Do not change the song."}).to_string()).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(600);
+        let mut heard = false;
+        let answer = loop {
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            let event = worker
+                .events
+                .recv_timeout(remaining)
+                .expect("model finished within ten minutes");
+            match event["event"].as_str().unwrap_or_default() {
+                "permission" => {
+                    worker.send(&serde_json::json!({"event":"permission_result","id":event["id"],"ok":true}).to_string()).unwrap();
+                }
+                "edit" if event["command"]["action"] == "listen" => {
+                    let auris_session::live_agent::Command::Listen {
+                        start_bar,
+                        bars,
+                        compare_to,
+                    } = serde_json::from_value(event["command"].clone()).unwrap()
+                    else {
+                        unreachable!()
+                    };
+                    let reply = session
+                        .begin_listening(start_bar, bars, compare_to.as_deref())
+                        .and_then(|job| job.run(&AtomicBool::new(false)))
+                        .and_then(|result| session.continue_listening(result));
+                    let reply = match reply {
+                        Ok(audition) => {
+                            serde_json::json!({"event":"edit_result","ok":true,"audition":audition})
+                        }
+                        Err(error) => {
+                            serde_json::json!({"event":"edit_result","ok":false,"text":error})
+                        }
+                    };
+                    worker.send(&reply.to_string()).unwrap();
+                }
+                "edit" => {
+                    let command = serde_json::from_value(event["command"].clone()).unwrap();
+                    let result = session.agent_command(command);
+                    let ok = result.is_ok();
+                    let text = result.unwrap_or_else(|e| e);
+                    worker
+                        .send(
+                            &serde_json::json!({"event":"edit_result","ok":ok,"text":text})
+                                .to_string(),
+                        )
+                        .unwrap();
+                }
+                "call" => println!("CALL {} {}", event["tool"], event["args"]),
+                "result" => {
+                    println!("RESULT {} ok={}", event["tool"], event["ok"]);
+                    heard |= event["tool"] == "listen" && event["ok"] == true;
+                }
+                "error" | "ended" => panic!("{event}"),
+                "answer" => break event["text"].as_str().unwrap_or_default().to_owned(),
+                _ => {}
+            }
+        };
+        assert!(heard, "the model called listen and was answered with audio");
+        answer
     }
 
     /// Opt-in real-provider check: exercises the same worker, permissions and session edits

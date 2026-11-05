@@ -1,13 +1,15 @@
-//! Actual rendered-audio feedback, independent of project saving and controller transport.
+//! Rendered excerpts for the controlling model to hear, independent of saving and transport.
+//!
+//! [`Session::begin_listening`] snapshots the open document; [`ListeningJob::run`] renders it on a
+//! worker and encodes exact WAV bytes; [`Session::continue_listening`] accepts the result only for
+//! the unchanged document. Nothing here talks to a model: the frontend that called `listen`
+//! hands the clips to the model that asked, as audio input, and refuses the tool to a model that
+//! cannot take audio.
 
-use crate::audio_review::AudioReviewOptions;
-use crate::audio_review::assessment::{
-    AssessmentRequest, ComparisonAspect, assess_audio_cancellable,
-};
 use crate::{RenderJob, Session, prelude::*};
 use auris_core::AudioBuffer;
 use auris_gpu::analysis::analyze_loudness_cpu;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::VecDeque;
 use std::path::Path;
@@ -18,6 +20,9 @@ use std::sync::{
 
 /// Retained raw excerpts are bounded to four stereo, 48 kHz, thirty-second buffers.
 const RETAINED_EXCERPTS: usize = 4;
+
+/// The rate every audition is rendered and encoded at.
+pub const AUDITION_SAMPLE_RATE: u32 = 48_000;
 
 #[derive(Default)]
 /// Opaque bounded raw-audio history that a saved-project host may retain between calls.
@@ -49,20 +54,68 @@ pub struct ListeningJob {
     render: RenderJob,
     range: Range,
     previous: Option<Arc<Excerpt>>,
-    focus: String,
-    aspect: Option<ComparisonAspect>,
-    options: AudioReviewOptions,
-    selection: Option<crate::audio_review::ReviewerSelection>,
 }
 
-/// Completed feedback awaiting document/revision validation and bounded retention.
+/// A finished render awaiting document/revision validation and bounded retention.
 pub struct ListeningResult {
     owner: Arc<()>,
     excerpt: Arc<Excerpt>,
-    text: String,
+    audition: Audition,
 }
 
-/// Measurements of the source render and the actual, decoded critic WAV.
+/// One excerpt as the exact WAV bytes a model receives.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct AuditionClip {
+    /// `excerpt` alone, or `before` and `after` for a comparison.
+    pub label: String,
+    /// Standard base64 of a 48 kHz, 16-bit PCM, stereo WAV file.
+    pub wav_base64: String,
+}
+
+impl AuditionClip {
+    /// The WAV bytes, decoded.
+    pub fn wav(&self) -> Result<Vec<u8>, String> {
+        use base64::Engine;
+        base64::engine::general_purpose::STANDARD
+            .decode(&self.wav_base64)
+            .map_err(|error| error.to_string())
+    }
+}
+
+/// What `listen` answers: a report for the model to read and the clips for it to hear.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Audition {
+    /// IDs, bar range, revision and exact measurements of every clip, as JSON.
+    pub report: serde_json::Value,
+    /// Clips in listening order: `before` precedes `after` in a comparison.
+    pub clips: Vec<AuditionClip>,
+}
+
+impl Audition {
+    /// The report's text, which is the tool's text answer at every door.
+    pub fn text(&self) -> String {
+        self.report.to_string()
+    }
+
+    /// One line naming a clip, placed beside its audio so a listener knows which is which.
+    pub fn caption(&self, clip: &AuditionClip) -> String {
+        let range = &self.report["range"];
+        format!(
+            "Auris audition {} ({}): bars {}..{} of the open song, {:.2} seconds, rendered from revision {}.",
+            self.report["audition_id"].as_str().unwrap_or_default(),
+            clip.label,
+            range["start_bar"],
+            range["start_bar"].as_u64().unwrap_or(1) + range["bars"].as_u64().unwrap_or(1) - 1,
+            range["seconds"].as_f64().unwrap_or_default(),
+            self.report["clips"]
+                .as_array()
+                .and_then(|clips| clips.iter().find(|entry| entry["label"] == clip.label))
+                .map_or(serde_json::Value::Null, |entry| entry["revision"].clone()),
+        )
+    }
+}
+
+/// Measurements of the source render and the actual, decoded audition WAV.
 #[derive(Debug, Serialize)]
 pub struct AuditionMeasurements {
     /// Sample peak before protecting the audition file, in dBFS (silence is -120).
@@ -79,7 +132,7 @@ pub struct AuditionMeasurements {
     pub true_peak_estimate_dbfs: f32,
     /// RMS measured on the encoded WAV, without independent loudness normalization.
     pub rms_dbfs: f32,
-    /// SHA-256 of the exact WAV bytes submitted for this excerpt.
+    /// SHA-256 of the exact WAV bytes delivered for this excerpt.
     pub wav_sha256: String,
     /// Rate of the rendered and encoded excerpt.
     pub sample_rate: f64,
@@ -112,7 +165,7 @@ fn encode_audition(
     audio: &AudioBuffer,
     gain: f32,
     cancel: &AtomicBool,
-) -> Result<AuditionMeasurements, String> {
+) -> Result<(AuditionMeasurements, Vec<u8>), String> {
     use sha2::{Digest, Sha256};
     check_cancel(cancel)?;
     let source = analyze_loudness_cpu(audio);
@@ -137,20 +190,23 @@ fn encode_audition(
         crate::decode_audio(path, audio.sample_rate()).map_err(|error| error.to_string())?;
     let measured = analyze_loudness_cpu(&decoded);
     if measured.peak >= 1.0 || measured.true_peak_db() > -0.99 {
-        return Err("Encoded audition exceeds its peak ceiling; no audio was submitted".into());
+        return Err("Encoded audition exceeds its peak ceiling; no audio was delivered".into());
     }
     let bytes = std::fs::read(path).map_err(|error| error.to_string())?;
-    Ok(AuditionMeasurements {
-        source_peak_dbfs: source.peak_db(),
-        source_true_peak_estimate_dbfs: source.true_peak_db(),
-        source_full_scale_samples: full_scale,
-        attenuation_db: if gain < 1.0 { 20.0 * gain.log10() } else { 0.0 },
-        peak_dbfs: measured.peak_db(),
-        true_peak_estimate_dbfs: measured.true_peak_db(),
-        rms_dbfs: measured.rms_db(),
-        wav_sha256: hex::encode(Sha256::digest(bytes)),
-        sample_rate: decoded.sample_rate(),
-    })
+    Ok((
+        AuditionMeasurements {
+            source_peak_dbfs: source.peak_db(),
+            source_true_peak_estimate_dbfs: source.true_peak_db(),
+            source_full_scale_samples: full_scale,
+            attenuation_db: if gain < 1.0 { 20.0 * gain.log10() } else { 0.0 },
+            peak_dbfs: measured.peak_db(),
+            true_peak_estimate_dbfs: measured.true_peak_db(),
+            rms_dbfs: measured.rms_db(),
+            wav_sha256: hex::encode(Sha256::digest(&bytes)),
+            sample_rate: decoded.sample_rate(),
+        },
+        bytes,
+    ))
 }
 
 /// Writes a protected audition WAV and measures its exact encoded result.
@@ -164,7 +220,27 @@ pub fn write_audition_wav(
 ) -> Result<AuditionMeasurements, String> {
     check_cancel(cancel)?;
     let gain = protective_gain(audio)?;
-    encode_audition(path, audio, gain, cancel)
+    encode_audition(path, audio, gain, cancel).map(|(measurements, _)| measurements)
+}
+
+/// Encodes one excerpt through a temporary file, which is removed before returning.
+fn audition_clip(
+    audio: &AudioBuffer,
+    gain: f32,
+    cancel: &AtomicBool,
+) -> Result<(AuditionMeasurements, String), String> {
+    use base64::Engine;
+    let file = tempfile::Builder::new()
+        .prefix("auris-audition-")
+        .suffix(".wav")
+        .tempfile()
+        .map_err(|error| error.to_string())?
+        .into_temp_path();
+    let (measurements, bytes) = encode_audition(&file, audio, gain, cancel)?;
+    Ok((
+        measurements,
+        base64::engine::general_purpose::STANDARD.encode(bytes),
+    ))
 }
 
 impl Session {
@@ -173,40 +249,16 @@ impl Session {
         std::mem::swap(&mut self.listening, context);
     }
 
-    /// Snapshots the unsaved mix for actual audio feedback. Does not edit, save or add Undo.
+    /// Snapshots the unsaved mix for the model to hear. Does not edit, save or add Undo.
     ///
-    /// `compare_to` is an opaque ID from an earlier successful call in this document.
-    /// The same bars and timing are required. Comparisons require `aspect` and reject `focus`;
-    /// diagnosis accepts `focus` and no aspect. At most four raw excerpts are retained.
+    /// `compare_to` is an opaque ID from an earlier successful call in this document, and needs
+    /// the same bars and timing. At most four raw excerpts are retained.
     pub fn begin_listening(
         &mut self,
         start_bar: u32,
         bars: u32,
-        focus: Option<&str>,
         compare_to: Option<&str>,
-        aspect: Option<ComparisonAspect>,
     ) -> Result<ListeningJob, String> {
-        let options = AudioReviewOptions::from_env()?;
-        self.begin_listening_with_options(start_bar, bars, focus, compare_to, aspect, options)
-    }
-
-    /// Prepares a listening snapshot using explicit server settings, including for headless hosts.
-    pub fn begin_listening_with_options(
-        &mut self,
-        start_bar: u32,
-        bars: u32,
-        focus: Option<&str>,
-        compare_to: Option<&str>,
-        aspect: Option<ComparisonAspect>,
-        options: AudioReviewOptions,
-    ) -> Result<ListeningJob, String> {
-        if compare_to.is_some() != aspect.is_some() || (compare_to.is_some() && focus.is_some()) {
-            return Err("Comparison requires compare_to and aspect, with focus omitted. Use focus only for single-excerpt diagnosis.".into());
-        }
-        let focus = focus.unwrap_or("Describe the sounds and instruments heard in this audio.");
-        if focus.trim().is_empty() || focus.len() > 4000 {
-            return Err("focus must contain 1..4000 UTF-8 bytes".into());
-        }
         let (start, end) = crate::audio_inspection::bar_range(self.project(), start_bar, bars)?;
         let start_seconds = self.project().tempo_map.ticks_to_seconds(start).0;
         let range = Range {
@@ -229,84 +281,54 @@ impl Session {
                     .iter()
                     .find(|entry| entry.id == id)
                     .cloned()
-                    .ok_or("Unknown or expired audition_id; request a new baseline")
+                    .ok_or("Unknown or expired audition_id; listen again for a new baseline")
             })
             .transpose()?;
         if previous.as_ref().is_some_and(|entry| entry.range != range) {
-            return Err("Comparison requires the same bars and timing as the baseline; request a new baseline after tempo or meter changes".into());
+            return Err("Comparison requires the same bars and timing as the baseline; listen again for a new baseline after tempo or meter changes".into());
         }
         Ok(ListeningJob {
-            selection: None,
             owner: self.listening.owner.clone(),
             revision: self.revision(),
-            render: self.render_job_at(Some(48_000.0)),
+            render: self.render_job_at(Some(f64::from(AUDITION_SAMPLE_RATE))),
             range,
             previous,
-            focus: focus.into(),
-            aspect,
-            options,
         })
     }
 
-    /// Accepts feedback only for the unchanged document; retains its raw audio for comparison.
-    pub fn continue_listening(&mut self, result: ListeningResult) -> Result<String, String> {
+    /// Accepts an audition only for the unchanged document; retains its raw audio for comparison.
+    pub fn continue_listening(&mut self, result: ListeningResult) -> Result<Audition, String> {
         if !Arc::ptr_eq(&self.listening.owner, &result.owner)
             || self.revision() != result.excerpt.revision
         {
-            return Err("The document changed during listening; request a fresh audition".into());
+            return Err("The document changed during listening; listen again".into());
         }
         self.listening.excerpts.push_back(result.excerpt);
         while self.listening.excerpts.len() > RETAINED_EXCERPTS {
             self.listening.excerpts.pop_front();
         }
-        Ok(result.text)
+        Ok(result.audition)
     }
 }
 
 impl ListeningJob {
-    /// Discovers a reviewer without loading weights or uploading audio, then pins that choice.
-    /// Returns a model name when the desktop must obtain consent before running this job.
-    pub fn prepare_reviewer(
-        mut self,
-        cancel: &AtomicBool,
-    ) -> Result<(Self, Option<String>), String> {
-        let (options, selection, confirm) = self.options.prepare(cancel)?;
-        let model = confirm.then(|| options.model.clone());
-        self.options = options;
-        self.selection = Some(selection);
-        check_cancel(cancel)?;
-        Ok((self, model))
-    }
-
-    /// Renders at 48 kHz and sends actual WAV bytes to the configured audio critic.
+    /// Renders at 48 kHz and encodes exact WAV bytes; a comparison encodes the baseline too.
     ///
-    /// A/B files share one protective gain; raw baselines never change. Cancellation is checked
-    /// around rendering, encoding and network stages. An in-flight HTTP call has a bounded timeout.
-    pub fn run(self, cancel: &AtomicBool) -> Result<ListeningResult, String> {
-        use std::hash::{BuildHasher, Hasher};
-        let current_first = std::collections::hash_map::RandomState::new()
-            .build_hasher()
-            .finish()
-            & 1
-            != 0;
-        self.run_with_order(cancel, current_first)
-    }
-
-    fn run_with_order(
-        mut self,
-        cancel: &AtomicBool,
-        current_first: bool,
-    ) -> Result<ListeningResult, String> {
+    /// Both files of a comparison share one protective gain, so their relative level is the
+    /// mix's own; raw baselines never change. Cancellation is checked around rendering and
+    /// encoding.
+    pub fn run(mut self, cancel: &AtomicBool) -> Result<ListeningResult, String> {
         check_cancel(cancel)?;
         self.render
             .validate_complete()
             .map_err(|error| error.to_string())?;
+        let rate = f64::from(AUDITION_SAMPLE_RATE);
         let options = OfflineOptions {
-            start_frames: (self.range.start_seconds * 48_000.0).round() as u64,
+            start_frames: (self.range.start_seconds * rate).round() as u64,
             end_frames: Some(
-                ((self.range.start_seconds + self.range.seconds) * 48_000.0).round() as u64,
+                ((self.range.start_seconds + self.range.seconds) * rate).round() as u64,
             ),
-            sample_rate: Some(48_000.0),
+            sample_rate: Some(rate),
             include_tail: false,
             ..Default::default()
         };
@@ -322,79 +344,47 @@ impl ListeningJob {
         if let Some(previous) = &self.previous {
             gain = gain.min(protective_gain(&previous.audio)?);
         }
-        let current = tempfile::Builder::new()
-            .prefix("auris-audition-")
-            .suffix(".wav")
-            .tempfile()
-            .map_err(|error| error.to_string())?
-            .into_temp_path();
-        let measurements = encode_audition(&current, &audio, gain, cancel)?;
-        let previous_file = self
-            .previous
-            .as_ref()
-            .map(|previous| {
-                let file = tempfile::Builder::new()
-                    .prefix("auris-before-")
-                    .suffix(".wav")
-                    .tempfile()
-                    .map_err(|error| error.to_string())?
-                    .into_temp_path();
-                let measures = encode_audition(&file, &previous.audio, gain, cancel)?;
-                Ok::<_, String>((file, measures))
-            })
-            .transpose()?;
-        let (inputs, request) = if let Some((file, _)) = &previous_file {
-            let inputs = if current_first {
-                vec![("A", current.as_ref()), ("B", file.as_ref())]
-            } else {
-                vec![("A", file.as_ref()), ("B", current.as_ref())]
-            };
-            (
-                inputs,
-                AssessmentRequest::Comparison(self.aspect.expect("validated comparison aspect")),
-            )
-        } else {
-            (
-                vec![("Excerpt", current.as_ref())],
-                AssessmentRequest::Diagnostic(&self.focus),
-            )
-        };
-        let mut review =
-            assess_audio_cancellable(&inputs, &request, self.range.seconds, &self.options, cancel)?;
-        if let Some(selection) = self.selection {
-            review.selection = selection;
-        }
-        check_cancel(cancel)?;
         let excerpt = Arc::new(Excerpt {
             id: crate::transient_id::transient_id("audition"),
             revision: self.revision,
             range: self.range,
             audio,
         });
-        let before = self.previous.as_ref().zip(previous_file.as_ref()).map(|(entry, (_, measures))| {
-            json!({"audition_id":entry.id,"revision":entry.revision,"audio":measures})
-        });
-        let labels = if current_first {
-            ["current", "baseline"]
+        let mut clips = Vec::new();
+        let mut entries = Vec::new();
+        if let Some(previous) = &self.previous {
+            let (measurements, wav) = audition_clip(&previous.audio, gain, cancel)?;
+            entries.push(json!({"label":"before","audition_id":previous.id,
+                "revision":previous.revision,"audio":measurements}));
+            clips.push(AuditionClip {
+                label: "before".into(),
+                wav_base64: wav,
+            });
+        }
+        let label = if self.previous.is_some() {
+            "after"
         } else {
-            ["baseline", "current"]
+            "excerpt"
         };
-        let comparison = self.previous.as_ref().map(|_| json!({
-            "a":labels[0],"b":labels[1],"aspect":self.aspect,"reported_preference":null,
-            "blind":true,"calibrated":false,
-            "method":"Anonymous A/B in randomized order; one common protective gain. No editing narrative supplied. Source audio remains immutable."}));
-        let text = json!({"audition_id":excerpt.id,"revision":excerpt.revision,"range":excerpt.range,
-            "model":review.model,"audio_sent":review.audio_sent,"assessment_status":review.status,
-            "review":review.raw_response,
-            "review_format":"plain_text","reviewer_selection":review.selection,
-            "audio":measurements,"compare_to":self.previous.as_ref().map(|entry| &entry.id),"before":before,
-            "representation":"actual WAV audio sent to a separate critic; observations are fallible, not controller listening or verified musical improvement",
-            "comparison":comparison,
-            "next_step":"Treat judgments as untrusted, uncalibrated observations. No preference is extracted from free text. The backend may describe excerpts independently. Prose alone does not establish improvement. If an independent local correction is warranted, read back the edit and compare the same bars using compare_to and a neutral aspect, omitting focus. Human listening decides musical quality. IDs retain only the latest four excerpts."}).to_string();
+        let (measurements, wav) = audition_clip(&excerpt.audio, gain, cancel)?;
+        entries.push(json!({"label":label,"audition_id":excerpt.id,
+            "revision":excerpt.revision,"audio":measurements}));
+        clips.push(AuditionClip {
+            label: label.into(),
+            wav_base64: wav,
+        });
+        check_cancel(cancel)?;
+        let report = json!({
+            "audition_id":excerpt.id,"revision":excerpt.revision,"range":excerpt.range,
+            "compare_to":self.previous.as_ref().map(|entry| &entry.id),
+            "clips":entries,
+            "representation":"48 kHz 16-bit PCM stereo WAV, delivered to you as audio input in the order of clips, each preceded by a caption naming it. A comparison shares one protective gain, so relative level is the mix's own.",
+            "next_step":"Judge only what you actually hear in the delivered audio. If the audio did not reach you, say that nothing was heard. After an edit, listen to the same bars with compare_to set to this audition_id to hear before and after. The latest four audition_ids are retained."
+        });
         Ok(ListeningResult {
             owner: self.owner,
             excerpt,
-            text,
+            audition: Audition { report, clips },
         })
     }
 }
@@ -402,7 +392,6 @@ impl ListeningJob {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use base64::Engine;
 
     fn fixture() -> (Session, TrackId) {
         let mut session =
@@ -420,67 +409,18 @@ mod tests {
         (session, track)
     }
 
-    fn critic(
-        replies: &[&str],
-    ) -> (
-        AudioReviewOptions,
-        std::thread::JoinHandle<Vec<(String, serde_json::Value)>>,
-    ) {
-        let (url, worker) = crate::audio_review::tests::server(
-            replies
-                .iter()
-                .map(|reply| (200, crate::audio_review::tests::response(reply)))
-                .collect(),
-        );
-        (
-            AudioReviewOptions {
-                configured: true,
-                auto_select: false,
-                url: format!("{url}/v1"),
-                model: "scripted-critic".into(),
-                api_key: None,
-                ollama_url: None,
-            },
-            worker,
-        )
-    }
-
-    fn listen(
-        session: &mut Session,
-        options: &AudioReviewOptions,
-        previous: Option<&str>,
-    ) -> serde_json::Value {
-        let job = session
-            .begin_listening_with_options(
-                1,
-                1,
-                None,
-                previous,
-                previous.map(|_| ComparisonAspect::Balance),
-                options.clone(),
-            )
-            .unwrap();
-        let result = job.run_with_order(&AtomicBool::new(false), true).unwrap();
-        serde_json::from_str(&session.continue_listening(result).unwrap()).unwrap()
-    }
-
-    fn submitted(request: &serde_json::Value) -> Vec<Vec<u8>> {
-        request["messages"][0]["content"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .filter(|part| part["type"] == "input_audio")
-            .map(|part| {
-                base64::engine::general_purpose::STANDARD
-                    .decode(part["input_audio"]["data"].as_str().unwrap())
-                    .unwrap()
-            })
-            .collect()
+    fn listen(session: &mut Session, previous: Option<&str>) -> Audition {
+        let job = session.begin_listening(1, 1, previous).unwrap();
+        let result = job.run(&AtomicBool::new(false)).unwrap();
+        session.continue_listening(result).unwrap()
     }
 
     fn rms(bytes: &[u8]) -> f64 {
         let reader = hound::WavReader::new(std::io::Cursor::new(bytes)).unwrap();
-        assert_eq!(reader.spec().sample_rate, 48000);
+        let spec = reader.spec();
+        assert_eq!(spec.sample_rate, AUDITION_SAMPLE_RATE);
+        assert_eq!(spec.channels, 2);
+        assert_eq!(spec.bits_per_sample, 16);
         let samples: Vec<_> = reader.into_samples::<i16>().map(Result::unwrap).collect();
         assert!(
             samples
@@ -496,48 +436,43 @@ mod tests {
     }
 
     #[test]
-    fn unsaved_listen_edit_compare_submits_real_audio_and_keeps_the_baseline() {
+    fn unsaved_listen_edit_compare_returns_real_audio_and_keeps_the_baseline() {
         let (mut session, track) = fixture();
         let original = session.project().clone();
         let original_revision = session.revision();
-        let (options, worker) = critic(&[
-            r#"{"kind":"diagnostic","status":"cannot_judge","observations":[],"uncertainty":"Scripted transport only","suggestion":null}"#,
-            r#"{"kind":"comparison","verdict":"prefer_a","confidence":"low","observations":[{"excerpt":"both","start_seconds":0,"end_seconds":1,"detail":"A is quieter."}],"reason":"Scripted preference","uncertainty":"Not a listening test"}"#,
-        ]);
-        let first = listen(&mut session, &options, None);
+        let first = listen(&mut session, None);
         assert_eq!(session.project(), &original);
         assert_eq!(session.revision(), original_revision);
         assert!(session.path().is_none());
-        assert_eq!(first["audio_sent"], true);
-        assert_eq!(first["assessment_status"], "unvalidated_response");
-        let baseline = session.listening.excerpts[0].clone();
-        let baseline_audio = baseline.audio.clone();
+        assert_eq!(first.clips.len(), 1);
+        assert_eq!(first.clips[0].label, "excerpt");
+        let first_wav = first.clips[0].wav().unwrap();
+        let frames = hound::WavReader::new(std::io::Cursor::new(&first_wav))
+            .unwrap()
+            .duration();
+        let seconds = first.report["range"]["seconds"].as_f64().unwrap();
+        assert_eq!(frames, (seconds * 48_000.0).round() as u32);
+        assert!(rms(&first_wav) > 0.0);
+
         session.set_param(crate::ParamTarget::TrackGain(track), -12.0);
-        let second = listen(&mut session, &options, first["audition_id"].as_str());
-        assert_eq!(second["compare_to"], first["audition_id"]);
-        assert_eq!(second["before"]["revision"], original_revision);
-        assert!(second["revision"].as_u64().unwrap() > original_revision);
-        assert_eq!(baseline.audio.channels(), baseline_audio.channels());
+        let second = listen(&mut session, first.report["audition_id"].as_str());
+        assert_eq!(second.report["compare_to"], first.report["audition_id"]);
+        let labels: Vec<_> = second
+            .clips
+            .iter()
+            .map(|clip| clip.label.as_str())
+            .collect();
+        assert_eq!(labels, ["before", "after"]);
         assert_eq!(
-            second["audio"]["attenuation_db"],
-            second["before"]["audio"]["attenuation_db"]
+            second.report["clips"][0]["revision"].as_u64(),
+            Some(original_revision)
         );
-        let requests = worker.join().unwrap();
-        let original_upload = submitted(&requests[0].1);
-        let comparison = submitted(&requests[1].1);
-        assert_eq!(original_upload[0], comparison[1]);
-        assert!((20.0 * (rms(&comparison[0]) / rms(&comparison[1])).log10() + 12.0).abs() < 0.02);
-        assert!(second["comparison"]["reported_preference"].is_null());
-        assert_eq!(second["comparison"]["calibrated"], false);
-        assert!(second["assessment_error"].is_null());
-        assert_eq!(second["assessment_status"], "unvalidated_response");
-        let prompt = requests[1].1["messages"][0]["content"][0]["text"]
-            .as_str()
-            .unwrap();
-        assert!(prompt.starts_with("Audio excerpts in order:\n1. A\n2. B\n"));
-        assert!(
-            !prompt.contains("Current") && !prompt.contains("Before") && !prompt.contains("-12")
-        );
+        assert!(second.report["revision"].as_u64().unwrap() > original_revision);
+        let before = second.clips[0].wav().unwrap();
+        let after = second.clips[1].wav().unwrap();
+        assert_eq!(before, first_wav, "the baseline is delivered unchanged");
+        assert!((20.0 * (rms(&after) / rms(&before)).log10() + 12.0).abs() < 0.02);
+        assert!(second.caption(&second.clips[0]).contains("(before)"));
         session.undo();
         assert_eq!(
             session.project(),
@@ -549,72 +484,41 @@ mod tests {
     #[test]
     fn overloaded_comparison_uses_one_protective_gain_for_both_excerpts() {
         let (mut session, track) = fixture();
-        let (options, worker) = critic(&["Initial", "Comparison"]);
-        let first = listen(&mut session, &options, None);
+        let first = listen(&mut session, None);
         let original = session.listening.excerpts[0].audio.clone();
         session.set_param(crate::ParamTarget::TrackGain(track), 30.0);
-        let second = listen(&mut session, &options, first["audition_id"].as_str());
-        assert!(
-            second["audio"]["source_full_scale_samples"]
-                .as_u64()
-                .unwrap()
-                > 0
-        );
-        assert!(second["audio"]["attenuation_db"].as_f64().unwrap() < 0.0);
-        assert_eq!(
-            second["audio"]["attenuation_db"],
-            second["before"]["audio"]["attenuation_db"]
-        );
-        assert!(second["audio"]["true_peak_estimate_dbfs"].as_f64().unwrap() < -0.99);
+        let second = listen(&mut session, first.report["audition_id"].as_str());
+        let after = &second.report["clips"][1]["audio"];
+        let before = &second.report["clips"][0]["audio"];
+        assert!(after["source_full_scale_samples"].as_u64().unwrap() > 0);
+        assert!(after["attenuation_db"].as_f64().unwrap() < 0.0);
+        assert_eq!(after["attenuation_db"], before["attenuation_db"]);
+        assert!(after["true_peak_estimate_dbfs"].as_f64().unwrap() < -0.99);
         assert_eq!(
             session.listening.excerpts[0].audio.channels(),
             original.channels()
         );
         assert_eq!(session.project().track(track).unwrap().mixer.gain_db, 30.0);
-        let requests = worker.join().unwrap();
-        let pair = submitted(&requests[1].1);
-        assert!((20.0 * (rms(&pair[0]) / rms(&pair[1])).log10() - 30.0).abs() < 0.1);
-        assert!(second["assessment"].is_null());
-        assert_eq!(second["review_format"], "plain_text");
-        assert_eq!(second["review"], "Comparison");
-        assert!(second["comparison"]["reported_preference"].is_null());
+        let pair: Vec<_> = second
+            .clips
+            .iter()
+            .map(|clip| clip.wav().unwrap())
+            .collect();
+        assert!((20.0 * (rms(&pair[1]) / rms(&pair[0])).log10() - 30.0).abs() < 0.1);
     }
 
     #[test]
     fn stale_results_invalid_comparisons_and_cancellation_do_not_publish() {
         let (mut session, track) = fixture();
-        let (options, worker) = critic(&["Initial", "Stale observation"]);
-        let first = listen(&mut session, &options, None);
-        let baseline = first["audition_id"].as_str().unwrap();
+        let first = listen(&mut session, None);
+        let baseline = first.report["audition_id"].as_str().unwrap();
+        assert!(session.begin_listening(2, 1, Some(baseline)).is_err());
         assert!(
             session
-                .begin_listening_with_options(
-                    2,
-                    1,
-                    None,
-                    Some(baseline),
-                    Some(ComparisonAspect::Balance),
-                    options.clone()
-                )
+                .begin_listening(1, 1, Some("C:/external.wav"))
                 .is_err()
         );
-        assert!(
-            session
-                .begin_listening_with_options(
-                    1,
-                    1,
-                    None,
-                    Some("C:/external.wav"),
-                    Some(ComparisonAspect::Balance),
-                    options.clone()
-                )
-                .is_err()
-        );
-        assert!(
-            session
-                .begin_listening_with_options(1, 9, None, None, None, options.clone())
-                .is_err()
-        );
+        assert!(session.begin_listening(1, 9, None).is_err());
         session
             .agent_command(crate::live_agent::Command::EditTimeline {
                 operation: crate::live_agent::document_editing::TimelineOperation::SetTempo {
@@ -623,33 +527,11 @@ mod tests {
                 },
             })
             .unwrap();
-        assert!(
-            session
-                .begin_listening_with_options(
-                    1,
-                    1,
-                    None,
-                    Some(baseline),
-                    Some(ComparisonAspect::Balance),
-                    options.clone()
-                )
-                .is_err()
-        );
+        assert!(session.begin_listening(1, 1, Some(baseline)).is_err());
         session.undo();
-        let cancelled = session
-            .begin_listening_with_options(1, 1, None, None, None, options.clone())
-            .unwrap();
+        let cancelled = session.begin_listening(1, 1, None).unwrap();
         assert!(cancelled.run(&AtomicBool::new(true)).is_err());
-        let job = session
-            .begin_listening_with_options(
-                1,
-                1,
-                None,
-                Some(baseline),
-                Some(ComparisonAspect::Balance),
-                options.clone(),
-            )
-            .unwrap();
+        let job = session.begin_listening(1, 1, Some(baseline)).unwrap();
         session.set_param(crate::ParamTarget::TrackGain(track), -3.0);
         let result = job.run(&AtomicBool::new(false)).unwrap();
         assert!(
@@ -660,54 +542,29 @@ mod tests {
         );
         assert_eq!(session.listening.excerpts.len(), 1);
         session.new_project();
-        assert!(
-            session
-                .begin_listening_with_options(
-                    1,
-                    1,
-                    None,
-                    Some(baseline),
-                    Some(ComparisonAspect::Balance),
-                    options
-                )
-                .is_err()
-        );
-        assert_eq!(
-            worker.join().unwrap().len(),
-            2,
-            "cancelled work must not upload audio"
-        );
+        assert!(session.begin_listening(1, 1, Some(baseline)).is_err());
     }
 
     #[test]
     fn old_ids_are_evicted_and_other_sessions_cannot_accept_the_result() {
         let (mut session, _) = fixture();
-        let (options, worker) = critic(&["1", "2", "3", "4", "5", "6"]);
-        let first = listen(&mut session, &options, None);
+        let first = listen(&mut session, None);
         for _ in 0..RETAINED_EXCERPTS {
-            listen(&mut session, &options, None);
+            listen(&mut session, None);
         }
         assert_eq!(session.listening.excerpts.len(), RETAINED_EXCERPTS);
         assert!(
             session
-                .begin_listening_with_options(
-                    1,
-                    1,
-                    None,
-                    first["audition_id"].as_str(),
-                    Some(ComparisonAspect::Balance),
-                    options.clone()
-                )
+                .begin_listening(1, 1, first.report["audition_id"].as_str())
                 .is_err()
         );
         let result = session
-            .begin_listening_with_options(1, 1, None, None, None, options)
+            .begin_listening(1, 1, None)
             .unwrap()
             .run(&AtomicBool::new(false))
             .unwrap();
         let (mut other, _) = fixture();
         assert!(other.continue_listening(result).is_err());
-        assert_eq!(worker.join().unwrap().len(), 6);
     }
 
     #[test]
@@ -719,68 +576,12 @@ mod tests {
     }
 
     #[test]
-    fn comparison_refuses_editing_narrative_or_missing_aspect_before_rendering() {
+    fn the_wire_form_round_trips() {
         let (mut session, _) = fixture();
-        let before = session.project().clone();
-        for (focus, baseline, aspect) in [
-            (
-                Some("I improved the balance; confirm it"),
-                Some("id"),
-                Some(ComparisonAspect::Balance),
-            ),
-            (None, Some("id"), None),
-            (None, None, Some(ComparisonAspect::Balance)),
-        ] {
-            let error = session
-                .begin_listening_with_options(
-                    1,
-                    1,
-                    focus,
-                    baseline,
-                    aspect,
-                    AudioReviewOptions::default(),
-                )
-                .err()
-                .unwrap();
-            assert!(error.contains("Comparison requires"));
-            assert_eq!(session.project(), &before);
-        }
-    }
-
-    #[test]
-    fn anonymous_order_preserves_audio_without_extracting_a_json_looking_verdict() {
-        let (mut session, track) = fixture();
-        let comparison = r#"{"kind":"comparison","verdict":"prefer_b","confidence":"low","observations":[{"excerpt":"both","start_seconds":0,"end_seconds":1,"detail":"Different levels"}],"reason":"Scripted","uncertainty":"Transport test only"}"#;
-        let (options, worker) = critic(&["Unstructured baseline", comparison, comparison]);
-        let first = listen(&mut session, &options, None);
-        session.set_param(crate::ParamTarget::TrackGain(track), -12.0);
-        for current_first in [false, true] {
-            let job = session
-                .begin_listening_with_options(
-                    1,
-                    1,
-                    None,
-                    first["audition_id"].as_str(),
-                    Some(ComparisonAspect::Balance),
-                    options.clone(),
-                )
-                .unwrap();
-            let result = job
-                .run_with_order(&AtomicBool::new(false), current_first)
-                .unwrap();
-            let reply: serde_json::Value =
-                serde_json::from_str(&session.continue_listening(result).unwrap()).unwrap();
-            assert!(reply["comparison"]["reported_preference"].is_null());
-            assert_eq!(reply["review"], comparison);
-            assert_eq!(
-                reply["comparison"]["b"],
-                if current_first { "baseline" } else { "current" }
-            );
-        }
-        let requests = worker.join().unwrap();
-        let first_pair = submitted(&requests[1].1);
-        let second_pair = submitted(&requests[2].1);
-        assert_eq!(first_pair[0], second_pair[1]);
-        assert_eq!(first_pair[1], second_pair[0]);
+        let audition = listen(&mut session, None);
+        let wire = serde_json::to_string(&audition).unwrap();
+        let back: Audition = serde_json::from_str(&wire).unwrap();
+        assert_eq!(back, audition);
+        assert_eq!(back.text(), audition.report.to_string());
     }
 }

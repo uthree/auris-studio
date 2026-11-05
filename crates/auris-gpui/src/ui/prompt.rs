@@ -560,8 +560,6 @@ pub enum Answer {
 /// A question the sheet is asking, and what turns on the answer.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Question {
-    /// Consent to load a local audio model for this one listening request.
-    AudioModelLoad(std::sync::Arc<crate::ui::agent_chat::AudioLoadRequest>),
     /// A verified update can be installed now or when the app later quits.
     RestartForUpdate {
         /// Downloaded release version shown in the question.
@@ -1424,10 +1422,6 @@ impl AurisApp {
         cx: &mut Context<Self>,
     ) {
         match (question, answer) {
-            (Question::AudioModelLoad(request), Answer::Confirm) => {
-                self.approve_audio_model_load(&request);
-            }
-            (Question::AudioModelLoad(_), Answer::Deny) => {}
             (Question::RestartForUpdate { .. }, Answer::Confirm) => {
                 self.restart_for_update(window, cx);
             }
@@ -2351,13 +2345,6 @@ impl AurisApp {
         question: &Question,
     ) -> (SharedString, SharedString, Option<SharedString>) {
         match question {
-            Question::AudioModelLoad(request) => (
-                self.t(Key::AudioModelLoadBody)
-                    .replace("{model}", &request.model)
-                    .into(),
-                self.t(Key::AudioModelLoadConfirm).into(),
-                None,
-            ),
             Question::RestartForUpdate { version } => (
                 self.t(Key::UpdateRestartBody)
                     .replace("{version}", version)
@@ -3201,31 +3188,6 @@ mod tests {
 /// here: the sheet's three buttons carry names a test can find them by.
 #[cfg(test)]
 mod window_tests {
-    #[gpui::test]
-    fn audio_load_dialog_escape_cancels_without_sending_consent(cx: &mut gpui::TestAppContext) {
-        let (app, cx) = crate::harness::open(cx);
-        let (response, receiver) = std::sync::mpsc::channel();
-        app.update(cx, |this, _| {
-            this.open_prompt(super::Prompt::ask(
-                this.t(auris_i18n::Key::AudioModelLoadTitle),
-                super::Question::AudioModelLoad(std::sync::Arc::new(
-                    crate::ui::agent_chat::AudioLoadRequest {
-                        model: "test-audio".into(),
-                        response,
-                    },
-                )),
-            ));
-        });
-        crate::harness::paint(&app, cx);
-        cx.simulate_keystrokes("escape");
-        crate::harness::paint(&app, cx);
-        app.read_with(cx, |this, _| assert!(this.prompt.is_none()));
-        assert_eq!(
-            receiver.try_recv(),
-            Err(std::sync::mpsc::TryRecvError::Disconnected)
-        );
-    }
-
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 

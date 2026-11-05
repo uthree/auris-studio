@@ -5,7 +5,7 @@
 Ordinary composition uses an existing Codex or Claude Code environment and installed Auris tools:
 write, inspect notes, render, measure, make justified repairs, and deliver. Built-in instruments
 need no evaluator installation. Synthesized singing additionally needs a suitable installed voice.
-External music evaluation is a separate [development experiment](development-audio-evaluation.md).
+An agent whose model takes audio input can [hear the song itself](agent-listening.md).
 
 Saved-project MCP, the built-in Claude/Codex backends and native API agents share
 canonical session commands, schemas and validation. Saved calls add `project`
@@ -550,7 +550,7 @@ A failed save retains the draft and leaves the active preferences unchanged.
 
 This edits the live agent's shared instructions. Native CLI tool guidance,
 operation schemas/help, optional workflow responses and permission checks remain
-separate. Approval-review and audio-critic instructions are independent. Saved-file
+separate. Approval-review instructions are independent. Saved-file
 MCP uses its own instructions. Custom prompts count toward the local model's
 context budget just like the standard prompt.
 
@@ -567,7 +567,7 @@ phase's instructions, so the phase text lives in one place.
 | `/compose <brief>` | The whole song in one go: score, then arrangement, then mix, without stopping at the demo. |
 | `/draft <brief>` | A demo: the score phase only, with the foreground melody over one plain chord part and roles registered. It stops there and asks whether to arrange or revise. |
 | `/mix [direction]` | The mix phase on the open song. Roles are registered from the song as it stands when there are none, and the phase lock keeps every note, sound and performance. A fix that needs an earlier phase is reported instead of made. |
-| `/review [direction]` | A read-only review: `lint_project` (score, then audio), the notes, `melody_shape` and `arrangement_shape`, and `inspect_audio` measurements. When an audio reviewer is configured, it also sends excerpts to `listen`. It then lists the problems, the findings it judges to be false positives, and a plan to fix the rest in phase order. |
+| `/review [direction]` | A read-only review: `lint_project` (score, then audio), the notes, `melody_shape` and `arrangement_shape`, and `inspect_audio` measurements. When the model can hear, it also listens to excerpts with `listen`. It then lists the problems, the findings it judges to be false positives, and a plan to fix the rest in phase order. |
 
 `/compose` and `/draft` need a brief; sent without one, the panel asks for it and sends
 nothing. Completion and `/help` list all four.

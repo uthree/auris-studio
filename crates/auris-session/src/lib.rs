@@ -49,7 +49,6 @@ pub mod audio_inspection;
 pub mod choices;
 pub use audio_attachment::{AudioAttachmentCopy, copy_audio_attachment, prepare_audio_attachment};
 pub mod audio_input;
-pub mod audio_review;
 pub mod conversation_attachments;
 pub mod conversations;
 pub mod execution_trace;
