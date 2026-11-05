@@ -30,6 +30,7 @@ use auris_session::{Session, SessionError, SessionOptions};
 pub mod composition_preview;
 pub mod composition_workflows;
 pub mod environment;
+pub mod phase_commands;
 pub mod workshop;
 pub use composition_preview as preview_composition;
 #[path = "capabilities.rs"]

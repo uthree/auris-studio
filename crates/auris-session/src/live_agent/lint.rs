@@ -1,5 +1,6 @@
-//! `lint_project` and `apply_lint_fixes`: the music linter, as a model reads it.
+//! `lint_project`, `apply_lint_fixes` and `ignore_lint`: the music linter, as a model reads it.
 
+use auris_core::project::{LintScope, LintSuppression};
 use auris_core::time::Ticks;
 
 use crate::Session;
@@ -198,6 +199,76 @@ impl Session {
             "revision": self.agent_document_revision()?,
             "score_diagnostics_now": after.diagnostics.len(),
             "note": "not_found ids were already fixed, moved by an edit, or came from an audio pass at an older revision; lint again. no_obvious_fix needs a musical decision.",
+        })
+        .to_string())
+    }
+
+    /// Turns one current finding into an ignore rule with its reason, as one undo step.
+    pub(crate) fn agent_ignore_lint(
+        &mut self,
+        id: &str,
+        scope: super::LintIgnoreScope,
+        reason: &str,
+    ) -> Result<String, String> {
+        let reason = reason.trim();
+        if reason.is_empty() || reason.len() > 512 {
+            return Err("Give a nonempty reason up to 512 bytes".into());
+        }
+        let report = self.current_lint();
+        let diagnostic = report.find(id).ok_or(
+            "No current finding has that id: it was fixed, moved by an edit, or came from an older audio pass. Run lint_project again.",
+        )?;
+        let scope = match scope {
+            super::LintIgnoreScope::Song => LintScope::Song,
+            super::LintIgnoreScope::Track => LintScope::Track {
+                track: diagnostic
+                    .track
+                    .ok_or("This finding belongs to no track; use scope section or song")?,
+            },
+            super::LintIgnoreScope::Clip => {
+                let mut clips: Vec<_> = diagnostic.notes.iter().map(|note| note.clip).collect();
+                clips.dedup();
+                match clips.as_slice() {
+                    [clip] => LintScope::Clip { clip: *clip },
+                    _ => {
+                        return Err(
+                            "This finding is not in exactly one clip; use scope track, section or song"
+                                .into(),
+                        );
+                    }
+                }
+            }
+            super::LintIgnoreScope::Section => LintScope::Section {
+                label: self
+                    .project()
+                    .sections
+                    .section_at(diagnostic.start)
+                    .map(|(label, _)| label.to_string())
+                    .ok_or("This finding starts outside every section; use scope track or song")?,
+            },
+        };
+        let suppression = LintSuppression {
+            rule: Some(diagnostic.rule.name().to_string()),
+            scope,
+            reason: reason.into(),
+        };
+        if self
+            .project()
+            .lint_suppressions
+            .iter()
+            .any(|kept| kept.same_rule(&suppression))
+        {
+            return Err(
+                "That rule is already ignored there; read ignore_rules in lint_project".into(),
+            );
+        }
+        self.suppress_lint(suppression.clone());
+        let after = self.current_lint();
+        Ok(serde_json::json!({
+            "ignored": suppression,
+            "revision": self.agent_document_revision()?,
+            "diagnostics_now": after.diagnostics.len(),
+            "suppressed": after.suppressed,
         })
         .to_string())
     }

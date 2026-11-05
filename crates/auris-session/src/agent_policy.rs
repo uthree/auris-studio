@@ -232,6 +232,7 @@ pub const OPERATIONS: &[&str] = &[
     "edit_project.inspect_audio",
     "edit_project.lint_project",
     "edit_project.apply_lint_fixes",
+    "edit_project.ignore_lint",
     "edit_project.listen",
     "edit_project.checkpoints",
     "edit_project.import_audio",
@@ -333,9 +334,11 @@ impl Operation {
                         | crate::live_agent::Command::ExportMidi { .. }
                         | crate::live_agent::Command::VerifyRender { .. }
                 ) && !parsed.uses_only_workspace())
+                // Silencing a check is the user's call: the agent proposes it, the user confirms.
                 || matches!(
                     parsed,
                     crate::live_agent::Command::Listen { .. }
+                        | crate::live_agent::Command::IgnoreLint { .. }
                         | crate::live_agent::Command::RemoveTrack { .. }
                         | crate::live_agent::Command::Compose { replace: true, .. }
                 );
