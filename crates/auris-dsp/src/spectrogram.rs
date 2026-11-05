@@ -6,7 +6,10 @@
 
 use auris_core::AudioBuffer;
 
-use crate::{SILENCE_DB, SpectrumAnalyzer, bands_from_bins};
+use crate::{SILENCE_DB, SpectrumAnalyzer};
+
+#[cfg(test)]
+mod performance_tests;
 
 const WINDOW_FRAMES: usize = 4_096;
 const HOP_FRAMES: usize = WINDOW_FRAMES / 2;
@@ -14,6 +17,39 @@ const MAX_COLUMNS: usize = 2_048;
 const BAND_COUNT: usize = 96;
 const LOW_HZ: f64 = 20.0;
 const HIGH_HZ: f64 = 20_000.0;
+
+struct BandMapping {
+    bins: Vec<usize>,
+}
+
+impl BandMapping {
+    fn new(bin_count: usize, rate: f64, high_hz: f64) -> Self {
+        let mut bins = vec![usize::MAX; bin_count];
+        if bin_count < 2 || rate <= 0.0 || high_hz <= LOW_HZ {
+            return Self { bins };
+        }
+        let span = (high_hz / LOW_HZ).log2();
+        let hz_per_bin = rate / 2.0 / (bin_count - 1) as f64;
+        for (index, band) in bins.iter_mut().enumerate() {
+            let frequency = index as f64 * hz_per_bin;
+            if !(LOW_HZ..=high_hz).contains(&frequency) {
+                continue;
+            }
+            let position = (frequency / LOW_HZ).log2() / span;
+            *band = ((position * BAND_COUNT as f64) as usize).min(BAND_COUNT - 1);
+        }
+        Self { bins }
+    }
+
+    fn apply(&self, levels: &[f32], bands: &mut [f32; BAND_COUNT]) {
+        bands.fill(SILENCE_DB);
+        for (level, &band) in levels.iter().zip(&self.bins) {
+            if band != usize::MAX {
+                bands[band] = bands[band].max(*level);
+            }
+        }
+    }
+}
 
 /// A bounded, source-coordinate spectrogram with logarithmic frequency bands.
 ///
@@ -62,6 +98,7 @@ impl Spectrogram {
         let mut analyzer = SpectrumAnalyzer::new(WINDOW_FRAMES);
         let mut samples = vec![0.0; WINDOW_FRAMES];
         let mut bins = vec![SILENCE_DB; analyzer.bin_count()];
+        let band_mapping = BandMapping::new(bins.len(), rate, result.high_hz);
         let interpolations = unresolved_bands(bins.len(), rate, result.high_hz);
         let mut bands = [SILENCE_DB; BAND_COUNT];
         let mut window_bands = [SILENCE_DB; BAND_COUNT];
@@ -87,7 +124,7 @@ impl Spectrogram {
                 analyzer.reset();
                 analyzer.push(&samples);
                 analyzer.magnitudes(&mut bins);
-                bands_from_bins(&bins, rate, LOW_HZ, result.high_hz, &mut bands);
+                band_mapping.apply(&bins, &mut bands);
                 interpolate_bands(&bins, &interpolations, &mut bands);
                 for (destination, level) in window_bands.iter_mut().zip(bands) {
                     // Corrupt samples can overflow the FFT even if individually finite. A
@@ -228,6 +265,30 @@ mod tests {
 
     fn audio(channels: Vec<Vec<f32>>) -> AudioBuffer {
         AudioBuffer::from_planar(channels, RATE).unwrap()
+    }
+
+    #[test]
+    fn cached_band_mapping_matches_the_public_scalar_mapping() {
+        for (rate, high) in [
+            (22_050.0, 11_025.0),
+            (44_100.0, 20_000.0),
+            (48_000.0, 20_000.0),
+            (96_000.0, 20_000.0),
+        ] {
+            let bins: Vec<f32> = (0..=2_048)
+                .map(|index| match index % 17 {
+                    0 => f32::NAN,
+                    1 => f32::INFINITY,
+                    _ => -120.0 + (index % 121) as f32,
+                })
+                .collect();
+            let mapping = BandMapping::new(bins.len(), rate, high);
+            let mut cached = [SILENCE_DB; BAND_COUNT];
+            let mut scalar = [SILENCE_DB; BAND_COUNT];
+            mapping.apply(&bins, &mut cached);
+            crate::bands_from_bins(&bins, rate, LOW_HZ, high, &mut scalar);
+            assert_eq!(cached, scalar, "rate={rate}, high={high}");
+        }
     }
 
     fn loudest(column: &[f32]) -> (usize, f32) {
