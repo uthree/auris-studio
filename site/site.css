@@ -398,6 +398,26 @@ main {
   margin-left: auto;
 }
 
+/* ---------------------------------------------------------------- community */
+
+.community {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--at-space-lg);
+}
+
+.community__text {
+  flex: 1;
+}
+
+.community__text p {
+  margin: var(--at-space-xs) 0 0;
+}
+
+.community__button {
+  flex: none;
+}
+
 /* ---------------------------------------------------------------- footer */
 
 .footer {
@@ -433,5 +453,9 @@ main {
   .section--pair,
   .links {
     grid-template-columns: 1fr;
+  }
+  .community {
+    flex-direction: column;
+    align-items: flex-start;
   }
 }
