@@ -1614,6 +1614,8 @@ mod tests {
                 provider: "openai".into(),
                 url: "http://localhost:11434/v1".into(),
                 model: model.into(),
+                // As the panel asks by default; a model that cannot think must still answer.
+                effort: auris_session::ReasoningEffort::Medium,
                 ..Default::default()
             },
             None,

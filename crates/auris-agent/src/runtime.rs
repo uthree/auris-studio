@@ -14,8 +14,19 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 /// Resolves the usable Ollama context before constructing the request and its budget guard.
+///
+/// An Ollama server refuses a reasoning request to a model that cannot think (`"… does not
+/// support thinking"`), so a model whose capabilities omit `thinking` has the Agent Panel's
+/// effort dropped for this run rather than failing every request. That holds behind the
+/// OpenAI-compatible dialect too, where the same server answers.
 pub(super) async fn preflight(options: &mut Options) -> Result<bool, String> {
     if options.provider != Provider::Ollama {
+        if let Some(origin) = options.url.as_deref().and_then(ollama_origin)
+            && let Some(shown) = ollama_show(&origin, options).await
+            && !advertises(&shown, "thinking")
+        {
+            without_reasoning(options);
+        }
         return Ok(true);
     }
     let base = options
@@ -47,9 +58,45 @@ pub(super) async fn preflight(options: &mut Options) -> Result<bool, String> {
         ));
     }
     options.context_tokens = context;
-    Ok(shown["capabilities"]
-        .as_array()
-        .is_some_and(|caps| caps.iter().any(|cap| cap == "vision")))
+    if !advertises(&shown, "thinking") {
+        without_reasoning(options);
+    }
+    Ok(advertises(&shown, "vision"))
+}
+
+/// Drops whatever asks a model to think. An explicit "off" stays: Ollama accepts `think: false`
+/// and `reasoning_effort: "none"` from a model that cannot think, and refuses only a request
+/// that turns thinking on.
+fn without_reasoning(options: &mut Options) {
+    if !matches!(
+        options.effort,
+        ReasoningEffort::Default | ReasoningEffort::None
+    ) {
+        options.effort = ReasoningEffort::Default;
+    }
+    if options.thinking == Some(true) {
+        options.thinking = None;
+    }
+}
+
+/// `/api/show` for the model, or nothing when the server cannot say.
+async fn ollama_show(origin: &str, options: &Options) -> Option<serde_json::Value> {
+    let mut request = reqwest::Client::new()
+        .post(format!("{origin}/api/show"))
+        .timeout(MODEL_LIST_PATIENCE)
+        .json(&serde_json::json!({"model":options.model}));
+    if let Some(key) = &options.key {
+        request = request.bearer_auth(key);
+    }
+    request
+        .send()
+        .await
+        .ok()?
+        .error_for_status()
+        .ok()?
+        .json()
+        .await
+        .ok()
 }
 
 /// Whether the model takes audio input, which is what offers it `listen`.
@@ -64,26 +111,9 @@ pub(super) async fn hears(options: &Options) -> bool {
     let Some(origin) = options.url.as_deref().and_then(ollama_origin) else {
         return true;
     };
-    let mut request = reqwest::Client::new()
-        .post(format!("{origin}/api/show"))
-        .timeout(MODEL_LIST_PATIENCE)
-        .json(&serde_json::json!({"model":options.model}));
-    if let Some(key) = &options.key {
-        request = request.bearer_auth(key);
-    }
-    let shown: Option<serde_json::Value> = async {
-        request
-            .send()
-            .await
-            .ok()?
-            .error_for_status()
-            .ok()?
-            .json()
-            .await
-            .ok()
-    }
-    .await;
-    shown.is_some_and(|shown| advertises_audio(&shown))
+    ollama_show(&origin, options)
+        .await
+        .is_some_and(|shown| advertises(&shown, "audio"))
 }
 
 /// The Ollama server behind an OpenAI-compatible URL: port 11434, path `/v1`.
@@ -93,10 +123,11 @@ fn ollama_origin(url: &str) -> Option<String> {
         .then(|| parsed.origin().ascii_serialization())
 }
 
-fn advertises_audio(shown: &serde_json::Value) -> bool {
+/// Whether `/api/show` lists `capability` (`audio`, `vision`, `thinking`, …).
+fn advertises(shown: &serde_json::Value, capability: &str) -> bool {
     shown["capabilities"]
         .as_array()
-        .is_some_and(|caps| caps.iter().any(|cap| cap == "audio"))
+        .is_some_and(|caps| caps.iter().any(|cap| cap == capability))
 }
 
 /// Prefer the language architecture's ceiling over auxiliary audio/vision metadata.
@@ -600,13 +631,55 @@ mod tests {
         assert_eq!(ollama_origin("http://localhost:11434"), None);
         assert_eq!(ollama_origin("https://api.openai.com/v1"), None);
         assert_eq!(ollama_origin("not a url"), None);
-        assert!(advertises_audio(
-            &serde_json::json!({"capabilities":["completion","vision","audio","tools"]})
+        assert!(advertises(
+            &serde_json::json!({"capabilities":["completion","vision","audio","tools"]}),
+            "audio"
         ));
-        assert!(!advertises_audio(
-            &serde_json::json!({"capabilities":["completion","vision"]})
+        assert!(!advertises(
+            &serde_json::json!({"capabilities":["completion","vision"]}),
+            "audio"
         ));
-        assert!(!advertises_audio(&serde_json::json!({})));
+        assert!(!advertises(&serde_json::json!({}), "audio"));
+    }
+
+    /// The reported failure: `lfm3-audio` lists no `thinking`, and a medium effort sent as
+    /// `think` was refused with HTTP 400 before the model said a word.
+    #[tokio::test]
+    async fn a_model_that_cannot_think_is_sent_no_reasoning_request() {
+        for (capabilities, effort, expected) in [
+            (
+                serde_json::json!(["completion", "audio", "tools"]),
+                ReasoningEffort::Medium,
+                ReasoningEffort::Default,
+            ),
+            // Turning thinking off is accepted, and stays asked for.
+            (
+                serde_json::json!(["completion", "audio", "tools"]),
+                ReasoningEffort::None,
+                ReasoningEffort::None,
+            ),
+            (
+                serde_json::json!(["completion", "tools", "thinking"]),
+                ReasoningEffort::Medium,
+                ReasoningEffort::Medium,
+            ),
+        ] {
+            let show = serde_json::json!({"capabilities":capabilities}).to_string();
+            let (url, _) = crate::tests::mock_server(vec![show]);
+            let prefs = auris_session::AgentPreferences {
+                provider: "ollama".into(),
+                model: "mock".into(),
+                url,
+                effort,
+                context_tokens: Some(65536),
+                ..Default::default()
+            };
+            let Command::Run(mut options) = parse_args(&[], &|_| None, &prefs).unwrap() else {
+                panic!()
+            };
+            preflight(&mut options).await.unwrap();
+            assert_eq!(options.effort, expected);
+        }
     }
 
     #[tokio::test]
