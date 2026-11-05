@@ -81,3 +81,11 @@ the falling scale rising. `lfm3-audio` and `lfm3-omni`, which cannot think, answ
 panel's medium effort dropped; both called `listen`, received the audio and called both scales
 rising. `lfm3` and `lfm3-vl` list no `audio` capability and are not offered the tool. The path
 delivers the sound; how well a model hears it is the model's.
+
+Sending the same clips straight to `/v1`, three times each with the two answers offered in either
+order, showed that none of these models judges a melody. `lfm3-omni` answered whichever word the
+question named first, `lfm3-audio` said "rises" every time, `gemma4:e2b` said it could not tell,
+and `gemma4:e4b` contradicted itself. Speech is another matter: given a Japanese sentence spoken by
+VOICEVOX, `lfm3-omni`, `lfm3-audio` (asked what the speaker says) and `gemma4:e2b` transcribed it
+word for word. These are speech models; the clip reaches them, and what they cannot do is hear
+which way the pitch moves.
