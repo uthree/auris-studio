@@ -10,6 +10,9 @@ and render singing voices. CLI, MCP and agent frontends share the desktop's edit
 **[Visit the Auris Studio website →](https://uthree.github.io/auris-studio/)** for a tour of
 the features and direct downloads.
 
+**[Join the Auris Studio Discord](https://discord.gg/vDFjbUWBas)** to share what you made, ask
+questions and hear about new releases.
+
 ![The editor: arrangement, piano roll and the agent panel](docs/screenshots/readme/editor-en.png)
 
 | Start a project | Compose with the AI workshop |
