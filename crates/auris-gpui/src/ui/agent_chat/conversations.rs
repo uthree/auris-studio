@@ -1842,6 +1842,67 @@ mod tests {
     }
 
     #[gpui::test]
+    fn saving_the_same_project_with_an_absolute_path_keeps_chat_available(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let cwd = std::env::current_dir().unwrap();
+        let root = tempfile::tempdir_in(&cwd).unwrap();
+        let relative = root.path().strip_prefix(&cwd).unwrap().join("Song.auris");
+        let (app, cx) = open(cx);
+        app.update(cx, |this, _| {
+            this.session.save_as(&relative).unwrap();
+            assert!(!this.session.path().unwrap().is_absolute());
+            this.panels.show(crate::dock::Panel::Agent);
+            this.agent_chat.models_loaded = true;
+        });
+        paint(&app, cx);
+        settle(&app, cx);
+        let id = app.update(cx, |this, _| {
+            this.agent_chat.input = TextField::new("Keep this draft after replacing the same file");
+            let id = this
+                .agent_chat
+                .conversations
+                .active_id()
+                .unwrap()
+                .to_owned();
+            let previous = this.session.path().unwrap().to_path_buf();
+            let absolute = previous.canonicalize().unwrap();
+            let original_store = this
+                .agent_chat
+                .conversations
+                .store
+                .as_ref()
+                .unwrap()
+                .root()
+                .canonicalize()
+                .unwrap();
+            this.session.save_as_replacing(&absolute).unwrap();
+            assert_eq!(
+                ConversationStore::for_project(this.session.project_folder().unwrap())
+                    .root()
+                    .canonicalize()
+                    .unwrap(),
+                original_store,
+                "Save As changes only the spelling of the conversation store"
+            );
+            this.agent_document_saved_from(Some(&previous));
+            id
+        });
+        settle(&app, cx);
+        app.read_with(cx, |this, _| {
+            assert_eq!(this.agent_chat.conversations.active_id(), Some(id.as_str()));
+            assert!(!this.agent_chat.conversations.unavailable());
+            assert_eq!(
+                this.agent_chat.input.content(),
+                "Keep this draft after replacing the same file"
+            );
+            let store = this.agent_chat.conversations.store.as_ref().unwrap();
+            assert!(store.load(&id).is_ok());
+            assert!(this.session.path().unwrap().is_absolute());
+        });
+    }
+
+    #[gpui::test]
     fn rename_and_archive_keep_the_conversation_accessible_without_changing_music(
         cx: &mut gpui::TestAppContext,
     ) {

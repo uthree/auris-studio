@@ -8,8 +8,11 @@ use std::collections::BTreeMap;
 
 use auris_core::AudioBuffer;
 use auris_core::project::DrumRole;
-use rustfft::{FftPlanner, num_complex::Complex};
+use rustfft::{Fft, FftPlanner, num_complex::Complex};
 use serde::{Deserialize, Serialize};
+
+#[cfg(test)]
+mod performance_tests;
 
 /// Coarse description of the measured spectrum, independent of musical use.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -139,10 +142,11 @@ pub fn analyze_drum_audio(audio: &AudioBuffer) -> Result<DrumAcoustics, &'static
         (end_region.iter().sum::<f64>() / end_region.len().max(1) as f64 / max_energy.max(1e-30))
             .clamp(0.0, 1.0);
     let split = |seconds: f64| (start + (rate * seconds) as usize).min(frames);
-    let spectrum = measure_spectrum(audio, start, frames);
-    let attack = measure_spectrum(audio, start, split(0.06));
-    let body = measure_spectrum(audio, split(0.06), split(0.2));
-    let tail = measure_spectrum(audio, split(0.2), frames);
+    let mut workspace = SpectrumWorkspace::new();
+    let spectrum = measure_spectrum(audio, start, frames, &mut workspace);
+    let attack = measure_spectrum(audio, start, split(0.06), &mut workspace);
+    let body = measure_spectrum(audio, split(0.06), split(0.2), &mut workspace);
+    let tail = measure_spectrum(audio, split(0.2), frames, &mut workspace);
     let character = if peak < 1e-7 || energy == 0.0 {
         AcousticCharacter::Silent
     } else if spectrum.concentration > 0.55 {
@@ -175,35 +179,70 @@ pub fn analyze_drum_audio(audio: &AudioBuffer) -> Result<DrumAcoustics, &'static
     Ok(result)
 }
 
-fn measure_spectrum(audio: &AudioBuffer, start: usize, end: usize) -> DrumSpectrum {
+struct SpectrumWorkspace {
+    fft: std::sync::Arc<dyn Fft<f64>>,
+    data: Vec<Complex<f64>>,
+    scratch: Vec<Complex<f64>>,
+    powers: Vec<f64>,
+    window: Vec<f64>,
+}
+
+impl SpectrumWorkspace {
+    fn new() -> Self {
+        const SIZE: usize = 2048;
+        let fft = FftPlanner::new().plan_fft_forward(SIZE);
+        let window = (0..SIZE)
+            .map(|i| 0.5 - 0.5 * (std::f64::consts::TAU * i as f64 / SIZE as f64).cos())
+            .collect();
+        let scratch = vec![Complex::new(0.0, 0.0); fft.get_inplace_scratch_len()];
+        Self {
+            fft,
+            data: vec![Complex::new(0.0, 0.0); SIZE],
+            scratch,
+            powers: vec![0.0; SIZE / 2 + 1],
+            window,
+        }
+    }
+}
+
+fn measure_spectrum(
+    audio: &AudioBuffer,
+    start: usize,
+    end: usize,
+    workspace: &mut SpectrumWorkspace,
+) -> DrumSpectrum {
     if end <= start {
         return DrumSpectrum::default();
     }
-    let size = 2048;
+    let size = workspace.data.len();
     let rate = audio.sample_rate();
-    let fft = FftPlanner::new().plan_fft_forward(size);
-    let mut data = vec![Complex::new(0.0f64, 0.0); size];
-    let mut powers = vec![0.0; size / 2 + 1];
+    workspace.powers.fill(0.0);
     for channel in audio.channels() {
         for offset in (start..end).step_by(size / 2) {
-            data.fill(Complex::new(0.0, 0.0));
-            for (i, value) in data.iter_mut().enumerate().take((end - offset).min(size)) {
-                let window = 0.5 - 0.5 * (std::f64::consts::TAU * i as f64 / size as f64).cos();
-                value.re = f64::from(channel[offset + i]) * window;
+            workspace.data.fill(Complex::new(0.0, 0.0));
+            for (i, value) in workspace
+                .data
+                .iter_mut()
+                .enumerate()
+                .take((end - offset).min(size))
+            {
+                value.re = f64::from(channel[offset + i]) * workspace.window[i];
             }
-            fft.process(&mut data);
-            for (power, value) in powers.iter_mut().zip(&data) {
+            workspace
+                .fft
+                .process_with_scratch(&mut workspace.data, &mut workspace.scratch);
+            for (power, value) in workspace.powers.iter_mut().zip(&workspace.data) {
                 *power += value.norm_sqr();
             }
         }
     }
     // DC and sub-audible drift do not identify a drum.
-    for (i, power) in powers.iter_mut().enumerate() {
+    for (i, power) in workspace.powers.iter_mut().enumerate() {
         if i as f64 * rate / (size as f64) < 20.0 {
             *power = 0.0;
         }
     }
-    let total: f64 = powers.iter().sum();
+    let total: f64 = workspace.powers.iter().sum();
     if total <= 1e-30 {
         return DrumSpectrum::default();
     }
@@ -213,7 +252,7 @@ fn measure_spectrum(audio: &AudioBuffer, start: usize, end: usize) -> DrumSpectr
     let mut count = 0;
     let mut strongest = 0usize;
     let mut strongest_low = 0.0;
-    for (i, &power) in powers.iter().enumerate() {
+    for (i, &power) in workspace.powers.iter().enumerate() {
         let hz = i as f64 * rate / size as f64;
         let fraction = power / total;
         result.centroid_hz += hz * fraction;
@@ -230,7 +269,7 @@ fn measure_spectrum(audio: &AudioBuffer, start: usize, end: usize) -> DrumSpectr
             strongest_low = power;
             result.low_peak_hz = hz;
         }
-        if power > powers[strongest] {
+        if power > workspace.powers[strongest] {
             strongest = i;
         }
         if hz >= 40.0 {
@@ -241,7 +280,8 @@ fn measure_spectrum(audio: &AudioBuffer, start: usize, end: usize) -> DrumSpectr
     }
     result.flatness =
         ((logs / count as f64).exp() / (arithmetic / count as f64).max(1e-30)).clamp(0.0, 1.0);
-    result.concentration = powers[strongest.saturating_sub(1)..(strongest + 2).min(powers.len())]
+    result.concentration = workspace.powers
+        [strongest.saturating_sub(1)..(strongest + 2).min(workspace.powers.len())]
         .iter()
         .sum::<f64>()
         / total;

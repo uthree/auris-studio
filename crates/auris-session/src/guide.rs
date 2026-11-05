@@ -1086,8 +1086,15 @@ pub mod architecture {
     //!
     //! [`auris_engine::render_block`] is the single implementation of "produce N frames".
     //! Realtime playback calls it from the device callback; [`auris_engine::render_project`] calls
-    //! it in a loop as fast as the CPU allows. Because there is only one path, an export matches
-    //! what was heard, sample for sample — there is no second implementation that could drift.
+    //! it in a loop as fast as the CPU allows. Both execute the same track DSP, event scheduling,
+    //! automation and delay compensation. Offline rendering groups tracks into dependency
+    //! generations, including outputs, sends and sidechain keys, and uses Rayon for wide
+    //! generations. Workers only modify their own track; the caller then commits outputs in
+    //! stable order before the next generation starts. Reordering independent contributions
+    //! can introduce floating-point roundoff relative to playback, while output length and
+    //! sample timing remain unchanged. Caller-placed plugins stay on the rendering caller's
+    //! thread until their native worker-migration contracts are established. Realtime rendering
+    //! retains the serial routing order and never dispatches to or waits for Rayon.
     //!
     //! # How it gets there: outputs, buses and sends
     //!
@@ -1250,8 +1257,11 @@ pub mod architecture {
     //! **A layer holds no clips.** [`TrackKind::holds_notes`](auris_core::TrackKind::holds_notes)
     //! is `false` for one, which is what keeps every command that writes, pastes or moves notes off
     //! it. Removing the source detaches its layers in the same step:
-    //! [`Session::detach_layer`](crate::Session::detach_layer) copies the source's clips and writes
-    //! the shape into them, so a layer goes on sounding as it did.
+    //! [`Session::detach_layer`](crate::Session::detach_layer) preserves the sound in ordinary
+    //! clips. An identity shape retains the source's editable loops, performance stack and recipe.
+    //! A shaped layer freezes every performed pass before applying its shape, then removes the
+    //! baked stack and recipe. Its curves keep their original reset boundaries; when those differ
+    //! from the frozen note clip's boundaries, separate control clips preserve their timing.
 }
 
 pub mod realtime {
@@ -1321,6 +1331,12 @@ pub mod realtime {
     //! because a delay feeding a reverb keeps feeding it for the whole of its own decay — and for
     //! the same reason a track's tail, its bus's and the master's add end to end. The offline
     //! renderer uses the longest such path to decide how far past the last clip to keep going.
+    //! Before processing, it asks
+    //! [`Effect::tail_frames_with_context`](auris_core::plugin::Effect::tail_frames_with_context)
+    //! with the planned tempo bounds. A synced delay can therefore size its echo at the song's
+    //! tempo without advancing audio or plugin state. The bounds include tempo changes during
+    //! whole-project ring-out; ranged exports stop their transport, and cycle warm-up uses only
+    //! the cycle's tempos. Effects without a tempo-dependent tail retain their ordinary report.
     //!
     //! Both figures come from plugins, so the arithmetic that combines them saturates rather than
     //! wrapping: a plugin reporting an absurd tail should pad an export, not overflow it.
