@@ -1428,6 +1428,12 @@ fn video(args: &[String]) -> Result<(), String> {
                     .parse()
                     .map_err(|_| messages::unknown_option(LANGUAGE, &format!("{option} {text}")))?;
             }
+            "--parallax" => {
+                let text = value(&mut index, option, Key::CliNeedsValue)?;
+                style.parallax = text
+                    .parse()
+                    .map_err(|_| messages::unknown_option(LANGUAGE, &format!("{option} {text}")))?;
+            }
             "--particles" => {
                 let text = value(&mut index, option, Key::CliNeedsValue)?;
                 style.particles = text
