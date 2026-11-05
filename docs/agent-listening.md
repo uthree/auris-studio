@@ -77,5 +77,7 @@ cargo test -p auris-agent --lib local_audio_model_hears_a_rendered_bar -- --igno
 
 On 2026-11-06 both `gemma4:e2b` and `gemma4:e4b` called `listen` as asked and received the
 audio. `e2b` named both directions correctly; `e4b` called
-the falling scale rising. `lfm3-audio`, which cannot think, answered with the panel's medium effort
-dropped and called both scales rising. The path delivers the sound; how well a model hears it is the model's.
+the falling scale rising. `lfm3-audio` and `lfm3-omni`, which cannot think, answered with the
+panel's medium effort dropped; both called `listen`, received the audio and called both scales
+rising. `lfm3` and `lfm3-vl` list no `audio` capability and are not offered the tool. The path
+delivers the sound; how well a model hears it is the model's.
