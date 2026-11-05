@@ -394,7 +394,7 @@ mod tests {
             body["messages"][0]["content"][0]["text"]
                 .as_str()
                 .unwrap()
-                .contains(crate::MUSICAL_DESIGN_INSTRUCTIONS)
+                .contains(&crate::default_system_prompt())
         );
     }
 

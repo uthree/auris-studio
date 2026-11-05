@@ -28,6 +28,73 @@ impl Session {
         self.last_record = None;
     }
 
+    /// Run an agent's command under a phase lock, withdrawing it if it changed locked material.
+    ///
+    /// Withdrawn means gone: the document, the dirty flag and the undo history are as they were
+    /// before the call, so neither the screen nor Undo shows an edit the agent was not allowed to
+    /// make. The error the agent reads names what changed and the phase that may change it.
+    ///
+    /// Read-only commands skip the comparison. So does the agent's own undo and redo, which
+    /// moves history in a way a history mark cannot put back; the lock is on new
+    /// edits, not on stepping through ones already made.
+    pub fn agent_command_locked(
+        &mut self,
+        command: crate::live_agent::Command,
+        lock: Option<&crate::phase::Lock>,
+        plugin_paths: &[std::path::PathBuf],
+    ) -> Result<String, String> {
+        let lock = lock.filter(|_| {
+            command.is_mutating() && !matches!(command, crate::live_agent::Command::History { .. })
+        });
+        self.agent_locked(lock, |session| {
+            session.agent_command_with_plugin_paths(command, plugin_paths)
+        })
+    }
+
+    /// Publish a long job's result under a phase lock, as [`Self::agent_command_locked`] does
+    /// for a command: a job that wrote locked material is withdrawn when it publishes.
+    ///
+    /// A restored checkpoint is exempt for the reason the agent's undo is.
+    pub fn continue_agent_job_locked(
+        &mut self,
+        result: crate::live_agent::AgentResult,
+        lock: Option<&crate::phase::Lock>,
+        cancelled: &std::sync::atomic::AtomicBool,
+    ) -> Result<crate::live_agent::AgentStep, String> {
+        let lock = lock.filter(|_| !matches!(result, crate::live_agent::AgentResult::History(_)));
+        self.agent_locked(lock, |session| {
+            session.continue_agent_job(result, cancelled)
+        })
+    }
+
+    /// Run `apply`, then withdraw everything it did if it changed what `lock` holds fixed.
+    ///
+    /// The one place the comparison lives, for commands, job publications and the workshop's
+    /// direct vocal steps alike. With no lock it is `apply` and nothing more.
+    pub fn agent_locked<T>(
+        &mut self,
+        lock: Option<&crate::phase::Lock>,
+        apply: impl FnOnce(&mut Self) -> Result<T, String>,
+    ) -> Result<T, String> {
+        let Some(lock) = lock else {
+            return apply(self);
+        };
+        let printed = crate::phase::print(&self.project, lock);
+        let before = self.project.clone();
+        let dirty = self.dirty;
+        let mark = self.history.mark();
+        let result = apply(self);
+        let changes =
+            crate::phase::changes(&printed, &crate::phase::print(&self.project, lock), &before);
+        if changes.is_empty() {
+            return result;
+        }
+        self.history.rollback(mark);
+        self.restore_history_project(Edit::ExternalChanges, before);
+        self.dirty = dirty;
+        Err(crate::phase::refusal(lock, &changes))
+    }
+
     pub(crate) fn with_agent_history<T>(
         &mut self,
         apply: impl FnOnce(&mut Self) -> Result<T, String>,

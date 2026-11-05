@@ -500,12 +500,11 @@ denials. Note replacement is allowed inside the new disposable candidate; operat
 interactive approval remain unavailable. No external evaluator or shell setup is required.
 Lyric generation applies it to words and phrase structure without claiming known pitches.
 
-The production sequence lives in `crates/auris-agent/src/prompts/composition.md`;
-`prompts/live-tools.md` retains essential operation contracts such as IDs, revisions,
-note units, lyrics, singer takes and final-render verification. Exact schemas and
-detailed task guidance are obtained through discovery and `tool_help` when needed.
-The experimental modular profile additionally enters production phases
-([composition-workflows.md](composition-workflows.md)).
+The system prompt is the common core in `crates/auris-agent/src/prompts/core.md`:
+IDs, revisions, note units, failure recovery, scope and honesty. The production
+sequence is three phases, each of which returns its own instructions when entered
+([composition-workflows.md](composition-workflows.md)). Exact schemas and detailed
+task guidance are obtained through discovery and `tool_help` when needed.
 The editor panel and workshop composers resolve the same shared prompt; the workshop
 adds its private-session and host-owned export constraints. Codex and Claude Code
 receive the same resolved composition prompt. A composer's policy denies the shell and

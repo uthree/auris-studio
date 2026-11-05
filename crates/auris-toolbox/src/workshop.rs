@@ -21,6 +21,22 @@ conversation_summary, when present, stands in for earlier messages no longer sup
 Do not claim to have heard audio. Do not claim a song or edit exists before workers complete. For unavailable voices or instruments ask about alternatives rather than silently replacing explicit choices.
 Available voices are supplied by the host. Do not invent installed resources. Keep titles under 80 characters, descriptions under 400, instructions under 16000, reply under 4000."#;
 
+/// How the director runs a phased workshop, appended to [`DIRECTOR`].
+pub const DIRECTOR_PHASES: &str = r#"Phased rounds. A direction may carry "phase": "score" for a demo or "finish" to complete a selected demo; without it an assignment produces a finished song in one go.
+For a new song from scratch, unless the user asked for the finished song in one go, first dispatch two or three demos with "phase":"score". Make them genuinely different takes on the brief's melody, harmony and lyrics. A demo has the form, chords, lyrics and the sung melody over one plain guide part, and no arrangement or mix, so it is quick and several can be compared.
+After the user selects a demo (candidate_selected), offer as choices to finish it or to revise its melody, lyrics or chords. A revision is another "phase":"score" assignment continuing the selected demo. To finish, dispatch one assignment with "phase":"finish" continuing the selected demo, describing the sound and the arrangement wanted. "finish" needs a selected demo. Its melody, lyrics, harmony and tempo are locked while it is arranged, so do not ask a finishing assignment to change them; revise the demo first."#;
+
+/// The director's system prompt, with the phased rounds.
+pub fn director() -> String {
+    format!("{DIRECTOR}\n{DIRECTOR_PHASES}")
+}
+
+/// Appended to a demo candidate's assignment.
+pub const DEMO_ROUND: &str = "This candidate is a demo the user compares with others before one is arranged. The score phase is in force: deliver what it describes (form, harmony, lyrics, the foreground melody and its sung take over one plain guide part) and register roles with production_record set_roles. Then stop. Do not choose final sounds, arrange or mix, and skip the mixer pass and the full-mix inspection the general instructions ask for. The host refuses a demo without registered roles.";
+
+/// Appended to the assignment that finishes a selected demo.
+pub const FINISH_ROUND: &str = "The parent is the demo the user selected. Its roles are registered and the arrangement phase is in force: read production_record first. The foreground melody, lyrics, harmony, sections and tempo are locked, and the host withdraws an edit that changes them. Arrange the demo as the arrangement phase describes, replacing its guide part, then enter_phase mix and finish the mix.";
+
 /// Instructions appended to the ordinary live music tool contract for each isolated child.
 pub const COMPOSER: &str = r#"You are one isolated Auris song composer. Your tools edit only your private candidate session.
 Produce the assigned complete, editable music, using Auris tools. Inspect the current score first. If it contains a parent candidate, edit that exact score and preserve everything not requested to change. Never replace or regenerate protected melody or lyrics.

@@ -1668,7 +1668,7 @@ impl Session {
         layout_only
     }
 
-    fn restore_history_project(&mut self, edit: Edit, project: Project) {
+    pub(super) fn restore_history_project(&mut self, edit: Edit, project: Project) {
         if matches!(edit, Edit::MoveMixerNodes | Edit::ArrangeMixerNodes) {
             // Save may since have stamped the build or collected assets. A layout edit must
             // retain those changes as well as live plugin state, rather than adopting its file.

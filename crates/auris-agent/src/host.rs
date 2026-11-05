@@ -86,6 +86,19 @@ impl ToolHost {
         result
     }
 
+    /// Hand an edit to the document's owner, with the phase lock the owner must hold it to.
+    ///
+    /// The lock travels with each edit rather than living in the owner, because the phase is
+    /// this conversation's state: the owner only compares before and after, and withdraws an
+    /// edit that changed what the phase in force keeps fixed.
+    async fn edit(&self, command: Value) -> Result<Value, String> {
+        let mut event = json!({"event":"edit","command":command});
+        if let Some(lock) = self.bridge.phase_lock()? {
+            event["lock"] = json!(lock);
+        }
+        self.bridge.exchange(event).await
+    }
+
     pub(crate) async fn call(&self, name: &str, args: Value) -> Result<Value, String> {
         // Keep approval and execution together even when an MCP client calls in parallel.
         let _guard = self.bridge.tool_lock().await;
@@ -156,10 +169,7 @@ impl ToolHost {
                 &json!({"command":command}).to_string(),
             )
             .await?;
-            return self
-                .bridge
-                .exchange(json!({"event":"edit","command":command}))
-                .await;
+            return self.edit(json!(command)).await;
         }
         if name == toolbox::live_agent::audio_attachment::NAME {
             let args: toolbox::live_agent::audio_attachment::Args =
@@ -210,10 +220,7 @@ impl ToolHost {
                 &json!({"command":command}).to_string(),
             )
             .await?;
-            return self
-                .bridge
-                .exchange(json!({"event":"edit","command":command}))
-                .await;
+            return self.edit(json!(command)).await;
         }
         let command = toolbox::live_agent::command(name, &args)?
             .ok_or_else(|| format!("Unknown live tool: {name}"))?;
@@ -221,10 +228,7 @@ impl ToolHost {
         if let auris_session::live_agent::Command::RepairLyrics { request } = &command {
             self.bridge.reserve_lyric_repair(request)?;
         }
-        let mut reply = self
-            .bridge
-            .exchange(json!({"event":"edit", "command":command}))
-            .await?;
+        let mut reply = self.edit(json!(command)).await?;
         if reply["event"] != "edit_result" {
             return Err("The edit response did not match the pending request".into());
         }
@@ -296,6 +300,48 @@ mod tests {
             .unwrap();
             assert_eq!(operation.mutating, kind != "read");
         }
+    }
+
+    #[tokio::test]
+    async fn edits_carry_the_lock_of_the_phase_in_force() {
+        let (bridge, commands, events) = crate::worker::test_bridge();
+        bridge
+            .inspected_production_document(
+                &mut json!({"revision":"today","document_instance":"instance"}),
+            )
+            .unwrap();
+        let host = ToolHost::new(bridge.clone());
+        let edit = async |expected: Value| {
+            let call = host.call("add_track", json!({"name":"Bass","kind":"instrument"}));
+            let owner = async {
+                let permission = next_event(&events).await;
+                commands
+                    .send(
+                        json!({"event":"permission_result","id":permission["id"],"ok":true})
+                            .to_string(),
+                    )
+                    .unwrap();
+                let edit = next_event(&events).await;
+                assert_eq!(edit["event"], "edit");
+                assert_eq!(edit.get("lock").cloned().unwrap_or(Value::Null), expected);
+                commands
+                    .send(json!({"event":"edit_result","ok":true,"text":"{}"}).to_string())
+                    .unwrap();
+            };
+            let (result, ()) = tokio::join!(call, owner);
+            result.unwrap();
+        };
+        edit(Value::Null).await;
+        for operation in [
+            json!({"kind":"enter_phase","phase":"score","reason":"new song"}),
+            json!({"kind":"set_roles","foreground":[2]}),
+            json!({"kind":"enter_phase","phase":"arrangement","reason":"demo approved"}),
+        ] {
+            bridge
+                .production_record(serde_json::from_value(operation).unwrap())
+                .unwrap();
+        }
+        edit(json!({"phase":"arrangement","foreground":[2]})).await;
     }
 
     #[tokio::test]

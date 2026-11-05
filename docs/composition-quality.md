@@ -222,6 +222,6 @@ The [follow-up report](composition-quality-validation-2026-10-24.md) covers
 conversation records, immutable candidates, scoped variation, modular prompts
 and real backend trials. It retains all 24 holdout deliveries and the six-trial
 development prompt ablation, including recovered tool errors and runtime-smoke
-failures. Human preference remains unscored. The candidate catalog and modular
-prompt stay opt-in; see [candidate tools](composition-candidates.md) and
-[workflow configuration](composition-workflows.md).
+failures. Human preference remains unscored. The candidate catalog stays opt-in;
+the phased prompt is now the default. See [candidate tools](composition-candidates.md)
+and [production phases](composition-workflows.md).

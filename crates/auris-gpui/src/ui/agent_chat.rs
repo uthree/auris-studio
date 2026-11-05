@@ -415,6 +415,9 @@ pub(crate) enum AgentEvent {
     /// A file-free command for the bound session.
     Edit {
         command: serde_json::Value,
+        /// What the conversation's production phase keeps fixed; the edit is withdrawn if it
+        /// changes any of it.
+        lock: Option<auris_session::phase::Lock>,
     },
     /// Previously completed text turns recovered for this project.
     History {
@@ -539,6 +542,10 @@ pub(crate) fn parse_event(line: &str) -> Option<AgentEvent> {
         },
         "edit" => AgentEvent::Edit {
             command: parsed.get("command")?.clone(),
+            lock: match parsed.get("lock") {
+                Some(lock) => Some(serde_json::from_value(lock.clone()).ok()?),
+                None => None,
+            },
         },
         "history" => AgentEvent::History {
             summary: text("summary"),
@@ -1153,6 +1160,8 @@ struct PendingSoundSearch {
 struct PendingAgentJob {
     revision: u64,
     operation: auris_session::agent_policy::Operation,
+    /// The phase lock in force when the job was asked for, which its publication is held to.
+    lock: Option<auris_session::phase::Lock>,
     cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
     receiver: Receiver<Result<auris_session::live_agent::AgentResult, String>>,
 }
@@ -1197,6 +1206,7 @@ fn spawn_agent_job(
     job: auris_session::live_agent::AgentJob,
     revision: u64,
     operation: auris_session::agent_policy::Operation,
+    lock: Option<auris_session::phase::Lock>,
 ) -> Result<PendingAgentJob, String> {
     let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let worker_cancel = cancel.clone();
@@ -1213,6 +1223,7 @@ fn spawn_agent_job(
     Ok(PendingAgentJob {
         revision,
         operation,
+        lock,
         cancel,
         receiver,
     })
@@ -2845,8 +2856,19 @@ impl AurisApp {
         true
     }
 
-    /// Apply one request to the bound document without touching its saved file.
+    /// An edit outside any production phase.
+    #[cfg(test)]
     fn agent_edit(&mut self, command: serde_json::Value) -> Result<String, String> {
+        self.agent_edit_locked(command, None)
+    }
+
+    /// Apply one request to the bound document without touching its saved file, withdrawing it
+    /// if it changes what the conversation's production phase keeps fixed.
+    fn agent_edit_locked(
+        &mut self,
+        command: serde_json::Value,
+        lock: Option<&auris_session::phase::Lock>,
+    ) -> Result<String, String> {
         if self.agent_chat.bound_project.as_deref() != self.session.path() {
             return Err("The open document changed; start a new conversation".into());
         }
@@ -2871,9 +2893,9 @@ impl AurisApp {
         } else {
             None
         };
-        let result = self
-            .session
-            .agent_command_with_plugin_paths(command, &self.settings.plugin_paths)?;
+        let result =
+            self.session
+                .agent_command_locked(command, lock, &self.settings.plugin_paths)?;
         if let Some(suggestion) = suggestion {
             self.agent_chat.issue_suggestion = Some(suggestion);
         }
@@ -3045,7 +3067,11 @@ impl AurisApp {
         Ok(())
     }
 
-    fn start_agent_job(&mut self, command: &serde_json::Value) -> Result<(), String> {
+    fn start_agent_job(
+        &mut self,
+        command: &serde_json::Value,
+        lock: Option<auris_session::phase::Lock>,
+    ) -> Result<(), String> {
         if self.agent_chat.bound_project.as_deref() != self.session.path() {
             return Err("The open document changed; start a new conversation".into());
         }
@@ -3071,7 +3097,7 @@ impl AurisApp {
         let job = self
             .session
             .begin_agent_job(command, self.settings.clone())?;
-        let pending = spawn_agent_job(job, self.session.revision(), operation)?;
+        let pending = spawn_agent_job(job, self.session.revision(), operation, lock)?;
         self.agent_chat
             .link
             .as_mut()
@@ -3096,11 +3122,18 @@ impl AurisApp {
             return;
         };
         let revision = self.session.revision();
-        let result =
-            result.and_then(|result| self.session.continue_agent_job(result, &pending.cancel));
+        let result = result.and_then(|result| {
+            self.session
+                .continue_agent_job_locked(result, pending.lock.as_ref(), &pending.cancel)
+        });
         let response = match result {
             Ok(auris_session::live_agent::AgentStep::Work(job)) => {
-                match spawn_agent_job(job, revision, pending.operation.clone()) {
+                match spawn_agent_job(
+                    job,
+                    revision,
+                    pending.operation.clone(),
+                    pending.lock.clone(),
+                ) {
                     Ok(next) => {
                         if let Some(link) = self.agent_chat.link.as_mut() {
                             link.job = Some(next);
@@ -3357,11 +3390,11 @@ impl AurisApp {
                 cx.notify();
                 continue;
             }
-            if let AgentEvent::Edit { command } = event {
+            if let AgentEvent::Edit { command, lock } = event {
                 if serde_json::from_value::<auris_session::live_agent::Command>(command.clone())
                     .is_ok_and(|command| command.needs_worker())
                 {
-                    if let Err(error) = self.start_agent_job(&command)
+                    if let Err(error) = self.start_agent_job(&command, lock)
                         && let Some(link) = &self.agent_chat.link
                     {
                         let _ = link.send(
@@ -3405,7 +3438,7 @@ impl AurisApp {
                     continue;
                 }
                 let revision = self.session.revision();
-                let result = self.agent_edit(command);
+                let result = self.agent_edit_locked(command, lock.as_ref());
                 let ok = result.is_ok();
                 let text = result.unwrap_or_else(|error| error);
                 let wire = serde_json::json!({"event": "edit_result", "ok": ok, "text": text});
@@ -5960,6 +5993,7 @@ mod tests {
             let pending = PendingAgentJob {
                 revision: 1,
                 operation,
+                lock: None,
                 cancel: cancel.clone(),
                 receiver,
             };
@@ -5988,6 +6022,7 @@ mod tests {
         let pending = PendingAgentJob {
             revision: 1,
             operation,
+            lock: None,
             cancel: cancel.clone(),
             receiver,
         };
@@ -6887,7 +6922,7 @@ mod tests {
             let before = this.project().clone();
             assert!(this.session.path().is_none());
             let event = parse_event(r#"{"event":"edit","command":{"action":"add_track","name":"Agent lead","kind":"instrument"}}"#).unwrap();
-            let AgentEvent::Edit { command } = event else { panic!() };
+            let AgentEvent::Edit { command, .. } = event else { panic!() };
             this.agent_edit(command).unwrap();
             assert!(this.project().tracks.iter().any(|track| track.name == "Agent lead"));
             assert!(this.session.is_dirty());

@@ -92,8 +92,7 @@ impl Bridge {
 
     pub(crate) fn production_record(&self, operation: Operation) -> Result<Value, String> {
         let write = !matches!(operation, Operation::Read);
-        let instructions = toolbox::composition_workflows::enabled()
-            && matches!(operation, Operation::Read | Operation::EnterPhase { .. });
+        let instructions = matches!(operation, Operation::Read | Operation::EnterPhase { .. });
         self.with_production(
             |state| {
                 if !state.document["revision"].is_string() {
@@ -101,7 +100,9 @@ impl Bridge {
                         "Call inspect_project before reading or updating production_record".into(),
                     );
                 }
-                state.record.update(operation)?;
+                state
+                    .record
+                    .update_with_document(operation, &state.document)?;
                 let mut view = record_view(&state.record, &state.document, instructions)?;
                 view["persistence"] = json!(if state.history.is_some() {
                     "conversation"
@@ -114,6 +115,27 @@ impl Bridge {
         )
     }
 
+    /// The record as it stands, for a host that keeps it beside the document it describes.
+    pub(crate) fn production_snapshot(&self) -> Result<Record, String> {
+        self.with_production(|state| Ok(state.record.clone()), false)
+    }
+
+    /// Start from a record a host kept, before the model's first turn.
+    pub(crate) fn seed_production(&self, record: Record) -> Result<(), String> {
+        self.with_production(
+            |state| {
+                state.record = record;
+                Ok(())
+            },
+            false,
+        )
+    }
+
+    /// What the phase in force keeps fixed, for the owner to hold an edit to.
+    pub(crate) fn phase_lock(&self) -> Result<Option<auris_session::phase::Lock>, String> {
+        self.with_production(|state| Ok(state.record.lock()), false)
+    }
+
     pub(crate) fn inspected_production_document(&self, document: &mut Value) -> Result<(), String> {
         let view = self.with_production(
             |state| {
@@ -122,6 +144,11 @@ impl Bridge {
             },
             false,
         )?;
+        // Per-bar digests are for the record to compare, not for the model to read: several
+        // kilobytes of hex in every inspection would crowd out what the model needs.
+        if let Some(facts) = document["phase_facts"].as_object_mut() {
+            facts.remove("score_bars");
+        }
         document["production_record"] = view;
         Ok(())
     }

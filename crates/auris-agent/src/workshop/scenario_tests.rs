@@ -77,6 +77,7 @@ fn candidate(id: u64, parent: Option<u64>, ready: bool) -> Candidate {
             instructions: "Preserve the notes and apply only the requested timeline edit.".into(),
             protected_tracks: vec![1],
             sources: vec![],
+            phase: None,
         },
         error: None,
         recoveries: 0,
@@ -91,11 +92,12 @@ fn seed(store: &Store, selected: Option<u64>) {
     execute(
         &mut session,
         json!({"action":"add_track","name":"Original drums","kind":"drum"}),
+        None,
         &Settings::default(),
         &cancel,
     )
     .unwrap();
-    execute(&mut session, json!({"action":"generate_phrase","track":1,"part":"drums","start_bar":1,"bars":2,"seed":42}), &Settings::default(), &cancel).unwrap();
+    execute(&mut session, json!({"action":"generate_phrase","track":1,"part":"drums","start_bar":1,"bars":2,"seed":42}), None, &Settings::default(), &cancel).unwrap();
     let first = candidate(1, None, true);
     session
         .finish_workshop_candidate(&store.candidate_path(1), idea(&first.direction), &cancel)
@@ -652,4 +654,60 @@ fn selected_song_revisions_accumulate_across_reopening() {
         open_score(&store, 1).project().tracks
     );
     assert_eq!(song_bytes(&store, 1), original);
+}
+
+#[test]
+fn a_composer_that_finishes_with_lint_warnings_is_sent_back_a_bounded_number_of_times() {
+    use auris_session::prelude::{Note, Ticks};
+    let directory = tempfile::tempdir().unwrap();
+    let store = Store::new(directory.path().into());
+    seed(&store, Some(1));
+    // A duplicated note on a track the direction does not protect: a warning the composer
+    // never fixes here.
+    let mut parent = open_score(&store, 1);
+    let keys = parent.add_default_instrument_track("Keys").unwrap();
+    let clip = parent
+        .add_midi_clip(keys, "Chords", Ticks::ZERO, Ticks(3840))
+        .unwrap();
+    let note = Note::new(60, Ticks::ZERO, Ticks(480));
+    parent
+        .replace_notes(clip, vec![note.clone(), note])
+        .unwrap();
+    parent
+        .finish_workshop_candidate(
+            &store.candidate_path(1),
+            idea(&candidate(1, None, true).direction),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+    let (url, _) = crate::tests::mock_server(vec![
+        director(),
+        edit(json!({"kind":"set_tempo","at_tick":0,"bpm":90.0})),
+        answer(),
+        answer(),
+        answer(),
+    ]);
+    let running = Running::start(store.clone());
+    running
+        .commands
+        .send(Command::Send(
+            "Slow this song to 90 BPM.".into(),
+            Box::new(prefs(url)),
+            vec![],
+        ))
+        .unwrap();
+    let finished = running.finished(2);
+    let made = &finished.document.rounds[1].candidates[0];
+    assert!(made.ready, "{:?}", made.error);
+    let log =
+        std::fs::read_to_string(store.candidate_path(made.id).join(composer_log::FILE)).unwrap();
+    let kinds: Vec<String> = log
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .filter_map(|entry| entry["kind"].as_str().map(str::to_owned))
+        .filter(|kind| kind == "send_back" || kind == "unresolved")
+        .collect();
+    assert_eq!(kinds, ["send_back", "send_back", "unresolved"]);
+    assert!(log.contains("duplicate_note"));
+    assert_eq!(open_score(&store, made.id).project().bpm(), 90.0);
 }

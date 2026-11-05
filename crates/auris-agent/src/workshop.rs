@@ -1489,6 +1489,72 @@ fn wait_for_recovery(count: u32, cancel: &AtomicBool) -> bool {
     !cancel.load(Ordering::Acquire)
 }
 
+/// A finished candidate's production record, beside its song, for a candidate continuing it.
+const RECORD: &str = "production.json";
+/// The record as of the latest checkpoint, which a recovery resumes.
+const CHECKPOINT_RECORD: &str = "checkpoint/production.json";
+
+/// The production record a candidate starts from, given its round and its parent's record.
+///
+/// A demo enters the score phase, keeping a parent demo's roles when it revises one. A finishing
+/// candidate enters the arrangement on its parent's record, so the demo's melody, harmony and
+/// tempo are locked while it is arranged; a parent with no registered roles cannot be finished.
+/// An assignment outside a phased round starts with no record, as before.
+fn round_record(
+    phase: Option<auris_session::workshop::RoundPhase>,
+    parent: Option<auris_session::production_record::Record>,
+) -> Result<Option<auris_session::production_record::Record>, String> {
+    use auris_session::production_record::{Operation, Phase};
+    use auris_session::workshop::RoundPhase;
+    let (mut record, phase, reason) = match phase {
+        None => return Ok(None),
+        Some(RoundPhase::Score) => (
+            parent.unwrap_or_default(),
+            Phase::Score,
+            "Workshop demo round: the user compares demos before one is arranged",
+        ),
+        Some(RoundPhase::Finish) => {
+            let record = parent
+                .filter(|record| record.roles.is_some())
+                .ok_or("Only a demo with registered roles can be finished; select a demo first")?;
+            (
+                record,
+                Phase::Arrangement,
+                "Workshop: the user selected this demo to be arranged and mixed",
+            )
+        }
+    };
+    record.update(Operation::EnterPhase {
+        phase,
+        reason: reason.into(),
+        writing_order: None,
+    })?;
+    Ok(Some(record))
+}
+
+/// Where a candidate's production record is, given the song file a child opens as its parent.
+fn parent_record_path(song: Option<&std::path::Path>) -> Option<PathBuf> {
+    Some(song?.parent()?.parent()?.join(RECORD))
+}
+
+fn read_record(
+    path: &std::path::Path,
+) -> Result<auris_session::production_record::Record, AttemptError> {
+    let bytes = std::fs::read(path).map_err(|e| AttemptError::permanent(e.to_string()))?;
+    serde_json::from_slice(&bytes)
+        .map_err(|e| AttemptError::permanent(format!("Production record is unreadable: {e}")))
+}
+
+fn keep_record(worker: &crate::Worker, path: &std::path::Path) -> Result<(), AttemptError> {
+    let record = worker.production_record()?;
+    let bytes = serde_json::to_vec(&record).map_err(|e| AttemptError::permanent(e.to_string()))?;
+    if let Some(folder) = path.parent() {
+        std::fs::create_dir_all(folder).map_err(|e| AttemptError::permanent(e.to_string()))?;
+    }
+    auris_session::settings::write_config_bytes(path, &bytes)
+        .map_err(|e| AttemptError::permanent(e.to_string()))
+}
+
 fn save_checkpoint(session: &mut Session, folder: &std::path::Path) -> Result<(), AttemptError> {
     let path = folder.join("checkpoint/checkpoint.auris");
     if session.path() == Some(path.as_path()) {
@@ -1664,8 +1730,8 @@ fn compose(
             .set_japanese_dictionary(Some(dictionary))
             .map_err(|e| e.to_string())?;
     }
-    if let Some(parent) = parent {
-        let missing = session.open(&parent).map_err(|e| e.to_string())?;
+    if let Some(parent) = &parent {
+        let missing = session.open(parent).map_err(|e| e.to_string())?;
         if !missing.is_empty() {
             return Err(AttemptError::permanent(
                 "Parent candidate has missing assets",
@@ -1696,10 +1762,10 @@ fn compose(
         Ok(())
     };
     let checkpoint = folder.join("checkpoint/checkpoint.auris");
-    if checkpoint
+    let checkpoint_exists = checkpoint
         .try_exists()
-        .map_err(|e| AttemptError::permanent(e.to_string()))?
-    {
+        .map_err(|e| AttemptError::permanent(e.to_string()))?;
+    if checkpoint_exists {
         let missing = session
             .open(&checkpoint)
             .map_err(|e| AttemptError::permanent(e.to_string()))?;
@@ -1728,6 +1794,22 @@ fn compose(
         auris_toolbox::workshop::COMPOSER
     );
     let worker = crate::Worker::spawn(prefs.clone(), None, true, None)?;
+    let kept = folder.join(CHECKPOINT_RECORD);
+    let record = if checkpoint_exists && kept.is_file() {
+        // A recovery resumes the record its checkpoint was saved with, phase and roles included.
+        Some(read_record(&kept)?)
+    } else {
+        // The parent's record sits beside its song: <candidate>/song/song.auris and
+        // <candidate>/production.json.
+        let parent_record = match parent_record_path(parent.as_deref()) {
+            Some(path) if path.is_file() => Some(read_record(&path)?),
+            _ => None,
+        };
+        round_record(candidate.direction.phase, parent_record).map_err(AttemptError::permanent)?
+    };
+    if let Some(record) = record {
+        worker.seed_production_record(record)?;
+    }
     let mut previews = preview::Renderer::start(candidate.id, sender.clone())?;
     if candidate.direction.protected_tracks.len() > 128
         || candidate
@@ -1746,6 +1828,10 @@ fn compose(
         "candidates":candidate.direction.sources,
         "instruction":"These earlier versions are loaded read-only. To bring material back, call source_material list, then restore the named clips exactly; never rewrite remembered notes. Re-sing restored singer clips."
     })),
+    "phase":candidate.direction.phase.map(|phase| match phase {
+        auris_session::workshop::RoundPhase::Score => auris_toolbox::workshop::DEMO_ROUND,
+        auris_session::workshop::RoundPhase::Finish => auris_toolbox::workshop::FINISH_ROUND,
+    }),
     "recovery":candidate.error.as_ref().map(|error| json!({
         "last_error":error,
         "instruction":"Inspect the restored score and current resources. Continue only unfinished work; do not duplicate successful edits. Correct the cause of the last failure before completing."
@@ -1772,8 +1858,9 @@ fn compose(
         &json!({"say": assignment.to_string(),"policy":prefs.policy,"attachments":references})
             .to_string(),
     )?;
-    let deadline = Instant::now() + Duration::from_secs(900);
+    let mut deadline = Instant::now() + Duration::from_secs(900);
     let mut denials = 0;
+    let mut lint_sends = 0;
     let mut last_failure = String::new();
     let mut tool_calls = BTreeMap::new();
     let completion = loop {
@@ -1855,10 +1942,24 @@ fn compose(
                     _ => "arrange",
                 };
                 let _ = sender.send(JobEvent::Progress(candidate.id, stage.into()));
-                let result = execute(&mut session, event["command"].clone(), &settings, cancel);
+                let lock = match event.get("lock") {
+                    Some(lock) => Some(
+                        serde_json::from_value::<auris_session::phase::Lock>(lock.clone())
+                            .map_err(|e| e.to_string())?,
+                    ),
+                    None => None,
+                };
+                let result = execute(
+                    &mut session,
+                    event["command"].clone(),
+                    lock.as_ref(),
+                    &settings,
+                    cancel,
+                );
                 if result.is_ok() && session.is_dirty() {
                     validate_protected(&session)?;
                     save_checkpoint(&mut session, &folder)?;
+                    keep_record(&worker, &folder.join(CHECKPOINT_RECORD))?;
                 }
                 let reply = match result {
                     Ok(text) if action == "inspect_audio" => {
@@ -1880,6 +1981,28 @@ fn compose(
             }
             "result" if event["ok"] == true => last_failure.clear(),
             "answer" => {
+                // A composer that reports done with warnings left, or with a song short of
+                // what its phases require, is sent back to them a bounded number of times:
+                // instructions alone are skipped by models that finish fast. What still remains
+                // after that is logged, not refused.
+                let structure =
+                    unmet_structure(&worker.production_record()?, &session, &candidate.direction);
+                let lint = session.unresolved_lint(LINT_SEND_BACK_FINDINGS);
+                if lint.is_some() || !structure.is_empty() {
+                    let unresolved = json!({"lint":lint,"structure":structure});
+                    if lint_sends < SEND_BACKS {
+                        lint_sends += 1;
+                        log.note("send_back", unresolved.clone());
+                        let _ = sender.send(JobEvent::Progress(candidate.id, "arrange".into()));
+                        deadline += Duration::from_secs(300);
+                        worker.send(
+                            &json!({"say": send_back(&unresolved).to_string(),"policy":prefs.policy})
+                                .to_string(),
+                        )?;
+                        continue;
+                    }
+                    log.note("unresolved", unresolved);
+                }
                 break event["text"]
                     .as_str()
                     .unwrap_or_default()
@@ -1908,6 +2031,14 @@ fn compose(
     drop(previews);
     session.end_agent_request();
     validate_protected(&session)?;
+    let record = worker.production_record()?;
+    if candidate.direction.phase == Some(auris_session::workshop::RoundPhase::Score)
+        && record.roles.is_none()
+    {
+        log.note("demo_without_roles", json!(null));
+        return Err("The demo did not register its foreground with production_record set_roles; finishing it needs the roles".into());
+    }
+    keep_record(&worker, &folder.join(RECORD))?;
     if session.project() == &before {
         log.note("unchanged", json!(null));
         return Err(format!(
@@ -1929,6 +2060,42 @@ fn compose(
         .map_err(Into::into)
 }
 
+/// How many times a composer is sent back to an unfinished song before it is taken as it is.
+const SEND_BACKS: usize = 2;
+
+/// How many lint findings a send-back lists; the counts by rule cover the rest.
+const LINT_SEND_BACK_FINDINGS: usize = 12;
+
+/// What a song reported finished still lacks: the unmet structural checks of every phase its
+/// record reached, and, for anything but a demo, the mix phase itself.
+fn unmet_structure(
+    record: &auris_session::production_record::Record,
+    session: &Session,
+    direction: &Direction,
+) -> Vec<serde_json::Value> {
+    use auris_session::production_record::Phase;
+    let mut unmet = auris_session::production_record::unmet_structure(record, session);
+    let demo = direction.phase == Some(auris_session::workshop::RoundPhase::Score);
+    if !demo
+        && record
+            .phase
+            .as_ref()
+            .is_some_and(|state| state.reached < Phase::Mix)
+    {
+        unmet.push(json!({"check":"mix_reached","unmet":["the song was not arranged and mixed: enter the arrangement and mix phases"]}));
+    }
+    unmet
+}
+
+/// The message that sends a composer back to what its finished song still lacks.
+fn send_back(unresolved: &serde_json::Value) -> serde_json::Value {
+    json!({
+        "host_check": "The host checked the song you reported finished and found it incomplete: lint warnings or errors that remain, structural phase checks that are unmet, or both. Complete it now, then finish with your final report again.",
+        "unresolved": unresolved,
+        "instruction": "For structure, do the missing work the assignment asks for: write the remaining sections, melody and lyrics, replace the guide, arrange and mix; production_record read lists the phase checks. For lint, run lint_project for the full list with ids; apply_lint_fixes takes the obvious fixes, and a finding without one needs your own edit. A change to locked material needs enter_phase to the phase that owns it, with this check as the reason. A warning you keep on purpose: name it and say why in your final report. Do not redo finished work.",
+    })
+}
+
 fn audio_gate(cancel: &AtomicBool) -> Result<std::sync::MutexGuard<'static, ()>, String> {
     loop {
         if cancel.load(Ordering::Acquire) {
@@ -1945,6 +2112,7 @@ fn audio_gate(cancel: &AtomicBool) -> Result<std::sync::MutexGuard<'static, ()>,
 fn execute(
     session: &mut Session,
     command: serde_json::Value,
+    lock: Option<&auris_session::phase::Lock>,
     settings: &Settings,
     cancel: &AtomicBool,
 ) -> Result<String, String> {
@@ -2013,13 +2181,13 @@ fn execute(
         let mut job = session.begin_agent_vocal(command, settings.clone())?;
         loop {
             let result = job.run(cancel)?;
-            match session.continue_agent_vocal(result)? {
+            match session.agent_locked(lock, |session| session.continue_agent_vocal(result))? {
                 auris_session::live_agent::VocalStep::Work(next) => job = *next,
                 auris_session::live_agent::VocalStep::Done(text) => return Ok(text),
             }
         }
     }
-    session.agent_command_with_plugin_paths(command, &settings.plugin_paths)
+    session.agent_command_locked(command, lock, &settings.plugin_paths)
 }
 
 #[cfg(test)]
@@ -2034,6 +2202,46 @@ mod tests {
             assert!(std::time::Instant::now() < deadline, "no snapshot");
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
+    }
+
+    #[test]
+    fn a_demo_starts_in_the_score_and_finishing_it_locks_its_melody() {
+        use auris_session::production_record::{Operation, Phase};
+        use auris_session::workshop::RoundPhase;
+        assert!(super::round_record(None, None).unwrap().is_none());
+
+        let demo = super::round_record(Some(RoundPhase::Score), None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(demo.phase.as_ref().unwrap().phase, Phase::Score);
+        assert_eq!(demo.lock(), None);
+        // A demo the composer never registered roles for cannot be finished.
+        assert!(super::round_record(Some(RoundPhase::Finish), Some(demo.clone())).is_err());
+        assert!(super::round_record(Some(RoundPhase::Finish), None).is_err());
+
+        let mut registered = demo;
+        registered
+            .update(Operation::SetRoles {
+                foreground: vec![2],
+                guide: vec![4],
+                no_foreground: None,
+            })
+            .unwrap();
+        let finish = super::round_record(Some(RoundPhase::Finish), Some(registered.clone()))
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            finish.lock(),
+            Some(auris_session::phase::Lock::Arrangement {
+                foreground: vec![2]
+            })
+        );
+        assert_eq!(finish.roles.as_ref().unwrap().guide, vec![4]);
+        // Revising a demo keeps its roles and stays unlocked.
+        let revised = super::round_record(Some(RoundPhase::Score), Some(registered))
+            .unwrap()
+            .unwrap();
+        assert!(revised.roles.is_some() && revised.lock().is_none());
     }
 
     #[test]
@@ -2435,6 +2643,7 @@ mod tests {
         execute(
             &mut session,
             json!({"action":"add_track","name":"Original drums","kind":"drum"}),
+            None,
             &Settings::default(),
             &cancel,
         )
@@ -2442,6 +2651,7 @@ mod tests {
         execute(
             &mut session,
             json!({"action":"generate_phrase","track":1,"part":"drums","start_bar":1,"bars":2,"seed":42}),
+            None,
             &Settings::default(),
             &cancel,
         ).unwrap();
@@ -2812,6 +3022,7 @@ mod tests {
                 instructions: "Create a short chiptune instrumental".into(),
                 protected_tracks: vec![],
                 sources: vec![],
+                phase: None,
             },
         }
     }
@@ -2845,11 +3056,12 @@ mod tests {
         execute(
             &mut session,
             json!({"action":"add_track","name":"Kit","kind":"drum"}),
+            None,
             &Settings::default(),
             &cancel,
         )
         .unwrap();
-        execute(&mut session, json!({"action":"generate_phrase","track":1,"part":"drums","start_bar":1,"bars":2,"seed":42}), &Settings::default(), &cancel).unwrap();
+        execute(&mut session, json!({"action":"generate_phrase","track":1,"part":"drums","start_bar":1,"bars":2,"seed":42}), None, &Settings::default(), &cancel).unwrap();
         let song = session
             .finish_workshop_candidate(
                 &store.candidate_path(1),
@@ -3122,11 +3334,12 @@ mod tests {
         execute(
             &mut session,
             json!({"action":"add_track","name":"Kit","kind":"drum"}),
+            None,
             &Settings::default(),
             &cancel,
         )
         .unwrap();
-        execute(&mut session, json!({"action":"generate_phrase","track":1,"part":"drums","start_bar":1,"bars":2,"seed":42}), &Settings::default(), &cancel).unwrap();
+        execute(&mut session, json!({"action":"generate_phrase","track":1,"part":"drums","start_bar":1,"bars":2,"seed":42}), None, &Settings::default(), &cancel).unwrap();
         save_checkpoint(&mut session, &folder).unwrap();
         let original = session.project().tracks.clone();
         drop(session);
@@ -3292,6 +3505,10 @@ mod tests {
             crate::tests::completion(&phrase, "tool_calls"),
             crate::tests::completion(&inspect, "tool_calls"),
             crate::tests::completion(&answer, "stop"),
+            // A two-bar drum sketch with no sections or roles is sent back twice for its
+            // structure, then kept as it is.
+            crate::tests::completion(&answer, "stop"),
+            crate::tests::completion(&answer, "stop"),
         ]);
         let prefs = AgentPreferences {
             provider: "openai".into(),
@@ -3314,8 +3531,9 @@ mod tests {
         .unwrap();
         assert!(result.audio.peak() > 1e-8);
         assert!(dir.path().join("1/song/song.auris").is_file());
-        assert_eq!(seen.lock().unwrap().len(), 6);
+        assert_eq!(seen.lock().unwrap().len(), 8);
         assert!(seen.lock().unwrap()[1].contains("worker_lifetime"));
+        assert!(seen.lock().unwrap()[6].contains("roles_registered"));
         let events: Vec<_> = receiver.try_iter().collect();
         let completed: Vec<_> = events
             .iter()
@@ -3404,6 +3622,7 @@ mod tests {
         let error = execute(
             &mut session,
             json!({"action":"render","path":"untrusted.wav"}),
+            None,
             &Settings::default(),
             &AtomicBool::new(false),
         )

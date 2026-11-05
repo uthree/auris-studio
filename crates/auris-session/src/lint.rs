@@ -691,6 +691,30 @@ mod tests {
     }
 
     #[test]
+    fn unresolved_warnings_are_counted_for_hosts_and_inspections_until_suppressed() {
+        let (mut session, _, _) = session();
+        let unresolved = session.unresolved_lint(1).unwrap();
+        assert_eq!(unresolved["warnings_and_errors"], 2);
+        assert_eq!(unresolved["by_rule"]["duplicate_note"], 2);
+        assert_eq!(unresolved["diagnostics"].as_array().unwrap().len(), 1);
+        assert_eq!(unresolved["diagnostics"][0]["track_name"], "Keys");
+        assert_eq!(
+            crate::production_record::phase_facts(&session)["lint"]["by_rule"]["duplicate_note"],
+            2
+        );
+        session.suppress_lint(LintSuppression {
+            rule: None,
+            scope: LintScope::Song,
+            reason: "kept on purpose".into(),
+        });
+        assert!(session.unresolved_lint(1).is_none());
+        assert_eq!(
+            crate::production_record::phase_facts(&session)["lint"]["warnings_and_errors"],
+            0
+        );
+    }
+
+    #[test]
     fn suppressions_travel_with_the_saved_document() {
         let (mut session, tracks, _) = session();
         let suppression = LintSuppression {

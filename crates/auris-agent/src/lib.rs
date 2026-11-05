@@ -326,10 +326,14 @@ fn parse_command(
 /// Musical principles shared by live composition, startup directions and lyric writing.
 const MUSICAL_DESIGN_INSTRUCTIONS: &str = include_str!("prompts/musical-design.md");
 
-/// Built-in shared live-agent prompt for the active prompt profile.
+/// Built-in shared live-agent prompt: the common core of every composition phase.
 /// Settings displays this text when no replacement has been saved.
+///
+/// It carries only the rules that hold in every phase. What a phase asks for — its musical
+/// guidance, its tool essentials and its technique index — comes back from `enter_phase`, so a
+/// model carries the phase it is in and not the other two.
 pub fn default_system_prompt() -> String {
-    preamble_for_profile(toolbox::composition_workflows::enabled())
+    include_str!("prompts/core.md").to_owned()
 }
 
 /// Resolves the user's replacement prompt, preserving its text exactly unless blank.
@@ -361,24 +365,6 @@ pub fn live_system_prompt(prefs: &auris_session::AgentPreferences) -> String {
 #[cfg(test)]
 fn preamble() -> String {
     default_system_prompt()
-}
-
-/// The system prompt for one profile.
-///
-/// The phased profile carries only the common core: the rules that hold in every phase. What a
-/// phase asks for — its musical guidance, its tool essentials and its technique index — comes
-/// back from `enter_phase`, so a model carries the phase it is in and not the other two. The
-/// legacy profile is kept whole, as the baseline the phased one is measured against.
-fn preamble_for_profile(modular: bool) -> String {
-    if modular {
-        return include_str!("prompts/core.md").to_owned();
-    }
-    format!(
-        "{}\n{}\n{}",
-        include_str!("prompts/composition.md"),
-        MUSICAL_DESIGN_INSTRUCTIONS,
-        include_str!("prompts/live-tools.md")
-    )
 }
 
 /// A tool's refusal, carried as an error the runtime can classify.
@@ -1453,7 +1439,6 @@ mod tests {
         let sent = body["messages"][0]["content"][0]["text"].as_str().unwrap();
         assert!(sent.starts_with(&default_system_prompt()));
         assert!(sent.contains(&format!("Auris Studio {}", env!("CARGO_PKG_VERSION"))));
-        assert!(default_system_prompt().contains(MUSICAL_DESIGN_INSTRUCTIONS));
     }
 
     #[tokio::test]
@@ -1503,46 +1488,26 @@ mod tests {
     }
 
     #[test]
-    fn experimental_prompt_keeps_safety_contracts_and_the_same_catalog() {
-        let catalog = host::ToolHost::definitions()
-            .iter()
-            .map(|t| t.name.clone())
-            .collect::<Vec<_>>();
-        let modular = preamble_for_profile(true);
-        let legacy = preamble_for_profile(false);
-        assert_eq!(legacy.matches(MUSICAL_DESIGN_INSTRUCTIONS).count(), 1);
-        // The phased core leaves the musical guidance to the phase instructions.
-        assert!(!modular.contains(MUSICAL_DESIGN_INSTRUCTIONS));
+    fn the_common_core_keeps_safety_contracts_and_leaves_music_to_the_phases() {
+        let core = default_system_prompt();
+        // The musical guidance arrives with each phase's instructions, not in the core.
+        assert!(!core.contains(MUSICAL_DESIGN_INSTRUCTIONS));
         assert!(
-            modular.len() < 4500,
+            core.len() < 4500,
             "The common core grew to {} bytes",
-            modular.len()
+            core.len()
         );
-        for text in [&modular, &legacy] {
-            assert!(
-                text.len() < 16000,
-                "Shared prompt grew to {} bytes",
-                text.len()
-            );
-            for contract in [
-                "inspect_project",
-                "read_notes",
-                "expected_revision",
-                "0..1",
-                "production_record",
-                "Human listening",
-            ] {
-                assert!(text.contains(contract), "Missing {contract}");
-            }
+        for contract in [
+            "inspect_project",
+            "read_notes",
+            "expected_revision",
+            "0..1",
+            "production_record",
+            "Human listening",
+            "enter_phase",
+        ] {
+            assert!(core.contains(contract), "Missing {contract}");
         }
-        assert!(modular.contains("enter_phase"));
-        assert_eq!(
-            catalog,
-            host::ToolHost::definitions()
-                .iter()
-                .map(|t| t.name.clone())
-                .collect::<Vec<_>>()
-        );
     }
     use super::*;
 
