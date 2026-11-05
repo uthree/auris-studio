@@ -2493,6 +2493,7 @@ new のオプション
     AgentApprovalInternet { en: "Searches the internet.", ja: "インターネットを検索します。" }
     AgentApprovalReplaces { en: "May remove or replace existing content in this song.", ja: "曲の既存の内容を削除または置き換える可能性があります。" }
     AgentApprovalEdits { en: "Edits this song.", ja: "曲を編集します。" }
+    AgentApprovalIgnoreLint { en: "Ignores a lint finding and records why.", ja: "理由を記録して、Lint の指摘を無視します。" }
     AgentBypassWarning { en: "Bypass: the agent runs operations without asking. Deny rules still apply.", ja: "バイパス中：エージェントは確認なしで操作を実行します。禁止ルールは引き続き有効です。" }
     AgentAwaitingApproval { en: "Waiting for approval", ja: "操作の承認待ち" }
     AgentCompact { en: "Summarize context", ja: "会話を要約" }
@@ -2575,6 +2576,11 @@ new のオプション
     AgentSlashDefault { en: "Reset an operation rule", ja: "許可ルールを標準に戻す" }
     AgentSlashCompact { en: "Summarize earlier context", ja: "過去の会話を要約" }
     AgentSlashHelp { en: "Show available commands", ja: "使えるコマンドを表示" }
+    AgentSlashCompose { en: "Compose the whole song: score, arrangement and mix", ja: "曲を最後まで作る（スコア・アレンジ・ミックス）" }
+    AgentSlashDraft { en: "Write a demo: the melody over plain chords", ja: "デモを作る（メロディーとコード伴奏だけ）" }
+    AgentSlashMix { en: "Mix the open song, keeping its notes and sounds", ja: "音符と音色はそのままでミックスする" }
+    AgentSlashReview { en: "Review the song and propose fixes, without editing", ja: "曲を点検して修正案を出す（編集はしない）" }
+    AgentSlashNeedsBrief { en: "Describe the song after {command}.", ja: "{command} の後に、作りたい曲の説明を書いてください。" }
     AgentSlashUnknown { en: "Unknown command. Use /help to see available commands.", ja: "不明なコマンドです。/help で使えるコマンドを確認できます。" }
     AgentSlashWorkshopOnlyPanel { en: "This command is available in the agent panel. Use /help for song conversation commands.", ja: "このコマンドはエージェントパネルで使えます。曲作成で使えるコマンドは /help で確認できます。" }
     AgentSlashBusy { en: "Stop the current task before changing model settings.", ja: "モデル設定を変えるには、実行中の処理を停止してください。" }

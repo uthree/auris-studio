@@ -22,6 +22,8 @@ pub mod song_authoring;
 pub mod song_ideas;
 pub mod timbre_names;
 pub mod workshop;
+/// The chat's composition commands, which the desktop turns into assignments.
+pub use toolbox::phase_commands::PhaseCommand;
 
 use std::io::Read;
 use std::path::PathBuf;

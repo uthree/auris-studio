@@ -554,6 +554,32 @@ separate. Approval-review and audio-critic instructions are independent. Saved-f
 MCP uses its own instructions. Custom prompts count toward the local model's
 context budget just like the standard prompt.
 
+## Composition commands
+
+Four slash commands in the Agent panel start a production at a chosen phase. The transcript
+shows what was typed; the model receives an assignment built by
+`auris_toolbox::phase_commands`, followed by the user's text. The assignment names where
+the work starts and stops and sends the model through `enter_phase`, which returns that
+phase's instructions, so the phase text lives in one place.
+
+| Command | What it asks for |
+| --- | --- |
+| `/compose <brief>` | The whole song in one go: score, then arrangement, then mix, without stopping at the demo. |
+| `/draft <brief>` | A demo: the score phase only, with the foreground melody over one plain chord part and roles registered. It stops there and asks whether to arrange or revise. |
+| `/mix [direction]` | The mix phase on the open song. Roles are registered from the song as it stands when there are none, and the phase lock keeps every note, sound and performance. A fix that needs an earlier phase is reported instead of made. |
+| `/review [direction]` | A read-only review: `lint_project` (score, then audio), the notes, `melody_shape` and `arrangement_shape`, and `inspect_audio` measurements. When an audio reviewer is configured, it also sends excerpts to `listen`. It then lists the problems, the findings it judges to be false positives, and a plan to fix the rest in phase order. |
+
+`/compose` and `/draft` need a brief; sent without one, the panel asks for it and sends
+nothing. Completion and `/help` list all four.
+
+`/review` runs its whole turn in Plan mode, whatever mode is chosen and whatever allow rules
+exist. The worker receives that policy for the tools it runs itself, and the window refuses
+live edits, including `production_record` writes, until the next turn. A false positive is
+only proposed as an ignore rule. Once the user agrees, a later turn calls `ignore_lint`, which
+needs confirmation as a removal does: Edit mode asks, Auto review has the reviewer weigh it against what the user typed, and only Bypass or an allow rule skips it. It records
+the rule with its reason as one Undo step, and the rule shows in the Problems panel like one
+added by hand.
+
 ## Ollama configuration and failure recovery
 
 Settings → Agent exposes context size (32K, 64K, 128K, 256K) and thinking (model default,
