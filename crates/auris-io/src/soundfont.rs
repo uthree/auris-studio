@@ -198,6 +198,17 @@ pub fn presets(font: &SoundFont) -> Vec<SoundFontPreset> {
     presets
 }
 
+/// What a font calls one of its sounds, or `None` when it has nothing at that bank and patch.
+///
+/// The one-name counterpart of [`presets`], for a caller that draws a single track's sound on
+/// every repaint and should not build and sort the whole list to find it.
+pub fn preset_name(font: &SoundFont, bank: i32, patch: i32) -> Option<String> {
+    font.get_presets()
+        .iter()
+        .find(|preset| preset.get_bank_number() == bank && preset.get_patch_number() == patch)
+        .map(|preset| preset.get_name().trim().to_string())
+}
+
 /// How many sounds a font offers.
 ///
 /// Separate from [`presets`] because a list that is only being *counted* — a library row saying

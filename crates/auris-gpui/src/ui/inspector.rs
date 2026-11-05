@@ -509,10 +509,15 @@ impl AurisApp {
                     .unwrap_or_else(|| self.t(Key::SingerNoVoice).to_string())
             }
         } else {
-            instrument_id
-                .as_ref()
-                .map(|id| self.instrument_label(track_id, id))
-                .unwrap_or_default()
+            // The sound by name when there is one — the header says the same — and otherwise
+            // the instrument, whose own panel below is where a sound gets chosen.
+            match self.track_sound_label(track_id) {
+                crate::i18n::TrackSoundLabel::Named { name, .. } => name,
+                _ => instrument_id
+                    .as_ref()
+                    .map(|id| self.instrument_label(track_id, id))
+                    .unwrap_or_default(),
+            }
         };
         let mut sound_rows = self.singer_rows(track_id, cx);
         if is_singer || instrument_id.is_some() {

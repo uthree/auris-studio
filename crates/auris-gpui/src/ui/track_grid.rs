@@ -211,10 +211,7 @@ impl AurisApp {
         };
         let theme = &self.theme;
         let instrument = instrument_id(&track.kind);
-        let label = instrument.map_or_else(
-            || self.t(crate::i18n::track_kind_key(&track.kind)).to_owned(),
-            |instrument| self.instrument_label(id, instrument),
-        );
+        let label = self.track_sound_label(id).text(self.language);
         let selected = self.selected_track == Some(id);
         let frame = self
             .track_grid

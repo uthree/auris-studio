@@ -25,7 +25,8 @@ use auris_core::{
 };
 use auris_io::{
     IoError, SoundFont, SoundFontPreset, byte_size, document_in_folder, font_name,
-    import_audio_file, load_project, load_soundfont, preset_count, presets, save_project,
+    import_audio_file, load_project, load_soundfont, preset_count, preset_name, presets,
+    save_project,
 };
 
 use crate::error::SessionError;
@@ -1796,6 +1797,19 @@ impl Session {
             .unwrap_or(0)
     }
 
+    /// What the sound a track plays is called in its font, for a label beside the track.
+    ///
+    /// `None` when the track plays no SoundFont sound, or names one its font — missing, unread
+    /// or simply without that bank and patch — cannot put a name to. That is the same set of
+    /// tracks [`Self::playback_readiness`] reports as
+    /// [`MissingSoundfont`](crate::prelude::PlaybackState::MissingSoundfont), and a frontend should say
+    /// so rather than show a name that will not play.
+    pub fn track_preset_name(&self, track: TrackId) -> Option<String> {
+        let preset = self.track_preset(track)?;
+        let font = self.fonts.get(preset.font)?;
+        preset_name(&font, preset.bank, preset.patch).filter(|name| !name.is_empty())
+    }
+
     /// Every sound one imported font offers, in bank and patch order.
     ///
     /// Empty for a font whose file could not be read, which is the same thing a font with no
@@ -2795,6 +2809,65 @@ mod tests {
         assert_eq!(session.soundfonts().count(), 0);
         assert!(!session.can_undo(), "a failed import left a step behind");
         assert!(!session.is_dirty());
+    }
+
+    #[test]
+    fn a_track_names_its_sound_only_when_the_font_can() {
+        let scratch = Scratch::new("track-preset-name");
+        let path = scratch.soundfont("GM.sf2");
+        let mut session = session();
+        let font = session.import_soundfont(&path).unwrap();
+        let track = session
+            .add_instrument_track("Piano", auris_sampler::SAMPLER_ID)
+            .unwrap();
+        assert_eq!(
+            session.track_preset_name(track),
+            None,
+            "no sound chosen yet"
+        );
+
+        let preset = session.soundfont_presets(font)[0].clone();
+        session
+            .set_track_preset(
+                track,
+                auris_core::PresetRef {
+                    font,
+                    bank: preset.bank,
+                    patch: preset.patch,
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            session.track_preset_name(track).as_deref(),
+            Some("Test Piano")
+        );
+
+        // A patch the font does not have plays nothing, so it has no name either.
+        session
+            .set_track_preset(
+                track,
+                auris_core::PresetRef {
+                    font,
+                    bank: preset.bank,
+                    patch: preset.patch + 1,
+                },
+            )
+            .unwrap();
+        assert_eq!(session.track_preset_name(track), None);
+
+        // Nor does a font the project names but never loaded.
+        let missing = named_font(&mut session, "Orchestra");
+        session
+            .set_track_preset(
+                track,
+                auris_core::PresetRef {
+                    font: missing,
+                    bank: 0,
+                    patch: 0,
+                },
+            )
+            .unwrap();
+        assert_eq!(session.track_preset_name(track), None);
     }
 
     #[test]
