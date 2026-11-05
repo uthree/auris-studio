@@ -1029,6 +1029,7 @@ strings! {
     VideoParticles { en: "Sparks at the playhead", ja: "再生線のパーティクル" }
     VideoParticlesOff { en: "Off", ja: "なし" }
     VideoSink { en: "Sink while sounding", ja: "演奏中の沈み込み" }
+    VideoParallax { en: "Depth between tracks", ja: "トラックの奥行き" }
     VideoDrums { en: "Include drums", ja: "ドラムも描く" }
     VideoChordSection { en: "Chords", ja: "コード" }
     VideoChords { en: "Show chords", ja: "コード進行を表示" }
@@ -2220,6 +2221,8 @@ VIDEO OPTIONS (default: the look last chosen in the desktop application)
         --tail <seconds>          Silence after the music has ended (default: 2)
         --particles <amount>      Sparks where notes meet the playhead: 0 is none, 1 the usual
         --sink <amount>           How far sounding notes sink: 0 is still, 1 the usual
+        --parallax <amount>       Spread tracks in depth, each scrolling at its own speed:
+                                  0 is flat (default), 1 the usual
         --drums                   Draw drum tracks too
         --no-chords               Leave out the chord names in the corner
         --no-lyrics               Leave out the lyric subtitles
@@ -2315,6 +2318,7 @@ video のオプション（既定: デスクトップ版で最後に選んだ見
         --tail <seconds>          演奏が終わった後の無音の秒数（既定: 2）
         --particles <amount>      再生線でノートが散らす火花の量（0 でなし、1 が標準）
         --sink <amount>           演奏中のノートが沈み込む深さ（0 で動かない、1 が標準）
+        --parallax <amount>       トラックごとにスクロール速度をずらす奥行き（既定の 0 で平面、1 が標準）
         --drums                   ドラムトラックも描く
         --no-chords               左上のコード名を表示しない
         --no-lyrics               歌詞の字幕を表示しない

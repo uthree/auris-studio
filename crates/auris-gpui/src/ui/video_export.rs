@@ -1492,6 +1492,21 @@ impl AurisApp {
                         .clamp(0.0, NoteRollStyle::MAX_PARTICLES);
                 },
             ))
+            .child(self.stepper(
+                "video-parallax",
+                Key::VideoParallax,
+                if style.parallax <= 0.0 {
+                    self.t(Key::VideoParticlesOff).to_string()
+                } else {
+                    format!("{:.0}%", style.parallax * 100.0)
+                },
+                theme,
+                cx,
+                |style, direction| {
+                    style.parallax =
+                        (style.parallax + 0.25 * direction).clamp(0.0, NoteRollStyle::MAX_PARALLAX);
+                },
+            ))
             .child(
                 div()
                     .text_xs()
