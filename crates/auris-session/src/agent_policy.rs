@@ -337,8 +337,7 @@ impl Operation {
                 // Silencing a check is the user's call: the agent proposes it, the user confirms.
                 || matches!(
                     parsed,
-                    crate::live_agent::Command::Listen { .. }
-                        | crate::live_agent::Command::IgnoreLint { .. }
+                    crate::live_agent::Command::IgnoreLint { .. }
                         | crate::live_agent::Command::RemoveTrack { .. }
                         | crate::live_agent::Command::Compose { replace: true, .. }
                 );
@@ -706,20 +705,19 @@ mod tests {
     }
 
     #[test]
-    fn listening_is_a_read_with_network_confirmation_and_deny_rules() {
+    fn listening_is_a_free_read_that_deny_rules_still_stop() {
+        // The audio goes to the model already in the conversation, so no new party is involved.
         let operation = Operation::parse(
             "edit_project",
             &serde_json::json!({"command":{
-                "action":"listen","start_bar":1,"bars":4,"focus":"balance","compare_to":null
+                "action":"listen","start_bar":1,"bars":4,"compare_to":null
             }}),
         )
         .unwrap();
         assert!(!operation.mutating);
-        assert!(operation.confirm);
+        assert!(!operation.confirm);
         let mut policy = Policy::default();
-        assert_eq!(policy.decide(&operation), Decision::Ask);
-        policy.mode = Mode::AutoReview;
-        assert_eq!(policy.decide(&operation), Decision::Review);
+        assert_eq!(policy.decide(&operation), Decision::Allow);
         policy.set_rule("edit_project.listen", Some(false)).unwrap();
         policy.mode = Mode::Bypass;
         assert!(matches!(policy.decide(&operation), Decision::Deny(_)));

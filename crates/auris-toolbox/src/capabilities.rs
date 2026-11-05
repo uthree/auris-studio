@@ -32,15 +32,8 @@ pub mod capabilities {
             }));
             serde_json::json!({"track":track.id.0,"voice":voice})
         }).collect();
-        let audio_reviewer = match auris_session::audio_review::AudioReviewOptions::from_env() {
-            Ok(options) => serde_json::json!({"tool":"listen","model":options.model,
-                "configured":true,"validated":false,
-                "note":"For explicitly requested evaluator development experiments only, not ordinary composition. listen sends rendered WAV bytes to a separate audio model; configured does not establish audible-review quality"}),
-            Err(error) => serde_json::json!({"tool":"listen","configured":false,"error":error}),
-        };
         Ok(serde_json::json!({"auris":crate::environment::Environment::current().json(),"general_midi_available":session.general_midi_available(),"voices":voices,
             "playback":session.playback_readiness(),"selected_voices":selected,
-            "audio_reviewer":audio_reviewer,
-            "preview":"playable audio file; model audio input support depends on the provider and model"}).to_string())
+            "preview":"playable audio file; model audio input support depends on the provider and model. listen, where offered, delivers rendered bars to you as audio input"}).to_string())
     }
 }

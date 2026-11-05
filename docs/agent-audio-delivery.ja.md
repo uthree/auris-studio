@@ -35,4 +35,4 @@
 <a id="inspection-and-audition"></a>
 ## 検査とオーディション
 
-`inspect_audio`は、保存されたMCPとライブホストを通じて、同じ測定値とPNGを返します。`preview`は24 kHz保護PCM16 WAVを使用し、報告される減衰はオーディションのみ適用されます。ミックスおよびエクスポート時の配信設定は変更されません。`listen`は、すべてのバックエンドで`compare_to`から返された不透明な`audition_id`と中立的な`aspect`を使用します。比較には`focus`は省略してください。匿名A/B抜粋はランダムな順序と共通の保護ゲインを使用します。[agent workflows](agent-workflows.ja.md)を参照してください。
+`inspect_audio`は、保存されたMCPとライブホストを通じて、同じ測定値とPNGを返します。`preview`は24 kHz保護PCM16 WAVを使用し、報告される減衰はオーディションのみ適用されます。ミックスおよびエクスポート時の配信設定は変更されません。`listen`は、レンダリングした小節を音声入力として、音声を受け付けるモデルに届けます。返された`audition_id`を`compare_to`に渡すと、編集前と編集後を共通の保護ゲインで届けます。[エージェントに曲を聴かせる](agent-listening.md)を参照してください。

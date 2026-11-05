@@ -3,6 +3,9 @@
 use crate::{Bridge, permissions, toolbox};
 use serde_json::{Value, json};
 
+/// The tool that answers with audio for the model to hear.
+pub(crate) const LISTEN: &str = "listen";
+
 /// One window's tool endpoint, shared by rig, Antigravity and the embedded MCP server.
 #[derive(Clone)]
 pub(crate) struct ToolHost {
@@ -18,8 +21,18 @@ impl ToolHost {
         std::env::var("BRAVE_SEARCH_API_KEY").is_ok_and(|key| !key.trim().is_empty())
     }
 
+    /// The tools every door offers. `listen` is left out: it answers with audio, which only a
+    /// model that takes audio input can use, so [`Self::catalog_for`] adds it for one that does.
     pub(crate) fn catalog() -> Vec<toolbox::live_agent::Definition> {
+        Self::catalog_for(false)
+    }
+
+    /// [`Self::catalog`], with `listen` when the model can hear what it returns.
+    pub(crate) fn catalog_for(hearing: bool) -> Vec<toolbox::live_agent::Definition> {
         let mut catalog = toolbox::live_agent::definitions();
+        if !hearing {
+            catalog.retain(|tool| tool.name != LISTEN);
+        }
         // Candidate schemas add about 9 KiB. Keep the experimental surface explicit so
         // existing 32k local-model conversations retain their inspection headroom.
         if !std::env::var("AURIS_COMPOSITION_CANDIDATES").is_ok_and(|v| v == "1") {
@@ -41,7 +54,12 @@ impl ToolHost {
     }
 
     pub(crate) fn definitions() -> Vec<toolbox::live_agent::Definition> {
-        Self::catalog()
+        Self::definitions_for(false)
+    }
+
+    /// The compact schemas a model is offered; see [`Self::catalog_for`].
+    pub(crate) fn definitions_for(hearing: bool) -> Vec<toolbox::live_agent::Definition> {
+        Self::catalog_for(hearing)
             .into_iter()
             .map(|mut tool| {
                 toolbox::compact_parameters(&mut tool.parameters);
@@ -56,7 +74,7 @@ impl ToolHost {
     }
 
     pub(crate) fn contains(name: &str) -> bool {
-        Self::catalog().iter().any(|tool| tool.name == name)
+        Self::catalog_for(true).iter().any(|tool| tool.name == name)
     }
 
     pub(crate) async fn call_with_origin(
@@ -232,22 +250,24 @@ impl ToolHost {
         if reply["event"] != "edit_result" {
             return Err("The edit response did not match the pending request".into());
         }
-        if reply["ok"] == true && matches!(name, "inspect_project" | "listen") {
-            let mut value: Value =
-                serde_json::from_str(reply["text"].as_str().ok_or("Missing tool response")?)
-                    .map_err(|e| e.to_string())?;
-            if name == "inspect_project" {
-                self.bridge.inspected_production_document(&mut value)?;
-                reply["text"] = value.to_string().into();
-            } else if let Some(revision) = value["revision"].as_u64() {
+        if reply["ok"] == true && name == LISTEN {
+            // The desktop answers with the whole audition; its report is the production record.
+            let report = reply["audition"]["report"].clone();
+            if let Some(revision) = report["revision"].as_u64() {
                 self.bridge.observe_production(
                     name,
                     revision,
                     args["start_bar"].as_u64().zip(args["bars"].as_u64()),
                     None,
-                    value,
+                    report,
                 )?;
             }
+        } else if reply["ok"] == true && name == "inspect_project" {
+            let mut value: Value =
+                serde_json::from_str(reply["text"].as_str().ok_or("Missing tool response")?)
+                    .map_err(|e| e.to_string())?;
+            self.bridge.inspected_production_document(&mut value)?;
+            reply["text"] = value.to_string().into();
         }
         if matches!(
             name,
@@ -472,7 +492,7 @@ mod tests {
         for allowed in [false, true] {
             let (bridge, commands, events) = crate::worker::test_bridge();
             let host = ToolHost::new(bridge);
-            let args = json!({"start_bar":1,"bars":2,"focus":"balance","compare_to":null});
+            let args = json!({"start_bar":1,"bars":2,"compare_to":null});
             let call = host.call("listen", args);
             let owner = async {
                 let request = next_event(&events).await;
@@ -483,7 +503,7 @@ mod tests {
                 )
                 .unwrap();
                 assert_eq!(operation.name, "edit_project.listen");
-                assert!(!operation.mutating && operation.confirm);
+                assert!(!operation.mutating && !operation.confirm);
                 commands
                     .send(
                         json!({"event":"permission_result","id":request["id"],"ok":allowed})
@@ -495,7 +515,7 @@ mod tests {
                     assert_eq!(request["event"], "edit");
                     assert_eq!(request["command"]["action"], "listen");
                     assert!(request["command"].get("project").is_none());
-                    commands.send(json!({"event":"edit_result","ok":true,"text":"{\"revision\":1,\"assessment\":null}"}).to_string()).unwrap();
+                    commands.send(json!({"event":"edit_result","ok":true,"audition":{"report":{"revision":1},"clips":[]}}).to_string()).unwrap();
                 }
             };
             let (result, ()) = tokio::join!(call, owner);

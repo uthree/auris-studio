@@ -89,7 +89,7 @@ const DRAFT: &str = "The user asked for a demo: the score phase only. enter_phas
 
 const MIX: &str = "Mix the open song and change nothing else. Read inspect_project and production_record read first. When no roles are registered, register them from the song as it stands with set_roles: its melody or lead vocal as the foreground, or no_foreground with a reason. Then enter_phase mix, with this request as the reason, and follow the phase_instructions it returns. Every note, sound and performance stays as it is: do not enter an earlier phase in this turn. When a problem can only be fixed there, report it with where it is and which phase owns it.";
 
-const REVIEW: &str = "Review the open song and change nothing: this turn runs in plan mode, and the host refuses every edit. Read inspect_project and production_record read, then lint_project, following offset until every finding is read, and again with audio true when the song has tracks that sound. Read the score behind the findings: read_notes for the foreground and the harmony, melody_shape for the lead and arrangement_shape. Measure representative sections, transitions and the ending with inspect_audio, which is measurement, not listening. When capabilities reports an audio_reviewer, this review asks for listening: send those excerpts to it with listen, one focus question each. Otherwise say that nothing was listened to. Judge every finding against what the song is trying to do; a finding may be deliberate. Then present, in the user's language: the problems found, each with where it is (bars and tracks), why it matters and the phase that owns its fix; the findings you judge to be false positives, each with its id and why, proposed as ignore rules; and a plan that fixes the rest in phase order (score, arrangement, mix). Ask with offer_choices which of it to carry out. An ignore rule is added only after the user agrees, in a later turn, with ignore_lint, which asks them to confirm.";
+const REVIEW: &str = "Review the open song and change nothing: this turn runs in plan mode, and the host refuses every edit. Read inspect_project and production_record read, then lint_project, following offset until every finding is read, and again with audio true when the song has tracks that sound. Read the score behind the findings: read_notes for the foreground and the harmony, melody_shape for the lead and arrangement_shape. Measure representative sections, transitions and the ending with inspect_audio, which is measurement, not listening. When listen is among your tools, this review asks for listening: hear those excerpts with listen and judge them by ear. Otherwise say that nothing was listened to. Judge every finding against what the song is trying to do; a finding may be deliberate. Then present, in the user's language: the problems found, each with where it is (bars and tracks), why it matters and the phase that owns its fix; the findings you judge to be false positives, each with its id and why, proposed as ignore rules; and a plan that fixes the rest in phase order (score, arrangement, mix). Ask with offer_choices which of it to carry out. An ignore rule is added only after the user agrees, in a later turn, with ignore_lint, which asks them to confirm.";
 
 #[cfg(test)]
 mod tests {
@@ -141,13 +141,7 @@ mod tests {
         assert!(mix.contains("enter_phase mix"));
         assert!(mix.contains("do not enter an earlier phase"));
         let review = PhaseCommand::Review.assignment("");
-        for needle in [
-            "lint_project",
-            "inspect_audio",
-            "audio_reviewer",
-            "listen",
-            "ignore_lint",
-        ] {
+        for needle in ["lint_project", "inspect_audio", "listen", "ignore_lint"] {
             assert!(review.contains(needle), "{needle}");
         }
     }

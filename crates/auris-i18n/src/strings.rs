@@ -1875,9 +1875,6 @@ strings! {
     MenuAnalyzeAllChords { en: "Analyze Chords across Tracks", ja: "全トラックのコードを解析" }
     MenuAnalyzeAudio { en: "Analyze Audio BPM / Chords", ja: "音声のBPM・コードを解析" }
     MenuAnalyzeInstruments { en: "Estimate Instruments…", ja: "楽器の種類を推定…" }
-    AudioModelLoadTitle { en: "Load audio review model?", ja: "試聴モデルを読み込みますか？" }
-    AudioModelLoadBody { en: "The local model “{model}” is not confirmed to be loaded. Loading it for this review can use substantial memory and CPU/GPU resources and slow down your computer. Cancel to skip this review.", ja: "ローカルモデル「{model}」の読み込み済み状態を確認できません。この試聴のために読み込むと、メモリやCPU・GPUを多く使用し、パソコンの動作が重くなることがあります。キャンセルすると今回の試聴を中止します。" }
-    AudioModelLoadConfirm { en: "Load and Review", ja: "読み込んで試聴する" }
     DialogYamnetModel { en: "Select prepared YAMNet ONNX model", ja: "変換済みYAMNetモデル（ONNX）を選択" }
     AnalysisInstruments { en: "Instrument/voice hypotheses (YAMNet, CPU). Overlapping windows; scores are not probabilities. Empty candidates mean unknown. Labels are the model's original vocabulary.", ja: "楽器・歌声の候補（YAMNet・CPU）。時間窓は重複します。スコアは確率ではなく、候補なしは判定不明です。名称はモデルの原表記です。" }
     AnalysisInstrumentMean { en: "Whole-clip mean scores", ja: "クリップ全体の平均スコア" }

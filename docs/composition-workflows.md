@@ -82,7 +82,7 @@ makes it stale, and so is a record that never entered a phase.
 
 The shared contract retains exact IDs, tick units, revision checks, source
 preservation, limits on exploration, and the distinction between measurements,
-critic reports and human listening. Workflow instructions are model guidance;
+a model's listening and human listening. Workflow instructions are model guidance;
 the canonical session commands enforce validation and permissions independently.
 Deferred candidate decisions retain the pending round and its IDs across turns
 within its lifetime. Finishing a turn is not a reason to cancel the round.

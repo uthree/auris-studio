@@ -517,9 +517,11 @@ fn strip_markup(text: &str) -> String {
 }
 
 /// File-free editing and reference tools for the rig agent.
-fn armed(builder: AgentBuilder, bridge: Option<Bridge>, prompt: &str) -> Agent {
+/// `hearing` offers `listen`, and only with a bridge: the desktop is what renders the audition
+/// and the bridge is what carries its audio into the next request.
+fn armed(builder: AgentBuilder, bridge: Option<Bridge>, prompt: &str, hearing: bool) -> Agent {
     let mut builder = builder.preamble(prompt).dynamic_tools(Vec::new());
-    for definition in host::ToolHost::definitions() {
+    for definition in host::ToolHost::definitions_for(hearing && bridge.is_some()) {
         let tool_name = definition.name.clone();
         let bridge = bridge.clone();
         builder = builder.dynamic_tool(rig::tool::DynamicTool::new(
@@ -557,6 +559,14 @@ fn armed(builder: AgentBuilder, bridge: Option<Bridge>, prompt: &str) -> Agent {
                         .call_with_origin(&name, args, origin)
                         .await
                         .map_err(ToolExecutionError::other)?;
+                    if name == host::LISTEN && reply["ok"] == true {
+                        let audition = serde_json::from_value(reply["audition"].clone())
+                            .map_err(|e| ToolExecutionError::other(e.to_string()))?;
+                        return bridge
+                            .accept_audition(&audition)
+                            .map(ToolOutput::text)
+                            .map_err(ToolExecutionError::other);
+                    }
                     if name == "inspect_audio" && reply["ok"] == true {
                         let report = serde_json::from_value(reply["inspection"].clone())
                             .map_err(|e| ToolExecutionError::other(e.to_string()))?;
@@ -582,12 +592,16 @@ fn armed(builder: AgentBuilder, bridge: Option<Bridge>, prompt: &str) -> Agent {
 /// treat it that way or tolerate it, and it saves an `Option` dance at each arm.
 #[cfg(test)]
 fn build_agent(options: &Options) -> Result<Agent, String> {
-    build_for_worker(options, None)
+    build_for_worker(options, None, false)
 }
 
-fn build_for_worker(options: &Options, bridge: Option<Bridge>) -> Result<Agent, String> {
+fn build_for_worker(
+    options: &Options,
+    bridge: Option<Bridge>,
+    hearing: bool,
+) -> Result<Agent, String> {
     build_with(options, |builder| {
-        armed(builder, bridge, &options.system_prompt)
+        armed(builder, bridge, &options.system_prompt, hearing)
     })
 }
 
@@ -978,9 +992,9 @@ fn check_attachments(provider: Provider, audio: &[String]) -> Result<(), String>
             }) =>
         {
             Err(
-                "This agent's rig Ollama adapter cannot send audio attachments. Use listen for \
-             a separate audio critic, or --provider openai against an audio-capable endpoint \
-             implementing input_audio (including a compatible Ollama /v1 endpoint)."
+                "This agent's rig Ollama adapter cannot send audio attachments. Use --provider \
+             openai against an audio-capable endpoint implementing input_audio (including a \
+             compatible Ollama /v1 endpoint)."
                     .to_string(),
             )
         }

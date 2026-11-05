@@ -1108,41 +1108,6 @@ struct PendingListening {
     operation: auris_session::agent_policy::Operation,
     cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
     receiver: Receiver<Result<auris_session::audio_audition::ListeningResult, String>>,
-    approval: Receiver<AudioLoadRequest>,
-}
-
-/// One invocation's load consent. Dropping the last copy cancels the waiting worker.
-#[derive(Debug)]
-pub struct AudioLoadRequest {
-    pub(crate) model: String,
-    pub(crate) response: std::sync::mpsc::Sender<bool>,
-}
-
-impl PartialEq for AudioLoadRequest {
-    fn eq(&self, other: &Self) -> bool {
-        std::ptr::eq(self, other)
-    }
-}
-
-fn await_audio_load_consent(
-    model: String,
-    requests: &std::sync::mpsc::Sender<AudioLoadRequest>,
-    cancel: &std::sync::atomic::AtomicBool,
-) -> Result<(), String> {
-    let (response, receiver) = std::sync::mpsc::channel();
-    requests
-        .send(AudioLoadRequest { model, response })
-        .map_err(|_| "Audio model loading cancelled".to_string())?;
-    loop {
-        if cancel.load(std::sync::atomic::Ordering::Relaxed) {
-            return Err("Audio model loading cancelled".into());
-        }
-        match receiver.recv_timeout(std::time::Duration::from_millis(100)) {
-            Ok(true) => return Ok(()),
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
-            _ => return Err("Audio model loading cancelled by the user; do not retry without a new user request".into()),
-        }
-    }
 }
 
 impl PendingListening {
@@ -1156,7 +1121,7 @@ impl PendingListening {
             self.cancel
                 .store(true, std::sync::atomic::Ordering::Relaxed);
             return Some(Err(
-                "The document changed during listening; request a fresh audition".into(),
+                "The document changed during listening; listen again".into()
             ));
         }
         if let auris_session::agent_policy::Decision::Deny(reason) = policy.decide(&self.operation)
@@ -3042,9 +3007,7 @@ impl AurisApp {
         let auris_session::live_agent::Command::Listen {
             start_bar,
             bars,
-            focus,
             compare_to,
-            aspect,
         } = serde_json::from_value(command.clone()).map_err(|error| error.to_string())?
         else {
             return Err("Expected listen".into());
@@ -3053,13 +3016,9 @@ impl AurisApp {
             "edit_project",
             &serde_json::json!({"command":command}),
         )?;
-        let job = self.session.begin_listening(
-            start_bar,
-            bars,
-            focus.as_deref(),
-            compare_to.as_deref(),
-            aspect,
-        )?;
+        let job = self
+            .session
+            .begin_listening(start_bar, bars, compare_to.as_deref())?;
         let link = self.agent_chat.link.as_mut().ok_or("The agent stopped")?;
         if link.listening.is_some() {
             return Err("A listening operation is already running".into());
@@ -3067,15 +3026,10 @@ impl AurisApp {
         let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let worker_cancel = cancel.clone();
         let (sender, receiver) = std::sync::mpsc::channel();
-        let (approval_sender, approval) = std::sync::mpsc::channel();
         std::thread::Builder::new()
             .name("auris-audio-listening".into())
             .spawn(move || {
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    let (job, model) = job.prepare_reviewer(&worker_cancel)?;
-                    if let Some(model) = model {
-                        await_audio_load_consent(model, &approval_sender, &worker_cancel)?;
-                    }
                     job.run(&worker_cancel)
                 }))
                 .unwrap_or_else(|_| Err("Audio listening worker stopped unexpectedly".into()));
@@ -3083,7 +3037,6 @@ impl AurisApp {
             })
             .map_err(|error| error.to_string())?;
         link.listening = Some(PendingListening {
-            approval,
             revision: self.session.revision(),
             operation,
             cancel,
@@ -3259,41 +3212,7 @@ impl AurisApp {
         let _ = link.send(&wire.to_string());
     }
 
-    pub(crate) fn approve_audio_model_load(&mut self, request: &AudioLoadRequest) {
-        let allowed = self
-            .agent_chat
-            .link
-            .as_ref()
-            .and_then(|link| link.listening.as_ref())
-            .is_some_and(|pending| {
-                pending.revision == self.session.revision()
-                    && self.agent_chat.bound_project.as_deref() == self.session.path()
-                    && !pending.cancel.load(std::sync::atomic::Ordering::Relaxed)
-                    && !matches!(
-                        self.settings.agent.policy.decide(&pending.operation),
-                        auris_session::agent_policy::Decision::Deny(_)
-                    )
-            });
-        let _ = request.response.send(allowed);
-    }
-
     fn poll_agent_listening(&mut self) {
-        if self
-            .agent_chat
-            .link
-            .as_ref()
-            .is_none_or(|link| link.listening.is_none())
-        {
-            if matches!(
-                self.prompt.as_ref().map(|prompt| &prompt.body),
-                Some(crate::ui::prompt::PromptBody::Ask(
-                    crate::ui::prompt::Question::AudioModelLoad(_)
-                ))
-            ) {
-                self.prompt = None;
-            }
-            return;
-        }
         let Some(link) = self.agent_chat.link.as_mut() else {
             return;
         };
@@ -3305,27 +3224,16 @@ impl AurisApp {
             self.agent_chat.bound_project.as_deref() == self.session.path(),
             &self.settings.agent.policy,
         ) else {
-            if self.prompt.is_none()
-                && let Ok(request) = pending.approval.try_recv()
-            {
-                self.open_prompt(crate::ui::prompt::Prompt::ask(
-                    self.t(auris_i18n::Key::AudioModelLoadTitle),
-                    crate::ui::prompt::Question::AudioModelLoad(std::sync::Arc::new(request)),
-                ));
-            }
             return;
         };
         link.listening = None;
-        if matches!(
-            self.prompt.as_ref().map(|prompt| &prompt.body),
-            Some(crate::ui::prompt::PromptBody::Ask(
-                crate::ui::prompt::Question::AudioModelLoad(_)
-            ))
-        ) {
-            self.prompt = None;
-        }
-        let result = result.and_then(|result| self.session.continue_listening(result));
-        let wire = serde_json::json!({"event":"edit_result","ok":result.is_ok(),"text":result.unwrap_or_else(|error|error)});
+        // The clips travel whole: the worker hands them to the model as audio input.
+        let wire = match result.and_then(|result| self.session.continue_listening(result)) {
+            Ok(audition) => {
+                serde_json::json!({"event":"edit_result","ok":true,"audition":audition})
+            }
+            Err(error) => serde_json::json!({"event":"edit_result","ok":false,"text":error}),
+        };
         let _ = link.send(&wire.to_string());
     }
 
@@ -5945,58 +5853,6 @@ impl AurisApp {
 
 #[cfg(test)]
 mod tests {
-    #[gpui::test]
-    fn audio_load_dialog_closes_when_the_agent_has_stopped(cx: &mut gpui::TestAppContext) {
-        let (app, cx) = crate::harness::open(cx);
-        let (response, receiver) = std::sync::mpsc::channel();
-        app.update(cx, |this, _| {
-            this.open_prompt(crate::ui::prompt::Prompt::ask(
-                "Load audio model?",
-                crate::ui::prompt::Question::AudioModelLoad(std::sync::Arc::new(
-                    super::AudioLoadRequest {
-                        model: "test-audio".into(),
-                        response,
-                    },
-                )),
-            ));
-            this.poll_agent_listening();
-            assert!(this.prompt.is_none());
-        });
-        assert_eq!(
-            receiver.try_recv(),
-            Err(std::sync::mpsc::TryRecvError::Disconnected)
-        );
-    }
-
-    #[test]
-    fn local_audio_load_waits_for_consent_and_stops_on_dismissal_or_cancellation() {
-        for answer in [Some(true), Some(false), None] {
-            let (requests, receiver) = std::sync::mpsc::channel();
-            let worker = std::thread::spawn(move || {
-                super::await_audio_load_consent(
-                    "test-audio".into(),
-                    &requests,
-                    &std::sync::atomic::AtomicBool::new(false),
-                )
-            });
-            let request = receiver.recv().unwrap();
-            assert!(!worker.is_finished());
-            if let Some(answer) = answer {
-                request.response.send(answer).unwrap();
-            }
-            drop(request);
-            assert_eq!(worker.join().unwrap().is_ok(), answer == Some(true));
-        }
-        let (requests, receiver) = std::sync::mpsc::channel();
-        let result = super::await_audio_load_consent(
-            "test-audio".into(),
-            &requests,
-            &std::sync::atomic::AtomicBool::new(true),
-        );
-        assert!(result.is_err());
-        drop(receiver);
-    }
-
     use super::*;
     use auris_session::agent_policy::Mode;
     use auris_session::prelude::{Note, Ticks};
@@ -7232,7 +7088,6 @@ mod tests {
         )
         .unwrap();
         let pending = PendingListening {
-            approval: std::sync::mpsc::channel().1,
             revision: 7,
             operation,
             cancel: cancel.clone(),

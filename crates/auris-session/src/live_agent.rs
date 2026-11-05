@@ -553,7 +553,7 @@ pub enum Command {
         /// Optional track ID for solo routing; omit for the mix.
         track: Option<u64>,
     },
-    /// For explicitly requested evaluator development experiments only; not part of ordinary composition or delivery. Render the unsaved mix and send actual WAV audio to the configured critic. Use focus for single-excerpt diagnosis. For blind A/B, pass compare_to and a neutral aspect, omitting focus; order is randomized and the critic sees no edit narrative. Returns short untrusted prose in review, review_format=plain_text, exact WAV measurements, revision and audition_id. No preference or confidence is extracted. Some backends describe each excerpt independently. Never automatically adopt an edit from this prose alone. Use 1..8 bars, at most 30 seconds, inside the arrangement. Retains four IDs with matching bars/timing. No save or Undo; network permission applies. Separate-model feedback is not proof that you heard the music.
+    /// Hear the open song yourself: renders 1..8 bars of the unsaved mix (at most 30 seconds, inside the arrangement) and delivers the WAV to you as audio input with your next request. Offered only to a model that accepts audio. To hear an edit, call it again on the same bars with compare_to set to an earlier audition_id: you then receive before, then after, at one common protective gain. Returns audition_id, revision and exact WAV measurements; four IDs are retained. Judge only what you actually hear. No save or Undo.
     Listen {
         /// First bar, starting at 1.
         #[schemars(range(min = 1))]
@@ -561,12 +561,8 @@ pub enum Command {
         /// Number of bars, 1..8, fitting at most thirty seconds.
         #[schemars(range(min = 1, max = 8))]
         bars: u32,
-        /// Diagnostic question for one excerpt, up to 4000 bytes. Must be omitted for comparison.
-        focus: Option<String>,
         /// Opaque audition_id from this open document, with the same bars and timing.
         compare_to: Option<String>,
-        /// Neutral comparison criterion, required with compare_to and omitted for diagnosis. Comparison never forwards an editing narrative.
-        aspect: Option<crate::audio_review::assessment::ComparisonAspect>,
     },
 
     /// Search instruments by text, acoustic reference, character/impression, or bounded browsing. Character mode accepts Japanese/English impressions and explicit 0..1 targets (brightness, attack speed, sustain, captured release, noise); translate arbitrary prose/negation into targets and omit query when necessary. Optional id retains resemblance to an existing sound; name restricts names/tags. Inspect returned targets, character and relative distance, then render a musical phrase before adopting. Copy returned sound IDs into set_instrument. Retry indexing results later without refreshing. Shared by desktop Agent and MCP.
@@ -1321,19 +1317,13 @@ impl Session {
             Command::Listen {
                 start_bar,
                 bars,
-                focus,
                 compare_to,
-                aspect,
             } => {
-                let job = self.begin_listening(
-                    start_bar,
-                    bars,
-                    focus.as_deref(),
-                    compare_to.as_deref(),
-                    aspect,
-                )?;
+                // The whole `Audition`, clips included: the door that delivers the audio
+                // parses it back, and a text-only door must not call this at all.
+                let job = self.begin_listening(start_bar, bars, compare_to.as_deref())?;
                 let result = job.run(&std::sync::atomic::AtomicBool::new(false))?;
-                self.continue_listening(result)
+                serde_json::to_string(&self.continue_listening(result)?).map_err(|e| e.to_string())
             }
             Command::ReadNotes { clips } => self.agent_read_notes(&clips),
             Command::Compose {
