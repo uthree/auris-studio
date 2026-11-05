@@ -10,6 +10,7 @@
 use auris_core::param::{ParamDescriptor, db_to_gain, pan_gains};
 use auris_core::plugin::{
     Effect, Parameterized, PluginCategory, PluginDescriptor, PrepareContext, ProcessContext,
+    TailContext,
 };
 use auris_core::project::MixerStrip;
 use auris_core::registry::PluginRegistry;
@@ -486,11 +487,22 @@ impl RenderStrip {
     /// Saturating rather than wrapping, because the figures come from plugins: one that reports
     /// a nonsense tail should pad an export, not overflow the length it is added to.
     pub fn tail_frames(&self) -> usize {
+        self.tail_frames_using(|effect| effect.tail_frames())
+    }
+
+    /// Bounds this chain's tail over the planned tempo range before processing any audio.
+    ///
+    /// Enabled slots add in series, as in [`Self::tail_frames`].
+    pub fn tail_frames_with_context(&self, context: &TailContext) -> usize {
+        self.tail_frames_using(|effect| effect.tail_frames_with_context(context))
+    }
+
+    fn tail_frames_using(&self, tail: impl Fn(&dyn Effect) -> usize) -> usize {
         self.effects
             .iter()
             .zip(&self.enabled)
             .filter(|(_, enabled)| **enabled)
-            .map(|(effect, _)| effect.tail_frames())
+            .map(|(effect, _)| tail(effect.as_ref()))
             .fold(0usize, usize::saturating_add)
     }
 
