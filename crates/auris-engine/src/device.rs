@@ -907,33 +907,48 @@ impl OutputPreview {
             return;
         }
         let volume = f32::from_bits(controls.volume.load(Ordering::Relaxed));
-        let count = out.frame_count().min(buffer.frame_count() - self.position);
-        for channel in 0..out.channel_count().min(2) {
-            let source = if buffer.channel_count() == 1 {
-                0
-            } else {
-                channel
-            };
-            for frame in 0..count {
-                let value = if out.channel_count() == 1 && buffer.channel_count() == 2 {
-                    (buffer.sample(0, self.position + frame)
-                        + buffer.sample(1, self.position + frame))
-                        * 0.5
-                } else {
-                    buffer.sample(source, self.position + frame)
-                };
-                out.channel_mut(channel)[frame] = if value.is_finite() {
-                    value * volume
-                } else {
-                    0.0
-                };
+        let frames = buffer.frame_count();
+        let loop_start = usize::try_from(controls.loop_start.load(Ordering::Relaxed))
+            .ok()
+            .filter(|start| *start < frames);
+        let total = out.frame_count();
+        let mut written = 0;
+        while written < total {
+            if self.position >= frames {
+                // A loop wraps here, inside the block, so a seamless cycle stays seamless.
+                match loop_start {
+                    Some(start) => self.position = start,
+                    None => break,
+                }
             }
+            let count = (total - written).min(frames - self.position);
+            for channel in 0..out.channel_count().min(2) {
+                let source = if buffer.channel_count() == 1 {
+                    0
+                } else {
+                    channel
+                };
+                for frame in 0..count {
+                    let at = self.position + frame;
+                    let value = if out.channel_count() == 1 && buffer.channel_count() == 2 {
+                        (buffer.sample(0, at) + buffer.sample(1, at)) * 0.5
+                    } else {
+                        buffer.sample(source, at)
+                    };
+                    out.channel_mut(channel)[written + frame] = if value.is_finite() {
+                        value * volume
+                    } else {
+                        0.0
+                    };
+                }
+            }
+            self.position += count;
+            written += count;
         }
-        self.position += count;
         controls
             .position
             .store(self.position as u64, Ordering::Relaxed);
-        if self.position == buffer.frame_count() {
+        if self.position == frames && loop_start.is_none() {
             self.request.status.finish();
         }
     }
@@ -2022,6 +2037,7 @@ mod tests {
                 crate::OutputPreviewOptions {
                     position_seconds: 32.0 / rate,
                     volume: 0.0,
+                    loop_start_seconds: None,
                 },
             )
             .unwrap();
@@ -2052,6 +2068,61 @@ mod tests {
         preview.fill(&mut out);
         assert_eq!(out.peak(), 0.25);
         assert_eq!(status.position_seconds(), 16.0 / rate);
+    }
+
+    #[test]
+    fn a_looping_output_preview_wraps_inside_the_block_and_never_completes() {
+        let (device, handle) = start_silent(&AudioSettings::default());
+        let rate = handle.sample_rate();
+        // A ramp makes every frame name its own position.
+        let buffer = Arc::new(
+            AudioBuffer::from_planar(vec![(0..10).map(|n| n as f32).collect()], rate).unwrap(),
+        );
+        let status = handle
+            .play_output_preview_with(
+                buffer,
+                crate::OutputPreviewOptions {
+                    position_seconds: 6.0 / rate,
+                    loop_start_seconds: Some(4.0 / rate),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert!(status.is_looping());
+        let EngineCommand::PlayOutputPreview(request) =
+            device.idle_commands.as_ref().unwrap().try_recv().unwrap()
+        else {
+            panic!("expected a prepared preview");
+        };
+        let mut preview = OutputPreview {
+            request,
+            position: 0,
+        };
+        let mut out = AudioBuffer::new(1, 16, rate);
+        preview.fill(&mut out);
+        assert_eq!(
+            out.channel(0),
+            &[
+                6.0, 7.0, 8.0, 9.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0
+            ],
+            "the lead-in plays once, then the cycle repeats without a gap"
+        );
+        assert_eq!(status.position_seconds(), 10.0 / rate);
+        assert!(status.is_pending_or_playing(), "a loop never completes");
+        preview.fill(&mut out);
+        assert_eq!(out.channel(0)[0], 4.0);
+        // A loop point past the end is no loop at all.
+        let once = Arc::new(AudioBuffer::from_planar(vec![vec![1.0; 4]], rate).unwrap());
+        let status = handle
+            .play_output_preview_with(
+                once,
+                crate::OutputPreviewOptions {
+                    loop_start_seconds: Some(4.0 / rate),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert!(!status.is_looping());
     }
 
     #[test]

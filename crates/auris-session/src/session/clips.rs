@@ -363,6 +363,64 @@ impl Session {
         Ok(right)
     }
 
+    /// Joins clips on one track into one, returning the clip that remains.
+    ///
+    /// The opposite of [`Self::split_clip`], and what a person means by gluing two phrases that
+    /// sit side by side: the earliest clip grows over the others and takes in every note they
+    /// played, each where it was heard, with any gap between them becoming rest.
+    /// [`Project::join_midi_clips`](auris_core::Project::join_midi_clips) is the account of what is
+    /// carried over — loops are written
+    /// out, curves and comments come along, and a recipe does not, the joined text being nobody's
+    /// single composition.
+    ///
+    /// Refused, before anything is recorded, for audio clips, for clips on different tracks, and
+    /// for pieces that disagree about mute or note transforms: the joined clip has one of each,
+    /// and joining is a change to where the boundaries are, never to what plays.
+    pub fn join_clips(&mut self, clips: &[ClipId]) -> Result<ClipId, SessionError> {
+        if let Some(refusal) = self.project.midi_join_refusal(clips) {
+            return Err(SessionError::CannotJoin(refusal));
+        }
+        let before = self.project.clone();
+        let Some(joined) = self.project.join_midi_clips(clips) else {
+            return Err(SessionError::CannotJoin(auris_core::JoinRefusal::TooFew));
+        };
+        if self.transaction.is_none() {
+            self.history.push(Edit::JoinClips, &before);
+        }
+        // Pushed by hand, as a split is, so the join can be attempted before a step exists — and
+        // for the same reason a split gives: it must break a run of coalescing repeats.
+        self.last_record = None;
+        self.dirty = true;
+        self.revision = self.revision.wrapping_add(1);
+        self.invalidate_graph();
+        Ok(joined)
+    }
+
+    /// The clip a lone clip would be joined with: the next one along its lane, or the one before
+    /// it when it is the last.
+    ///
+    /// What the arrangement's menu offers when one clip is right-clicked rather than a selection.
+    /// "Next" is by start, the reading [`Self::next_clip_start`] takes; only note clips have a
+    /// partner, there being no join for audio.
+    pub fn join_partner(&self, clip: ClipId) -> Option<ClipId> {
+        let (track, here) = self.project.midi_clip(clip)?;
+        let key = (here.start, here.id.0);
+        let others = self
+            .project
+            .track(track)?
+            .kind
+            .note_clips()?
+            .iter()
+            .filter(|other| other.id != clip)
+            .map(|other| ((other.start, other.id.0), other.id));
+        let (after, before): (Vec<_>, Vec<_>) = others.partition(|(at, _)| *at > key);
+        after
+            .into_iter()
+            .min_by_key(|(at, _)| *at)
+            .or_else(|| before.into_iter().max_by_key(|(at, _)| *at))
+            .map(|(_, id)| id)
+    }
+
     /// Renames a clip. Singer names are derived from lyrics and cannot be overridden.
     pub fn rename_clip(
         &mut self,
@@ -703,6 +761,11 @@ impl Session {
             candidate.length_is_explicit = true;
             candidate.notes = notes;
             candidate.recipe = recipe;
+            // A comment is never dropped by a trim: one pinned to material cut away stays at the
+            // new front, where the person who wrote it will still find it.
+            for comment in &mut candidate.comments {
+                comment.at = (comment.at - by).max_zero();
+            }
             candidate.bend.retain_mut(|point| {
                 if point.at < by {
                     false
@@ -1158,7 +1221,7 @@ impl Session {
         }
     }
 
-    fn audio_clip_exists(&self, clip: ClipId) -> bool {
+    pub(super) fn audio_clip_exists(&self, clip: ClipId) -> bool {
         self.project.tracks.iter().any(|track| {
             track
                 .kind
@@ -1309,7 +1372,7 @@ fn fade_frames(span: Ticks, length_ticks: Ticks, length_frames: u64) -> u64 {
 mod tests {
     use super::*;
     use crate::session::fixtures::{BAR, numeral, session, session_with_clip, undo_depth};
-    use auris_core::{AssetPath, ClipPreset, ClipRecipe, Note};
+    use auris_core::{AssetPath, ClipPreset, ClipRecipe, JoinRefusal, Note};
 
     #[test]
     fn a_lane_is_made_by_drawing_on_it_and_is_gone_when_the_last_point_is() {
@@ -2459,6 +2522,50 @@ mod tests {
         assert_eq!(session.midi_clip(right).unwrap().start, Ticks::QUARTER);
         assert!(session.can_undo());
         assert_ne!(session.revision(), revision);
+    }
+
+    #[test]
+    fn joining_side_by_side_clips_is_one_undo_step_and_a_refusal_is_none() {
+        let (mut session, track, first) = session_with_clip();
+        let second = session
+            .add_midi_clip(track, "B", Ticks::from_beats(8.0), Ticks::from_beats(4.0))
+            .unwrap();
+        assert_eq!(session.join_partner(first), Some(second));
+        assert_eq!(
+            session.join_partner(second),
+            Some(first),
+            "the last joins backwards"
+        );
+        session.forget_history();
+
+        session.set_clip_muted(second, true).unwrap();
+        session.forget_history();
+        let error = session.join_clips(&[first, second]);
+        assert!(matches!(
+            error,
+            Err(SessionError::CannotJoin(JoinRefusal::MixedMute))
+        ));
+        assert!(
+            !session.can_undo(),
+            "a refused join leaves no undo step behind"
+        );
+        session.set_clip_muted(second, false).unwrap();
+        session.forget_history();
+
+        let joined = session.join_clips(&[first, second]).unwrap();
+        assert_eq!(joined, first);
+        assert!(session.midi_clip(second).is_none());
+        assert_eq!(
+            session.midi_clip(joined).unwrap().length,
+            Ticks::from_beats(12.0)
+        );
+
+        assert_eq!(session.undo(), Some(Edit::JoinClips));
+        assert!(
+            session.midi_clip(second).is_some(),
+            "undo brings the piece back"
+        );
+        assert!(!session.can_undo());
     }
 
     #[test]

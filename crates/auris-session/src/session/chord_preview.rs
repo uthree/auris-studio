@@ -11,8 +11,6 @@ use auris_core::{
     AudioBuffer, Instrument, NoteEvent, Parameterized, PluginState, PrepareContext, ProcessContext,
 };
 
-use super::Session;
-
 /// Immutable work for a background thread. No document or live instrument is touched.
 #[derive(Clone)]
 pub struct ChordPreviewJob {
@@ -263,38 +261,6 @@ impl ChordPreview {
     }
 }
 
-impl Session {
-    /// Plays a rendered audition without creating tracks or using the document's mixer.
-    pub fn play_chord_preview(
-        &mut self,
-        preview: &ChordPreview,
-    ) -> Result<auris_engine::OutputPreviewStatus, String> {
-        self.play_chord_preview_with(preview, auris_engine::OutputPreviewOptions::default())
-    }
-
-    /// Plays a chord audition with its initial position and independent volume.
-    pub fn play_chord_preview_with(
-        &mut self,
-        preview: &ChordPreview,
-        options: auris_engine::OutputPreviewOptions,
-    ) -> Result<auris_engine::OutputPreviewStatus, String> {
-        if self.is_recording() {
-            return Err("stop recording before auditioning chords".into());
-        }
-        if (preview.buffer.sample_rate() - self.sample_rate()).abs() > 0.1 {
-            return Err("the audio rate changed; render the preview again".into());
-        }
-        self.engine
-            .play_output_preview_with(Arc::clone(&preview.buffer), options)
-            .map_err(|e| e.to_string())
-    }
-
-    /// Stops the independent audition without editing the document or moving its playhead.
-    pub fn stop_chord_preview(&self) {
-        self.send(auris_engine::EngineCommand::StopOutputPreview);
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -398,20 +364,5 @@ mod tests {
             .run(&AtomicBool::new(false))
             .unwrap();
         assert_ne!(first.chord_names, other.chord_names);
-    }
-
-    #[test]
-    fn audition_and_adoption_leave_the_live_document_and_history_untouched() {
-        let mut session = super::super::fixtures::session();
-        let before = session.project().clone();
-        let spec = request("dorian");
-        let preview =
-            ChordPreviewJob::new(spec.clone(), "verse".into(), None, session.sample_rate())
-                .run(&AtomicBool::new(false))
-                .unwrap();
-        session.play_chord_preview(&preview).unwrap();
-        session.stop_chord_preview();
-        assert_eq!(session.project(), &before);
-        assert!(!session.can_undo());
     }
 }

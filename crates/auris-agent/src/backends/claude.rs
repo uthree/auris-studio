@@ -90,6 +90,8 @@ fn command(
     native: bool,
     session: Session<'_>,
 ) -> Result<Command, String> {
+    // A live conversation whose policy refuses the shell is started without one.
+    let shell = native && super::native_tools(prefs);
     let mut command = Command::new(executable(prefs)?);
     // A file, not an argument: the preamble outgrows Windows' 32 767-character command line.
     let prompt = cwd.join("system-prompt.md");
@@ -118,7 +120,7 @@ fn command(
         .arg(cwd.join("mcp.json"))
         .args([
             "--tools",
-            if native { "Bash,Read,Glob,Grep,Write,Edit,NotebookEdit" } else { "" },
+            if shell { "Bash,Read,Glob,Grep,Write,Edit,NotebookEdit" } else { "" },
             "--disable-slash-commands",
             "--no-chrome",
             "--permission-mode",
@@ -129,7 +131,7 @@ fn command(
         ])
         .arg(
             json!({"disableAllHooks":true,"autoMemoryEnabled":false,"enabledPlugins":{},"fastMode":prefs.fast_mode,
-            "permissions":{"allow":["mcp__auris_live__*"],"ask":if native { NATIVE_TOOLS } else { &[] }}})
+            "permissions":{"allow":["mcp__auris_live__*"],"ask":if shell { NATIVE_TOOLS } else { &[] }}})
             .to_string(),
         )
         .arg("--system-prompt-file")
@@ -1058,6 +1060,18 @@ mod tests {
         let settings: Value = serde_json::from_str(&settings[1]).unwrap();
         assert_eq!(settings["permissions"]["ask"], json!(NATIVE_TOOLS));
         assert_eq!(settings["fastMode"], false);
+        // A workshop composer's policy refuses the shell, so it is neither offered nor described.
+        let mut composer = prefs.clone();
+        composer.policy.deny = vec!["cli_command".into()];
+        let args: Vec<_> = super::command(&composer, cwd.path(), true, Session::Ephemeral)
+            .unwrap()
+            .as_std()
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        assert!(args.windows(2).any(|args| args == ["--tools", ""]));
+        assert!(prompt(&args).contains("no shell or file tools"));
+        assert!(!prompt(&args).contains("Native shell and file tools are available"));
         assert!(
             validate_tools(
                 &json!({"tools":["Bash","Read","Edit","mcp__auris_live__inspect_project"]})

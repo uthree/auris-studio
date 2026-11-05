@@ -14,17 +14,19 @@
 //! * [`SourceId`](auris_core::project::SourceId)s become `Arc<AudioBuffer>` handles from the
 //!   [`AudioSourceBank`].
 //!
-//! Everything a block needs is pre-sized here, including the per-block event scratch, so
-//! rendering never touches the allocator.
+//! Everything a realtime block needs is pre-sized here, including the per-block event scratch,
+//! so callback rendering never touches the allocator. Offline worker dispatch is separate.
 //!
-//! Building itself is here, with [`RenderGraph`]. The five topics it calls out to have a file
+//! Building itself is here, with [`RenderGraph`]. The topics it calls out to have a file
 //! each, and none of them calls back: `automation` resolves the document's lanes, `latency` lays
 //! out the delay lines, `schedule` flattens musical time into frames, `strip` is the mixer strip
-//! and `track` is the node the routing joins up. They are private and re-exported, so every path
+//! and `track` is the node the routing joins up. `parallel` plans offline dependency generations.
+//! The public types are re-exported, so every path
 //! into the module is the one it always was.
 
 mod automation;
 mod latency;
+mod parallel;
 mod schedule;
 mod strip;
 mod track;
@@ -40,7 +42,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use auris_core::param::db_to_gain;
-use auris_core::plugin::{Effect, Instrument, PrepareContext};
+use auris_core::plugin::{Effect, Instrument, PrepareContext, TailContext};
 use auris_core::project::{AudioSourceBank, EffectSlotId, MixerStrip, Project, TrackId, TrackKind};
 use auris_core::registry::PluginRegistry;
 use auris_core::time::{Samples, TempoMap};
@@ -70,6 +72,8 @@ const DEFAULT_SAMPLE_RATE: f64 = 48_000.0;
 /// on the main thread while only the half that renders belongs in a graph. The caller that owns
 /// the other half builds those and leaves them here.
 /// The graph calls [`Effect::prepare`] before using each effect, including caller-built ones.
+/// Tracks containing caller-built plugins remain on the rendering caller's thread even during
+/// parallel offline rendering; registry-built tracks may be processed on different workers.
 ///
 /// Building **takes** each effect it uses, so a map that still holds entries afterwards names
 /// slots that are no longer in the project — which is how the caller finds out that a hosted
@@ -154,6 +158,8 @@ pub struct RenderGraph {
     pub(crate) sidechain_taps: Vec<AudioBuffer>,
     /// Track indices ordered so that everything feeding a bus comes before it.
     pub(crate) order: Vec<usize>,
+    /// Independent generations used only by offline rendering.
+    pub(crate) offline_plan: parallel::OfflineRenderPlan,
     /// Total latency the delay lines were laid out for: playhead to output, in frames.
     latency: usize,
     /// Every strip's own latency as it was when the delays were laid out — each track's, then the
@@ -310,6 +316,12 @@ impl RenderGraph {
         let mut scheduled_audio_windows_total = 0usize;
         let mut resource_error = None;
         for (index, track) in project.tracks.iter().enumerate() {
+            let parallel_safe = !instruments.contains_key(&track.id)
+                && !track
+                    .mixer
+                    .effects
+                    .iter()
+                    .any(|slot| placed.contains_key(&slot.id));
             // `audible` carries only the solo resolution; the strip keeps its own mute so a
             // mute toggle is a command rather than a rebuild.
             let audible = solo.get(index).copied().unwrap_or(true);
@@ -553,6 +565,7 @@ impl RenderGraph {
                 source,
                 mono: matches!(track.kind, TrackKind::Singer(_)),
                 strip,
+                parallel_safe,
                 outputs,
                 sends,
                 // Sized below, once every chain's latency is known.
@@ -630,6 +643,8 @@ impl RenderGraph {
         // step if each is held back to the longest path through it. A graph where nothing looks
         // ahead allocates nothing here, because every delay comes out zero.
         let order = project.routing_order();
+        let offline_plan =
+            parallel::OfflineRenderPlan::build(&tracks, &bus_tracks, &tap_tracks, &order);
         let plan = plan_latency(&tracks, &bus_tracks, &order, master.latency_frames());
         for (index, track) in tracks.iter_mut().enumerate() {
             track.delay = LatencyDelay::new(plan.node[index], RENDER_CHANNELS);
@@ -677,6 +692,7 @@ impl RenderGraph {
             bus_tracks,
             sidechain_taps,
             order,
+            offline_plan,
             latency: plan.total,
             built_latencies,
             tempo_map: project.tempo_map.clone(),
@@ -901,14 +917,19 @@ impl RenderGraph {
     /// The offline renderer keeps going for this long past the end of the arrangement so that
     /// reverbs and delays are not chopped off in the exported file.
     pub fn tail_frames(&self) -> usize {
-        let master = self.master.tail_frames();
-        let through = longest_paths(
-            &self.tracks,
-            &self.bus_tracks,
-            &self.order,
-            RenderStrip::tail_frames,
-            master,
-        );
+        self.tail_frames_using(RenderStrip::tail_frames)
+    }
+
+    /// Bounds the graph's tail over the planned tempos without processing any audio.
+    ///
+    /// Routing and serial chains contribute exactly as in [`Self::tail_frames`].
+    pub fn tail_frames_with_context(&self, context: &TailContext) -> usize {
+        self.tail_frames_using(|strip| strip.tail_frames_with_context(context))
+    }
+
+    fn tail_frames_using(&self, tail: impl Fn(&RenderStrip) -> usize) -> usize {
+        let master = tail(&self.master);
+        let through = longest_paths(&self.tracks, &self.bus_tracks, &self.order, tail, master);
         self.tracks
             .iter()
             .enumerate()
@@ -1220,6 +1241,14 @@ mod tests {
         let graph =
             RenderGraph::build(&project, &AudioSourceBank::new(), &testkit::registry(), 512);
         assert_eq!(graph.tail_frames(), 2 * testkit::TAIL_FRAMES);
+        // Existing effects, including hosted wrappers, need not implement the new query.
+        assert_eq!(
+            graph.tail_frames_with_context(&TailContext {
+                min_bpm: 10.0,
+                max_bpm: 999.0,
+            }),
+            2 * testkit::TAIL_FRAMES
+        );
     }
 
     #[test]

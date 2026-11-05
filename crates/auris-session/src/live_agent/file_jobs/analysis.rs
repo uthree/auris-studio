@@ -45,7 +45,7 @@ pub struct AnalysisRender {
     /// Capture a warmed-up cycle. The range must be one complete intended cycle.
     #[serde(default)]
     pub looping: bool,
-    /// Absolute new JSON manifest path. Outputs survive audition-cache eviction.
+    /// New JSON manifest path, workspace-relative or absolute. Outputs survive audition-cache eviction.
     pub manifest_path: String,
 }
 
@@ -391,7 +391,7 @@ impl Session {
             }
         }
         Ok(Manifest {
-            path: local_path(&request.manifest_path)?,
+            path: self.agent_path(&request.manifest_path)?,
             dependencies: Vec::new(),
             context_from_start: request.context_from_start,
             fonts: self.analysis_loaded_fonts(),

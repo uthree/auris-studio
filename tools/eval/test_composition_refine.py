@@ -217,7 +217,6 @@ def _fake_args(tmp_path: Path) -> SimpleNamespace:
         speaker=None,
         model="fake",
         backend="codex",
-        prompt_profile="legacy",
         timeout=60,
         auditions=False,
     )

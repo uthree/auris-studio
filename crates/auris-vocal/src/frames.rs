@@ -48,8 +48,8 @@ use auris_core::plugin::{CC_EXPRESSION, pitch_to_hz};
 use auris_core::project::{ClipCurve, CurvePoint, curve_at};
 use auris_core::time::{Seconds, TempoMap, Ticks};
 use auris_core::{
-    ConsonantLevels, ConsonantWidths, Fall, Scoop, SingerTrack, Vibrato, default_frame_hop,
-    loop_passes,
+    ConsonantLevels, ConsonantWidths, Fall, NoteTransform, Scoop, SingerTrack, Vibrato,
+    default_frame_hop, loop_passes, swing_position,
 };
 
 use crate::ornament::ornament_offset;
@@ -458,14 +458,30 @@ fn timed_notes_with_origins<'a>(
             continue;
         }
         let expression = clip.curve(ClipCurve::Controller(CC_EXPRESSION));
+        // A swung clip has to be sung swung, or the voice stays on the straight grid while
+        // the band it shares the offbeats with plays them late. Both ends move, so a legato
+        // line stays legato; the other transforms are the band's and leave the voice alone.
+        let swung = |position: Ticks| {
+            clip.transforms
+                .iter()
+                .fold(position, |position, transform| match transform {
+                    NoteTransform::Swing {
+                        percent,
+                        subdivision,
+                    } => swing_position(position, *percent, *subdivision),
+                    _ => position,
+                })
+        };
         for (offset, span) in loop_passes(clip.length, clip.loop_end) {
             let base = clip.start + offset;
             for (index, note) in clip.playable_notes_with_indices() {
                 if note.start >= span {
                     continue;
                 }
-                let length = note.length.min(span - note.start);
-                let start = base + note.start;
+                let from = swung(note.start);
+                let length =
+                    (swung(note.start + note.length.min(span - note.start)) - from).max(Ticks(1));
+                let start = base + from;
                 let (phonemes, phoneme_seconds) = match note.phonemes.is_empty() {
                     true => (vec!["a".to_string()], Vec::new()),
                     false => (note.phonemes.clone(), note.phoneme_seconds.clone()),
@@ -770,6 +786,29 @@ mod tests {
         );
         assert_eq!(track.clips[0].notes[0].lyric, "光");
         assert_eq!(track.clips[0].notes[1].lyric, "+");
+    }
+
+    #[test]
+    fn a_swung_clip_is_sung_swung_and_stays_legato() {
+        let notes = vec![
+            sung(60, 0.0, 0.5, &["a"]),
+            sung(62, 0.5, 0.5, &["i"]),
+            sung(64, 1.0, 0.5, &["u"]),
+        ];
+        let mut track = track(notes);
+        track.clips[0].transforms = vec![NoteTransform::Swing {
+            percent: 67,
+            subdivision: auris_core::Subdivision::Eighth,
+        }];
+        let timed = timed_notes(&track, &map());
+        let seconds = |ticks: i64| ticks as f64 / 960.0 * 0.5;
+        // The offbeat lands at 643 ticks, and the note before it holds until it does.
+        assert!((timed[1].start - seconds(643)).abs() < 1e-9);
+        assert!((timed[0].end - seconds(643)).abs() < 1e-9);
+        assert!((timed[2].start - seconds(960)).abs() < 1e-9);
+        // Without the transform the voice sits on the straight grid.
+        track.clips[0].transforms.clear();
+        assert!((timed_notes(&track, &map())[1].start - seconds(480)).abs() < 1e-9);
     }
 
     #[test]

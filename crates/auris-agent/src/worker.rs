@@ -489,6 +489,7 @@ impl Bridge {
 
 /// A cancellable background conversation. Dropping it never waits on the UI thread.
 pub struct Worker {
+    bridge: Bridge,
     stopped: Arc<AtomicBool>,
     commands: async_mpsc::UnboundedSender<String>,
     events: mpsc::Receiver<serde_json::Value>,
@@ -563,6 +564,7 @@ impl Worker {
             recall: Default::default(),
         }));
         let (cancel, cancelled) = oneshot::channel();
+        let handle = bridge.clone();
         std::thread::Builder::new()
             .name("auris-agent".into())
             .spawn(move || {
@@ -594,11 +596,25 @@ impl Worker {
             })
             .map_err(|error| error.to_string())?;
         Ok(Self {
+            bridge: handle,
             stopped,
             commands,
             events,
             cancel: Some(cancel),
         })
+    }
+
+    /// The conversation's production record: its phase, roles and notes.
+    pub fn production_record(&self) -> Result<auris_session::production_record::Record, String> {
+        self.bridge.production_snapshot()
+    }
+
+    /// Start the conversation from a record a host kept, before sending the first request.
+    pub fn seed_production_record(
+        &self,
+        record: auris_session::production_record::Record,
+    ) -> Result<(), String> {
+        self.bridge.seed_production(record)
     }
 
     /// Cancel pending model and approval work without waiting for the worker thread.
@@ -779,12 +795,16 @@ mod tests {
     #[test]
     fn worker_uses_configured_tool_call_limit_and_can_exceed_the_old_caps() {
         use serde_json::json;
+        // Every call is another round trip carrying the whole history so far, so each case is
+        // costly; this ran 161 calls under a limit of 250 too, which the unlimited case already
+        // covers, and the four together took 26 seconds of a 30-second deadline. The boundary
+        // is at 100 because the settings clamp any lower limit up to it.
         for (limit, calls, completes) in [
-            (None, 161, true),
+            (None, 161_usize, true),
             (Some(100), 100, true),
             (Some(100), 101, false),
-            (Some(250), 161, true),
         ] {
+            let cap = limit.map(|limit| limit as usize);
             let mut responses: Vec<_> = (0..calls)
                 .map(|id| {
                     crate::tests::completion(
@@ -843,10 +863,10 @@ mod tests {
                         assert!(!completes, "{event}");
                         assert_eq!(
                             crate::tool_calls::limit_from_error(event["message"].as_str().unwrap()),
-                            Some(100),
+                            cap,
                             "unexpected error after {permissions} calls: {event}"
                         );
-                        assert_eq!(permissions, 100);
+                        assert_eq!(Some(permissions), cap);
                         break;
                     }
                     Some("edit") => panic!("reference calls must not edit the score"),

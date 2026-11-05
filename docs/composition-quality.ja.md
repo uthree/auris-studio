@@ -59,4 +59,4 @@ uv run --with ruff ruff check tools/eval/composition_quality.py tools/eval/test_
 <a id="follow-up-validation-of-production-records-and-candidates"></a>
 ## 本番記録と候補の追跡検証
 
-[追跡レポート](composition-quality-validation-2026-10-24.ja.md) は、会話記録、不変候補、スコープ付き変化、モジュール式プロンプト、実バックエンド試行を対象にします。回復したツールエラーと runtime-smoke の失敗を含む、24件すべてのホールドアウト配信と6試行の開発プロンプトアブレーションを保持します。人による選好はまだ採点していません。候補カタログとモジュール式プロンプトはオプトインのままです。[候補ツール](composition-candidates.ja.md) と [ワークフロー設定](composition-workflows.ja.md) を参照してください。
+[追跡レポート](composition-quality-validation-2026-10-24.ja.md) は、会話記録、不変候補、スコープ付き変化、モジュール式プロンプト、実バックエンド試行を対象にします。回復したツールエラーと runtime-smoke の失敗を含む、24件すべてのホールドアウト配信と6試行の開発プロンプトアブレーションを保持します。人による選好はまだ採点していません。候補カタログはオプトインのままで、フェーズ方式のプロンプトは既定になりました。[候補ツール](composition-candidates.ja.md) と [制作フェーズ](composition-workflows.ja.md) を参照してください。

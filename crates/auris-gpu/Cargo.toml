@@ -13,4 +13,5 @@ auris-dsp.workspace = true
 bytemuck.workspace = true
 log.workspace = true
 pollster.workspace = true
+rayon.workspace = true
 wgpu.workspace = true

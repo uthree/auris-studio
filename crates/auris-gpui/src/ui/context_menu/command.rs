@@ -28,6 +28,7 @@ impl MenuCommand {
             Self::DeleteClip(_) | Self::DeleteNotes => "edit.delete",
             Self::ToggleClipMute(_) => "clip.mute",
             Self::SplitClipAtPlayhead(_) => "clip.split",
+            Self::JoinClips(_) => "clip.join",
             Self::ToggleClipLoop(_) => "clip.loop",
             Self::DuplicateNotes => "edit.duplicate",
             Self::CutNotes => "edit.cut",
@@ -48,6 +49,14 @@ impl MenuCommand {
 /// What choosing a menu item does.
 #[derive(Clone, Debug, PartialEq)]
 pub enum MenuCommand {
+    /// Applies the obvious fix of the linter problem with this id.
+    LintFix(String),
+    /// Hands the linter problem with this id to the agent.
+    LintAskAgent(String),
+    /// Opens the Problems tab on the linter problem with this id.
+    LintShow(String),
+    /// Adds this ignore rule to the project.
+    LintIgnore(auris_session::lint::LintSuppression),
     /// Rename an exact project-local song conversation.
     WorkshopThreadRename(String),
     /// Archive or restore an exact project-local song conversation.
@@ -419,6 +428,8 @@ pub enum MenuCommand {
     ToggleClipMute(ClipId),
     /// Divide a clip at the playhead.
     SplitClipAtPlayhead(ClipId),
+    /// Join the selection a clip belongs to into one clip, or a lone clip with its neighbour.
+    JoinClips(ClipId),
     /// Set the cycle region to a clip's extent.
     LoopOverClip(ClipId),
     /// Repeat a clip out to the next one on its lane, or stop it repeating.
@@ -535,6 +546,17 @@ pub enum MenuCommand {
         /// The channels to read, or `None` to disarm it.
         input: Option<InputChannels>,
     },
+    /// Put one recording of a sampler's map in a velocity layer.
+    SetSampleVelocity {
+        /// The sampler's track.
+        track: TrackId,
+        /// Which zone of its map.
+        zone: usize,
+        /// Softest velocity answered, 0..1.
+        low: f32,
+        /// Hardest velocity answered, 0..1.
+        high: f32,
+    },
     /// Point one effect at a track to key from, or stop it listening to one.
     SetEffectSidechain {
         /// Strip the effect sits in, or `None` for the master bus.
@@ -621,6 +643,29 @@ pub enum MenuCommand {
     SetLyricLineAt(Ticks),
     /// Remove the lyric line in force at a position.
     RemoveLyricLineAt(Ticks),
+    /// Type a new comment pinned at a position (and row, inside a clip).
+    AddCommentAt {
+        /// What will hold it.
+        host: CommentHost,
+        /// Song time on a track, clip time inside a clip.
+        at: Ticks,
+        /// The piano-roll row, inside a clip.
+        pitch: Option<u8>,
+    },
+    /// Retype a comment.
+    EditComment {
+        /// What holds it.
+        host: CommentHost,
+        /// Which comment.
+        id: CommentId,
+    },
+    /// Take a comment off.
+    RemoveComment {
+        /// What holds it.
+        host: CommentHost,
+        /// Which comment.
+        id: CommentId,
+    },
     /// Stop showing words from a position: the silence after a line.
     EndLyricLineAt(Ticks),
     /// Rewrite the song-wide lyrics from what the singer tracks sing.
@@ -708,6 +753,43 @@ pub enum MenuCommand {
         /// The grid whose offbeats the swing delays.
         subdivision: Subdivision,
     },
+    /// Replace a clip's performance with a preset's stages.
+    ApplyPerformPreset {
+        /// Clip whose performance is being shaped.
+        clip: ClipId,
+        /// The preset's name, built in or kept.
+        name: String,
+    },
+    /// Open one instrument family's presets.
+    ShowPerformPresetFamily {
+        /// Clip whose performance is being shaped.
+        clip: ClipId,
+        /// The family to list.
+        family: PresetFamily,
+        /// Where the menu stays anchored.
+        at: Point<Pixels>,
+    },
+    /// Ask which family to keep the clip's performance under.
+    ShowPerformPresetSave {
+        /// Clip whose performance is kept.
+        clip: ClipId,
+        /// Where the menu stays anchored.
+        at: Point<Pixels>,
+    },
+    /// Name a preset kept from the clip's performance.
+    SavePerformPreset {
+        /// Clip whose performance is kept.
+        clip: ClipId,
+        /// The family it is filed under.
+        family: PresetFamily,
+    },
+    /// List the kept presets for deletion.
+    ShowPerformPresetDelete {
+        /// Where the menu stays anchored.
+        at: Point<Pixels>,
+    },
+    /// Delete a kept preset.
+    DeletePerformPreset(String),
     /// Set the pitch order of a chord stroke.
     SetPerformStrokeDirection {
         /// Clip whose performance is being shaped.
@@ -823,6 +905,15 @@ impl AurisApp {
             return;
         }
         match command {
+            MenuCommand::LintFix(id) => self.apply_lint(&id, cx),
+            MenuCommand::LintAskAgent(id) => self.ask_agent_about_lint(&id, cx),
+            MenuCommand::LintIgnore(suppression) => self.lint_ignore(suppression, cx),
+            MenuCommand::LintShow(id) => {
+                self.lint.tab = crate::ui::lint::LogTab::Problems;
+                self.show_panel(crate::dock::Panel::Log);
+                self.reveal_lint(&id);
+                cx.notify();
+            }
             MenuCommand::CopyAgentMarkdown(text) => {
                 cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
             }
@@ -1227,6 +1318,7 @@ impl AurisApp {
                 let at = self.playhead_ticks();
                 self.split_clips_for_command(clip, at);
             }
+            MenuCommand::JoinClips(clip) => self.join_clips_for_command(clip),
             MenuCommand::LoopOverClip(clip) => {
                 // The *sounding* extent, repeats included: cycling over a looped clip and
                 // hearing only its first bar would be a cycle region nobody could explain.
@@ -1375,6 +1467,12 @@ impl AurisApp {
                 slot,
                 source,
             } => self.set_effect_sidechain(track, slot, source),
+            MenuCommand::SetSampleVelocity {
+                track,
+                zone,
+                low,
+                high,
+            } => self.set_sample_velocity(track, zone, low, high),
             MenuCommand::AddEffect { track, effect_id } => self.add_effect_to(track, &effect_id),
 
             MenuCommand::ShowProgressionPicker { at, anchor } => {
@@ -1480,6 +1578,31 @@ impl AurisApp {
             MenuCommand::SetPerformStrokeDirection { clip, direction } => {
                 self.set_perform_stroke_direction(clip, direction)
             }
+            MenuCommand::ApplyPerformPreset { clip, name } => {
+                if let Err(error) = self.session.apply_performance_preset(clip, &name) {
+                    self.set_status(crate::i18n::error_text(&error, self.language()));
+                }
+            }
+            MenuCommand::ShowPerformPresetFamily { clip, family, at } => {
+                let menu = self.perform_preset_family_menu(at, clip, family);
+                self.open_menu(menu);
+            }
+            MenuCommand::ShowPerformPresetSave { clip, at } => {
+                let menu = self.perform_preset_save_menu(at, clip);
+                self.open_menu(menu);
+            }
+            MenuCommand::SavePerformPreset { clip, family } => {
+                self.prompt_for_perform_preset(clip, family)
+            }
+            MenuCommand::ShowPerformPresetDelete { at } => {
+                let menu = self.perform_preset_delete_menu(at);
+                self.open_menu(menu);
+            }
+            MenuCommand::DeletePerformPreset(name) => {
+                if let Err(error) = self.session.forget_performance_preset(&name) {
+                    self.set_status(crate::i18n::error_text(&error, self.language()));
+                }
+            }
             MenuCommand::SetParamChoice { target, value } => self.session.set_param(target, value),
             MenuCommand::ResetParam(target) => self.reset_param(target),
             MenuCommand::SetParamValue(target) => self.prompt_for_param(target),
@@ -1550,6 +1673,14 @@ impl AurisApp {
             MenuCommand::EndSectionsAt(tick) => self.session.set_section(tick, None),
             MenuCommand::SetLyricLineAt(tick) => self.prompt_for_lyric_line(tick),
             MenuCommand::RemoveLyricLineAt(tick) => self.session.remove_lyric_line(tick),
+            MenuCommand::AddCommentAt { host, at, pitch } => {
+                self.prompt_for_new_comment(host, at, pitch);
+            }
+            MenuCommand::EditComment { host, id } => self.prompt_for_comment(host, id),
+            // A stale menu over a comment already gone has nothing left to take off.
+            MenuCommand::RemoveComment { host, id } => {
+                let _ = self.session.remove_comment(host, id);
+            }
             MenuCommand::EndLyricLineAt(tick) => self.session.set_lyric_line(tick, None),
             MenuCommand::LyricsFromVocals => {
                 self.session.annotate_lyrics_from_vocals(None);

@@ -109,6 +109,27 @@ pub(crate) fn replacement_clip(
     Ok(candidate)
 }
 
+/// Removes sorted, deduplicated, in-bounds note indices in one stable pass.
+fn remove_note_indices(notes: &mut Vec<Note>, doomed: &[usize]) {
+    let (Some(&first), Some(&last)) = (doomed.first(), doomed.last()) else {
+        return;
+    };
+    // Single notes and contiguous selections can remove one range directly, including a whole
+    // clip or its tail, without scanning the unaffected prefix.
+    if last - first == doomed.len() - 1 {
+        notes.drain(first..=last);
+        return;
+    }
+    let mut selected = 0;
+    let mut note_index = 0;
+    notes.retain(|_| {
+        let remove = selected < doomed.len() && doomed[selected] == note_index;
+        selected += usize::from(remove);
+        note_index += 1;
+        !remove
+    });
+}
+
 impl Session {
     /// Replace only a clip's authored notes in one undoable edit.
     /// Validates the entire batch before mutation; identical retries create no history.
@@ -193,12 +214,9 @@ impl Session {
         }
         self.record(edit);
         if let Some(target) = self.project.midi_clip_mut(clip) {
-            // Remove from the back so the earlier indices stay valid.
-            for index in doomed.into_iter().rev() {
-                if index < target.notes.len() {
-                    target.notes.remove(index);
-                }
-            }
+            // The selection is sorted and deduplicated above. A stable retain pass avoids
+            // repeatedly shifting the tail with Vec::remove for large selections.
+            remove_note_indices(&mut target.notes, &doomed);
         }
         self.invalidate_graph();
         Ok(())
@@ -557,6 +575,9 @@ impl Session {
         self.project.midi_clip(clip).map(|(_, clip)| clip)
     }
 }
+
+#[cfg(test)]
+mod performance_tests;
 
 #[cfg(test)]
 mod tests {

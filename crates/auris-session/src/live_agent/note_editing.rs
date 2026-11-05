@@ -1,4 +1,4 @@
-//! Exact tick-based note editing shared by file and live agents.
+//! Exact note editing by song bar and beat, shared by file and live agents.
 
 use crate::{Session, prelude::*};
 use serde::{Deserialize, Serialize};

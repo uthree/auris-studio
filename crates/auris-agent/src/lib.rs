@@ -22,6 +22,8 @@ pub mod song_authoring;
 pub mod song_ideas;
 pub mod timbre_names;
 pub mod workshop;
+/// The chat's composition commands, which the desktop turns into assignments.
+pub use toolbox::phase_commands::PhaseCommand;
 
 use std::io::Read;
 use std::path::PathBuf;
@@ -326,10 +328,14 @@ fn parse_command(
 /// Musical principles shared by live composition, startup directions and lyric writing.
 const MUSICAL_DESIGN_INSTRUCTIONS: &str = include_str!("prompts/musical-design.md");
 
-/// Built-in shared live-agent prompt for the active prompt profile.
+/// Built-in shared live-agent prompt: the common core of every composition phase.
 /// Settings displays this text when no replacement has been saved.
+///
+/// It carries only the rules that hold in every phase. What a phase asks for — its musical
+/// guidance, its tool essentials and its technique index — comes back from `enter_phase`, so a
+/// model carries the phase it is in and not the other two.
 pub fn default_system_prompt() -> String {
-    preamble_for_profile(toolbox::composition_workflows::enabled())
+    include_str!("prompts/core.md").to_owned()
 }
 
 /// Resolves the user's replacement prompt, preserving its text exactly unless blank.
@@ -361,20 +367,6 @@ pub fn live_system_prompt(prefs: &auris_session::AgentPreferences) -> String {
 #[cfg(test)]
 fn preamble() -> String {
     default_system_prompt()
-}
-
-fn preamble_for_profile(modular: bool) -> String {
-    let mut text = format!(
-        "{}\n{}\n{}",
-        include_str!("prompts/composition.md"),
-        MUSICAL_DESIGN_INSTRUCTIONS,
-        include_str!("prompts/live-tools.md")
-    );
-    // Detailed musical/operation guidance is returned by tool_help when needed.
-    if modular {
-        text.push_str("\nFor music-making select production_record select_workflow (composition, accompaniment, vocals, local_edit or delivery), choose writing_order harmony_first, melody_first or rhythm_first, and follow the returned workflow.\n");
-    }
-    text
 }
 
 /// A tool's refusal, carried as an error the runtime can classify.
@@ -1449,7 +1441,6 @@ mod tests {
         let sent = body["messages"][0]["content"][0]["text"].as_str().unwrap();
         assert!(sent.starts_with(&default_system_prompt()));
         assert!(sent.contains(&format!("Auris Studio {}", env!("CARGO_PKG_VERSION"))));
-        assert!(default_system_prompt().contains(MUSICAL_DESIGN_INSTRUCTIONS));
     }
 
     #[tokio::test]
@@ -1499,39 +1490,26 @@ mod tests {
     }
 
     #[test]
-    fn experimental_prompt_keeps_safety_contracts_and_the_same_catalog() {
-        let catalog = host::ToolHost::definitions()
-            .iter()
-            .map(|t| t.name.clone())
-            .collect::<Vec<_>>();
-        let modular = preamble_for_profile(true);
-        let legacy = preamble_for_profile(false);
-        for text in [&modular, &legacy] {
-            assert_eq!(text.matches(MUSICAL_DESIGN_INSTRUCTIONS).count(), 1);
-            assert!(
-                text.len() < 9000,
-                "Shared prompt grew to {} bytes",
-                text.len()
-            );
-            for contract in [
-                "inspect_project",
-                "read_notes",
-                "expected_revision",
-                "0..1",
-                "production_record",
-                "Human listening",
-            ] {
-                assert!(text.contains(contract), "Missing {contract}");
-            }
-        }
-        assert!(modular.contains("select_workflow"));
-        assert_eq!(
-            catalog,
-            host::ToolHost::definitions()
-                .iter()
-                .map(|t| t.name.clone())
-                .collect::<Vec<_>>()
+    fn the_common_core_keeps_safety_contracts_and_leaves_music_to_the_phases() {
+        let core = default_system_prompt();
+        // The musical guidance arrives with each phase's instructions, not in the core.
+        assert!(!core.contains(MUSICAL_DESIGN_INSTRUCTIONS));
+        assert!(
+            core.len() < 4500,
+            "The common core grew to {} bytes",
+            core.len()
         );
+        for contract in [
+            "inspect_project",
+            "read_notes",
+            "expected_revision",
+            "0..1",
+            "production_record",
+            "Human listening",
+            "enter_phase",
+        ] {
+            assert!(core.contains(contract), "Missing {contract}");
+        }
     }
     use super::*;
 

@@ -144,12 +144,32 @@ pub fn resize_handles(window: &Window) -> Vec<Stateful<Div>> {
     .collect()
 }
 
+/// Whether this window draws its own minimize, maximize and close buttons.
+///
+/// macOS has its traffic lights and a fullscreen window has no caption at all. Linux draws
+/// them only while the window draws its own decorations: a compositor that declines client
+/// decorations (and the headless test platform, which always reports server ones) keeps its
+/// own frame, and Atelier's `TitleBar` then drops the controls. Asking here keeps the space
+/// reserved for them and the buttons themselves in agreement.
+pub fn draws_caption_buttons(window: &Window) -> bool {
+    if window.is_fullscreen() {
+        return false;
+    }
+    if cfg!(target_os = "macos") {
+        false
+    } else if cfg!(target_os = "windows") {
+        true
+    } else {
+        matches!(window.window_decorations(), Decorations::Client { .. })
+    }
+}
+
 /// Space occupied by the application-drawn window controls.
 pub fn controls_width(window: &Window) -> Pixels {
-    if cfg!(target_os = "macos") || window.is_fullscreen() {
-        px(0.0)
-    } else {
+    if draws_caption_buttons(window) {
         CONTROL_WIDTH * 3.0
+    } else {
+        px(0.0)
     }
 }
 

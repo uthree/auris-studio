@@ -157,8 +157,7 @@ impl LyricOverlay {
             ..Stroke::default()
         };
         frame.stroke_path(path, &rim, &stroke, place, None);
-        // The playhead colour, the frame's own ink, rather than the chord caption's colour.
-        let (r, g, b) = style.playhead_color.rgb();
+        let (r, g, b) = style.lyric_color.rgb();
         let mut ink = Paint {
             anti_alias: true,
             ..Paint::default()
@@ -307,6 +306,32 @@ mod tests {
         assert_eq!(lit(&drawn(true, 2.5).unwrap()), 0, "silent between lines");
         assert_eq!(lit(&drawn(true, 9.0).unwrap()), 0, "and after the last");
         assert_eq!(lit(&drawn(false, 1.0).unwrap()), 0, "and none when off");
+    }
+
+    #[test]
+    fn the_subtitle_is_drawn_in_its_own_colour_not_the_playhead_one() {
+        if !japanese_installed() {
+            return;
+        }
+        let style = NoteRollStyle {
+            lyric_color: Color(0xff2000),
+            playhead_color: Color(0x00ff00),
+            ..style(true)
+        };
+        let renderer = FrameRenderer::with_background(&score(), &style, None);
+        let mut frame = renderer.canvas();
+        renderer.draw(1.0, &mut frame);
+        let (mut red, mut green) = (0, 0);
+        for pixel in frame.data().as_chunks::<4>().0 {
+            if pixel[0] > 200 && pixel[1] < 80 {
+                red += 1;
+            }
+            if pixel[1] > 200 && pixel[0] < 80 {
+                green += 1;
+            }
+        }
+        assert!(red > 100, "the line is in the lyric colour: {red}");
+        assert_eq!(green, 0, "and nothing of it in the playhead's");
     }
 
     #[test]
