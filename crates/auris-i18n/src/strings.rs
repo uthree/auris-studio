@@ -533,6 +533,9 @@ strings! {
     TrackKindSinger { en: "Singer", ja: "シンガー" }
     TrackKindAudio { en: "Audio", ja: "オーディオ" }
     TrackKindBus { en: "Bus", ja: "バス" }
+    // Drawn in a track header in place of a sound's name when the track has none to play.
+    TrackSoundNone { en: "No sound", ja: "音源なし" }
+    TrackVoiceNone { en: "No voice", ja: "声なし" }
     // A strip is 128 px wide and every label on it is an abbreviation for that reason.
     OutputShort { en: "Out", ja: "出力" }
     MixerConnectionFrom { en: "From", ja: "接続元" }

@@ -68,6 +68,49 @@ impl AurisApp {
         )
     }
 
+    /// The label a track header draws where it once said only what kind of track it was.
+    ///
+    /// A track that plays something names what it plays — the SoundFont sound, the sample, the
+    /// built-in or hosted instrument, the voice — because "Instrument" is true of every one of
+    /// them and tells nobody which piano this is. A track that plays nothing yet says *that*,
+    /// rather than falling back to the kind, so an empty sampler does not look like a working
+    /// one. Audio and bus tracks play no instrument, and their kind is still the useful word.
+    pub(crate) fn track_sound_label(&self, track: TrackId) -> TrackSoundLabel {
+        let Some(entry) = self.project().track(track) else {
+            return TrackSoundLabel::Kind(Key::TrackKindAudio);
+        };
+        let kind = track_kind_key(&entry.kind);
+        let named = match &entry.kind {
+            TrackKind::Singer(_) => {
+                return match self.singer_voice_label(track) {
+                    Some(voice) => TrackSoundLabel::Named { name: voice, kind },
+                    None => TrackSoundLabel::Unset {
+                        placeholder: Key::TrackVoiceNone,
+                        kind,
+                    },
+                };
+            }
+            TrackKind::Instrument(inner) | TrackKind::Drum(inner) => {
+                match inner.instrument_id.as_str() {
+                    SAMPLER_ID => self.session.track_preset_name(track),
+                    AUDIO_SAMPLER_ID => self
+                        .session
+                        .track_sample_name(track)
+                        .filter(|_| self.session.track_sample_is_loaded(track)),
+                    id => Some(self.instrument_label(track, id)),
+                }
+            }
+            TrackKind::Audio(_) | TrackKind::Bus => return TrackSoundLabel::Kind(kind),
+        };
+        match named {
+            Some(name) => TrackSoundLabel::Named { name, kind },
+            None => TrackSoundLabel::Unset {
+                placeholder: Key::TrackSoundNone,
+                kind,
+            },
+        }
+    }
+
     /// A plugin's one-line description for the browser.
     pub(crate) fn plugin_description(&self, text: &str) -> String {
         audio::plugin_description(text, self.language).to_string()
@@ -247,6 +290,54 @@ pub fn edit_key(edit: Edit) -> Key {
         Edit::FreezeClipTransforms => Key::EditFreezeClipTransforms,
         Edit::Compose => Key::EditCompose,
         Edit::BalanceLevels => Key::EditBalanceLevels,
+    }
+}
+
+/// What a track header says about what plays the track; see
+/// [`AurisApp::track_sound_label`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum TrackSoundLabel {
+    /// Something plays it, and this is its name.
+    Named {
+        /// The sound, instrument or voice, as its owner calls it.
+        name: String,
+        /// The track's kind, which the label no longer shows and its tooltip still does.
+        kind: Key,
+    },
+    /// The track has room for a sound and nothing in it that will play.
+    Unset {
+        /// What to say instead of a name.
+        placeholder: Key,
+        /// The track's kind, for the tooltip.
+        kind: Key,
+    },
+    /// A track that plays no instrument at all, for which the kind is the right word.
+    Kind(Key),
+}
+
+impl TrackSoundLabel {
+    /// The words drawn in the header.
+    pub(crate) fn text(&self, language: Language) -> String {
+        match self {
+            Self::Named { name, .. } => name.clone(),
+            Self::Unset { placeholder, .. } => placeholder.get(language).to_string(),
+            Self::Kind(kind) => kind.get(language).to_string(),
+        }
+    }
+
+    /// The fuller account for the tooltip: the kind the label replaced, then the label.
+    pub(crate) fn tooltip(&self, language: Language) -> String {
+        match self {
+            Self::Named { kind, .. } | Self::Unset { kind, .. } => {
+                format!("{} · {}", kind.get(language), self.text(language))
+            }
+            Self::Kind(kind) => kind.get(language).to_string(),
+        }
+    }
+
+    /// `true` when nothing will play, which the header draws more quietly than a name.
+    pub(crate) fn is_unset(&self) -> bool {
+        matches!(self, Self::Unset { .. })
     }
 }
 

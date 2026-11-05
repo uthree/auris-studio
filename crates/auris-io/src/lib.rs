@@ -55,7 +55,8 @@ pub use project_file::{
 };
 pub use record::WavRecorder;
 pub use soundfont::{
-    SoundFontPreset, font_name, load_soundfont, preset_count, presets, soundfont_extensions,
+    SoundFontPreset, font_name, load_soundfont, preset_count, preset_name, presets,
+    soundfont_extensions,
 };
 
 /// A parsed SoundFont, as [`load_soundfont`] returns it.
