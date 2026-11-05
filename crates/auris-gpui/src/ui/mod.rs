@@ -45,6 +45,7 @@ pub mod palette;
 pub mod part;
 pub mod performance;
 pub mod performance_presets;
+pub(crate) mod physical_bodies;
 pub(crate) mod physical_model;
 pub mod piano_roll;
 pub(crate) mod pitch_performance;

@@ -1,8 +1,10 @@
 //! The physical instrument's body, live, beside its parameter editor — and a body to touch.
 //!
-//! Drawn with Atelier's physical-model plots: one [`StringLane`] per sounding string, bar,
-//! shell, bore or vocal tract, a circular [`Heatmap`] per drum head or cymbal, and the modes the
-//! body rings in on a stem plot. Every body is also a surface. Pressing it excites the model at
+//! Each body is drawn as what it is: a [`StringLane`] per plucked, struck or bowed string, a
+//! circular [`Heatmap`] per drum head or cymbal, and for the rest the painters in
+//! [`super::physical_bodies`] — a piano string between its hammer and damper, a mallet bar on its
+//! supports, a bell's rim as a ring, a bore or a vocal tract as a tube of air. The modes the body
+//! rings in are on a stem plot beside them. Every body is also a surface. Pressing it excites the model at
 //! that place, the way the instrument itself is played: a string is pulled and let go, a head or
 //! a struck string is pressed, a bowed string, a bore or a tract sounds for as long as the press
 //! is held. The note is the voice the lane is showing, or the audition note when the lane is at
@@ -10,6 +12,7 @@
 
 use std::{cell::Cell, rc::Rc};
 
+use super::physical_bodies::{BodyPlot, BoreEnd, LANE_INSET, Shape, ring_fraction};
 use super::plugin_window::PluginSubject;
 use crate::{app::AurisApp, theme::Theme};
 use atelier::plot::{LinePlot, Series};
@@ -27,8 +30,6 @@ use gpui::{
 
 /// Lanes on screen, which is every voice a motion frame carries.
 const LANES: usize = auris_session::MOTION_VOICES;
-/// The margin [`StringLane`] leaves at each anchor, so a pointer maps onto the drawn string.
-const LANE_INSET: f32 = 10.;
 
 #[derive(Debug)]
 pub(crate) struct PhysicalView {
@@ -366,12 +367,16 @@ impl AurisApp {
         let Some(bounds) = self.physical_view.surfaces.get(lane).and_then(Cell::get) else {
             return;
         };
-        let (at, pull) = if is_surface(self.lane_geometry(lane)) {
+        let geometry = self.lane_geometry(lane);
+        let (at, pull) = if is_surface(geometry) {
             let Some(radius) = head_touch(bounds, position) else {
                 return;
             };
             // A stick lands as hard wherever it lands on the head; how hard is the audition's.
             (radius, 0.65)
+        } else if geometry == MotionGeometry::Shell {
+            // A bell is struck around its rim, as hard wherever it is struck.
+            (ring_fraction(bounds.center(), position), 0.65)
         } else {
             lane_touch(bounds, position)
         };
@@ -494,6 +499,9 @@ impl AurisApp {
                 (Gesture::Sustain, _, "auris.physical.violin") => Key::PhysicalTouchBow,
                 (Gesture::Sustain, _, "auris.physical.choir") => Key::PhysicalTouchSing,
                 (Gesture::Sustain, ..) => Key::PhysicalTouchBlow,
+                (Gesture::Key, ..) => Key::PhysicalTouchKey,
+                (_, _, "auris.physical.mallet") => Key::PhysicalTouchBar,
+                (_, _, "auris.physical.bell") => Key::PhysicalTouchRim,
                 _ => Key::PhysicalTouchStrike,
             }
         });
@@ -514,6 +522,7 @@ impl AurisApp {
             resting_contact,
             resting_pitch: self.physical_view.pitch,
             drums,
+            instrument: id.clone(),
             language,
         };
         let motion = self.physical_bodies(&bodies, &theme, cx);
@@ -637,7 +646,7 @@ impl AurisApp {
             .flex()
             .gap(spacing.sm)
             .child(self.touch_tracker(cx));
-        container = if bodies.drums {
+        container = if bodies.cells() {
             container.flex_row().flex_wrap()
         } else {
             container.flex_col()
@@ -700,7 +709,7 @@ impl AurisApp {
                         .color(TextColor::Faint),
                 );
             let level = shown.map_or(0., |voice| voice.level.clamp(0., 1.));
-            container = container.child(if bodies.drums {
+            container = container.child(if bodies.cells() {
                 div()
                     .flex()
                     .flex_col()
@@ -988,6 +997,8 @@ struct Bodies {
     resting_contact: Option<f32>,
     resting_pitch: u8,
     drums: bool,
+    /// The instrument's id, which tells one string-like body from another.
+    instrument: String,
     language: Language,
 }
 
@@ -1029,25 +1040,14 @@ impl Bodies {
             (_, Some(voice)) => body_points(voice, geometry, self.gain),
             (_, None) => vec![0.; auris_session::MOTION_POINTS],
         };
-        let mut plot = StringLane::new(points).color(color);
         let contact = match (touch, shown) {
             (Some(touch), _) => Some(touch.at),
             (_, Some(voice)) => Some(voice.contact),
             (_, None) => self.resting_contact,
-        };
-        match geometry {
-            // A shell is a ring opened out; it has no one place it was struck.
-            MotionGeometry::Shell => {}
-            // Air is set going at the mouthpiece or the glottis, the first point.
-            MotionGeometry::Bore | MotionGeometry::Tract => plot = plot.contact(0.),
-            _ => {
-                if let Some(contact) = contact.filter(|contact| contact.is_finite()) {
-                    plot = plot.contact(contact);
-                }
-            }
         }
-        if let (Some(index), Some(voice)) = (voice, shown) {
-            let trails = self
+        .filter(|contact| contact.is_finite());
+        let trails = match (voice, shown) {
+            (Some(index), Some(_)) => self
                 .history
                 .iter()
                 .rev()
@@ -1058,15 +1058,62 @@ impl Bodies {
                     let matched = match_history(&self.frame, past)[index]?;
                     Some(body_points(&past.voices[matched], geometry, self.gain))
                 })
-                .collect();
-            plot = plot.trails(trails);
-            if !voice.held {
-                plot = plot.inactive();
+                .collect(),
+            _ => Vec::new(),
+        };
+        // Drawn at full strength while a note is held or a press is on the body.
+        let active = match shown {
+            Some(voice) => voice.held,
+            None => touch.is_some(),
+        };
+        let shape = match geometry {
+            MotionGeometry::String if self.instrument == "auris.physical.piano" => {
+                Some(Shape::Piano {
+                    hammer: contact,
+                    striking: shown.is_some_and(|voice| voice.excitation > 0.05)
+                        || touch.is_some_and(|touch| touch.sounding),
+                    // The damper is off a held key, and off every string under the pedal.
+                    damped: !(active || self.frame.pedal),
+                })
             }
-        } else if touch.is_none() {
+            MotionGeometry::Bar => Some(Shape::Bar { mallet: contact }),
+            MotionGeometry::Shell => Some(Shape::Ring { contact }),
+            MotionGeometry::Bore => Some(Shape::Bore(
+                if self.instrument == "auris.physical.tin_whistle" {
+                    BoreEnd::Fipple
+                } else {
+                    BoreEnd::Reed
+                },
+            )),
+            MotionGeometry::Tract => Some(Shape::Tract(tract_areas(shown))),
+            _ => None,
+        };
+        if let Some(shape) = shape {
+            let plot = BodyPlot::new(shape, points, color, theme).trails(trails);
+            return if active { plot } else { plot.inactive() }.into_any_element();
+        }
+        let mut plot = StringLane::new(points).color(color).trails(trails);
+        if let Some(contact) = contact {
+            plot = plot.contact(contact);
+        }
+        if !active {
             plot = plot.inactive();
         }
         plot.into_any_element()
+    }
+
+    /// Whether the bodies sit side by side in square cells, as heads and bells do, rather
+    /// than one lane under another.
+    fn cells(&self) -> bool {
+        self.drums || self.resting == MotionGeometry::Shell
+    }
+}
+
+/// The eight tubes a voice's tract is made of, or a neutral vowel's while nobody sings.
+fn tract_areas(voice: Option<&MotionVoice>) -> [f32; 8] {
+    match voice {
+        Some(voice) if voice.modes.iter().any(|area| *area > 0.) => voice.modes,
+        _ => [0.45, 0.4, 0.45, 0.55, 0.65, 0.7, 0.65, 0.55],
     }
 }
 
@@ -1111,6 +1158,7 @@ pub(crate) fn model_thumbnail(
         resting_contact: None,
         resting_pitch: 60,
         drums: is_drum_model(&id),
+        instrument: id,
         language: Language::English,
     }
     .plot(0, loudest, geometry, &theme)
