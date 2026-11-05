@@ -638,6 +638,15 @@ pub enum Drag {
         /// to the pointer on the first move.
         grab_offset: Ticks,
     },
+    /// Dragging a comment along its track's lane or around the piano roll.
+    Comment {
+        /// What holds it.
+        host: CommentHost,
+        /// Which comment.
+        id: CommentId,
+        /// How far right of the comment's pin the pointer took hold.
+        grab_offset: Ticks,
+    },
     /// Dragging the start of a lyric line along the lyrics lane.
     LyricLine {
         /// The change being moved, by where it currently sits.
@@ -877,6 +886,7 @@ impl Drag {
             Drag::HarmonyChord { .. } => Some(Edit::MoveChord),
             Drag::SectionLabel { .. } => Some(Edit::MoveSection),
             Drag::LyricLine { .. } => Some(Edit::MoveLyricLine),
+            Drag::Comment { .. } => Some(Edit::MoveComment),
             // How far in the view is zoomed is a property of the window, like a panel's width.
             Drag::TimeZoom { .. } => None,
             // The video's look is an application setting, not part of the document.
@@ -1544,6 +1554,8 @@ pub struct AurisApp {
     pub(crate) drum_analysis: crate::ui::drums::DrumAnalysisState,
     /// Whether the dedicated analysis panel is open.
     pub(crate) analysis_panel: bool,
+    /// The music linter's findings and its two schedules.
+    pub(crate) lint: crate::ui::lint::LintState,
     /// CPU music-analysis jobs and their unapplied draft.
     pub(crate) music_analysis: crate::ui::music_analysis::MusicAnalysisState,
     pub(crate) visualizer: crate::ui::visualizer::VisualizerState,
@@ -1798,6 +1810,10 @@ fn session_options(settings: &Settings) -> SessionOptions {
         gpu: live,
         shipped_fonts: live,
         soundfont_library: live.then(|| auris_session::config_dir().join("soundfonts.json")),
+        // Off in a test for the library's reason: a suite must not keep presets in the user's
+        // configuration, nor read the ones somebody kept there.
+        performance_presets: live
+            .then(auris_session::performance_presets::PerformancePresetBook::path),
         // Off in a test for the fonts' reason: a checkout with the dictionary fetched would
         // otherwise run a different suite than a CI machine without it.
         shipped_dictionary: live,
@@ -2017,6 +2033,7 @@ impl AurisApp {
                         this.watch_disk(cx);
                         this.drain_agent(cx);
                         this.poll_auto_sing(cx);
+                        this.poll_lint(cx);
                         this.poll_drum_analysis(cx);
                         this.poll_sung_preview(cx);
                         // Also here rather than in a command, because a monitor breaking up
@@ -2111,6 +2128,7 @@ impl AurisApp {
             sung_preview_rendering: false,
             drum_analysis: Default::default(),
             analysis_panel: false,
+            lint: Default::default(),
             music_analysis: Default::default(),
             visualizer: Default::default(),
             video_export: Default::default(),

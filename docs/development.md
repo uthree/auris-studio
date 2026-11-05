@@ -148,8 +148,8 @@ when no adapter is available.
 ### macOS without a full Xcode install
 
 macOS builds require 13.4 or later, matching the shipped Core ML ONNX Runtime. The workspace's
-Cargo configuration sets that deployment target for both architectures; the app bundle and
-the Intel runtime build use the same minimum version.
+Cargo configuration sets that deployment target and the app bundle uses the same minimum
+version. Releases are built for Apple Silicon only; Intel Macs are not supported.
 
 gpui normally compiles its Metal shaders at build time by shelling out to `xcrun metal`, which
 lives inside Xcode and is unreachable while `xcode-select -p` points at the Command Line

@@ -2929,6 +2929,103 @@ impl AurisApp {
         .detach();
     }
 
+    /// Prompts for audio files and adds them to a track's sampler map.
+    ///
+    /// The other way an audio file enters a song: rather than a clip on the timeline, a sound the
+    /// track plays from its notes. Several may be chosen at once, each becoming a zone at the
+    /// root its name spells. Decoded on a worker, like every other import.
+    pub(crate) fn load_sample(&mut self, track: TrackId, cx: &mut Context<Self>) {
+        let extensions: Vec<String> = auris_session::supported_audio_extensions()
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let language = self.language();
+        cx.spawn(async move |this, cx| {
+            let extension_refs: Vec<&str> = extensions.iter().map(String::as_str).collect();
+            let handles = rfd::AsyncFileDialog::new()
+                .set_title(Key::DialogLoadSample.get(language))
+                .add_filter(Key::FilterAudio.get(language), &extension_refs)
+                .pick_files()
+                .await;
+            let Some(handles) = handles.filter(|handles| !handles.is_empty()) else {
+                return;
+            };
+            let paths: Vec<PathBuf> = handles
+                .iter()
+                .map(|handle| handle.path().to_path_buf())
+                .collect();
+            let Ok(rate) = this.update(cx, |this, cx| {
+                let text = messages::importing(this.language(), &paths[0].display().to_string());
+                this.set_status(text);
+                cx.notify();
+                this.project().sample_rate
+            }) else {
+                return;
+            };
+            let mut loaded = Vec::with_capacity(paths.len());
+            for path in &paths {
+                let read = read_file(
+                    cx.background_executor().clone(),
+                    Reading::Audio { rate },
+                    path.clone(),
+                )
+                .await;
+                loaded.push((path.clone(), read));
+            }
+            let _ = this.update(cx, |this, cx| {
+                let decoded = loaded
+                    .into_iter()
+                    .map(|(path, read)| read.map(|read| (path, read)))
+                    .collect::<Result<Vec<_>, _>>();
+                match decoded.and_then(|decoded| this.take_samples(track, decoded)) {
+                    Ok(line) => this.set_status(line),
+                    Err(error) => {
+                        this.set_failed_status(this.failure(Key::SamplerLoadSample, &error))
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Gives decoded audio to a track's sampler, and says so.
+    #[cfg(test)]
+    pub(crate) fn take_sample(
+        &mut self,
+        track: TrackId,
+        path: &Path,
+        loaded: Loaded,
+    ) -> Result<String, SessionError> {
+        self.take_samples(track, vec![(path.to_path_buf(), loaded)])
+    }
+
+    /// Adds several decoded files to a track's sampler map in one undo step, and says so.
+    pub(crate) fn take_samples(
+        &mut self,
+        track: TrackId,
+        loaded: Vec<(PathBuf, Loaded)>,
+    ) -> Result<String, SessionError> {
+        let samples = loaded
+            .into_iter()
+            .map(|(path, loaded)| match loaded {
+                Loaded::Audio(buffer) => Ok((path, buffer)),
+                _ => Err(SessionError::EmptySample(path)),
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let count = samples.len();
+        let first = samples
+            .first()
+            .and_then(|(path, _)| path.file_stem())
+            .map(|stem| stem.to_string_lossy().to_string())
+            .unwrap_or_default();
+        self.session.place_samples(track, samples, false)?;
+        Ok(match count {
+            1 => messages::sample_loaded(self.language(), &first),
+            _ => messages::samples_loaded(self.language(), count),
+        })
+    }
+
     /// Gives a file that has been read to the document, and says what happened.
     ///
     /// The file dialogs and a drop all land here, which is what stops them from drifting apart —
@@ -3694,7 +3791,7 @@ impl AurisApp {
 
 /// The command a dropped file would have been, so a failure names the same thing the menu does.
 /// A file read into memory on a worker thread, waiting to be given to the document.
-enum Loaded {
+pub(crate) enum Loaded {
     /// Audio, decoded and resampled to the project's rate.
     Audio(AudioBuffer),
     /// A SoundFont, read whole.

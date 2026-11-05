@@ -14,6 +14,7 @@
 mod actions;
 mod app;
 mod appearance;
+mod cargo_install;
 mod dock;
 mod gestures;
 // The window itself, driven from `cargo test`. Test-only: it exists to be compiled with
@@ -56,6 +57,9 @@ fn main() {
     if let Some(code) = auris_session::handle_plugin_discovery_worker() {
         std::process::exit(code);
     }
+    // A shortcut bundle made for a Cargo install carries a copy of the executable; a newer
+    // `cargo install` since is swapped in here, before anything has started.
+    cargo_install::refresh_app_bundle();
     // Warnings matter here — a missing audio file or a plugin the registry does not know is
     // logged rather than shown — so surface them by default instead of requiring RUST_LOG. And
     // they are *kept*, because the terminal they used to go to is not somewhere an application

@@ -345,6 +345,8 @@ mod tests {
                 chords: Some("| I | IV | V | I |".into()),
                 section: None,
                 clear_chords: false,
+                clear_key: false,
+                clear_section: false,
             })
             .unwrap();
         let track = session.add_default_instrument_track("Lead").unwrap();

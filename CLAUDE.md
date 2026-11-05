@@ -61,7 +61,8 @@ vendor/vst3-host         VST3 host bindings, forked for a single-owner realtime 
 crates/auris-core        types, music theory, plugin traits, project model — no local dependencies
 crates/auris-dsp         effects and DSP primitives
 crates/auris-synth       built-in chiptune instruments; depends on auris-dsp
-crates/auris-sampler     SoundFont playback: the font bank and the sampler instrument;
+crates/auris-sampler     sample playback: the SoundFont player and its font bank, and the
+                         audio sampler that pitches one audio file across the keyboard;
                          depends on auris-dsp
 crates/auris-singer      singing-voice synthesis: DiffSinger, LeapSinger and VOICEVOX offline;
                          depends on auris-core and auris-vocal
@@ -145,6 +146,10 @@ whole thing work is **one folder, one project**: two documents in one folder wou
   copies the fonts too, for archiving.
 * Never `Path::join` a stored relative path — an absolute one would discard the folder.
   `AssetPath::resolve` rebuilds it component by component for exactly that reason.
+* `Workspace/` is where agents read and write without asking: a file tool given a path relative
+  to it is checked by `Session::resolve_workspace_path` and skips the permission prompt. Nothing in
+  the document points into it (loading from it copies into `Audio/`), but Save As and recovery
+  carry it with the folder.
 * A file that has moved is searched for by name and confirmed by size, and what is found is
   written back into the document. Missing assets are reported, never fatal: the project opens
   with that one track silent.

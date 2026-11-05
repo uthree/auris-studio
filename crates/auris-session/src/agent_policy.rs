@@ -199,12 +199,17 @@ pub const OPERATIONS: &[&str] = &[
     "edit_project.analyze_lyrics",
     "edit_project.diagnose_song",
     "edit_project.repair_lyrics",
+    "edit_project.source_material",
+    "edit_project.report_status",
+    "edit_project.melody_shape",
+    "edit_project.arrangement_shape",
     "edit_project.edit_harmony",
     "edit_project.list_voices",
     "edit_project.inspect_singer",
     "edit_project.set_singer_voice",
     "edit_project.write_lyrics",
     "edit_project.edit_lyrics",
+    "edit_project.edit_comments",
     "edit_project.sing",
     "read_report",
     "edit_project.import_transcription",
@@ -225,9 +230,14 @@ pub const OPERATIONS: &[&str] = &[
     "edit_project.mixer_graph.set_strip",
     "edit_project.inspect",
     "edit_project.inspect_audio",
+    "edit_project.lint_project",
+    "edit_project.apply_lint_fixes",
+    "edit_project.ignore_lint",
     "edit_project.listen",
     "edit_project.checkpoints",
     "edit_project.import_audio",
+    "edit_project.load_sample",
+    "edit_project.edit_sample_map",
     "edit_project.audio_assets",
     "edit_project.import_midi",
     "edit_project.render",
@@ -235,6 +245,7 @@ pub const OPERATIONS: &[&str] = &[
     "edit_project.preview",
     "edit_project.export_midi",
     "edit_project.verify_render",
+    "edit_project.workspace",
     "edit_project.read_notes",
     "edit_project.history",
     "edit_project.edit_notes",
@@ -261,6 +272,7 @@ pub const OPERATIONS: &[&str] = &[
     "edit_project.suggest_issue_report",
     "edit_project.offer_choices",
     "edit_project.set_performance",
+    "edit_project.performance_presets",
     "edit_project.set_loop",
     "search_instruments",
     "instrument_diagnostics",
@@ -308,15 +320,25 @@ impl Operation {
                 || matches!(&parsed, crate::live_agent::Command::Checkpoints { operation, .. } if operation.is_mutating())
                 || matches!(&parsed, crate::live_agent::Command::History { .. } if mutating)
                 || matches!(&parsed, crate::live_agent::Command::EditClip { operation, .. } if operation.requires_confirmation())
+                || matches!(&parsed, crate::live_agent::Command::EditComments { operation } if operation.requires_confirmation())
+                || matches!(&parsed, crate::live_agent::Command::PerformancePresets { operation } if operation.requires_confirmation())
                 || matches!(&parsed, crate::live_agent::Command::EditNotes { edits, .. } if edits.iter().any(crate::live_agent::note_editing::NoteEdit::requires_confirmation))
-                || matches!(
+                // A local file is asked about because it could be anything on the machine; a
+                // project-workspace path cannot, so reading and writing there is free.
+                || (matches!(
                     parsed,
-                    crate::live_agent::Command::Listen { .. }
-                        | crate::live_agent::Command::ImportAudio { .. }
+                    crate::live_agent::Command::ImportAudio { .. }
+                        | crate::live_agent::Command::LoadSample { .. }
                         | crate::live_agent::Command::ImportMidi { .. }
                         | crate::live_agent::Command::Render { .. }
                         | crate::live_agent::Command::ExportMidi { .. }
                         | crate::live_agent::Command::VerifyRender { .. }
+                ) && !parsed.uses_only_workspace())
+                // Silencing a check is the user's call: the agent proposes it, the user confirms.
+                || matches!(
+                    parsed,
+                    crate::live_agent::Command::Listen { .. }
+                        | crate::live_agent::Command::IgnoreLint { .. }
                         | crate::live_agent::Command::RemoveTrack { .. }
                         | crate::live_agent::Command::Compose { replace: true, .. }
                 );
@@ -913,6 +935,46 @@ mod tests {
         }
         assert!(Operation::parse("render", &serde_json::json!({})).is_err());
         assert!(Operation::parse("edit_project.remove_track", &serde_json::json!({})).is_err());
+    }
+
+    #[test]
+    fn workspace_files_need_no_prompt_but_other_local_files_still_ask() {
+        let parse = |command: serde_json::Value| {
+            Operation::parse("edit_project", &serde_json::json!({ "command": command })).unwrap()
+        };
+        let render = |path: &str| {
+            parse(serde_json::json!({"action":"render","destination":{"kind":"mix","path":path}}))
+        };
+        let sample = |path: &str| {
+            parse(serde_json::json!({"action":"load_sample","track":1,"samples":[{"path":path}]}))
+        };
+        let edit = Policy::default();
+        assert_eq!(edit.decide(&render("renders/mix.wav")), Decision::Allow);
+        assert_eq!(edit.decide(&sample("samples/kick.wav")), Decision::Allow);
+        assert_eq!(edit.decide(&render("/tmp/mix.wav")), Decision::Ask);
+        assert_eq!(edit.decide(&sample("/tmp/kick.wav")), Decision::Ask);
+        // An escape is not a workspace path, so it is asked about and then refused on resolution.
+        assert_eq!(edit.decide(&render("../mix.wav")), Decision::Ask);
+        let stems = parse(
+            serde_json::json!({"action":"render","destination":{"kind":"stems","folder":"stems/v1"}}),
+        );
+        assert_eq!(edit.decide(&stems), Decision::Allow);
+        let listing = parse(serde_json::json!({"action":"workspace"}));
+        assert_eq!(listing.name, "edit_project.workspace");
+        assert!(!listing.mutating && !listing.confirm);
+        // Loading a sample still changes the document, which read-only mode refuses.
+        let read_only = Policy {
+            mode: Mode::ReadOnly,
+            ..Policy::default()
+        };
+        assert!(matches!(
+            read_only.decide(&sample("samples/kick.wav")),
+            Decision::Deny(_)
+        ));
+        assert_eq!(
+            read_only.decide(&render("renders/mix.wav")),
+            Decision::Allow
+        );
     }
 
     #[test]

@@ -459,6 +459,8 @@ impl Session {
         self.waveforms.clear();
         self.fonts.clear();
         self.font_cache.retain(|_, font| font.shared);
+        // Another document's sound handles name its fonts by its ids.
+        self.earlier_sound_scopes.clear();
     }
 
     /// Drops decoded sources that neither the current document nor undo/redo can restore.

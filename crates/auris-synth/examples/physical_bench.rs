@@ -5,7 +5,7 @@ use std::time::Instant;
 use auris_core::{
     AudioBuffer, Effect, Instrument, NoteEvent, Parameterized, PrepareContext, ProcessContext,
 };
-use auris_synth::{Model, Physical};
+use auris_synth::{Model, Physical, Quality};
 
 fn main() {
     if std::env::args().any(|arg| arg == "--folk") {
@@ -20,9 +20,20 @@ fn main() {
     let observe = std::env::args().any(|arg| arg == "--motion");
     let rate = 48_000.0;
     let frames = 256;
+    // `--quality draft|standard|high` measures one level of `Quality`; Standard by default.
+    let quality = std::env::args()
+        .skip_while(|arg| arg != "--quality")
+        .nth(1)
+        .map_or(Quality::Standard, |level| match level.as_str() {
+            "draft" => Quality::Draft,
+            "high" => Quality::High,
+            _ => Quality::Standard,
+        });
+    println!("{quality:?} quality");
     for model in Model::ALL {
         let mut instrument = Physical::new(model);
         instrument.set_param_by_key("decay", 12.0);
+        instrument.set_param_by_key("quality", quality.value());
         instrument.prepare(&PrepareContext::new(rate, frames, 2));
         let monitor = instrument.motion_monitor();
         if let Some(monitor) = &monitor {

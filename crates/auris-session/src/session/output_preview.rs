@@ -17,6 +17,21 @@ pub fn prepare_output_preview(
     audio: &AudioBuffer,
     sample_rate: f64,
 ) -> Result<Arc<AudioBuffer>, SessionError> {
+    prepare_looping_output_preview(audio, sample_rate, None)
+}
+
+/// [`prepare_output_preview`] for audio that wraps to `loop_start_seconds` at its end.
+///
+/// A sample-rate converter reads either side of every frame, and at a buffer's edges it reads
+/// silence; played on a loop, that dip lands on every wrap. The cycle is therefore converted
+/// with its own frames as context on both sides — its start on the right of its end and, when
+/// the loop starts at the top, its end on the left of its start — so the wrap is as seamless at
+/// the device's rate as it was in the render. `None` is exactly [`prepare_output_preview`].
+pub fn prepare_looping_output_preview(
+    audio: &AudioBuffer,
+    sample_rate: f64,
+    loop_start_seconds: Option<f64>,
+) -> Result<Arc<AudioBuffer>, SessionError> {
     if !sample_rate.is_finite() || !(8_000.0..=192_000.0).contains(&sample_rate) {
         return Err(SessionError::OutputPreview(
             "invalid output sample rate".into(),
@@ -35,8 +50,14 @@ pub fn prepare_output_preview(
             "audition needs finite, nonempty mono or stereo PCM at a supported sample rate".into(),
         ));
     }
+    let loop_start = loop_start_seconds
+        .filter(|seconds| seconds.is_finite() && *seconds >= 0.0)
+        .map(|seconds| (seconds * audio.sample_rate()).round() as usize)
+        .filter(|start| *start < audio.frame_count());
     let mut prepared = if audio.sample_rate() == sample_rate {
         audio.clone()
+    } else if let Some(start) = loop_start {
+        resample_cycle(audio, sample_rate, start)?
     } else {
         auris_io::resample_buffer(audio, sample_rate)?
     };
@@ -56,6 +77,58 @@ pub fn prepare_output_preview(
     let gain = (0.1 / rms).min(f64::from(10.0f32.powf(-1.0 / 20.0) / peak));
     prepared.apply_gain(gain as f32);
     Ok(Arc::new(prepared))
+}
+
+/// Converts a buffer whose frames from `loop_start` on repeat, padding the cycle with itself.
+fn resample_cycle(
+    audio: &AudioBuffer,
+    sample_rate: f64,
+    loop_start: usize,
+) -> Result<AudioBuffer, SessionError> {
+    let source = audio.sample_rate().round() as u64;
+    let target = sample_rate.round() as u64;
+    let divisor = gcd(source, target);
+    let (step_in, step_out) = (source / divisor, target / divisor);
+    // A whole number of conversion steps, so the padding converts to a whole number of frames
+    // and the cycle can be cut back out at an exact frame. Several resampler chunks wide.
+    let pad = 8_192_u64.div_ceil(step_in) * step_in;
+    let pad_out = usize::try_from(pad / step_in * step_out)
+        .map_err(|_| SessionError::OutputPreview("audition loop padding overflows".into()))?;
+    let pad = pad as usize;
+    let frames = audio.frame_count();
+    let cycle = frames - loop_start;
+    let lead = if loop_start == 0 { pad } else { 0 };
+    let channels = audio
+        .channels()
+        .iter()
+        .map(|channel| {
+            let cyclic = |i: usize| channel[loop_start + i % cycle];
+            (0..lead)
+                .map(|i| cyclic(i + cycle - lead % cycle))
+                .chain(channel.iter().copied())
+                .chain((0..pad).map(cyclic))
+                .collect()
+        })
+        .collect();
+    let padded = AudioBuffer::from_planar(channels, audio.sample_rate())?;
+    let converted = auris_io::resample_buffer(&padded, sample_rate)?;
+    let skip = if lead > 0 { pad_out } else { 0 };
+    let length =
+        usize::try_from((frames as u128 * u128::from(target)).div_ceil(u128::from(source)))
+            .map_err(|_| SessionError::OutputPreview("audition is too long".into()))?;
+    let channels = converted
+        .channels()
+        .iter()
+        .map(|channel| channel[skip..skip + length].to_vec())
+        .collect();
+    Ok(AudioBuffer::from_planar(channels, sample_rate)?)
+}
+
+fn gcd(mut a: u64, mut b: u64) -> u64 {
+    while b != 0 {
+        (a, b) = (b, a % b);
+    }
+    a.max(1)
 }
 
 impl Session {
@@ -109,6 +182,43 @@ mod tests {
             48_000.0,
         )
         .unwrap()
+    }
+
+    #[test]
+    fn a_loop_converts_to_the_device_rate_without_a_dip_at_the_wrap() {
+        // 50 cycles of 50 Hz in exactly one second, so the buffer is a seamless loop. A cosine,
+        // because it starts and ends at its peak, where an edge effect has the most to take away.
+        let tone = AudioBuffer::from_planar(
+            vec![
+                (0..22_050)
+                    .map(|n| 0.5 * (n as f32 * std::f32::consts::TAU * 50.0 / 22_050.0).cos())
+                    .collect(),
+            ],
+            22_050.0,
+        )
+        .unwrap();
+        // Steepest step a 50 Hz cosine at 0.5 takes between two frames at 48 kHz, after gain.
+        let wrap = |audio: &AudioBuffer| {
+            let channel = audio.channel(0);
+            let step = channel
+                .windows(2)
+                .skip(4_800)
+                .take(4_800)
+                .map(|pair| (pair[1] - pair[0]).abs())
+                .fold(0.0, f32::max);
+            ((channel[0] - channel[channel.len() - 1]).abs(), step)
+        };
+        let looped = prepare_looping_output_preview(&tone, 48_000.0, Some(0.0)).unwrap();
+        assert_eq!(looped.frame_count(), 48_000);
+        let (jump, step) = wrap(&looped);
+        assert!(jump <= step * 1.05, "wrap {jump} against a step of {step}");
+        // The ordinary conversion fades both edges towards silence, so its wrap is a click.
+        let once = prepare_output_preview(&tone, 48_000.0).unwrap();
+        let (jump, step) = wrap(&once);
+        assert!(
+            jump > step * 2.0,
+            "the edge effect this avoids: {jump} against {step}"
+        );
     }
 
     #[test]

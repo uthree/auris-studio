@@ -441,7 +441,7 @@ fn codex_composes_and_revises_the_open_document(cx: &mut gpui::TestAppContext) {
             let mut check = Session::new(auris_session::SessionOptions::headless()).unwrap();
             check.import_midi(&midi).ok().map(|report|report.notes)
         };
-        json!({"model":config.model,"backend":config.backend,"prompt_profile":if std::env::var("AURIS_COMPOSITION_WORKFLOWS").is_ok_and(|value| value == "1") {"modular"} else {"legacy"},"fixture":config.fixture,"elapsed_seconds":started.elapsed().as_secs_f64(),
+        json!({"model":config.model,"backend":config.backend,"prompt_profile":"phased","fixture":config.fixture,"elapsed_seconds":started.elapsed().as_secs_f64(),
             "policy":"isolated generated fixture, explicit bypass; real application host",
             "turns":turns,"unsaved":this.session.path().is_none(),"midi_notes":midi_notes,
             "encoded":auris_session::inspect_export(&wav).ok(),

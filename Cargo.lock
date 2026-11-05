@@ -632,7 +632,7 @@ dependencies = [
 
 [[package]]
 name = "auris-agent"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "auris-session",
  "auris-toolbox",
@@ -657,7 +657,7 @@ dependencies = [
 
 [[package]]
 name = "auris-analysis"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "auris-core",
  "auris-dsp",
@@ -672,7 +672,7 @@ dependencies = [
 
 [[package]]
 name = "auris-clap"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "auris-core",
  "clack-extensions",
@@ -690,7 +690,7 @@ dependencies = [
 
 [[package]]
 name = "auris-cli"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "auris-i18n",
  "auris-session",
@@ -701,7 +701,7 @@ dependencies = [
 
 [[package]]
 name = "auris-compose"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "auris-core",
  "serde",
@@ -711,7 +711,7 @@ dependencies = [
 
 [[package]]
 name = "auris-core"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "base64 0.23.1",
  "serde",
@@ -721,7 +721,7 @@ dependencies = [
 
 [[package]]
 name = "auris-dsp"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "auris-core",
  "ndarray",
@@ -732,30 +732,32 @@ dependencies = [
 
 [[package]]
 name = "auris-engine"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "auris-core",
  "cpal",
  "crossbeam-channel",
  "log",
+ "rayon",
  "thiserror 2.0.21",
 ]
 
 [[package]]
 name = "auris-gpu"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "auris-core",
  "auris-dsp",
  "bytemuck",
  "log",
  "pollster 1.0.1",
+ "rayon",
  "wgpu 30.0.1",
 ]
 
 [[package]]
 name = "auris-gpui"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "atelier",
  "auris-agent",
@@ -789,7 +791,7 @@ dependencies = [
 
 [[package]]
 name = "auris-i18n"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "objc2-foundation",
  "serde",
@@ -799,7 +801,7 @@ dependencies = [
 
 [[package]]
 name = "auris-io"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "auris-core",
  "flac-codec",
@@ -818,7 +820,7 @@ dependencies = [
 
 [[package]]
 name = "auris-mcp"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "auris-session",
  "auris-toolbox",
@@ -832,18 +834,19 @@ dependencies = [
 
 [[package]]
 name = "auris-sampler"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "auris-core",
  "auris-dsp",
  "log",
  "rustysynth",
+ "serde",
  "serde_json",
 ]
 
 [[package]]
 name = "auris-session"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "auris-analysis",
  "auris-clap",
@@ -881,7 +884,7 @@ dependencies = [
 
 [[package]]
 name = "auris-singer"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "auris-core",
  "auris-vocal",
@@ -901,7 +904,7 @@ dependencies = [
 
 [[package]]
 name = "auris-synth"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "auris-core",
  "auris-dsp",
@@ -912,7 +915,7 @@ dependencies = [
 
 [[package]]
 name = "auris-toolbox"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "auris-session",
  "base64 0.23.1",
@@ -927,7 +930,7 @@ dependencies = [
 
 [[package]]
 name = "auris-update-helper"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "hex",
  "serde",
@@ -939,11 +942,12 @@ dependencies = [
 
 [[package]]
 name = "auris-video"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "auris-core",
  "fontdb 0.23.0",
  "image",
+ "rayon",
  "serde",
  "serde_json",
  "tempfile",
@@ -954,7 +958,7 @@ dependencies = [
 
 [[package]]
 name = "auris-vocal"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "auris-core",
  "jpreprocess",
@@ -965,7 +969,7 @@ dependencies = [
 
 [[package]]
 name = "auris-vst3"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "auris-core",
  "crossbeam-queue",

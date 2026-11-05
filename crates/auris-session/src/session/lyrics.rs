@@ -22,7 +22,7 @@ pub(super) struct LyricPhrase {
     pub(super) text: String,
     pub(super) moras: Vec<SungMora>,
     contours: Vec<Contour>,
-    group_starts: Vec<usize>,
+    pub(super) group_starts: Vec<usize>,
 }
 
 fn is_closure(mora: &SungMora) -> bool {
