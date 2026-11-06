@@ -7,10 +7,15 @@ a migration path. The version number is the promise, and `0` is the promise that
 The release workflow reads the section whose heading matches the tag, so the headings are the
 format rather than a convention: `## <version> — <date>`.
 
-## Unreleased
+## 0.20.0 — 2026-11-06
 
 ### Composing with the agent
 
+* **Phased composition is the default.** Every model composes in score, arrangement and mix
+  phases, runs the music linter before moving on, and is sent back to a song that stops short of
+  what its phases require or still carries lint warnings. A composition can be started at a
+  chosen phase from the agent chat, and the agent may ignore a lint finding once the user
+  confirms.
 * **An agent whose model takes audio input hears the song itself.** `listen` renders up to eight
   bars and delivers the WAV to the model that called it — in the desktop, with the request after
   the tool result; through `auris-mcp`, as MCP audio content — and `compare_to` delivers before
@@ -20,12 +25,59 @@ format rather than a convention: `## <version> — <date>`.
 * **The separate audio critic is gone.** `listen` no longer uploads to a configured reviewer:
   `AURIS_AUDIO_URL`, `AURIS_AUDIO_MODEL`, `AURIS_AUDIO_API_KEY_ENV` and `AURIS_AUDIO_AUTO_SELECT`,
   its `focus` and `aspect` arguments, the load-consent dialog and `tools/audio-review` are removed.
-* **The agent gives the parts it types a performance.** Listing `performance_presets` for a clip
-  now names a `suggested_preset` for its instrument and notes — a rolled, pedalled piano for held
-  chords, a strum for an acoustic guitar, pickups for a finger bass — and the arrangement
-  instructions ask the agent to start every part it wrote, the melody included, from one.
+* **Performance presets by instrument family.** Presets live in
+  `performance-presets.json` in the configuration directory, the agent lists them with
+  `performance_presets`, and listing them for a clip names a `suggested_preset` for its
+  instrument and notes — a rolled, pedalled piano for held chords, a strum for an acoustic
+  guitar, pickups for a finger bass. The arrangement instructions ask the agent to start every
+  part it wrote, the melody included, from one.
 * A SoundFont track now files its performance presets by its General MIDI patch, and a bassoon
   is a wind rather than a bass.
+* **Each project has a `Workspace/` folder** that agents read and write without a permission
+  prompt; Save As and recovery carry it with the project.
+* Whole songs can be attached as MIDI references in agent conversations.
+* Agents can delete section names and key changes with `edit_harmony`.
+
+### AI workshop
+
+* Workshop songs are produced side by side: a busy conversation keeps working in the
+  background, with its own queue.
+* A loop song auditions as a seamless loop.
+* The summary of earlier choices can be rewritten by hand.
+* The end of the transcript stays above the composer.
+
+### Arranging and sound
+
+* **Add an audio sampler** that plays an audio file across the keyboard, or a map of several
+  samples, each placed by its measured pitch.
+* **The SoundFont player's forced envelope is removed.** A font plays as it was made; to reshape
+  a sound, render it and play the result in the audio sampler.
+* Join adjacent MIDI clips into one (⌘J / Ctrl+J, or `edit_clip` join), and edit the
+  neighbouring clips straight from the piano roll.
+* The physical-model view draws each body as the instrument it is.
+
+### Interface
+
+* Track headers name what plays the track — the preset, sample, plugin or voice — and say when
+  nothing does.
+* Colour tracks by their sounds' timbre clusters from the Find Sounds button or the track menu.
+* The sections, key, chords and lyrics strips are shown and hidden one by one, and a key is
+  stored only where it changes.
+
+### Video export
+
+* Spread tracks in depth with an optional parallax scroll and haze (`--parallax` on the CLI).
+* Add silence before and after the song, and give lyric subtitles their own colour.
+
+### Speed and fixes
+
+* Offline rendering, waveform analysis and video backdrops run in parallel, and linting, audio
+  analysis and bulk note deletion are faster.
+* Fix layer performance, export tails, video notes and Save As aliases.
+* The CLI finds a project's audio when it opens the project by a bare file name.
+
+Projects are now saved as format 35, which stores the audio sampler's samples as a map; earlier
+builds cannot open them.
 
 ## 0.19.0 — 2026-11-03
 
