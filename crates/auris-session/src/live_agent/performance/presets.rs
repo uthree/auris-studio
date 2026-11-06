@@ -13,7 +13,8 @@ pub enum PresetOperation {
         family: Option<PresetFamily>,
         /// Exact preset name; returns its full stages.
         name: Option<String>,
-        /// MIDI clip ID; adds suggested_family from its track's instrument.
+        /// MIDI clip ID; adds suggested_family from its track's instrument and suggested_preset
+        /// from that instrument and the clip's notes.
         clip: Option<u64>,
     },
     /// Replace a clip's (or one drum writer's) stages with a preset's. Pitch and octave stages are skipped on drums.
@@ -104,16 +105,20 @@ impl Session {
                     })
                     .to_string());
                 }
-                let suggested = clip
+                let suggestion = clip
                     .map(|clip| {
-                        let (track, _) = self
+                        let (track, clip) = self
                             .project()
                             .midi_clip(ClipId(clip))
                             .ok_or("Unknown MIDI clip ID")?;
                         let track = self.project().track(track).ok_or("Unknown track ID")?;
-                        Ok::<_, String>(crate::performance_presets::family_hint(track))
+                        Ok::<_, String>((
+                            crate::performance_presets::family_hint(track),
+                            crate::performance_presets::suggested_preset(track, clip),
+                        ))
                     })
                     .transpose()?;
+                let (suggested, suggested_preset) = suggestion.unzip();
                 let presets: Vec<_> = self
                     .performance_presets()
                     .into_iter()
@@ -130,6 +135,8 @@ impl Session {
                     .collect();
                 Ok(serde_json::json!({
                     "suggested_family": suggested,
+                    // A starting point for the instrument; a preset that suits the genre better wins.
+                    "suggested_preset": suggested_preset.flatten(),
                     "presets": presets,
                     "note": "apply copies a preset's stages into one clip; tune afterwards with set_performance. Presets carry no swing unless a user kept one with it: swing is the song's feel.",
                 })
@@ -265,6 +272,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(listed["suggested_family"], "guitar");
+        assert_eq!(listed["suggested_preset"], "acoustic_strum");
         let presets = listed["presets"].as_array().unwrap();
         assert!(presets.iter().all(|p| p["family"] == "guitar"));
         assert!(presets.iter().any(|p| p["name"] == "acoustic_strum"));

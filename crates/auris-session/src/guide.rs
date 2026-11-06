@@ -2963,6 +2963,13 @@ pub mod harmony {
     //! link to the preset, so a document stays portable and a preset edited later rewrites no
     //! song — the same reason a kept chord progression is copied rather than quoted. No built-in
     //! swings, because swing is the song's decision rather than one part's.
+    //!
+    //! A writer installs its own stack as it writes; notes typed by hand, by a person or an agent,
+    //! arrive with none and play exactly on the grid. Listing presets for a clip therefore answers
+    //! with a [`suggested_preset`](crate::performance_presets::suggested_preset) read off the
+    //! instrument and the clip's shape, and the agent's arrangement instructions ask it to give
+    //! every part it wrote a starting feel. Nothing applies one unasked.
+    //!
     //! Every wander draws from a seed
     //! the transform stores, through the same named streams the composer draws from
     //! ([`auris_core::rng`]), and it draws per loop pass — a repeated bar is loose differently

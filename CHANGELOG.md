@@ -20,6 +20,12 @@ format rather than a convention: `## <version> — <date>`.
 * **The separate audio critic is gone.** `listen` no longer uploads to a configured reviewer:
   `AURIS_AUDIO_URL`, `AURIS_AUDIO_MODEL`, `AURIS_AUDIO_API_KEY_ENV` and `AURIS_AUDIO_AUTO_SELECT`,
   its `focus` and `aspect` arguments, the load-consent dialog and `tools/audio-review` are removed.
+* **The agent gives the parts it types a performance.** Listing `performance_presets` for a clip
+  now names a `suggested_preset` for its instrument and notes — a rolled, pedalled piano for held
+  chords, a strum for an acoustic guitar, pickups for a finger bass — and the arrangement
+  instructions ask the agent to start every part it wrote, the melody included, from one.
+* A SoundFont track now files its performance presets by its General MIDI patch, and a bassoon
+  is a wind rather than a bass.
 
 ## 0.19.0 — 2026-11-03
 
