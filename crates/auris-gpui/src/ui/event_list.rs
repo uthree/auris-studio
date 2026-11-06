@@ -44,6 +44,10 @@ pub(crate) struct EventListState {
     /// The row last clicked, when it is a curve point — a note's row is selected through the
     /// roll's own note selection, so the two never disagree about it.
     pub row: Option<EventRef>,
+    /// The row playback last scrolled the list to, so it scrolls once per row it reaches
+    /// rather than every frame — a hand scrolling the list during playback is left alone until
+    /// the music moves on to another row.
+    pub followed: Option<usize>,
 }
 
 /// One column of the list.
@@ -323,6 +327,56 @@ impl EventTint {
     }
 }
 
+/// Where in the clip's own time the playhead is, when it is inside the clip.
+///
+/// A looping clip repeats its content up to its loop end, so the playhead on the third pass is
+/// read back onto the first: that is the pass the list shows.
+fn clip_time(
+    playhead: Ticks,
+    start: Ticks,
+    length: Ticks,
+    looped_to: Option<Ticks>,
+) -> Option<Ticks> {
+    let into = playhead - start;
+    let end = looped_to.unwrap_or(length).max(length);
+    if into < Ticks::ZERO || into >= end || length <= Ticks::ZERO {
+        return None;
+    }
+    Some(Ticks(into.raw() % length.raw()))
+}
+
+/// Which rows are sounding at clip time `at`, and the row the playback cursor is on.
+///
+/// A note sounds from its start to its end. A curve point is "sounding" while it is the one in
+/// force — the last point of its curve at or before the playhead — because a controller is
+/// state, and the row that set it is the one being heard. The cursor is the last row reached,
+/// which is what the list follows.
+fn now_playing(events: &[ClipEvent], at: Ticks) -> (Vec<bool>, Option<usize>) {
+    let mut sounding = vec![false; events.len()];
+    let mut in_force: Vec<(ClipCurve, usize)> = Vec::new();
+    let mut cursor = None;
+    for (index, event) in events.iter().enumerate() {
+        if event.at > at {
+            continue;
+        }
+        cursor = Some(index);
+        match (event.event, event.kind) {
+            (_, ClipEventKind::Note { gate, .. }) => sounding[index] = at < event.at + gate,
+            (EventRef::Curve { curve, .. }, _) => {
+                match in_force.iter_mut().find(|(each, _)| *each == curve) {
+                    Some(held) => held.1 = index,
+                    None => in_force.push((curve, index)),
+                }
+            }
+            _ => {}
+        }
+    }
+    for (_, index) in in_force {
+        sounding[index] = true;
+    }
+    (sounding, cursor)
+}
+
 /// A row ready to draw.
 struct DrawnRow {
     event: EventRef,
@@ -330,6 +384,8 @@ struct DrawnRow {
     cells: [String; 6],
     selected: bool,
     beyond_clip: bool,
+    /// Being heard right now, while the transport rolls.
+    sounding: bool,
 }
 
 impl AurisApp {
@@ -500,10 +556,31 @@ impl AurisApp {
             .map(|target| (target.start, target.length))
             .unwrap_or((Ticks::ZERO, Ticks::ZERO));
         let signatures = self.project().signatures.clone();
+        let looped_to = self
+            .session
+            .midi_clip(clip)
+            .filter(|target| target.is_looped())
+            .map(|target| target.loop_end);
+        let (sounding, cursor) = match self.is_playing() {
+            true => clip_time(self.playhead_ticks(), clip_start, clip_length, looped_to)
+                .map(|at| now_playing(&events, at))
+                .unwrap_or_else(|| (vec![false; events.len()], None)),
+            false => (vec![false; events.len()], None),
+        };
+        // Follow the music: once per row reached, and only far enough to bring it into view.
+        if let Some(row) = cursor
+            && cursor != self.event_list.followed
+        {
+            self.event_list
+                .scroll
+                .scroll_to_item(row, gpui::ScrollStrategy::Bottom);
+        }
+        self.event_list.followed = cursor;
         let mut previous = clip_start;
         let rows: Vec<DrawnRow> = events
             .iter()
-            .map(|event| {
+            .zip(sounding)
+            .map(|(event, sounding)| {
                 let cells = row_cells(event, clip_start, previous, &signatures, language);
                 previous = clip_start + event.at;
                 let selected = match event.event {
@@ -516,6 +593,7 @@ impl AurisApp {
                     cells,
                     selected,
                     beyond_clip: event.at >= clip_length,
+                    sounding,
                 }
             })
             .collect();
@@ -588,6 +666,9 @@ impl AurisApp {
                                 .h(ROW_HEIGHT)
                                 .text_xs()
                                 .text_color(colour)
+                                .when(row.sounding && !row.selected, |this| {
+                                    this.bg(theme.accent_soft)
+                                })
                                 .when(row.selected, |this| this.bg(theme.accent))
                                 .when(!row.selected, |this| {
                                     this.hover(|style| style.bg(theme.surface_hover))
@@ -846,6 +927,37 @@ mod tests {
                 assert_ne!(a.colour(&theme), b.colour(&theme), "{a:?} and {b:?}");
             }
         }
+    }
+
+    #[test]
+    fn what_is_heard_is_the_held_notes_and_the_curve_point_in_force() {
+        // A note held across the wheel's two points, and a second note after.
+        let events = [note(0, 0, 60), wheel(240), wheel(720), note(1, 960, 64)];
+        let (sounding, cursor) = now_playing(&events, Ticks(300));
+        assert_eq!(sounding, [true, true, false, false]);
+        assert_eq!(cursor, Some(1));
+        // Past the first note's end, the wheel's later point has taken over.
+        let (sounding, cursor) = now_playing(&events, Ticks(800));
+        assert_eq!(sounding, [false, false, true, false]);
+        assert_eq!(cursor, Some(2));
+        let (sounding, cursor) = now_playing(&events, Ticks(960));
+        assert_eq!(sounding, [false, false, true, true]);
+        assert_eq!(cursor, Some(3));
+    }
+
+    #[test]
+    fn a_looping_clip_is_read_back_onto_its_first_pass() {
+        let (start, length) = (Ticks(BAR), Ticks(BAR));
+        assert_eq!(clip_time(Ticks(0), start, length, None), None);
+        assert_eq!(
+            clip_time(Ticks(BAR + 10), start, length, None),
+            Some(Ticks(10))
+        );
+        assert_eq!(clip_time(Ticks(2 * BAR + 10), start, length, None), None);
+        assert_eq!(
+            clip_time(Ticks(3 * BAR + 10), start, length, Some(Ticks(4 * BAR))),
+            Some(Ticks(10))
+        );
     }
 
     #[test]
