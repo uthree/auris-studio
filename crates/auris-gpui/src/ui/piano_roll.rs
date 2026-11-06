@@ -2163,11 +2163,14 @@ impl AurisApp {
         self.selected_notes.clear();
         self.selected_notes.insert(index);
         let title = self.t(Key::PromptLyric);
-        self.open_prompt(crate::ui::prompt::Prompt::new(
-            title,
-            crate::ui::prompt::PromptTarget::Lyric { clip, index },
-            note.lyric.clone(),
-        ));
+        self.open_prompt(
+            crate::ui::prompt::Prompt::new(
+                title,
+                crate::ui::prompt::PromptTarget::Lyric { clip, index },
+                note.lyric.clone(),
+            )
+            .inline(crate::ui::inline_edit::InlinePlace::Target),
+        );
     }
 
     /// Opens the sheet that corrects one note's phonemes.
@@ -2186,11 +2189,14 @@ impl AurisApp {
         self.selected_notes.clear();
         self.selected_notes.insert(index);
         let title = self.t(Key::PromptPhonemes);
-        self.open_prompt(crate::ui::prompt::Prompt::new(
-            title,
-            crate::ui::prompt::PromptTarget::Phonemes { clip, index },
-            note.phonemes.join(" "),
-        ));
+        self.open_prompt(
+            crate::ui::prompt::Prompt::new(
+                title,
+                crate::ui::prompt::PromptTarget::Phonemes { clip, index },
+                note.phonemes.join(" "),
+            )
+            .inline(crate::ui::inline_edit::InlinePlace::Target),
+        );
     }
 
     /// Opens the sheet that lays a phrase across the selected notes.

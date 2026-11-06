@@ -315,6 +315,12 @@ impl AurisApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
+        // Every window that draws the document starts a frame of painted spots here, before
+        // the early return, so a label that stops being painted in it is forgotten.
+        self.canvas
+            .spots
+            .borrow_mut()
+            .next_frame(window.window_handle().window_id());
         if self
             .event_window
             .is_some_and(|id| id != window.window_handle().window_id())

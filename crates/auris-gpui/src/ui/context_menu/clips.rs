@@ -610,7 +610,7 @@ impl AurisApp {
     }
 
     /// Where a clip of either kind starts and ends on the timeline.
-    pub(super) fn clip_extent(&self, clip: ClipId) -> Option<(Ticks, Ticks)> {
+    pub(crate) fn clip_extent(&self, clip: ClipId) -> Option<(Ticks, Ticks)> {
         if let Some(midi) = self.session.midi_clip(clip) {
             return Some((midi.start, midi.end()));
         }
