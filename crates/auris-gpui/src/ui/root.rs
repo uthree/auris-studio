@@ -549,6 +549,7 @@ impl AurisApp {
                     .on_action(Self::window_listener(cx, Self::on_toggle_lyrics_lane))
                     .on_action(Self::window_listener(cx, Self::on_toggle_tempo_marks))
                     .on_action(Self::window_listener(cx, Self::on_toggle_bend_lane))
+                    .on_action(Self::window_listener(cx, Self::on_toggle_event_list))
                     .on_action(Self::window_listener(cx, Self::on_toggle_modulation_lane))
                     .on_action(Self::window_listener(cx, Self::on_open_settings))
                     .on_action(Self::window_listener(cx, Self::on_open_command_palette))
@@ -3720,6 +3721,16 @@ impl AurisApp {
         cx: &mut Context<Self>,
     ) {
         self.toggle_curve_lane(ClipCurve::Bend);
+        cx.notify();
+    }
+
+    fn on_toggle_event_list(
+        &mut self,
+        _: &actions::ToggleEventList,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_event_list();
         cx.notify();
     }
 

@@ -175,6 +175,11 @@ pub enum Edit {
     MoveNotes,
     /// A note's length changed.
     ResizeNote,
+    /// One field of one row of a clip's event list was rewritten.
+    ///
+    /// Its own step whichever column it was, because the list is a different gesture from the
+    /// drag that would have made the same change: a value typed is a decision made once.
+    EditEvent,
     /// Notes were snapped onto a division of the beat.
     QuantizeNotes,
     /// A note was given its word.

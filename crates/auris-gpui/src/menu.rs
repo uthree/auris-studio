@@ -635,6 +635,12 @@ pub fn model(language: Language, panels: &PanelLayout, state: MenuState) -> Vec<
                 "view.modulation_lane",
                 panels.curve_lane(ClipCurve::Controller(CC_MODULATION)),
             ),
+            toggle(
+                t(Key::CmdShowEventList),
+                actions::ToggleEventList,
+                "view.event_list",
+                panels.event_list,
+            ),
             MenuRow::Separator,
             command(t(Key::CmdZoomIn), actions::ZoomIn, "view.zoom_in"),
             command(t(Key::CmdZoomOut), actions::ZoomOut, "view.zoom_out"),

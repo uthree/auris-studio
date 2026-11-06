@@ -174,8 +174,11 @@ pub use session::{
     ClipInstrumentAnalysis, analyze_audio_file, analyze_instrument_file,
 };
 pub use session::{CheckpointJob, CheckpointOperation, CheckpointResult};
+pub use session::{ClipEvent, ClipEventKind, EventEdit, EventRef, clip_events};
 pub use session::{CompositionPreview, CompositionTrackPreview};
-pub use session::{DEFAULT_SAMPLE_ROOT, DetectedPitch, SampleZoneView, detect_pitch};
+pub use session::{
+    DEFAULT_SAMPLE_ROOT, DetectedPitch, SampleZoneView, detect_pitch, parse_root_note,
+};
 pub use session::{ENVELOPE_PITCHES, SoundEnvelope};
 pub use session::{prepare_looping_output_preview, prepare_output_preview};
 pub mod workshop;

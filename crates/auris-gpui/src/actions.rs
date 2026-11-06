@@ -218,6 +218,8 @@ actions!(
         ToggleBendLane,
         /// Show or hide the modulation strip under the piano roll.
         ToggleModulationLane,
+        /// Show or hide the event list down the side of the piano roll.
+        ToggleEventList,
         /// Open the settings window.
         OpenSettings,
         /// Open the command palette.
@@ -582,6 +584,7 @@ bindable! {
         "view.tempo_marks",     GroupView,      CmdShowTempoMarks,     "secondary-alt-t" => ToggleTempoMarks;
         "view.bend_lane",       GroupView,      CmdShowBendLane,       "secondary-alt-b" => ToggleBendLane;
         "view.modulation_lane", GroupView,      CmdShowModulationLane, "secondary-alt-w" => ToggleModulationLane;
+        "view.event_list",      GroupView,      CmdShowEventList,      "" => ToggleEventList;
         "view.zoom_in",         GroupView,      CmdZoomIn,             "secondary-=" => ZoomIn;
         "view.zoom_out",        GroupView,      CmdZoomOut,            "secondary--" => ZoomOut;
         "view.track_height_increase", GroupView, CmdIncreaseTrackHeight, "" => IncreaseTrackHeight;
