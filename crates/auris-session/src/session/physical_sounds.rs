@@ -7,7 +7,8 @@ use auris_synth::Model;
 use super::Session;
 use crate::SessionError;
 
-/// Corresponding native models only; unsupported timbres and specialty kits need GM.
+/// Corresponding native models and the nearest synth or voice family; unsupported timbres and
+/// specialty kits need GM.
 pub(super) fn native_sound(bank: i32, patch: i32) -> Option<(&'static str, PluginState)> {
     if !(0..=127).contains(&patch) {
         return None;
@@ -26,6 +27,17 @@ pub(super) fn native_sound(bank: i32, patch: i32) -> Option<(&'static str, Plugi
     }
     if patch == 78 {
         return Some((auris_synth::TinWhistle::ID, PluginState::empty()));
+    }
+    // The voices General MIDI has no model for still have a nearest family: a choir and a
+    // "synth voice" are ensembles of the human throat, and a square lead is what the chiptune
+    // voice is. A sawtooth lead is deliberately *not* here — see the timbre test below.
+    if let Some(id) = match patch {
+        52..=53 => Some(auris_synth::Choir::ID),
+        54 => Some(auris_synth::Vocal::ID),
+        80 => Some(auris_synth::Chiptune::ID),
+        _ => None,
+    } {
+        return Some((id, PluginState::empty()));
     }
     let model = match patch {
         0..=3 | 6..=7 => Model::Piano,
@@ -90,6 +102,35 @@ pub(super) fn native_sound(bank: i32, patch: i32) -> Option<(&'static str, Plugi
     }
     Some((model.id(), state))
 }
+
+/// The General MIDI program each built-in instrument is exported as.
+///
+/// The inverse of [`native_sound`] for the voices that function names, and kept beside it so the
+/// two directions are edited together; `every_exported_program_reads_back_as_the_same_instrument`
+/// holds them to it. A percussion voice has no entry on purpose: General MIDI announces a kit by
+/// putting the track on channel 10, where a program number would select a *kit* rather than a
+/// timbre, and the exported track is already on that channel.
+///
+/// A sampler preset or a hosted plug-in has no entry either. Its instrument is not one of ours,
+/// and inventing a program for it would tell the next reader something the document never said.
+/// [`auris_synth::Fm2`] is the same refusal in the other direction: its nearest General MIDI
+/// family is the sawtooth lead, which this session does not stand in for, so the track travels
+/// without a program rather than with a claim nobody made.
+pub(super) const GM_PROGRAMS: &[(&str, u8)] = &[
+    (Model::Piano.id(), 0),
+    (Model::Mallet.id(), 12),
+    (Model::Bell.id(), 14),
+    (auris_synth::HammeredDulcimer::ID, 15),
+    (Model::Guitar.id(), 25),
+    (Model::ElectricGuitar.id(), 27),
+    (Model::Bass.id(), 33),
+    (Model::Violin.id(), 40),
+    (auris_synth::Choir::ID, 52),
+    (auris_synth::Vocal::ID, 54),
+    (auris_synth::Clarinet::ID, 71),
+    (auris_synth::TinWhistle::ID, 78),
+    (auris_synth::Chiptune::ID, 80),
+];
 
 /// A part's role chooses an initial performance; the result remains ordinary editable state.
 pub(super) fn style_native(id: &str, role: Option<Role>, state: &mut PluginState) {
@@ -161,6 +202,7 @@ impl Session {
 mod tests {
     use super::*;
     use crate::SessionOptions;
+    use auris_core::time::Ticks;
 
     #[test]
     fn preset_signal_chains_use_registered_controls_within_their_ranges() {
@@ -479,5 +521,82 @@ mod tests {
             assert!(session.project().soundfonts.is_empty());
             assert!(session.undo().is_some());
         }
+    }
+
+    #[test]
+    fn every_exported_program_reads_back_as_the_same_instrument() {
+        for (id, program) in GM_PROGRAMS {
+            let (read, _) = native_sound(0, i32::from(*program)).unwrap_or_else(|| {
+                panic!("{id} exports as program {program}, which the reader does not know")
+            });
+            assert_eq!(read, *id, "program {program} reads back as {read}");
+        }
+    }
+
+    #[test]
+    fn a_midi_file_written_here_reads_back_on_the_same_voices() {
+        let folder = tempfile::tempdir().unwrap();
+        let destination = folder.path().join("Voices.mid");
+        let mut session = Session::new(SessionOptions::headless()).unwrap();
+        let mut expected = Vec::new();
+        for (id, _) in GM_PROGRAMS {
+            let track = session.add_instrument_track(*id, id).unwrap();
+            let clip = session
+                .add_midi_clip(track, "Phrase", Ticks::ZERO, Ticks::QUARTER)
+                .unwrap();
+            session
+                .add_note(clip, auris_core::Note::new(60, Ticks::ZERO, Ticks::QUARTER))
+                .unwrap();
+            expected.push((*id).to_string());
+        }
+        let drums = session.add_default_drum_track("Kit").unwrap();
+        let clip = session
+            .add_midi_clip(drums, "Beat", Ticks::ZERO, Ticks::QUARTER)
+            .unwrap();
+        session
+            .add_note(clip, auris_core::Note::new(36, Ticks::ZERO, Ticks::QUARTER))
+            .unwrap();
+        // The kit travels as the channel it is on, not as a program, so it is expected back too.
+        expected.push(auris_synth::DrumKit::ID.to_string());
+
+        session.export_midi(&destination).unwrap();
+        let report = session.import_midi(&destination).unwrap();
+        assert_eq!(report.tracks, expected.len());
+        let actual: Vec<String> = session
+            .project()
+            .tracks
+            .iter()
+            .filter_map(|track| track.kind.as_instrument())
+            .map(|inner| inner.instrument_id.clone())
+            .collect();
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn a_program_no_built_in_voice_covers_keeps_the_registry_default() {
+        // 56 is a trumpet. The built-in voices have no brass model, so the fallback stands rather
+        // than a violin being declared a trumpet because it was the nearest thing to hand.
+        let folder = tempfile::tempdir().unwrap();
+        let destination = folder.path().join("Brass.mid");
+        let mut source = auris_core::Project::new("Brass", 48_000.0);
+        let track = source.add_instrument_track("Trumpet", "auris.sampler");
+        let clip = source
+            .add_midi_clip(track, "Line", Ticks::ZERO, Ticks::QUARTER)
+            .unwrap();
+        source.midi_clip_mut(clip).unwrap().notes =
+            vec![auris_core::Note::new(60, Ticks::ZERO, Ticks::QUARTER)];
+        let bytes = auris_io::write_midi_bytes(&source, &[("auris.sampler", 56)]).unwrap();
+        std::fs::write(&destination, bytes).unwrap();
+
+        let mut session = Session::new(SessionOptions::headless()).unwrap();
+        session.import_midi(&destination).unwrap();
+        assert_eq!(
+            session.project().tracks[0]
+                .kind
+                .as_instrument()
+                .unwrap()
+                .instrument_id,
+            crate::registry::DEFAULT_INSTRUMENT
+        );
     }
 }

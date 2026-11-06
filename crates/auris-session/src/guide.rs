@@ -2152,6 +2152,10 @@ pub mod composition {
     //! preserve the track kind. Drum clips move and paste only between drum tracks, and drum
     //! recipes can only be generated on that kind. Melodic clips still move between instrument
     //! and singer tracks. MIDI channel 10 imports as drums and drum exports use that channel.
+    //! Every other imported track starts on the built-in voice that answers for the General MIDI
+    //! program it selected before its first note, and export writes the reverse program, so a
+    //! file written here reads back on the voices it was written with. A family no built-in voice
+    //! covers keeps the registry default; the shipped font is adopted only by an explicit choice.
     //!
     //! Version 21 stores the distinct kind. Older documents promote percussion from known
     //! built-in drum IDs, explicit SoundFont bank 128 selections, authored drum assignments,
