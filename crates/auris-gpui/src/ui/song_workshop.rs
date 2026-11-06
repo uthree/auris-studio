@@ -3330,6 +3330,89 @@ mod tests {
         }
     }
 
+    /// A wrapped Japanese answer is as tall as its blocks, and the candidates follow it.
+    ///
+    /// Measured before its width was known, the answer wrapped at every character and kept that
+    /// height: a four-line reply stood thousands of pixels tall, and the candidate cards under it
+    /// fell past the end of the scroll range.
+    #[gpui::test]
+    fn a_wrapped_japanese_answer_leaves_its_candidates_in_reach(cx: &mut gpui::TestAppContext) {
+        use auris_session::workshop::{Candidate, Direction, Message, Round};
+
+        let (app, cx) = crate::harness::open(cx);
+        cx.update(|window, cx| {
+            app.update(cx, |this, cx| {
+                this.show_project_chooser(window, cx);
+                this.open_song_workshop(window, cx);
+            })
+        });
+        make_ready(&app, cx);
+        app.update(cx, |this, _| {
+            let snapshot = this
+                .song_workshop
+                .as_mut()
+                .unwrap()
+                .snapshot
+                .as_mut()
+                .unwrap();
+            snapshot.document.messages.push(Message {
+                choices: None,
+                references: vec![],
+                attachments: Vec::new(),
+                user: false,
+                text: "パーティー感たっぷりのユーロビートですね！まずはメロディ・コード・歌詞を\
+                       比べられるデモを3つ作ります。\n\n\
+                       1. 王道ハイテンションのパーティーアンセム。夜のダンスフロアで歌います。\n\
+                       2. コミカルなパーティーチューン。掛け声が多めで、跳ねる感じです。\n\
+                       3. クールでちょっと切ないユーロビート。サビで一気に弾けます。"
+                    .into(),
+            });
+            snapshot.document.rounds.push(Round {
+                after_message: 1,
+                candidates: vec![Candidate {
+                    id: 0,
+                    parent: None,
+                    ready: false,
+                    error: None,
+                    recoveries: 0,
+                    tools: Default::default(),
+                    feedback: None,
+                    direction: Direction {
+                        title: "Midnight".into(),
+                        description: "Eurobeat".into(),
+                        instructions: String::new(),
+                        protected_tracks: Vec::new(),
+                        sources: vec![],
+                        phase: None,
+                    },
+                }],
+            });
+        });
+        crate::harness::resize(&app, cx, gpui::size(gpui::px(700.0), gpui::px(800.0)));
+        let root = cx
+            .debug_bounds("workshop-markdown-song-workshop-message-0-root")
+            .unwrap();
+        let last = cx
+            .debug_bounds("workshop-markdown-song-workshop-message-0-1-block")
+            .unwrap();
+        assert!(
+            last.size.height > gpui::px(30.0),
+            "the list wraps at this width, which is what the measurement got wrong"
+        );
+        assert_eq!(
+            root.bottom(),
+            last.bottom(),
+            "the answer ends with its last block"
+        );
+        let card = cx.debug_bounds("song-candidate-0").unwrap();
+        assert!(
+            card.top() - root.bottom() < gpui::px(200.0),
+            "the candidate sits under the answer: answer ends at {:?}, card starts at {:?}",
+            root.bottom(),
+            card.top()
+        );
+    }
+
     #[gpui::test]
     fn workshop_body_and_composer_stay_visible_at_narrow_width(cx: &mut gpui::TestAppContext) {
         let (app, cx) = crate::harness::open(cx);

@@ -148,14 +148,18 @@ fn render_blocks(
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
+    // A block container, not a flex column. As a flex column its height came from a measurement
+    // its parent took before the width was known, when text wraps at every break opportunity:
+    // Japanese breaks between any two characters, so a three-line reply measured one character
+    // per line and kept that height, thousands of pixels, at its real width. Everything after it
+    // in the transcript ended past the scroll range. Block layout sums the blocks as drawn.
+    let root_id = format!("{id}-root");
     let mut column = div()
-        .flex()
-        .flex_col()
+        .debug_selector(move || root_id.clone())
         .w_full()
         .min_w_0()
         .h_auto()
-        .flex_shrink_0()
-        .gap_2();
+        .flex_shrink_0();
     for (index, block) in blocks.iter().enumerate() {
         let child_id = format!("{id}-{index}");
         let child = match block {
@@ -223,6 +227,7 @@ fn render_blocks(
         column = column.child(
             div()
                 .debug_selector(move || debug_id.clone())
+                .when(index > 0, |block| block.mt_2())
                 .w_full()
                 .min_w_0()
                 .flex_shrink_0()
