@@ -70,7 +70,9 @@ pub enum SessionError {
     #[error("invalid automation: {0}")]
     InvalidAutomation(String),
     /// A checkpoint name is empty, too long, or contains a path separator or punctuation.
-    #[error("checkpoint names need 1-80 bytes of letters, digits, hyphens or underscores")]
+    #[error(
+        "checkpoint names need 1-80 bytes of letters, digits, hyphens or underscores, with no spaces or punctuation"
+    )]
     InvalidCheckpointName,
     /// Another editor changed the saved document after this session read it.
     #[error("the project changed on disk: {0}; reload its changes or save your work elsewhere")]

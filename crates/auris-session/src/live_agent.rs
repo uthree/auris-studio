@@ -346,7 +346,7 @@ pub enum Command {
         /// Requested operation in absolute timeline ticks.
         operation: document_editing::ClipOperation,
     },
-    /// Read or edit authored pitch bend or normalized MIDI controllers, including sustain CC64. Derived performance curves are preserved. Read the lane first; mutations require its revision.
+    /// Read or edit authored pitch bend or normalized MIDI controllers, including sustain CC64. Derived performance curves are preserved. Read the lane first; mutations require its revision. Every read also returns authored_curves: exactly the lanes this clip carries, with their point counts, so one read tells you which controllers exist. read_notes reports the same inventory.
     EditClipCurve {
         /// Stable MIDI clip ID.
         clip: u64,
@@ -581,7 +581,7 @@ pub enum Command {
         #[schemars(length(min = 1, max = 16))]
         edits: Vec<note_editing::NoteEdit>,
     },
-    /// Read 1..8 MIDI clip pages in one call. Copy each clip from inspect_project tracks[].clips[].clip or add_clip's clip result, never tracks[].track or add_track's track result. Track IDs and clip IDs are different addresses. Each request is `{clip:<returned clip ID>,offset:0}`; offset defaults to zero. Returns one shared revision and clips containing up to 128 notes each with song bar, beat and length_beats in the same units edit_notes takes (each clip also reports its bars `[first,last]`; on_grid:false marks a stored attack between subdivisions), normalized velocity 0..1, original zero-based storage indices (`index`) and a stable timeline rank (`timeline_index`). Pages remain in storage order so edits address the original indices; sort by `timeline_index` for lyric and phrase work. The rank uses start position then storage index as its tie-break. Follow each clip's next_offset; truncated is explicit. Do not edit between pages. Pass the top-level revision to edit_notes; stale indices are rejected.
+    /// Read 1..8 MIDI clip pages in one call. Copy each clip from inspect_project tracks[].clips[].clip or add_clip's clip result, never tracks[].track or add_track's track result. Track IDs and clip IDs are different addresses. Each request is `{clip:<returned clip ID>,offset:0}`; offset defaults to zero. Returns one shared revision and clips containing up to 128 notes each with song bar, beat and length_beats in the same units edit_notes takes (each clip also reports its bars `[first,last]`; on_grid:false marks a stored attack between subdivisions), normalized velocity 0..1, original zero-based storage indices (`index`) and a stable timeline rank (`timeline_index`). Pages remain in storage order so edits address the original indices; sort by `timeline_index` for lyric and phrase work. The rank uses start position then storage index as its tie-break. Follow each clip's next_offset; truncated is explicit. Do not edit between pages. Pass the top-level revision to edit_notes; stale indices are rejected. A clip that carries authored bend or controller lanes also lists them in authored_curves as `{kind,number,points}`, in the shape edit_clip_curve's curve takes; an absent field means the clip has none, so never sweep controller numbers to find them.
     ReadNotes {
         /// Up to eight distinct clip pages; omitted offset starts at zero.
         #[schemars(length(min = 1, max = 8))]
