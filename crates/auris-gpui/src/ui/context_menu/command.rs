@@ -369,6 +369,8 @@ pub enum MenuCommand {
         /// Whether it should be showing afterwards.
         shown: bool,
     },
+    /// Show or hide the piano roll's event list.
+    ShowEventList(bool),
     /// Open the list of places a track's output could go.
     ShowOutputPicker {
         /// Track being routed.
@@ -1202,6 +1204,10 @@ impl AurisApp {
             MenuCommand::ClipSourceTempo(clip) => self.prompt_for_clip_source_tempo(clip),
             MenuCommand::ShowCurveLane { which, shown } => {
                 self.panels.set_curve_lane(which, shown);
+                self.remember_layout();
+            }
+            MenuCommand::ShowEventList(shown) => {
+                self.panels.event_list = shown;
                 self.remember_layout();
             }
             MenuCommand::ShowOutputPicker { track, at } => {

@@ -233,6 +233,7 @@ pub fn edit_key(edit: Edit) -> Key {
         Edit::DuplicateNotes => Key::EditDuplicateNotes,
         Edit::TransposeNotes => Key::EditTransposeNotes,
         Edit::SetNoteVelocity => Key::EditSetNoteVelocity,
+        Edit::EditEvent => Key::EditEditEvent,
         Edit::MoveNotes => Key::EditMoveNotes,
         Edit::ResizeNote => Key::EditResizeNote,
         Edit::QuantizeNotes => Key::EditQuantizeNotes,

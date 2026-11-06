@@ -181,6 +181,18 @@ pub enum PromptTarget {
     ClipSourceTempo(ClipId),
     /// Where the playhead sits, as bar, beat and hundredth.
     Position,
+    /// One cell of the piano roll's event list.
+    ///
+    /// Return commits the value and walks on to the same cell of the next row, the way the
+    /// lyric sheet walks from note to note.
+    Event {
+        /// The clip the list shows.
+        clip: ClipId,
+        /// Which row.
+        event: auris_session::EventRef,
+        /// Which column of it.
+        column: crate::ui::event_list::EventColumn,
+    },
     /// One of the note-roll video's colours, as a code such as `#3D7BFF`.
     ///
     /// The picker's sliders find a colour by eye; this is for the one that is already known —
@@ -279,7 +291,9 @@ impl PromptTarget {
             | PromptTarget::LintReason(_)
             // No shared notation: every parameter is written in its own units, and the range
             // and the unit are in the prompt's title instead, where they can name this one.
-            | PromptTarget::Param(_) => return None,
+            | PromptTarget::Param(_)
+            // Each column has its own rule, stated by its own hint.
+            | PromptTarget::Event { .. } => return None,
         })
     }
 
@@ -292,6 +306,8 @@ impl PromptTarget {
     pub fn hint(self) -> Option<Key> {
         if matches!(self, Self::AgentChordReference { .. }) {
             Some(Key::AgentChordsHint)
+        } else if let Self::Event { event, column, .. } = self {
+            Some(column.hint(event))
         } else {
             self.notation().map(Notation::hint)
         }
@@ -1123,6 +1139,28 @@ impl AurisApp {
                         return;
                     }
                 }
+            }
+            PromptTarget::Event {
+                clip,
+                event,
+                column,
+            } => {
+                // Closed first so the walk can open the next cell's sheet in its place.
+                let field = self.prompt.take();
+                match self.commit_event_prompt(clip, event, column, &text) {
+                    Ok(()) => {
+                        if let Some(error) = field.and_then(|prompt| prompt.error)
+                            && self.status == error.as_ref()
+                        {
+                            self.set_status("");
+                        }
+                    }
+                    Err(error) => {
+                        self.prompt = field;
+                        self.reject_prompt(error);
+                    }
+                }
+                return;
             }
             PromptTarget::Phonemes { clip, index } => {
                 let phonemes: Vec<String> =
@@ -2985,6 +3023,11 @@ mod tests {
             PromptTarget::ClipSourceTempo(ClipId(1)),
             PromptTarget::Position,
             PromptTarget::VideoColour(crate::ui::video_export::VideoColourSlot::Single),
+            PromptTarget::Event {
+                clip: ClipId(1),
+                event: auris_session::EventRef::Note(0),
+                column: crate::ui::event_list::EventColumn::Value,
+            },
         ];
         for target in &representatives {
             match target {
@@ -3021,7 +3064,8 @@ mod tests {
                 | PromptTarget::DrumLaneNote { .. }
                 | PromptTarget::ClipSourceTempo(_)
                 | PromptTarget::Position
-                | PromptTarget::VideoColour(_) => {}
+                | PromptTarget::VideoColour(_)
+                | PromptTarget::Event { .. } => {}
             }
         }
         representatives
@@ -3030,6 +3074,12 @@ mod tests {
     #[test]
     fn everything_that_is_a_notation_rather_than_a_name_says_so() {
         for target in every_target() {
+            // An event-list cell is written in whichever notation its column takes, and says so
+            // through that column's own hint rather than through one shared notation.
+            if matches!(target, PromptTarget::Event { .. }) {
+                assert!(target.hint().is_some());
+                continue;
+            }
             assert_eq!(
                 target.hint().is_some(),
                 target.notation().is_some(),

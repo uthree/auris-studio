@@ -324,6 +324,11 @@ pub struct PanelLayout {
     /// wheel, which was a flag here before a clip could hold anything else, and which is one menu
     /// item away like all the rest.
     controller_lanes: Vec<u8>,
+    /// Whether the piano roll shows its event list down its left-hand side.
+    ///
+    /// Off until asked for, like the curve strips: most editing is done on the grid, and the
+    /// list takes a few hundred pixels of it whenever it is open.
+    pub event_list: bool,
 }
 
 impl PanelLayout {
@@ -402,6 +407,7 @@ impl Default for PanelLayout {
             lanes: TimelineLanes::default(),
             bend_lane: false,
             controller_lanes: Vec::new(),
+            event_list: false,
         }
     }
 }
@@ -677,6 +683,8 @@ struct StoredLayout {
     bend_lane: bool,
     /// Which controllers it draws a strip for.
     controller_lanes: Vec<u8>,
+    /// Whether it shows its event list.
+    event_list: bool,
 }
 
 impl From<&PanelLayout> for StoredLayout {
@@ -703,6 +711,7 @@ impl From<&PanelLayout> for StoredLayout {
             lanes: layout.lanes,
             bend_lane: layout.bend_lane,
             controller_lanes: layout.controller_lanes.clone(),
+            event_list: layout.event_list,
         }
     }
 }
@@ -723,6 +732,7 @@ impl From<StoredLayout> for PanelLayout {
         }
         layout.lanes = stored.lanes;
         layout.bend_lane = stored.bend_lane;
+        layout.event_list = stored.event_list;
         // Through the setter, so a file naming the same controller twice, or naming them out of
         // order, still produces the stack the roll draws rather than a duplicate strip.
         for number in stored.controller_lanes {

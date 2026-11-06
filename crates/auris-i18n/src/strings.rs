@@ -1466,6 +1466,39 @@ strings! {
     StraightenCurve { en: "Straighten", ja: "カーブを消す" }
     CmdShowBendLane { en: "Pitch Bend", ja: "ピッチベンド" }
     CmdShowModulationLane { en: "Modulation", ja: "モジュレーション" }
+    CmdShowEventList { en: "Event List", ja: "イベントリスト" }
+    EventList { en: "Events", ja: "イベント" }
+    EventListMeasure { en: "Meas", ja: "小節" }
+    EventListTick { en: "Tick", ja: "Tick" }
+    EventListStep { en: "Step", ja: "Step" }
+    EventListEvent { en: "Event", ja: "イベント" }
+    EventListGate { en: "Gate", ja: "Gate" }
+    EventListValue { en: "Vel/Value", ja: "Vel/値" }
+    EventListNote { en: "Note", ja: "ノート" }
+    EventListEmpty { en: "No events in this clip", ja: "このクリップにはイベントがありません" }
+    HintEventMeasure { en: "Enter the bar number, from 1.", ja: "小節番号を1以上の整数で入力してください。" }
+    HintEventTick {
+        en: "Enter ticks from the start of the bar (960 to a quarter note).",
+        ja: "小節の頭からのTick数を入力してください（四分音符 = 960）。"
+    }
+    HintEventStep {
+        en: "Enter ticks after the event above (960 to a quarter note).",
+        ja: "ひとつ上のイベントからのTick数を入力してください（四分音符 = 960）。"
+    }
+    HintEventPitch {
+        en: "Enter a note name such as C4 or F#3, or a MIDI note number.",
+        ja: "C4 や F#3 のような音名か、MIDIノート番号を入力してください。"
+    }
+    HintEventGate {
+        en: "Enter the length in ticks (960 to a quarter note).",
+        ja: "長さをTick数で入力してください（四分音符 = 960）。"
+    }
+    HintEventVelocity { en: "Enter a velocity from 1 to 127.", ja: "ベロシティを1〜127で入力してください。" }
+    HintEventController { en: "Enter a value from 0 to 127.", ja: "値を0〜127で入力してください。" }
+    HintEventBend {
+        en: "Enter semitones, from -12 to 12.",
+        ja: "半音単位で-12〜12の値を入力してください。"
+    }
     RoleKick { en: "Kick", ja: "キック" }
     RoleSnare { en: "Snare", ja: "スネア" }
     RoleHat { en: "Hi-hat", ja: "ハイハット" }
@@ -1827,6 +1860,7 @@ strings! {
     EditDuplicateNotes { en: "duplicating notes", ja: "ノートの複製" }
     EditTransposeNotes { en: "transposing notes", ja: "ノートの移調" }
     EditSetNoteVelocity { en: "changing note velocity", ja: "ノートの強さの変更" }
+    EditEditEvent { en: "editing an event", ja: "イベントの編集" }
     EditMoveNotes { en: "moving notes", ja: "ノートの移動" }
     EditResizeNote { en: "resizing a note", ja: "ノートの長さ変更" }
     EditQuantizeNotes { en: "quantising", ja: "クオンタイズ" }
@@ -2946,6 +2980,10 @@ mod tests {
             Key::VoiceSetupVoicevox,
             Key::VoiceSetupDiffSinger,
             Key::VoiceSetupLeapSinger,
+            // The event list's column headings, which Japanese list editors print in English too.
+            Key::EventListTick,
+            Key::EventListStep,
+            Key::EventListGate,
         ];
         for key in Key::ALL {
             if SHARED.contains(key) {

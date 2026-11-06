@@ -1459,6 +1459,8 @@ pub struct AurisApp {
     pub(crate) pitch: PitchView,
     /// The drum editor's independent row scrolling and MIDI-address visibility.
     pub(crate) drum_editor: crate::ui::drum_editor::DrumEditorState,
+    /// The piano roll's event list: where it is scrolled, and its selected curve row.
+    pub(crate) event_list: crate::ui::event_list::EventListState,
     pub(crate) selected_track: Option<TrackId>,
     /// Monitor dropouts already reported, so the frame loop says something once per new gap
     /// rather than thirty times a second for as long as the count stands.
@@ -2093,6 +2095,7 @@ impl AurisApp {
             signature_scroll_remainder: 0.0,
             pitch: PitchView::default(),
             drum_editor: crate::ui::drum_editor::DrumEditorState::default(),
+            event_list: crate::ui::event_list::EventListState::default(),
             selected_track,
             monitor_gaps: 0,
             selected_clip,
