@@ -51,6 +51,18 @@ pub struct TextField {
     reversed: bool,
     /// Byte range of the text the IME is still composing, if any.
     marked: Option<Range<usize>>,
+    /// Bounded edit history for the field-local undo shortcuts.
+    undo: Vec<TextFieldSnapshot>,
+    redo: Vec<TextFieldSnapshot>,
+}
+
+const TEXT_FIELD_HISTORY_LIMIT: usize = 100;
+
+#[derive(Clone, Debug, PartialEq)]
+struct TextFieldSnapshot {
+    content: String,
+    selection: Range<usize>,
+    reversed: bool,
 }
 
 impl TextField {
@@ -66,7 +78,57 @@ impl TextField {
             selection,
             reversed: false,
             marked: None,
+            undo: Vec::new(),
+            redo: Vec::new(),
         }
+    }
+
+    fn snapshot(&self) -> TextFieldSnapshot {
+        TextFieldSnapshot {
+            content: self.content.clone(),
+            selection: self.selection.clone(),
+            reversed: self.reversed,
+        }
+    }
+
+    fn restore(&mut self, snapshot: TextFieldSnapshot) {
+        self.content = snapshot.content;
+        self.selection = snapshot.selection;
+        self.reversed = snapshot.reversed;
+        // Undo returns to committed text; restoring a pre-edit would make the next insertion
+        // replace invisible composing text instead of appending at the caret.
+        self.marked = None;
+    }
+
+    fn remember_edit(&mut self) {
+        self.undo.push(self.snapshot());
+        if self.undo.len() > TEXT_FIELD_HISTORY_LIMIT {
+            self.undo.remove(0);
+        }
+        self.redo.clear();
+    }
+
+    /// Undoes one edit in this field, including the caret but always returning to committed text.
+    pub fn undo(&mut self) -> bool {
+        let Some(snapshot) = self.undo.pop() else {
+            return false;
+        };
+        self.redo.push(self.snapshot());
+        self.restore(snapshot);
+        true
+    }
+
+    /// Redoes one edit in this field, including the caret but never restoring an IME pre-edit.
+    pub fn redo(&mut self) -> bool {
+        let Some(snapshot) = self.redo.pop() else {
+            return false;
+        };
+        self.undo.push(self.snapshot());
+        if self.undo.len() > TEXT_FIELD_HISTORY_LIMIT {
+            self.undo.remove(0);
+        }
+        self.restore(snapshot);
+        true
     }
 
     /// The text.
@@ -97,6 +159,10 @@ impl TextField {
     /// Replaces `range` with `text` and puts the caret after it.
     pub fn replace(&mut self, range: Range<usize>, text: &str) {
         let range = self.clamp(range);
+        let changed = &self.content[range.clone()] != text;
+        if changed && self.marked.is_none() {
+            self.remember_edit();
+        }
         self.content.replace_range(range.clone(), text);
         let caret = range.start + text.len();
         self.selection = caret..caret;
@@ -112,6 +178,11 @@ impl TextField {
         selected: Option<Range<usize>>,
     ) {
         let range = self.clamp(range);
+        let was_marked = self.marked.is_some();
+        // A reconversion may start by marking unchanged text before replacing it.
+        if !was_marked && (!text.is_empty() || !range.is_empty()) {
+            self.remember_edit();
+        }
         self.content.replace_range(range.clone(), text);
         let marked = range.start..range.start + text.len();
         self.selection = match selected {
@@ -121,6 +192,16 @@ impl TextField {
         };
         self.reversed = false;
         self.marked = (!text.is_empty()).then_some(marked);
+        if was_marked
+            && text.is_empty()
+            && self
+                .undo
+                .last()
+                .is_some_and(|snapshot| snapshot == &self.snapshot())
+        {
+            // Cancelling the pre-edit is not a user-visible edit. Do not leave a no-op undo step.
+            self.undo.pop();
+        }
     }
 
     /// Types `text` over the selection.
@@ -316,6 +397,20 @@ impl TextField {
             }
         }
         match key {
+            "z" if secondary && !shift => {
+                return if self.undo() {
+                    KeyEffect::Changed
+                } else {
+                    KeyEffect::Moved
+                };
+            }
+            "z" if secondary && shift => {
+                return if self.redo() {
+                    KeyEffect::Changed
+                } else {
+                    KeyEffect::Moved
+                };
+            }
             "backspace" => self.backspace(),
             "delete" => self.delete_forward(),
             "left" => {
@@ -983,6 +1078,114 @@ mod tests {
         assert_eq!(field.apply_key("home", false, false), KeyEffect::Moved);
         assert_eq!(field.apply_key("a", false, true), KeyEffect::Moved);
         assert_eq!(field.content(), "reverb");
+    }
+
+    #[test]
+    fn undo_and_redo_restore_typed_text_without_resurrecting_a_replaced_draft() {
+        let mut field = TextField::new("old");
+        field.insert("new");
+        assert_eq!(field.content(), "new");
+        assert_eq!(field.apply_key("z", false, true), KeyEffect::Changed);
+        assert_eq!(field.content(), "old");
+        assert_eq!(
+            field.apply_key_for_platform("z", true, true, false),
+            KeyEffect::Changed
+        );
+        assert_eq!(field.content(), "new");
+
+        // Replacing a field from application state starts a fresh editing history. A later
+        // shortcut must not resurrect the previous conversation or settings value.
+        field = TextField::new("reset");
+        assert_eq!(field.apply_key("z", false, true), KeyEffect::Moved);
+        assert_eq!(
+            field.apply_key_for_platform("z", true, true, false),
+            KeyEffect::Moved
+        );
+        assert_eq!(field.content(), "reset");
+    }
+
+    #[test]
+    fn undo_handles_unicode_selection_and_ime_composition_as_one_edit() {
+        let mut field = TextField::new("歌");
+        field.caret_to_end();
+        field.replace_and_mark(3..3, "か", None);
+        field.replace_and_mark(3..6, "歌", None);
+        field.replace(3..6, "歌");
+        assert_eq!(field.apply_key("z", false, true), KeyEffect::Changed);
+        assert_eq!(field.content(), "歌");
+        assert_eq!(
+            field.apply_key_for_platform("z", true, true, false),
+            KeyEffect::Changed
+        );
+        assert_eq!(field.marked(), None);
+        field.insert("x");
+        assert_eq!(field.content(), "歌歌x");
+        assert_eq!(field.apply_key("z", false, true), KeyEffect::Changed);
+        assert_eq!(field.content(), "歌歌");
+    }
+
+    #[test]
+    fn deletion_starts_a_new_branch_and_older_redo_is_discarded() {
+        let mut field = TextField::new("abc");
+        field.caret_to_end();
+        field.backspace();
+        assert_eq!(field.content(), "ab");
+        assert!(field.undo());
+        assert_eq!(field.content(), "abc");
+        field.delete_forward();
+        assert_eq!(field.content(), "abc");
+        field.move_home(false);
+        field.delete_forward();
+        assert_eq!(field.content(), "bc");
+        assert_eq!(
+            field.apply_key_for_platform("z", true, true, false),
+            KeyEffect::Moved
+        );
+    }
+
+    #[test]
+    fn cancelled_empty_ime_preedit_does_not_leave_an_undo_step() {
+        let mut field = TextField::new("");
+        field.replace_and_mark(0..0, "k", None);
+        field.replace_and_mark(0..1, "", None);
+        assert_eq!(field.content(), "");
+        assert!(!field.undo());
+
+        let mut field = TextField::new("");
+        field.insert("a");
+        field.replace_and_mark(1..1, "k", None);
+        field.replace_and_mark(1..2, "", None);
+        assert!(field.undo());
+        assert_eq!(field.content(), "");
+        assert!(!field.undo());
+    }
+
+    #[test]
+    fn ime_reconversion_remembers_the_text_before_marking() {
+        let mut field = TextField::new("歌");
+        field.replace_and_mark(0..3, "歌", None);
+        field.replace_and_mark(0..3, "うた", None);
+        field.replace(0..6, "唄");
+        assert!(field.undo());
+        assert_eq!(field.content(), "歌");
+        assert_eq!(field.selection(), 0..3);
+        assert!(field.redo());
+        assert_eq!(field.content(), "唄");
+        assert_eq!(field.marked(), None);
+    }
+
+    #[test]
+    fn history_is_bounded() {
+        let mut field = TextField::new("");
+        for _ in 0..110 {
+            field.caret_to_end();
+            field.insert("x");
+        }
+        let mut undone = 0;
+        while field.undo() {
+            undone += 1;
+        }
+        assert_eq!(undone, TEXT_FIELD_HISTORY_LIMIT);
     }
 
     #[gpui::test]
