@@ -14,6 +14,7 @@ use gpui::{Pixels, Point};
 
 use crate::app::AurisApp;
 use crate::dock::TimelineLane;
+use crate::ui::inline_edit::InlinePlace;
 use crate::ui::prompt::{Prompt, PromptTarget};
 
 use super::{ContextMenu, MenuCommand};
@@ -184,7 +185,9 @@ impl AurisApp {
             .map(str::to_string)
             .unwrap_or_default();
         let title = self.t(Key::SetSectionTitle);
-        self.open_prompt(Prompt::new(title, PromptTarget::Section(tick), current));
+        self.open_prompt(
+            Prompt::new(title, PromptTarget::Section(tick), current).inline(InlinePlace::Target),
+        );
     }
 
     /// The menu for the structure lane.
@@ -232,7 +235,9 @@ impl AurisApp {
             .map(str::to_string)
             .unwrap_or_default();
         let title = self.t(Key::SetLyricLineTitle);
-        self.open_prompt(Prompt::new(title, PromptTarget::LyricLine(tick), current));
+        self.open_prompt(
+            Prompt::new(title, PromptTarget::LyricLine(tick), current).inline(InlinePlace::Target),
+        );
     }
 
     /// The menu for the lyrics lane: headed by the line under the pointer when there is one.

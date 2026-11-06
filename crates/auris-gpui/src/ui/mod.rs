@@ -30,6 +30,7 @@ pub mod drums;
 pub mod envelope;
 pub(crate) mod expression;
 pub mod icons;
+pub(crate) mod inline_edit;
 pub mod inspector;
 pub mod layer;
 pub mod library;

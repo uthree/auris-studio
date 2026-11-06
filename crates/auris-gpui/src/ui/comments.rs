@@ -20,6 +20,7 @@ use crate::app::{AurisApp, Drag};
 use crate::theme::Metrics;
 use crate::ui::automation::RowKind;
 use crate::ui::context_menu::{ContextMenu, MenuCommand};
+use crate::ui::inline_edit::InlinePlace;
 use crate::ui::prompt::{Prompt, PromptTarget};
 
 /// How tall a comment tag is.
@@ -56,11 +57,14 @@ impl AurisApp {
         pitch: Option<u8>,
     ) {
         let title = self.t(Key::CommentTitle);
-        self.open_prompt(Prompt::new(
-            title,
-            PromptTarget::NewComment { host, at, pitch },
-            String::new(),
-        ));
+        self.open_prompt(
+            Prompt::new(
+                title,
+                PromptTarget::NewComment { host, at, pitch },
+                String::new(),
+            )
+            .inline(InlinePlace::Target),
+        );
     }
 
     /// Opens the text sheet on an existing comment.
@@ -73,7 +77,10 @@ impl AurisApp {
             return;
         };
         let title = self.t(Key::CommentTitle);
-        self.open_prompt(Prompt::new(title, PromptTarget::Comment { host, id }, text));
+        self.open_prompt(
+            Prompt::new(title, PromptTarget::Comment { host, id }, text)
+                .inline(InlinePlace::Target),
+        );
     }
 
     /// The menu a right-click on a tag opens, headed by what the comment says.
@@ -185,6 +192,11 @@ impl AurisApp {
             // The pin itself: a stripe on the tag's left edge, standing exactly on its moment.
             .child(div().w(px(3.0)).h_full().bg(theme.warning))
             .child(tag_text(&comment.text))
+            // Where the tag stands, so editing it opens the editor over it.
+            .child(crate::ui::inline_edit::spot(
+                &self.canvas.spots,
+                tag_selector(host, id),
+            ))
             .tooltip(crate::ui::tooltip::keyed_tip(full, "", theme))
             .on_mouse_down(
                 MouseButton::Left,
