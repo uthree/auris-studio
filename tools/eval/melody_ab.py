@@ -288,6 +288,7 @@ def write_comparison(
             "--bit-depth",
             "32",
             "--no-tail",
+            "--force",
             "--output",
             str(wav),
         ]
