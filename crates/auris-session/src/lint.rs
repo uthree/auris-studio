@@ -93,6 +93,8 @@ pub enum Rule {
     InaudibleVelocity,
     /// A note outside any instrument's or voice's usable range.
     ExtremePitch,
+    /// A part plays exactly as written: every attack on the grid and no performance stage.
+    MechanicalPerformance,
     /// The rendered mix reaches full scale.
     Clipping,
     /// The rendered mix is far louder than any delivery target.
@@ -111,7 +113,7 @@ pub enum Rule {
 
 impl Rule {
     /// Every rule, score rules first.
-    pub const ALL: [Rule; 19] = [
+    pub const ALL: [Rule; 20] = [
         Rule::CrowdedOnset,
         Rule::DenseNotes,
         Rule::HarshInterval,
@@ -124,6 +126,7 @@ impl Rule {
         Rule::MissingLyric,
         Rule::InaudibleVelocity,
         Rule::ExtremePitch,
+        Rule::MechanicalPerformance,
         Rule::Clipping,
         Rule::TooLoud,
         Rule::TooQuiet,
@@ -148,6 +151,7 @@ impl Rule {
             Rule::MissingLyric => "missing_lyric",
             Rule::InaudibleVelocity => "inaudible_velocity",
             Rule::ExtremePitch => "extreme_pitch",
+            Rule::MechanicalPerformance => "mechanical_performance",
             Rule::Clipping => "clipping",
             Rule::TooLoud => "too_loud",
             Rule::TooQuiet => "too_quiet",
@@ -227,6 +231,13 @@ pub enum Fix {
         chords: Vec<(Ticks, auris_core::theory::numeral::Numeral)>,
         /// Where the run of bars ends.
         end: Ticks,
+    },
+    /// Give a clip with no performance the stack of a performance preset.
+    ApplyPerformancePreset {
+        /// The clip.
+        clip: ClipId,
+        /// The preset's name.
+        preset: String,
     },
     /// Run [`Session::normalize_mix`](crate::Session::normalize_mix) toward the standard target.
     NormalizeMix,
@@ -379,6 +390,19 @@ impl Diagnostic {
             Rule::ExtremePitch => {
                 format!("{pitches} lies outside the usable range of instruments or voices")
             }
+            Rule::MechanicalPerformance => {
+                let start = format!(
+                    "this clip's {value:.0} notes all start exactly on the grid and it has no performance stage, so it plays like a sequencer"
+                );
+                match &self.fix {
+                    Some(Fix::ApplyPerformancePreset { preset, .. }) => format!(
+                        "{start}; the preset {preset} suits its instrument (performance_presets lists others for the genre)"
+                    ),
+                    _ => format!(
+                        "{start}; choose a starting feel from performance_presets or shape timing and dynamics with set_performance"
+                    ),
+                }
+            }
             Rule::Clipping => {
                 format!("the mix reaches full scale ({value:.1} dBFS sample peak) and distorts")
             }
@@ -405,6 +429,9 @@ impl Diagnostic {
             Fix::SetVelocity { .. } => "raise the velocity to the default",
             Fix::ResetFader { .. } => "bring the track's fader back to 0 dB",
             Fix::SetChords { .. } => "write the chords the notes spell, one per bar",
+            Fix::ApplyPerformancePreset { .. } => {
+                "apply the preset named in the message, then tune it with set_performance"
+            }
             Fix::NormalizeMix => "normalize the mix toward -14 LUFS",
         })
     }

@@ -235,6 +235,7 @@ impl AurisApp {
             Rule::DuplicateNote => Key::LintDuplicateNote,
             Rule::InaudibleVelocity => Key::LintInaudibleVelocity,
             Rule::ExtremePitch => Key::LintExtremePitch,
+            Rule::MechanicalPerformance => Key::LintMechanicalPerformance,
             Rule::Clipping => Key::LintClipping,
             Rule::TooLoud => Key::LintTooLoud,
             Rule::TooQuiet => Key::LintTooQuiet,
@@ -276,6 +277,12 @@ impl AurisApp {
             Fix::SetVelocity { .. } => self.t(Key::LintFixVelocity).into(),
             Fix::ResetFader { .. } => self.t(Key::LintFixFader).into(),
             Fix::NormalizeMix => self.t(Key::LintFixNormalize).into(),
+            Fix::ApplyPerformancePreset { preset, .. } => {
+                let name = crate::ui::performance_presets::builtin_key(preset)
+                    .map_or_else(|| preset.clone(), |key| self.t(key).to_string());
+                self.t(Key::LintFixPerformancePreset)
+                    .replace("{preset}", &name)
+            }
             Fix::SetChords { chords, .. } => {
                 let harmony = &self.session.project().harmony;
                 let names = chords
@@ -465,6 +472,7 @@ impl AurisApp {
             Rule::DuplicateNote => Key::LintNameDuplicateNote,
             Rule::InaudibleVelocity => Key::LintNameInaudibleVelocity,
             Rule::ExtremePitch => Key::LintNameExtremePitch,
+            Rule::MechanicalPerformance => Key::LintNameMechanicalPerformance,
             Rule::Clipping => Key::LintNameClipping,
             Rule::TooLoud => Key::LintNameTooLoud,
             Rule::TooQuiet => Key::LintNameTooQuiet,

@@ -11,6 +11,8 @@
 
 use std::path::{Path, PathBuf};
 
+use auris_core::project::MidiClip;
+use auris_core::time::TICKS_PER_QUARTER;
 use auris_core::{
     NoteTransform, PerformancePreset, PresetFamily, builtin_performance_preset,
     builtin_performance_presets,
@@ -308,6 +310,9 @@ pub(crate) fn kept_stack(stack: &[NoteTransform]) -> Vec<NoteTransform> {
 }
 
 /// The family a preset falls in by default, read from a track's instrument.
+///
+/// A SoundFont patch says what it is by its General MIDI number, which outranks whatever the
+/// track happens to be called; everything else is read from the instrument's id and the name.
 pub fn family_hint(track: &auris_core::Track) -> PresetFamily {
     if track.kind.is_drum() {
         return PresetFamily::Drums;
@@ -315,10 +320,23 @@ pub fn family_hint(track: &auris_core::Track) -> PresetFamily {
     let Some(instrument) = track.kind.as_instrument() else {
         return PresetFamily::Other;
     };
+    if let Some(patch) = sampler_patch(track) {
+        match patch {
+            None => return PresetFamily::Drums,
+            Some(program) => {
+                if let Some(family) = gm_family(program) {
+                    return family;
+                }
+            }
+        }
+    }
     let id = instrument.instrument_id.as_str();
     let name = format!("{id} {}", track.name).to_lowercase();
     let any = |words: &[&str]| words.iter().any(|word| name.contains(word));
-    if any(&["bass"]) {
+    if any(&["bassoon"]) {
+        // Before the basses: a bassoon is a wind.
+        PresetFamily::Woodwinds
+    } else if any(&["bass"]) {
         PresetFamily::Bass
     } else if any(&["guitar"]) {
         PresetFamily::Guitar
@@ -339,9 +357,129 @@ pub fn family_hint(track: &auris_core::Track) -> PresetFamily {
     }
 }
 
+/// A sampler track's General MIDI program: `Some(None)` for a percussion bank, `None` for a
+/// track that is not a sampler or has no patch chosen.
+fn sampler_patch(track: &auris_core::Track) -> Option<Option<u8>> {
+    let instrument = track.kind.as_instrument()?;
+    if instrument.instrument_id != auris_sampler::SAMPLER_ID {
+        return None;
+    }
+    let preset = auris_sampler::stored_preset(&instrument.instrument_state)?;
+    Some((preset.bank != 128).then(|| u8::try_from(preset.patch).unwrap_or(u8::MAX)))
+}
+
+/// The family of a General MIDI program, where one of the presets' families covers it.
+fn gm_family(program: u8) -> Option<PresetFamily> {
+    Some(match program {
+        0..=7 | 16..=23 => PresetFamily::Keys,
+        24..=31 => PresetFamily::Guitar,
+        32..=39 => PresetFamily::Bass,
+        40..=51 => PresetFamily::Strings,
+        56..=63 => PresetFamily::Brass,
+        64..=79 => PresetFamily::Woodwinds,
+        80..=103 => PresetFamily::Synth,
+        _ => return None,
+    })
+}
+
+/// A half note: chords held this long on average are pads and ballads rather than comping.
+const HALF_NOTE: i64 = TICKS_PER_QUARTER * 2;
+/// Under a dotted sixteenth on average, a line is a sequence or a pluck rather than a phrase.
+const SHORT_NOTE: i64 = TICKS_PER_QUARTER * 3 / 8;
+
+/// The built-in preset a clip with no performance of its own would start from.
+///
+/// The family comes from [`family_hint`]; the choice within it from the instrument's name and
+/// the clip's own shape — whether it strikes chords or plays one line, and how long its notes
+/// are — so a pad gets the pad's pedal and an arpeggio the sequencer's tight gate. `None` when no
+/// built-in was written for the instrument: a bell, a mallet, a sound nobody can place.
+///
+/// A starting point, not a verdict on the genre: a funk song still picks `funk_bass` over
+/// `finger_bass` by somebody's choice.
+pub fn suggested_preset(track: &auris_core::Track, clip: &MidiClip) -> Option<&'static str> {
+    let family = family_hint(track);
+    let program = sampler_patch(track).flatten();
+    let id = track
+        .kind
+        .as_instrument()
+        .map_or("", |instrument| instrument.instrument_id.as_str());
+    let name = format!("{id} {}", track.name).to_lowercase();
+    let any = |words: &[&str]| words.iter().any(|word| name.contains(word));
+    let gm =
+        |programs: std::ops::RangeInclusive<u8>| program.is_some_and(|p| programs.contains(&p));
+    let (chordal, mean_length) = clip_shape(clip);
+    Some(match family {
+        PresetFamily::Drums => "pop_drums",
+        PresetFamily::Keys => {
+            if any(&["organ"]) || gm(16..=23) {
+                "organ_sustain"
+            } else if any(&["rhodes", "epiano", "electric piano", "wurli"]) || gm(4..=5) {
+                "electric_piano_soul"
+            } else if chordal && mean_length >= HALF_NOTE {
+                "piano_ballad"
+            } else {
+                "piano_pop_comp"
+            }
+        }
+        PresetFamily::Guitar => {
+            let electric = any(&["electric", "distort", "overdrive"]) || gm(26..=31);
+            match (electric, chordal) {
+                (true, true) => "rock_rhythm_guitar",
+                (true, false) => "lead_guitar",
+                (false, _) => "acoustic_strum",
+            }
+        }
+        PresetFamily::Bass => {
+            if any(&["synth", "chiptune"]) || gm(38..=39) {
+                "synth_bass_tight"
+            } else {
+                "finger_bass"
+            }
+        }
+        PresetFamily::Strings => {
+            if any(&["pizz"]) || gm(45..=45) || mean_length < SHORT_NOTE {
+                "string_pizzicato"
+            } else {
+                "string_legato"
+            }
+        }
+        PresetFamily::Brass => "brass_section",
+        PresetFamily::Woodwinds => "woodwind_solo",
+        PresetFamily::Synth => {
+            if id.contains("chiptune") {
+                "chiptune"
+            } else if any(&["pad"]) || gm(88..=95) || (chordal && mean_length >= HALF_NOTE) {
+                "synth_pad"
+            } else if !chordal && mean_length < SHORT_NOTE {
+                "synth_arp_tight"
+            } else {
+                "synth_lead"
+            }
+        }
+        PresetFamily::Other => return None,
+    })
+}
+
+/// Whether at least a third of a clip's notes share their onset with another, and the mean
+/// written length of its notes in ticks.
+fn clip_shape(clip: &MidiClip) -> (bool, i64) {
+    let notes: Vec<_> = clip.playable_notes_with_indices().map(|(_, n)| n).collect();
+    if notes.is_empty() {
+        return (false, 0);
+    }
+    let mut onsets = std::collections::BTreeMap::<i64, usize>::new();
+    for note in &notes {
+        *onsets.entry(note.start.raw()).or_default() += 1;
+    }
+    let stacked: usize = onsets.values().filter(|count| **count > 1).sum();
+    let total: i64 = notes.iter().map(|note| note.length.raw()).sum();
+    (stacked * 3 >= notes.len(), total / notes.len() as i64)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use auris_core::time::Ticks;
 
     fn preset(name: &str) -> PerformancePreset {
         PerformancePreset {
@@ -350,6 +488,126 @@ mod tests {
             description: String::new(),
             transforms: vec![NoteTransform::Gate { amount: 0.5 }],
         }
+    }
+
+    /// The preset suggested for one clip on a track called `name` playing `instrument`.
+    fn suggested(
+        name: &str,
+        instrument: &str,
+        notes: Vec<auris_core::project::Note>,
+    ) -> Option<&'static str> {
+        let mut project = auris_core::Project::new("Suggest", 48_000.0);
+        let track = project.add_instrument_track(name, instrument);
+        let clip = project
+            .add_midi_clip(track, "Clip", Ticks::ZERO, Ticks(3840 * 4))
+            .unwrap();
+        project.midi_clip_mut(clip).unwrap().notes = notes;
+        let (_, clip) = project.midi_clip(clip).unwrap();
+        suggested_preset(project.track(track).unwrap(), clip)
+    }
+
+    fn chords(length: i64) -> Vec<auris_core::project::Note> {
+        (0..4)
+            .flat_map(|bar| {
+                [60, 64, 67].map(|pitch| {
+                    auris_core::project::Note::new(pitch, Ticks(bar * length), Ticks(length))
+                })
+            })
+            .collect()
+    }
+
+    fn line(length: i64) -> Vec<auris_core::project::Note> {
+        (0..8)
+            .map(|i| auris_core::project::Note::new(60 + i as u8, Ticks(i * length), Ticks(length)))
+            .collect()
+    }
+
+    #[test]
+    fn the_suggestion_follows_the_instrument_and_the_clips_shape() {
+        let piano = "auris.physical.piano";
+        assert_eq!(
+            suggested("Piano", piano, chords(3840)),
+            Some("piano_ballad")
+        );
+        assert_eq!(
+            suggested("Piano", piano, chords(480)),
+            Some("piano_pop_comp")
+        );
+        assert_eq!(
+            suggested("Organ", piano, chords(3840)),
+            Some("organ_sustain")
+        );
+        let guitar = "auris.physical.guitar";
+        assert_eq!(
+            suggested("Guitar", guitar, chords(960)),
+            Some("acoustic_strum")
+        );
+        let electric = "auris.physical.electric_guitar";
+        assert_eq!(
+            suggested("Gtr", electric, chords(960)),
+            Some("rock_rhythm_guitar")
+        );
+        assert_eq!(suggested("Gtr", electric, line(480)), Some("lead_guitar"));
+        assert_eq!(
+            suggested("Bass", "auris.physical.bass", line(480)),
+            Some("finger_bass")
+        );
+        let violin = "auris.physical.violin";
+        assert_eq!(
+            suggested("Violin", violin, line(960)),
+            Some("string_legato")
+        );
+        assert_eq!(
+            suggested("Violin", violin, line(240)),
+            Some("string_pizzicato")
+        );
+        let clarinet = "auris.physical.clarinet";
+        assert_eq!(
+            suggested("Clarinet", clarinet, line(960)),
+            Some("woodwind_solo")
+        );
+        assert_eq!(
+            suggested("Bassoon", "x.unknown", line(960)),
+            Some("woodwind_solo")
+        );
+        let chip = "auris.synth.chiptune";
+        assert_eq!(suggested("Lead", chip, line(480)), Some("chiptune"));
+        assert_eq!(
+            suggested("Synth Pad", "x.synth", chords(3840)),
+            Some("synth_pad")
+        );
+        assert_eq!(
+            suggested("Synth", "x.synth", line(120)),
+            Some("synth_arp_tight")
+        );
+        assert_eq!(suggested("Synth", "x.synth", line(960)), Some("synth_lead"));
+        assert_eq!(suggested("Bells", "auris.physical.bell", line(960)), None);
+    }
+
+    #[test]
+    fn a_soundfont_patch_names_its_family_by_its_general_midi_number() {
+        let mut project = auris_core::Project::new("Suggest", 48_000.0);
+        let track = project.add_instrument_track("Track 1", auris_sampler::SAMPLER_ID);
+        let mut state = auris_core::PluginState::default();
+        auris_sampler::store_preset(
+            &mut state,
+            auris_core::PresetRef {
+                font: auris_core::SoundFontId(1),
+                bank: 0,
+                patch: 33,
+            },
+        );
+        project
+            .track_mut(track)
+            .unwrap()
+            .kind
+            .as_instrument_mut()
+            .unwrap()
+            .instrument_state = state;
+        assert_eq!(
+            family_hint(project.track(track).unwrap()),
+            PresetFamily::Bass
+        );
     }
 
     #[test]

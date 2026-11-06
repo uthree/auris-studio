@@ -14,6 +14,10 @@ use super::{Diagnostic, Fix, NoteRef, Rule, Severity, sort};
 mod intervals;
 use intervals::intervals;
 
+mod mechanical;
+use mechanical::mechanical_clips;
+pub(super) use mechanical::performs;
+
 #[cfg(test)]
 mod performance_tests;
 
@@ -79,6 +83,7 @@ pub fn lint_score(project: &Project) -> Vec<Diagnostic> {
     diagnostics.extend(limit(missing_chords(project, &events)));
     diagnostics.extend(clip_rules(project));
     diagnostics.extend(singer_rules(project));
+    diagnostics.extend(limit(mechanical_clips(project)));
     sort(&mut diagnostics);
     diagnostics
 }

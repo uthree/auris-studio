@@ -2963,6 +2963,15 @@ pub mod harmony {
     //! link to the preset, so a document stays portable and a preset edited later rewrites no
     //! song — the same reason a kept chord progression is copied rather than quoted. No built-in
     //! swings, because swing is the song's decision rather than one part's.
+    //!
+    //! A writer installs its own stack as it writes; notes typed by hand, by a person or an agent,
+    //! arrive with none and play exactly on the grid. The linter says so: a hand-written instrument
+    //! or drum clip of at least eight notes, every attack on a straight or triplet grid and no stage
+    //! that moves timing or dynamics, is `mechanical_performance`, and its fix applies the built-in
+    //! [`suggested_preset`](crate::performance_presets::suggested_preset) reads off the instrument
+    //! and the clip's shape. Swing, gate and sustain alone do not count, since each treats every
+    //! note by one rule; a style that wants the machine records that as a suppression.
+    //!
     //! Every wander draws from a seed
     //! the transform stores, through the same named streams the composer draws from
     //! ([`auris_core::rng`]), and it draws per loop pass — a repeated bar is loose differently
