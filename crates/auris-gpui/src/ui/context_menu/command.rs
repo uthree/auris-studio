@@ -12,6 +12,7 @@ use gpui::{Context, Pixels, Point};
 
 use crate::app::{AurisApp, FadeEdge};
 use crate::dock::{Dock, Panel, TimelineLane};
+use crate::ui::inline_edit::InlinePlace;
 use crate::ui::prompt::{Prompt, PromptTarget};
 
 use super::timeline::progression_target;
@@ -1308,7 +1309,9 @@ impl AurisApp {
                     .map(|name| name.to_string())
                     .unwrap_or_default();
                 let title = self.t(Key::RenameClipTitle);
-                self.open_prompt(Prompt::new(title, PromptTarget::Clip(clip), name));
+                self.open_prompt(
+                    Prompt::new(title, PromptTarget::Clip(clip), name).inline(InlinePlace::Target),
+                );
             }
             MenuCommand::DeleteClip(clip) => {
                 let doomed = self.clips_for_command(clip);
@@ -1632,7 +1635,10 @@ impl AurisApp {
             MenuCommand::SetKeyAt(tick) => {
                 let current = self.project().harmony.key_at(tick).to_text();
                 let title = self.t(Key::SetKeyTitle);
-                self.open_prompt(Prompt::new(title, PromptTarget::Key(tick), current));
+                self.open_prompt(
+                    Prompt::new(title, PromptTarget::Key(tick), current)
+                        .inline(InlinePlace::Target),
+                );
             }
             MenuCommand::RemoveKeyAt(tick) => self.session.remove_key(tick),
             MenuCommand::SetTempoAt(tick) => self.prompt_for_tempo_from(tick),
@@ -1676,7 +1682,10 @@ impl AurisApp {
                     .map(|numeral| numeral.to_string())
                     .unwrap_or_default();
                 let title = self.t(Key::SetChordTitle);
-                self.open_prompt(Prompt::new(title, PromptTarget::Chord(tick), current));
+                self.open_prompt(
+                    Prompt::new(title, PromptTarget::Chord(tick), current)
+                        .inline(InlinePlace::Target),
+                );
             }
             MenuCommand::RemoveChordAt(tick) => self.session.remove_chord(tick),
             MenuCommand::ClearHarmony { from, to } => self.session.clear_harmony(from, to),

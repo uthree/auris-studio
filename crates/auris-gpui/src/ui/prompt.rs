@@ -18,6 +18,7 @@ use gpui::{
 
 use crate::app::AurisApp;
 use crate::theme::{Metrics, Theme};
+use crate::ui::inline_edit::InlinePlace;
 use crate::ui::paint;
 use crate::ui::text_field::TextField;
 use crate::ui::widgets::{ButtonState, ButtonStyle, Latch, button, button_enabled};
@@ -681,6 +682,13 @@ pub struct Prompt {
     chord_key: Option<MusicalKey>,
     /// The source entry for a library edit, so concurrent changes are detected on commit.
     sound: Option<std::sync::Arc<auris_session::SoundPreset>>,
+    /// Where the field is drawn in place of a sheet, when it is.
+    ///
+    /// Only a request: [`AurisApp::inline_bounds`] decides from what is on screen, and a prompt
+    /// whose label cannot be found is drawn as the sheet instead.
+    place: Option<InlinePlace>,
+    /// What the field held when it opened, so leaving it untouched can close it without an edit.
+    initial: String,
 }
 
 impl Prompt {
@@ -699,19 +707,49 @@ impl Prompt {
         target: PromptTarget,
         text: impl Into<String>,
     ) -> Self {
+        let text = text.into();
         Self {
             feedback_foci: None,
             title: title.into(),
             body: PromptBody::Text {
                 target,
-                field: TextField::new(text),
+                field: TextField::new(text.clone()),
             },
             error: None,
             completing: None,
             vocabulary: None,
             chord_key: None,
             sound: None,
+            place: None,
+            initial: text,
         }
+    }
+
+    /// The same prompt, drawn over its label at `place` rather than as a sheet.
+    pub(crate) fn inline(mut self, place: InlinePlace) -> Self {
+        self.place = Some(place);
+        self
+    }
+
+    /// Where this prompt asked to be drawn in place, if it did.
+    pub(crate) fn place(&self) -> Option<&InlinePlace> {
+        self.place.as_ref()
+    }
+
+    /// The last rejected answer, while it is waiting to be corrected.
+    pub(crate) fn error(&self) -> Option<&SharedString> {
+        self.error.as_ref()
+    }
+
+    /// Whether leaving the field now would write nothing worth writing: its text is what it
+    /// opened with, or it was emptied where an empty answer means nothing.
+    pub(crate) fn is_untouched(&self) -> bool {
+        let Some(field) = self.field() else {
+            return true;
+        };
+        let text = field.content().trim();
+        text == self.initial.trim()
+            || (text.is_empty() && self.target().is_none_or(|t| !empty_prompt_is_meaningful(t)))
     }
 
     /// Edits a saved sound's name while retaining the exact entry being renamed.
@@ -746,6 +784,8 @@ impl Prompt {
             vocabulary: None,
             chord_key: None,
             sound: None,
+            place: None,
+            initial: String::new(),
         }
     }
 
@@ -763,6 +803,8 @@ impl Prompt {
             vocabulary: None,
             chord_key: None,
             sound: None,
+            place: None,
+            initial: String::new(),
         }
     }
 
@@ -1756,6 +1798,7 @@ impl AurisApp {
         let Some(prompt) = self.prompt.as_mut() else {
             return false;
         };
+        let target = prompt.target();
         // A question has no field to type into, so only its explicit answer keys apply. A Mac's
         // key labelled Delete reports `backspace`; accepting that spelling only on macOS avoids
         // making an ordinary PC Backspace permanently discard recovery data.
@@ -1774,18 +1817,24 @@ impl AurisApp {
         // platform has already offered them to it before we see them.
         let composing = field.marked().is_some();
 
+        // A comment is written over several lines: Shift-Return breaks the line, Return still
+        // commits, and Up and Down move between the lines rather than to the ends.
+        let multiline = target.is_some_and(crate::ui::inline_edit::is_multiline);
         match event.keystroke.key.as_str() {
             "escape" if !composing => {
                 self.cancel_prompt();
             }
+            "enter" if !composing && multiline && shift => field.insert("\n"),
             "enter" if !composing => {
                 self.commit_prompt(window, cx);
             }
+            "up" if multiline => field.move_up(shift),
+            "down" if multiline => field.move_down(shift),
             "up" => field.move_home(shift),
             "down" => field.move_end(shift),
             // Editing and clipboard shortcuts are shared with every other text field.
             key => {
-                return field.apply_key_with_clipboard(key, shift, command, false, cx)
+                return field.apply_key_with_clipboard(key, shift, command, multiline, cx)
                     != crate::ui::text_field::KeyEffect::Ignored;
             }
         }
@@ -1809,8 +1858,11 @@ impl AurisApp {
     }
 
     /// Draws the sheet over everything else.
-    pub(crate) fn render_prompt(&self, cx: &mut Context<Self>) -> Option<impl IntoElement + use<>> {
+    pub(crate) fn render_prompt(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
         let prompt = self.prompt.as_ref()?;
+        if let Some(bounds) = self.inline_bounds(prompt) {
+            return self.render_inline_prompt(prompt, bounds, cx);
+        }
         let theme = self.theme.clone();
         let title = prompt.title.clone();
         let focus = self.focus.clone();
@@ -1838,13 +1890,8 @@ impl AurisApp {
                     .children(self.render_feedback_rating(prompt, cx))
                     .child(if matches!(target, PromptTarget::WorkshopFeedback { .. }) {
                         self.render_feedback_comment(field, cx).into_any_element()
-                    } else if matches!(
-                        target,
-                        PromptTarget::Comment { .. } | PromptTarget::NewComment { .. }
-                    ) {
-                        // A comment may run over several lines, which a one-line field cannot
-                        // draw: shaping a line refuses a line break.
-                        self.render_wrapped_field(field, cx).into_any_element()
+                    } else if crate::ui::inline_edit::is_multiline(*target) {
+                        self.render_prompt_area(field, cx).into_any_element()
                     } else {
                         self.render_prompt_field(
                             field.content().to_string().into(),
@@ -2028,8 +2075,53 @@ impl AurisApp {
                                 .child(body),
                         )
                         .child(buttons),
-                ),
+                )
+                .into_any_element(),
         )
+    }
+
+    /// The box a comment is typed into on the sheet: several lines, as in place.
+    fn render_prompt_area(
+        &self,
+        field: &TextField,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
+        let theme = self.theme.clone();
+        div()
+            .id("prompt-text-area")
+            .debug_selector(|| "prompt-text-field".into())
+            .h(crate::ui::text_area::area_height(field.content(), 3, 8))
+            .w_full()
+            .rounded(Metrics::RADIUS_SM)
+            .bg(theme.surface_sunken)
+            .border_1()
+            .border_color(theme.accent)
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                    if let Some(field) = this.prompt.as_mut().and_then(Prompt::field_mut) {
+                        match crate::ui::text_area::area_offset_at(
+                            window,
+                            field.content(),
+                            event.position,
+                        ) {
+                            Some(offset) => field.place_caret(offset, event.modifiers.shift),
+                            None => field.caret_to_end(),
+                        }
+                    }
+                    this.focus.focus(window);
+                    cx.notify();
+                }),
+            )
+            .child(crate::ui::text_area::editable_area(
+                field.content().to_owned().into(),
+                field.selection(),
+                field.marked(),
+                Vec::new(),
+                self.focus.clone(),
+                cx.entity(),
+                theme,
+            ))
     }
 
     /// Change the explicit star choice without altering the user's written impressions.
@@ -2142,53 +2234,6 @@ impl AurisApp {
             .child(self.render_prompt_hint(Key::WorkshopFeedbackHint, &theme))
     }
 
-    /// A box that wraps and keeps line breaks, for text that may run over several lines.
-    fn render_wrapped_field(
-        &self,
-        field: &TextField,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement + use<> {
-        let theme = self.theme.clone();
-        div()
-            .id("prompt-wrapped-field")
-            .debug_selector(|| "prompt-text-field".into())
-            .w_full()
-            .min_h(FIELD_HEIGHT)
-            .max_h(gpui::rems(10.0))
-            .overflow_y_scroll()
-            .rounded(Metrics::RADIUS_SM)
-            .bg(theme.surface_sunken)
-            .border_1()
-            .border_color(theme.accent)
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, event: &MouseDownEvent, window, cx| {
-                    if let Some(field) = this.prompt.as_mut().and_then(Prompt::field_mut) {
-                        if let Some(offset) = crate::ui::text_area::wrapped_area_offset_at(
-                            window,
-                            field.content(),
-                            event.position,
-                        ) {
-                            field.place_caret(offset, event.modifiers.shift);
-                        } else {
-                            field.caret_to_end();
-                        }
-                    }
-                    this.focus.focus(window);
-                    cx.notify();
-                }),
-            )
-            .child(crate::ui::text_area::editable_wrapped_area(
-                field.content().to_owned().into(),
-                field.selection(),
-                field.marked(),
-                true,
-                self.focus.clone(),
-                cx.entity(),
-                theme,
-            ))
-    }
-
     /// The box the rename sheet types into.
     fn render_prompt_field(
         &self,
@@ -2231,7 +2276,7 @@ impl AurisApp {
     /// Pressing one fills the field *and* commits, because every one of them is a whole answer
     /// rather than a prefix of one. A chip that only filled the box would be asking for a second
     /// press to do what the first one already said.
-    fn render_prompt_completions(
+    pub(crate) fn render_prompt_completions(
         &self,
         prompt: &Prompt,
         cx: &mut Context<Self>,

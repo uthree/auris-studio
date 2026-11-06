@@ -3372,17 +3372,25 @@ impl AurisApp {
     /// change it is a step nobody takes twice — which is how a project ends up with eight tracks
     /// called Audio 1.
     pub(crate) fn prompt_to_rename_track(&mut self, track: TrackId) {
+        self.prompt_to_rename_track_at(track, crate::ui::inline_edit::header_name_spot(track));
+    }
+
+    /// Asks for a track's new name, typed over the label recorded as `spot`.
+    pub(crate) fn prompt_to_rename_track_at(&mut self, track: TrackId, spot: gpui::SharedString) {
         let name = self
             .project()
             .track(track)
             .map(|track| track.name.clone())
             .unwrap_or_default();
         let title = self.t(Key::RenameTrackTitle);
-        self.open_prompt(crate::ui::prompt::Prompt::new(
-            title,
-            crate::ui::prompt::PromptTarget::Track(track),
-            name,
-        ));
+        self.open_prompt(
+            crate::ui::prompt::Prompt::new(
+                title,
+                crate::ui::prompt::PromptTarget::Track(track),
+                name,
+            )
+            .inline(crate::ui::inline_edit::InlinePlace::Spot(spot)),
+        );
     }
 
     /// Shows a track's automation lane on `target`, or hides it when it is already on that one.

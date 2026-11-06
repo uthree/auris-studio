@@ -667,6 +667,11 @@ impl AurisApp {
                         .id("position")
                         .debug_selector(|| "position".into())
                         .h_full()
+                        .relative()
+                        .child(crate::ui::inline_edit::spot(
+                            &self.canvas.spots,
+                            crate::ui::inline_edit::POSITION_SPOT,
+                        ))
                         .on_mouse_down(
                             gpui::MouseButton::Left,
                             cx.listener(|this, event: &gpui::MouseDownEvent, _, cx| {
@@ -856,6 +861,11 @@ impl AurisApp {
             self.theme.text,
             compact,
         )
+        .relative()
+        .child(crate::ui::inline_edit::spot(
+            &self.canvas.spots,
+            crate::ui::inline_edit::TEMPO_SPOT,
+        ))
         .on_mouse_down(
             gpui::MouseButton::Left,
             cx.listener(|this, event: &gpui::MouseDownEvent, window, cx| {
@@ -959,14 +969,18 @@ impl AurisApp {
         let title = self.t(Key::SetTempoTitle);
         let at = self.playhead_ticks();
         let current = format!("{:.2}", self.project().tempo_map.bpm_at(at));
-        self.open_prompt(Prompt::new(title, PromptTarget::Tempo(at), current));
+        self.open_prompt(Prompt::new(title, PromptTarget::Tempo(at), current).inline(
+            crate::ui::inline_edit::InlinePlace::Spot(crate::ui::inline_edit::TEMPO_SPOT.into()),
+        ));
     }
 
     /// Opens the sheet that takes a position as bar, beat and hundredth.
     pub(crate) fn prompt_for_position(&mut self) {
         let title = self.t(Key::SetPositionTitle);
         let current = format_position(self.playhead_ticks(), &self.project().signatures);
-        self.open_prompt(Prompt::new(title, PromptTarget::Position, current));
+        self.open_prompt(Prompt::new(title, PromptTarget::Position, current).inline(
+            crate::ui::inline_edit::InlinePlace::Spot(crate::ui::inline_edit::POSITION_SPOT.into()),
+        ));
     }
 
     /// Opens the sheet that takes a meter as `6/8`, aimed at the stretch the playhead is in.

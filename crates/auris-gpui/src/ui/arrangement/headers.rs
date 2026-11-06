@@ -368,6 +368,10 @@ impl AurisApp {
                                         .text_color(theme.text)
                                         .truncate()
                                         .child(name)
+                                        .child(crate::ui::inline_edit::spot(
+                                            &self.canvas.spots,
+                                            crate::ui::inline_edit::header_name_spot(id),
+                                        ))
                                         .tooltip(self.tip(Key::MenuRename, ""))
                                         .on_mouse_down(
                                             MouseButton::Left,
@@ -527,6 +531,10 @@ impl AurisApp {
                                             .text_color(theme.text)
                                             .truncate()
                                             .child(name)
+                                            .child(crate::ui::inline_edit::spot(
+                                                &self.canvas.spots,
+                                                crate::ui::inline_edit::header_name_spot(id),
+                                            ))
                                             .tooltip(self.tip(Key::MenuRename, ""))
                                             .on_mouse_down(
                                                 MouseButton::Left,

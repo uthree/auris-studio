@@ -1377,6 +1377,8 @@ pub struct CanvasBounds {
     /// hundred and twenty-nine of them, they are a machine word each, and a lane closed and
     /// reopened wants the rectangle it had.
     curves: CurveBounds,
+    /// Where labels that can be edited in place were painted, for an inline prompt to cover.
+    pub spots: crate::ui::inline_edit::SpotBook,
 }
 
 impl CanvasBounds {
