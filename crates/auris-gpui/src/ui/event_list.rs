@@ -9,7 +9,7 @@
 //! rows into text and text back into an [`EventEdit`].
 //!
 //! Selecting a note's row selects that note in the roll and scrolls the grid to it, so the two
-//! views are one selection seen twice. A double-click on a cell opens the sheet that edits it,
+//! views are one selection seen twice. A double-click on a cell opens a field in the cell itself,
 //! and Return there walks on to the same cell of the next row — the flow a list editor teaches.
 
 use auris_i18n::controller::controller_name;
@@ -20,6 +20,7 @@ use auris_session::{ClipEvent, ClipEventKind, EventEdit, EventRef, parse_root_no
 use gpui::{MouseButton, MouseDownEvent, Pixels, SharedString, div, prelude::*, px};
 
 use crate::app::AurisApp;
+use crate::ui::inline_edit::{InlinePlace, spot};
 use crate::ui::prompt::{Prompt, PromptTarget};
 use crate::ui::timeline::pitch_name;
 
@@ -262,6 +263,11 @@ pub(crate) fn parse_cell(
     })
 }
 
+/// The spot key a cell records where it was painted under, so its field opens in the cell.
+fn cell_spot(clip: ClipId, event: EventRef, column: EventColumn) -> SharedString {
+    format!("event-cell:{}:{event:?}:{column:?}", clip.0).into()
+}
+
 /// A row ready to draw.
 struct DrawnRow {
     event: EventRef,
@@ -282,7 +288,7 @@ impl AurisApp {
         self.session.clip_events(clip).unwrap_or_default()
     }
 
-    /// Opens the sheet that edits one cell.
+    /// Opens a field over one cell, in place.
     pub(crate) fn open_event_prompt(&mut self, clip: ClipId, event: EventRef, column: EventColumn) {
         if !column.applies_to(event) {
             return;
@@ -297,15 +303,23 @@ impl AurisApp {
         let text = cell_text(&events, row, column, clip_start, &self.project().signatures);
         self.select_event(event);
         let title = format!("{} — {}", self.t(Key::EventList), self.t(column.label()));
-        self.open_prompt(Prompt::new(
-            title,
-            PromptTarget::Event {
-                clip,
-                event,
-                column,
-            },
-            text,
-        ));
+        // The cell may be scrolled out of the list — Return walking past the bottom — so the
+        // list is brought round to it; the field lands in the cell from the next frame on.
+        self.event_list
+            .scroll
+            .scroll_to_item(row, gpui::ScrollStrategy::Bottom);
+        self.open_prompt(
+            Prompt::new(
+                title,
+                PromptTarget::Event {
+                    clip,
+                    event,
+                    column,
+                },
+                text,
+            )
+            .inline(InlinePlace::Spot(cell_spot(clip, event, column))),
+        );
     }
 
     /// Applies what was typed into a cell, then walks the sheet on to the same cell of the next
@@ -450,8 +464,10 @@ impl AurisApp {
             .collect();
         let rows = std::sync::Arc::new(rows);
 
+        let spots = self.canvas.spots.clone();
         let cell = |column: EventColumn, text: SharedString| {
             let base = div()
+                .relative()
                 .h_full()
                 .px_1()
                 .flex()
@@ -524,6 +540,12 @@ impl AurisApp {
                                 .children(EventColumn::ALL.into_iter().zip(row.cells.iter()).map(
                                     |(column, text)| {
                                         cell(column, text.clone().into())
+                                            .when(column.applies_to(event), |this| {
+                                                this.child(spot(
+                                                    &spots,
+                                                    cell_spot(clip, event, column),
+                                                ))
+                                            })
                                             .debug_selector(move || {
                                                 format!("event-cell-{index}-{column:?}")
                                             })
@@ -615,8 +637,18 @@ mod tests {
         cx.simulate_input("90");
         cx.simulate_keystrokes("enter");
         paint(&app, cx);
-        // Return walked on to the wheel point's value.
+        // Return walked on to the wheel point's value, and the field sits in the list, not
+        // in a sheet over the window.
+        let cell = cx
+            .debug_bounds("event-cell-1-Value")
+            .expect("the wheel's value cell is drawn");
         app.read_with(cx, |this, _| {
+            let prompt = this.prompt.as_ref().expect("the walk opened the next cell");
+            let field = this.inline_bounds(prompt).expect("the field is in place");
+            assert!(
+                field.contains(&cell.center()),
+                "the field {field:?} covers the cell {cell:?}"
+            );
             assert_eq!(
                 this.prompt.as_ref().and_then(|prompt| prompt.target()),
                 Some(PromptTarget::Event {
