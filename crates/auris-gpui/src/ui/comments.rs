@@ -1,4 +1,5 @@
-//! Comments on screen: the small tags pinned along a track's lane and inside the piano roll.
+//! Comments on screen: the small tags pinned along a track's lane and inside the piano roll, and
+//! the notes written on the nodes of the mixer graph.
 //!
 //! A comment is text the engine never reads, so it is drawn as an element rather than painted
 //! into the lane canvas: an element gets hover, a tooltip with the whole text, a press and a menu
@@ -11,6 +12,7 @@
 use auris_i18n::Key;
 use auris_session::prelude::*;
 
+use auris_session::mixer_graph::MixerNode;
 use gpui::{
     AnyElement, MouseButton, MouseDownEvent, MouseMoveEvent, Pixels, Point, SharedString, div,
     prelude::*, px,
@@ -44,7 +46,26 @@ pub(crate) fn tag_selector(host: CommentHost, id: CommentId) -> String {
     match host {
         CommentHost::Track(track) => format!("comment-track-{}-{}", track.0, id.0),
         CommentHost::Clip(clip) => format!("comment-clip-{}-{}", clip.0, id.0),
+        CommentHost::Mixer(node) => format!("comment-mixer-{}-{}", node.key(), id.0),
     }
+}
+
+/// How many lines of a comment a mixer node shows; the tooltip has the rest.
+const NOTE_LINES: usize = 4;
+
+/// What a note on a mixer node shows: the first few lines as written, and an ellipsis when
+/// there is more. Each line is still wrapped to the node's width as it is drawn.
+pub(crate) fn note_text(text: &str) -> String {
+    let mut lines = text.lines();
+    let mut shown = lines
+        .by_ref()
+        .take(NOTE_LINES)
+        .collect::<Vec<_>>()
+        .join("\n");
+    if lines.next().is_some() {
+        shown.push('…');
+    }
+    shown
 }
 
 impl AurisApp {
@@ -111,6 +132,8 @@ impl AurisApp {
         };
         let pinned_to_a_row = comment.pitch.is_some();
         let (at, pitch) = match host {
+            // A node's comment stays on its node; moving the node moves it.
+            CommentHost::Mixer(_) => return,
             CommentHost::Track(_) => {
                 let x = event.position.x - self.lanes_origin().x;
                 let at = self
@@ -208,7 +231,7 @@ impl AurisApp {
 
     /// A press on a tag: a double click opens its text, a single one takes hold of it.
     fn press_comment(&mut self, host: CommentHost, id: CommentId, event: &MouseDownEvent) {
-        if event.click_count >= 2 {
+        if event.click_count >= 2 || !host.is_timed() {
             self.prompt_for_comment(host, id);
             return;
         }
@@ -216,6 +239,7 @@ impl AurisApp {
             return;
         };
         let (pointer, pinned) = match host {
+            CommentHost::Mixer(_) => return,
             CommentHost::Track(_) => (
                 self.timeline
                     .x_to_tick(event.position.x - self.lanes_origin().x),
@@ -238,6 +262,75 @@ impl AurisApp {
             id,
             grab_offset: (pointer - pinned).max_zero(),
         });
+    }
+
+    /// The comments on one mixer node, as notes stacked at the foot of its card.
+    ///
+    /// Whole paragraphs rather than one-line tags: a node has no timeline to keep clear, and a
+    /// note about the mix is read where it is written. A single press opens the text, since a
+    /// note on a node has nowhere to be dragged to; the press stops there, so it never also
+    /// takes hold of the node.
+    pub(crate) fn mixer_comment_notes(
+        &self,
+        node: MixerNode,
+        zoom: f32,
+        cx: &mut gpui::Context<Self>,
+    ) -> Vec<AnyElement> {
+        let host = CommentHost::Mixer(node);
+        let theme = &self.theme;
+        self.session
+            .comments(host)
+            .iter()
+            .map(|comment| {
+                let id = comment.id;
+                let selector = tag_selector(host, id);
+                div()
+                    .id(SharedString::from(selector.clone()))
+                    .debug_selector(move || selector.clone())
+                    .w_full()
+                    .flex()
+                    .gap_1()
+                    .p(px(3.0 * zoom))
+                    .rounded(Metrics::RADIUS_XS)
+                    .border_1()
+                    .border_color(theme.warning)
+                    .bg(theme.surface_raised)
+                    .hover(|style| style.bg(theme.surface_hover))
+                    .text_color(theme.text)
+                    .cursor(gpui::CursorStyle::PointingHand)
+                    .child(div().w(px(3.0)).flex_none().bg(theme.warning))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .whitespace_normal()
+                            .child(note_text(&comment.text)),
+                    )
+                    .tooltip(crate::ui::tooltip::keyed_tip(
+                        comment.text.clone(),
+                        "",
+                        theme,
+                    ))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                            cx.stop_propagation();
+                            this.press_comment(host, id, event);
+                            cx.notify();
+                        }),
+                    )
+                    .on_mouse_down(
+                        MouseButton::Right,
+                        cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                            cx.stop_propagation();
+                            let menu = this.comment_menu(event.position, host, id);
+                            this.open_menu(menu);
+                            cx.notify();
+                        }),
+                    )
+                    .into_any_element()
+            })
+            .collect()
     }
 
     /// Every track comment as a tag along the foot of its lane, in the lane column's coordinates.
@@ -293,6 +386,13 @@ mod tests {
         assert_eq!(tag_text("first\nsecond"), "first…");
         let long = "a".repeat(40);
         assert_eq!(tag_text(&long).chars().count(), TAG_CHARS + 1);
+    }
+
+    #[test]
+    fn a_mixer_note_keeps_its_lines_up_to_a_paragraph() {
+        assert_eq!(note_text("one\ntwo"), "one\ntwo");
+        assert_eq!(note_text("1\n2\n3\n4"), "1\n2\n3\n4");
+        assert_eq!(note_text("1\n2\n3\n4\n5"), "1\n2\n3\n4…");
     }
 }
 

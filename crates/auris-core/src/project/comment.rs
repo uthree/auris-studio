@@ -6,13 +6,19 @@
 //! whoever reads the document next — the person who wrote it a month later, or an agent asked to
 //! work on the passage.
 //!
-//! Two places hold them, because there are two things a person points at:
+//! Three places hold them, because there are three things a person points at:
 //!
 //! * [`Track::comments`](super::Track::comments) — a moment on a track's lane, in song time. A
 //!   comment about the part as a whole ("the guitar doubles the vocal from here").
 //! * [`MidiClip::comments`](super::MidiClip::comments) — a spot inside a clip, in clip time and
 //!   optionally on a pitch row of the piano roll. A comment about these notes, which moves,
 //!   copies and splits with them because it belongs to them.
+//! * [`MixerStrip::comments`](super::MixerStrip::comments) and
+//!   [`EffectSlot::comments`](super::EffectSlot::comments) — a node of the mixer graph. A comment
+//!   about how a part sits in the mix ("keep the reverb short here"), which has no moment at all.
+//!
+//! A comment is prose, and prose has paragraphs: the text may run over several lines, and every
+//! reader keeps its line breaks.
 //!
 //! Neither reaches anything that sounds: no renderer, transform or digest reads them.
 
@@ -36,6 +42,8 @@ pub struct Comment {
     /// Unique among its holder's comments.
     pub id: CommentId,
     /// Where it is pinned: song time on a track, time from the clip's start inside a clip.
+    /// Always zero on a mixer node, which is a place without a moment.
+    #[serde(default)]
     pub at: Ticks,
     /// The piano-roll row it is pinned to, inside a clip; `None` pins it to the moment alone.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -48,9 +56,11 @@ impl Comment {
     /// The longest comment kept, in UTF-8 bytes: a paragraph, not a document.
     pub const MAX_TEXT: usize = 4096;
 
-    /// The text as it is stored: trimmed, and cut at a character boundary within
-    /// [`Self::MAX_TEXT`]. `None` when nothing is left, since an empty comment says nothing.
+    /// The text as it is stored: line endings made `\n`, trimmed, and cut at a character
+    /// boundary within [`Self::MAX_TEXT`]. `None` when nothing is left, since an empty comment
+    /// says nothing. Line breaks inside the text are kept: a comment may be a paragraph or two.
     pub fn clean_text(text: &str) -> Option<String> {
+        let text = text.replace("\r\n", "\n").replace('\r', "\n");
         let text = text.trim();
         if text.is_empty() {
             return None;
@@ -133,6 +143,24 @@ impl Comments for super::Track {
     }
 }
 
+impl Comments for super::MixerStrip {
+    fn comment_list(&self) -> &[Comment] {
+        &self.comments
+    }
+    fn comment_list_mut(&mut self) -> &mut Vec<Comment> {
+        &mut self.comments
+    }
+}
+
+impl Comments for super::EffectSlot {
+    fn comment_list(&self) -> &[Comment] {
+        &self.comments
+    }
+    fn comment_list_mut(&mut self) -> &mut Vec<Comment> {
+        &mut self.comments
+    }
+}
+
 impl Comments for super::MidiClip {
     fn comment_list(&self) -> &[Comment] {
         &self.comments
@@ -169,6 +197,14 @@ mod tests {
         );
         assert!(clip.set_comment_text(second, ""), "empty text removes");
         assert!(clip.comment(second).is_none());
+    }
+
+    #[test]
+    fn a_comment_keeps_its_lines() {
+        assert_eq!(
+            Comment::clean_text("\n  first line\r\n\r\nsecond paragraph\r  \n").as_deref(),
+            Some("first line\n\nsecond paragraph")
+        );
     }
 
     #[test]

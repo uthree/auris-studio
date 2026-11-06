@@ -1172,7 +1172,14 @@ impl AurisApp {
                 MouseButton::Right,
                 Self::opens_menu(cx, move |this, at| this.mixer_node_menu(at, node)),
             )
-            .child(div().truncate().text_color(theme.text_muted).child(name));
+            .child({
+                let selector = format!("graph-name-{id}");
+                div()
+                    .debug_selector(move || selector.clone())
+                    .truncate()
+                    .text_color(theme.text_muted)
+                    .child(name)
+            });
         match node {
             MixerNode::Effect(_, slot) => {
                 let effect = owner
@@ -1369,7 +1376,8 @@ impl AurisApp {
                 }
             }
         }
-        card.into_any_element()
+        card.children(self.mixer_comment_notes(node, zoom, cx))
+            .into_any_element()
     }
 }
 
@@ -1473,6 +1481,105 @@ mod tests {
         click("mixer-show-graph", cx);
         paint(&app, cx);
         assert!(cx.debug_bounds("flow-graph").is_some());
+    }
+
+    #[gpui::test]
+    fn a_comment_is_written_on_a_node_and_shown_there_with_its_lines(cx: &mut TestAppContext) {
+        use crate::ui::context_menu::{MenuCommand, MenuEntry};
+        use crate::ui::prompt::PromptTarget;
+
+        let (app, cx) = open(cx);
+        let bus = app.update(cx, |this, _| {
+            show(this);
+            this.session.add_bus_track("Bus")
+        });
+        paint(&app, cx);
+        let node = MixerNode::Strip(Some(bus));
+        expose_pair(&app, cx, node, MixerNode::Strip(None));
+        let host = CommentHost::Mixer(node);
+
+        let name = cx
+            .debug_bounds(selector(format!("graph-name-{}", node_id(node))))
+            .unwrap();
+        crate::harness::right_press(cx, name.center());
+        let offered = app.read_with(cx, |this, _| {
+            this.menu.as_ref().is_some_and(|menu| {
+                menu.entries.iter().any(|entry| {
+                    matches!(entry, MenuEntry::Item(item)
+                        if matches!(item.command, MenuCommand::AddCommentAt { host: h, .. } if h == host))
+                })
+            })
+        });
+        assert!(offered, "the node's own menu offers a comment on it");
+        app.update(cx, |this, cx| {
+            this.menu = None;
+            this.run_menu_command(
+                MenuCommand::AddCommentAt {
+                    host,
+                    at: Ticks::ZERO,
+                    pitch: None,
+                },
+                cx,
+            );
+            assert!(matches!(
+                this.prompt.as_ref().and_then(|prompt| prompt.target()),
+                Some(PromptTarget::NewComment { host: h, .. }) if h == host
+            ));
+        });
+        cx.simulate_input("ボーカルの下に");
+        cx.simulate_keystrokes("enter");
+        paint(&app, cx);
+        let id = app.read_with(cx, |this, _| {
+            let comments = &this.project().track(bus).unwrap().mixer.comments;
+            assert_eq!(comments.len(), 1);
+            assert_eq!(comments[0].text, "ボーカルの下に");
+            assert!(this.project().track(bus).unwrap().comments.is_empty());
+            comments[0].id
+        });
+
+        app.update(cx, |this, _| {
+            this.session
+                .set_comment_text(host, id, "ボーカルの下に\nサビだけ前へ")
+                .unwrap();
+        });
+        paint(&app, cx);
+        let one_line = cx
+            .debug_bounds(selector(crate::ui::comments::tag_selector(host, id)))
+            .expect("the note is drawn on its node");
+        app.update(cx, |this, _| {
+            this.session
+                .set_comment_text(host, id, "ボーカルの下に\nサビだけ前へ\n間奏は控えめ")
+                .unwrap();
+        });
+        paint(&app, cx);
+        let three_lines = cx
+            .debug_bounds(selector(crate::ui::comments::tag_selector(host, id)))
+            .unwrap();
+        assert!(
+            three_lines.size.height > one_line.size.height,
+            "every line of the comment takes a line on the node"
+        );
+
+        crate::harness::click_at(cx, three_lines.center(), gpui::Modifiers::default());
+        app.read_with(cx, |this, cx| {
+            assert!(
+                matches!(
+                    this.prompt.as_ref().and_then(|prompt| prompt.target()),
+                    Some(PromptTarget::Comment { host: h, id: i }) if h == host && i == id
+                ),
+                "a press on the note opens its text"
+            );
+            assert!(
+                this.mixer_canvas
+                    .as_ref()
+                    .unwrap()
+                    .state
+                    .read(cx)
+                    .drag_state
+                    .is_none(),
+                "and does not take hold of the node"
+            );
+        });
     }
 
     #[gpui::test]

@@ -1,27 +1,30 @@
-//! The agent's door to comments: notes people pin on tracks and inside clips.
+//! The agent's door to comments: notes people pin on tracks, inside clips and on mixer nodes.
 use super::*;
+use crate::mixer_graph::MixerNode;
 use crate::session::CommentHost;
 
 /// What edit_comments does.
 #[derive(Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Operation {
-    /// Pin a new comment. Supply exactly one of track (a moment on the track's lane) or clip (a spot inside that note clip, optionally on a pitch row of its piano roll).
+    /// Pin a new comment. Supply exactly one of track (a moment on the track's lane), clip (a spot inside that note clip, optionally on a pitch row of its piano roll) or mixer_node (a strip or effect in the mixer graph, about the mix rather than a moment; no bar).
     Add {
         /// Stable track ID from inspect_project.
         track: Option<u64>,
         /// Stable note-clip ID from inspect_project; the position must fall inside the clip.
         clip: Option<u64>,
-        /// 1-based song bar (not counted from the clip).
+        /// Mixer node ID from mixer_graph read: track:ID, track:master or effect:ID.
+        mixer_node: Option<String>,
+        /// 1-based song bar (not counted from the clip). Required on a track or clip.
         #[schemars(range(min = 1))]
-        bar: u32,
+        bar: Option<u32>,
         /// 1-based beat of bar, fractional allowed.
         #[serde(default = "first_beat")]
         beat: f64,
         /// MIDI pitch row 0..127 inside a clip; omit to pin the moment only. Ignored on a track.
         #[schemars(range(min = 0, max = 127))]
         pitch: Option<u8>,
-        /// What the comment says, 1..4096 UTF-8 bytes.
+        /// What the comment says, 1..4096 UTF-8 bytes; line breaks are kept.
         #[schemars(length(min = 1, max = 4096))]
         text: String,
     },
@@ -31,6 +34,8 @@ pub enum Operation {
         track: Option<u64>,
         /// The clip holding it, when it is inside a clip.
         clip: Option<u64>,
+        /// The mixer node holding it, when it is in the mixer graph.
+        mixer_node: Option<String>,
         /// Comment ID from inspect_project comments.
         comment: u64,
         /// New text.
@@ -51,6 +56,8 @@ pub enum Operation {
         track: Option<u64>,
         /// The clip holding it, when it is inside a clip.
         clip: Option<u64>,
+        /// The mixer node holding it, when it is in the mixer graph.
+        mixer_node: Option<String>,
         /// Comment ID from inspect_project comments.
         comment: u64,
     },
@@ -67,11 +74,19 @@ impl Operation {
     }
 }
 
-fn host(track: Option<u64>, clip: Option<u64>) -> Result<CommentHost, String> {
-    match (track, clip) {
-        (Some(track), None) => Ok(CommentHost::Track(TrackId(track))),
-        (None, Some(clip)) => Ok(CommentHost::Clip(ClipId(clip))),
-        _ => Err("Supply exactly one of track or clip".into()),
+impl Session {
+    fn comment_host(
+        &self,
+        track: Option<u64>,
+        clip: Option<u64>,
+        mixer_node: Option<&str>,
+    ) -> Result<CommentHost, String> {
+        match (track, clip, mixer_node) {
+            (Some(track), None, None) => Ok(CommentHost::Track(TrackId(track))),
+            (None, Some(clip), None) => Ok(CommentHost::Clip(ClipId(clip))),
+            (None, None, Some(node)) => Ok(CommentHost::Mixer(self.graph_node(node)?)),
+            _ => Err("Supply exactly one of track, clip or mixer_node".into()),
+        }
     }
 }
 
@@ -86,7 +101,7 @@ impl Session {
     /// Song time to the holder's own time: a clip comment is stored from the clip's start.
     fn comment_local(&self, host: CommentHost, at: Ticks) -> Result<Ticks, String> {
         match host {
-            CommentHost::Track(_) => Ok(at),
+            CommentHost::Track(_) | CommentHost::Mixer(_) => Ok(at),
             CommentHost::Clip(id) => {
                 let (_, clip) = self.project().midi_clip(id).ok_or_else(|| {
                     format!("clip {} is not a note clip from inspect_project", id.0)
@@ -109,27 +124,35 @@ impl Session {
             Operation::Add {
                 track,
                 clip,
+                mixer_node,
                 bar,
                 beat,
                 pitch,
                 text,
             } => {
-                let host = host(track, clip)?;
-                let at = position(self.project(), bar, beat)?;
-                let at = self.comment_local(host, at)?;
+                let host = self.comment_host(track, clip, mixer_node.as_deref())?;
+                let at = match bar {
+                    _ if !host.is_timed() => Ticks::ZERO,
+                    Some(bar) => {
+                        let at = position(self.project(), bar, beat)?;
+                        self.comment_local(host, at)?
+                    }
+                    None => return Err("Supply bar for a comment on a track or clip".into()),
+                };
                 self.add_comment(host, at, pitch, &text)
                     .map_err(|e| e.to_string())?
             }
             Operation::Edit {
                 track,
                 clip,
+                mixer_node,
                 comment,
                 text,
                 bar,
                 beat,
                 pitch,
             } => {
-                let host = host(track, clip)?;
+                let host = self.comment_host(track, clip, mixer_node.as_deref())?;
                 let id = CommentId(comment);
                 let current = self
                     .comment(host, id)
@@ -160,9 +183,10 @@ impl Session {
             Operation::Remove {
                 track,
                 clip,
+                mixer_node,
                 comment,
             } => {
-                let host = host(track, clip)?;
+                let host = self.comment_host(track, clip, mixer_node.as_deref())?;
                 self.remove_comment(host, CommentId(comment))
                     .map_err(|e| e.to_string())?;
                 CommentId(comment)
@@ -191,7 +215,8 @@ fn musical(project: &auris_core::Project, tick: Ticks) -> (u32, f64) {
     (bar, (beat * 1000.0).round() / 1000.0)
 }
 
-/// Every comment in the document as an agent reads it, in song order.
+/// Every comment in the document as an agent reads it: the timed ones in song order, then the
+/// ones pinned in the mixer graph, strip by strip.
 pub(crate) fn comments_json(project: &auris_core::Project) -> serde_json::Value {
     let mut placed = Vec::new();
     for track in &project.tracks {
@@ -205,7 +230,7 @@ pub(crate) fn comments_json(project: &auris_core::Project) -> serde_json::Value 
         }
     }
     placed.sort_by_key(|(at, ..)| *at);
-    placed
+    let timed = placed
         .into_iter()
         .map(|(at, track, clip, comment)| {
             let (bar, beat) = musical(project, at);
@@ -216,9 +241,35 @@ pub(crate) fn comments_json(project: &auris_core::Project) -> serde_json::Value 
                 "pitch_name": comment.pitch.map(|pitch| auris_core::theory::pitch::midi_name(i32::from(pitch))),
                 "text": comment.text,
             })
-        })
-        .collect::<Vec<_>>()
-        .into()
+        });
+    let strips = project
+        .tracks
+        .iter()
+        .map(|track| (Some(track.id), track.name.as_str(), &track.mixer))
+        .chain(std::iter::once((None, "master", &project.master)));
+    let mut mixer = Vec::new();
+    for (owner, name, strip) in strips {
+        let row = |node: MixerNode, effect: Option<&str>, comment: &auris_core::Comment| {
+            serde_json::json!({
+                "comment": comment.id.0, "mixer_node": node.key(),
+                "track": owner.map(|id| id.0), "track_name": name,
+                "effect": effect, "text": comment.text,
+            })
+        };
+        for comment in &strip.comments {
+            mixer.push(row(MixerNode::Strip(owner), None, comment));
+        }
+        for slot in &strip.effects {
+            for comment in &slot.comments {
+                mixer.push(row(
+                    MixerNode::Effect(owner, slot.id),
+                    Some(&slot.effect_id),
+                    comment,
+                ));
+            }
+        }
+    }
+    timed.chain(mixer).collect::<Vec<_>>().into()
 }
 
 #[cfg(test)]
@@ -302,5 +353,35 @@ mod tests {
         )
         .unwrap();
         assert_eq!(inspected["comments"].as_array().unwrap().len(), 2);
+
+        let report: serde_json::Value = serde_json::from_str(
+            &run(
+                &mut session,
+                serde_json::json!({"action":"edit_comments","operation":{"kind":"add","mixer_node":"track:master","text":"leave headroom\nfor mastering"}}),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let last = report["comments"]
+            .as_array()
+            .unwrap()
+            .last()
+            .unwrap()
+            .clone();
+        assert_eq!(
+            (last["mixer_node"].as_str(), last["text"].as_str()),
+            (Some("track:master"), Some("leave headroom\nfor mastering"))
+        );
+        assert_eq!(session.project().master.comments.len(), 1);
+        let unknown = run(
+            &mut session,
+            serde_json::json!({"action":"edit_comments","operation":{"kind":"add","mixer_node":"effect:999","text":"x"}}),
+        );
+        assert!(unknown.unwrap_err().contains("Unknown mixer node"));
+        let no_bar = run(
+            &mut session,
+            serde_json::json!({"action":"edit_comments","operation":{"kind":"add","track":track.0,"text":"x"}}),
+        );
+        assert!(no_bar.unwrap_err().contains("bar"));
     }
 }

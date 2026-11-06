@@ -30,7 +30,7 @@ impl AurisApp {
         at: gpui::Point<gpui::Pixels>,
         node: MixerNode,
     ) -> ContextMenu {
-        match node {
+        let menu = match node {
             MixerNode::Strip(Some(track)) => {
                 self.select_track(track);
                 self.track_menu(at, track)
@@ -52,10 +52,19 @@ impl AurisApp {
                         let label = self.effect_label(slot, &effect_id);
                         self.effect_menu(at, owner, slot, label)
                     }
-                    None => ContextMenu::new(at, self.t(Key::MixerGraph)),
+                    None => return ContextMenu::new(at, self.t(Key::MixerGraph)),
                 }
             }
-        }
+        };
+        // Every node can carry a note about how it sits in the mix.
+        menu.separator().item(
+            self.t(Key::MenuAddComment),
+            MenuCommand::AddCommentAt {
+                host: CommentHost::Mixer(node),
+                at: Ticks::ZERO,
+                pitch: None,
+            },
+        )
     }
 
     /// What right-clicking the empty canvas offers: a new node there, or a fresh layout.

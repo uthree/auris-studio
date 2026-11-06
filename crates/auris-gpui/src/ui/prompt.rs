@@ -1838,6 +1838,13 @@ impl AurisApp {
                     .children(self.render_feedback_rating(prompt, cx))
                     .child(if matches!(target, PromptTarget::WorkshopFeedback { .. }) {
                         self.render_feedback_comment(field, cx).into_any_element()
+                    } else if matches!(
+                        target,
+                        PromptTarget::Comment { .. } | PromptTarget::NewComment { .. }
+                    ) {
+                        // A comment may run over several lines, which a one-line field cannot
+                        // draw: shaping a line refuses a line break.
+                        self.render_wrapped_field(field, cx).into_any_element()
                     } else {
                         self.render_prompt_field(
                             field.content().to_string().into(),
@@ -2133,6 +2140,53 @@ impl AurisApp {
                     )),
             )
             .child(self.render_prompt_hint(Key::WorkshopFeedbackHint, &theme))
+    }
+
+    /// A box that wraps and keeps line breaks, for text that may run over several lines.
+    fn render_wrapped_field(
+        &self,
+        field: &TextField,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
+        let theme = self.theme.clone();
+        div()
+            .id("prompt-wrapped-field")
+            .debug_selector(|| "prompt-text-field".into())
+            .w_full()
+            .min_h(FIELD_HEIGHT)
+            .max_h(gpui::rems(10.0))
+            .overflow_y_scroll()
+            .rounded(Metrics::RADIUS_SM)
+            .bg(theme.surface_sunken)
+            .border_1()
+            .border_color(theme.accent)
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                    if let Some(field) = this.prompt.as_mut().and_then(Prompt::field_mut) {
+                        if let Some(offset) = crate::ui::text_area::wrapped_area_offset_at(
+                            window,
+                            field.content(),
+                            event.position,
+                        ) {
+                            field.place_caret(offset, event.modifiers.shift);
+                        } else {
+                            field.caret_to_end();
+                        }
+                    }
+                    this.focus.focus(window);
+                    cx.notify();
+                }),
+            )
+            .child(crate::ui::text_area::editable_wrapped_area(
+                field.content().to_owned().into(),
+                field.selection(),
+                field.marked(),
+                true,
+                self.focus.clone(),
+                cx.entity(),
+                theme,
+            ))
     }
 
     /// The box the rename sheet types into.

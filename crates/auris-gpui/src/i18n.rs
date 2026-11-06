@@ -431,6 +431,7 @@ pub fn error_text(error: &SessionError, language: Language) -> String {
             .to_string()
         }
         SessionError::UnknownComment(_) => Key::ErrorUnknownComment.get(language).to_string(),
+        SessionError::UnknownMixerNode(_) => Key::ErrorUnknownMixerNode.get(language).to_string(),
         SessionError::EmptyComment => Key::ErrorEmptyComment.get(language).to_string(),
         SessionError::NotANoteClip(_) => Key::ErrorNotANoteClip.get(language).to_string(),
         SessionError::LintStale => Key::ErrorLintStale.get(language).to_string(),
@@ -1146,6 +1147,7 @@ mod tests {
                 auris_session::performance_presets::KeepRefusal::Exists,
             ),
             SessionError::UnknownComment(4),
+            SessionError::UnknownMixerNode("effect:9".into()),
             SessionError::EmptyComment,
             SessionError::NotANoteClip(5),
             SessionError::CannotSplit(3),

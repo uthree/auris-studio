@@ -183,6 +183,10 @@ pub enum SessionError {
         index: usize,
     },
 
+    /// The mixer graph has no such node: the track or the effect slot is gone.
+    #[error("no mixer node {0}")]
+    UnknownMixerNode(String),
+
     /// The track or clip holds no comment with that id.
     #[error("no comment with id {0} there")]
     UnknownComment(u64),
