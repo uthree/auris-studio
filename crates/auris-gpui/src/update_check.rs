@@ -161,6 +161,8 @@ fn stale_update_files(directory: &Path, current: &Version, own_pid: u32) -> Vec<
             name.strip_prefix("auris-studio-v")
                 .and_then(|rest| {
                     rest.strip_suffix("-windows-x86_64-setup.exe")
+                        .or_else(|| rest.strip_suffix("-macos-aarch64.dmg"))
+                        // Downloaded by a build from before Intel Macs were dropped.
                         .or_else(|| rest.strip_suffix("-macos-universal.dmg"))
                 })
                 .and_then(|version| Version::parse(version).ok())
@@ -263,7 +265,7 @@ fn select_asset(
     let suffix = if cfg!(target_os = "windows") {
         "windows-x86_64-setup.exe"
     } else if cfg!(target_os = "macos") {
-        "macos-universal.dmg"
+        "macos-aarch64.dmg"
     } else {
         return Ok(None);
     };
@@ -545,7 +547,7 @@ mod tests {
         let suffix = if cfg!(target_os = "windows") {
             "windows-x86_64-setup.exe"
         } else {
-            "macos-universal.dmg"
+            "macos-aarch64.dmg"
         };
         let name = format!("auris-studio-v0.10.0-{suffix}");
         let url =
@@ -582,7 +584,7 @@ mod tests {
         let suffix = if cfg!(target_os = "windows") {
             "windows-x86_64-setup.exe"
         } else {
-            "macos-universal.dmg"
+            "macos-aarch64.dmg"
         };
         let name = format!("auris-studio-v0.10.0-{suffix}");
         let json = format!(
@@ -599,7 +601,7 @@ mod tests {
         let suffix = if cfg!(target_os = "windows") {
             "windows-x86_64-setup.exe"
         } else {
-            "macos-universal.dmg"
+            "macos-aarch64.dmg"
         };
         let name = format!("auris-studio-v0.10.0-{suffix}");
         let url =

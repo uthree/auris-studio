@@ -534,6 +534,53 @@ impl RenderJob {
         })
     }
 
+    /// Renders what a listener auditions, at `rate`, and where its playback wraps to.
+    ///
+    /// A song that plays once is rendered whole, with its tail when `include_tail` asks. A loop
+    /// song — looping on, and a region holding all the music — is the lead-in before the region
+    /// rendered as written, followed by exactly one cycle captured the way
+    /// [`loop_options`](Self::loop_options) captures it: warmed up first, so the reverb and the
+    /// releases ringing over the loop's end are already sounding at its start. Wrapping from the
+    /// last frame back to the returned start is then seamless, which a whole-song render with its
+    /// tail never is. The lead-in is what keeps an intro heard before the loop takes over.
+    pub fn render_audition(
+        &mut self,
+        rate: f64,
+        include_tail: bool,
+        progress: &mut RenderProgress<'_>,
+    ) -> Result<(AudioBuffer, Option<f64>), SessionError> {
+        let whole = OfflineOptions {
+            sample_rate: Some(rate),
+            include_tail,
+            ..Default::default()
+        };
+        let cycle = crate::audition::audition_loop(&self.project)
+            .and_then(|_| self.loop_options(whole.clone()));
+        let Some(cycle) = cycle else {
+            return Ok((self.render(&whole, progress)?, None));
+        };
+        let lead_frames = cycle.start_frames;
+        let looped = self.render(&cycle, progress)?;
+        if lead_frames == 0 {
+            return Ok((looped, Some(0.0)));
+        }
+        let lead = self.render(
+            &OfflineOptions {
+                include_tail: false,
+                ..whole.with_range(0, lead_frames)
+            },
+            progress,
+        )?;
+        let channels = lead
+            .channels()
+            .iter()
+            .zip(looped.channels())
+            .map(|(lead, cycle)| lead.iter().chain(cycle).copied().collect())
+            .collect();
+        let audio = AudioBuffer::from_planar(channels, rate)?;
+        Ok((audio, Some(lead_frames as f64 / rate)))
+    }
+
     /// Renders to a buffer, reporting progress and taking a cancellation through `progress`.
     ///
     /// An export can be asked for any rate, including one the sources were never decoded at, so
@@ -603,19 +650,6 @@ impl RenderJob {
         writer.finish_with_commit(|| progress.begin_commit())?;
         progress.report(1.0);
         Ok(summary)
-    }
-
-    /// Encode privately without publishing; the owning session validates the staged result.
-    pub fn stage_audio_export(
-        &mut self,
-        path: &Path,
-        settings: &AudioExportSettings,
-        options: &OfflineOptions,
-        track: Option<TrackId>,
-        progress: &mut RenderProgress<'_>,
-    ) -> Result<auris_io::StagedAudioExport, SessionError> {
-        let (writer, _) = self.render_audio_writer(track, path, settings, options, progress)?;
-        Ok(writer.finish_staged()?)
     }
 
     /// Capture exact stereo float samples, optionally priming effects from timeline zero.
@@ -894,17 +928,6 @@ impl RenderJob {
             .map_err(|failure| failure.error)
     }
 
-    /// Like [`Self::render_stems`], retaining summaries for complete files when a later stem fails.
-    pub fn render_stems_with_partial(
-        &mut self,
-        folder: &Path,
-        settings: &WavExportSettings,
-        options: &OfflineOptions,
-        progress: &mut RenderProgress<'_>,
-    ) -> Result<Vec<StemSummary>, StemRenderFailure> {
-        self.render_audio_stems_with_partial(folder, &(*settings).into(), options, progress)
-    }
-
     /// Like [`Self::render_audio_stems`], retaining completed files after a later failure.
     pub fn render_audio_stems_with_partial(
         &mut self,
@@ -997,6 +1020,57 @@ impl RenderJob {
     }
 }
 
+impl RenderJob {
+    /// Plays the one graph once per pass and hands every rendered block to `sink`.
+    ///
+    /// A pass of `None` hears every track — the mix with solos ignored, which is what a check of
+    /// the song wants rather than what somebody happens to be monitoring — and `Some(track)` hears
+    /// that track as its stem would. The graph is built once, for the reason
+    /// [`Self::render_stems`] gives. Returns the rate the passes ran at.
+    pub(crate) fn render_passes(
+        &mut self,
+        passes: &[Option<TrackId>],
+        options: &OfflineOptions,
+        progress: &mut RenderProgress<'_>,
+        mut sink: impl FnMut(usize, &AudioBuffer),
+    ) -> Result<f64, SessionError> {
+        let rate = options.sample_rate.unwrap_or(self.project.sample_rate);
+        self.check_hosted_rate(rate)?;
+        let mut bank = bank_at_rate(&self.bank, rate);
+        fill_stretches(&self.project, &mut bank);
+        let mut render = OfflineRender::new(
+            &self.project,
+            &bank,
+            &self.registry,
+            &mut self.placed,
+            &mut self.instruments,
+            options,
+        )?;
+        let span = 1.0 / passes.len().max(1) as f32;
+        for (index, pass) in passes.iter().enumerate() {
+            match pass {
+                Some(track) => render.set_audible(&self.project.soloed_alone(*track)),
+                None => render.set_audible(&vec![true; self.project.tracks.len()]),
+            }
+            let streamed = progress.within(index as f32 * span, span, |progress| {
+                render.render_streamed(progress, |block| {
+                    sink(index, block);
+                    Ok::<(), std::convert::Infallible>(())
+                })
+            });
+            match streamed {
+                Ok(()) => {}
+                Err(OfflineStreamError::Render(error)) => return Err(error.into()),
+                Err(OfflineStreamError::Sink(never)) => match never {},
+            }
+            if progress.is_cancelled() {
+                break;
+            }
+        }
+        Ok(render.sample_rate())
+    }
+}
+
 impl std::fmt::Debug for RenderJob {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RenderJob")
@@ -1010,9 +1084,79 @@ impl std::fmt::Debug for RenderJob {
 mod tests {
     use super::*;
     use crate::registry::plugin_catalogue;
+    use auris_core::project::Note;
     use auris_core::time::Ticks;
+    use auris_engine::{RenderGraph, Transport, render_block};
 
     const SOURCE: SourceId = SourceId(1);
+
+    #[test]
+    fn production_registry_parallel_offline_render_matches_serial_playback() {
+        let mut project = Project::new("Parallel registry render", 48_000.0);
+        project.master.gain_db = -18.0;
+        for index in 0..8 {
+            let instrument = [
+                "auris.synth.chiptune",
+                "auris.synth.fm2",
+                "auris.synth.noisedrum",
+                auris_synth::Clarinet::ID,
+            ][index % 4];
+            let track = project.add_instrument_track(format!("Built-in {index}"), instrument);
+            project.add_effect(Some(track), "auris.fx.eq");
+            project.add_effect(Some(track), "auris.fx.reverb");
+            let clip = project
+                .add_midi_clip(track, "note", Ticks::ZERO, Ticks::from_beats(1.0))
+                .expect("clip");
+            project
+                .midi_clip_mut(clip)
+                .expect("clip remains")
+                .notes
+                .push(Note::new(
+                    48 + index as u8,
+                    Ticks::ZERO,
+                    Ticks::from_beats(1.0),
+                ));
+        }
+        let registry = plugin_catalogue();
+        for track in &project.tracks {
+            if let auris_core::project::TrackKind::Instrument(instrument) = &track.kind {
+                assert!(registry.has_instrument(&instrument.instrument_id));
+            }
+        }
+        let bank = AudioSourceBank::new();
+        let mut parallel = RenderGraph::build(&project, &bank, &registry, 512);
+        let mut serial = RenderGraph::build(&project, &bank, &registry, 512);
+        let mut parallel_transport = Transport::playing_from(0);
+        let mut serial_transport = Transport::playing_from(0);
+        let mut parallel_out = AudioBuffer::new(2, 512, 48_000.0);
+        let mut serial_out = AudioBuffer::new(2, 512, 48_000.0);
+        let mut peak = 0.0_f32;
+
+        for _ in 0..10 {
+            render_block(
+                &mut parallel,
+                &mut parallel_transport,
+                &mut parallel_out,
+                true,
+            );
+            render_block(&mut serial, &mut serial_transport, &mut serial_out, false);
+            peak = peak.max(serial_out.peak());
+            for channel in 0..2 {
+                for (actual, expected) in parallel_out
+                    .channel(channel)
+                    .iter()
+                    .zip(serial_out.channel(channel))
+                {
+                    assert!(actual.is_finite() && expected.is_finite());
+                    assert!(
+                        actual.to_bits() == expected.to_bits(),
+                        "parallel registry render diverged: {actual} vs {expected}"
+                    );
+                }
+            }
+        }
+        assert!(peak > 1e-5, "fixture must render audible samples");
+    }
 
     /// A bank holding one second of steady 0.5 on two channels, at `rate`.
     fn bank_at(id: SourceId, rate: f64) -> AudioSourceBank {

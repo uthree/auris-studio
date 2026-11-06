@@ -48,6 +48,13 @@ pub enum PromptTarget {
     },
     /// A reusable sound captured from a track.
     SaveSound(TrackId),
+    /// The name of a performance preset kept from a clip's current performance.
+    SavePerformancePreset {
+        /// The clip whose performance is kept.
+        clip: ClipId,
+        /// The instrument family it is filed under.
+        family: PresetFamily,
+    },
     /// The saved user sound retained by this prompt.
     RenameSound,
     /// A new copy of the saved user sound retained by this prompt.
@@ -62,6 +69,26 @@ pub enum PromptTarget {
     Chord(Ticks),
     /// The name of the song section in force at a position on the timeline.
     Section(Ticks),
+    /// The song-wide lyric line in force at a position on the timeline, or a new one there.
+    LyricLine(Ticks),
+    /// A new comment, pinned where the menu was opened.
+    NewComment {
+        /// What will hold it.
+        host: CommentHost,
+        /// Song time on a track, clip time inside a clip.
+        at: Ticks,
+        /// The piano-roll row, inside a clip.
+        pitch: Option<u8>,
+    },
+    /// Why an ignore rule exists, by its place in the project's list.
+    LintReason(usize),
+    /// An existing comment's text.
+    Comment {
+        /// What holds it.
+        host: CommentHost,
+        /// Which comment.
+        id: CommentId,
+    },
     /// The lyric sung on one note.
     ///
     /// Return commits the word and walks on to the next note in sung order, so a verse can be
@@ -230,6 +257,7 @@ impl PromptTarget {
             PromptTarget::Position => Notation::Position,
             PromptTarget::VideoColour(_) => Notation::Colour,
             PromptTarget::SaveSound(_)
+            | PromptTarget::SavePerformancePreset { .. }
             | PromptTarget::WorkshopThreadName { .. }
             | PromptTarget::WorkshopFeedback { .. }
             | PromptTarget::AgentConversationName
@@ -243,6 +271,11 @@ impl PromptTarget {
             | PromptTarget::Lyric { .. }
             | PromptTarget::Phonemes { .. }
             | PromptTarget::Lyrics { .. }
+            | PromptTarget::LyricLine(_)
+            // A comment is prose.
+            | PromptTarget::NewComment { .. }
+            | PromptTarget::Comment { .. }
+            | PromptTarget::LintReason(_)
             // No shared notation: every parameter is written in its own units, and the range
             // and the unit are in the prompt's title instead, where they can name this one.
             | PromptTarget::Param(_) => return None,
@@ -527,8 +560,6 @@ pub enum Answer {
 /// A question the sheet is asking, and what turns on the answer.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Question {
-    /// Consent to load a local audio model for this one listening request.
-    AudioModelLoad(std::sync::Arc<crate::ui::agent_chat::AudioLoadRequest>),
     /// A verified update can be installed now or when the app later quits.
     RestartForUpdate {
         /// Downloaded release version shown in the question.
@@ -540,6 +571,16 @@ pub enum Question {
         current: String,
         /// Published version shown in the question.
         latest: String,
+    },
+    /// A newer version was found for a copy installed with `cargo install`, which the updater
+    /// cannot replace: the answer copies the command that upgrades it.
+    CargoUpgrade {
+        /// Installed version shown in the question.
+        current: String,
+        /// Published version shown in the question.
+        latest: String,
+        /// The terminal command shown and copied.
+        command: String,
     },
     /// Replaces an exact library entry with a snapshot captured before confirmation.
     OverwriteSound {
@@ -1014,6 +1055,10 @@ impl AurisApp {
                     Err(error) => Err(error),
                 }
             }
+            PromptTarget::SavePerformancePreset { clip, family } => self
+                .session
+                .keep_clip_performance(clip, &text, family, "", false)
+                .map(|_| ()),
             PromptTarget::Track(track) => self.session.rename_track(track, text),
             PromptTarget::Clip(clip) => self.session.rename_clip(clip, text),
             PromptTarget::Lyric { clip, index } => {
@@ -1090,6 +1135,30 @@ impl AurisApp {
             // job rather than an empty field's.
             PromptTarget::Section(at) => {
                 self.session.set_section(at, Some(text));
+                Ok(())
+            }
+            // Retyping a line keeps where it starts; typing over a silence starts a line there
+            // that runs until the next change.
+            PromptTarget::LyricLine(at) => {
+                let start = self
+                    .session
+                    .project()
+                    .lyrics
+                    .change_at(at)
+                    .filter(|change| self.session.project().lyrics.text_at(*change).is_some());
+                self.session.set_lyric_line(start.unwrap_or(at), Some(text));
+                Ok(())
+            }
+            PromptTarget::NewComment { host, at, pitch } => {
+                self.session.add_comment(host, at, pitch, &text).map(|_| ())
+            }
+            PromptTarget::Comment { host, id } => self.session.set_comment_text(host, id, &text),
+            PromptTarget::LintReason(index) => {
+                if let Some(rule) = self.session.project().lint_suppressions.get(index).cloned() {
+                    let before = self.session.revision();
+                    self.session.set_lint_suppression_reason(&rule, &text);
+                    self.lint_suppressions_changed(before);
+                }
                 Ok(())
             }
             PromptTarget::Seed(clip) => match text.parse::<u64>() {
@@ -1274,6 +1343,8 @@ impl AurisApp {
                 Key::EditSetDrumAssignment
             } else if matches!(target, PromptTarget::SaveSound(_)) {
                 Key::SaveSound
+            } else if matches!(target, PromptTarget::SavePerformancePreset { .. }) {
+                Key::PerformPresetSave
             } else if matches!(target, PromptTarget::DuplicateSound) {
                 Key::DuplicateSound
             } else {
@@ -1351,10 +1422,6 @@ impl AurisApp {
         cx: &mut Context<Self>,
     ) {
         match (question, answer) {
-            (Question::AudioModelLoad(request), Answer::Confirm) => {
-                self.approve_audio_model_load(&request);
-            }
-            (Question::AudioModelLoad(_), Answer::Deny) => {}
             (Question::RestartForUpdate { .. }, Answer::Confirm) => {
                 self.restart_for_update(window, cx);
             }
@@ -1363,6 +1430,10 @@ impl AurisApp {
                 cx.open_url(crate::update_check::RELEASE_PAGE);
             }
             (Question::OpenUpdateRelease { .. }, Answer::Deny) => {}
+            (Question::CargoUpgrade { command, .. }, Answer::Confirm) => {
+                self.copy_upgrade_command(command, cx);
+            }
+            (Question::CargoUpgrade { .. }, Answer::Deny) => {}
             (
                 Question::OverwriteSound {
                     expected,
@@ -1802,7 +1873,9 @@ impl AurisApp {
                     None,
                     // The default button names the edit the sheet will commit.
                     match target {
-                        PromptTarget::SaveSound(_) => self.t(Key::CmdSave).into(),
+                        PromptTarget::SaveSound(_) | PromptTarget::SavePerformancePreset { .. } => {
+                            self.t(Key::CmdSave).into()
+                        }
                         PromptTarget::WorkshopThreadName { .. } => self.t(Key::Rename).into(),
                         PromptTarget::WorkshopFeedback { .. } => {
                             self.t(Key::WorkshopFeedbackSend).into()
@@ -2272,13 +2345,6 @@ impl AurisApp {
         question: &Question,
     ) -> (SharedString, SharedString, Option<SharedString>) {
         match question {
-            Question::AudioModelLoad(request) => (
-                self.t(Key::AudioModelLoadBody)
-                    .replace("{model}", &request.model)
-                    .into(),
-                self.t(Key::AudioModelLoadConfirm).into(),
-                None,
-            ),
             Question::RestartForUpdate { version } => (
                 self.t(Key::UpdateRestartBody)
                     .replace("{version}", version)
@@ -2292,6 +2358,22 @@ impl AurisApp {
                     .replace("{version}", latest)
                     .into(),
                 self.t(Key::UpdateOpenRelease).into(),
+                None,
+            ),
+            Question::CargoUpgrade {
+                current,
+                latest,
+                command,
+            } => (
+                format!(
+                    "{} {}\n\n{command}",
+                    self.t(Key::UpdateAvailable)
+                        .replace("{current}", current)
+                        .replace("{version}", latest),
+                    self.t(Key::CargoUpdateBody),
+                )
+                .into(),
+                self.t(Key::CargoUpdateCopy).into(),
                 None,
             ),
             Question::OverwriteSound { source, .. } => (
@@ -2751,11 +2833,26 @@ mod tests {
             PromptTarget::DuplicateSound,
             PromptTarget::RenameSound,
             PromptTarget::SaveSound(TrackId(1)),
+            PromptTarget::SavePerformancePreset {
+                clip: ClipId(1),
+                family: PresetFamily::Keys,
+            },
             PromptTarget::Track(TrackId(1)),
             PromptTarget::Clip(ClipId(1)),
             PromptTarget::Key(AT),
             PromptTarget::Chord(AT),
             PromptTarget::Section(AT),
+            PromptTarget::LyricLine(AT),
+            PromptTarget::NewComment {
+                host: CommentHost::Track(TrackId(1)),
+                at: AT,
+                pitch: None,
+            },
+            PromptTarget::Comment {
+                host: CommentHost::Clip(ClipId(1)),
+                id: CommentId(1),
+            },
+            PromptTarget::LintReason(0),
             PromptTarget::Lyric {
                 clip: ClipId(1),
                 index: 0,
@@ -2793,6 +2890,7 @@ mod tests {
         for target in &representatives {
             match target {
                 PromptTarget::SaveSound(_)
+                | PromptTarget::SavePerformancePreset { .. }
                 | PromptTarget::AgentConversationName
                 | PromptTarget::AgentChordReference { .. }
                 | PromptTarget::WorkshopFeedback { .. }
@@ -2804,6 +2902,10 @@ mod tests {
                 | PromptTarget::Key(_)
                 | PromptTarget::Chord(_)
                 | PromptTarget::Section(_)
+                | PromptTarget::LyricLine(_)
+                | PromptTarget::NewComment { .. }
+                | PromptTarget::Comment { .. }
+                | PromptTarget::LintReason(_)
                 | PromptTarget::Lyric { .. }
                 | PromptTarget::Phonemes { .. }
                 | PromptTarget::Lyrics { .. }
@@ -3086,31 +3188,6 @@ mod tests {
 /// here: the sheet's three buttons carry names a test can find them by.
 #[cfg(test)]
 mod window_tests {
-    #[gpui::test]
-    fn audio_load_dialog_escape_cancels_without_sending_consent(cx: &mut gpui::TestAppContext) {
-        let (app, cx) = crate::harness::open(cx);
-        let (response, receiver) = std::sync::mpsc::channel();
-        app.update(cx, |this, _| {
-            this.open_prompt(super::Prompt::ask(
-                this.t(auris_i18n::Key::AudioModelLoadTitle),
-                super::Question::AudioModelLoad(std::sync::Arc::new(
-                    crate::ui::agent_chat::AudioLoadRequest {
-                        model: "test-audio".into(),
-                        response,
-                    },
-                )),
-            ));
-        });
-        crate::harness::paint(&app, cx);
-        cx.simulate_keystrokes("escape");
-        crate::harness::paint(&app, cx);
-        app.read_with(cx, |this, _| assert!(this.prompt.is_none()));
-        assert_eq!(
-            receiver.try_recv(),
-            Err(std::sync::mpsc::TryRecvError::Disconnected)
-        );
-    }
-
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 

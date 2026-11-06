@@ -22,6 +22,8 @@ pub mod song_authoring;
 pub mod song_ideas;
 pub mod timbre_names;
 pub mod workshop;
+/// The chat's composition commands, which the desktop turns into assignments.
+pub use toolbox::phase_commands::PhaseCommand;
 
 use std::io::Read;
 use std::path::PathBuf;
@@ -269,7 +271,7 @@ fn parse_args(
         return Err("--max-turns must be positive".into());
     }
     Ok(Command::Run(Options {
-        system_prompt: system_prompt(prefs),
+        system_prompt: live_system_prompt(prefs),
         context_tokens,
         output_tokens,
         thinking,
@@ -326,13 +328,20 @@ fn parse_command(
 /// Musical principles shared by live composition, startup directions and lyric writing.
 const MUSICAL_DESIGN_INSTRUCTIONS: &str = include_str!("prompts/musical-design.md");
 
-/// Built-in shared live-agent prompt for the active prompt profile.
+/// Built-in shared live-agent prompt: the common core of every composition phase.
 /// Settings displays this text when no replacement has been saved.
+///
+/// It carries only the rules that hold in every phase. What a phase asks for — its musical
+/// guidance, its tool essentials and its technique index — comes back from `enter_phase`, so a
+/// model carries the phase it is in and not the other two.
 pub fn default_system_prompt() -> String {
-    preamble_for_profile(toolbox::composition_workflows::enabled())
+    include_str!("prompts/core.md").to_owned()
 }
 
 /// Resolves the user's replacement prompt, preserving its text exactly unless blank.
+///
+/// This is the *editable* text Settings shows; what a model receives is
+/// [`live_system_prompt`], which follows it with the environment.
 pub fn system_prompt(prefs: &auris_session::AgentPreferences) -> String {
     if prefs.system_prompt.trim().is_empty() {
         default_system_prompt()
@@ -341,23 +350,23 @@ pub fn system_prompt(prefs: &auris_session::AgentPreferences) -> String {
     }
 }
 
+/// [`system_prompt`] followed by the running build's environment: what a live agent receives.
+///
+/// The environment line follows a replacement prompt too. It is facts about this process
+/// (version, build, platform), not instructions, and a model asked "which version is this?"
+/// should not have to guess because the user rewrote the musical guidance. It is kept out of
+/// [`system_prompt`] so that Settings never shows it, and saving never stores it.
+pub fn live_system_prompt(prefs: &auris_session::AgentPreferences) -> String {
+    format!(
+        "{}\n{}",
+        system_prompt(prefs),
+        toolbox::environment::Environment::current().prompt_note()
+    )
+}
+
 #[cfg(test)]
 fn preamble() -> String {
     default_system_prompt()
-}
-
-fn preamble_for_profile(modular: bool) -> String {
-    let mut text = format!(
-        "{}\n{}\n{}",
-        include_str!("prompts/composition.md"),
-        MUSICAL_DESIGN_INSTRUCTIONS,
-        include_str!("prompts/live-tools.md")
-    );
-    // Detailed musical/operation guidance is returned by tool_help when needed.
-    if modular {
-        text.push_str("\nFor music-making select production_record select_workflow (composition, accompaniment, vocals, local_edit or delivery), choose writing_order harmony_first, melody_first or rhythm_first, and follow the returned workflow.\n");
-    }
-    text
 }
 
 /// A tool's refusal, carried as an error the runtime can classify.
@@ -508,9 +517,11 @@ fn strip_markup(text: &str) -> String {
 }
 
 /// File-free editing and reference tools for the rig agent.
-fn armed(builder: AgentBuilder, bridge: Option<Bridge>, prompt: &str) -> Agent {
+/// `hearing` offers `listen`, and only with a bridge: the desktop is what renders the audition
+/// and the bridge is what carries its audio into the next request.
+fn armed(builder: AgentBuilder, bridge: Option<Bridge>, prompt: &str, hearing: bool) -> Agent {
     let mut builder = builder.preamble(prompt).dynamic_tools(Vec::new());
-    for definition in host::ToolHost::definitions() {
+    for definition in host::ToolHost::definitions_for(hearing && bridge.is_some()) {
         let tool_name = definition.name.clone();
         let bridge = bridge.clone();
         builder = builder.dynamic_tool(rig::tool::DynamicTool::new(
@@ -548,6 +559,14 @@ fn armed(builder: AgentBuilder, bridge: Option<Bridge>, prompt: &str) -> Agent {
                         .call_with_origin(&name, args, origin)
                         .await
                         .map_err(ToolExecutionError::other)?;
+                    if name == host::LISTEN && reply["ok"] == true {
+                        let audition = serde_json::from_value(reply["audition"].clone())
+                            .map_err(|e| ToolExecutionError::other(e.to_string()))?;
+                        return bridge
+                            .accept_audition(&audition)
+                            .map(ToolOutput::text)
+                            .map_err(ToolExecutionError::other);
+                    }
                     if name == "inspect_audio" && reply["ok"] == true {
                         let report = serde_json::from_value(reply["inspection"].clone())
                             .map_err(|e| ToolExecutionError::other(e.to_string()))?;
@@ -573,12 +592,16 @@ fn armed(builder: AgentBuilder, bridge: Option<Bridge>, prompt: &str) -> Agent {
 /// treat it that way or tolerate it, and it saves an `Option` dance at each arm.
 #[cfg(test)]
 fn build_agent(options: &Options) -> Result<Agent, String> {
-    build_for_worker(options, None)
+    build_for_worker(options, None, false)
 }
 
-fn build_for_worker(options: &Options, bridge: Option<Bridge>) -> Result<Agent, String> {
+fn build_for_worker(
+    options: &Options,
+    bridge: Option<Bridge>,
+    hearing: bool,
+) -> Result<Agent, String> {
     build_with(options, |builder| {
-        armed(builder, bridge, &options.system_prompt)
+        armed(builder, bridge, &options.system_prompt, hearing)
     })
 }
 
@@ -969,9 +992,9 @@ fn check_attachments(provider: Provider, audio: &[String]) -> Result<(), String>
             }) =>
         {
             Err(
-                "This agent's rig Ollama adapter cannot send audio attachments. Use listen for \
-             a separate audio critic, or --provider openai against an audio-capable endpoint \
-             implementing input_audio (including a compatible Ollama /v1 endpoint)."
+                "This agent's rig Ollama adapter cannot send audio attachments. Use --provider \
+             openai against an audio-capable endpoint implementing input_audio (including a \
+             compatible Ollama /v1 endpoint)."
                     .to_string(),
             )
         }
@@ -1427,9 +1450,11 @@ mod tests {
         let body: serde_json::Value = serde_json::from_str(&requests[0]).unwrap();
         assert_eq!(
             body["messages"][0]["content"],
-            serde_json::json!([{"type":"text", "text":default_system_prompt()}])
+            serde_json::json!([{"type":"text", "text":live_system_prompt(&prefs)}])
         );
-        assert!(default_system_prompt().contains(MUSICAL_DESIGN_INSTRUCTIONS));
+        let sent = body["messages"][0]["content"][0]["text"].as_str().unwrap();
+        assert!(sent.starts_with(&default_system_prompt()));
+        assert!(sent.contains(&format!("Auris Studio {}", env!("CARGO_PKG_VERSION"))));
     }
 
     #[tokio::test]
@@ -1458,47 +1483,47 @@ mod tests {
         assert_eq!(body["messages"][0]["role"], "system");
         assert_eq!(
             body["messages"][0]["content"],
-            serde_json::json!([{"type":"text", "text":custom}])
+            serde_json::json!([{"type":"text", "text":live_system_prompt(&prefs)}])
         );
+        // The replacement is sent verbatim, followed only by the environment's facts.
+        let sent = body["messages"][0]["content"][0]["text"].as_str().unwrap();
+        assert_eq!(
+            sent.strip_prefix(custom)
+                .and_then(|rest| rest.strip_prefix('\n')),
+            Some(
+                toolbox::environment::Environment::current()
+                    .prompt_note()
+                    .as_str()
+            )
+        );
+        // Settings edits the instructions alone, so saving never stores the environment.
+        assert_eq!(system_prompt(&prefs), custom);
         let mut defaults = prefs;
         defaults.system_prompt = " \n ".into();
         assert_eq!(system_prompt(&defaults), default_system_prompt());
     }
 
     #[test]
-    fn experimental_prompt_keeps_safety_contracts_and_the_same_catalog() {
-        let catalog = host::ToolHost::definitions()
-            .iter()
-            .map(|t| t.name.clone())
-            .collect::<Vec<_>>();
-        let modular = preamble_for_profile(true);
-        let legacy = preamble_for_profile(false);
-        for text in [&modular, &legacy] {
-            assert_eq!(text.matches(MUSICAL_DESIGN_INSTRUCTIONS).count(), 1);
-            assert!(
-                text.len() < 9000,
-                "Shared prompt grew to {} bytes",
-                text.len()
-            );
-            for contract in [
-                "inspect_project",
-                "read_notes",
-                "expected_revision",
-                "0..1",
-                "production_record",
-                "Human listening",
-            ] {
-                assert!(text.contains(contract), "Missing {contract}");
-            }
-        }
-        assert!(modular.contains("select_workflow"));
-        assert_eq!(
-            catalog,
-            host::ToolHost::definitions()
-                .iter()
-                .map(|t| t.name.clone())
-                .collect::<Vec<_>>()
+    fn the_common_core_keeps_safety_contracts_and_leaves_music_to_the_phases() {
+        let core = default_system_prompt();
+        // The musical guidance arrives with each phase's instructions, not in the core.
+        assert!(!core.contains(MUSICAL_DESIGN_INSTRUCTIONS));
+        assert!(
+            core.len() < 4500,
+            "The common core grew to {} bytes",
+            core.len()
         );
+        for contract in [
+            "inspect_project",
+            "read_notes",
+            "expected_revision",
+            "0..1",
+            "production_record",
+            "Human listening",
+            "enter_phase",
+        ] {
+            assert!(core.contains(contract), "Missing {contract}");
+        }
     }
     use super::*;
 

@@ -14,6 +14,7 @@ use auris_core::{
     PluginCategory, PluginDescriptor, PrepareContext, ProcessContext,
 };
 use auris_dsp::Adsr;
+use std::borrow::Cow;
 
 use crate::params::finite_or;
 use crate::render::{StereoImage, downmix_to_extra_channels, pan_gains};
@@ -21,12 +22,14 @@ use crate::{ParamBank, SegmentRenderer, VoiceAllocator, render_segments};
 
 mod body;
 mod calibration;
+mod decimator;
 mod legato;
 mod modal;
 mod pack;
 mod string;
 
 use body::Body;
+use decimator::Decimator;
 use legato::Legato;
 use modal::{Modal, VOICING};
 use string::StringModel;
@@ -37,6 +40,8 @@ use modal::PianoVoicing;
 pub use modal::piano::PianoVoicing;
 
 const VOICES: usize = 24;
+/// Largest internal sample-rate multiple of any [`Quality`].
+const MAX_OVERSAMPLING: usize = 2;
 const P_HARDNESS: u32 = 0;
 const P_POSITION: u32 = 1;
 const P_DECAY: u32 = 2;
@@ -54,6 +59,80 @@ const P_PICKUP_POSITION: u32 = 4;
 const P_TONE: u32 = 7;
 const P_PICKUP_Q: u32 = 8;
 const P_DECAY_RATIO: u32 = 9;
+
+/// How finely a physical model is simulated.
+///
+/// Every instrument has two of these controls: one for live playback, where the audio callback's
+/// budget is the limit, and one for offline rendering (export, freeze, bounce), where nothing but
+/// time is. A level is chosen when a note is struck and kept for that note, so changing either
+/// control never disturbs a sounding string and never allocates.
+///
+/// [`Quality::Standard`] is the model every calibration in this module was fitted at. The other
+/// two levels move from it only where a measurement said the move was worth something:
+///
+/// | Model | Draft | High |
+/// |---|---|---|
+/// | Piano | a third of the partial budget: 64 partial-strings a voice instead of 192 | as Standard |
+/// | Bell, Mallet | the first 8 modes instead of 32 | as Standard |
+/// | Guitar, Electric Guitar, Bass, Strings | as Standard | the string loop runs 2× oversampled |
+///
+/// The piano is the one expensive model, about eight times the cost of any other with 24 notes
+/// held, and Draft takes that to a little over half. What it costs in sound is small: over a
+/// second of a struck note it differs from Standard by -31 dB RMS on A0, -38 dB on A1 and less
+/// than -52 dB from A2 up. Giving the piano *more* partials instead was measured and left out:
+/// every partial below the band edge changed A0 by -73 dB and higher notes by nothing, because
+/// the hammer's contact spectrum and the strings' frictional loss have already taken them.
+/// Bars and bells are cheap at any level; their Draft is there so the control means the same
+/// thing on every model, and changes a struck bar by about -52 dB.
+///
+/// Oversampling a delay-line string halves the interpolation error in its loop. The audible
+/// place for that is the top of a plucked string's range: at the host rate the guitar's E6
+/// stretches its third to fifth harmonics one to three cents sharp, and at twice the rate they
+/// are harmonic again. A decimator band-limits the doubled rate back to the host's, and costs
+/// each string voice about as much as the string itself. Neither the bowed nor the plucked
+/// strings were measurably aliasing at the host rate, so that is not what High is for.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Quality {
+    /// Cheaper than the calibrated model, for dense live arrangements on a slow machine.
+    Draft,
+    /// The calibrated model.
+    #[default]
+    Standard,
+    /// More of the physics than a live callback can always afford; the default for rendering.
+    High,
+}
+
+impl Quality {
+    /// Choice labels in parameter-value order.
+    pub const CHOICES: &'static [Cow<'static, str>] = &[
+        Cow::Borrowed("Draft"),
+        Cow::Borrowed("Standard"),
+        Cow::Borrowed("High"),
+    ];
+
+    /// The level a choice parameter's value names, rounding to the nearest step.
+    pub fn from_value(value: f32) -> Self {
+        match finite_or(value, 1.0).round() as i32 {
+            i32::MIN..=0 => Self::Draft,
+            1 => Self::Standard,
+            _ => Self::High,
+        }
+    }
+
+    /// The choice parameter's value for this level.
+    pub const fn value(self) -> f32 {
+        match self {
+            Self::Draft => 0.0,
+            Self::Standard => 1.0,
+            Self::High => 2.0,
+        }
+    }
+
+    /// Internal sample-rate multiple of a delay-line string at this level.
+    fn oversampling(self) -> usize {
+        if self == Self::High { 2 } else { 1 }
+    }
+}
 
 /// Physical structure and excitation used by an instrument.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -200,6 +279,10 @@ struct Voice {
     string: StringModel,
     envelope: Adsr,
     presence: crate::presence::Presence,
+    /// Internal samples per output frame for a delay-line string, fixed at the strike.
+    oversampling: usize,
+    /// Band-limits an oversampled string back to the host rate.
+    decimator: Decimator,
     held: bool,
     deferred: bool,
     age: usize,
@@ -220,7 +303,9 @@ impl Voice {
         modal.prepare(model, voicing);
         let mut string = StringModel::default();
         if model.is_string() {
-            string.prepare(rate);
+            // Sized for the highest quality's internal rate, so a change of quality never
+            // allocates on the audio thread.
+            string.prepare(rate * MAX_OVERSAMPLING as f32);
         }
         let mut envelope = Adsr::new();
         envelope.set_sample_rate(rate);
@@ -238,6 +323,8 @@ impl Voice {
                     _ => 0.0,
                 },
             ),
+            oversampling: 1,
+            decimator: Decimator::default(),
             held: false,
             deferred: false,
             age: 0,
@@ -290,6 +377,12 @@ pub struct Physical {
     width_param: u32,
     /// One-pole coefficient by which a voice's pan follows the width control.
     pan_step: f32,
+    /// Id of the live-playback [`Quality`] choice, which follows the width.
+    quality_param: u32,
+    /// Id of the offline-render [`Quality`] choice, which follows the live one.
+    render_quality_param: u32,
+    /// Whether the block being rendered is an offline one, which picks the render quality.
+    offline: bool,
 }
 
 impl Physical {
@@ -449,6 +542,30 @@ impl Physical {
             2.0,
             1.0,
         ));
+        let quality_param = width_param + 1;
+        let render_quality_param = width_param + 2;
+        descriptors.push(
+            ParamDescriptor::new(
+                quality_param,
+                "quality",
+                "Live Quality",
+                0.0,
+                2.0,
+                Quality::Standard.value(),
+            )
+            .with_choices(Quality::CHOICES),
+        );
+        descriptors.push(
+            ParamDescriptor::new(
+                render_quality_param,
+                "render_quality",
+                "Render Quality",
+                0.0,
+                2.0,
+                Quality::High.value(),
+            )
+            .with_choices(Quality::CHOICES),
+        );
         let params = ParamBank::new(descriptors);
         Self {
             model,
@@ -474,7 +591,20 @@ impl Physical {
             scratch: Vec::new(),
             width_param,
             pan_step: 1.0,
+            quality_param,
+            render_quality_param,
+            offline: false,
         }
+    }
+
+    /// The level a note struck now is simulated at: the render quality while rendering
+    /// offline, the live quality otherwise.
+    pub fn quality(&self) -> Quality {
+        Quality::from_value(self.params.at(if self.offline {
+            self.render_quality_param
+        } else {
+            self.quality_param
+        }))
     }
 
     /// Replaces the piano's register curves and soundboard for offline fitting.
@@ -676,6 +806,7 @@ impl Physical {
             settings.position = touch_position(at);
         }
         let stretch = self.stretch(pitch);
+        let quality = self.quality();
         if self.is_legato() {
             self.legato.voice = Some(assignment.index);
         }
@@ -706,13 +837,20 @@ impl Physical {
         voice.pan = voice.position * self.params.at(self.width_param);
         let hz = pitch_to_hz(f32::from(pitch) + self.bend + stretch).min(self.rate * 0.2);
         if self.model.is_string() {
-            voice
-                .string
-                .excite(self.model, hz, velocity, self.rate, settings);
+            voice.oversampling = quality.oversampling();
+            voice.decimator.reset();
+            voice.string.excite(
+                self.model,
+                hz,
+                velocity,
+                self.rate * voice.oversampling as f32,
+                voice.oversampling as f32,
+                settings,
+            );
         } else {
             voice
                 .modal
-                .excite(self.model, hz, velocity, self.rate, settings);
+                .excite(self.model, hz, velocity, self.rate, quality, settings);
         }
         voice.limit = voice
             .modal
@@ -927,7 +1065,13 @@ impl SegmentRenderer for Physical {
             for (frame, (l, r)) in left.iter_mut().zip(right.iter_mut()).enumerate() {
                 let raw = if self.model.is_string() {
                     let bow = if voice.held { self.expression } else { 0.0 };
-                    voice.string.next(bow, pressure)
+                    if voice.oversampling > 1 {
+                        let first = voice.string.next(bow, pressure);
+                        let second = voice.string.next(bow, pressure);
+                        voice.decimator.process(first, second)
+                    } else {
+                        voice.string.next(bow, pressure)
+                    }
                 } else {
                     voice.modal.next()
                 };
@@ -1049,6 +1193,7 @@ impl Instrument for Physical {
     }
     fn process(&mut self, events: &[NoteEvent], out: &mut AudioBuffer, ctx: &ProcessContext) {
         let frames = ctx.block_frames.min(out.frame_count());
+        self.offline = ctx.is_offline;
         render_segments(self, events, out, frames);
         if self.motion.is_watched() {
             self.motion_frames = self.motion_frames.saturating_add(frames);

@@ -54,6 +54,12 @@ pub struct KeyPoint {
 /// so an empty map would panic rather than merely misbehave — which is why deserialization goes
 /// through a private repr instead of a plain derive.
 ///
+/// One more, the one [`ChordMap`] keeps for chords: **no point restates the key already in
+/// force.** A composer that writes the key at the head of every section, an agent that rewrites
+/// one range, a key change removed from between two stretches in the same key — each would
+/// otherwise leave `E minor | E minor | E minor` along the lane, three badges for what is one key.
+/// Every mutation drops such a point, which never changes what [`Self::key_at`] answers anywhere.
+///
 /// The conversion cannot fail, which is where this parts company with the tempo map: a tempo of
 /// zero divides by zero in the render path and has to be refused, whereas a key that will not
 /// parse costs one key change and nothing else.
@@ -135,7 +141,21 @@ impl KeyMap {
         points.sort_by_key(|point| point.tick);
         points[0].tick = Ticks::ZERO;
         points.dedup_by_key(|point| point.tick);
-        Self { points }
+        let mut map = Self { points };
+        map.coalesce();
+        map
+    }
+
+    /// Drops every point that restates the key already in force before it.
+    ///
+    /// The anchor at tick 0 is never one of them: nothing is in force before it.
+    fn coalesce(&mut self) {
+        let mut sounding = None;
+        self.points.retain(|point| {
+            let changes = Some(point.key) != sounding;
+            sounding = Some(point.key);
+            changes
+        });
     }
 
     /// The key changes, ordered by position.
@@ -151,6 +171,7 @@ impl KeyMap {
     /// Replaces the key of the first segment.
     pub fn set_initial(&mut self, key: Key) {
         self.points[0].key = key;
+        self.coalesce();
     }
 
     /// `true` when one key holds for the whole song.
@@ -159,21 +180,28 @@ impl KeyMap {
     }
 
     /// Inserts or replaces a key change.
+    ///
+    /// A change to the key already in force is not stored, and one that makes the change after
+    /// it redundant takes that one away: either way the map says the same thing in fewer points.
     pub fn set_point(&mut self, tick: Ticks, key: Key) {
         let tick = tick.max_zero();
         match self.points.binary_search_by_key(&tick, |point| point.tick) {
             Ok(index) => self.points[index].key = key,
             Err(index) => self.points.insert(index, KeyPoint { tick, key }),
         }
+        self.coalesce();
     }
 
     /// Removes the key change at `tick`. The anchor at tick 0 cannot be removed.
+    ///
+    /// When the key before it is the key the next change names, the two stretches join into one.
     pub fn remove_point(&mut self, tick: Ticks) {
         if tick == Ticks::ZERO {
             return;
         }
         if let Ok(index) = self.points.binary_search_by_key(&tick, |point| point.tick) {
             self.points.remove(index);
+            self.coalesce();
         }
     }
 
@@ -697,6 +725,69 @@ mod tests {
         keys.remove_point(bar(4));
         assert!(keys.is_constant());
         assert_eq!(keys.key_at(bar(4)), key("A minor"));
+    }
+
+    #[test]
+    fn a_key_map_never_restates_the_key_in_force() {
+        // The composer writes the key at the head of every section. Three sections in E minor
+        // are one stretch of E minor, and the lane must draw it once.
+        let keys = KeyMap::from_points(vec![
+            KeyPoint {
+                tick: Ticks::ZERO,
+                key: key("E minor"),
+            },
+            KeyPoint {
+                tick: bar(1),
+                key: key("E minor"),
+            },
+            KeyPoint {
+                tick: bar(9),
+                key: key("E minor"),
+            },
+            KeyPoint {
+                tick: bar(17),
+                key: key("G major"),
+            },
+            KeyPoint {
+                tick: bar(25),
+                key: key("G major"),
+            },
+        ]);
+        let ticks: Vec<_> = keys.points().iter().map(|point| point.tick).collect();
+        assert_eq!(ticks, vec![Ticks::ZERO, bar(17)]);
+
+        // Every mutation keeps it: a change to the key in force is not one…
+        let mut keys = KeyMap::constant(key("E minor"));
+        keys.set_point(bar(8), key("E minor"));
+        assert!(keys.is_constant());
+
+        // …a write that makes the next change redundant takes it away…
+        keys.set_point(bar(16), key("G major"));
+        keys.set_point(bar(8), key("G major"));
+        let ticks: Vec<_> = keys.points().iter().map(|point| point.tick).collect();
+        assert_eq!(ticks, vec![Ticks::ZERO, bar(8)]);
+
+        // …removing a change between two stretches in the same key joins them…
+        let mut keys = KeyMap::constant(key("C major"));
+        keys.set_point(bar(4), key("A minor"));
+        keys.set_point(bar(8), key("C major"));
+        keys.remove_point(bar(4));
+        assert!(keys.is_constant(), "{keys:?}");
+
+        // …and so does retyping the song's own key to the one that follows it.
+        let mut keys = KeyMap::constant(key("C major"));
+        keys.set_point(bar(4), key("D major"));
+        keys.set_initial(key("D major"));
+        assert!(keys.is_constant(), "{keys:?}");
+
+        // The same holds for a file written before the rule existed.
+        let json = r#"{"points":[
+            {"tick":0,"key":"E minor"},
+            {"tick":3840,"key":"E minor"},
+            {"tick":34560,"key":"E minor"}
+        ]}"#;
+        let loaded: KeyMap = serde_json::from_str(json).unwrap();
+        assert!(loaded.is_constant(), "{loaded:?}");
     }
 
     #[test]

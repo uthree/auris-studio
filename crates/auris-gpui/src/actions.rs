@@ -152,6 +152,8 @@ actions!(
         NudgeClipsRight,
         /// Cut the selected clip in two where the playhead is.
         SplitClip,
+        /// Join the selected clips on one track into one, or the selected clip with the next.
+        JoinClips,
         /// Mute or unmute the selected clip.
         ToggleClipMute,
         /// Repeat the selected clip out to the next one, or stop it repeating.
@@ -204,8 +206,12 @@ actions!(
         ToggleAgent,
         /// Show or hide the strip of section names above the arrangement.
         ToggleStructureLane,
-        /// Show or hide the key and chord strip above the arrangement.
-        ToggleHarmonyLane,
+        /// Show or hide the strip of key changes above the chords.
+        ToggleKeyLane,
+        /// Show or hide the chord strip above the arrangement.
+        ToggleChordLane,
+        /// Show or hide the song-wide lyrics strip under the chords.
+        ToggleLyricsLane,
         /// Show or hide the tempo changes marked along the ruler.
         ToggleTempoMarks,
         /// Show or hide the pitch bend strip under the piano roll.
@@ -566,11 +572,13 @@ bindable! {
         "view.about",           GroupHelp,      CmdAbout,              "" => ShowAbout;
         "help.report_problem",  GroupHelp,      IssueReport,           "" => ReportProblem;
         "help.check_updates",   GroupHelp,      CmdCheckForUpdates,    "" => CheckForUpdates;
-        // The three strips over the arrangement. Out on `secondary-alt-` because they are
+        // The strips over the arrangement. Out on `secondary-alt-` because they are
         // arrangement furniture rather than things reached mid-take, and because the plain and
         // shifted forms of these letters are all spoken for.
         "view.structure_lane",  GroupView,      CmdShowStructureLane,  "secondary-alt-s" => ToggleStructureLane;
-        "view.harmony_lane",    GroupView,      CmdShowHarmonyLane,    "secondary-alt-h" => ToggleHarmonyLane;
+        "view.key_lane",        GroupView,      CmdShowKeyLane,        "secondary-alt-k" => ToggleKeyLane;
+        "view.chord_lane",      GroupView,      CmdShowChordLane,      "secondary-alt-h" => ToggleChordLane;
+        "view.lyrics_lane",     GroupView,      CmdShowLyricsLane,     "secondary-alt-y" => ToggleLyricsLane;
         "view.tempo_marks",     GroupView,      CmdShowTempoMarks,     "secondary-alt-t" => ToggleTempoMarks;
         "view.bend_lane",       GroupView,      CmdShowBendLane,       "secondary-alt-b" => ToggleBendLane;
         "view.modulation_lane", GroupView,      CmdShowModulationLane, "secondary-alt-w" => ToggleModulationLane;
@@ -668,6 +676,8 @@ bindable! {
         // X is the scissors everywhere that has a pair. Not ⌘T, which Logic splits with and
         // which is the instrument track here.
         "clip.split",           GroupClip,      CmdSplitClip,          "alt-x"       => SplitClip;
+        // Logic's Join, and the pair of the scissors above it.
+        "clip.join",            GroupClip,      CmdJoinClips,          "secondary-j" => JoinClips;
         "clip.mute",            GroupClip,      CmdToggleClipMute,     ""            => ToggleClipMute;
         // Logic's own key for looping a region, and a bare letter is free here for the reason
         // `edit.next_tool` is: the arrangement is not a place anything types.

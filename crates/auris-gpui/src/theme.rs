@@ -1378,6 +1378,34 @@ impl Theme {
         self.categorical_color(source.h - anchor.h, source.s / anchor.s)
     }
 
+    /// The document colour that tints a track in a timbre cluster's hue.
+    ///
+    /// The Find Sounds map marks cluster `n` with [`atelier`]'s `n`th categorical colour, a hue
+    /// placed relative to the accent. A track keeps only an RGB value, and
+    /// [`track_color`](Self::track_color) reads any value outside the palette as a hue offset
+    /// from the accent, so the value stored is the one carrying that same offset: in this theme
+    /// the track draws in the cluster's hue, and under another theme both move together.
+    /// Lightness and saturation stay the track palette's, so a recoloured track still reads as a
+    /// track. Palette values mean palette *slots*, so a result that lands on one is nudged off it.
+    pub fn timbre_cluster_track_color(&self, cluster: usize) -> auris_session::prelude::Color {
+        use auris_session::prelude::Color;
+        let offset = self.atelier.categorical(cluster).h - self.accent.h;
+        let anchor: Hsla = rgb(Color::PALETTE[0].0).into();
+        let tint = gpui::Rgba::from(hsla(
+            (anchor.h + offset).rem_euclid(1.0),
+            anchor.s,
+            anchor.l,
+            1.0,
+        ));
+        let channel = |value: f32| (value.clamp(0.0, 1.0) * 255.0).round() as u32;
+        let packed = channel(tint.r) << 16 | channel(tint.g) << 8 | channel(tint.b);
+        if Color::PALETTE.iter().any(|slot| slot.0 == packed) {
+            Color(packed ^ 1)
+        } else {
+            Color(packed)
+        }
+    }
+
     /// Stable categorical colour for a visualized channel, string or resonant mode.
     ///
     /// Uses the active scheme's track palette, including custom overrides, with contrast
@@ -1479,14 +1507,21 @@ impl Metrics {
     /// Height of the harmony lane, between the structure lane and the clip lanes.
     ///
     /// Two rows: a thin strip of key changes over a taller strip of chords. See
-    /// [`paint::harmony_rows`](crate::ui::paint::harmony_rows) for why they are not one.
+    /// [`paint::harmony_rows`](crate::ui::paint::harmony_rows) for why they are not one. Either
+    /// can be hidden, and the lane then takes only the other's height.
     pub const HARMONY_LANE_HEIGHT: Pixels = px(34.0);
+    /// Height of the strip of key changes along the top of the harmony lane.
+    pub const KEY_ROW_HEIGHT: Pixels = px(13.0);
+    /// Height of the chord blocks under the key strip: the rest of the harmony lane.
+    pub const CHORD_ROW_HEIGHT: Pixels = px(21.0);
     /// Height of the structure lane, between the ruler and the harmony.
     ///
     /// One row of section names — イントロ, Aメロ, サビ — coarser than the harmony below it,
     /// which is why it sits above: the stack reads from the largest division of the song down
     /// to the smallest.
     pub const STRUCTURE_LANE_HEIGHT: Pixels = px(18.0);
+    /// Height of the lyrics lane under the chords.
+    pub const LYRICS_LANE_HEIGHT: Pixels = px(18.0);
     /// Width of the track header column.
     ///
     /// Wide enough for the button row an *audio* track carries — mute, solo, arm and input
@@ -2162,6 +2197,34 @@ mod tests {
             for neutral in [0x000000, 0x888888, 0xffffff] {
                 assert_eq!(theme.track_color(neutral).s, 0.0);
             }
+        }
+    }
+
+    #[test]
+    fn timbre_cluster_tracks_draw_in_their_cluster_hue_in_every_scheme() {
+        let hue_gap = |a: f32, b: f32| {
+            let d = (a - b).rem_euclid(1.0);
+            d.min(1.0 - d)
+        };
+        for scheme in SCHEMES {
+            let theme = Theme::from_scheme(scheme);
+            let mut stored = Vec::new();
+            for cluster in 0..auris_session::MAX_TIMBRE_CLUSTERS {
+                let color = theme.timbre_cluster_track_color(cluster);
+                assert!(!auris_session::prelude::Color::PALETTE.contains(&color));
+                let track = theme.track_color(color.0);
+                let marker = theme.atelier.categorical(cluster);
+                assert!(
+                    hue_gap(track.h, marker.h) < 0.01,
+                    "cluster {cluster}: track hue {} vs map hue {}",
+                    track.h,
+                    marker.h
+                );
+                stored.push(color);
+            }
+            stored.sort_by_key(|color| color.0);
+            stored.dedup();
+            assert_eq!(stored.len(), auris_session::MAX_TIMBRE_CLUSTERS);
         }
     }
 

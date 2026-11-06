@@ -14,8 +14,19 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 /// Resolves the usable Ollama context before constructing the request and its budget guard.
+///
+/// An Ollama server refuses a reasoning request to a model that cannot think (`"… does not
+/// support thinking"`), so a model whose capabilities omit `thinking` has the Agent Panel's
+/// effort dropped for this run rather than failing every request. That holds behind the
+/// OpenAI-compatible dialect too, where the same server answers.
 pub(super) async fn preflight(options: &mut Options) -> Result<bool, String> {
     if options.provider != Provider::Ollama {
+        if let Some(origin) = options.url.as_deref().and_then(ollama_origin)
+            && let Some(shown) = ollama_show(&origin, options).await
+            && !advertises(&shown, "thinking")
+        {
+            without_reasoning(options);
+        }
         return Ok(true);
     }
     let base = options
@@ -47,9 +58,76 @@ pub(super) async fn preflight(options: &mut Options) -> Result<bool, String> {
         ));
     }
     options.context_tokens = context;
-    Ok(shown["capabilities"]
+    if !advertises(&shown, "thinking") {
+        without_reasoning(options);
+    }
+    Ok(advertises(&shown, "vision"))
+}
+
+/// Drops whatever asks a model to think. An explicit "off" stays: Ollama accepts `think: false`
+/// and `reasoning_effort: "none"` from a model that cannot think, and refuses only a request
+/// that turns thinking on.
+fn without_reasoning(options: &mut Options) {
+    if !matches!(
+        options.effort,
+        ReasoningEffort::Default | ReasoningEffort::None
+    ) {
+        options.effort = ReasoningEffort::Default;
+    }
+    if options.thinking == Some(true) {
+        options.thinking = None;
+    }
+}
+
+/// `/api/show` for the model, or nothing when the server cannot say.
+async fn ollama_show(origin: &str, options: &Options) -> Option<serde_json::Value> {
+    let mut request = reqwest::Client::new()
+        .post(format!("{origin}/api/show"))
+        .timeout(MODEL_LIST_PATIENCE)
+        .json(&serde_json::json!({"model":options.model}));
+    if let Some(key) = &options.key {
+        request = request.bearer_auth(key);
+    }
+    request
+        .send()
+        .await
+        .ok()?
+        .error_for_status()
+        .ok()?
+        .json()
+        .await
+        .ok()
+}
+
+/// Whether the model takes audio input, which is what offers it `listen`.
+///
+/// rig's Ollama adapter cannot send audio, so only the OpenAI-compatible dialect can hear. An
+/// Ollama server behind that dialect says what a model accepts, and is asked; any other
+/// endpoint is trusted to take audio, as audio attachments already trust it.
+pub(super) async fn hears(options: &Options) -> bool {
+    if options.provider != Provider::OpenAi {
+        return false;
+    }
+    let Some(origin) = options.url.as_deref().and_then(ollama_origin) else {
+        return true;
+    };
+    ollama_show(&origin, options)
+        .await
+        .is_some_and(|shown| advertises(&shown, "audio"))
+}
+
+/// The Ollama server behind an OpenAI-compatible URL: port 11434, path `/v1`.
+fn ollama_origin(url: &str) -> Option<String> {
+    let parsed = reqwest::Url::parse(url).ok()?;
+    (parsed.port() == Some(11434) && parsed.path().trim_end_matches('/') == "/v1")
+        .then(|| parsed.origin().ascii_serialization())
+}
+
+/// Whether `/api/show` lists `capability` (`audio`, `vision`, `thinking`, …).
+fn advertises(shown: &serde_json::Value, capability: &str) -> bool {
+    shown["capabilities"]
         .as_array()
-        .is_some_and(|caps| caps.iter().any(|cap| cap == "vision")))
+        .is_some_and(|caps| caps.iter().any(|cap| cap == capability))
 }
 
 /// Prefer the language architecture's ceiling over auxiliary audio/vision metadata.
@@ -382,13 +460,17 @@ impl AgentHook for Guard {
                 .all(has_only_known_text)
                 .then(|| request.cloned().collect());
         }
-        if let Some(visual) = visual {
+        // An audition is heard once, in the request right after the listen call answered.
+        let audible = self.bridge.as_ref().and_then(Bridge::take_audible);
+        if visual.is_some() || audible.is_some() {
             self.state.lock().unwrap().pending_request = None;
             let mut history = event.history.to_vec();
             // Preserve contiguous assistant-call/tool-result pairs. The extra context is
             // ephemeral and tagged with the snapshot revision, never persisted as a user turn.
             let index = history.iter().rposition(|message| matches!(message, Message::Assistant { content, .. } if content.iter().any(|part| matches!(part, AssistantContent::ToolCall(_))))).unwrap_or(history.len());
-            history.insert(index, visual);
+            for message in audible.into_iter().chain(visual).rev() {
+                history.insert(index, message);
+            }
             return CompletionCallAction::Patch(
                 rig::agent::RequestPatch::default().history(history),
             );
@@ -536,6 +618,70 @@ where
 mod tests {
     use super::*;
 
+    #[test]
+    fn only_an_ollama_v1_url_is_asked_about_audio() {
+        assert_eq!(
+            ollama_origin("http://localhost:11434/v1").as_deref(),
+            Some("http://localhost:11434")
+        );
+        assert_eq!(
+            ollama_origin("http://127.0.0.1:11434/v1/").as_deref(),
+            Some("http://127.0.0.1:11434")
+        );
+        assert_eq!(ollama_origin("http://localhost:11434"), None);
+        assert_eq!(ollama_origin("https://api.openai.com/v1"), None);
+        assert_eq!(ollama_origin("not a url"), None);
+        assert!(advertises(
+            &serde_json::json!({"capabilities":["completion","vision","audio","tools"]}),
+            "audio"
+        ));
+        assert!(!advertises(
+            &serde_json::json!({"capabilities":["completion","vision"]}),
+            "audio"
+        ));
+        assert!(!advertises(&serde_json::json!({}), "audio"));
+    }
+
+    /// The reported failure: `lfm3-audio` lists no `thinking`, and a medium effort sent as
+    /// `think` was refused with HTTP 400 before the model said a word.
+    #[tokio::test]
+    async fn a_model_that_cannot_think_is_sent_no_reasoning_request() {
+        for (capabilities, effort, expected) in [
+            (
+                serde_json::json!(["completion", "audio", "tools"]),
+                ReasoningEffort::Medium,
+                ReasoningEffort::Default,
+            ),
+            // Turning thinking off is accepted, and stays asked for.
+            (
+                serde_json::json!(["completion", "audio", "tools"]),
+                ReasoningEffort::None,
+                ReasoningEffort::None,
+            ),
+            (
+                serde_json::json!(["completion", "tools", "thinking"]),
+                ReasoningEffort::Medium,
+                ReasoningEffort::Medium,
+            ),
+        ] {
+            let show = serde_json::json!({"capabilities":capabilities}).to_string();
+            let (url, _) = crate::tests::mock_server(vec![show]);
+            let prefs = auris_session::AgentPreferences {
+                provider: "ollama".into(),
+                model: "mock".into(),
+                url,
+                effort,
+                context_tokens: Some(65536),
+                ..Default::default()
+            };
+            let Command::Run(mut options) = parse_args(&[], &|_| None, &prefs).unwrap() else {
+                panic!()
+            };
+            preflight(&mut options).await.unwrap();
+            assert_eq!(options.effort, expected);
+        }
+    }
+
     #[tokio::test]
     async fn default_native_catalog_leaves_room_for_a_user_prompt() {
         let prefs = auris_session::AgentPreferences {
@@ -545,7 +691,7 @@ mod tests {
         let Command::Run(options) = parse_args(&[], &|_| None, &prefs).unwrap() else {
             panic!()
         };
-        let agent = build_for_worker(&options, None).unwrap();
+        let agent = build_for_worker(&options, None, false).unwrap();
         let guard = Guard::new(&agent, Some(32768), 4096).await.unwrap();
         assert!(
             guard.schema_tokens + 1024 <= 32768,
@@ -564,13 +710,13 @@ mod tests {
         let Command::Run(short) = parse_args(&[], &|_| None, &prefs).unwrap() else {
             panic!()
         };
-        let agent = build_for_worker(&short, None).unwrap();
+        let agent = build_for_worker(&short, None, false).unwrap();
         let short_guard = Guard::new(&agent, Some(32768), 4096).await.unwrap();
         prefs.system_prompt = "長い制作方針。\n".repeat(2000);
         let Command::Run(long) = parse_args(&[], &|_| None, &prefs).unwrap() else {
             panic!()
         };
-        let agent = build_for_worker(&long, None).unwrap();
+        let agent = build_for_worker(&long, None, false).unwrap();
         let long_guard = Guard::new(&agent, Some(32768), 4096).await.unwrap();
         assert_eq!(
             long_guard.schema_tokens - short_guard.schema_tokens,

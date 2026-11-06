@@ -650,13 +650,17 @@ a missing-string marker.
 
 A strip under the bar ruler carries the key and the chords, spanning every track because that is
 what harmony is: one thing the whole arrangement obeys at any one moment, belonging to no track.
-Like the tempo map, it changes as the song goes on.
+Like the tempo map, it changes as the song goes on. A key is marked where it *changes*: writing E
+minor at the head of three sections in E minor stores one key, not three, exactly as two bars of
+`C` are one chord.
 
-It, the structure strip above it and the tempo marks along the ruler are each shown or hidden from
-the **View** menu, and where you leave them is where they are next launch. A piece with no chords
-written pays fifty pixels a row for two empty strips; a piece being arranged around a chorus wants
-all three. Hiding a lane hides the drawing of something and never the thing — the document keeps
-its chords whether or not they are on screen.
+The structure strip, the key row, the chord row, the lyrics strip and the tempo marks along the
+ruler are each shown or hidden on their own — from the **View** menu, or from the right-click menu
+of any of the strips or of the blank corner above the track headers — and where you leave them is
+where they are next launch. A piece with no chords written pays fifty pixels a row for two empty
+strips; a piece being arranged around a chorus wants all of them. Hiding a lane hides the drawing
+of something and never the thing — the document keeps its chords whether or not they are on
+screen.
 
 Right-click it to type a chord (`IV`, `vi`, `bVII7`) or a key (`Eb`, `F# minor`), or to write one
 of the named progressions — `axis`, `marusa`, `royal-road`, `canon` and a dozen more, the same
@@ -810,27 +814,12 @@ happens off the audio thread; what runs on it allocates nothing.
 
 ### Shaping a font
 
-The sampler carries the same four controls the built-in instruments do — attack, decay, sustain,
-release — and the same draggable envelope above them. They sit *on top of* the font's own shape
-rather than replacing it: a piano's hammer is still a hammer, but you can fade it in, hold it
-under its own decay, or let it ring long after the key has gone.
-
-**It is off until you switch it on.** The `Envelope` toggle in the window is the whole of it, and
-while it is off the four sliders do nothing at all — the sampler is not multiplying every note by
-one, it is not running the mechanism. That matters because switching it on **costs** something:
-
-* **Polyphony drops to fifteen notes.** Channel expression is the only per-note gain the
-  synthesiser exposes and it applies to a whole MIDI channel, so a note that is to be faded on its
-  own needs a channel to itself. There are sixteen and one is reserved.
-* **A drum kit's choke groups stop working** — an open hi-hat is no longer cut off by a closed one.
-  The choke is only checked between notes sharing a channel, and now they do not.
-
-The window says so, in a strip under the graph, for as long as the switch is on. Turning it back
-off restores everything immediately, mid-note if need be.
-
-Once it is on, the envelope owns the note. A release of zero means the note stops when the key
-does, and the graph shows exactly that — a vertical drop with no tail. The default is a fifth of a
-second, which is close to how a General MIDI patch already behaves.
+The SoundFont player plays a font exactly as it was authored, its own envelope included; its one
+control is the level. It used to carry an attack, decay, sustain and release of its own, laid over
+the font through per-note MIDI channels, and that cost fourteen-note polyphony and a drum kit's
+choke groups for a fade the synthesiser was never built to take. To give a font sound a different
+attack or release — a piano cut off the moment the key lifts, say — render its notes to audio and
+play them from the audio sampler, whose envelope is its own.
 
 ## Built-in effects
 

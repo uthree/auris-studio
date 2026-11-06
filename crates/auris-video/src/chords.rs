@@ -38,16 +38,16 @@ const FAMILIES: [&str; 6] = [
 ];
 
 /// An installed font, read once per process.
-struct FontData {
-    bytes: Vec<u8>,
-    index: u32,
+pub(crate) struct FontData {
+    pub(crate) bytes: Vec<u8>,
+    pub(crate) index: u32,
 }
 
 /// The font chord names are drawn in, if the machine has any.
 ///
 /// Loading every installed face takes a noticeable moment, and a preview makes a renderer on
 /// every change of colour, so the answer is kept for the life of the process.
-fn system_font() -> Option<&'static FontData> {
+pub(crate) fn system_font() -> Option<&'static FontData> {
     static FONT: OnceLock<Option<FontData>> = OnceLock::new();
     FONT.get_or_init(|| {
         let mut database = fontdb::Database::new();
@@ -71,9 +71,9 @@ fn system_font() -> Option<&'static FontData> {
 }
 
 /// A chord name outlined in font units: x from the left of the name, y up from the baseline.
-struct Label {
-    path: Option<SkPath>,
-    advance: f64,
+pub(crate) struct Label {
+    pub(crate) path: Option<SkPath>,
+    pub(crate) advance: f64,
 }
 
 /// The overlay for one score, with every name it will show already outlined.
@@ -91,10 +91,7 @@ impl ChordOverlay {
         }
         let font = system_font()?;
         let face = ttf_parser::Face::parse(&font.bytes, font.index).ok()?;
-        let cap = face
-            .capital_height()
-            .filter(|height| *height > 0)
-            .map_or(f64::from(face.units_per_em()) * 0.7, f64::from);
+        let cap = capital_height(&face);
         let mut labels = HashMap::new();
         for chord in &score.chords {
             labels
@@ -212,6 +209,13 @@ impl ChordOverlay {
     }
 }
 
+/// Height of a capital in font units, which is what caption text is sized by.
+pub(crate) fn capital_height(face: &ttf_parser::Face<'_>) -> f64 {
+    face.capital_height()
+        .filter(|height| *height > 0)
+        .map_or(f64::from(face.units_per_em()) * 0.7, f64::from)
+}
+
 fn rect(
     frame: &mut Pixmap,
     style: &NoteRollStyle,
@@ -241,7 +245,7 @@ fn fill(frame: &mut Pixmap, path: &SkPath, style: &NoteRollStyle, opacity: f64, 
     frame.fill_path(path, &paint, FillRule::Winding, at, None);
 }
 
-fn unit_byte(value: f64) -> u8 {
+pub(crate) fn unit_byte(value: f64) -> u8 {
     (value.clamp(0.0, 1.0) * 255.0).round() as u8
 }
 
@@ -249,7 +253,7 @@ fn unit_byte(value: f64) -> u8 {
 ///
 /// In a chord symbol `b` and `#` are only ever accidentals — no suffix spells a word with a `b`
 /// in it — so both can be swapped for the real signs without reading the symbol.
-fn outline(face: &ttf_parser::Face<'_>, name: &str) -> Label {
+pub(crate) fn outline(face: &ttf_parser::Face<'_>, name: &str) -> Label {
     let mut builder = Outline {
         path: PathBuilder::new(),
         x: 0.0,

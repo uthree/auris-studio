@@ -109,6 +109,11 @@ pub struct NoteRollStyle {
     /// How far a sounding note sinks, as if pressed like a key, as a multiple of the usual
     /// depth: 0 keeps notes still.
     pub sink: f32,
+    /// How far apart the tracks are spread in depth, as a multiple of the usual spread: the
+    /// first track nearest and scrolling a little faster than the music, the last farthest,
+    /// slower, fainter and thinner. Every note still meets the playhead the moment it sounds.
+    /// 0 keeps the roll flat.
+    pub parallax: f32,
     /// Draw drum tracks as well as pitched ones.
     pub include_drums: bool,
     /// Show the chord sounding now in the top corner, with the next one beside it.
@@ -119,6 +124,28 @@ pub struct NoteRollStyle {
     /// Colour of the chord caption: its names, the arrow before the next one, and the bar that
     /// fills as the chord plays.
     pub chord_color: Color,
+    /// Show the line being sung as a subtitle along the bottom of the frame.
+    ///
+    /// The lines are the song-wide lyrics annotation, not the words on the notes: those are
+    /// what a voice sings, often a mora at a time or in kana, and this is what a person reads.
+    pub lyrics: bool,
+    /// Colour of the lyric subtitles. A dark rim is drawn round them whatever this is, so a
+    /// light line still reads over light notes.
+    pub lyric_color: Color,
+    /// Show the tempo in the top right corner, in beats per minute.
+    pub tempo: bool,
+    /// Show where in the bar the music is as a regular polygon in the top right corner: a
+    /// corner for each beat of the bar, the corner of the beat sounding now lit, and the outline
+    /// traced round as the bar goes by.
+    pub beat_counter: bool,
+    /// Colour of the tempo and the beat counter.
+    pub meter_color: Color,
+    /// Seconds of silence before the music starts, with the notes already in view and coming
+    /// in, so a video does not open on the first beat.
+    pub lead_in: f32,
+    /// Seconds after the mix has ended — its effect tail included — before the video does, so
+    /// the last notes have finished passing the playhead before the picture stops.
+    pub tail: f32,
 }
 
 impl Default for NoteRollStyle {
@@ -154,9 +181,17 @@ impl Default for NoteRollStyle {
             flash: true,
             particles: 1.0,
             sink: 1.0,
+            parallax: 0.0,
             include_drums: false,
             chords: true,
             chord_color: Color(0xffffff),
+            lyrics: true,
+            lyric_color: Color(0xffffff),
+            tempo: true,
+            beat_counter: true,
+            meter_color: Color(0xffffff),
+            lead_in: 1.0,
+            tail: 2.0,
         }
     }
 }
@@ -168,6 +203,10 @@ impl NoteRollStyle {
     pub const MAX_PARTICLES: f32 = 3.0;
     /// The most [`Self::sink`] can be turned up to.
     pub const MAX_SINK: f32 = 3.0;
+    /// The most [`Self::parallax`] can be turned up to.
+    pub const MAX_PARALLAX: f32 = 3.0;
+    /// The longest [`Self::lead_in`] or [`Self::tail`] can be, in seconds.
+    pub const MAX_PADDING: f32 = 10.0;
 
     /// The same style with every number in a range a renderer and an encoder can use.
     ///
@@ -206,6 +245,13 @@ impl NoteRollStyle {
             } else {
                 defaults.sink
             },
+            parallax: if self.parallax.is_finite() {
+                self.parallax.clamp(0.0, Self::MAX_PARALLAX)
+            } else {
+                defaults.parallax
+            },
+            lead_in: padding(self.lead_in, defaults.lead_in),
+            tail: padding(self.tail, defaults.tail),
             low_hue: finite_or(self.low_hue, defaults.low_hue),
             high_hue: finite_or(self.high_hue, defaults.high_hue),
             palette: if self.palette.is_empty() {
@@ -216,6 +262,10 @@ impl NoteRollStyle {
             ..self.clone()
         }
     }
+}
+
+fn padding(value: f32, fallback: f32) -> f32 {
+    finite_or(value, fallback).clamp(0.0, NoteRollStyle::MAX_PADDING)
 }
 
 fn finite_or(value: f32, fallback: f32) -> f32 {
@@ -246,9 +296,13 @@ mod tests {
             seconds_visible: f32::NAN,
             playhead: 4.0,
             palette: Vec::new(),
+            lead_in: -1.0,
+            tail: f32::INFINITY,
             ..NoteRollStyle::default()
         }
         .sanitised();
+        assert_eq!(style.lead_in, 0.0);
+        assert_eq!(style.tail, 2.0);
         assert_eq!(style.fps, 1);
         assert_eq!(style.seconds_visible, 8.0);
         assert_eq!(style.playhead, 1.0);

@@ -502,16 +502,24 @@ impl ConversationStore {
         if self == destination {
             return Ok(());
         }
-        // A common ordering also permits two windows to copy in opposite directions.
-        let (first, second) = if self.root < destination.root {
-            (self, destination)
+        // Resolve both stores before locking. Save As can name the current folder through a
+        // relative path, different case or a symlink; locking both spellings would wait on our
+        // own first lock. Canonical roots also give opposite-direction copies the same order,
+        // even when either caller reached one of the stores through an alias.
+        let source = self.canonical_copy_store()?;
+        let destination = destination.canonical_copy_store()?;
+        if same_file::is_same_file(&source.root, &destination.root).map_err(|e| e.to_string())? {
+            return Ok(());
+        }
+        let (first, second) = if source.copy_order_key() < destination.copy_order_key() {
+            (&source, &destination)
         } else {
-            (destination, self)
+            (&destination, &source)
         };
         let _first_lock = first.lock()?;
         let _second_lock = second.lock()?;
-        for info in self.list_unlocked()? {
-            let source = self.folder(&info.id)?;
+        for info in source.list_unlocked()? {
+            let source = source.folder(&info.id)?;
             let target = destination.folder(&info.id)?;
             if target.join("meta.json").exists() {
                 let existing: ConversationInfo = read_json(&target.join("meta.json"))?;
@@ -545,6 +553,22 @@ impl ConversationStore {
             crate::conversation_attachments::copy_to(&source, &target)?;
         }
         Ok(())
+    }
+
+    fn canonical_copy_store(&self) -> Result<Self, String> {
+        std::fs::create_dir_all(&self.root).map_err(|e| e.to_string())?;
+        let root = self.root.canonicalize().map_err(|e| e.to_string())?;
+        Ok(Self::at(root))
+    }
+
+    fn copy_order_key(&self) -> (PathBuf, PathBuf) {
+        let folded = if cfg!(windows) {
+            self.root.as_os_str().to_ascii_lowercase().into()
+        } else {
+            self.root.clone()
+        };
+        // The full path breaks ties for distinct case-sensitive Windows directories.
+        (folded, self.root.clone())
     }
 }
 
@@ -615,6 +639,115 @@ fn write_json(path: &Path, value: &impl Serialize) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn copying_store_aliases_and_opposite_directions_does_not_block() {
+        const PROBE: &str = "AURIS_CONVERSATION_COPY_TEST";
+        if let Ok(mode) = std::env::var(PROBE) {
+            let root = std::env::current_dir().unwrap();
+            let source = ConversationStore::at(PathBuf::from("source"));
+            let conversation = source.create().unwrap();
+            let attachment = root.join("reference.txt");
+            std::fs::write(&attachment, "Retain the complete attachment").unwrap();
+            let archived = source
+                .capture_attachments(&conversation.info.id, &[attachment])
+                .unwrap();
+            let bytes = std::fs::read(&archived[0]).unwrap();
+            let destination = ConversationStore::at(root.join(match mode.as_str() {
+                "relative" => "source",
+                "case" => "SOURCE",
+                "symlink" => "alias",
+                "opposite" => "target",
+                _ => panic!("unknown copy probe"),
+            }));
+            if mode == "opposite" {
+                destination.create().unwrap();
+                let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+                let handles: Vec<_> = [
+                    (source.clone(), destination.clone()),
+                    (
+                        ConversationStore::at(PathBuf::from("target")),
+                        ConversationStore::at(root.join("source")),
+                    ),
+                ]
+                .into_iter()
+                .map(|(from, to)| {
+                    let barrier = barrier.clone();
+                    std::thread::spawn(move || {
+                        barrier.wait();
+                        for _ in 0..16 {
+                            from.copy_to(&to).unwrap();
+                        }
+                    })
+                })
+                .collect();
+                for handle in handles {
+                    handle.join().unwrap();
+                }
+                assert_eq!(source.list().unwrap(), destination.list().unwrap());
+                assert_eq!(source.list().unwrap().len(), 2);
+            } else {
+                source.copy_to(&destination).unwrap();
+                assert_eq!(
+                    destination.load(&conversation.info.id).unwrap(),
+                    conversation
+                );
+            }
+            assert_eq!(std::fs::read(&archived[0]).unwrap(), bytes);
+            return;
+        }
+
+        for mode in ["relative", "case", "symlink", "opposite"] {
+            let directory = tempfile::tempdir().unwrap();
+            std::fs::create_dir(directory.path().join("source")).unwrap();
+            if mode == "case"
+                && !same_file::is_same_file(
+                    directory.path().join("source"),
+                    directory.path().join("SOURCE"),
+                )
+                .unwrap_or(false)
+            {
+                continue;
+            }
+            if mode == "symlink" {
+                #[cfg(unix)]
+                std::os::unix::fs::symlink("source", directory.path().join("alias")).unwrap();
+                #[cfg(not(unix))]
+                continue;
+            }
+            // A broken alias check must fail this test instead of hanging the suite forever.
+            let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "conversations::tests::copying_store_aliases_and_opposite_directions_does_not_block",
+                ])
+                .env(PROBE, mode)
+                .current_dir(directory.path())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .unwrap();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+            loop {
+                if child.try_wait().unwrap().is_some() {
+                    let output = child.wait_with_output().unwrap();
+                    assert!(
+                        output.status.success(),
+                        "{mode}: {}\n{}",
+                        String::from_utf8_lossy(&output.stdout),
+                        String::from_utf8_lossy(&output.stderr)
+                    );
+                    break;
+                }
+                if std::time::Instant::now() >= deadline {
+                    child.kill().unwrap();
+                    child.wait().unwrap();
+                    panic!("{mode} conversation copy blocked");
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+        }
+    }
 
     #[test]
     fn sent_attachments_survive_original_deletion_and_save_as() {

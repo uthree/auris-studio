@@ -415,6 +415,9 @@ pub(crate) enum AgentEvent {
     /// A file-free command for the bound session.
     Edit {
         command: serde_json::Value,
+        /// What the conversation's production phase keeps fixed; the edit is withdrawn if it
+        /// changes any of it.
+        lock: Option<auris_session::phase::Lock>,
     },
     /// Previously completed text turns recovered for this project.
     History {
@@ -539,6 +542,10 @@ pub(crate) fn parse_event(line: &str) -> Option<AgentEvent> {
         },
         "edit" => AgentEvent::Edit {
             command: parsed.get("command")?.clone(),
+            lock: match parsed.get("lock") {
+                Some(lock) => Some(serde_json::from_value(lock.clone()).ok()?),
+                None => None,
+            },
         },
         "history" => AgentEvent::History {
             summary: text("summary"),
@@ -650,6 +657,35 @@ pub(crate) fn framed_say(text: &str, project: Option<&Path>) -> String {
         ),
         None => text.to_string(),
     }
+}
+
+/// What one send puts on the wire, and whether the turn must not edit.
+///
+/// A composition command reaches the model as its assignment while the transcript keeps what
+/// was typed. `/review` runs the whole turn under plan mode: the worker gets that policy for the
+/// tools it runs itself, and the window holds its own live edits to it for as long as the turn
+/// lasts.
+fn turn_wire(message: &PendingAgentSend) -> (String, bool) {
+    let command = auris_agent::PhaseCommand::parse(&message.text);
+    let said = command.map_or_else(
+        || message.text.clone(),
+        |(command, instruction)| command.assignment(instruction),
+    );
+    let read_only = command.is_some_and(|(command, _)| command.read_only());
+    let framed = format!(
+        "[Window context: {}]\n{}",
+        message.selection_context,
+        framed_say(&said, message.token.project.as_deref())
+    );
+    let wire = serde_json::json!({
+        "say": framed,
+        "display": &message.text,
+        "attachments": &message.attachments,
+        "policy": controls::turn_policy(&message.preferences.policy, read_only),
+        "auto_compact_percent": message.preferences.auto_compact_percent.unwrap_or(85)
+    })
+    .to_string();
+    (wire, read_only)
 }
 
 /// Whether two paths name the same file, asked the way the filesystem answers it.
@@ -1072,41 +1108,6 @@ struct PendingListening {
     operation: auris_session::agent_policy::Operation,
     cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
     receiver: Receiver<Result<auris_session::audio_audition::ListeningResult, String>>,
-    approval: Receiver<AudioLoadRequest>,
-}
-
-/// One invocation's load consent. Dropping the last copy cancels the waiting worker.
-#[derive(Debug)]
-pub struct AudioLoadRequest {
-    pub(crate) model: String,
-    pub(crate) response: std::sync::mpsc::Sender<bool>,
-}
-
-impl PartialEq for AudioLoadRequest {
-    fn eq(&self, other: &Self) -> bool {
-        std::ptr::eq(self, other)
-    }
-}
-
-fn await_audio_load_consent(
-    model: String,
-    requests: &std::sync::mpsc::Sender<AudioLoadRequest>,
-    cancel: &std::sync::atomic::AtomicBool,
-) -> Result<(), String> {
-    let (response, receiver) = std::sync::mpsc::channel();
-    requests
-        .send(AudioLoadRequest { model, response })
-        .map_err(|_| "Audio model loading cancelled".to_string())?;
-    loop {
-        if cancel.load(std::sync::atomic::Ordering::Relaxed) {
-            return Err("Audio model loading cancelled".into());
-        }
-        match receiver.recv_timeout(std::time::Duration::from_millis(100)) {
-            Ok(true) => return Ok(()),
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
-            _ => return Err("Audio model loading cancelled by the user; do not retry without a new user request".into()),
-        }
-    }
 }
 
 impl PendingListening {
@@ -1120,7 +1121,7 @@ impl PendingListening {
             self.cancel
                 .store(true, std::sync::atomic::Ordering::Relaxed);
             return Some(Err(
-                "The document changed during listening; request a fresh audition".into(),
+                "The document changed during listening; listen again".into()
             ));
         }
         if let auris_session::agent_policy::Decision::Deny(reason) = policy.decide(&self.operation)
@@ -1153,6 +1154,8 @@ struct PendingSoundSearch {
 struct PendingAgentJob {
     revision: u64,
     operation: auris_session::agent_policy::Operation,
+    /// The phase lock in force when the job was asked for, which its publication is held to.
+    lock: Option<auris_session::phase::Lock>,
     cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
     receiver: Receiver<Result<auris_session::live_agent::AgentResult, String>>,
 }
@@ -1197,6 +1200,7 @@ fn spawn_agent_job(
     job: auris_session::live_agent::AgentJob,
     revision: u64,
     operation: auris_session::agent_policy::Operation,
+    lock: Option<auris_session::phase::Lock>,
 ) -> Result<PendingAgentJob, String> {
     let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let worker_cancel = cancel.clone();
@@ -1213,6 +1217,7 @@ fn spawn_agent_job(
     Ok(PendingAgentJob {
         revision,
         operation,
+        lock,
         cancel,
         receiver,
     })
@@ -2421,7 +2426,33 @@ impl AurisApp {
                     .collect()
             })
             .unwrap_or_default();
+        // The comments a person can see beside what they selected: "do what the comment says"
+        // should not need a lookup first. Every other comment is in inspect_project.
+        let here: Vec<_> = self
+            .selected_track
+            .and_then(|id| project.track(id))
+            .into_iter()
+            .flat_map(|track| {
+                track.comments.iter().map(move |comment| {
+                    serde_json::json!({"track": track.id.0, "comment": comment.id.0,
+                        "bar": project.signatures.bar_of(comment.at), "text": comment.text})
+                })
+            })
+            .chain(
+                self.selected_clip
+                    .and_then(|id| project.midi_clip(id))
+                    .into_iter()
+                    .flat_map(|(_, clip)| {
+                        clip.comments.iter().map(move |comment| {
+                            serde_json::json!({"clip": clip.id.0, "comment": comment.id.0,
+                                "bar": project.signatures.bar_of(clip.start + comment.at),
+                                "pitch": comment.pitch, "text": comment.text})
+                        })
+                    }),
+            )
+            .collect();
         serde_json::json!({
+            "comments_on_selection": here,
             "selected_track": self.selected_track.and_then(|id| project.track(id)).map(|track| &track.name),
             "song_creation_reference": project.creation_brief,
             "selected_track_id": self.selected_track.map(|id| id.0),
@@ -2572,6 +2603,13 @@ impl AurisApp {
         }
         if crate::ui::chat_commands::is_control_command(&text) && !self.agent_operation_busy() {
             self.agent_control_command(&text);
+            return;
+        }
+        if let Some(command) = crate::ui::chat_commands::missing_brief(&text) {
+            let note = self
+                .t(Key::AgentSlashNeedsBrief)
+                .replace("{command}", command);
+            self.agent_chat.push_entry(ChatEntry::Error(note));
             return;
         }
         if self.agent_chat.busy || !self.agent_chat.queued.is_empty() {
@@ -2774,19 +2812,7 @@ impl AurisApp {
             }
         }
 
-        let framed = format!(
-            "[Window context: {}]\n{}",
-            message.selection_context,
-            framed_say(&message.text, message.token.project.as_deref())
-        );
-        let wire = serde_json::json!({
-            "say": framed,
-            "display": &message.text,
-            "attachments": &message.attachments,
-            "policy": message.preferences.policy,
-            "auto_compact_percent": message.preferences.auto_compact_percent.unwrap_or(85)
-        })
-        .to_string();
+        let (wire, read_only) = turn_wire(&message);
         if let Some(link) = self.agent_chat.link.as_mut()
             && let Err(error) = link.send(&wire)
         {
@@ -2795,6 +2821,7 @@ impl AurisApp {
             self.agent_chat.link = None;
             return false;
         }
+        self.agent_chat.controls.read_only_turn = read_only;
         // Typed here, so it is something the user asked for. Restored turns are not, which is
         // why automatic review reads this list rather than the transcript.
         self.session.begin_agent_request();
@@ -2819,8 +2846,19 @@ impl AurisApp {
         true
     }
 
-    /// Apply one request to the bound document without touching its saved file.
+    /// An edit outside any production phase.
+    #[cfg(test)]
     fn agent_edit(&mut self, command: serde_json::Value) -> Result<String, String> {
+        self.agent_edit_locked(command, None)
+    }
+
+    /// Apply one request to the bound document without touching its saved file, withdrawing it
+    /// if it changes what the conversation's production phase keeps fixed.
+    fn agent_edit_locked(
+        &mut self,
+        command: serde_json::Value,
+        lock: Option<&auris_session::phase::Lock>,
+    ) -> Result<String, String> {
         if self.agent_chat.bound_project.as_deref() != self.session.path() {
             return Err("The open document changed; start a new conversation".into());
         }
@@ -2845,9 +2883,9 @@ impl AurisApp {
         } else {
             None
         };
-        let result = self
-            .session
-            .agent_command_with_plugin_paths(command, &self.settings.plugin_paths)?;
+        let result =
+            self.session
+                .agent_command_locked(command, lock, &self.settings.plugin_paths)?;
         if let Some(suggestion) = suggestion {
             self.agent_chat.issue_suggestion = Some(suggestion);
         }
@@ -2969,9 +3007,7 @@ impl AurisApp {
         let auris_session::live_agent::Command::Listen {
             start_bar,
             bars,
-            focus,
             compare_to,
-            aspect,
         } = serde_json::from_value(command.clone()).map_err(|error| error.to_string())?
         else {
             return Err("Expected listen".into());
@@ -2980,13 +3016,9 @@ impl AurisApp {
             "edit_project",
             &serde_json::json!({"command":command}),
         )?;
-        let job = self.session.begin_listening(
-            start_bar,
-            bars,
-            focus.as_deref(),
-            compare_to.as_deref(),
-            aspect,
-        )?;
+        let job = self
+            .session
+            .begin_listening(start_bar, bars, compare_to.as_deref())?;
         let link = self.agent_chat.link.as_mut().ok_or("The agent stopped")?;
         if link.listening.is_some() {
             return Err("A listening operation is already running".into());
@@ -2994,15 +3026,10 @@ impl AurisApp {
         let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let worker_cancel = cancel.clone();
         let (sender, receiver) = std::sync::mpsc::channel();
-        let (approval_sender, approval) = std::sync::mpsc::channel();
         std::thread::Builder::new()
             .name("auris-audio-listening".into())
             .spawn(move || {
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    let (job, model) = job.prepare_reviewer(&worker_cancel)?;
-                    if let Some(model) = model {
-                        await_audio_load_consent(model, &approval_sender, &worker_cancel)?;
-                    }
                     job.run(&worker_cancel)
                 }))
                 .unwrap_or_else(|_| Err("Audio listening worker stopped unexpectedly".into()));
@@ -3010,7 +3037,6 @@ impl AurisApp {
             })
             .map_err(|error| error.to_string())?;
         link.listening = Some(PendingListening {
-            approval,
             revision: self.session.revision(),
             operation,
             cancel,
@@ -3019,7 +3045,11 @@ impl AurisApp {
         Ok(())
     }
 
-    fn start_agent_job(&mut self, command: &serde_json::Value) -> Result<(), String> {
+    fn start_agent_job(
+        &mut self,
+        command: &serde_json::Value,
+        lock: Option<auris_session::phase::Lock>,
+    ) -> Result<(), String> {
         if self.agent_chat.bound_project.as_deref() != self.session.path() {
             return Err("The open document changed; start a new conversation".into());
         }
@@ -3045,7 +3075,7 @@ impl AurisApp {
         let job = self
             .session
             .begin_agent_job(command, self.settings.clone())?;
-        let pending = spawn_agent_job(job, self.session.revision(), operation)?;
+        let pending = spawn_agent_job(job, self.session.revision(), operation, lock)?;
         self.agent_chat
             .link
             .as_mut()
@@ -3070,11 +3100,18 @@ impl AurisApp {
             return;
         };
         let revision = self.session.revision();
-        let result =
-            result.and_then(|result| self.session.continue_agent_job(result, &pending.cancel));
+        let result = result.and_then(|result| {
+            self.session
+                .continue_agent_job_locked(result, pending.lock.as_ref(), &pending.cancel)
+        });
         let response = match result {
             Ok(auris_session::live_agent::AgentStep::Work(job)) => {
-                match spawn_agent_job(job, revision, pending.operation.clone()) {
+                match spawn_agent_job(
+                    job,
+                    revision,
+                    pending.operation.clone(),
+                    pending.lock.clone(),
+                ) {
                     Ok(next) => {
                         if let Some(link) = self.agent_chat.link.as_mut() {
                             link.job = Some(next);
@@ -3175,41 +3212,7 @@ impl AurisApp {
         let _ = link.send(&wire.to_string());
     }
 
-    pub(crate) fn approve_audio_model_load(&mut self, request: &AudioLoadRequest) {
-        let allowed = self
-            .agent_chat
-            .link
-            .as_ref()
-            .and_then(|link| link.listening.as_ref())
-            .is_some_and(|pending| {
-                pending.revision == self.session.revision()
-                    && self.agent_chat.bound_project.as_deref() == self.session.path()
-                    && !pending.cancel.load(std::sync::atomic::Ordering::Relaxed)
-                    && !matches!(
-                        self.settings.agent.policy.decide(&pending.operation),
-                        auris_session::agent_policy::Decision::Deny(_)
-                    )
-            });
-        let _ = request.response.send(allowed);
-    }
-
     fn poll_agent_listening(&mut self) {
-        if self
-            .agent_chat
-            .link
-            .as_ref()
-            .is_none_or(|link| link.listening.is_none())
-        {
-            if matches!(
-                self.prompt.as_ref().map(|prompt| &prompt.body),
-                Some(crate::ui::prompt::PromptBody::Ask(
-                    crate::ui::prompt::Question::AudioModelLoad(_)
-                ))
-            ) {
-                self.prompt = None;
-            }
-            return;
-        }
         let Some(link) = self.agent_chat.link.as_mut() else {
             return;
         };
@@ -3221,27 +3224,16 @@ impl AurisApp {
             self.agent_chat.bound_project.as_deref() == self.session.path(),
             &self.settings.agent.policy,
         ) else {
-            if self.prompt.is_none()
-                && let Ok(request) = pending.approval.try_recv()
-            {
-                self.open_prompt(crate::ui::prompt::Prompt::ask(
-                    self.t(auris_i18n::Key::AudioModelLoadTitle),
-                    crate::ui::prompt::Question::AudioModelLoad(std::sync::Arc::new(request)),
-                ));
-            }
             return;
         };
         link.listening = None;
-        if matches!(
-            self.prompt.as_ref().map(|prompt| &prompt.body),
-            Some(crate::ui::prompt::PromptBody::Ask(
-                crate::ui::prompt::Question::AudioModelLoad(_)
-            ))
-        ) {
-            self.prompt = None;
-        }
-        let result = result.and_then(|result| self.session.continue_listening(result));
-        let wire = serde_json::json!({"event":"edit_result","ok":result.is_ok(),"text":result.unwrap_or_else(|error|error)});
+        // The clips travel whole: the worker hands them to the model as audio input.
+        let wire = match result.and_then(|result| self.session.continue_listening(result)) {
+            Ok(audition) => {
+                serde_json::json!({"event":"edit_result","ok":true,"audition":audition})
+            }
+            Err(error) => serde_json::json!({"event":"edit_result","ok":false,"text":error}),
+        };
         let _ = link.send(&wire.to_string());
     }
 
@@ -3331,11 +3323,11 @@ impl AurisApp {
                 cx.notify();
                 continue;
             }
-            if let AgentEvent::Edit { command } = event {
+            if let AgentEvent::Edit { command, lock } = event {
                 if serde_json::from_value::<auris_session::live_agent::Command>(command.clone())
                     .is_ok_and(|command| command.needs_worker())
                 {
-                    if let Err(error) = self.start_agent_job(&command)
+                    if let Err(error) = self.start_agent_job(&command, lock)
                         && let Some(link) = &self.agent_chat.link
                     {
                         let _ = link.send(
@@ -3379,7 +3371,7 @@ impl AurisApp {
                     continue;
                 }
                 let revision = self.session.revision();
-                let result = self.agent_edit(command);
+                let result = self.agent_edit_locked(command, lock.as_ref());
                 let ok = result.is_ok();
                 let text = result.unwrap_or_else(|error| error);
                 let wire = serde_json::json!({"event": "edit_result", "ok": ok, "text": text});
@@ -5867,58 +5859,6 @@ impl AurisApp {
 
 #[cfg(test)]
 mod tests {
-    #[gpui::test]
-    fn audio_load_dialog_closes_when_the_agent_has_stopped(cx: &mut gpui::TestAppContext) {
-        let (app, cx) = crate::harness::open(cx);
-        let (response, receiver) = std::sync::mpsc::channel();
-        app.update(cx, |this, _| {
-            this.open_prompt(crate::ui::prompt::Prompt::ask(
-                "Load audio model?",
-                crate::ui::prompt::Question::AudioModelLoad(std::sync::Arc::new(
-                    super::AudioLoadRequest {
-                        model: "test-audio".into(),
-                        response,
-                    },
-                )),
-            ));
-            this.poll_agent_listening();
-            assert!(this.prompt.is_none());
-        });
-        assert_eq!(
-            receiver.try_recv(),
-            Err(std::sync::mpsc::TryRecvError::Disconnected)
-        );
-    }
-
-    #[test]
-    fn local_audio_load_waits_for_consent_and_stops_on_dismissal_or_cancellation() {
-        for answer in [Some(true), Some(false), None] {
-            let (requests, receiver) = std::sync::mpsc::channel();
-            let worker = std::thread::spawn(move || {
-                super::await_audio_load_consent(
-                    "test-audio".into(),
-                    &requests,
-                    &std::sync::atomic::AtomicBool::new(false),
-                )
-            });
-            let request = receiver.recv().unwrap();
-            assert!(!worker.is_finished());
-            if let Some(answer) = answer {
-                request.response.send(answer).unwrap();
-            }
-            drop(request);
-            assert_eq!(worker.join().unwrap().is_ok(), answer == Some(true));
-        }
-        let (requests, receiver) = std::sync::mpsc::channel();
-        let result = super::await_audio_load_consent(
-            "test-audio".into(),
-            &requests,
-            &std::sync::atomic::AtomicBool::new(true),
-        );
-        assert!(result.is_err());
-        drop(receiver);
-    }
-
     use super::*;
     use auris_session::agent_policy::Mode;
     use auris_session::prelude::{Note, Ticks};
@@ -5940,6 +5880,7 @@ mod tests {
             let pending = PendingAgentJob {
                 revision: 1,
                 operation,
+                lock: None,
                 cancel: cancel.clone(),
                 receiver,
             };
@@ -5968,6 +5909,7 @@ mod tests {
         let pending = PendingAgentJob {
             revision: 1,
             operation,
+            lock: None,
             cancel: cancel.clone(),
             receiver,
         };
@@ -6098,6 +6040,187 @@ mod tests {
         crate::harness::click("agent-mode-option-1", cx);
         app.read_with(cx, |this, _| {
             assert_eq!(this.settings.agent.policy.mode, Mode::Edit)
+        });
+    }
+
+    fn pending(text: &str, mode: auris_session::agent_policy::Mode) -> PendingAgentSend {
+        let mut preferences = AgentPreferences::default();
+        preferences.policy.mode = mode;
+        PendingAgentSend {
+            token: AgentDocumentToken {
+                project: None,
+                revision: 0,
+            },
+            text: text.into(),
+            attachments: Vec::new(),
+            preferences,
+            selection_context: "{}".into(),
+        }
+    }
+
+    #[test]
+    fn composition_commands_reach_the_model_as_assignments_and_review_as_plan_mode() {
+        use auris_session::agent_policy::{Mode, Policy};
+        let wire = |text: &str| {
+            let (wire, read_only) = turn_wire(&pending(text, Mode::Bypass));
+            let wire: serde_json::Value = serde_json::from_str(&wire).unwrap();
+            let policy: Policy = serde_json::from_value(wire["policy"].clone()).unwrap();
+            (wire, policy.mode, read_only)
+        };
+
+        let (review, mode, read_only) = wire("/review the chorus feels flat");
+        assert!(read_only);
+        assert_eq!(mode, Mode::Plan, "a review overrides even bypass");
+        assert_eq!(review["display"], "/review the chorus feels flat");
+        let said = review["say"].as_str().unwrap();
+        assert!(said.contains("[/review command]"), "{said}");
+        assert!(said.ends_with("The user's direction:\nthe chorus feels flat"));
+
+        for (text, needle) in [
+            ("/compose a rainy ballad", "all three phases"),
+            (
+                "/draft a rainy ballad",
+                "Do not enter the arrangement phase",
+            ),
+            ("/mix", "enter_phase mix"),
+        ] {
+            let (sent, mode, read_only) = wire(text);
+            assert!(!read_only, "{text}");
+            assert_eq!(mode, Mode::Bypass, "{text} keeps the chosen mode");
+            assert!(sent["say"].as_str().unwrap().contains(needle), "{text}");
+            assert_eq!(sent["display"], text);
+        }
+
+        let (plain, mode, read_only) = wire("write a chorus");
+        assert!(!read_only);
+        assert_eq!(mode, Mode::Bypass);
+        assert!(plain["say"].as_str().unwrap().ends_with("\nwrite a chorus"));
+    }
+
+    #[gpui::test]
+    fn a_review_turn_refuses_every_edit_whatever_mode_was_chosen(cx: &mut gpui::TestAppContext) {
+        use auris_session::agent_policy::{Decision, Mode, Operation};
+        let (app, cx) = crate::harness::open(cx);
+        let add_track =
+            serde_json::json!({"action": "add_track", "name": "Lead", "kind": "instrument"});
+        let decide = |this: &AurisApp, tool: &str, args: serde_json::Value| {
+            this.agent_turn_policy()
+                .decide(&Operation::parse(tool, &args).unwrap())
+        };
+        app.update(cx, |this, _| {
+            this.settings.agent.policy.mode = Mode::Bypass;
+            this.settings.agent.policy.allow = vec!["*".into()];
+            this.agent_chat.controls.read_only_turn = true;
+            let revision = this.session.revision();
+            let tracks = this.session.project().tracks.len();
+            let error = this.agent_edit(add_track.clone()).unwrap_err();
+            assert!(error.starts_with("Plan mode"), "{error}");
+            assert_eq!(this.session.revision(), revision);
+            assert_eq!(this.session.project().tracks.len(), tracks);
+            // The record is document state too: a review reads it and never enters a phase.
+            for operation in [
+                serde_json::json!({"kind": "enter_phase", "phase": "mix", "reason": "review"}),
+                serde_json::json!({"kind": "set_roles", "foreground": [1]}),
+            ] {
+                assert!(matches!(
+                    decide(
+                        this,
+                        "production_record",
+                        serde_json::json!({ "operation": operation })
+                    ),
+                    Decision::Deny(_)
+                ));
+            }
+            assert_eq!(
+                decide(
+                    this,
+                    "production_record",
+                    serde_json::json!({"operation": {"kind": "read"}})
+                ),
+                Decision::Allow
+            );
+            // An ignore rule waits for a later turn and the user's confirmation.
+            assert!(matches!(
+                decide(
+                    this,
+                    "edit_project",
+                    serde_json::json!({"command": {"action": "ignore_lint", "id": "x", "reason": "deliberate"}})
+                ),
+                Decision::Deny(_)
+            ));
+
+            // The next ordinary turn is back under the chosen mode.
+            this.agent_chat.controls.read_only_turn = false;
+            this.agent_edit(add_track).unwrap();
+            assert_eq!(this.session.project().tracks.len(), tracks + 1);
+        });
+    }
+
+    #[gpui::test]
+    fn composition_commands_complete_in_the_agent_panel_and_list_in_help(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, _| {
+            this.settings.agent.model.clear();
+            this.panels.show(crate::dock::Panel::Agent);
+            this.agent_chat.models_loaded = true;
+        });
+        crate::harness::paint(&app, cx);
+        crate::harness::click("agent-input", cx);
+        crate::harness::paint(&app, cx);
+        cx.simulate_input("/rev");
+        crate::harness::paint(&app, cx);
+        assert!(cx.debug_bounds("agent-slash-option-0").is_some());
+        cx.simulate_keystrokes("tab");
+        app.read_with(cx, |this, _| {
+            assert_eq!(this.agent_chat.input.content(), "/review");
+        });
+        app.update(cx, |this, _| {
+            this.agent_chat.input = TextField::new(String::new());
+        });
+        cx.simulate_input("/dra");
+        cx.simulate_keystrokes("tab");
+        app.read_with(cx, |this, _| {
+            // A writing command waits for its brief.
+            assert_eq!(this.agent_chat.input.content(), "/draft ");
+        });
+
+        app.update(cx, |this, _| {
+            this.agent_chat.input = TextField::new("/help");
+        });
+        crate::harness::paint(&app, cx);
+        crate::harness::click("agent-send", cx);
+        app.read_with(cx, |this, _| {
+            let Some(ChatEntry::Status(help)) = this.agent_chat.entries.last() else {
+                panic!("no help");
+            };
+            for command in auris_agent::PhaseCommand::ALL {
+                assert!(help.contains(command.name()), "{help}");
+            }
+            assert!(help.contains(Key::AgentSlashReview.get(this.language())));
+        });
+    }
+
+    #[gpui::test]
+    fn a_writing_command_without_a_brief_asks_for_one_and_sends_nothing(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, _| {
+            this.settings.agent.model.clear();
+            this.panels.show(crate::dock::Panel::Agent);
+            this.agent_chat.models_loaded = true;
+            this.agent_chat.input = TextField::new("/compose");
+            this.agent_send();
+        });
+        app.read_with(cx, |this, _| {
+            assert_eq!(this.agent_chat.input.content(), "/compose");
+            assert!(this.agent_chat.link.is_none());
+            assert!(!this.agent_chat.busy);
+            assert!(this.agent_chat.entries.contains(&ChatEntry::Error(
+                "Describe the song after /compose.".into()
+            )));
         });
     }
 
@@ -6898,7 +7021,7 @@ mod tests {
             let before = this.project().clone();
             assert!(this.session.path().is_none());
             let event = parse_event(r#"{"event":"edit","command":{"action":"add_track","name":"Agent lead","kind":"instrument"}}"#).unwrap();
-            let AgentEvent::Edit { command } = event else { panic!() };
+            let AgentEvent::Edit { command, .. } = event else { panic!() };
             this.agent_edit(command).unwrap();
             assert!(this.project().tracks.iter().any(|track| track.name == "Agent lead"));
             assert!(this.session.is_dirty());
@@ -7002,7 +7125,6 @@ mod tests {
         )
         .unwrap();
         let pending = PendingListening {
-            approval: std::sync::mpsc::channel().1,
             revision: 7,
             operation,
             cancel: cancel.clone(),

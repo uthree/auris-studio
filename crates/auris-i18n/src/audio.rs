@@ -229,6 +229,7 @@ const PLUGIN_NAMES: &[(&str, &str)] = &[
     ("Limiter", "リミッター"),
     ("Reverb", "リバーブ"),
     ("SoundFont", "サウンドフォント"),
+    ("Sampler", "サンプラー"),
 ];
 
 /// Japanese versions of the one-line descriptions shown in the plugin browser.
@@ -341,6 +342,10 @@ const PLUGIN_DESCRIPTIONS: &[(&str, &str)] = &[
         "Plays an imported SoundFont",
         "読み込んだサウンドフォントを再生します",
     ),
+    (
+        "Plays audio files across the keyboard",
+        "オーディオファイルを鍵盤に割り当て、近いルート音のサンプルを音程を変えて鳴らします",
+    ),
 ];
 
 /// Japanese names for parameters. Shared across plugins on purpose — see the module note.
@@ -378,6 +383,8 @@ const PARAMETERS: &[(&str, &str)] = &[
     ("Cabinet", "キャビネット"),
     ("Bow speed", "運弓速度"),
     ("Bow response", "運弓の応答時間"),
+    ("Live Quality", "再生時の演算精度"),
+    ("Render Quality", "書き出し時の演算精度"),
     ("Legato", "レガート"),
     ("Attack", "アタック"),
     ("Bit Depth", "ビット深度"),
@@ -389,6 +396,12 @@ const PARAMETERS: &[(&str, &str)] = &[
     ("Detune", "デチューン"),
     ("Drive", "ドライブ"),
     ("Envelope", "エンベロープ"),
+    ("Fine Tune", "微調整"),
+    ("Key Tracking", "キー追従"),
+    ("Loop", "ループ"),
+    ("Loop End", "ループ終点"),
+    ("Loop Start", "ループ始点"),
+    ("Root Note", "ルートノート"),
     ("Feedback", "フィードバック"),
     ("Gain", "ゲイン"),
     ("Glide", "グライド"),
@@ -660,6 +673,9 @@ const CHOICES: &[(&str, &str)] = &[
     ("Fold", "フォールド"),
     ("Bitcrush", "ビットクラッシュ"),
     ("Free", "フリー"),
+    ("Draft", "軽量"),
+    ("Standard", "標準"),
+    ("High", "高精度"),
     // The delay's note values read the same in any language; the entries exist so the
     // completeness test can tell a considered label from a forgotten one.
     ("1/1", "1/1"),

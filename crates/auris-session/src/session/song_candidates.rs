@@ -4,7 +4,7 @@ use super::{SaveReport, Session, SessionOptions};
 use crate::{Edit, SessionError};
 use auris_compose::{SongSpec, compose, preset};
 use auris_core::{AssetPath, AudioBuffer, Project};
-use auris_engine::{OfflineOptions, RenderProgress};
+use auris_engine::RenderProgress;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -671,13 +671,12 @@ impl SongCandidate {
             idea.description
         ));
         progress("render");
-        let audio = session
+        // A loop song's audition is one seamless cycle, which the timeline recognises by length.
+        let (audio, _) = session
             .render_job_at(Some(22_050.0))
-            .render(
-                &OfflineOptions {
-                    sample_rate: Some(22_050.0),
-                    ..Default::default()
-                },
+            .render_audition(
+                22_050.0,
+                true,
                 &mut RenderProgress::default().cancelled_by(cancel),
             )
             .map_err(|e| e.to_string())?;
@@ -748,13 +747,12 @@ impl Session {
         if !report.uncollected.is_empty() {
             return Err("Candidate assets could not be collected".into());
         }
-        let audio = self
+        // A loop song's audition is one seamless cycle, which the timeline recognises by length.
+        let (audio, _) = self
             .render_job_at(Some(22_050.0))
-            .render(
-                &OfflineOptions {
-                    sample_rate: Some(22_050.0),
-                    ..Default::default()
-                },
+            .render_audition(
+                22_050.0,
+                true,
                 &mut RenderProgress::default().cancelled_by(cancel),
             )
             .map_err(|e| e.to_string())?;

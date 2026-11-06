@@ -65,6 +65,6 @@ without rendering the project again. Its PASS/FAIL verdict is separate from list
 `inspect_audio` returns the same measurements and PNG through saved MCP and the live
 host. `preview` uses a 24 kHz protected PCM16 WAV; its reported attenuation applies
 only to the audition. The mix and exported delivery settings remain unchanged.
-`listen` takes a returned opaque `audition_id` in `compare_to` plus a neutral `aspect`
-on every backend. Omit `focus` for comparisons. Anonymous A/B excerpts use randomized
-order and a common protective gain. See [agent workflows](agent-workflows.md).
+`listen` delivers rendered bars to a model that takes audio input; a returned
+`audition_id` in `compare_to` delivers before and after at a common protective gain.
+See [letting the agent hear the song](agent-listening.md).

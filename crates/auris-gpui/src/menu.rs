@@ -426,6 +426,7 @@ pub fn model(language: Language, panels: &PanelLayout, state: MenuState) -> Vec<
             ),
             MenuRow::Separator,
             command(t(Key::CmdSplitClip), actions::SplitClip, "clip.split"),
+            command(t(Key::CmdJoinClips), actions::JoinClips, "clip.join"),
             command(
                 t(Key::CmdToggleClipMute),
                 actions::ToggleClipMute,
@@ -599,10 +600,22 @@ pub fn model(language: Language, panels: &PanelLayout, state: MenuState) -> Vec<
                 panels.lanes.structure,
             ),
             toggle(
-                t(Key::CmdShowHarmonyLane),
-                actions::ToggleHarmonyLane,
-                "view.harmony_lane",
-                panels.lanes.harmony,
+                t(Key::CmdShowKeyLane),
+                actions::ToggleKeyLane,
+                "view.key_lane",
+                panels.lanes.keys,
+            ),
+            toggle(
+                t(Key::CmdShowChordLane),
+                actions::ToggleChordLane,
+                "view.chord_lane",
+                panels.lanes.chords,
+            ),
+            toggle(
+                t(Key::CmdShowLyricsLane),
+                actions::ToggleLyricsLane,
+                "view.lyrics_lane",
+                panels.lanes.lyrics,
             ),
             toggle(
                 t(Key::CmdShowTempoMarks),

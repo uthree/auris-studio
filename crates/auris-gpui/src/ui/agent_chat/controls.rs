@@ -30,6 +30,8 @@ pub(super) struct Controls {
     pub(super) effort_focus: Option<gpui::FocusHandle>,
     pub(super) reasoning_picker: Option<crate::ui::reasoning_picker::Handle>,
     pub(super) slash: chat_commands::Completions,
+    /// The turn in flight came from `/review`: whatever the chosen mode, it runs as plan mode.
+    pub(super) read_only_turn: bool,
 }
 
 pub(super) struct Pending {
@@ -88,10 +90,24 @@ pub(super) fn approval_summary(operation: &Operation) -> Option<Key> {
         "cli_file_change" => Some(Key::AgentApprovalChangeFiles),
         "cli_file_read" => Some(Key::AgentApprovalReadOutside),
         "search_internet" => Some(Key::AgentApprovalInternet),
+        "edit_project.ignore_lint" => Some(Key::AgentApprovalIgnoreLint),
         _ if operation.mutating && operation.confirm => Some(Key::AgentApprovalReplaces),
         _ if operation.mutating => Some(Key::AgentApprovalEdits),
         _ => None,
     }
+}
+
+/// A read-only turn keeps the user's rules but not their mode: plan mode refuses every change,
+/// even under an allow rule or bypass, and leaves reads and network questions as they were.
+pub(super) fn turn_policy(
+    chosen: &auris_session::agent_policy::Policy,
+    read_only: bool,
+) -> auris_session::agent_policy::Policy {
+    let mut policy = chosen.clone();
+    if read_only {
+        policy.mode = Mode::Plan;
+    }
+    policy
 }
 
 fn mode_key(mode: Mode) -> Key {
@@ -340,7 +356,7 @@ impl AurisApp {
                 return;
             }
         };
-        match self.settings.agent.policy.decide(&operation) {
+        match self.agent_turn_policy().decide(&operation) {
             Decision::Allow => self.permission_result(id, true, "Allowed by current permissions"),
             Decision::Deny(reason) => self.permission_result(id, false, &reason),
             decision @ (Decision::Ask | Decision::Review) => {
@@ -423,7 +439,7 @@ impl AurisApp {
         else {
             return;
         };
-        if self.settings.agent.policy.decide(&pending.operation) != Decision::Review {
+        if self.agent_turn_policy().decide(&pending.operation) != Decision::Review {
             return;
         }
         use auris_agent::approval_review::Verdict;
@@ -467,7 +483,7 @@ impl AurisApp {
         let changed = self.agent_chat.bound_project.as_deref() != self.session.path()
             || (pending.operation.mutating && pending.revision != self.session.revision());
         let forbidden = matches!(
-            self.settings.agent.policy.decide(&pending.operation),
+            self.agent_turn_policy().decide(&pending.operation),
             Decision::Deny(_)
         );
         if denied || changed || forbidden {
@@ -505,6 +521,14 @@ impl AurisApp {
         Ok(())
     }
 
+    /// The policy this turn runs under: the chosen one, held to plan mode for a `/review`.
+    pub(super) fn agent_turn_policy(&self) -> auris_session::agent_policy::Policy {
+        turn_policy(
+            &self.settings.agent.policy,
+            self.agent_chat.controls.read_only_turn,
+        )
+    }
+
     pub(super) fn check_agent_edit(&mut self, command: &serde_json::Value) -> Result<(), String> {
         let operation = Operation::parse("edit_project", &serde_json::json!({"command":command}))?;
         let permit = self
@@ -519,7 +543,7 @@ impl AurisApp {
         if let Some(index) = permit {
             self.agent_chat.controls.permits.remove(index);
         }
-        match self.settings.agent.policy.decide(&operation) {
+        match self.agent_turn_policy().decide(&operation) {
             Decision::Allow => Ok(()),
             Decision::Deny(reason) => Err(reason),
             Decision::Ask | Decision::Review if approved => Ok(()),
@@ -1501,8 +1525,9 @@ mod tests {
     #[test]
     fn slash_completion_covers_commands_arguments_and_plain_text() {
         let commands = chat_commands::slash_matches("/m", &[], Scope::Agent);
-        assert_eq!(commands.len(), 2);
+        assert_eq!(commands.len(), 3);
         assert_eq!(commands[0].fill, "/mode ");
+        assert_eq!(commands[2].fill, "/mix");
 
         let modes = chat_commands::slash_matches("/mode p", &[], Scope::Agent);
         assert_eq!(modes.len(), 1);

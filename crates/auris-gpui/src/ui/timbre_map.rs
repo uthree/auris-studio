@@ -75,6 +75,9 @@ pub(crate) struct TimbreMapState {
     naming_generation: u64,
     naming_error: Option<String>,
     editing_icon: bool,
+    /// Tracks waiting for the scan in progress before they can take their clusters' colours:
+    /// `Some(None)` is every track, `Some(Some(id))` the one whose menu asked.
+    pending_track_colors: Option<Option<TrackId>>,
 }
 
 #[derive(Default)]
@@ -122,6 +125,7 @@ impl TimbreMapState {
             control.cancel();
         }
         self.generation = self.generation.wrapping_add(1);
+        self.pending_track_colors = None;
         self.cancel_naming();
     }
 
@@ -478,6 +482,51 @@ impl AurisApp {
         })
     }
 
+    /// Tints tracks in the colours of the clusters their sounds were measured into: every track
+    /// the map can answer for, or only `only`. One undoable step, however many tracks change.
+    ///
+    /// With no map yet, Find Sounds opens and scans, and the colours follow when the scan
+    /// finishes; closing the window or scanning again forgets them, as it does the scan.
+    pub(crate) fn color_tracks_by_timbre(&mut self, only: Option<TrackId>, cx: &mut Context<Self>) {
+        if let Some(map) = self.timbre_map.map.clone() {
+            self.apply_timbre_track_colors(&map, only);
+            return;
+        }
+        self.open_timbre_map(cx);
+        if self.timbre_map.control.is_some() {
+            self.timbre_map.pending_track_colors = Some(only);
+        }
+    }
+
+    fn apply_timbre_track_colors(&mut self, map: &TimbreMap, only: Option<TrackId>) -> usize {
+        let colors: Vec<_> = self
+            .session
+            .timbre_track_clusters(map)
+            .into_iter()
+            .filter(|(track, _)| only.is_none_or(|only| only == *track))
+            .map(|(track, cluster)| (track, self.theme.timbre_cluster_track_color(cluster)))
+            .collect();
+        self.session.set_track_colors(&colors).unwrap_or(0)
+    }
+
+    /// The colour a track would take from its sound's cluster, when the map has measured it.
+    ///
+    /// `None` both when no map has been made and when the map has nothing to say about the
+    /// track; [`Self::timbre_map_ready`] tells the two apart.
+    pub(crate) fn timbre_track_color(&self, track: TrackId) -> Option<Color> {
+        let map = self.timbre_map.map.as_ref()?;
+        self.session
+            .timbre_track_clusters(map)
+            .into_iter()
+            .find(|(id, _)| *id == track)
+            .map(|(_, cluster)| self.theme.timbre_cluster_track_color(cluster))
+    }
+
+    /// Whether a timbre map has been made in this run of the application.
+    pub(crate) fn timbre_map_ready(&self) -> bool {
+        self.timbre_map.map.is_some()
+    }
+
     fn name_timbre_clusters(&mut self, cx: &mut Context<Self>) {
         let Some(map) = &self.timbre_map.map else {
             return;
@@ -582,8 +631,15 @@ impl AurisApp {
                     return;
                 }
                 this.timbre_map.control = None;
+                let waiting = this.timbre_map.pending_track_colors.take();
                 match result {
-                    Ok(map) => this.timbre_map.map = Some(Arc::new(map)),
+                    Ok(map) => {
+                        let map = Arc::new(map);
+                        if let Some(only) = waiting {
+                            this.apply_timbre_track_colors(&map, only);
+                        }
+                        this.timbre_map.map = Some(map);
+                    }
                     Err(e) => this.timbre_map.error = Some(e.to_string()),
                 }
                 cx.notify();
@@ -1338,6 +1394,19 @@ impl AurisApp {
                             })),
                     );
                 }
+                // The legend's colours are what it hands to tracks, so the button sits with them.
+                let colourable = !self.session.timbre_track_clusters(map).is_empty();
+                naming_controls = naming_controls.child(
+                    Button::new("timbre-color-tracks", self.t(Key::TimbreMapColorTracks))
+                        .ghost()
+                        .size(ControlSize::Small)
+                        .disabled(!colourable)
+                        .tooltip(self.t(Key::TimbreMapColorTracksHint))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.color_tracks_by_timbre(None, cx);
+                            cx.notify();
+                        })),
+                );
                 let figure = Card::new()
                     .flex_1()
                     .min_w_0()
@@ -1942,6 +2011,85 @@ mod tests {
             assert_eq!(this.settings, previous);
             assert_eq!(this.timbre_map.error.as_deref(), Some("disk full"));
             assert_eq!(this.project(), &before);
+        });
+    }
+
+    #[gpui::test]
+    fn tracks_take_their_clusters_colours_after_a_scan_and_undo_together(cx: &mut TestAppContext) {
+        use crate::ui::context_menu::{MenuCommand, MenuEntry};
+        let color = |this: &AurisApp, id| this.project().track(id).unwrap().color;
+        let (app, cx) = open(cx);
+        let (lead, pad, audio) = app.update(cx, |this, cx| {
+            let lead = this.session.add_default_instrument_track("Lead").unwrap();
+            let pad = this.session.add_default_instrument_track("Pad").unwrap();
+            let audio = this.session.add_audio_track("Audio");
+            // Before any map the row is offered, and choosing it scans; the track asked for
+            // follows once the scan is done.
+            let offered = |this: &AurisApp, id| {
+                this.track_menu(gpui::point(gpui::px(0.), gpui::px(0.)), id)
+                    .entries
+                    .iter()
+                    .any(|entry| {
+                        matches!(entry, MenuEntry::Item(item)
+                        if item.command == MenuCommand::ColorTrackByTimbre(id))
+                    })
+            };
+            assert!(offered(this, lead));
+            assert!(!offered(this, audio), "nothing measured an audio track");
+            this.run_menu_command(MenuCommand::ColorTrackByTimbre(lead), cx);
+            assert!(this.timbre_map.open);
+            assert!(this.timbre_map.control.is_some());
+            assert_eq!(
+                color(this, lead),
+                Color::INSTRUMENT,
+                "nothing changes before the map"
+            );
+            (lead, pad, audio)
+        });
+        cx.run_until_parked();
+        app.update(cx, |this, cx| {
+            let map = this.timbre_map.map.clone().expect("the scan finished");
+            let clusters = this.session.timbre_track_clusters(&map);
+            let tint = |id| {
+                let cluster = clusters
+                    .iter()
+                    .find(|(track, _)| *track == id)
+                    .map(|(_, cluster)| *cluster)
+                    .expect("a default instrument is a measured sound");
+                this.theme.timbre_cluster_track_color(cluster)
+            };
+            let (lead_tint, pad_tint) = (tint(lead), tint(pad));
+            assert_eq!(color(this, lead), lead_tint);
+            assert_eq!(
+                color(this, pad),
+                Color::INSTRUMENT,
+                "only the track asked for"
+            );
+            let menu = this.track_menu(gpui::point(gpui::px(0.), gpui::px(0.)), lead);
+            let row = menu
+                .entries
+                .iter()
+                .find_map(|entry| match entry {
+                    MenuEntry::Item(item)
+                        if item.command == MenuCommand::ColorTrackByTimbre(lead) =>
+                    {
+                        Some(item)
+                    }
+                    _ => None,
+                })
+                .expect("a measured track offers its cluster colour");
+            assert_eq!(row.swatch, Some(this.theme.track_color(lead_tint.0)));
+            assert!(row.checked);
+
+            this.session.forget_history();
+            this.color_tracks_by_timbre(None, cx);
+            assert_eq!(color(this, pad), pad_tint);
+            assert_eq!(color(this, lead), lead_tint);
+            assert_eq!(color(this, audio), Color::AUDIO);
+            assert_eq!(this.session.undo(), Some(Edit::SetTrackColors));
+            assert_eq!(color(this, pad), Color::INSTRUMENT);
+            assert_eq!(color(this, lead), lead_tint);
+            assert_eq!(this.session.undo(), None, "every track was one step");
         });
     }
 

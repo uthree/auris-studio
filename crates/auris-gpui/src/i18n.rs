@@ -68,6 +68,49 @@ impl AurisApp {
         )
     }
 
+    /// The label a track header draws where it once said only what kind of track it was.
+    ///
+    /// A track that plays something names what it plays — the SoundFont sound, the sample, the
+    /// built-in or hosted instrument, the voice — because "Instrument" is true of every one of
+    /// them and tells nobody which piano this is. A track that plays nothing yet says *that*,
+    /// rather than falling back to the kind, so an empty sampler does not look like a working
+    /// one. Audio and bus tracks play no instrument, and their kind is still the useful word.
+    pub(crate) fn track_sound_label(&self, track: TrackId) -> TrackSoundLabel {
+        let Some(entry) = self.project().track(track) else {
+            return TrackSoundLabel::Kind(Key::TrackKindAudio);
+        };
+        let kind = track_kind_key(&entry.kind);
+        let named = match &entry.kind {
+            TrackKind::Singer(_) => {
+                return match self.singer_voice_label(track) {
+                    Some(voice) => TrackSoundLabel::Named { name: voice, kind },
+                    None => TrackSoundLabel::Unset {
+                        placeholder: Key::TrackVoiceNone,
+                        kind,
+                    },
+                };
+            }
+            TrackKind::Instrument(inner) | TrackKind::Drum(inner) => {
+                match inner.instrument_id.as_str() {
+                    SAMPLER_ID => self.session.track_preset_name(track),
+                    AUDIO_SAMPLER_ID => self
+                        .session
+                        .track_sample_name(track)
+                        .filter(|_| self.session.track_sample_is_loaded(track)),
+                    id => Some(self.instrument_label(track, id)),
+                }
+            }
+            TrackKind::Audio(_) | TrackKind::Bus => return TrackSoundLabel::Kind(kind),
+        };
+        match named {
+            Some(name) => TrackSoundLabel::Named { name, kind },
+            None => TrackSoundLabel::Unset {
+                placeholder: Key::TrackSoundNone,
+                kind,
+            },
+        }
+    }
+
     /// A plugin's one-line description for the browser.
     pub(crate) fn plugin_description(&self, text: &str) -> String {
         audio::plugin_description(text, self.language).to_string()
@@ -157,6 +200,7 @@ pub fn edit_key(edit: Edit) -> Key {
         Edit::RenameProject => Key::EditRenameProject,
         Edit::RenameTrack => Key::EditRenameTrack,
         Edit::SetTrackColor => Key::EditSetTrackColor,
+        Edit::SetTrackColors => Key::EditSetTrackColors,
         Edit::SetTrackHeight => Key::EditSetTrackHeight,
         Edit::MuteTrack => Key::EditMuteTrack,
         Edit::SoloTrack => Key::EditSoloTrack,
@@ -172,6 +216,7 @@ pub fn edit_key(edit: Edit) -> Key {
         Edit::PasteClips => Key::EditPasteClips,
         Edit::DuplicateClip => Key::EditDuplicateClip,
         Edit::SplitClip => Key::EditSplitClip,
+        Edit::JoinClips => Key::EditJoinClips,
         Edit::RenameClip => Key::EditRenameClip,
         Edit::MuteClip => Key::EditMuteClip,
         Edit::MoveClip => Key::EditMoveClip,
@@ -204,6 +249,8 @@ pub fn edit_key(edit: Edit) -> Key {
         Edit::SetSingerVoice => Key::EditSetSingerVoice,
         Edit::SetSingerSpeaker => Key::EditSetSingerSpeaker,
         Edit::Sing => Key::EditSing,
+        Edit::LintFix => Key::EditLintFix,
+        Edit::LintSuppression => Key::EditLintSuppression,
         Edit::AddEffect => Key::EditAddEffect,
         Edit::RemoveEffect => Key::EditRemoveEffect,
         Edit::BypassEffect => Key::EditBypassEffect,
@@ -224,6 +271,8 @@ pub fn edit_key(edit: Edit) -> Key {
         Edit::ImportAudio => Key::EditImportAudio,
         Edit::RecordTake => Key::EditRecordTake,
         Edit::ImportSoundFont => Key::EditImportSoundFont,
+        Edit::LoadSample => Key::EditLoadSample,
+        Edit::EditSampleMap => Key::EditSampleMap,
         Edit::ChoosePreset | Edit::ApplySoundPreset => Key::EditChoosePreset,
         Edit::SetKey => Key::EditSetKey,
         Edit::SetChord => Key::EditSetChord,
@@ -231,6 +280,10 @@ pub fn edit_key(edit: Edit) -> Key {
         Edit::ClearHarmony => Key::EditClearHarmony,
         Edit::SetSection => Key::EditSetSection,
         Edit::MoveSection => Key::EditMoveSection,
+        Edit::SetLyricLine => Key::EditSetLyricLine,
+        Edit::MoveLyricLine => Key::EditMoveLyricLine,
+        Edit::SetComment => Key::EditSetComment,
+        Edit::MoveComment => Key::EditMoveComment,
         Edit::StampProgression => Key::EditStampProgression,
         Edit::GenerateClip => Key::EditGenerateClip,
         Edit::FreezeClip => Key::EditFreezeClip,
@@ -238,6 +291,54 @@ pub fn edit_key(edit: Edit) -> Key {
         Edit::FreezeClipTransforms => Key::EditFreezeClipTransforms,
         Edit::Compose => Key::EditCompose,
         Edit::BalanceLevels => Key::EditBalanceLevels,
+    }
+}
+
+/// What a track header says about what plays the track; see
+/// [`AurisApp::track_sound_label`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum TrackSoundLabel {
+    /// Something plays it, and this is its name.
+    Named {
+        /// The sound, instrument or voice, as its owner calls it.
+        name: String,
+        /// The track's kind, which the label no longer shows and its tooltip still does.
+        kind: Key,
+    },
+    /// The track has room for a sound and nothing in it that will play.
+    Unset {
+        /// What to say instead of a name.
+        placeholder: Key,
+        /// The track's kind, for the tooltip.
+        kind: Key,
+    },
+    /// A track that plays no instrument at all, for which the kind is the right word.
+    Kind(Key),
+}
+
+impl TrackSoundLabel {
+    /// The words drawn in the header.
+    pub(crate) fn text(&self, language: Language) -> String {
+        match self {
+            Self::Named { name, .. } => name.clone(),
+            Self::Unset { placeholder, .. } => placeholder.get(language).to_string(),
+            Self::Kind(kind) => kind.get(language).to_string(),
+        }
+    }
+
+    /// The fuller account for the tooltip: the kind the label replaced, then the label.
+    pub(crate) fn tooltip(&self, language: Language) -> String {
+        match self {
+            Self::Named { kind, .. } | Self::Unset { kind, .. } => {
+                format!("{} · {}", kind.get(language), self.text(language))
+            }
+            Self::Kind(kind) => kind.get(language).to_string(),
+        }
+    }
+
+    /// `true` when nothing will play, which the header draws more quietly than a name.
+    pub(crate) fn is_unset(&self) -> bool {
+        matches!(self, Self::Unset { .. })
     }
 }
 
@@ -274,6 +375,7 @@ pub fn error_text(error: &SessionError, language: Language) -> String {
         | SessionError::OutputPreview(detail)
         | SessionError::InvalidDrumAssignment(detail)
         | SessionError::SoundPreset(detail)
+        | SessionError::SampleMap(detail)
         | SessionError::DrumAnalysis(detail)
         | SessionError::PluginDiscovery(detail)
         | SessionError::MusicAnalysis(detail) => with(Key::ErrorDocument, detail.clone()),
@@ -312,6 +414,26 @@ pub fn error_text(error: &SessionError, language: Language) -> String {
         },
         SessionError::UnknownTrack(_) => Key::ErrorUnknownTrack.get(language).to_string(),
         SessionError::UnknownClip(_) => Key::ErrorUnknownClip.get(language).to_string(),
+        SessionError::UnknownPerformancePreset(_) => {
+            Key::ErrorUnknownPerformancePreset.get(language).to_string()
+        }
+        SessionError::PerformancePreset(refusal) => {
+            use auris_session::performance_presets::KeepRefusal;
+            match refusal {
+                KeepRefusal::BadName => Key::ErrorPresetName,
+                KeepRefusal::BuiltinName => Key::ErrorPresetBuiltinName,
+                KeepRefusal::Exists => Key::ErrorPresetExists,
+                KeepRefusal::LongDescription => Key::ErrorPresetDescription,
+                KeepRefusal::Full => Key::ErrorPresetFull,
+                KeepRefusal::Builtin => Key::ErrorPresetBuiltin,
+            }
+            .get(language)
+            .to_string()
+        }
+        SessionError::UnknownComment(_) => Key::ErrorUnknownComment.get(language).to_string(),
+        SessionError::EmptyComment => Key::ErrorEmptyComment.get(language).to_string(),
+        SessionError::NotANoteClip(_) => Key::ErrorNotANoteClip.get(language).to_string(),
+        SessionError::LintStale => Key::ErrorLintStale.get(language).to_string(),
         SessionError::UnknownNote { .. } => Key::ErrorUnknownNote.get(language).to_string(),
         // The one vocal error a person can *fix* gets the sentence naming the fix; the others
         // carry the loader's or the frontend's own words, which name the folder or the text.
@@ -355,6 +477,15 @@ pub fn error_text(error: &SessionError, language: Language) -> String {
         SessionError::LibraryMissing => Key::ErrorLibraryMissing.get(language).to_string(),
         SessionError::UnknownProgression(name) => messages::unknown_progression(language, name),
         SessionError::CannotSplit(_) => Key::ErrorCannotSplit.get(language).to_string(),
+        SessionError::CannotJoin(refusal) => match refusal {
+            JoinRefusal::TooFew => Key::ErrorJoinTooFew,
+            JoinRefusal::Audio => Key::ErrorJoinAudio,
+            JoinRefusal::DifferentTracks => Key::ErrorJoinDifferentTracks,
+            JoinRefusal::MixedMute => Key::ErrorJoinMixedMute,
+            JoinRefusal::DifferentTransforms => Key::ErrorJoinDifferentTransforms,
+        }
+        .get(language)
+        .to_string(),
         SessionError::GenerationPositionOccupied => Key::ErrorGenerationPositionOccupied
             .get(language)
             .to_string(),
@@ -366,6 +497,7 @@ pub fn error_text(error: &SessionError, language: Language) -> String {
         }
         SessionError::WrongTrackKind { .. } => Key::ErrorWrongTrackKind.get(language).to_string(),
         SessionError::NoPath => Key::ErrorNoPath.get(language).to_string(),
+        SessionError::EmptySample(_) => Key::ErrorEmptySample.get(language).to_string(),
         SessionError::RecordingNeedsFolder => {
             Key::ErrorRecordingNeedsFolder.get(language).to_string()
         }
@@ -1009,9 +1141,18 @@ mod tests {
             SessionError::UnknownPlugin("auris.fx.nope".into()),
             SessionError::UnknownTrack(1),
             SessionError::UnknownClip(2),
+            SessionError::UnknownPerformancePreset("gone".into()),
+            SessionError::PerformancePreset(
+                auris_session::performance_presets::KeepRefusal::Exists,
+            ),
+            SessionError::UnknownComment(4),
+            SessionError::EmptyComment,
+            SessionError::NotANoteClip(5),
             SessionError::CannotSplit(3),
             SessionError::GenerationPositionOccupied,
             SessionError::NoPath,
+            SessionError::EmptySample("silence.wav".into()),
+            SessionError::SampleMap("there is no sample 3".into()),
             SessionError::AudioRestart("device gone".into()),
             SessionError::MissingAudio(vec!["a.wav".into()]),
             SessionError::RecordingInProgress,
