@@ -28,7 +28,10 @@ use crate::ui::timeline::pitch_name;
 ///
 /// Wide enough for the six columns at the interface's text size with the event's name in full,
 /// and no wider: every pixel it takes is a pixel of grid the notes no longer have.
-pub(crate) const EVENT_LIST_WIDTH: Pixels = px(340.0);
+pub(crate) const EVENT_LIST_WIDTH: Pixels = px(370.0);
+
+/// How wide the stripe down a row's left edge is, in its family's colour.
+const STRIPE_WIDTH: Pixels = px(3.0);
 
 /// How tall one row is.
 const ROW_HEIGHT: Pixels = px(18.0);
@@ -268,9 +271,62 @@ fn cell_spot(clip: ClipId, event: EventRef, column: EventColumn) -> SharedString
     format!("event-cell:{}:{event:?}:{column:?}", clip.0).into()
 }
 
+/// The family a row's event belongs to, which is what its colour says.
+///
+/// A list of a few hundred rows is read by scanning, and scanning wants the kinds apart before
+/// the words are read: the way a list editor colours notes, the bend and each sort of
+/// controller differently, so a stray sustain pedal or a volume ride among the notes stands out.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(crate) enum EventTint {
+    /// A note.
+    Note,
+    /// The pitch bend.
+    Bend,
+    /// A controller that sets a level: volume (7) or expression (11).
+    Level,
+    /// A pedal: sustain, portamento, sostenuto, soft, legato, hold 2 (64 to 69).
+    Pedal,
+    /// Any other controller.
+    Controller,
+}
+
+impl EventTint {
+    /// The family `kind` belongs to.
+    pub(crate) fn of(kind: ClipEventKind) -> Self {
+        match kind {
+            ClipEventKind::Note { .. } => EventTint::Note,
+            ClipEventKind::Bend { .. } => EventTint::Bend,
+            ClipEventKind::Controller { number: 7 | 11, .. } => EventTint::Level,
+            ClipEventKind::Controller {
+                number: 64..=69, ..
+            } => EventTint::Pedal,
+            ClipEventKind::Controller { .. } => EventTint::Controller,
+        }
+    }
+
+    /// Its colour in `theme`.
+    ///
+    /// Notes take the theme's own text colour. The other families take fixed hues — orange,
+    /// green, purple, blue — at a lightness chosen against the theme's background: many schemes
+    /// draw every semantic colour (warning, solo, meter) from their one accent, and four families
+    /// in one colour would be no colouring at all.
+    fn colour(self, theme: &crate::theme::Theme) -> gpui::Hsla {
+        let hue = match self {
+            EventTint::Note => return theme.text,
+            EventTint::Bend => 0.08,
+            EventTint::Level => 0.36,
+            EventTint::Pedal => 0.78,
+            EventTint::Controller => 0.58,
+        };
+        let lightness = if theme.background.l < 0.5 { 0.68 } else { 0.38 };
+        gpui::hsla(hue, 0.65, lightness, 1.0)
+    }
+}
+
 /// A row ready to draw.
 struct DrawnRow {
     event: EventRef,
+    tint: EventTint,
     cells: [String; 6],
     selected: bool,
     beyond_clip: bool,
@@ -456,6 +512,7 @@ impl AurisApp {
                 };
                 DrawnRow {
                     event: event.event,
+                    tint: EventTint::of(event.kind),
                     cells,
                     selected,
                     beyond_clip: event.at >= clip_length,
@@ -490,6 +547,7 @@ impl AurisApp {
             .border_color(theme.border)
             .text_xs()
             .text_color(theme.text_muted)
+            .child(div().w(STRIPE_WIDTH).flex_shrink_0())
             .children(
                 EventColumn::ALL
                     .into_iter()
@@ -520,10 +578,7 @@ impl AurisApp {
                             } else if row.beyond_clip {
                                 theme.text_faint
                             } else {
-                                match event {
-                                    EventRef::Note(_) => theme.text,
-                                    EventRef::Curve { .. } => theme.accent_text,
-                                }
+                                row.tint.colour(&theme)
                             };
                             div()
                                 .id(("event-row", index))
@@ -537,6 +592,15 @@ impl AurisApp {
                                 .when(!row.selected, |this| {
                                     this.hover(|style| style.bg(theme.surface_hover))
                                 })
+                                // A stripe in the family's colour, which stays when the row is
+                                // selected and its text turns to the selection's.
+                                .child(
+                                    div()
+                                        .w(STRIPE_WIDTH)
+                                        .flex_shrink_0()
+                                        .h_full()
+                                        .bg(row.tint.colour(&theme)),
+                                )
                                 .children(EventColumn::ALL.into_iter().zip(row.cells.iter()).map(
                                     |(column, text)| {
                                         cell(column, text.clone().into())
@@ -753,6 +817,35 @@ mod tests {
         );
         assert_eq!(cells[3], "CC#1 Modulation");
         assert_eq!(cells[4], "", "a controller has no gate");
+    }
+
+    #[test]
+    fn each_family_of_event_has_its_own_colour() {
+        let controller = |number| ClipEventKind::Controller { number, value: 0 };
+        assert_eq!(EventTint::of(note(0, 0, 60).kind), EventTint::Note);
+        assert_eq!(
+            EventTint::of(ClipEventKind::Bend { semitones: 0.0 }),
+            EventTint::Bend
+        );
+        assert_eq!(EventTint::of(controller(7)), EventTint::Level);
+        assert_eq!(EventTint::of(controller(11)), EventTint::Level);
+        assert_eq!(EventTint::of(controller(64)), EventTint::Pedal);
+        assert_eq!(EventTint::of(controller(1)), EventTint::Controller);
+        assert_eq!(EventTint::of(controller(74)), EventTint::Controller);
+        // Told apart even in a theme that draws every semantic colour from its accent.
+        let theme = crate::theme::Theme::default();
+        let tints = [
+            EventTint::Note,
+            EventTint::Bend,
+            EventTint::Level,
+            EventTint::Pedal,
+            EventTint::Controller,
+        ];
+        for (i, a) in tints.iter().enumerate() {
+            for b in &tints[i + 1..] {
+                assert_ne!(a.colour(&theme), b.colour(&theme), "{a:?} and {b:?}");
+            }
+        }
     }
 
     #[test]
