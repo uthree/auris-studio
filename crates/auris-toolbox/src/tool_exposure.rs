@@ -45,7 +45,7 @@ impl ToolGroups {
             );
         }
         let mut text = String::from(
-            "Control saved Auris projects. Respond in the user's language. Use project_id from create_project/open_project in project arguments; paths also work. Make dependent edits sequentially. Use tool_help for exact fields and examples after an error; correct arguments before retrying. Use inspect_project for stable numeric track/clip IDs. Read large reports with read_report instead of repeating a write. Comments in inspect_project are people's notes pinned to tracks and clips: read them before editing a passage and follow them unless told otherwise; they never sound, and edit_comments changes them. Never invent successful results. ",
+            "Control saved Auris projects. Respond in the user's language. Use project_id from create_project/open_project in project arguments; paths also work. Make dependent edits sequentially. Use tool_help for exact fields and examples after an error; correct arguments before retrying. Use inspect_project for stable numeric track/clip IDs. Read large reports with read_report instead of repeating a write. Comments in inspect_project are people's notes pinned to tracks, clips and mixer nodes: read them before editing a passage and follow them unless told otherwise; they never sound, and edit_comments changes them. Never invent successful results. ",
         );
         for group in &self.0 {
             text.push_str(match group.as_str() {

@@ -604,7 +604,9 @@ pub mod architecture {
     //! Comments are the source-code habit brought to a score: text pinned to a place that
     //! nothing plays. A track holds them in song time along its lane and a note clip in its own
     //! time, optionally on a piano-roll row, so they move, copy and split with the notes they are
-    //! about ([`Comment`](auris_core::Comment)). The session's comment commands
+    //! about ([`Comment`](auris_core::Comment)). A node of the mixer graph holds them too, on its
+    //! strip or effect slot and with no moment, so they leave with the effect they describe
+    //! ([`CommentHost::Mixer`](crate::session::CommentHost::Mixer)). The session's comment commands
     //! ([`Session::add_comment`](crate::Session::add_comment) and its neighbours) are undoable and
     //! touch nothing audible. `inspect_project` lists every comment for an agent and
     //! `edit_comments` writes them; the instructions tell a model to read the comments in a

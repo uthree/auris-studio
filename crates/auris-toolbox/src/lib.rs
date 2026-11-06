@@ -151,7 +151,7 @@ Writes require the revision returned by the lane read. Controller values are 0..
 edit_timeline reads or edits tempo/meter points without moving existing notes.
 Arrangement bar ranges start at 1. Only notes use bar/beat; clip, timeline and import positions are
 absolute ticks (960 per quarter note), curve points are ticks from 0 relative to their clip.
-Comments are notes pinned on a track's lane or inside a clip's piano roll; inspect_project lists them with bar, beat and pitch.
+Comments are notes pinned on a track's lane, inside a clip's piano roll, or on a mixer_graph node; inspect_project lists them with bar, beat and pitch (mixer ones with mixer_node instead).
 They never sound. Before editing a passage, read its comments: a person's comment is their note or request for that place,
 so follow it unless the current message says otherwise, and say when you could not. edit_comments adds a short comment where
 a deliberate choice needs explaining or the user asks for one; never remove or rewrite the user's comments unless asked.

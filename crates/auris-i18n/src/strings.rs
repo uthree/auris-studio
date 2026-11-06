@@ -1254,6 +1254,7 @@ strings! {
     MenuRemoveLyricLine { en: "Remove Lyric Line", ja: "歌詞の行を削除" }
     MenuEndLyricLineHere { en: "End Line Here", ja: "ここで行を終える" }
     MenuAddCommentHere { en: "Add Comment Here…", ja: "ここにコメントを追加…" }
+    MenuAddComment { en: "Add Comment…", ja: "コメントを追加…" }
     MenuEditComment { en: "Edit Comment…", ja: "コメントを編集…" }
     MenuRemoveComment { en: "Remove Comment", ja: "コメントを削除" }
     MenuComment { en: "Comment", ja: "コメント" }
@@ -1994,6 +1995,7 @@ strings! {
     ErrorUnknownTrack { en: "that track no longer exists", ja: "そのトラックは存在しません" }
     ErrorUnknownClip { en: "that clip no longer exists", ja: "そのクリップは存在しません" }
     ErrorUnknownComment { en: "that comment no longer exists", ja: "そのコメントは存在しません" }
+    ErrorUnknownMixerNode { en: "that track or effect is no longer in the mixer", ja: "そのトラックまたはエフェクトはミキサーにありません" }
     ErrorEmptyComment { en: "a comment needs some text", ja: "コメントに文字を入力してください" }
     ErrorNotANoteClip { en: "comments go inside note clips; pin this one on the track instead", ja: "コメントはノートのクリップ内に置けます。トラック上に置いてください" }
     ErrorUnknownSend { en: "that send no longer exists", ja: "そのセンドは存在しません" }
