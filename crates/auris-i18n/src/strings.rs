@@ -1127,7 +1127,8 @@ strings! {
     // The three strips over the arrangement, named by what is in them rather than by the word
     // "lane" — a person hides the chords, not a lane.
     CmdShowStructureLane { en: "Song Structure", ja: "曲の構成" }
-    CmdShowHarmonyLane { en: "Key and Chords", ja: "キーとコード" }
+    CmdShowKeyLane { en: "Key", ja: "キー" }
+    CmdShowChordLane { en: "Chords", ja: "コード" }
     CmdShowLyricsLane { en: "Lyrics", ja: "歌詞" }
     CmdShowTempoMarks { en: "Tempo Changes", ja: "テンポの変化" }
     CmdZoomIn { en: "Zoom In", ja: "拡大" }

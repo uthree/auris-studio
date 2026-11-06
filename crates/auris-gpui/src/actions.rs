@@ -206,8 +206,10 @@ actions!(
         ToggleAgent,
         /// Show or hide the strip of section names above the arrangement.
         ToggleStructureLane,
-        /// Show or hide the key and chord strip above the arrangement.
-        ToggleHarmonyLane,
+        /// Show or hide the strip of key changes above the chords.
+        ToggleKeyLane,
+        /// Show or hide the chord strip above the arrangement.
+        ToggleChordLane,
         /// Show or hide the song-wide lyrics strip under the chords.
         ToggleLyricsLane,
         /// Show or hide the tempo changes marked along the ruler.
@@ -570,11 +572,12 @@ bindable! {
         "view.about",           GroupHelp,      CmdAbout,              "" => ShowAbout;
         "help.report_problem",  GroupHelp,      IssueReport,           "" => ReportProblem;
         "help.check_updates",   GroupHelp,      CmdCheckForUpdates,    "" => CheckForUpdates;
-        // The three strips over the arrangement. Out on `secondary-alt-` because they are
+        // The strips over the arrangement. Out on `secondary-alt-` because they are
         // arrangement furniture rather than things reached mid-take, and because the plain and
         // shifted forms of these letters are all spoken for.
         "view.structure_lane",  GroupView,      CmdShowStructureLane,  "secondary-alt-s" => ToggleStructureLane;
-        "view.harmony_lane",    GroupView,      CmdShowHarmonyLane,    "secondary-alt-h" => ToggleHarmonyLane;
+        "view.key_lane",        GroupView,      CmdShowKeyLane,        "secondary-alt-k" => ToggleKeyLane;
+        "view.chord_lane",      GroupView,      CmdShowChordLane,      "secondary-alt-h" => ToggleChordLane;
         "view.lyrics_lane",     GroupView,      CmdShowLyricsLane,     "secondary-alt-y" => ToggleLyricsLane;
         "view.tempo_marks",     GroupView,      CmdShowTempoMarks,     "secondary-alt-t" => ToggleTempoMarks;
         "view.bend_lane",       GroupView,      CmdShowBendLane,       "secondary-alt-b" => ToggleBendLane;

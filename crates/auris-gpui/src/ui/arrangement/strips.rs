@@ -273,11 +273,17 @@ impl AurisApp {
                 _ => None,
             },
             language: self.language(),
+            show_keys: self.panels.lanes.keys,
+            show_chords: self.panels.lanes.chords,
         };
 
         div()
             .id("harmony-lane")
-            .h(Metrics::HARMONY_LANE_HEIGHT)
+            .h(self
+                .panels
+                .lanes
+                .harmony_height()
+                .unwrap_or(Metrics::HARMONY_LANE_HEIGHT))
             .w_full()
             .child({
                 let recorded = self.canvas.harmony.clone();
@@ -342,7 +348,7 @@ impl AurisApp {
     /// Which row of the harmony lane a window-space `y` falls in, if either.
     fn harmony_row_at(&self, y: Pixels) -> Option<HarmonyRow> {
         let bounds = self.canvas.harmony.get()?;
-        let (keys, chords) = paint::harmony_rows(bounds);
+        let (keys, chords) = paint::harmony_rows(bounds, self.panels.lanes.keys);
         if (keys.origin.y..keys.origin.y + keys.size.height).contains(&y) {
             Some(HarmonyRow::Keys)
         } else if (chords.origin.y..chords.origin.y + chords.size.height).contains(&y) {

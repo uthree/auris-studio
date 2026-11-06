@@ -302,7 +302,7 @@ impl AurisApp {
 
     /// The menu for the arrangement below the last track.
     pub(crate) fn arrangement_menu(&self, anchor: Point<Pixels>) -> ContextMenu {
-        ContextMenu::new(anchor, self.t(Key::MenuArrangement))
+        let menu = ContextMenu::new(anchor, self.t(Key::MenuArrangement))
             .toggle(
                 self.t(Key::MenuProjectSpectrogram),
                 MenuCommand::SetProjectSpectrogram(!self.spectrograms.project_enabled),
@@ -316,7 +316,8 @@ impl AurisApp {
             .item(self.t(Key::MenuNewDrumTrack), MenuCommand::NewDrumTrack)
             .item(self.t(Key::MenuNewSingerTrack), MenuCommand::NewSingerTrack)
             .item(self.t(Key::MenuNewAudioTrack), MenuCommand::NewAudioTrack)
-            .item(self.t(Key::MenuNewBusTrack), MenuCommand::NewBusTrack)
+            .item(self.t(Key::MenuNewBusTrack), MenuCommand::NewBusTrack);
+        self.with_lane_toggles(menu)
     }
 
     /// The projects opened lately, as a menu.

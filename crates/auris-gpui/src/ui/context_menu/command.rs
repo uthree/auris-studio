@@ -11,7 +11,7 @@ use auris_session::prelude::*;
 use gpui::{Context, Pixels, Point};
 
 use crate::app::{AurisApp, FadeEdge};
-use crate::dock::{Dock, Panel};
+use crate::dock::{Dock, Panel, TimelineLane};
 use crate::ui::prompt::{Prompt, PromptTarget};
 
 use super::timeline::progression_target;
@@ -41,6 +41,12 @@ impl MenuCommand {
             Self::ToggleTrackSolo(_) => "track.solo",
             Self::ToggleLoop => "transport.loop",
             Self::TogglePunch => "transport.punch",
+            Self::ToggleTimelineLane(lane) => match lane {
+                TimelineLane::Structure => "view.structure_lane",
+                TimelineLane::Keys => "view.key_lane",
+                TimelineLane::Chords => "view.chord_lane",
+                TimelineLane::Lyrics => "view.lyrics_lane",
+            },
             _ => return None,
         })
     }
@@ -254,6 +260,8 @@ pub enum MenuCommand {
     },
     /// Show or hide the whole project's rendered spectrogram.
     SetProjectSpectrogram(bool),
+    /// Show or hide one of the annotation strips over the arrangement.
+    ToggleTimelineLane(TimelineLane),
     /// Drop every recipe on a track, so nothing on it is written again.
     FreezeTrack(TrackId),
     /// Show a track's automation lane on a parameter, or hide it when it is already showing that
@@ -1124,6 +1132,7 @@ impl AurisApp {
             MenuCommand::SetProjectSpectrogram(enabled) => {
                 self.set_project_spectrogram(enabled, cx);
             }
+            MenuCommand::ToggleTimelineLane(lane) => self.toggle_timeline_lane(lane, cx),
             MenuCommand::FreezeTrack(track) => self.freeze_track(track),
             MenuCommand::ShowAutomation(track, target) => self.show_automation(track, target),
             MenuCommand::ClearAutomation(target) => {

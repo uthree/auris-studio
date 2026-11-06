@@ -160,7 +160,7 @@ impl AurisApp {
                     .when(self.panels.lanes.structure, |this| {
                         this.child(self.render_structure_lane(cx))
                     })
-                    .when(self.panels.lanes.harmony, |this| {
+                    .when(self.panels.lanes.harmony_height().is_some(), |this| {
                         this.child(self.render_harmony_lane(cx))
                     })
                     .when(self.panels.lanes.lyrics, |this| {
