@@ -4445,6 +4445,10 @@ impl AurisApp {
             entry,
         );
         let atelier_message = matches!(entry, ChatEntry::Agent(_) | ChatEntry::You { .. });
+        let copy = agent_components::CopyLabels {
+            tooltip: self.t(Key::AgentCopyMarkdown).into(),
+            copied: self.t(Key::CopiedToClipboard).into(),
+        };
         let body: AnyElement = match entry {
             ChatEntry::Agent(_) => agent_components::assistant_message(
                 ("agent-message", index),
@@ -4456,11 +4460,13 @@ impl AurisApp {
                     window,
                     cx,
                 )),
+                Some(&copy),
                 streaming,
             ),
             ChatEntry::You { .. } => agent_components::user_message(
                 ("agent-message", index),
                 text.clone(),
+                Some(&copy),
                 theme,
                 window,
                 cx,
@@ -6645,6 +6651,37 @@ mod tests {
                 Some(expected)
             );
         });
+    }
+
+    #[gpui::test]
+    fn each_message_copies_whole_from_its_footer_button(cx: &mut gpui::TestAppContext) {
+        let (app, cx) = crate::harness::open(cx);
+        // Paragraphs, a list and code spans: every one a block that selection stops at.
+        let answer = "以下をIssueのたたき台として使えます。\n\n**タイトル**\n指定したSoundFontを適用できない\n\n- インストゥルメントID: `auris.sampler.soundfont`\n- プリセット: font `3`, bank `0`";
+        let request = "Play **this** clip.\n\nKeep `120 BPM`.";
+        app.update(cx, |this, _| {
+            this.panels.show(crate::dock::Panel::Agent);
+            this.settings.agent.model = "test-model".into();
+            this.agent_chat.entries = vec![
+                ChatEntry::user(request.into()),
+                ChatEntry::Agent(answer.into()),
+            ];
+        });
+        crate::harness::resize(&app, cx, gpui::size(px(1200.), px(800.)));
+        for (selector, expected) in [
+            ("agent-message-1-copy", answer),
+            ("agent-message-0-copy", request),
+        ] {
+            crate::harness::click(selector, cx);
+            cx.update(|_, cx| {
+                assert_eq!(
+                    cx.read_from_clipboard()
+                        .and_then(|item| item.text())
+                        .as_deref(),
+                    Some(expected)
+                );
+            });
+        }
     }
 
     #[gpui::test]
