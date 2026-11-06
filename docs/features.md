@@ -650,13 +650,17 @@ a missing-string marker.
 
 A strip under the bar ruler carries the key and the chords, spanning every track because that is
 what harmony is: one thing the whole arrangement obeys at any one moment, belonging to no track.
-Like the tempo map, it changes as the song goes on.
+Like the tempo map, it changes as the song goes on. A key is marked where it *changes*: writing E
+minor at the head of three sections in E minor stores one key, not three, exactly as two bars of
+`C` are one chord.
 
-It, the structure strip above it and the tempo marks along the ruler are each shown or hidden from
-the **View** menu, and where you leave them is where they are next launch. A piece with no chords
-written pays fifty pixels a row for two empty strips; a piece being arranged around a chorus wants
-all three. Hiding a lane hides the drawing of something and never the thing — the document keeps
-its chords whether or not they are on screen.
+The structure strip, the key row, the chord row, the lyrics strip and the tempo marks along the
+ruler are each shown or hidden on their own — from the **View** menu, or from the right-click menu
+of any of the strips or of the blank corner above the track headers — and where you leave them is
+where they are next launch. A piece with no chords written pays fifty pixels a row for two empty
+strips; a piece being arranged around a chorus wants all of them. Hiding a lane hides the drawing
+of something and never the thing — the document keeps its chords whether or not they are on
+screen.
 
 Right-click it to type a chord (`IV`, `vi`, `bVII7`) or a key (`Eb`, `F# minor`), or to write one
 of the named progressions — `axis`, `marusa`, `royal-road`, `canon` and a dozen more, the same

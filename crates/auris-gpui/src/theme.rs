@@ -1507,8 +1507,13 @@ impl Metrics {
     /// Height of the harmony lane, between the structure lane and the clip lanes.
     ///
     /// Two rows: a thin strip of key changes over a taller strip of chords. See
-    /// [`paint::harmony_rows`](crate::ui::paint::harmony_rows) for why they are not one.
+    /// [`paint::harmony_rows`](crate::ui::paint::harmony_rows) for why they are not one. Either
+    /// can be hidden, and the lane then takes only the other's height.
     pub const HARMONY_LANE_HEIGHT: Pixels = px(34.0);
+    /// Height of the strip of key changes along the top of the harmony lane.
+    pub const KEY_ROW_HEIGHT: Pixels = px(13.0);
+    /// Height of the chord blocks under the key strip: the rest of the harmony lane.
+    pub const CHORD_ROW_HEIGHT: Pixels = px(21.0);
     /// Height of the structure lane, between the ruler and the harmony.
     ///
     /// One row of section names — イントロ, Aメロ, サビ — coarser than the harmony below it,

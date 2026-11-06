@@ -10,7 +10,7 @@ use gpui::{
 
 use crate::actions;
 use crate::app::{AudioExportTarget, AurisApp, Drag, ExportOutcome, OrnamentHandle, Pane};
-use crate::dock::{Dock, Panel, PanelLayout};
+use crate::dock::{Dock, Panel, PanelLayout, TimelineLane};
 use crate::gestures::past_drag_threshold;
 use crate::menu::MenuRow;
 use crate::theme::Theme;
@@ -538,7 +538,8 @@ impl AurisApp {
                     ))
                     .on_action(Self::window_listener(cx, Self::on_toggle_agent))
                     .on_action(Self::window_listener(cx, Self::on_toggle_structure_lane))
-                    .on_action(Self::window_listener(cx, Self::on_toggle_harmony_lane))
+                    .on_action(Self::window_listener(cx, Self::on_toggle_key_lane))
+                    .on_action(Self::window_listener(cx, Self::on_toggle_chord_lane))
                     .on_action(Self::window_listener(cx, Self::on_toggle_lyrics_lane))
                     .on_action(Self::window_listener(cx, Self::on_toggle_tempo_marks))
                     .on_action(Self::window_listener(cx, Self::on_toggle_bend_lane))
@@ -3649,26 +3650,41 @@ impl AurisApp {
         cx.notify();
     }
 
+    /// Shows or hides one of the annotation strips over the arrangement, and keeps the choice.
+    ///
+    /// The one place they are switched, so the View menu, the shortcuts and the strips' own
+    /// right-click menus cannot disagree about what turning one off means.
+    pub(crate) fn toggle_timeline_lane(&mut self, lane: TimelineLane, cx: &mut Context<Self>) {
+        self.panels.lanes.toggle(lane);
+        self.remember_layout();
+        cx.notify();
+    }
+
     fn on_toggle_structure_lane(
         &mut self,
         _: &actions::ToggleStructureLane,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.panels.lanes.structure = !self.panels.lanes.structure;
-        self.remember_layout();
-        cx.notify();
+        self.toggle_timeline_lane(TimelineLane::Structure, cx);
     }
 
-    fn on_toggle_harmony_lane(
+    fn on_toggle_key_lane(
         &mut self,
-        _: &actions::ToggleHarmonyLane,
+        _: &actions::ToggleKeyLane,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.panels.lanes.harmony = !self.panels.lanes.harmony;
-        self.remember_layout();
-        cx.notify();
+        self.toggle_timeline_lane(TimelineLane::Keys, cx);
+    }
+
+    fn on_toggle_chord_lane(
+        &mut self,
+        _: &actions::ToggleChordLane,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_timeline_lane(TimelineLane::Chords, cx);
     }
 
     fn on_toggle_lyrics_lane(
@@ -3677,9 +3693,7 @@ impl AurisApp {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.panels.lanes.lyrics = !self.panels.lanes.lyrics;
-        self.remember_layout();
-        cx.notify();
+        self.toggle_timeline_lane(TimelineLane::Lyrics, cx);
     }
 
     fn on_toggle_tempo_marks(

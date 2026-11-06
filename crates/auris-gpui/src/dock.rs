@@ -171,8 +171,14 @@ impl Panel {
 pub struct TimelineLanes {
     /// The strip of section names: イントロ, Aメロ, サビ.
     pub structure: bool,
-    /// The key and the chords.
-    pub harmony: bool,
+    /// The thin strip of key changes along the top of the harmony lane.
+    pub keys: bool,
+    /// The chord blocks under the key strip.
+    ///
+    /// Read from `harmony` too, the name of the one switch that covered keys and chords together
+    /// before each had its own.
+    #[serde(alias = "harmony")]
+    pub chords: bool,
     /// The song-wide lyrics: the line sung at each moment, under the chords.
     pub lyrics: bool,
     /// Tempo changes, marked along the ruler's lower edge.
@@ -184,19 +190,69 @@ pub struct TimelineLanes {
 }
 
 impl Default for TimelineLanes {
-    /// All three. A lane nobody has hidden is a lane that is drawn: somebody who does not know
+    /// All of them. A lane nobody has hidden is a lane that is drawn: somebody who does not know
     /// these can be turned off should still see what the document holds.
     fn default() -> Self {
         Self {
             structure: true,
-            harmony: true,
+            keys: true,
+            chords: true,
             lyrics: true,
             tempo: true,
         }
     }
 }
 
+/// One of the annotation strips over the arrangement that can be shown or hidden on its own.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum TimelineLane {
+    /// The section names.
+    Structure,
+    /// The key changes.
+    Keys,
+    /// The chords.
+    Chords,
+    /// The song-wide lyrics.
+    Lyrics,
+}
+
+impl TimelineLane {
+    /// Every strip, top to bottom, in the order the menus list them.
+    pub const ALL: [Self; 4] = [Self::Structure, Self::Keys, Self::Chords, Self::Lyrics];
+
+    /// What the strip is called on a menu row — the View menu's own words for it.
+    pub fn label(self) -> Key {
+        match self {
+            Self::Structure => Key::CmdShowStructureLane,
+            Self::Keys => Key::CmdShowKeyLane,
+            Self::Chords => Key::CmdShowChordLane,
+            Self::Lyrics => Key::CmdShowLyricsLane,
+        }
+    }
+}
+
 impl TimelineLanes {
+    /// Whether `lane` is showing.
+    pub fn shows(self, lane: TimelineLane) -> bool {
+        match lane {
+            TimelineLane::Structure => self.structure,
+            TimelineLane::Keys => self.keys,
+            TimelineLane::Chords => self.chords,
+            TimelineLane::Lyrics => self.lyrics,
+        }
+    }
+
+    /// Shows `lane` if it is hidden, hides it if it is showing.
+    pub fn toggle(&mut self, lane: TimelineLane) {
+        let flag = match lane {
+            TimelineLane::Structure => &mut self.structure,
+            TimelineLane::Keys => &mut self.keys,
+            TimelineLane::Chords => &mut self.chords,
+            TimelineLane::Lyrics => &mut self.lyrics,
+        };
+        *flag = !*flag;
+    }
+
     /// Everything above the clip lanes on the right, and the strip that matches it on the left.
     ///
     /// The track headers line up with their lanes only because the left column reserves exactly
@@ -209,13 +265,29 @@ impl TimelineLanes {
         if self.structure {
             height += Metrics::STRUCTURE_LANE_HEIGHT;
         }
-        if self.harmony {
-            height += Metrics::HARMONY_LANE_HEIGHT;
+        if let Some(harmony) = self.harmony_height() {
+            height += harmony;
         }
         if self.lyrics {
             height += Metrics::LYRICS_LANE_HEIGHT;
         }
         height
+    }
+
+    /// How tall the harmony lane is drawn, or `None` when neither of its rows is showing.
+    ///
+    /// The keys and the chords are two rows of one lane rather than two lanes, because a key
+    /// change is marked by a line running down through the chords; hiding either row gives back
+    /// exactly that row's height.
+    pub fn harmony_height(self) -> Option<Pixels> {
+        let mut height = px(0.0);
+        if self.keys {
+            height += Metrics::KEY_ROW_HEIGHT;
+        }
+        if self.chords {
+            height += Metrics::CHORD_ROW_HEIGHT;
+        }
+        (self.keys || self.chords).then_some(height)
     }
 }
 
@@ -993,7 +1065,8 @@ mod tests {
 
         let bare = TimelineLanes {
             structure: false,
-            harmony: false,
+            keys: false,
+            chords: false,
             lyrics: false,
             tempo: false,
         };
@@ -1019,6 +1092,36 @@ mod tests {
             all.header_height() - no_structure.header_height(),
             Metrics::STRUCTURE_LANE_HEIGHT
         );
+
+        // The harmony lane's two rows go one at a time, each giving back its own height.
+        let no_keys = TimelineLanes { keys: false, ..all };
+        assert_eq!(
+            all.header_height() - no_keys.header_height(),
+            Metrics::KEY_ROW_HEIGHT
+        );
+        let no_chords = TimelineLanes {
+            chords: false,
+            ..all
+        };
+        assert_eq!(
+            all.header_height() - no_chords.header_height(),
+            Metrics::CHORD_ROW_HEIGHT
+        );
+        let no_lyrics = TimelineLanes {
+            lyrics: false,
+            ..all
+        };
+        assert_eq!(
+            all.header_height() - no_lyrics.header_height(),
+            Metrics::LYRICS_LANE_HEIGHT
+        );
+    }
+
+    #[test]
+    fn the_old_single_harmony_switch_still_hides_the_chords() {
+        let lanes: TimelineLanes = serde_json::from_str(r#"{"harmony":false}"#).unwrap();
+        assert!(!lanes.chords);
+        assert!(lanes.keys, "the key strip had no switch of its own then");
     }
 
     #[test]
@@ -1027,7 +1130,8 @@ mod tests {
         layout.move_to(Panel::Mixer, Dock::Left);
         layout.set_size(Dock::Right, px(360.0));
         layout.header_width = px(220.0);
-        layout.lanes.harmony = false;
+        layout.lanes.chords = false;
+        layout.lanes.lyrics = false;
 
         let text = serde_json::to_string(&StoredLayout::from(&layout)).unwrap();
         let restored = PanelLayout::from(serde_json::from_str::<StoredLayout>(&text).unwrap());
