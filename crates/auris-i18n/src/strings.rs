@@ -2396,7 +2396,6 @@ new のオプション
     LintNameDuplicateNote { en: "Duplicate note", ja: "重複した音符" }
     LintNameInaudibleVelocity { en: "Inaudible velocity", ja: "聞こえないベロシティ" }
     LintNameExtremePitch { en: "Extreme pitch", ja: "極端な音高" }
-    LintNameMechanicalPerformance { en: "Played as typed", ja: "打ち込みのまま" }
     LintNameClipping { en: "Clipping", ja: "クリッピング" }
     LintNameTooLoud { en: "Too loud", ja: "音量が大きすぎ" }
     LintNameTooQuiet { en: "Too quiet", ja: "音量が小さすぎ" }
@@ -2422,7 +2421,6 @@ new のオプション
     LintDuplicateNote { en: "{pitches} is written twice on top of itself", ja: "{pitches}が同じ位置に重複して書かれています" }
     LintInaudibleVelocity { en: "{pitches} is too soft to hear (velocity {value})", ja: "{pitches}はベロシティ{value}で、小さすぎて聞こえません" }
     LintExtremePitch { en: "{pitches} is outside any instrument's range", ja: "{pitches}は楽器や声の音域から外れています" }
-    LintMechanicalPerformance { en: "All {value} notes start exactly on the grid and nothing performs them, so the part plays like a sequencer", ja: "{value}個のノートがすべてグリッドぴったりで、演奏の設定がないため打ち込みのように鳴ります" }
     LintClipping { en: "The mix clips ({value} dBFS)", ja: "ミックスがクリップしています（{value} dBFS）" }
     LintTooLoud { en: "The mix is too loud ({value} LUFS, above {limit})", ja: "ミックスの音量が大きすぎます（{value} LUFS、上限 {limit} LUFS）" }
     LintTooQuiet { en: "The mix is too quiet ({value} LUFS, below {limit})", ja: "ミックスの音量が小さすぎます（{value} LUFS、下限 {limit} LUFS）" }
@@ -2434,7 +2432,6 @@ new のオプション
     LintFixChords { en: "Write {chords}", ja: "{chords} を記入" }
     LintFixFader { en: "Reset the fader to 0 dB", ja: "フェーダーを0 dBに戻す" }
     LintFixNormalize { en: "Normalize the mix", ja: "ミックスをノーマライズ" }
-    LintFixPerformancePreset { en: "Perform with {preset}", ja: "「{preset}」で演奏する" }
     ErrorLintStale { en: "the song changed since this problem was found; it has been checked again", ja: "問題を見つけた後に曲が変更されたため、もう一度確認しました" }
     LogClear { en: "Clear", ja: "消去" }
     LogCopyAll { en: "Copy all", ja: "すべてコピー" }

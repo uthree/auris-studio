@@ -181,17 +181,6 @@ impl Session {
                 harmony.set_point(*end, after);
                 Ok(())
             }
-            Fix::ApplyPerformancePreset { clip, preset } => {
-                // Only a clip still played as written: a stage added since is somebody's choice.
-                if super::score::performs(self.clip_transforms(*clip)?) {
-                    return Err(SessionError::LintStale);
-                }
-                let listed = self
-                    .performance_preset(preset)
-                    .ok_or_else(|| SessionError::UnknownPerformancePreset(preset.clone()))?;
-                let (stack, _) = self.performance_preset_stack(*clip, &listed.preset)?;
-                self.set_clip_transforms(*clip, stack)
-            }
             Fix::NormalizeMix => {
                 self.normalize_mix(crate::TARGET_LUFS, -1.0)?;
                 Ok(())
