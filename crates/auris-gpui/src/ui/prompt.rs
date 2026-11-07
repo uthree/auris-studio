@@ -945,7 +945,7 @@ pub(crate) fn recovery_name(snapshot: &RecoverySnapshot, language: Language) -> 
 /// The focused recovery decision for one registry entry.
 pub(crate) fn recovery_prompt(snapshot: &RecoverySnapshot, language: Language) -> Prompt {
     Prompt::ask(
-        messages::recover_title(language, &recovery_name(snapshot, language)),
+        messages::recover_title(language, recovery_name(snapshot, language)),
         Question::Recovery(snapshot.clone()),
     )
 }
@@ -2549,7 +2549,7 @@ impl AurisApp {
                     snapshot.source_document().map_or_else(
                         || self.t(Key::RecoveryUnsavedBody).to_owned(),
                         |source| {
-                            messages::recovery_from(self.language(), &source.display().to_string())
+                            messages::recovery_from(self.language(), source.display().to_string())
                         },
                     ),
                     self.t(Key::RecoveryKeyboardHint),
@@ -2559,7 +2559,7 @@ impl AurisApp {
                 Some(self.t(Key::DiscardRecovery).into()),
             ),
             Question::Replace { existing, .. } => (
-                messages::would_replace(self.language(), &existing.display().to_string()).into(),
+                messages::would_replace(self.language(), existing.display().to_string()).into(),
                 self.t(Key::Replace).into(),
                 None,
             ),

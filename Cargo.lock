@@ -573,6 +573,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "atelier-i18n"
+version = "0.4.0"
+source = "git+https://github.com/uthree/design-language?tag=v0.4.0#8b2caa40aa9ef771052d8a72cfaeeed1ddc319f8"
+dependencies = [
+ "objc2-foundation",
+ "toml 0.8.23",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "atomic"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -793,10 +803,9 @@ dependencies = [
 name = "auris-i18n"
 version = "0.20.0"
 dependencies = [
- "objc2-foundation",
+ "atelier-i18n",
  "serde",
  "serde_json",
- "windows-sys 0.61.2",
 ]
 
 [[package]]

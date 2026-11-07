@@ -1744,7 +1744,7 @@ impl AurisApp {
             card = card.child(
                 Label::new(messages::saved(
                     self.language(),
-                    &saved.display().to_string(),
+                    saved.display().to_string(),
                 ))
                 .size(TextSize::Small)
                 .color(TextColor::Faint),

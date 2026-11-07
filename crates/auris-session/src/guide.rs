@@ -3123,9 +3123,9 @@ pub mod platforms {
     //!
     //! # Windows sets no locale variables
     //!
-    //! [`Language::from_system_locale`](auris_i18n::Language::from_system_locale) is what makes a
-    //! Japanese Windows install come up in Japanese; reading `LANG` alone would leave it in
-    //! English.
+    //! [`Language::from_system`](auris_i18n::Language::from_system) asks the operating system
+    //! after the locale variables, which is what makes a Japanese Windows install come up in
+    //! Japanese; reading `LANG` alone would leave it in English.
     //!
     //! # What differs at runtime
     //!

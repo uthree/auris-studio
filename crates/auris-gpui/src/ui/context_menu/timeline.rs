@@ -316,11 +316,11 @@ impl AurisApp {
         let title = match harmony.chord_at(tick) {
             Some(chord) => messages::harmony_chord(
                 self.language(),
-                &harmony
+                harmony
                     .numeral_at(tick)
                     .map(|numeral| numeral.to_string())
                     .unwrap_or_default(),
-                &chord.to_string(),
+                chord.to_string(),
             ),
             None => messages::harmony_at_bar(self.language(), signatures.bar_of(placed)),
         };
