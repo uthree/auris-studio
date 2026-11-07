@@ -28,15 +28,14 @@ log.workspace = true
 # The build-time path shells out to `xcrun metal`, which lives inside Xcode and is unreachable
 # while `xcode-select -p` points at the Command Line Tools.
 gpui = { version = "=0.2.2", features = ["runtime_shaders"] }
-# Atelier's adopted Glass language, pinned to a release tag.
-atelier = { git = "https://github.com/uthree/design-language", tag = "v0.4.0" }
+# Atelier's adopted Glass language, pinned to the reviewed revision after v0.4.0 that stacks
+# Markdown blocks in block layout (design-language#53); back to a tag at the next release.
+atelier = { git = "https://github.com/uthree/design-language", rev = "d835e46716a97bf0756b899b89d8ba9cb54bce99" }
 gpui-flow = { path = "../../vendor/gpui-flow" }
-# The agent transcript uses selectable Markdown without language-specific highlighting.
-# It shares gpui's version and stays wholly inside this presentation crate.
+# Menus, the rhythm grid and a few setup surfaces still draw with it; the agent transcript's
+# Markdown is Atelier's now. It shares gpui's version and stays wholly inside this crate.
 # Later component releases require GPUI snapshots; 0.5.1 is the latest compatible release.
 gpui-component = "=0.5.1"
-# Share the renderer's GFM parser; the transcript owns block and list layout.
-markdown = "1"
 # Decode voice artwork on a worker, with bounded dimensions before GPUI sees the pixels.
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
 rfd = "0.17"

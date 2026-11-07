@@ -4453,13 +4453,6 @@ impl AurisApp {
             ChatEntry::Agent(_) => agent_components::assistant_message(
                 ("agent-message", index),
                 text.clone(),
-                Some(super::agent_markdown::render(
-                    SharedString::from(format!("agent-markdown-{index}")),
-                    SharedString::from(text.clone()),
-                    theme,
-                    window,
-                    cx,
-                )),
                 Some(&copy),
                 streaming,
             ),
@@ -4528,11 +4521,6 @@ impl AurisApp {
                     card,
                     picked,
                     active,
-                    agent_components::ChoiceCardText {
-                        send: self.t(Key::ChoicesSend).into(),
-                        multiple: self.t(Key::ChoicesMultiple).into(),
-                    },
-                    theme,
                     move |picked, window, cx| option(&picked, window, cx),
                     move |window, cx| send(&(), window, cx),
                 )
@@ -6557,7 +6545,7 @@ mod tests {
         });
         crate::harness::resize(&app, cx, gpui::size(gpui::px(1200.0), gpui::px(1000.0)));
         for (selector, expected) in [
-            ("agent-markdown-1-0-block", answer),
+            ("agent-message-1-block-1", answer),
             ("agent-message-0-text", user),
             ("agent-detail-2-0", detail),
         ] {
@@ -6953,10 +6941,10 @@ mod tests {
         });
         crate::harness::paint(&app, cx);
         for selector in [
-            "agent-markdown-0-1-0-0-block",
-            "agent-markdown-0-1-1-0-block",
-            "agent-markdown-0-3-0-0-block",
-            "agent-markdown-0-3-1-0-block",
+            "agent-message-0-block-2",
+            "agent-message-0-block-3",
+            "agent-message-0-block-5",
+            "agent-message-0-block-6",
         ] {
             let body = cx.debug_bounds(selector).expect("list body is rendered");
             let message = cx.debug_bounds("agent-line-0").unwrap();
