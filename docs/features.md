@@ -728,13 +728,21 @@ would arrive detuned by however far the wheel happened to be up. It keeps runnin
 zero, so turning the wheel up mid-note picks the cycle up where it would have been instead of
 jumping.
 
+A plugin's window draws its continuous parameters as **knobs**, packed side by side, and its
+switches and choices as rows between them, in the plugin's own order. Drag a knob up or to the
+right to turn it up; hold **Shift** to turn it a fifth as fast; the arrow keys, Home and End move
+it once Tab reaches it; a double click puts it back to its default; a right click offers the same
+menu a slider does (a typed value, automation). A turn is one Undo step however long it takes.
+The mixer's volume, pan and send levels stay sliders, because a single value on its own row reads
+better along a line.
+
 A plugin carrying all four of attack, decay, sustain and release draws them as **the shape they
-are**, above its sliders: a polyline with a handle on each corner, dragged the way Logic drags one.
+are**, above its knobs: a polyline with a handle on each corner, dragged the way Logic drags one.
 The attack and release corners move along the time axis and the middle one moves in both — sideways
 is how long the fall takes, upwards is how far it falls to, which is the pair a hand is reaching for
 anyway. The time axis is cube-rooted rather than proportional, because a default five-millisecond
 attack against a two-second range is a quarter of one per cent, and a handle a pixel wide is a
-control that does not exist. The sliders stay: a graph is how a shape is found and a number is how
+control that does not exist. The knobs stay: a graph is how a shape is found and a number is how
 it is said, and neither answers for the other. All four or none — the drum synth has a decay and
 nothing else, and inventing two corners for it would be a picture of something that is not
 happening.
@@ -866,11 +874,11 @@ making is drawn over that, and each band that is switched in has a node on the c
 * **Drag a node.** Sideways is the frequency, up and down is the gain.
 * **The wheel over a node** narrows the band — forwards for tighter, back for wider.
 * A high-pass or low-pass node moves **sideways only**, and sits on the centre line. Those shapes
-  have a corner, not a level; the gain the slider offers is a number the audio never reads.
+  have a corner, not a level; the gain the knob offers is a number the audio never reads.
 * A band that is switched **off** has no node and is not on the curve. Its **On** button in the
   list below is what puts it there.
 
-The sliders under the graph do everything the nodes do and reach a little further — a band can be
+The knobs under the graph do everything the nodes do and reach a little further — a band can be
 set below the 30 Hz the display starts at, and Q is a number as well as a gesture. A graph is how a
 shape is found; a number is how it is said.
 
