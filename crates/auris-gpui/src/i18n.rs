@@ -468,7 +468,7 @@ pub fn error_text(error: &SessionError, language: Language) -> String {
         // The names it offers are the model's own and read the same in every language; the
         // sentence joining them is ours and is translated here.
         SessionError::NoSuchSpeaker { name, offered } => {
-            messages::no_such_speaker(language, name, &offered.join(", "))
+            messages::no_such_speaker(language, name, offered.join(", "))
         }
         SessionError::SingingNeedsFolder => Key::ErrorSingingNeedsFolder.get(language).to_string(),
         SessionError::NothingToSing(_) => Key::ErrorNothingToSing.get(language).to_string(),
@@ -516,15 +516,15 @@ pub fn error_text(error: &SessionError, language: Language) -> String {
         SessionError::NotRecording => Key::ErrorNotRecording.get(language).to_string(),
         SessionError::SettingsWrite { path, source } => messages::settings_write_failed(
             language,
-            &path.display().to_string(),
-            &source.to_string(),
+            path.display().to_string(),
+            source.to_string(),
         ),
         SessionError::AudioRestart(reason) => messages::audio_restart_failed(language, reason),
         SessionError::MissingAudio(paths) => messages::missing_audio_files(language, paths.len()),
         // Reaches a status line only when a host did not ask; the desktop app turns this one into
         // a sheet before it ever gets here.
         SessionError::WouldReplace(path) => {
-            messages::would_replace(language, &path.display().to_string())
+            messages::would_replace(language, path.display().to_string())
         }
         SessionError::CalibrationBusy => Key::ErrorCalibrationBusy.get(language).to_string(),
         SessionError::CalibrationHeardNothing => {

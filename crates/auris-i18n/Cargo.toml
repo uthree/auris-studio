@@ -12,16 +12,12 @@ rust-version.workspace = true
 [dependencies]
 serde = { workspace = true, features = ["derive"] }
 
-# Windows sets none of the POSIX locale variables, so the only way to learn what language the
-# machine is in is to ask. `windows-sys` is already in the tree by way of the file dialogs, and
-# this pulls one function out of it.
-[target.'cfg(target_os = "windows")'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Globalization"] }
+# The table itself lives in `locales/`, one TOML file per language; atelier-i18n's generator turns
+# it into Rust at build time and its runtime half asks the system which language to show.
+atelier-i18n = { git = "https://github.com/uthree/design-language", tag = "v0.4.0" }
 
-# A Mac application started from Finder inherits no locale variables either; it asks Foundation
-# for the user's ordered languages. Already in the tree by way of the plugin windows.
-[target.'cfg(target_os = "macos")'.dependencies]
-objc2-foundation = { workspace = true, features = ["NSArray", "NSLocale", "NSString"] }
+[build-dependencies]
+atelier-i18n = { git = "https://github.com/uthree/design-language", tag = "v0.4.0", features = ["build"] }
 
 [dev-dependencies]
 serde_json.workspace = true

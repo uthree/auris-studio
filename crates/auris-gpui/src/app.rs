@@ -3569,7 +3569,7 @@ impl AurisApp {
             Ok(handle) => self.settings_window = Some(handle),
             Err(error) => {
                 let text =
-                    messages::failed(self.language, self.t(Key::Settings), &error.to_string());
+                    messages::failed(self.language, self.t(Key::Settings), error.to_string());
                 self.set_status(text);
             }
         }

@@ -1055,7 +1055,7 @@ impl AurisApp {
         self.session.set_count_in_bars(bars);
         let status = match self.session.count_in_bars() {
             0 => self.t(Key::CountInOff).to_string(),
-            bars => messages::count_in_set(self.language, &count_in_label(self.language, bars)),
+            bars => messages::count_in_set(self.language, count_in_label(self.language, bars)),
         };
         self.set_status(status);
     }
@@ -1123,7 +1123,7 @@ impl AurisApp {
             return;
         };
         let name = self.track_name(track);
-        let line = messages::armed_on_input(self.language, &name, &input_label(armed));
+        let line = messages::armed_on_input(self.language, &name, input_label(armed));
         self.set_status(line);
     }
 
@@ -1718,7 +1718,7 @@ mod tests {
         for language in Language::ALL {
             assert_eq!(
                 recording_summary(&alone, language),
-                messages::recorded_take(language, &Seconds(12.5).format_clock()),
+                messages::recorded_take(language, Seconds(12.5).format_clock()),
             );
         }
     }
