@@ -54,6 +54,21 @@ pub const STRUMMED_CHORDS: usize = 8;
 /// Notes struck on one tick that make a strummed chord rather than a double stop.
 const STRUM_STRINGS: usize = 3;
 
+/// General MIDI drum notes a drummer plays with a hand: every kit piece but the pedals.
+const HAND_DRUMS: std::ops::RangeInclusive<u8> = 37..=81;
+/// The kick and pedal hi-hat notes, played with the feet.
+const FOOT_DRUMS: [u8; 3] = [35, 36, 44];
+/// The closed hi-hat note, which one hat cannot sound with the open one.
+const CLOSED_HAT: u8 = 42;
+/// The open hi-hat note.
+const OPEN_HAT: u8 = 46;
+/// Hands a drummer has.
+pub const DRUM_HANDS: usize = 2;
+/// The shortest gap between sung notes that a singer can breathe in, in seconds.
+pub const BREATH_GAP_SECONDS: f64 = 0.2;
+/// Seconds of singing without such a gap that no singer sustains.
+pub const BREATHLESS_SECONDS: f64 = 15.0;
+
 /// Distinct pitch classes that must sound at one instant for a bar to count as chordal writing.
 pub const CHORD_TONES: usize = 3;
 /// A pitch class's share of a bar's sounding time below which it is ornament, not harmony.
@@ -91,6 +106,8 @@ pub fn lint_score(project: &Project) -> Vec<Diagnostic> {
     diagnostics.extend(limit(missing_chords(project, &events)));
     diagnostics.extend(clip_rules(project));
     diagnostics.extend(limit(tight_strums(project)));
+    diagnostics.extend(limit(impossible_drum_hits(project)));
+    diagnostics.extend(limit(breathless_phrases(project)));
     diagnostics.extend(singer_rules(project));
     sort(&mut diagnostics);
     diagnostics
@@ -621,6 +638,106 @@ fn clip_rules(project: &Project) -> Vec<Diagnostic> {
     all
 }
 
+/// Drum attacks no drummer can play: more hand-played pieces at one moment than two hands, or
+/// an open and a closed hi-hat together. Read per drum track on the timeline, loops included.
+fn impossible_drum_hits(project: &Project) -> Vec<Diagnostic> {
+    let mut found = Vec::new();
+    for track in project.tracks.iter().filter(|t| !t.mixer.mute) {
+        let TrackKind::Drum(instrument) = &track.kind else {
+            continue;
+        };
+        let mut moments: BTreeMap<Ticks, Vec<u8>> = BTreeMap::new();
+        for clip in instrument.clips.iter().filter(|clip| !clip.muted) {
+            for (offset, span) in loop_passes(clip.length, clip.loop_end) {
+                for note in clip.playable_notes().filter(|note| note.start < span) {
+                    moments
+                        .entry(clip.start + offset + note.start)
+                        .or_default()
+                        .push(note.pitch);
+                }
+            }
+        }
+        for (at, pitches) in moments {
+            let hands = sorted_pitches(
+                pitches
+                    .iter()
+                    .copied()
+                    .filter(|p| HAND_DRUMS.contains(p) && !FOOT_DRUMS.contains(p)),
+            );
+            let hats = pitches.contains(&CLOSED_HAT) && pitches.contains(&OPEN_HAT);
+            if hands.len() <= DRUM_HANDS && !hats {
+                continue;
+            }
+            let mut diagnostic = Diagnostic::new(
+                Rule::ImpossibleDrumHit,
+                Severity::Warning,
+                at,
+                at + Ticks(TICKS_PER_QUARTER / 4),
+            );
+            diagnostic.track = Some(track.id);
+            // Zero names the hi-hat conflict; otherwise the count of hands asked for.
+            diagnostic.value = Some(if hands.len() > DRUM_HANDS {
+                hands.len() as f32
+            } else {
+                0.0
+            });
+            diagnostic.pitches = hands;
+            diagnostic.limit = Some(DRUM_HANDS as f32);
+            found.push(diagnostic);
+        }
+    }
+    found
+}
+
+/// Sung stretches longer than a breath lasts with no gap to take one, per singer track.
+fn breathless_phrases(project: &Project) -> Vec<Diagnostic> {
+    let seconds = |tick: Ticks| project.tempo_map.ticks_to_seconds(tick).0;
+    let mut found = Vec::new();
+    for track in project.tracks.iter().filter(|t| !t.mixer.mute) {
+        let TrackKind::Singer(singer) = &track.kind else {
+            continue;
+        };
+        let mut sung: Vec<(Ticks, Ticks)> = Vec::new();
+        for clip in singer.clips.iter().filter(|clip| !clip.muted) {
+            for (offset, span) in loop_passes(clip.length, clip.loop_end) {
+                for note in clip.playable_notes().filter(|note| note.start < span) {
+                    let at = clip.start + offset + note.start;
+                    sung.push((at, at + note.length.min(span - note.start)));
+                }
+            }
+        }
+        sung.sort();
+        let close = |phrase: (Ticks, Ticks), found: &mut Vec<Diagnostic>| {
+            let length = seconds(phrase.1) - seconds(phrase.0);
+            if length > BREATHLESS_SECONDS {
+                let mut diagnostic =
+                    Diagnostic::new(Rule::NoBreath, Severity::Warning, phrase.0, phrase.1);
+                diagnostic.track = Some(track.id);
+                diagnostic.value = Some(length as f32);
+                diagnostic.limit = Some(BREATH_GAP_SECONDS as f32);
+                found.push(diagnostic);
+            }
+        };
+        let mut phrase: Option<(Ticks, Ticks)> = None;
+        for (start, end) in sung {
+            phrase = match phrase {
+                Some((first, last)) if seconds(start) - seconds(last) < BREATH_GAP_SECONDS => {
+                    Some((first, last.max(end)))
+                }
+                Some(previous) => {
+                    close(previous, &mut found);
+                    Some((start, end))
+                }
+                None => Some((start, end)),
+            };
+        }
+        if let Some(previous) = phrase {
+            close(previous, &mut found);
+        }
+    }
+    found
+}
+
 /// Guitar clips whose chords strike every string at once, or within a few milliseconds.
 ///
 /// Read from each clip's stored chords and its strum stage, one report per clip: a pick sweeps
@@ -1097,6 +1214,65 @@ mod tests {
         assert!(tight(&strummed("Rhythm guitar", 8, strum(5.0, 6.0))).is_empty());
         assert!(tight(&strummed("Rhythm guitar", 4, vec![])).is_empty());
         assert!(tight(&strummed("Keys", 8, vec![])).is_empty());
+    }
+
+    fn found(project: &Project, rule: Rule) -> Vec<Diagnostic> {
+        lint_score(project)
+            .into_iter()
+            .filter(|d| d.rule == rule)
+            .collect()
+    }
+
+    #[test]
+    fn three_hands_or_two_hi_hats_at_once_are_impossible_and_a_groove_is_not() {
+        let mut project = Project::new("Lint", 48_000.0);
+        let kit = project.add_drum_track("Kit", "auris.sampler.soundfont");
+        let clip = project
+            .add_midi_clip(kit, "Kit", Ticks::ZERO, Ticks(3840))
+            .unwrap();
+        let hit = |pitch, at| Note::new(pitch, Ticks(at), Ticks(120));
+        project.midi_clip_mut(clip).unwrap().notes = vec![
+            // A kick, snare and closed hat on one beat: two hands and a foot.
+            hit(36, 0),
+            hit(38, 0),
+            hit(42, 0),
+            // Crash, snare and ride together: three hands.
+            hit(49, 960),
+            hit(38, 960),
+            hit(51, 960),
+            // Closed and open hat at once.
+            hit(42, 1920),
+            hit(46, 1920),
+        ];
+        let hits = found(&project, Rule::ImpossibleDrumHit);
+        assert_eq!(hits.len(), 2, "{hits:?}");
+        assert_eq!(hits[0].start, Ticks(960));
+        assert_eq!(hits[0].value, Some(3.0));
+        assert_eq!(hits[1].value, Some(0.0));
+    }
+
+    #[test]
+    fn a_singer_needs_a_gap_to_breathe_within_fifteen_seconds() {
+        let sing = |notes: Vec<Note>| {
+            let mut project = Project::new("Lint", 48_000.0);
+            let voice = project.add_singer_track("Voice", "auris.synth.vocal");
+            let clip = project
+                .add_midi_clip(voice, "Line", Ticks::ZERO, Ticks(3840 * 16))
+                .unwrap();
+            project.midi_clip_mut(clip).unwrap().notes = notes;
+            project
+        };
+        let sung = |i: i64| Note {
+            lyric: "あ".into(),
+            ..Note::new(64, Ticks(960 * i), Ticks(960))
+        };
+        // Forty legato quarters at 120 bpm: twenty seconds with nowhere to breathe.
+        let held = found(&sing((0..40).map(sung).collect()), Rule::NoBreath);
+        assert_eq!(held.len(), 1);
+        assert!((held[0].value.unwrap() - 20.0).abs() < 0.1);
+        // The same line with a quarter rest every four bars breathes fine.
+        let phrased = (0..40).filter(|i| i % 16 != 15).map(sung).collect();
+        assert!(found(&sing(phrased), Rule::NoBreath).is_empty());
     }
 
     #[test]
