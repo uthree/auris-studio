@@ -190,6 +190,8 @@ fn every_physical_model_shows_its_bodies_in_every_direction(cx: &mut gpui::TestA
         ("auris.physical.tin_whistle", false),
         ("auris.physical.choir", true),
         ("auris.synth.drumkit", true),
+        ("auris.synth.fm2", true),
+        ("auris.synth.chiptune", true),
     ] {
         let (track, mut utility) = open_model(&app, cx, id);
         app.read_with(&utility, |app, _| {
@@ -311,6 +313,68 @@ fn a_bow_and_a_breath_last_as_long_as_the_press(cx: &mut gpui::TestAppContext) {
             assert!(app.physical_view.touch.is_none());
             assert!(app.physical_view.ringing.is_none(), "{id} stops on release");
         });
+    }
+}
+
+#[gpui::test]
+fn an_oscillator_is_drawn_as_its_waveform_and_played_like_a_key(cx: &mut gpui::TestAppContext) {
+    let (app, cx) = harness::open(cx);
+    for (id, pictures) in [
+        ("auris.synth.fm2", ["synth-operators", "synth-sidebands"]),
+        ("auris.synth.chiptune", ["synth-cycle", "synth-harmonics"]),
+    ] {
+        let (track, mut utility) = open_model(&app, cx, id);
+        for picture in pictures {
+            assert!(
+                utility.debug_bounds(picture).is_some(),
+                "{id} draws {picture}"
+            );
+        }
+        // The display gain and trails belong to bodies, not waveforms.
+        assert!(utility.debug_bounds("physical-gain").is_none(), "{id}");
+        app.update(&mut utility, |app, _| {
+            // The patch's own cycle waits on the first lane before anything is played.
+            let resting = app.oscillator_resting_cycle(track, id);
+            assert_eq!(resting.len(), auris_session::MOTION_POINTS);
+            assert!(resting.iter().any(|sample| sample.abs() > 0.5), "{id}");
+        });
+        let before = app.read_with(&utility, |app, _| app.project().clone());
+        let lane = utility.debug_bounds("physical-body-0").unwrap();
+        let at = point(lane.center().x, lane.top() + px(2.));
+        harness::press(&mut utility, at);
+        harness::paint(&app, &mut utility);
+        app.read_with(&utility, |app, _| {
+            let touch = app.physical_view.touch.expect("the key is held");
+            assert!(touch.sounding, "{id} sounds as it is pressed");
+            assert_eq!(touch.pitch, 60);
+        });
+        harness::release(&mut utility, at);
+        harness::paint(&app, &mut utility);
+        app.read_with(&utility, |app, _| {
+            assert!(app.physical_view.touch.is_none());
+            assert!(app.physical_view.ringing.is_none(), "{id} stops on release");
+            assert_eq!(app.project(), &before);
+        });
+        // A sounding voice is drawn from its frame, and the patch follows the knobs.
+        app.update(&mut utility, |app, cx| {
+            let mut frame = MotionFrame {
+                geometry: MotionGeometry::Oscillator,
+                active: 1,
+                ..Default::default()
+            };
+            frame.voices[0].pitch = 64.;
+            frame.voices[0].level = 0.7;
+            frame.voices[0].held = true;
+            frame.voices[0].excitation = 2.5;
+            for (n, point) in frame.voices[0].points.iter_mut().enumerate() {
+                *point = (n as f32 * 0.1).sin() * 0.7;
+            }
+            app.physical_view.accept_frame(frame);
+            app.physical_view.frozen = true;
+            cx.notify();
+        });
+        harness::paint(&app, &mut utility);
+        assert!(utility.debug_bounds("physical-body-3").is_some(), "{id}");
     }
 }
 
@@ -538,7 +602,7 @@ fn nonphysical_instrument_replaces_the_motion_surface_and_releases_preview(
         assert!(!app.physical_view.history.is_empty());
         let plain = app
             .session
-            .add_instrument_track("Chip", "auris.synth.chiptune")
+            .add_instrument_track("Noise", "auris.synth.noisedrum")
             .unwrap();
         app.open_plugin_window(PluginSubject::Instrument(plain));
         app.poll_physical_view();
