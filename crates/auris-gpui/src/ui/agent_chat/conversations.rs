@@ -244,7 +244,8 @@ impl AurisApp {
                 .collect(),
             draft: self.agent_chat.input.content().into(),
             attachments: self.agent_chat.references.attachments.clone(),
-            scroll_y: self.agent_chat.scroll.offset().y.into(),
+            // The conversation view keeps where it is read; a reopened one shows its end.
+            scroll_y: 0.0,
             interrupted: self.agent_chat.busy,
             queued: self
                 .agent_chat
@@ -529,6 +530,7 @@ impl AurisApp {
         self.agent_chat.history_load = None;
         let restoring_entries = !initial || self.agent_chat.entries.is_empty();
         if restoring_entries {
+            self.agent_chat.new_transcript();
             self.agent_chat.entries = conversation
                 .transcript
                 .messages
@@ -560,10 +562,6 @@ impl AurisApp {
             self.agent_chat.input = draft;
             self.agent_chat.references.attachments = attachments;
         }
-        self.agent_chat
-            .scroll
-            .set_offset(gpui::point(px(0.0), px(conversation.transcript.scroll_y)));
-        self.agent_chat.follow_tail = false;
         self.agent_chat.loaded_history = Some(memory);
         self.agent_chat.history_project = self.session.path().map(Path::to_path_buf);
         navigation.active = Some(conversation);
@@ -1218,11 +1216,7 @@ impl AurisApp {
 
 impl AgentChat {
     pub(super) fn toggle_conversation_entry(&mut self, index: usize) {
-        let expanded = if self.conversations.previewing() {
-            &mut self.conversations.preview_expanded
-        } else {
-            &mut self.expanded
-        };
+        let expanded = &mut self.conversations.preview_expanded;
         if !expanded.remove(&index) {
             expanded.insert(index);
         }
@@ -1639,7 +1633,7 @@ mod tests {
         assert!(cx.debug_bounds("agent-message-attachment-0-0").is_some());
         assert!(cx.debug_bounds("agent-message-attachment-0-1").is_some());
         assert_eq!(cx.opened_url(), None);
-        click("agent-message-attachment-0-0", cx);
+        click("agent-message-attachment-0-0-open", cx);
         cx.run_until_parked();
         app.read_with(cx, |this, _| {
             assert_eq!(this.attachment_preview.as_ref().unwrap().path, reference)

@@ -159,6 +159,27 @@ pub(crate) fn user_message(
         .into_any_element()
 }
 
+/// Draws a person's message that carried files, each a chip that opens it.
+///
+/// `ChatView` draws a message's attachments as labels only; the editor's open the file they
+/// name, so the panel draws this message itself.
+pub(crate) fn user_message_with_attachments(
+    // atelier: allow — the person's message is still Atelier's UserMessage, chips and all.
+    id: impl Into<ElementId>,
+    text: impl Into<SharedString>,
+    chips: impl IntoIterator<Item = atelier::agent::ContextChip>,
+) -> AnyElement {
+    let id = id.into();
+    let text = text.into();
+    let mut message = UserMessage::new(text.clone())
+        .id(id.clone())
+        .action(CopyButton::new(SharedString::from(format!("{id}-copy")), text));
+    for chip in chips {
+        message = message.attachment(chip);
+    }
+    message.into_any_element()
+}
+
 /// Draws an agent answer: the prose alone, with no avatar or name above it.
 ///
 /// Both conversations have exactly two voices, and the person's own sits in an accent bubble on

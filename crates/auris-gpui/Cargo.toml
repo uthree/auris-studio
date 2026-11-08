@@ -30,7 +30,7 @@ log.workspace = true
 gpui = { version = "=0.2.2", features = ["runtime_shaders"] }
 # Atelier's adopted Glass language, pinned to the reviewed revision after v0.4.0 that stacks
 # Markdown blocks in block layout (design-language#53); back to a tag at the next release.
-atelier = { git = "https://github.com/uthree/design-language", rev = "d835e46716a97bf0756b899b89d8ba9cb54bce99" }
+atelier = { git = "https://github.com/uthree/design-language", rev = "46559d3409020727dc0214230a89098dae5d7686" }
 gpui-flow = { path = "../../vendor/gpui-flow" }
 # Menus, the rhythm grid and a few setup surfaces still draw with it; the agent transcript's
 # Markdown is Atelier's now. It shares gpui's version and stays wholly inside this crate.
