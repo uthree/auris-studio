@@ -2,7 +2,9 @@
 
 use std::collections::{BTreeMap, HashSet};
 
-use auris_core::project::{MidiClip, Project, TrackId, TrackKind, loop_passes};
+use auris_core::project::{
+    MidiClip, NoteTransform, PresetFamily, Project, TrackId, TrackKind, loop_passes,
+};
 use auris_core::time::{TICKS_PER_QUARTER, Ticks};
 
 use auris_core::theory::chord::{Chord, Quality};
@@ -42,6 +44,16 @@ pub const INSTRUMENT_RANGE: (u8, u8) = (21, 108);
 /// The range a singing voice can be asked for, from a bass's C2 to a soprano's C6.
 pub const VOICE_RANGE: (u8, u8) = (36, 84);
 
+/// Milliseconds from a chord's first string to its last under which a guitar is heard striking
+/// them at once. Listeners need about 15 to 20 ms to tell which of two sounds came first; this
+/// sits below every shipped guitar preset (the tightest, funk cutting, spreads 10 ms), so only
+/// a strum nobody chose on purpose is reported.
+pub const TIGHT_STRUM_MS: f32 = 10.0;
+/// Chords a clip must strike before its strum is judged: a closing chord alone is not a part.
+pub const STRUMMED_CHORDS: usize = 8;
+/// Notes struck on one tick that make a strummed chord rather than a double stop.
+const STRUM_STRINGS: usize = 3;
+
 /// Distinct pitch classes that must sound at one instant for a bar to count as chordal writing.
 pub const CHORD_TONES: usize = 3;
 /// A pitch class's share of a bar's sounding time below which it is ornament, not harmony.
@@ -78,6 +90,7 @@ pub fn lint_score(project: &Project) -> Vec<Diagnostic> {
     diagnostics.extend(harmony(project, &events));
     diagnostics.extend(limit(missing_chords(project, &events)));
     diagnostics.extend(clip_rules(project));
+    diagnostics.extend(limit(tight_strums(project)));
     diagnostics.extend(singer_rules(project));
     sort(&mut diagnostics);
     diagnostics
@@ -608,6 +621,85 @@ fn clip_rules(project: &Project) -> Vec<Diagnostic> {
     all
 }
 
+/// Guitar clips whose chords strike every string at once, or within a few milliseconds.
+///
+/// Read from each clip's stored chords and its strum stage, one report per clip: a pick sweeps
+/// across the strings, so a strummed part with no strum, or one too quick to hear, sounds like
+/// a keyboard playing a guitar sample.
+fn tight_strums(project: &Project) -> Vec<Diagnostic> {
+    let mut found = Vec::new();
+    for track in project.tracks.iter().filter(|t| !t.mixer.mute) {
+        let TrackKind::Instrument(instrument) = &track.kind else {
+            continue;
+        };
+        if crate::performance_presets::family_hint(track) != PresetFamily::Guitar {
+            continue;
+        }
+        for clip in instrument.clips.iter().filter(|clip| !clip.muted) {
+            let mut by_onset: BTreeMap<Ticks, Vec<(usize, auris_core::project::Note)>> =
+                BTreeMap::new();
+            for (index, note) in clip.playable_notes_with_indices() {
+                by_onset.entry(note.start).or_default().push((index, note));
+            }
+            let chords: Vec<_> = by_onset
+                .values()
+                .filter(|notes| notes.len() >= STRUM_STRINGS)
+                .collect();
+            if chords.len() < STRUMMED_CHORDS {
+                continue;
+            }
+            let spread = |strings: usize| {
+                clip.transforms
+                    .iter()
+                    .find_map(|stage| match stage {
+                        NoteTransform::Strum { settings } if settings.string_ms > 0.0 => Some(
+                            settings.string_ms.min(auris_core::MAX_STRING_MS)
+                                * (strings - 1) as f32,
+                        ),
+                        NoteTransform::Strum { settings } => Some(settings.spread_ms),
+                        NoteTransform::Stroke { spread_ms, .. } => Some(*spread_ms),
+                        _ => None,
+                    })
+                    .unwrap_or(0.0)
+                    .clamp(0.0, 100.0)
+            };
+            let tightest = chords
+                .iter()
+                .map(|notes| spread(notes.len()))
+                .fold(f32::INFINITY, f32::min);
+            if tightest >= TIGHT_STRUM_MS {
+                continue;
+            }
+            let first = chords[0];
+            let last = chords[chords.len() - 1];
+            let end = last
+                .iter()
+                .map(|(_, note)| note.end())
+                .max()
+                .unwrap_or(last[0].1.start);
+            let mut diagnostic = Diagnostic::new(
+                Rule::TightStrum,
+                Severity::Warning,
+                clip.start + first[0].1.start,
+                clip.start + end,
+            );
+            diagnostic.track = Some(track.id);
+            diagnostic.notes = first
+                .iter()
+                .map(|(index, _)| NoteRef {
+                    clip: clip.id,
+                    index: *index,
+                })
+                .collect();
+            diagnostic.pitches = sorted_pitches(first.iter().map(|(_, note)| note.pitch));
+            diagnostic.value = Some(tightest);
+            diagnostic.limit = Some(TIGHT_STRUM_MS);
+            found.push(diagnostic);
+        }
+    }
+    found
+}
+
 /// What a voice cannot do: sing two notes at once, or sing a note with no words on it.
 ///
 /// Overlaps are read within a clip, where trimming the earlier note is the obvious repair: a
@@ -951,6 +1043,60 @@ mod tests {
                 pitches: vec![(1, 106)]
             })
         );
+    }
+
+    /// A clip on a track named `name` striking `chords` three-string power chords a bar apart.
+    fn strummed(name: &str, chords: i64, transforms: Vec<NoteTransform>) -> Project {
+        let mut project = Project::new("Lint", 48_000.0);
+        let track = project.add_instrument_track(name, "auris.synth.pulse");
+        let clip = project
+            .add_midi_clip(track, "Chords", Ticks::ZERO, Ticks(3840 * chords))
+            .unwrap();
+        let clip = project.midi_clip_mut(clip).unwrap();
+        clip.notes = (0..chords)
+            .flat_map(|bar| {
+                [40, 47, 52].map(|pitch| Note::new(pitch, Ticks(3840 * bar), Ticks(1920)))
+            })
+            .collect();
+        clip.transforms = transforms;
+        project
+    }
+
+    fn strum(spread_ms: f32, string_ms: f32) -> Vec<NoteTransform> {
+        vec![NoteTransform::Strum {
+            settings: auris_core::Strum {
+                spread_ms,
+                string_ms,
+                ..Default::default()
+            },
+        }]
+    }
+
+    fn tight(project: &Project) -> Vec<f32> {
+        lint_score(project)
+            .iter()
+            .filter(|d| d.rule == Rule::TightStrum)
+            .map(|d| d.value.unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn a_guitar_striking_every_string_at_once_or_nearly_is_reported() {
+        assert_eq!(tight(&strummed("Rhythm guitar", 8, vec![])), [0.0]);
+        assert_eq!(tight(&strummed("Rhythm guitar", 8, strum(7.0, 0.0))), [7.0]);
+        // Four milliseconds a string is eight across a power chord's two gaps.
+        assert_eq!(
+            tight(&strummed("Rhythm guitar", 8, strum(20.0, 4.0))),
+            [8.0]
+        );
+    }
+
+    #[test]
+    fn a_hand_speed_strum_a_closing_chord_and_a_keyboard_pass_the_strum_rule() {
+        assert!(tight(&strummed("Rhythm guitar", 8, strum(14.0, 0.0))).is_empty());
+        assert!(tight(&strummed("Rhythm guitar", 8, strum(5.0, 6.0))).is_empty());
+        assert!(tight(&strummed("Rhythm guitar", 4, vec![])).is_empty());
+        assert!(tight(&strummed("Keys", 8, vec![])).is_empty());
     }
 
     #[test]

@@ -49,7 +49,7 @@ pub use expression::Expression;
 pub use groove::{GroovePoint, GrooveTemplate};
 pub use lint_suppression::{LintScope, LintSuppression};
 mod strum;
-pub use strum::{Strum, StrumClock};
+pub use strum::{MAX_STRING_MS, Strum, StrumClock};
 mod ornament;
 mod performance;
 mod performance_preset;

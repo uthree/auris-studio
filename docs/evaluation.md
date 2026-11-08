@@ -146,6 +146,32 @@ is a universal quality score. This reads written text, not performance transform
 muted clips/tracks are excluded from musical measures, while validation covers all stored
 notes. It does not simulate loops, routing, solo or audio clips.
 
+### Line form, entries and predictability
+
+```
+uv run tools/eval/melody_form.py MySong/MySong.auris --json form.json
+uv run tools/eval/melody_form.py runs/ --track Vocal
+```
+
+Cuts the foreground (the first singer track, or `--track`) into lines at the song-wide lyric
+annotation, otherwise at clip boundaries and rests of a beat or more. Each line gets a letter
+in its section's form (the same onsets and pitches share a letter; the same onsets under other
+pitches add a prime), the beat it enters on and whether that is a pickup, its syncopated and
+anticipated notes, the spacing of its onsets, the scale degree and chord it ends on, Huron's
+contour type, and an IDyOM-style short-term information content: a PPM model over (interval,
+inter-onset interval) symbols that learns only from the song so far, so an exact repeat falls
+towards zero bits a note. Sections add their chord loop and main drum bar, and strummed tracks
+report the spread their strum stage gives each chord.
+
+Flags mark extremes only: every line of a section identical, every line entering on one beat,
+no syncopated note at all, every line one note count, one onset spacing for most notes, no line
+ending on the tonic, several lines in a row predictable from the song so far, three sections
+sharing one drum bar, a chorus looping the verse's progression from another chord, and a guitar
+strummed over less than 10 ms (below every shipped preset) or not at all. The song whose
+friends' feedback prompted the script raises all of them
+([plan](song-feedback-improvement-plan-2026-11-09.ja.md)). None is a target, an absent flag is
+not a judgement, and the model knows nothing about a genre's conventions.
+
 `tools/eval/fixtures/vocal-phrases.asong` supplies a fixed lyric probe with shared verses and
 unvoiced closures. Use the same dictionary and sound assets for both renders. An instrument
 audition of sung notes checks melody/rhythm, not the intelligibility of a learned singer.

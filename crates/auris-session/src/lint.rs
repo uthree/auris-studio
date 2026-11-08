@@ -33,7 +33,7 @@ mod fix;
 mod score;
 
 pub use audio::{AUDIO_LINT_RATE, AudioLintJob, AudioLintResult, AudioSummary};
-pub use score::lint_score;
+pub use score::{TIGHT_STRUM_MS, lint_score};
 
 use auris_core::Project;
 use auris_core::project::{ClipId, TrackId};
@@ -93,6 +93,8 @@ pub enum Rule {
     InaudibleVelocity,
     /// A note outside any instrument's or voice's usable range.
     ExtremePitch,
+    /// A guitar strikes its chords' strings all at once, or nearly: no hand sweeps that fast.
+    TightStrum,
     /// The rendered mix reaches full scale.
     Clipping,
     /// The rendered mix is far louder than any delivery target.
@@ -111,7 +113,7 @@ pub enum Rule {
 
 impl Rule {
     /// Every rule, score rules first.
-    pub const ALL: [Rule; 19] = [
+    pub const ALL: [Rule; 20] = [
         Rule::CrowdedOnset,
         Rule::DenseNotes,
         Rule::HarshInterval,
@@ -124,6 +126,7 @@ impl Rule {
         Rule::MissingLyric,
         Rule::InaudibleVelocity,
         Rule::ExtremePitch,
+        Rule::TightStrum,
         Rule::Clipping,
         Rule::TooLoud,
         Rule::TooQuiet,
@@ -148,6 +151,7 @@ impl Rule {
             Rule::MissingLyric => "missing_lyric",
             Rule::InaudibleVelocity => "inaudible_velocity",
             Rule::ExtremePitch => "extreme_pitch",
+            Rule::TightStrum => "tight_strum",
             Rule::Clipping => "clipping",
             Rule::TooLoud => "too_loud",
             Rule::TooQuiet => "too_quiet",
@@ -379,6 +383,10 @@ impl Diagnostic {
             Rule::ExtremePitch => {
                 format!("{pitches} lies outside the usable range of instruments or voices")
             }
+            Rule::TightStrum if value <= 0.0 => "this guitar strikes every string of its chords at once, which no hand plays; apply a guitar performance preset or a strum".to_string(),
+            Rule::TightStrum => format!(
+                "this guitar strikes every string of its chords within {value:.0} ms (under {limit:.0} ms), heard as one hit; widen the strum or set string_ms"
+            ),
             Rule::Clipping => {
                 format!("the mix reaches full scale ({value:.1} dBFS sample peak) and distorts")
             }

@@ -1,9 +1,25 @@
 //! Chord strokes driven by a continuous hand clock, including silent grid positions.
+//!
+//! A pick sweeping across strings reaches them one after another, and no two sweeps take the
+//! same time or space the strings alike. Listeners need about 15 to 20 ms to tell which of two
+//! sounds came first, so a chord whose strings all start within a few milliseconds is heard as
+//! one hit, a sound no hand makes. The spread is therefore given either for the whole chord or
+//! per string, and each stroke wanders a little in speed and spacing.
 
 use super::performance::{chords, milliseconds};
 use super::{Note, PerformanceContext, StrokeDirection};
 use crate::Ticks;
+use crate::rng::{Key, Rng};
 use serde::{Deserialize, Serialize};
+
+/// The longest time between adjacent struck strings, in milliseconds.
+pub const MAX_STRING_MS: f32 = 30.0;
+
+/// How far a stroke's overall speed wanders at full variation, as a fraction of its spread.
+const SPEED_WANDER: f32 = 0.35;
+
+/// How far one string's gap wanders at full variation, as a fraction of an even gap.
+const GAP_WANDER: f32 = 0.5;
 
 /// What advances alternating strokes.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -24,6 +40,13 @@ pub enum StrumClock {
 pub struct Strum {
     /// Milliseconds between the first and last struck pitch, clamped to 0..=100.
     pub spread_ms: f32,
+    /// Milliseconds between adjacent struck pitches, clamped to `0..=MAX_STRING_MS`. When
+    /// positive it replaces `spread_ms`, so a six-note chord takes longer than a power chord
+    /// and an upstroke over fewer strings is quicker than the downstroke before it.
+    pub string_ms: f32,
+    /// How far each stroke's speed and string spacing wander, in 0..=1. Zero strikes every
+    /// chord identically; the wander is reproducible and depends only on the chord's position.
+    pub variation: f32,
     /// Lowest first, highest first, or alternating strokes.
     pub direction: StrokeDirection,
     /// Clock for alternating direction; metrical clocks restart at each bar line.
@@ -40,6 +63,8 @@ impl Default for Strum {
     fn default() -> Self {
         Self {
             spread_ms: 20.0,
+            string_ms: 0.0,
+            variation: 0.3,
             direction: StrokeDirection::Alternate,
             clock: StrumClock::Sixteenths,
             up_notes: 0,
@@ -92,10 +117,11 @@ pub(super) fn strum(
             .map(|&i| notes[i].length.raw())
             .min()
             .unwrap_or(1);
-        let spread = if settings.spread_ms <= 0.0 {
+        let stroke = Stroke::drawn(settings, played.len(), absolute, context.pass);
+        let spread = if stroke.spread_ms <= 0.0 {
             0
         } else {
-            milliseconds(settings.spread_ms.clamp(0.0, 100.0), context.bpm)
+            milliseconds(stroke.spread_ms, context.bpm)
                 .raw()
                 .min(shortest - 1)
                 .min((next - start).raw() - 1)
@@ -104,7 +130,8 @@ pub(super) fn strum(
         let last_rank = played.len().saturating_sub(1).max(1);
         for (rank, &i) in played.iter().enumerate() {
             let order = if up { played.len() - 1 - rank } else { rank };
-            let offset = Ticks(spread * order as i64 / last_rank as i64);
+            // The epsilon keeps an even split exact where a third is not representable.
+            let offset = Ticks((spread as f64 * stroke.position(order) + 1e-6).floor() as i64);
             notes[i].start += offset;
             notes[i].length -= offset;
             let gain = if up {
@@ -116,6 +143,59 @@ pub(super) fn strum(
         }
     }
     suppressed
+}
+
+/// One sweep of the hand: how long it takes and where along it each string is struck.
+struct Stroke {
+    /// From the first struck string to the last, before the chord's own limits.
+    spread_ms: f32,
+    /// Each string's place along the sweep, from 0 at the first to 1 at the last.
+    positions: Vec<f64>,
+}
+
+impl Stroke {
+    /// The sweep over `strings` notes of the chord at `absolute`, wandering by `variation`.
+    ///
+    /// Each chord draws from a stream named by its timeline position and loop pass, so the
+    /// wander of one chord never depends on the chords around it or on an edit elsewhere, and a
+    /// copied clip is struck differently from its original.
+    fn drawn(settings: &Strum, strings: usize, absolute: Ticks, pass: u64) -> Self {
+        let variation = settings.variation.clamp(0.0, 1.0);
+        let mut draw = Rng::stream(
+            0,
+            &[
+                Key::Word("strum"),
+                Key::Index(pass),
+                Key::Index(absolute.raw().max(0) as u64),
+            ],
+        );
+        let mut wander = |amount: f32| 1.0 + amount * variation * (2.0 * draw.unit() - 1.0);
+        let speed = wander(SPEED_WANDER);
+        let gaps: Vec<f64> = (1..strings)
+            .map(|_| f64::from(wander(GAP_WANDER)))
+            .collect();
+        let base = if settings.string_ms > 0.0 {
+            settings.string_ms.clamp(0.0, MAX_STRING_MS) * gaps.len() as f32
+        } else {
+            settings.spread_ms
+        };
+        let total: f64 = gaps.iter().sum();
+        let mut positions = vec![0.0];
+        let mut reached = 0.0;
+        for gap in &gaps {
+            reached += gap;
+            positions.push(if total > 0.0 { reached / total } else { 0.0 });
+        }
+        Self {
+            spread_ms: (base * speed).clamp(0.0, 100.0),
+            positions,
+        }
+    }
+
+    /// The fraction of the sweep elapsed when the string at `order` is struck.
+    fn position(&self, order: usize) -> f64 {
+        self.positions.get(order).copied().unwrap_or(0.0)
+    }
 }
 
 #[cfg(test)]
@@ -223,6 +303,100 @@ mod tests {
         assert_eq!(slots[3].as_ref().unwrap().velocity, 0.0);
         assert_eq!(slots[4].as_ref().unwrap().pitch, 48);
     }
+    /// The onsets of each chord in `output`, relative to its first string, chord by chord.
+    fn shapes(output: &[Note], strings: usize) -> Vec<Vec<i64>> {
+        output
+            .chunks(strings)
+            .map(|chord| {
+                let first = chord[0].start.raw();
+                chord.iter().map(|note| note.start.raw() - first).collect()
+            })
+            .collect()
+    }
+
+    fn downstrokes(spread_ms: f32, string_ms: f32, variation: f32) -> Strum {
+        Strum {
+            spread_ms,
+            string_ms,
+            variation,
+            direction: StrokeDirection::LowToHigh,
+            clock: StrumClock::Attacks,
+            ..Strum::default()
+        }
+    }
+
+    #[test]
+    fn without_variation_every_chord_is_split_evenly_and_alike() {
+        let source = (0..4).flat_map(|i| chord(i * 480)).collect();
+        let output = performed(
+            source,
+            downstrokes(30.0, 0.0, 0.0),
+            Ticks::ZERO,
+            SignatureMap::default(),
+        );
+        // 30 ms at 120 bpm is 58 ticks, split evenly over the three gaps of a four-note chord.
+        assert_eq!(shapes(&output, 4), vec![vec![0, 19, 38, 58]; 4]);
+    }
+
+    #[test]
+    fn string_time_makes_a_wide_chord_take_longer_than_a_power_chord() {
+        let notes = |pitches: &[u8]| -> Vec<Note> {
+            pitches
+                .iter()
+                .map(|&pitch| Note::new(pitch, Ticks::ZERO, Ticks(960)))
+                .collect()
+        };
+        let settings = downstrokes(5.0, 10.0, 0.0);
+        let power = performed(
+            notes(&[40, 47, 52]),
+            settings.clone(),
+            Ticks::ZERO,
+            SignatureMap::default(),
+        );
+        let open = performed(
+            notes(&[40, 45, 50, 55, 59, 64]),
+            settings,
+            Ticks::ZERO,
+            SignatureMap::default(),
+        );
+        // Ten milliseconds a string: two gaps for the power chord, five for the open chord.
+        assert_eq!(
+            shapes(&power, 3)[0].last(),
+            Some(&milliseconds(20.0, 120.0).raw())
+        );
+        assert_eq!(
+            shapes(&open, 6)[0].last(),
+            Some(&milliseconds(50.0, 120.0).raw())
+        );
+    }
+
+    #[test]
+    fn strokes_wander_in_speed_and_spacing_but_keep_their_order() {
+        let source: Vec<Note> = (0..8).flat_map(|i| chord(i * 480)).collect();
+        let settings = downstrokes(30.0, 0.0, 1.0);
+        let output = performed(
+            source.clone(),
+            settings.clone(),
+            Ticks::ZERO,
+            SignatureMap::default(),
+        );
+        let strokes = shapes(&output, 4);
+        let even = milliseconds(30.0, 120.0).raw() as f32;
+        for stroke in &strokes {
+            assert!(
+                stroke.windows(2).all(|pair| pair[0] < pair[1]),
+                "{stroke:?}"
+            );
+            let spread = *stroke.last().unwrap() as f32;
+            assert!(spread >= even * (1.0 - SPEED_WANDER) - 1.0, "{stroke:?}");
+            assert!(spread <= even * (1.0 + SPEED_WANDER) + 1.0, "{stroke:?}");
+        }
+        let distinct: std::collections::BTreeSet<_> = strokes.iter().collect();
+        assert!(distinct.len() > 4, "strokes should differ: {strokes:?}");
+        let again = performed(source, settings, Ticks::ZERO, SignatureMap::default());
+        assert_eq!(output, again, "the wander is reproducible");
+    }
+
     #[test]
     fn offgrid_clip_origins_use_the_project_meter() {
         let meter = SignatureMap::constant(TimeSignature::new(3, 4));
