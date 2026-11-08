@@ -163,9 +163,9 @@ impl AurisApp {
             for (offset, (id, last)) in sync.rows.iter_mut().enumerate() {
                 let index = start + offset;
                 let streaming = entry_is_streaming(busy, index, len, &entries[index]);
-                let same = last
-                    .as_ref()
-                    .is_some_and(|last| last.streaming == streaming && last.entry == entries[index]);
+                let same = last.as_ref().is_some_and(|last| {
+                    last.streaming == streaming && last.entry == entries[index]
+                });
                 if !same {
                     let row = shown(index);
                     changed.push((*id, self.agent_view_entry(trimmed + index, &row, cx)));
@@ -227,7 +227,12 @@ impl AurisApp {
 
     /// One transcript entry as the view draws it. `key` is the entry's position counted from
     /// the first this panel ever held, so ids built from it never repeat.
-    fn agent_view_entry(&self, key: usize, shown: &Shown, cx: &mut gpui::Context<Self>) -> ViewEntry {
+    fn agent_view_entry(
+        &self,
+        key: usize,
+        shown: &Shown,
+        cx: &mut gpui::Context<Self>,
+    ) -> ViewEntry {
         let language = self.language();
         match &shown.entry {
             ChatEntry::You { text, attachments } if attachments.is_empty() => {
@@ -298,7 +303,10 @@ impl AurisApp {
                 detail,
             } => {
                 let (summary, state) = if line.is_empty() {
-                    (Key::AgentPhaseTool.get(language).to_string(), ToolState::Running)
+                    (
+                        Key::AgentPhaseTool.get(language).to_string(),
+                        ToolState::Running,
+                    )
                 } else if *ok {
                     (line.clone(), ToolState::Succeeded)
                 } else {

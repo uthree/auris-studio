@@ -61,9 +61,11 @@ See [Codex speed](https://learn.chatgpt.com/docs/agent-configuration/speed),
 [Claude Code fast mode](https://code.claude.com/docs/en/fast-mode), and
 [OpenAI API fast mode](https://developers.openai.com/api/docs/guides/fast-mode).
 
-Consecutive tool calls share a collapsed summary showing their count and any
-running or failed calls. Open the group to inspect each call's arguments and
-result; user messages and assistant replies keep separate groups apart.
+The conversation is Atelier's `ChatView`. Consecutive tool calls share one frame
+headed by their count, each call a row with its state; open a row to read its
+arguments and result. User messages and assistant replies keep separate groups
+apart. Reading further up stops the conversation following new entries, and a
+"jump to latest" button counts what arrived meanwhile.
 
 Type `/model ` in the composer to list available models. Arrow keys choose a
 candidate, Tab completes its name, and Enter switches immediately. Escape hides

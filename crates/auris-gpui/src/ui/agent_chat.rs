@@ -1821,7 +1821,6 @@ impl AgentChat {
 
     /// Converts every still-running tool row into a terminal row.
     fn finish_open_tools(&mut self, line: &str, detail: &str) {
-        let mut changed = false;
         for index in std::mem::take(&mut self.open_tools).into_values() {
             if let Some(ChatEntry::Tool {
                 ok,
@@ -1830,15 +1829,12 @@ impl AgentChat {
                 ..
             }) = self.entries.get_mut(index)
             {
-                changed = true;
                 *ok = false;
                 *row_line = line.to_string();
                 if !detail.is_empty() {
                     *row_detail = detail.to_string();
                 }
             }
-        }
-        if changed {
         }
     }
 
@@ -1863,7 +1859,6 @@ impl AgentChat {
             } else {
                 ChatEntry::Agent(text)
             });
-        } else {
         }
     }
 
@@ -4007,23 +4002,27 @@ impl AurisApp {
             })
             .when(transcript_start > 0, |this| {
                 this.child(
-                    div().flex().justify_center().pt(theme.atelier.spacing.sm).child(button(
-                        "agent-earlier-messages",
-                        self.t(Key::AgentEarlierMessages),
-                        ButtonStyle::Ghost,
-                        false,
-                        theme.accent,
-                        &theme,
-                        cx.listener(|this, _, _, cx| {
-                            this.agent_chat.conversations.transcript_start = this
-                                .agent_chat
-                                .conversations
-                                .transcript_start
-                                .saturating_sub(CHAT_CAPACITY);
-                            this.agent_chat.follow_tail = false;
-                            cx.notify();
-                        }),
-                    )),
+                    div()
+                        .flex()
+                        .justify_center()
+                        .pt(theme.atelier.spacing.sm)
+                        .child(button(
+                            "agent-earlier-messages",
+                            self.t(Key::AgentEarlierMessages),
+                            ButtonStyle::Ghost,
+                            false,
+                            theme.accent,
+                            &theme,
+                            cx.listener(|this, _, _, cx| {
+                                this.agent_chat.conversations.transcript_start = this
+                                    .agent_chat
+                                    .conversations
+                                    .transcript_start
+                                    .saturating_sub(CHAT_CAPACITY);
+                                this.agent_chat.follow_tail = false;
+                                cx.notify();
+                            }),
+                        )),
                 )
             })
             .child(
@@ -6591,10 +6590,7 @@ mod tests {
             this.agent_chat.entries = vec![ChatEntry::Agent(answer.into())];
         });
         crate::harness::paint(&app, cx);
-        let short = chat_view::answer_bounds(&app, cx, 0)
-            .unwrap()
-            .size
-            .height;
+        let short = chat_view::answer_bounds(&app, cx, 0).unwrap().size.height;
         app.update(cx, |this, _| {
             // A fresh identity avoids the Markdown renderer's asynchronous update debounce.
             this.agent_chat.entries = vec![
@@ -6610,10 +6606,7 @@ mod tests {
             ];
         });
         crate::harness::paint(&app, cx);
-        let long = chat_view::answer_bounds(&app, cx, 1)
-            .unwrap()
-            .size
-            .height;
+        let long = chat_view::answer_bounds(&app, cx, 1).unwrap().size.height;
         // Structural overflow, not font metrics or a pixel snapshot: more content must
         // occupy more space, and the conversation must keep the following tool reachable.
         assert!(
@@ -6621,10 +6614,16 @@ mod tests {
             "the answer was compressed: {short:?} -> {long:?}"
         );
         let lines = cx.debug_bounds("agent-lines").unwrap();
-        assert!(long > lines.size.height, "the answer fits; nothing to scroll");
+        assert!(
+            long > lines.size.height,
+            "the answer fits; nothing to scroll"
+        );
         let tool = chat_view::row(&app, cx, 2, "tool");
         let row = cx.debug_bounds(tool).unwrap();
-        assert!(row.bottom() <= lines.bottom() + px(1.), "a new conversation shows its end");
+        assert!(
+            row.bottom() <= lines.bottom() + px(1.),
+            "a new conversation shows its end"
+        );
         crate::harness::click(tool, cx);
         app.read_with(cx, |this, cx| assert!(this.agent_chat.chat_row_open(2, cx)));
     }
@@ -6655,7 +6654,9 @@ mod tests {
                 .push_entry(ChatEntry::Agent("new while reading".into()));
         });
         crate::harness::paint(&app, cx);
-        app.read_with(cx, |this, cx| assert_eq!(this.agent_chat.unread_entries(cx), 1));
+        app.read_with(cx, |this, cx| {
+            assert_eq!(this.agent_chat.unread_entries(cx), 1)
+        });
         assert!(
             chat_view::answer_bounds(&app, cx, 80).unwrap().origin.y > lines.bottom(),
             "reader was forced to the tail"
@@ -6663,7 +6664,9 @@ mod tests {
 
         crate::harness::click("agent-chat-jump", cx);
         crate::harness::paint(&app, cx);
-        app.read_with(cx, |this, cx| assert_eq!(this.agent_chat.unread_entries(cx), 0));
+        app.read_with(cx, |this, cx| {
+            assert_eq!(this.agent_chat.unread_entries(cx), 0)
+        });
         let newest = chat_view::answer_bounds(&app, cx, 80).unwrap();
         assert!(newest.bottom() <= lines.bottom() + px(1.));
     }
@@ -6691,7 +6694,9 @@ mod tests {
         app.read_with(cx, |this, cx| assert!(this.agent_chat.chat_row_open(0, cx)));
         cx.simulate_keystrokes("shift-tab tab");
         release_key("space", cx);
-        app.read_with(cx, |this, cx| assert!(!this.agent_chat.chat_row_open(0, cx)));
+        app.read_with(cx, |this, cx| {
+            assert!(!this.agent_chat.chat_row_open(0, cx))
+        });
         release_key("enter", cx);
         app.read_with(cx, |this, cx| assert!(this.agent_chat.chat_row_open(0, cx)));
     }
@@ -6749,7 +6754,10 @@ mod tests {
         });
         crate::harness::paint(&app, cx);
         let height = |cx: &mut gpui::VisualTestContext, index| {
-            chat_view::answer_bounds(&app, cx, index).unwrap().size.height
+            chat_view::answer_bounds(&app, cx, index)
+                .unwrap()
+                .size
+                .height
         };
         let short = height(cx, 0);
         let long = height(cx, 1);
@@ -6773,7 +6781,10 @@ mod tests {
         });
         crate::harness::paint(&app, cx);
         let height = |cx: &mut gpui::VisualTestContext, index| {
-            chat_view::answer_bounds(&app, cx, index).unwrap().size.height
+            chat_view::answer_bounds(&app, cx, index)
+                .unwrap()
+                .size
+                .height
         };
         let short = height(cx, 0);
         let long = height(cx, 1);

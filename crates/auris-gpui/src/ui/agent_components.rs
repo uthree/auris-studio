@@ -173,7 +173,10 @@ pub(crate) fn user_message_with_attachments(
     let text = text.into();
     let mut message = UserMessage::new(text.clone())
         .id(id.clone())
-        .action(CopyButton::new(SharedString::from(format!("{id}-copy")), text));
+        .action(CopyButton::new(
+            SharedString::from(format!("{id}-copy")),
+            text,
+        ));
     for chip in chips {
         message = message.attachment(chip);
     }
