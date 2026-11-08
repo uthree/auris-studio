@@ -21,7 +21,7 @@ use gpui::{Entity, Subscription};
 use super::*;
 
 /// The view's element id. Its rows are `agent-chat-{part}-{entry}`, for example
-/// `agent-chat-answer-3`; see [`AgentChat::chat_row_id`].
+/// `agent-chat-answer-3`; see `AgentChat::chat_row_id`.
 pub(crate) const CHAT_VIEW_ID: &str = "agent-chat";
 
 /// One entry as the view was last given it.
