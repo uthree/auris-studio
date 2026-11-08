@@ -163,6 +163,10 @@ pub fn arrangement_shape(project: &Project) -> Value {
         }
     }
 
+    // Sections that share one main drum bar, and choruses that loop the verse's progression.
+    warnings.extend(shared_grooves(project, &spans, &parts));
+    warnings.extend(borrowed_progressions(project, &spans));
+
     // The intro and outro around the voice. The song ends with the bar its last sound is in: a
     // final hit on the downbeat of the last bar still owns that bar.
     let bar_length = |at: Ticks| project.signatures.signature_at(at).ticks_per_bar().raw() as f64;
@@ -192,6 +196,133 @@ pub fn arrangement_shape(project: &Project) -> Value {
         "warnings": warnings,
         "note": "Measured on written notes. distinct_bars counts different one-bar patterns; a groove may repeat, but a part that never changes does not follow the song.",
     })
+}
+
+/// Sections at or above which one shared main drum bar is reported.
+pub const SHARED_GROOVE_SECTIONS: usize = 3;
+
+/// Groups of three or more sections whose most-played drum bar is the same bar.
+///
+/// A groove may repeat; an intro, verse, interlude and outro that all ride on one bar, with
+/// only a cymbal changed elsewhere, is a drum part that does not follow the form.
+fn shared_grooves(
+    project: &Project,
+    spans: &[auris_core::SectionSpan],
+    parts: &[(String, bool, Bars)],
+) -> Vec<String> {
+    let bar_of = |tick: Ticks| project.signatures.bar_floor(tick).raw();
+    let mut owners: BTreeMap<Vec<(i64, u8)>, Vec<String>> = BTreeMap::new();
+    for span in spans {
+        let mut counts: BTreeMap<Vec<(i64, u8)>, usize> = BTreeMap::new();
+        let mut bar = bar_of(span.start);
+        while bar < span.end.raw() {
+            let mut hits: Vec<(i64, u8)> = parts
+                .iter()
+                .filter(|(_, drum, _)| *drum)
+                .filter_map(|(_, _, bars)| bars.get(&bar))
+                .flatten()
+                .map(|(at, pitch, _)| (*at, *pitch))
+                .collect();
+            hits.sort_unstable();
+            hits.dedup();
+            if !hits.is_empty() {
+                *counts.entry(hits).or_insert(0) += 1;
+            }
+            bar += project
+                .signatures
+                .signature_at(Ticks(bar))
+                .ticks_per_bar()
+                .raw()
+                .max(1);
+        }
+        if let Some((main, _)) = counts.into_iter().max_by_key(|(_, count)| *count) {
+            owners.entry(main).or_default().push(span.label.clone());
+        }
+    }
+    owners
+        .into_values()
+        .filter(|names| {
+            // Choruses sharing the chorus groove is a form, not a loop: count kinds of section.
+            let kinds: BTreeSet<String> = names.iter().map(|name| section_kind(name)).collect();
+            kinds.len() >= SHARED_GROOVE_SECTIONS
+        })
+        .map(|names| {
+            format!(
+                "{} all play one main drum bar; give each section its own groove (kick, hats, half time) rather than one bar with the cymbals changed",
+                names.join(", ")
+            )
+        })
+        .collect()
+}
+
+/// A section label without its number or a final/last marker: サビ2 and 最終サビ are both サビ.
+fn section_kind(label: &str) -> String {
+    let mut kind = label.to_lowercase();
+    for word in ["final", "last", "最終", "ラスト", "ラス"] {
+        kind = kind.replace(word, "");
+    }
+    kind.chars()
+        .filter(|c| {
+            !c.is_ascii_digit() && !c.is_whitespace() && !"０１２３４５６７８９".contains(*c)
+        })
+        .collect()
+}
+
+/// The shortest repeating unit of a per-bar progression.
+fn loop_of(bars: &[String]) -> &[String] {
+    (1..=bars.len())
+        .find(|size| (0..bars.len()).all(|i| bars[i] == bars[i % size]))
+        .map_or(bars, |size| &bars[..size])
+}
+
+/// Choruses whose chord loop is a verse's loop, possibly started on another chord.
+fn borrowed_progressions(project: &Project, spans: &[auris_core::SectionSpan]) -> Vec<String> {
+    let progression = |span: &auris_core::SectionSpan| -> Vec<String> {
+        let mut bars = Vec::new();
+        let mut at = project.signatures.bar_floor(span.start);
+        while at < span.end {
+            bars.push(
+                project
+                    .harmony
+                    .numeral_at(at)
+                    .map_or_else(|| "-".to_owned(), |numeral| numeral.to_text()),
+            );
+            at += project.signatures.signature_at(at).ticks_per_bar();
+        }
+        bars
+    };
+    let verse = |label: &str| {
+        let label = label.to_lowercase();
+        label.contains("verse") || label.contains("aメロ")
+    };
+    let verses: Vec<(String, Vec<String>)> = spans
+        .iter()
+        .filter(|span| verse(&span.label))
+        .map(|span| (span.label.clone(), loop_of(&progression(span)).to_vec()))
+        .filter(|(_, cycle)| cycle.iter().any(|chord| chord != "-"))
+        .collect();
+    let mut warnings = Vec::new();
+    for span in spans.iter().filter(|span| is_chorus(&span.label)) {
+        let bars = progression(span);
+        let cycle = loop_of(&bars);
+        let doubled: Vec<&String> = cycle.iter().chain(cycle.iter()).collect();
+        if let Some((name, _)) = verses.iter().find(|(_, verse)| {
+            verse.len() == cycle.len()
+                && (0..cycle.len()).any(|shift| {
+                    doubled[shift..shift + cycle.len()]
+                        .iter()
+                        .zip(verse)
+                        .all(|(a, b)| *a == b)
+                })
+        }) {
+            warnings.push(format!(
+                "{} loops {name}'s progression ({}) started elsewhere; give the chorus its own progression or harmonic rhythm",
+                span.label,
+                cycle.join(" ")
+            ));
+        }
+    }
+    warnings
 }
 
 #[cfg(test)]
@@ -290,5 +421,67 @@ mod tests {
             "{warnings:?}"
         );
         assert_eq!(report["outro_bars"], 8.0);
+    }
+
+    fn warnings(project: &Project) -> Vec<String> {
+        arrangement_shape(project)["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|w| w.as_str().unwrap().to_owned())
+            .collect()
+    }
+
+    #[test]
+    fn three_sections_on_one_drum_bar_are_reported_and_a_varied_kit_is_not() {
+        let same = song((8, 20), 28, &groove);
+        assert!(
+            warnings(&same)
+                .iter()
+                .any(|w| w.contains("Aメロ, Bメロ, サビ all play one main drum bar")),
+            "{:?}",
+            warnings(&same)
+        );
+        let varied = song((8, 20), 28, &|bar| {
+            vec![Note::new(
+                36 + (bar / 4) as u8 % 3,
+                Ticks::ZERO,
+                Ticks::QUARTER,
+            )]
+        });
+        assert!(
+            !warnings(&varied)
+                .iter()
+                .any(|w| w.contains("one main drum bar"))
+        );
+    }
+
+    #[test]
+    fn a_chorus_on_the_verses_loop_from_another_chord_is_reported() {
+        use auris_core::theory::{key::Key, numeral::Numeral, pitch::PitchClass, scale::ScaleId};
+        let mut project = song((8, 20), 28, &groove);
+        project.harmony =
+            auris_core::harmony::Harmony::in_key(Key::new(PitchClass::new(4), ScaleId::Minor));
+        let bar = Ticks::QUARTER * 4;
+        let verse = ["i", "i", "VI", "VII"];
+        let chorus = ["VI", "VII", "i", "i"];
+        for (index, numeral) in verse.iter().chain(&verse).chain(&chorus).enumerate() {
+            project.harmony.chords.set_point(
+                bar * (8 + index as i64),
+                Some(Numeral::parse(numeral).unwrap()),
+            );
+        }
+        let found = warnings(&project);
+        assert!(
+            found
+                .iter()
+                .any(|w| w.contains("サビ loops Aメロ's progression")),
+            "{found:?}"
+        );
+        project
+            .harmony
+            .chords
+            .set_point(bar * 16, Some(Numeral::parse("iv").unwrap()));
+        assert!(!warnings(&project).iter().any(|w| w.contains("loops")));
     }
 }

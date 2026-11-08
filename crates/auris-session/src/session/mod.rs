@@ -83,6 +83,7 @@ pub mod lyric_harness;
 mod lyric_lines;
 pub(crate) mod lyric_slots;
 mod lyrics;
+pub mod melody_form;
 pub mod melody_shape;
 mod mixer;
 mod monitor;

@@ -14,6 +14,10 @@
 //! composes it as a demo, and `AURIS_TRIAL_PHASE=finish` with `AURIS_TRIAL_PARENT` set to an
 //! earlier demo's output folder finishes that demo.
 //!
+//! `AURIS_TRIAL_DIRECT=1` asks the director for the round again first, from the conversation as
+//! it stood, and composes its first direction instead of the logged one; the new direction is
+//! written to `direction.json` beside the song. That tries a change to the director's guidance.
+//!
 //! Another composer is tried without touching the settings: `AURIS_TRIAL_BACKEND` and
 //! `AURIS_TRIAL_MODEL` replace the configured backend and model, and `AURIS_TRIAL_FAST=0` or
 //! `1` the faster service tier. The other agent preferences, effort among them, are kept.
@@ -24,7 +28,7 @@
 
 use std::path::PathBuf;
 
-use auris_agent::workshop::compose_trial;
+use auris_agent::workshop::{compose_trial, direct_trial};
 use auris_session::lint::Severity;
 use auris_session::workshop::{Candidate, Document, RoundPhase};
 use auris_session::{Session, SessionOptions, Settings};
@@ -89,10 +93,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Ok(fast) = std::env::var("AURIS_TRIAL_FAST") {
         prefs.fast_mode = fast == "1";
     }
+    if std::env::var("AURIS_TRIAL_DIRECT").as_deref() == Ok("1") {
+        eprintln!(
+            "asking the director again with {} {}",
+            prefs.backend, prefs.model
+        );
+        let mut directions = direct_trial(&planned, prefs.clone(), &settings)?;
+        if directions.is_empty() {
+            return Err("the director proposed no direction".into());
+        }
+        let phase = direction.phase;
+        direction = directions.remove(0);
+        direction.phase = direction.phase.or(phase);
+        eprintln!("{}", serde_json::to_string_pretty(&direction)?);
+    }
     eprintln!(
         "composing \"{}\" with {} {}",
-        candidate.direction.title, prefs.backend, prefs.model
+        direction.title, prefs.backend, prefs.model
     );
+    let chosen = direction.clone();
     let started = std::time::Instant::now();
     let result = compose_trial(
         direction,
@@ -110,6 +129,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 started.elapsed().as_secs_f64(),
                 output.display()
             );
+            std::fs::write(
+                output.join("direction.json"),
+                serde_json::to_string_pretty(&chosen)?,
+            )?;
             let lint = score_lint(&output.join("song/song.auris"))?;
             eprintln!("score lint: {lint}");
             std::fs::write(output.join("lint.json"), lint.to_string())?;

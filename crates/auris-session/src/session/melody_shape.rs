@@ -193,6 +193,8 @@ pub fn melody_shape(project: &Project, track: TrackId) -> Result<Value, String> 
             "The form ends {outro_bars:.1} bars after the melody; plan an outro of at least {MIN_FRAME_BARS} bars"
         ));
     }
+    let (lines, form_warnings) = super::melody_form::melody_form(project, track);
+    warnings.extend(form_warnings);
     let report: Vec<Value> = sections
         .iter()
         .map(|section| {
@@ -207,7 +209,7 @@ pub fn melody_shape(project: &Project, track: TrackId) -> Result<Value, String> 
         })
         .collect();
     Ok(json!({
-        "track": track.0, "sections": report, "chorus_lifts": lifts, "warnings": warnings,
+        "track": track.0, "sections": report, "chorus_lifts": lifts, "lines": lines, "warnings": warnings,
         "intro_bars": (intro_bars * 10.0).round() / 10.0,
         "outro_bars": (outro_bars * 10.0).round() / 10.0,
         "note": "Measured on written notes, highest note where several sound together. A lift is judged against the section just before each chorus.",

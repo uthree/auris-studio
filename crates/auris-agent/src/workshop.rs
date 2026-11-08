@@ -1779,6 +1779,31 @@ fn candidate_options(settings: &Settings) -> SessionOptions {
     options
 }
 
+/// Asks the director again for the round a logged conversation held, headless, so its
+/// assignments can be compared with the logged ones and composed with [`compose_trial`].
+///
+/// The request carries what the window sends for a new song: the conversation as `document`
+/// holds it, its summary and the installed voices, with no selection, candidate history or
+/// preference evidence. It is not part of the application: nothing in the window calls it.
+pub fn direct_trial(
+    document: &Document,
+    prefs: AgentPreferences,
+    settings: &Settings,
+) -> Result<Vec<Direction>, String> {
+    let voices = auris_session::library::voices_with_settings(settings);
+    let prompt = json!({"conversation_summary": conversation_summary(document),
+        "conversation": document.model_messages(), "selected": null, "selected_score": null,
+        "candidate_history": [], "preference_evidence": null, "installed_voices": voices})
+    .to_string();
+    let mut planner = crate::song_ideas::SongPlanner::conversation(prefs, prompt)?;
+    loop {
+        if let Some(answer) = planner.poll_text() {
+            return Ok(decision(&answer?)?.directions);
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
 /// Composes one candidate from a direction, outside any conversation: development tooling for
 /// repeating a theme already in the workshop logs after a prompt or tool change.
 ///

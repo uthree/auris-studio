@@ -152,6 +152,14 @@ def parse_key(name: str | None) -> tuple[int, str] | None:
     return pitch % 12, match.group(3)
 
 
+def section_kind(label: str | None) -> str:
+    """A section label without its number or a final marker: サビ2 and 最終サビ are サビ."""
+    kind = (label or "").lower()
+    for word in ("final", "last", "最終", "ラスト", "ラス"):
+        kind = kind.replace(word, "")
+    return re.sub(r"[\s0-9０-９]", "", kind)
+
+
 def is_chorus(label: str | None) -> bool:
     return bool(label) and any(word in label.lower() for word in CHORUS_WORDS)
 
@@ -588,7 +596,8 @@ def flags_for(
         if section.get("main_groove"):
             grooves[section["main_groove"]].append(section["section"])
     for names in grooves.values():
-        if len(names) >= PARAMETERS["shared_groove_min_sections"]:
+        kinds = {section_kind(name) for name in names}
+        if len(kinds) >= PARAMETERS["shared_groove_min_sections"]:
             flags.append(
                 {
                     "code": "shared_main_groove",
