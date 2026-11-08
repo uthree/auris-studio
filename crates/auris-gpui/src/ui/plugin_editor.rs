@@ -12,8 +12,8 @@ use gpui::{
 
 use crate::theme::Theme;
 use crate::ui::widgets::{
-    ButtonStyle, PickerBehavior, RowColumn, SLIDER_PERCENT_STEP, SliderFill, SliderKeyboardEvent,
-    button, dragged, picker_row, value_slider,
+    ButtonStyle, FINE_DRAG_SCALE, PickerBehavior, RowColumn, SLIDER_PERCENT_STEP, SliderFill,
+    SliderKeyboardEvent, button, dragged, picker_row, value_slider,
 };
 
 /// Which control shape suits a parameter.
@@ -69,6 +69,59 @@ where
         on_drag_start,
         on_keyboard,
     )
+}
+
+/// How wide a knob's cell is drawn in a parameter grid.
+///
+/// One width for every cell, so a plugin's knobs line up in columns however long their names
+/// are; a name longer than this wraps under its knob rather than pushing the next one along.
+pub const KNOB_CELL_WIDTH: Pixels = px(76.0);
+
+/// The knob for a continuous parameter, before it is told what to do when turned.
+///
+/// Atelier's `Knob` owns the gesture: the drag, the arrow keys, Home and End, and the double
+/// click back to the parameter's default. It reads and reports the value from 0 to 1, so the
+/// parameter's curve and steps stay with [`ParamDescriptor::normalize`] and its inverse. A range
+/// symmetric about zero turns from twelve o'clock, as its bar used to fill from the centre.
+///
+/// `label` and `value_text` arrive already translated, as [`slider_row`]'s do.
+pub fn param_knob(
+    descriptor: &ParamDescriptor,
+    label: String,
+    value_text: String,
+    value: f32,
+) -> atelier::Knob {
+    let knob = atelier::Knob::new(descriptor.normalize(value))
+        .id("knob")
+        .label(label)
+        .readout(value_text)
+        .step(slider_keyboard_step(descriptor))
+        .default_value(descriptor.normalize(descriptor.default));
+    match slider_fill_for(descriptor) {
+        SliderFill::FromCentre => knob.bipolar(),
+        SliderFill::FromStart => knob,
+    }
+}
+
+/// Where a knob's turn lands, given the knob's reading and the anchor the drag holds.
+///
+/// The knob measures its travel from where the press began, so its reading moves one for one
+/// with the pointer. Shift slows the turn by [`FINE_DRAG_SCALE`] as it slows every other drag,
+/// which the knob does not know about: the value moves by a fifth of the reading's travel from
+/// the anchor. `None` asks for the anchor to move to here first — the modifier changed — and
+/// leaves the value where it is, for the reason [`crate::app::Drag::Param`] gives.
+pub fn knob_value_after_turn(
+    reading: f32,
+    anchor_reading: f32,
+    anchor_value: f32,
+    fine_at_anchor: bool,
+    fine_now: bool,
+) -> Option<f32> {
+    if fine_at_anchor != fine_now {
+        return None;
+    }
+    let scale = if fine_now { FINE_DRAG_SCALE } else { 1.0 };
+    Some((anchor_value + (reading - anchor_reading) * scale).clamp(0.0, 1.0))
 }
 
 /// Returns the smallest keyboard move that reaches a parameter's next representable position.
@@ -250,6 +303,28 @@ mod tests {
 
     fn frequency() -> ParamDescriptor {
         ParamDescriptor::hertz(0u32, "freq", "Frequency", 20.0, 20_000.0, 1_000.0)
+    }
+
+    #[test]
+    fn a_knob_turns_one_for_one_and_a_fifth_as_far_with_shift() {
+        // Plain: the reading's travel from the anchor is the value's.
+        let plain = knob_value_after_turn(0.7, 0.5, 0.5, false, false).unwrap();
+        assert!((plain - 0.7).abs() < 1e-6);
+        // Fine: a fifth of it, from wherever the anchor left the value.
+        let fine = knob_value_after_turn(0.7, 0.5, 0.3, true, true).unwrap();
+        assert!((fine - 0.34).abs() < 1e-6);
+        // Never past either end.
+        assert_eq!(
+            knob_value_after_turn(1.0, 0.0, 0.9, false, false),
+            Some(1.0)
+        );
+        assert_eq!(
+            knob_value_after_turn(0.0, 1.0, 0.1, false, false),
+            Some(0.0)
+        );
+        // The modifier changing re-anchors instead of jumping.
+        assert_eq!(knob_value_after_turn(0.9, 0.5, 0.5, false, true), None);
+        assert_eq!(knob_value_after_turn(0.9, 0.5, 0.5, true, false), None);
     }
 
     #[test]

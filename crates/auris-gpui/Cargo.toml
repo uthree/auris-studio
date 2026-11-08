@@ -28,8 +28,8 @@ log.workspace = true
 # The build-time path shells out to `xcrun metal`, which lives inside Xcode and is unreachable
 # while `xcode-select -p` points at the Command Line Tools.
 gpui = { version = "=0.2.2", features = ["runtime_shaders"] }
-# Atelier's adopted Glass language, pinned to the reviewed main revision.
-atelier = { git = "https://github.com/uthree/design-language", rev = "331aa75561264716729b587d1f6c90a3d0f286b8" }
+# Atelier's adopted Glass language, pinned to a release tag.
+atelier = { git = "https://github.com/uthree/design-language", tag = "v0.4.0" }
 gpui-flow = { path = "../../vendor/gpui-flow" }
 # The agent transcript uses selectable Markdown without language-specific highlighting.
 # It shares gpui's version and stays wholly inside this presentation crate.

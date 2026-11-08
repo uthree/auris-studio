@@ -1973,6 +1973,8 @@ impl AurisApp {
                     .collect();
                 let _ = self.session.resize_notes(clip, &ends);
             }
+            // The knob follows the pointer itself and reports through `turn_knob`.
+            Drag::Knob { .. } => {}
             Drag::Param {
                 target,
                 start_value,
