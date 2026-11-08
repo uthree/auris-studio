@@ -23,7 +23,6 @@ use crate::theme::{Metrics, Theme};
 use crate::ui::agent_components;
 use crate::ui::context_menu::{ContextMenu, MenuCommand};
 use crate::ui::icons::{Icon, icon};
-use crate::ui::scrollbars::ScrollPanel;
 use crate::ui::text_field::TextField;
 use crate::ui::widgets::{
     ButtonState, ButtonStyle, activity_indicator, bounded_button_enabled, bounded_picker_label,
@@ -32,6 +31,7 @@ use crate::ui::widgets::{
 
 #[cfg(test)]
 mod articulation_eval;
+pub(crate) mod chat_view;
 #[cfg(test)]
 mod composition_eval;
 pub(crate) mod controls;
@@ -122,7 +122,9 @@ mod choice_card_tests {
         let (app, cx) = crate::harness::open(cx);
         let index = offer(&app, cx, false);
         cx.run_until_parked();
-        let option: &'static str = format!("agent-choices-{index}-option-1").leak();
+        crate::harness::paint(&app, cx);
+        let card = chat_view::row(&app, cx, index, "choices");
+        let option: &'static str = format!("{card}-option-1").leak();
         crate::harness::click(option, cx);
         assert_eq!(queued(&app, cx), ["Strings"]);
         app.read_with(cx, |this, _| {
@@ -134,7 +136,7 @@ mod choice_card_tests {
             ));
         });
         crate::harness::paint(&app, cx);
-        let other: &'static str = format!("agent-choices-{index}-option-2").leak();
+        let other: &'static str = format!("{card}-option-2").leak();
         crate::harness::click(other, cx);
         assert_eq!(
             queued(&app, cx),
@@ -150,13 +152,15 @@ mod choice_card_tests {
         let (app, cx) = crate::harness::open(cx);
         let index = offer(&app, cx, true);
         cx.run_until_parked();
+        crate::harness::paint(&app, cx);
+        let card = chat_view::row(&app, cx, index, "choices");
         for option in [2, 0] {
-            let id: &'static str = format!("agent-choices-{index}-option-{option}").leak();
+            let id: &'static str = format!("{card}-option-{option}").leak();
             crate::harness::click(id, cx);
             crate::harness::paint(&app, cx);
         }
         assert!(queued(&app, cx).is_empty(), "ticking is not answering");
-        let send: &'static str = format!("agent-choices-{index}-send").leak();
+        let send: &'static str = format!("{card}-send").leak();
         crate::harness::click(send, cx);
         assert_eq!(queued(&app, cx), ["- Piano\n- Synth"]);
     }
@@ -364,25 +368,6 @@ impl ChatEntry {
             attachments: Vec::new(),
         }
     }
-}
-
-/// Preserve message boundaries while coalescing adjacent tool calls for presentation.
-fn transcript_runs(entries: &[ChatEntry]) -> impl Iterator<Item = std::ops::Range<usize>> + '_ {
-    let mut start = 0;
-    std::iter::from_fn(move || {
-        if start == entries.len() {
-            return None;
-        }
-        let mut end = start + 1;
-        if matches!(entries[start], ChatEntry::Tool { .. }) {
-            while end < entries.len() && matches!(entries[end], ChatEntry::Tool { .. }) {
-                end += 1;
-            }
-        }
-        let run = start..end;
-        start = end;
-        Some(run)
-    })
 }
 
 /// Only the newest assistant entry may show Atelier's streaming caret.
@@ -1394,9 +1379,6 @@ pub(crate) struct AgentChat {
     streamed_answer: bool,
     /// The chosen model's context window, when its listing said.
     pub(crate) context_window: Option<u64>,
-    /// The transcript rows clicked open to their full text.
-    pub(crate) expanded: std::collections::BTreeSet<usize>,
-    expanded_tool_groups: std::collections::BTreeSet<usize>,
     /// Running tool rows by unique call id, so parallel calls sharing a name remain distinct.
     open_tools: std::collections::BTreeMap<String, usize>,
     /// The wire a model listing comes back on.
@@ -1452,11 +1434,17 @@ pub(crate) struct AgentChat {
     pub(crate) fresh_history: bool,
     /// Apply changed provider settings after the current reply has finished.
     restart_after_turn: bool,
-    /// Where the transcript is scrolled to.
-    pub(crate) scroll: gpui::ScrollHandle,
-    /// Transcript changes that arrived while the reader was away from the tail.
-    pub(crate) unread_entries: usize,
-    /// Whether transcript changes should continue following the tail.
+    /// The conversation's view, built on the panel's first frame; see [`chat_view`].
+    chat: Option<chat_view::ChatSync>,
+    /// Bumped whenever [`AgentChat::entries`] becomes another conversation, so the view starts
+    /// over rather than editing one transcript into the other.
+    transcript_epoch: u64,
+    /// How many entries have been dropped off the front of an unmanaged transcript in all.
+    trimmed: usize,
+    /// Show the end on the next frame, as after sending.
+    jump_pending: bool,
+    /// Whether a managed transcript's window keeps to its newest entries, rather than staying
+    /// where "earlier messages" moved it.
     follow_tail: bool,
     link: Option<AgentLink>,
 }
@@ -1505,8 +1493,6 @@ impl Default for AgentChat {
             speed: SpeedMeter::default(),
             streamed_answer: false,
             context_window: None,
-            expanded: std::collections::BTreeSet::new(),
-            expanded_tool_groups: std::collections::BTreeSet::new(),
             open_tools: std::collections::BTreeMap::new(),
             models_rx: None,
             discovery_endpoint: None,
@@ -1535,8 +1521,10 @@ impl Default for AgentChat {
             produced_project: None,
             fresh_history: false,
             restart_after_turn: false,
-            scroll: gpui::ScrollHandle::new(),
-            unread_entries: 0,
+            chat: None,
+            transcript_epoch: 0,
+            trimmed: 0,
+            jump_pending: false,
             follow_tail: true,
             link: None,
         }
@@ -1549,46 +1537,25 @@ impl AgentChat {
         self.controls.pending.is_some()
     }
 
-    /// Whether the transcript is at, or close enough to resume following, its tail.
-    fn is_near_tail(&self) -> bool {
-        let remaining =
-            f32::from(self.scroll.max_offset().height) + f32::from(self.scroll.offset().y);
-        remaining <= f32::from(Metrics::CONTROL_HEIGHT) * 2.0
-    }
-
-    fn should_follow_tail(&mut self) -> bool {
-        self.follow_tail = self.is_near_tail();
-        self.follow_tail
-    }
-
-    /// Records one transcript mutation without taking the reader away from older content.
-    fn finish_transcript_change(&mut self, follow_tail: bool) {
-        self.follow_tail = follow_tail;
-        if follow_tail {
-            self.unread_entries = 0;
-            self.scroll.scroll_to_bottom();
-        } else {
-            self.unread_entries = self.unread_entries.saturating_add(1);
-        }
-    }
-
     /// Explicitly resumes automatic tail following and clears the new-message count.
     pub(crate) fn jump_to_latest(&mut self) {
         self.follow_tail = true;
-        self.unread_entries = 0;
-        self.scroll.scroll_to_bottom();
+        self.jump_pending = true;
+    }
+
+    /// The transcript is about to become another conversation's: the view starts over, at
+    /// its end.
+    pub(crate) fn new_transcript(&mut self) {
+        self.transcript_epoch = self.transcript_epoch.wrapping_add(1);
+        self.follow_tail = true;
     }
 
     /// Replaces the transcript with persisted turns and presents their newest exchange.
     fn replace_history(&mut self, summary: String, turns: Vec<(String, String)>) {
         self.entries.clear();
         self.open_tools.clear();
-        self.expanded.clear();
-        self.expanded_tool_groups.clear();
         // A new document's transcript must not inherit the old document's scroll geometry.
-        self.scroll = gpui::ScrollHandle::new();
-        self.follow_tail = true;
-        self.unread_entries = 0;
+        self.new_transcript();
         if !summary.trim().is_empty() {
             self.push_entry(ChatEntry::RestoredContext(summary));
         }
@@ -1601,19 +1568,9 @@ impl AgentChat {
 
     /// Appends one transcript row, keeping indexes coherent and following only a nearby tail.
     fn push_entry(&mut self, entry: ChatEntry) -> usize {
-        let follow_tail = self.should_follow_tail();
         if !self.conversations.managed() && self.entries.len() >= CHAT_CAPACITY {
             self.entries.remove(0);
-            self.expanded = self
-                .expanded
-                .iter()
-                .filter_map(|index| index.checked_sub(1))
-                .collect();
-            self.expanded_tool_groups = self
-                .expanded_tool_groups
-                .iter()
-                .filter_map(|index| index.checked_sub(1))
-                .collect();
+            self.trimmed += 1;
             self.open_tools.retain(|_, index| {
                 let Some(shifted) = index.checked_sub(1) else {
                     return false;
@@ -1624,7 +1581,6 @@ impl AgentChat {
         }
         let index = self.entries.len();
         self.entries.push(entry);
-        self.finish_transcript_change(follow_tail);
         index
     }
 
@@ -1865,8 +1821,6 @@ impl AgentChat {
 
     /// Converts every still-running tool row into a terminal row.
     fn finish_open_tools(&mut self, line: &str, detail: &str) {
-        let follow_tail = self.should_follow_tail();
-        let mut changed = false;
         for index in std::mem::take(&mut self.open_tools).into_values() {
             if let Some(ChatEntry::Tool {
                 ok,
@@ -1875,7 +1829,6 @@ impl AgentChat {
                 ..
             }) = self.entries.get_mut(index)
             {
-                changed = true;
                 *ok = false;
                 *row_line = line.to_string();
                 if !detail.is_empty() {
@@ -1883,16 +1836,12 @@ impl AgentChat {
                 }
             }
         }
-        if changed {
-            self.finish_transcript_change(follow_tail);
-        }
     }
 
     fn append_streamed(&mut self, reasoning: bool, text: String) {
         if text.is_empty() {
             return;
         }
-        let follow_tail = self.should_follow_tail();
         let appended = match self.entries.last_mut() {
             Some(ChatEntry::Reasoning(existing)) if reasoning => {
                 existing.push_str(&text);
@@ -1910,8 +1859,6 @@ impl AgentChat {
             } else {
                 ChatEntry::Agent(text)
             });
-        } else {
-            self.finish_transcript_change(follow_tail);
         }
     }
 
@@ -2000,7 +1947,6 @@ impl AgentChat {
                 line,
                 detail,
             } => {
-                let follow_tail = self.should_follow_tail();
                 // The call pushed a running row; this fills it in. A result with no matching
                 // call — a build mismatch, a dropped line — becomes its own row rather than
                 // being lost.
@@ -2023,7 +1969,6 @@ impl AgentChat {
                         *row_ok = ok;
                         *row_line = line;
                         *row_detail = detail;
-                        self.finish_transcript_change(follow_tail);
                     }
                     _ => {
                         self.push_entry(ChatEntry::Tool {
@@ -2498,15 +2443,11 @@ impl AurisApp {
         self.agent_chat.references.attachments.clear();
         self.agent_chat.references.midi_draft = None;
         self.agent_chat.entries.clear();
-        self.agent_chat.expanded.clear();
-        self.agent_chat.expanded_tool_groups.clear();
+        self.agent_chat.new_transcript();
         self.agent_chat.open_tools.clear();
         self.agent_chat.model_label.clear();
         self.agent_chat.tokens_in = 0;
         self.agent_chat.tokens_out = 0;
-        self.agent_chat.scroll = gpui::ScrollHandle::new();
-        self.agent_chat.unread_entries = 0;
-        self.agent_chat.follow_tail = true;
         if had_transcript {
             self.agent_chat
                 .push_entry(ChatEntry::Note(Key::AgentConversationReset));
@@ -3845,22 +3786,16 @@ impl AurisApp {
             .conversations
             .transcript_start
             .min(self.agent_chat.entries.len());
-        let rows: Vec<AnyElement> = transcript_runs(&self.agent_chat.entries[transcript_start..])
-            .map(|run| {
-                let run = (run.start + transcript_start)..(run.end + transcript_start);
-                if run.len() > 1 {
-                    self.chat_tool_group(run, &theme, window, cx)
-                } else {
-                    self.chat_row(
-                        run.start,
-                        &self.agent_chat.entries[run.start],
-                        &theme,
-                        window,
-                        cx,
-                    )
-                }
-            })
-            .collect();
+        let thinking = self.agent_operation_busy().then(|| {
+            SharedString::from(self.t(if self.agent_chat.controls.compacting {
+                Key::AgentCompacting
+            } else if self.agent_chat.controls.pending.is_some() {
+                Key::AgentAwaitingApproval
+            } else {
+                Key::AgentWorking
+            }))
+        });
+        let conversation = self.agent_chat_view(transcript_start, thinking, cx);
         let operation_busy = self.agent_operation_busy();
         let drop_bounds = self.agent_chat.drop_bounds.clone();
         let accepts_drop = !composer_locked;
@@ -4054,79 +3989,72 @@ impl AurisApp {
                             ),
                     ),
             )
-            .child(
-                self.scrolling(
-                    ScrollPanel::Agent,
+            .when(self.agent_chat.controls.rules_open, |this| {
+                this.child(
                     div()
-                        .id("agent-lines")
-                        .flex()
-                        .flex_col()
-                        .flex_1()
-                        .p(theme.atelier.spacing.lg)
-                        .gap(theme.atelier.spacing.lg)
+                        .id("agent-rules-scroll")
+                        .flex_shrink()
+                        .max_h(relative(0.5))
                         .overflow_y_scroll()
-                        .when(self.agent_chat.controls.rules_open, |this| {
-                            this.child(self.agent_rules(cx))
-                        })
-                        .when(transcript_start > 0, |this| {
-                            this.child(button(
-                                "agent-earlier-messages",
-                                self.t(Key::AgentEarlierMessages),
-                                ButtonStyle::Ghost,
-                                false,
-                                theme.accent,
-                                &theme,
-                                cx.listener(|this, _, _, cx| {
-                                    this.agent_chat.conversations.transcript_start = this
-                                        .agent_chat
-                                        .conversations
-                                        .transcript_start
-                                        .saturating_sub(CHAT_CAPACITY);
-                                    this.agent_chat.follow_tail = false;
-                                    cx.notify();
-                                }),
-                            ))
-                        })
-                        .when(
-                            self.agent_chat.entries.is_empty() && !operation_busy,
-                            |view| {
-                                view.child(super::agent_components::conversation_intro(
+                        .p(theme.atelier.spacing.lg)
+                        .child(self.agent_rules(cx)),
+                )
+            })
+            .when(transcript_start > 0, |this| {
+                this.child(
+                    div()
+                        .flex()
+                        .justify_center()
+                        .pt(theme.atelier.spacing.sm)
+                        .child(button(
+                            "agent-earlier-messages",
+                            self.t(Key::AgentEarlierMessages),
+                            ButtonStyle::Ghost,
+                            false,
+                            theme.accent,
+                            &theme,
+                            cx.listener(|this, _, _, cx| {
+                                this.agent_chat.conversations.transcript_start = this
+                                    .agent_chat
+                                    .conversations
+                                    .transcript_start
+                                    .saturating_sub(CHAT_CAPACITY);
+                                this.agent_chat.follow_tail = false;
+                                cx.notify();
+                            }),
+                        )),
+                )
+            })
+            .child(
+                div()
+                    .id("agent-lines")
+                    .debug_selector(|| "agent-lines".to_string())
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_h_0()
+                    .min_w_0()
+                    // A press in the transcript is reading, not typing: the composer lets go.
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _, _| {
+                            this.agent_chat.focused = None;
+                        }),
+                    )
+                    .map(|lines| {
+                        if self.agent_chat.entries.is_empty() && !operation_busy {
+                            lines.p(theme.atelier.spacing.lg).child(
+                                super::agent_components::conversation_intro(
                                     self.t(Key::AgentPlaceholder),
                                     self.t(Key::AgentIntro),
                                     &theme,
-                                ))
-                            },
-                        )
-                        .children(rows)
-                        .when(operation_busy, |this| {
-                            this.child(div().px_1p5().text_xs().text_color(theme.text_faint).child(
-                                self.t(if self.agent_chat.controls.compacting {
-                                    Key::AgentCompacting
-                                } else if self.agent_chat.controls.pending.is_some() {
-                                    Key::AgentAwaitingApproval
-                                } else {
-                                    Key::AgentWorking
-                                }),
-                            ))
-                        }),
-                    cx,
-                ),
-            )
-            .when(self.agent_chat.unread_entries > 0, |this| {
-                let unread = self.agent_chat.unread_entries;
-                this.child(div().flex().justify_center().px_2().py_0p5().child(button(
-                    "agent-jump-latest",
-                    format!("{} ({unread})", self.t(Key::AgentJumpLatest)),
-                    ButtonStyle::Normal,
-                    false,
-                    theme.accent,
-                    &theme,
-                    cx.listener(|this, _, _, cx| {
-                        this.agent_chat.jump_to_latest();
-                        cx.notify();
+                                ),
+                            )
+                        } else {
+                            lines.child(conversation)
+                        }
                     }),
-                )))
-            })
+            )
             .child(self.agent_approval_view(cx))
             .children(self.issue_invitation(cx))
             .when(
@@ -4278,86 +4206,6 @@ impl AurisApp {
         row.into_any_element()
     }
 
-    /// A compact, keyboard-accessible summary of consecutive tool calls.
-    fn chat_tool_group(
-        &self,
-        run: std::ops::Range<usize>,
-        theme: &Theme,
-        window: &mut Window,
-        cx: &mut gpui::Context<Self>,
-    ) -> AnyElement {
-        let start = run.start;
-        let opened = self.agent_chat.expanded_tool_groups.contains(&start);
-        let mut running = 0;
-        let mut failed = 0;
-        for entry in &self.agent_chat.entries[run.clone()] {
-            if let ChatEntry::Tool { ok, line, .. } = entry {
-                if line.is_empty() {
-                    running += 1;
-                } else if !ok {
-                    failed += 1;
-                }
-            }
-        }
-        let mut label = self
-            .t(Key::AgentToolGroup)
-            .replace("{count}", &run.len().to_string());
-        for (count, key) in [
-            (running, Key::AgentToolGroupRunning),
-            (failed, Key::AgentToolGroupFailed),
-        ] {
-            if count > 0 {
-                label.push_str(" · ");
-                label.push_str(&self.t(key).replace("{count}", &count.to_string()));
-            }
-        }
-        div()
-            .id(("agent-tool-group", start))
-            .debug_selector(move || format!("agent-tool-group-{start}"))
-            .w_full()
-            .min_w_0()
-            .flex_shrink_0()
-            .px_1p5()
-            .py_0p5()
-            .text_xs()
-            .text_color(if failed > 0 {
-                theme.danger
-            } else {
-                theme.text_muted
-            })
-            .child(
-                disclosure(
-                    SharedString::from(format!("agent-tool-group-toggle-{start}")),
-                    label,
-                    opened,
-                    theme,
-                    cx.listener(move |this, _, _, cx| {
-                        if !this.agent_chat.expanded_tool_groups.remove(&start) {
-                            this.agent_chat.expanded_tool_groups.insert(start);
-                        }
-                        cx.notify();
-                    }),
-                )
-                .when(failed > 0, |this| this.text_color(theme.danger)),
-            )
-            .when(opened, |this| {
-                this.child(
-                    div()
-                        .id(("agent-tool-group-body", start))
-                        .debug_selector(move || format!("agent-tool-group-body-{start}"))
-                        .flex()
-                        .flex_col()
-                        .mt_1()
-                        .border_l_1()
-                        .border_color(theme.border_subtle)
-                        .children(run.map(|index| {
-                            self.chat_row(index, &self.agent_chat.entries[index], theme, window, cx)
-                        })),
-                )
-            })
-            .into_any_element()
-    }
-
     /// Open an explicitly selected reference in its local editor or preview.
     pub(crate) fn open_agent_attachment(&mut self, path: PathBuf, cx: &mut gpui::Context<Self>) {
         if auris_agent::attachment_kind(&path) == Some(auris_agent::AttachmentKind::Midi) {
@@ -4376,14 +4224,11 @@ impl AurisApp {
         window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) -> AnyElement {
-        let opened = if self.agent_chat.conversations.previewing() {
-            self.agent_chat
-                .conversations
-                .preview_expanded
-                .contains(&index)
-        } else {
-            self.agent_chat.expanded.contains(&index)
-        };
+        let opened = self
+            .agent_chat
+            .conversations
+            .preview_expanded
+            .contains(&index);
         let openable = matches!(entry, ChatEntry::Reasoning(_))
             || matches!(entry, ChatEntry::Tool { args, detail, .. } if !args.is_empty() || !detail.is_empty())
             || matches!(entry, ChatEntry::RestoredContext(detail) if !detail.is_empty());
@@ -4453,13 +4298,6 @@ impl AurisApp {
             ChatEntry::Agent(_) => agent_components::assistant_message(
                 ("agent-message", index),
                 text.clone(),
-                Some(super::agent_markdown::render(
-                    SharedString::from(format!("agent-markdown-{index}")),
-                    SharedString::from(text.clone()),
-                    theme,
-                    window,
-                    cx,
-                )),
                 Some(&copy),
                 streaming,
             ),
@@ -4528,11 +4366,6 @@ impl AurisApp {
                     card,
                     picked,
                     active,
-                    agent_components::ChoiceCardText {
-                        send: self.t(Key::ChoicesSend).into(),
-                        multiple: self.t(Key::ChoicesMultiple).into(),
-                    },
-                    theme,
                     move |picked, window, cx| option(&picked, window, cx),
                     move |window, cx| send(&(), window, cx),
                 )
@@ -6519,14 +6352,15 @@ mod tests {
             ];
         });
         crate::harness::paint(&app, cx);
-        app.read_with(cx, |this, _| assert!(this.agent_chat.expanded.is_empty()));
-        crate::harness::click("agent-line-0", cx);
-        crate::harness::click("agent-line-1", cx);
-        app.read_with(cx, |this, _| {
-            assert_eq!(
-                this.agent_chat.expanded.iter().copied().collect::<Vec<_>>(),
-                vec![0, 1]
-            );
+        app.read_with(cx, |this, cx| {
+            assert!(!this.agent_chat.chat_row_open(0, cx));
+            assert!(!this.agent_chat.chat_row_open(1, cx));
+        });
+        crate::harness::click(chat_view::row(&app, cx, 0, "reasoning"), cx);
+        crate::harness::click(chat_view::row(&app, cx, 1, "tool"), cx);
+        app.read_with(cx, |this, cx| {
+            assert!(this.agent_chat.chat_row_open(0, cx));
+            assert!(this.agent_chat.chat_row_open(1, cx));
         });
     }
 
@@ -6537,7 +6371,6 @@ mod tests {
         let (app, cx) = crate::harness::open(cx);
         let user = "**literal** <tag> & melody\n  日本語の歌詞";
         let answer = "A gentle piano melody";
-        let detail = "{\n  \"tempo\": 120\n}";
         // An answer rises into place as it arrives; this is about selecting it once it has.
         cx.update(|_, cx| atelier::motion::reduce_motion(cx));
         app.update(cx, |this, _| {
@@ -6551,16 +6384,14 @@ mod tests {
                     attachments: vec![],
                 },
                 ChatEntry::Agent(answer.into()),
-                ChatEntry::Reasoning(detail.into()),
             ];
-            this.agent_chat.expanded.insert(2);
         });
         crate::harness::resize(&app, cx, gpui::size(gpui::px(1200.0), gpui::px(1000.0)));
-        for (selector, expected) in [
-            ("agent-markdown-1-0-block", answer),
-            ("agent-message-0-text", user),
-            ("agent-detail-2-0", detail),
-        ] {
+        let answer_block: &'static str =
+            format!("{}-block-1", chat_view::row(&app, cx, 1, "answer")).leak();
+        let user_text: &'static str =
+            format!("{}-text", chat_view::row(&app, cx, 0, "user")).leak();
+        for (selector, expected) in [(answer_block, answer), (user_text, user)] {
             crate::harness::select_text(&app, cx, selector);
             cx.simulate_keystrokes("secondary-c");
             cx.update(|_, cx| {
@@ -6614,7 +6445,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn the_whole_conversation_and_any_line_of_it_can_be_copied(cx: &mut gpui::TestAppContext) {
+    fn the_whole_conversation_can_be_copied(cx: &mut gpui::TestAppContext) {
         let (app, cx) = crate::harness::open(cx);
         app.update(cx, |this, _| {
             this.panels.show(crate::dock::Panel::Agent);
@@ -6630,21 +6461,6 @@ mod tests {
             transcript_text(&this.agent_chat.entries, this.language())
         });
         assert!(expected.contains("hello") && expected.contains("the provider went away"));
-        cx.update(|_, cx| {
-            assert_eq!(
-                cx.read_from_clipboard().and_then(|item| item.text()),
-                Some(expected)
-            );
-        });
-
-        // An error is drawn as a notice nobody can drag across; the menu copies it instead.
-        let error = cx.debug_bounds("agent-line-2").unwrap();
-        crate::harness::right_press(cx, error.center());
-        crate::harness::paint(&app, cx);
-        crate::harness::click("menu-item-0", cx);
-        let expected = app.read_with(cx, |this, _| {
-            entry_text(&this.agent_chat.entries[2], this.language())
-        });
         cx.update(|_, cx| {
             assert_eq!(
                 cx.read_from_clipboard().and_then(|item| item.text()),
@@ -6669,8 +6485,8 @@ mod tests {
         });
         crate::harness::resize(&app, cx, gpui::size(px(1200.), px(800.)));
         for (selector, expected) in [
-            ("agent-message-1-copy", answer),
-            ("agent-message-0-copy", request),
+            (chat_view::row(&app, cx, 1, "copy"), answer),
+            (chat_view::row(&app, cx, 0, "copy"), request),
         ] {
             crate::harness::click(selector, cx);
             cx.update(|_, cx| {
@@ -6696,19 +6512,7 @@ mod tests {
             this.agent_chat.push_entry(ChatEntry::Agent(answer.into()));
         });
         crate::harness::resize(&app, cx, gpui::size(px(900.), px(600.)));
-        assert!(cx.debug_bounds("agent-copy-1").is_none());
-        let message = cx.debug_bounds("agent-line-1").unwrap();
-        crate::harness::right_press(cx, message.center());
-        crate::harness::paint(&app, cx);
-        app.read_with(cx, |this, _| {
-            let menu = this.menu.as_ref().expect("message context menu is open");
-            assert!(matches!(
-                &menu.entries[..],
-                [crate::ui::context_menu::MenuEntry::Item(item)]
-                    if item.label == this.t(Key::AgentCopyMarkdown)
-            ));
-        });
-        crate::harness::click("menu-item-0", cx);
+        crate::harness::click(chat_view::row(&app, cx, 1, "copy"), cx);
         cx.update(|_, cx| {
             assert_eq!(
                 cx.read_from_clipboard()
@@ -6717,41 +6521,6 @@ mod tests {
                 Some(answer)
             );
         });
-    }
-
-    #[gpui::test]
-    fn message_menu_copies_the_clicked_request_even_after_transcript_changes(
-        cx: &mut gpui::TestAppContext,
-    ) {
-        let (app, cx) = crate::harness::open(cx);
-        let request = "Play **this** clip.\n\nKeep `120 BPM`.";
-        app.update(cx, |this, _| {
-            this.panels.show(crate::dock::Panel::Agent);
-            this.settings.agent.model = "test-model".into();
-            this.agent_chat.entries = vec![ChatEntry::user(request.into())];
-        });
-        crate::harness::paint(&app, cx);
-        let message = cx.debug_bounds("agent-line-0").unwrap();
-        crate::harness::right_press(cx, message.center());
-        crate::harness::paint(&app, cx);
-        cx.simulate_keystrokes("escape");
-        app.read_with(cx, |this, _| assert!(this.menu.is_none()));
-
-        crate::harness::right_press(cx, message.center());
-        app.update(cx, |this, _| {
-            this.agent_chat.entries = vec![ChatEntry::Agent("Another message".into())];
-        });
-        crate::harness::paint(&app, cx);
-        cx.simulate_keystrokes("down enter");
-        cx.update(|_, cx| {
-            assert_eq!(
-                cx.read_from_clipboard()
-                    .and_then(|item| item.text())
-                    .as_deref(),
-                Some(request)
-            );
-        });
-        app.read_with(cx, |this, _| assert!(this.menu.is_none()));
     }
 
     #[gpui::test]
@@ -6821,7 +6590,7 @@ mod tests {
             this.agent_chat.entries = vec![ChatEntry::Agent(answer.into())];
         });
         crate::harness::paint(&app, cx);
-        let short = cx.debug_bounds("agent-line-0").unwrap().size.height;
+        let short = chat_view::answer_bounds(&app, cx, 0).unwrap().size.height;
         app.update(cx, |this, _| {
             // A fresh identity avoids the Markdown renderer's asynchronous update debounce.
             this.agent_chat.entries = vec![
@@ -6837,21 +6606,26 @@ mod tests {
             ];
         });
         crate::harness::paint(&app, cx);
-        let long = cx.debug_bounds("agent-line-1").unwrap().size.height;
+        let long = chat_view::answer_bounds(&app, cx, 1).unwrap().size.height;
         // Structural overflow, not font metrics or a pixel snapshot: more content must
-        // occupy more space, and scrolling must make the following tool reachable.
+        // occupy more space, and the conversation must keep the following tool reachable.
         assert!(
             long > short * 10.,
             "the answer was compressed: {short:?} -> {long:?}"
         );
-        app.update(cx, |this, _| {
-            let view = this.scroll_view(ScrollPanel::Agent);
-            assert!(view.max_offset > view.viewport);
-            this.set_scroll_offset(ScrollPanel::Agent, -view.max_offset);
-        });
-        crate::harness::paint(&app, cx);
-        crate::harness::click("agent-tool-result-2", cx);
-        app.read_with(cx, |this, _| assert!(this.agent_chat.expanded.contains(&2)));
+        let lines = cx.debug_bounds("agent-lines").unwrap();
+        assert!(
+            long > lines.size.height,
+            "the answer fits; nothing to scroll"
+        );
+        let tool = chat_view::row(&app, cx, 2, "tool");
+        let row = cx.debug_bounds(tool).unwrap();
+        assert!(
+            row.bottom() <= lines.bottom() + px(1.),
+            "a new conversation shows its end"
+        );
+        crate::harness::click(tool, cx);
+        app.read_with(cx, |this, cx| assert!(this.agent_chat.chat_row_open(2, cx)));
     }
 
     #[gpui::test]
@@ -6866,36 +6640,35 @@ mod tests {
                 .collect();
         });
         crate::harness::paint(&app, cx);
-        app.update(cx, |this, _| {
-            let view = this.scroll_view(ScrollPanel::Agent);
-            assert!(view.max_offset > view.viewport);
-            this.set_scroll_offset(ScrollPanel::Agent, -view.max_offset / 2.0);
+        let lines = cx.debug_bounds("agent-lines").unwrap();
+        // Read further up, the way a person does: with the wheel.
+        cx.simulate_event(gpui::ScrollWheelEvent {
+            position: lines.center(),
+            delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.), lines.size.height * 2.)),
+            ..Default::default()
         });
         crate::harness::paint(&app, cx);
-        let before = app.read_with(cx, |this, _| this.scroll_view(ScrollPanel::Agent).offset);
 
         app.update(cx, |this, _| {
             this.agent_chat
                 .push_entry(ChatEntry::Agent("new while reading".into()));
-            assert_eq!(this.agent_chat.unread_entries, 1);
         });
         crate::harness::paint(&app, cx);
-        app.read_with(cx, |this, _| {
-            let view = this.scroll_view(ScrollPanel::Agent);
-            assert!(
-                (view.offset - before).abs() < 1.0,
-                "reader was forced to the tail"
-            );
+        app.read_with(cx, |this, cx| {
+            assert_eq!(this.agent_chat.unread_entries(cx), 1)
         });
+        assert!(
+            chat_view::answer_bounds(&app, cx, 80).unwrap().origin.y > lines.bottom(),
+            "reader was forced to the tail"
+        );
 
-        assert!(cx.debug_bounds("agent-jump-latest").is_some());
-        crate::harness::click("agent-jump-latest", cx);
+        crate::harness::click("agent-chat-jump", cx);
         crate::harness::paint(&app, cx);
-        app.read_with(cx, |this, _| {
-            let view = this.scroll_view(ScrollPanel::Agent);
-            assert!((view.offset + view.max_offset).abs() < 1.0);
-            assert_eq!(this.agent_chat.unread_entries, 0);
+        app.read_with(cx, |this, cx| {
+            assert_eq!(this.agent_chat.unread_entries(cx), 0)
         });
+        let newest = chat_view::answer_bounds(&app, cx, 80).unwrap();
+        assert!(newest.bottom() <= lines.bottom() + px(1.));
     }
 
     #[gpui::test]
@@ -6917,15 +6690,15 @@ mod tests {
         });
         crate::harness::paint(&app, cx);
 
-        crate::harness::click("agent-tool-result-0", cx);
-        app.read_with(cx, |this, _| assert!(this.agent_chat.expanded.contains(&0)));
+        crate::harness::click(chat_view::row(&app, cx, 0, "tool"), cx);
+        app.read_with(cx, |this, cx| assert!(this.agent_chat.chat_row_open(0, cx)));
         cx.simulate_keystrokes("shift-tab tab");
         release_key("space", cx);
-        app.read_with(cx, |this, _| {
-            assert!(!this.agent_chat.expanded.contains(&0))
+        app.read_with(cx, |this, cx| {
+            assert!(!this.agent_chat.chat_row_open(0, cx))
         });
         release_key("enter", cx);
-        app.read_with(cx, |this, _| assert!(this.agent_chat.expanded.contains(&0)));
+        app.read_with(cx, |this, cx| assert!(this.agent_chat.chat_row_open(0, cx)));
     }
 
     #[test]
@@ -6952,14 +6725,11 @@ mod tests {
             )];
         });
         crate::harness::paint(&app, cx);
-        for selector in [
-            "agent-markdown-0-1-0-0-block",
-            "agent-markdown-0-1-1-0-block",
-            "agent-markdown-0-3-0-0-block",
-            "agent-markdown-0-3-1-0-block",
-        ] {
+        let answer = chat_view::row(&app, cx, 0, "answer");
+        for block in [2, 3, 5, 6] {
+            let selector: &'static str = format!("{answer}-block-{block}").leak();
             let body = cx.debug_bounds(selector).expect("list body is rendered");
-            let message = cx.debug_bounds("agent-line-0").unwrap();
+            let message = chat_view::answer_bounds(&app, cx, 0).unwrap();
             assert!(
                 body.size.width > message.size.width / 2. && body.size.height > gpui::px(0.),
                 "list body collapsed: {selector}: {body:?}; message: {message:?}"
@@ -6983,8 +6753,14 @@ mod tests {
             ];
         });
         crate::harness::paint(&app, cx);
-        let short = cx.debug_bounds("agent-line-0").unwrap().size.height;
-        let long = cx.debug_bounds("agent-line-1").unwrap().size.height;
+        let height = |cx: &mut gpui::VisualTestContext, index| {
+            chat_view::answer_bounds(&app, cx, index)
+                .unwrap()
+                .size
+                .height
+        };
+        let short = height(cx, 0);
+        let long = height(cx, 1);
         assert!(
             long > short * 3.,
             "list text does not wrap: {short:?} -> {long:?}"
@@ -7004,8 +6780,14 @@ mod tests {
             ];
         });
         crate::harness::paint(&app, cx);
-        let short = cx.debug_bounds("agent-line-0").unwrap().size.height;
-        let long = cx.debug_bounds("agent-line-1").unwrap().size.height;
+        let height = |cx: &mut gpui::VisualTestContext, index| {
+            chat_view::answer_bounds(&app, cx, index)
+                .unwrap()
+                .size
+                .height
+        };
+        let short = height(cx, 0);
+        let long = height(cx, 1);
         assert!(
             long > short * 10.,
             "list paragraphs share a horizontal row: {short:?} -> {long:?}"
@@ -7840,33 +7622,6 @@ mod tests {
                 ChatEntry::Agent("answer".into())
             ]
         );
-        assert!(chat.expanded.is_empty());
-    }
-
-    #[test]
-    fn consecutive_tools_group_without_crossing_message_boundaries() {
-        let tool = || ChatEntry::Tool {
-            name: "inspect".into(),
-            args: "{}".into(),
-            ok: true,
-            line: "done".into(),
-            detail: String::new(),
-        };
-        let entries = [
-            tool(),
-            tool(),
-            ChatEntry::Agent("answer".into()),
-            tool(),
-            ChatEntry::user("next request".into()),
-            tool(),
-            tool(),
-            tool(),
-        ];
-        assert_eq!(
-            transcript_runs(&entries).collect::<Vec<_>>(),
-            vec![0..2, 2..3, 3..4, 4..5, 5..8]
-        );
-        assert_eq!(transcript_runs(&[]).count(), 0);
     }
 
     #[test]
@@ -7906,32 +7661,22 @@ mod tests {
                 .push(ChatEntry::Agent("Visible answer".into()));
         });
         crate::harness::paint(&app, cx);
-        let group = cx.debug_bounds("agent-tool-group-0").unwrap();
-        assert!(group.size.height < Metrics::CONTROL_HEIGHT * 2.0);
-        assert!(cx.debug_bounds("agent-line-0").is_none());
-        assert!(cx.debug_bounds("agent-line-40").is_some());
+        // One frame holds the run, every call a row of its own; the answer follows it.
+        let first = chat_view::bounds(&app, cx, 0, "tool").unwrap();
+        let last = chat_view::bounds(&app, cx, 39, "tool").unwrap();
+        let answer = chat_view::answer_bounds(&app, cx, 40).unwrap();
+        assert!(first.size.height < Metrics::CONTROL_HEIGHT * 2.0);
+        assert!(first.origin.y < last.origin.y && last.bottom() <= answer.origin.y);
 
-        crate::harness::click("agent-tool-group-toggle-0", cx);
+        let tool = chat_view::row(&app, cx, 39, "tool");
+        let collapsed = cx.debug_bounds(tool).unwrap().size.height;
+        crate::harness::click(tool, cx);
         crate::harness::paint(&app, cx);
-        assert!(cx.debug_bounds("agent-tool-group-body-0").is_some());
-        let collapsed = cx.debug_bounds("agent-line-0").unwrap().size.height;
-        crate::harness::click("agent-tool-result-0", cx);
-        crate::harness::paint(&app, cx);
-        assert!(cx.debug_bounds("agent-line-0").unwrap().size.height > collapsed);
-        app.read_with(cx, |this, _| {
-            assert!(this.agent_chat.expanded_tool_groups.contains(&0));
-            assert!(this.agent_chat.expanded.contains(&0));
+        app.read_with(cx, |this, cx| {
+            assert!(this.agent_chat.chat_row_open(39, cx));
+            assert!(!this.agent_chat.chat_row_open(0, cx));
         });
-
-        crate::harness::click("agent-tool-group-toggle-0", cx);
-        release_key("space", cx);
-        app.read_with(cx, |this, _| {
-            assert!(this.agent_chat.expanded_tool_groups.contains(&0))
-        });
-        release_key("enter", cx);
-        app.read_with(cx, |this, _| {
-            assert!(!this.agent_chat.expanded_tool_groups.contains(&0))
-        });
+        assert!(cx.debug_bounds(tool).unwrap().size.height >= collapsed);
     }
 
     #[test]
@@ -9137,17 +8882,14 @@ mod tests {
             cx.update(|window, _| window.set_rem_size(px(font_size)));
             crate::harness::resize(&app, cx, gpui::size(px(720.0), px(720.0)));
             let panel = cx.debug_bounds("agent-panel").unwrap();
-            let group = cx.debug_bounds("agent-message-attachments-0").unwrap();
             for selector in [
                 "agent-message-attachment-0-0",
                 "agent-message-attachment-0-1",
             ] {
-                let row = cx.debug_bounds(selector).unwrap();
-                assert_eq!(row.left(), group.left());
-                assert_eq!(row.right(), group.right());
-                assert!(row.left() >= panel.left() && row.right() <= panel.right());
+                let chip = cx.debug_bounds(selector).unwrap();
+                assert!(chip.left() >= panel.left() && chip.right() <= panel.right());
             }
-            assert!(cx.debug_bounds("agent-message-attachments-1").is_none());
+            assert!(cx.debug_bounds("agent-message-attachment-1-0").is_none());
             assert!(cx.debug_bounds("agent-attachment-remove-0").is_none());
         }
         app.read_with(cx, |this, _| {
@@ -9179,7 +8921,7 @@ mod tests {
         });
         crate::harness::paint(&app, cx);
         assert_eq!(cx.opened_url(), None);
-        crate::harness::click("agent-message-attachment-0-0", cx);
+        crate::harness::click("agent-message-attachment-0-0-open", cx);
         cx.run_until_parked();
         app.read_with(cx, |this, _| {
             assert_eq!(this.attachment_preview.as_ref().unwrap().path, paths[0])
@@ -9222,8 +8964,8 @@ mod tests {
         });
         crate::harness::paint(&app, cx);
         for selector in [
-            "agent-message-attachment-0-0",
-            "agent-message-attachment-0-1",
+            "agent-message-attachment-0-0-open",
+            "agent-message-attachment-0-1-open",
         ] {
             crate::harness::click(selector, cx);
             cx.run_until_parked();

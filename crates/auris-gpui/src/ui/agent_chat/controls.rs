@@ -237,14 +237,9 @@ impl AurisApp {
 
     /// Opens or closes the permission rules and reveals their start when they become visible.
     fn set_agent_rules_open(&mut self, open: bool) {
+        // The rules sit above the conversation rather than inside its scroller, so opening them
+        // shows them wherever the conversation has been scrolled to.
         self.agent_chat.controls.rules_open = open;
-        if open {
-            // The rules are the first child of the transcript scroller. A retained tail offset
-            // otherwise opens them above the viewport, making the button appear to do nothing.
-            self.agent_chat
-                .scroll
-                .set_offset(gpui::point(px(0.0), px(0.0)));
-        }
     }
 
     fn save_agent_policy_with<E>(
@@ -1243,11 +1238,6 @@ mod tests {
                 .collect();
         });
         crate::harness::paint(&app, cx);
-        app.update(cx, |this, _| {
-            this.agent_chat
-                .scroll
-                .set_offset(gpui::point(px(0.0), px(-120.0)));
-        });
 
         crate::harness::click("agent-mode-menu", cx);
         crate::harness::paint(&app, cx);
@@ -1255,9 +1245,11 @@ mod tests {
         crate::harness::paint(&app, cx);
         app.read_with(cx, |this, _| {
             assert!(this.agent_chat.controls.rules_open);
-            assert_eq!(this.agent_chat.scroll.offset().y, px(0.0));
         });
-        assert!(cx.debug_bounds("agent-rule-*").is_some());
+        // Opened over a conversation read at its end, the rules are on screen all the same.
+        let rules = cx.debug_bounds("agent-rule-*").expect("rules are drawn");
+        let panel = cx.debug_bounds("agent-panel").unwrap();
+        assert!(rules.origin.y >= panel.origin.y && rules.origin.y < panel.bottom());
 
         crate::harness::click("agent-mode-menu", cx);
         crate::harness::paint(&app, cx);
