@@ -479,7 +479,7 @@ mod tests {
                 .unwrap();
             let chip = app
                 .session
-                .add_instrument_track("Chip", "auris.synth.chiptune")
+                .add_instrument_track("Noise", "auris.synth.noisedrum")
                 .unwrap();
             let audio = app.session.add_audio_track("Audio");
             let bus = app.session.add_bus_track("Bus");

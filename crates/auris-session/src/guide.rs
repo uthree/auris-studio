@@ -1477,6 +1477,15 @@ pub mod plugins {
     //! ([`MotionGeometry::Tract`](auris_core::motion::MotionGeometry::Tract)); the dulcimer
     //! publishes each course as the sum of its modes' shapes.
     //!
+    //! The two oscillator synthesisers, [`Fm2`](auris_synth::Fm2) and
+    //! [`Chiptune`](auris_synth::Chiptune), have no body and publish through the same channel
+    //! anyway, as [`MotionGeometry::Oscillator`](auris_core::motion::MotionGeometry::Oscillator):
+    //! one cycle of each sounding voice's waveform at its envelope's level, that cycle's first
+    //! eight harmonics, and for the operator pair the modulation index the voice has decayed to.
+    //! A frontend therefore draws and plays every built-in pitched instrument with one view,
+    //! whose second picture — the operators and their sidebands, or the chip voice's cycle — it
+    //! computes from the parameters, because that has to be there before a note is played.
+    //!
     //! A body can also be touched.
     //! [`Session::touch_instrument`](crate::Session::touch_instrument) sends
     //! [`TOUCH_CONTROLLER`](auris_core::motion::TOUCH_CONTROLLER) ahead of a note, and the

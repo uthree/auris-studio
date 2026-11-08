@@ -2124,6 +2124,9 @@ mod tests {
             "auris.physical.tin_whistle",
             "auris.physical.choir",
             "auris.physical.hammered_dulcimer",
+            // Not physical, but observed the same way: their oscillators' waveforms.
+            "auris.synth.chiptune",
+            "auris.synth.fm2",
         ] {
             let track = session.add_instrument_track("Model", id).unwrap();
             assert!(session.has_instrument_motion(track), "{id}");
@@ -2163,10 +2166,10 @@ mod tests {
                 .values()
                 .all(|monitor| !monitor.is_watched())
         );
-        let chip = session
-            .add_instrument_track("Chip", "auris.synth.chiptune")
+        let noise = session
+            .add_instrument_track("Noise", "auris.synth.noisedrum")
             .unwrap();
-        assert!(!session.has_instrument_motion(chip));
+        assert!(!session.has_instrument_motion(noise));
         let drums = session.add_default_drum_track("Kit").unwrap();
         assert!(session.has_instrument_motion(drums));
         session.watch_instrument_motion(Some(drums));

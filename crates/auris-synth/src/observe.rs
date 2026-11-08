@@ -79,6 +79,32 @@ pub(crate) fn recent_voices(
     selected
 }
 
+/// The magnitudes of the first `out.len()` harmonics of one cycle, relative to the strongest.
+///
+/// A plain DFT at the harmonic bins: eight bins of a sixty-four point cycle is five hundred
+/// multiplies, at display rate, which is less than one voice spends on one block.
+pub(crate) fn harmonics(cycle: &[f32], out: &mut [f32]) {
+    let length = cycle.len().max(1) as f32;
+    for (index, value) in out.iter_mut().enumerate() {
+        let harmonic = (index + 1) as f32;
+        let (mut real, mut imaginary) = (0.0_f32, 0.0_f32);
+        for (at, sample) in cycle.iter().enumerate() {
+            let angle = std::f32::consts::TAU * harmonic * at as f32 / length;
+            real += sample * angle.cos();
+            imaginary += sample * angle.sin();
+        }
+        *value = real.hypot(imaginary);
+    }
+    let loudest = out.iter().fold(0.0_f32, |a, b| a.max(*b));
+    if loudest > 1e-6 && loudest.is_finite() {
+        for value in out.iter_mut() {
+            *value /= loudest;
+        }
+    } else {
+        out.fill(0.0);
+    }
+}
+
 /// Pressure along a waveguide bore, from the mouthpiece (first point) to the open end (last).
 ///
 /// The bore is one delay line holding a whole round trip of `length` samples, written at
@@ -127,6 +153,20 @@ mod tests {
     }
 
     #[test]
+    fn a_square_has_odd_harmonics_falling_as_one_over_n() {
+        let cycle: Vec<f32> = (0..64).map(|i| if i < 32 { 1.0 } else { -1.0 }).collect();
+        let mut out = [0.0; 8];
+        harmonics(&cycle, &mut out);
+        assert!((out[0] - 1.0).abs() < 1e-5);
+        assert!(out[1] < 1e-4 && out[3] < 1e-4, "{out:?}");
+        assert!((out[2] - 1.0 / 3.0).abs() < 0.01, "{out:?}");
+        assert!((out[4] - 1.0 / 5.0).abs() < 0.01, "{out:?}");
+        let mut silent = [1.0; 8];
+        harmonics(&[0.0; 64], &mut silent);
+        assert_eq!(silent, [0.0; 8]);
+    }
+
+    #[test]
     fn an_unwatched_observer_is_never_due() {
         let mut observer = Observer::default();
         assert!(!observer.due(48_000, 48_000.0));
@@ -137,7 +177,9 @@ mod tests {
     }
 
     use crate::test_support::{Rig, count_allocations};
-    use crate::{Choir, Clarinet, DrumKit, HammeredDulcimer, Model, Physical, TinWhistle};
+    use crate::{
+        Chiptune, Choir, Clarinet, DrumKit, Fm2, HammeredDulcimer, Model, Physical, TinWhistle,
+    };
     use auris_core::motion::TOUCH_CONTROLLER;
     use auris_core::{
         AudioBuffer, Instrument, NoteEvent, Parameterized, PrepareContext, ProcessContext,
@@ -219,6 +261,79 @@ mod tests {
     }
 
     #[test]
+    fn the_chiptune_publishes_one_cycle_of_its_pulse_in_its_bit_depth() {
+        let mut synth = Chiptune::new();
+        assert!(synth.set_param_by_key("pulse_width", 0.25));
+        assert!(synth.set_param_by_key("bits", 3.0));
+        assert!(synth.set_param_by_key("octave", 1.0));
+        let frame = observe(Box::new(synth), &[on(60)]);
+        assert_eq!(frame.geometry, MotionGeometry::Oscillator);
+        let voice = &frame.voices[0];
+        // The octave switch is part of the note it plays.
+        assert_eq!(voice.pitch, 72.0);
+        assert!(voice.held && voice.level > 0.4, "level {}", voice.level);
+        // A quarter of the period high, at the level the envelope has reached.
+        let high = voice.points.iter().filter(|p| **p > 0.0).count();
+        assert_eq!(high, 16);
+        assert!((loudest(&voice.points) - voice.level).abs() < 1e-4);
+        // A 25 % pulse has no fourth harmonic, and its second is strong.
+        assert!(
+            voice.modes[3] < 0.02 && voice.modes[1] > 0.6,
+            "{:?}",
+            voice.modes
+        );
+
+        let mut triangle = Chiptune::new();
+        assert!(triangle.set_param_by_key("waveform", 3.0));
+        assert!(triangle.set_param_by_key("bits", 3.0));
+        let frame = observe(Box::new(triangle), &[on(60)]);
+        // Three bits are four steps either side of zero: nine levels, and no others.
+        let mut levels: Vec<i32> = frame.voices[0]
+            .points
+            .iter()
+            .map(|p| (p / frame.voices[0].level * 4.0).round() as i32)
+            .collect();
+        levels.sort_unstable();
+        levels.dedup();
+        assert_eq!(levels, (-4..=4).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn the_fm_operator_publishes_its_index_falling_to_a_sine() {
+        let mut synth = Fm2::new();
+        assert!(synth.set_param_by_key("index", 6.0));
+        assert!(synth.set_param_by_key("mod_decay", 0.4));
+        let mut rig = Rig::new(Box::new(synth), 48_000.0, 256, 2);
+        let monitor = rig.instrument.motion_monitor().expect("a body to observe");
+        monitor.watch(true);
+        rig.render(1_600, &[on(57)]);
+        let early = monitor.read().expect("a frame");
+        assert_eq!(early.geometry, MotionGeometry::Oscillator);
+        assert!(
+            early.voices[0].excitation > 2.0,
+            "{}",
+            early.voices[0].excitation
+        );
+        // Bright: the upper harmonics are there while the index is high.
+        assert!(
+            early.voices[0].modes[3..].iter().any(|m| *m > 0.3),
+            "{:?}",
+            early.voices[0].modes
+        );
+        rig.render(30_000, &[]);
+        let settled = monitor.read().expect("a frame");
+        let voice = &settled.voices[0];
+        assert!(voice.excitation < 0.01, "{}", voice.excitation);
+        // Settled into the carrier alone.
+        assert!(
+            voice.modes[1..].iter().all(|m| *m < 0.02),
+            "{:?}",
+            voice.modes
+        );
+        assert_eq!(voice.pitch, 57.0);
+    }
+
+    #[test]
     fn the_dulcimer_publishes_its_course_with_fixed_ends_and_its_modes() {
         let frame = observe(Box::new(HammeredDulcimer::new()), &[on(62)]);
         assert_eq!(frame.geometry, MotionGeometry::String);
@@ -272,6 +387,8 @@ mod tests {
             Box::new(TinWhistle::new()),
             Box::new(Choir::new()),
             Box::new(HammeredDulcimer::new()),
+            Box::new(Fm2::new()),
+            Box::new(Chiptune::new()),
         ] {
             instrument.prepare(&PrepareContext::new(48_000.0, 256, 2));
             instrument.motion_monitor().unwrap().watch(true);

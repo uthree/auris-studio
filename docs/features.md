@@ -716,6 +716,20 @@ Deliberately simple chiptune voices, enough to hear the engine working:
 
 Square and saw are PolyBLEP band-limited, so high notes stay clean instead of aliasing.
 
+Both pitched voices open in the same view the physical instruments do. Where a physical model
+draws its strings, **Oscillator waveforms** draws one cycle of each sounding voice — two periods,
+so the join shows — at the height its envelope has reached: an FM note's bright attack visibly
+settling into a sine, a pulse narrowing as its duty cycle is turned, a triangle breaking into the
+bit depth's steps. At rest the first lane holds the patch's own cycle, faintly. Hold on a waveform
+to play its note, louder the farther from the centre line; it stops when let go, as a key does.
+
+Under it, the patch as a picture. For **FM 2-Op**, the two operators — the modulator at its
+ratio, the carrier, and the depth between them, live while a note sounds — and the **sidebands**
+that depth throws out: frequencies as multiples of the note, amplitudes from the Bessel functions
+of the depth, faint for the note's start and coloured for the loudest voice now. An integer ratio
+puts every line on a harmonic; 3.5 puts them between. For **Chiptune**, **one cycle** as the
+waveform, pulse width and bit depth make it, and its first sixteen harmonics.
+
 Both pitched voices have a **vibrato**, in three controls: **Vibrato Rate** in hertz, **Vibrato**
 — how far this *sound* wobbles, whatever anybody is doing with a controller — and **Mod Depth**,
 how much further the modulation wheel can push it. `Vibrato` starts at zero, so a patch nobody has

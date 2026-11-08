@@ -9,10 +9,12 @@ use auris_core::{
 };
 
 use crate::lfo::Lfo;
+use crate::observe::{Observer, harmonics, recent_voices};
 use crate::oscillator::{Oscillator, Waveform};
 use crate::params::{ParamBank, finite_or};
 use crate::render::{SegmentRenderer, render_segments, spread_to_all_channels};
-use crate::voice::VoiceAllocator;
+use crate::voice::{VoiceAllocator, VoiceState};
+use auris_core::motion::{MOTION_POINTS, MotionFrame, MotionGeometry};
 use auris_dsp::Adsr;
 use auris_dsp::adsr::SEGMENT_TIME_CONSTANTS;
 
@@ -126,6 +128,7 @@ pub struct Chiptune {
     output_gain: f32,
     /// Voice most recently triggered, so a new note can glide from its live frequency.
     last_voice: Option<usize>,
+    observer: Observer,
 }
 
 impl Default for Chiptune {
@@ -159,6 +162,7 @@ impl Chiptune {
             crush_levels: 0.0,
             output_gain: 1.0,
             last_voice: None,
+            observer: Observer::default(),
         };
         synth.refresh();
         synth
@@ -242,6 +246,48 @@ impl Chiptune {
                 oscillator.set_pulse_width(pulse_width);
             }
         }
+    }
+
+    /// The newest notes as their waveforms: one period of the shape each is playing, in the
+    /// bit depth's steps, at the level its envelope has reached.
+    fn publish_motion(&mut self) {
+        let mut frame = MotionFrame {
+            geometry: MotionGeometry::Oscillator,
+            active: self.allocator.active_count(),
+            expression: self.channel_volume,
+            ..MotionFrame::default()
+        };
+        let voices = &self.voices;
+        let selected = recent_voices(&self.allocator, |index| voices[index].envelope.is_active());
+        for (observed, index) in frame.voices.iter_mut().zip(selected) {
+            let Some(index) = index else {
+                break;
+            };
+            let voice = &self.voices[index];
+            let mut cycle = [0.0; MOTION_POINTS];
+            voice.oscillators[0].cycle(self.waveform, &mut cycle);
+            if self.crush_levels > 0.0 {
+                // At full scale, where the steps are as many as the bit depth allows; the real
+                // crusher meets the mix lower down and leaves fewer of them in use.
+                for sample in &mut cycle {
+                    *sample = (*sample * self.crush_levels).round() / self.crush_levels;
+                }
+            }
+            harmonics(&cycle, &mut observed.modes);
+            let level = voice.envelope.level() * voice.velocity;
+            for (point, sample) in observed.points.iter_mut().zip(cycle) {
+                *point = sample * level;
+            }
+            observed.pitch = voice.pitch + self.pitch_offset;
+            observed.level = level;
+            observed.contact = 0.0;
+            observed.excitation = 0.0;
+            observed.held = self
+                .allocator
+                .slot(index)
+                .is_some_and(|slot| slot.state == VoiceState::Held);
+        }
+        self.observer.publish(&frame);
     }
 
     fn frequency_for(&self, pitch: f32) -> f32 {
@@ -526,12 +572,20 @@ impl Instrument for Chiptune {
         self.channel_volume = 1.0;
         self.last_voice = None;
         self.refresh();
+        self.observer.reset(MotionGeometry::Oscillator);
     }
 
     fn process(&mut self, events: &[NoteEvent], out: &mut AudioBuffer, ctx: &ProcessContext) {
         let frames = ctx.block_frames.min(out.frame_count());
         render_segments(self, events, out, frames);
         spread_to_all_channels(out, frames);
+        if self.observer.due(frames, self.sample_rate) {
+            self.publish_motion();
+        }
+    }
+
+    fn motion_monitor(&self) -> Option<std::sync::Arc<auris_core::motion::MotionMonitor>> {
+        Some(self.observer.monitor())
     }
 
     fn active_voices(&self) -> usize {
