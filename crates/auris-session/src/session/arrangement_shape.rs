@@ -312,10 +312,11 @@ fn phrase_fills(
             starts.push(bar.raw());
             bar += project.signatures.signature_at(bar).ticks_per_bar();
         }
-        if index + 1 < spans.len() && is_chorus(&spans[index + 1].label) {
-            if let Some(&last) = starts.last() {
-                chorus_notes.push(bar_hits(last).len());
-            }
+        if index + 1 < spans.len()
+            && is_chorus(&spans[index + 1].label)
+            && let Some(&last) = starts.last()
+        {
+            chorus_notes.push(bar_hits(last).len());
         }
         let mut counts: BTreeMap<Vec<(i64, u8)>, usize> = BTreeMap::new();
         for &start in &starts {
