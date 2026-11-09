@@ -191,6 +191,50 @@ pub fn bands_from_bins(bins: &[f32], sample_rate: f64, low_hz: f64, high_hz: f64
     }
 }
 
+/// [`bands_from_bins`], with a band too narrow to hold a bin of its own given the level of the
+/// bin nearest its centre.
+///
+/// For a bar display, where an empty band is a hole in the floor rather than a quiet band. At the
+/// bottom of the range a sixth of an octave is a few hertz and a bin is tens of them, so a bin
+/// covers several bands; repeating its reading across them says what the window measured there,
+/// at the resolution it measured it, and invents nothing a neighbour did not.
+pub fn bands_from_bins_nearest(
+    bins: &[f32],
+    sample_rate: f64,
+    low_hz: f64,
+    high_hz: f64,
+    out: &mut [f32],
+) {
+    bands_from_bins(bins, sample_rate, low_hz, high_hz, out);
+    if bins.len() < 2 || out.is_empty() || sample_rate <= 0.0 || low_hz <= 0.0 || high_hz <= low_hz
+    {
+        return;
+    }
+    let span = (high_hz / low_hz).log2();
+    let hz_per_bin = sample_rate / 2.0 / (bins.len() - 1) as f64;
+    let count = out.len();
+    let band_of = |frequency: f64| {
+        let position = (frequency / low_hz).log2() / span;
+        ((position * count as f64) as usize).min(count - 1)
+    };
+    for (band, level) in out.iter_mut().enumerate() {
+        let from = low_hz * 2f64.powf(span * band as f64 / count as f64);
+        let to = low_hz * 2f64.powf(span * (band + 1) as f64 / count as f64);
+        let first = (from / hz_per_bin).ceil() as usize;
+        let holds_a_bin = (first..bins.len())
+            .take_while(|&bin| bin as f64 * hz_per_bin < to)
+            .any(|bin| {
+                bin as f64 * hz_per_bin >= low_hz && band_of(bin as f64 * hz_per_bin) == band
+            });
+        if holds_a_bin {
+            continue;
+        }
+        let centre = (from * to).sqrt();
+        let nearest = ((centre / hz_per_bin).round() as usize).min(bins.len() - 1);
+        *level = bins[nearest];
+    }
+}
+
 /// A sine at `frequency`, for tests and for anyone measuring a filter.
 pub fn sine(frequency: f64, sample_rate: f64, amplitude: f32, frames: usize) -> Vec<f32> {
     (0..frames)
@@ -330,6 +374,26 @@ mod tests {
         for index in 1..32 {
             let mirrored = analyzer.window[64 - index];
             assert!((analyzer.window[index] - mirrored).abs() < 1e-6);
+        }
+    }
+
+    #[test]
+    fn narrow_bands_take_the_nearest_bin_and_wide_ones_keep_their_own() {
+        // Bins 100 Hz apart, and sixty bands across 20 Hz to 20 kHz: below a few hundred hertz a
+        // band is narrower than a bin.
+        let bins: Vec<f32> = (0..=240).map(|bin| -0.1 * bin as f32).collect();
+        let mut sparse = [0.0; 60];
+        let mut filled = [0.0; 60];
+        bands_from_bins(&bins, 48_000.0, 20.0, 20_480.0, &mut sparse);
+        bands_from_bins_nearest(&bins, 48_000.0, 20.0, 20_480.0, &mut filled);
+        assert!(sparse.iter().take(20).any(|&level| level == SILENCE_DB));
+        assert!(filled.iter().all(|&level| level > SILENCE_DB));
+        // A band around 50 Hz has the 0 Hz or 100 Hz bin as its nearest; one around 1 kHz has
+        // bins of its own and keeps the loudest of them, as it always did.
+        for (band, (&sparse, &filled)) in sparse.iter().zip(&filled).enumerate() {
+            if sparse > SILENCE_DB {
+                assert_eq!(sparse, filled, "band {band} held a bin and was changed");
+            }
         }
     }
 }

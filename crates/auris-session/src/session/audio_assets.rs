@@ -35,7 +35,7 @@ pub enum Operation {
     },
     /// Search supported audio filenames, not audio content. Bounded to 10000 entries and depth 8; symlinks are skipped. Inspect completeness before claiming absence.
     Search {
-        /// Absolute local directory; omitted searches the OS Music and Downloads folders.
+        /// Absolute local directory, which asks the user first; omitted searches the OS Music and Downloads folders without asking.
         root: Option<String>,
         /// Case-insensitive words matched against the relative path; empty lists audio files.
         query: String,
@@ -89,8 +89,15 @@ impl Operation {
         matches!(self, Self::ImportUrl { .. } | Self::Process { .. })
     }
     /// Remote searches and ingestion require the application's network approval gate.
+    ///
+    /// So does a local search of a folder the model names: it lists file names anywhere the user
+    /// can read, the same reach as a native read outside the project, which asks too. Only the
+    /// default folders, where people keep the music and sounds they mean to use, are free.
     pub fn requires_confirmation(&self) -> bool {
-        matches!(self, Self::ImportUrl { .. } | Self::SearchOnline { .. })
+        matches!(
+            self,
+            Self::ImportUrl { .. } | Self::SearchOnline { .. } | Self::Search { root: Some(_), .. }
+        )
     }
 }
 
@@ -620,6 +627,47 @@ impl Job {
         })
     }
 }
+/// Whether a redirect from the approved `from` may be followed to `to` without asking again.
+///
+/// The person approved one address. A redirect within that origin is the same server answering;
+/// one to another origin is followed only over HTTPS and only to a public host, so an approved
+/// public URL cannot be bounced onto this machine or the local network, or onto plain HTTP.
+fn redirect_allowed(from: &url::Url, to: &url::Url) -> bool {
+    if from.origin() == to.origin() {
+        return true;
+    }
+    if to.scheme() != "https" {
+        return false;
+    }
+    match to.host() {
+        Some(url::Host::Domain(name)) => {
+            let name = name.trim_end_matches('.').to_ascii_lowercase();
+            name != "localhost" && !name.ends_with(".localhost")
+        }
+        Some(url::Host::Ipv4(ip)) => {
+            !(ip.is_loopback()
+                || ip.is_private()
+                || ip.is_link_local()
+                || ip.is_unspecified()
+                || ip.is_broadcast()
+                // 100.64.0.0/10, carrier-grade NAT and many VPNs' private ranges.
+                || (ip.octets()[0] == 100 && ip.octets()[1] & 0xc0 == 64))
+        }
+        Some(url::Host::Ipv6(ip)) => {
+            let segments = ip.segments();
+            !(ip.is_loopback()
+                || ip.is_unspecified()
+                // fc00::/7 unique local, fe80::/10 link local.
+                || segments[0] & 0xfe00 == 0xfc00
+                || segments[0] & 0xffc0 == 0xfe80
+                || ip.to_ipv4_mapped().is_some_and(|v4| {
+                    v4.is_loopback() || v4.is_private() || v4.is_link_local()
+                }))
+        }
+        None => false,
+    }
+}
+
 fn download(
     value: &str,
     folder: &Path,
@@ -645,7 +693,13 @@ fn download(
                 .get("location")
                 .and_then(|x| x.to_str().ok())
                 .ok_or("Redirect has no location")?;
-            url = audio_url(url.join(location).map_err(|e| e.to_string())?.as_str())?;
+            let next = audio_url(url.join(location).map_err(|e| e.to_string())?.as_str())?;
+            if !redirect_allowed(&url, &next) {
+                return Err(format!(
+                    "Audio URL redirected to {next}, which was not the address approved; import that URL directly instead"
+                ));
+            }
+            url = next;
             continue;
         }
         if !response.status().is_success() {

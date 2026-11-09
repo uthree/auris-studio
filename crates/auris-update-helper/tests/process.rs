@@ -19,7 +19,7 @@ fn invalid_package_reports_digest_failure_after_parent_exit() {
     let suffix = if cfg!(target_os = "windows") {
         "windows-x86_64-setup.exe"
     } else {
-        "macos-universal.dmg"
+        "macos-aarch64.dmg"
     };
     let package = directory.path().join(format!("auris-studio-v1-{suffix}"));
     std::fs::write(&package, vec![0x5a; 1024 * 1024 + 1]).unwrap();

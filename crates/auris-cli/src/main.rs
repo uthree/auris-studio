@@ -232,7 +232,7 @@ fn save_new_project(
         Ok(report) => Ok(report.document),
         Err(SessionError::WouldReplace(path)) => Err(messages::project_folder_taken(
             LANGUAGE,
-            &path.display().to_string(),
+            path.display().to_string(),
         )),
         Err(error) => Err(error.to_string()),
     }
@@ -606,7 +606,7 @@ fn compose(args: &[String]) -> Result<(), String> {
         "{}",
         messages::composed(
             LANGUAGE,
-            &written.display().to_string(),
+            written.display().to_string(),
             report.tracks,
             report.notes,
             piece.seed,
@@ -758,7 +758,7 @@ fn sing(args: &[String]) -> Result<(), String> {
     for missing in session.open(&source).map_err(|error| error.to_string())? {
         warned(messages::warning_missing_audio(
             LANGUAGE,
-            &missing.display().to_string(),
+            missing.display().to_string(),
         ));
     }
     warn_foreign_build(&session);
@@ -873,7 +873,7 @@ fn frames(args: &[String]) -> Result<(), String> {
     for missing in session.open(&source).map_err(|error| error.to_string())? {
         warned(messages::warning_missing_audio(
             LANGUAGE,
-            &missing.display().to_string(),
+            missing.display().to_string(),
         ));
     }
     warn_foreign_build(&session);
@@ -1008,7 +1008,7 @@ fn sing_frames(args: &[String]) -> Result<(), String> {
             LANGUAGE,
             &sung.voice,
             sung.seconds,
-            &output.display().to_string()
+            output.display().to_string()
         )
     ))?;
     if let Some(report) = report {
@@ -1035,7 +1035,7 @@ fn collect(path: &Path) -> Result<(), String> {
     for missing in session.open(path).map_err(|error| error.to_string())? {
         warned(messages::warning_missing_audio(
             LANGUAGE,
-            &missing.display().to_string(),
+            missing.display().to_string(),
         ));
     }
     warn_foreign_build(&session);
@@ -1199,7 +1199,7 @@ fn info(path: &Path) -> Result<(), String> {
     for path in &missing {
         warned(messages::warning_missing_audio(
             LANGUAGE,
-            &path.display().to_string(),
+            path.display().to_string(),
         ));
     }
     printed(print)
@@ -1274,7 +1274,7 @@ fn render(args: &[String]) -> Result<(), String> {
     for path in session.open(&source).map_err(|error| error.to_string())? {
         warned(messages::warning_missing_audio(
             LANGUAGE,
-            &path.display().to_string(),
+            path.display().to_string(),
         ));
     }
     warn_foreign_build(&session);
@@ -1316,8 +1316,8 @@ fn render(args: &[String]) -> Result<(), String> {
                 "{}",
                 messages::wrote_file(
                     LANGUAGE,
-                    &stem.path.display().to_string(),
-                    &Seconds(stem.summary.seconds).format_clock(),
+                    stem.path.display().to_string(),
+                    Seconds(stem.summary.seconds).format_clock(),
                     stem.summary.channels,
                     settings.bit_depth.bits(),
                     stem.summary.peak_db,
@@ -1354,8 +1354,8 @@ fn render(args: &[String]) -> Result<(), String> {
         "{}",
         messages::wrote_file(
             LANGUAGE,
-            &output.display().to_string(),
-            &Seconds(summary.seconds).format_clock(),
+            output.display().to_string(),
+            Seconds(summary.seconds).format_clock(),
             summary.channels,
             settings.bit_depth.bits(),
             summary.peak_db,
@@ -1395,13 +1395,17 @@ fn video(args: &[String]) -> Result<(), String> {
                     Some(PathBuf::from(value(&mut index, option, Key::CliNeedsPath)?));
             }
             "--drums" => style.include_drums = true,
+            "--no-chords" => style.chords = false,
+            "--no-lyrics" => style.lyrics = false,
+            "--no-tempo" => style.tempo = false,
+            "--no-beats" => style.beat_counter = false,
             "--size" => {
                 let text = value(&mut index, option, Key::CliNeedsValue)?;
                 let (width, height) = text
                     .split_once(['x', 'X'])
                     .and_then(|(w, h)| Some((w.trim().parse().ok()?, h.trim().parse().ok()?)))
                     .ok_or_else(|| {
-                        messages::unknown_option(LANGUAGE, &format!("{option} {text}"))
+                        messages::unknown_option(LANGUAGE, format!("{option} {text}"))
                     })?;
                 style.size = VideoSize::new(width, height);
             }
@@ -1409,25 +1413,42 @@ fn video(args: &[String]) -> Result<(), String> {
                 let text = value(&mut index, option, Key::CliNeedsValue)?;
                 style.fps = text
                     .parse()
-                    .map_err(|_| messages::unknown_option(LANGUAGE, &format!("{option} {text}")))?;
+                    .map_err(|_| messages::unknown_option(LANGUAGE, format!("{option} {text}")))?;
             }
             "--seconds" => {
                 let text = value(&mut index, option, Key::CliNeedsValue)?;
                 style.seconds_visible = text
                     .parse()
-                    .map_err(|_| messages::unknown_option(LANGUAGE, &format!("{option} {text}")))?;
+                    .map_err(|_| messages::unknown_option(LANGUAGE, format!("{option} {text}")))?;
+            }
+            "--lead-in" | "--tail" => {
+                let text = value(&mut index, option, Key::CliNeedsValue)?;
+                let seconds: f32 = text
+                    .parse()
+                    .map_err(|_| messages::unknown_option(LANGUAGE, format!("{option} {text}")))?;
+                if option == "--lead-in" {
+                    style.lead_in = seconds;
+                } else {
+                    style.tail = seconds;
+                }
             }
             "--sink" => {
                 let text = value(&mut index, option, Key::CliNeedsValue)?;
                 style.sink = text
                     .parse()
-                    .map_err(|_| messages::unknown_option(LANGUAGE, &format!("{option} {text}")))?;
+                    .map_err(|_| messages::unknown_option(LANGUAGE, format!("{option} {text}")))?;
+            }
+            "--parallax" => {
+                let text = value(&mut index, option, Key::CliNeedsValue)?;
+                style.parallax = text
+                    .parse()
+                    .map_err(|_| messages::unknown_option(LANGUAGE, format!("{option} {text}")))?;
             }
             "--particles" => {
                 let text = value(&mut index, option, Key::CliNeedsValue)?;
                 style.particles = text
                     .parse()
-                    .map_err(|_| messages::unknown_option(LANGUAGE, &format!("{option} {text}")))?;
+                    .map_err(|_| messages::unknown_option(LANGUAGE, format!("{option} {text}")))?;
             }
             "--colors" => {
                 let text = value(&mut index, option, Key::CliNeedsValue)?;
@@ -1439,7 +1460,7 @@ fn video(args: &[String]) -> Result<(), String> {
                     _ => {
                         return Err(messages::unknown_option(
                             LANGUAGE,
-                            &format!("{option} {text}"),
+                            format!("{option} {text}"),
                         ));
                     }
                 };
@@ -1462,7 +1483,7 @@ fn video(args: &[String]) -> Result<(), String> {
     for path in session.open(&source).map_err(|error| error.to_string())? {
         warned(messages::warning_missing_audio(
             LANGUAGE,
-            &path.display().to_string(),
+            path.display().to_string(),
         ));
     }
     warn_foreign_build(&session);
@@ -1491,8 +1512,8 @@ fn video(args: &[String]) -> Result<(), String> {
         "{}",
         messages::wrote_video(
             LANGUAGE,
-            &output.display().to_string(),
-            &Seconds(summary.seconds).format_clock(),
+            output.display().to_string(),
+            Seconds(summary.seconds).format_clock(),
             summary.frames,
             summary.codec.encoder(),
         )
@@ -1572,7 +1593,7 @@ fn new_project(args: &[String]) -> Result<(), String> {
         "{}",
         messages::created_project(
             LANGUAGE,
-            &written.display().to_string(),
+            written.display().to_string(),
             session.project().bpm(),
             session.project().sample_rate,
         )

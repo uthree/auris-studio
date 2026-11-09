@@ -33,6 +33,8 @@
 //! so nothing a caller writes changes.
 
 mod clip;
+mod comment;
+pub use comment::{Comment, CommentId, Comments};
 mod composition;
 pub use composition::{CompositionBaseline, CompositionClipBaseline, CompositionTrackBaseline};
 mod curve;
@@ -42,12 +44,15 @@ mod expression;
 mod ghost;
 mod groove;
 mod layer;
+mod lint_suppression;
 pub use expression::Expression;
 pub use groove::{GroovePoint, GrooveTemplate};
+pub use lint_suppression::{LintScope, LintSuppression};
 mod strum;
 pub use strum::{Strum, StrumClock};
 mod ornament;
 mod performance;
+mod performance_preset;
 mod pitch_performance;
 mod volume_contour;
 pub use ghost::{GhostNotes, GhostPattern};
@@ -65,9 +70,10 @@ mod transform;
 mod fixtures;
 
 pub use clip::{
-    AudioClip, AudioSource, AudioSourceBank, FadeCurve, MAX_STRETCH, MIN_STRETCH, MidiClip, Note,
-    UNSTRETCHED, default_loop_end, loop_passes, notes_digest, notes_trimmed_from_front,
-    quantised_stretch, sounding_length, stretch_key, validated_loop_pass_count,
+    AudioClip, AudioSource, AudioSourceBank, FadeCurve, JoinRefusal, MAX_STRETCH, MIN_STRETCH,
+    MidiClip, Note, UNSTRETCHED, default_loop_end, loop_passes, notes_digest,
+    notes_trimmed_from_front, quantised_stretch, sounding_length, stretch_key,
+    validated_loop_pass_count,
 };
 pub use curve::{
     BEND_LIMIT, CONTROLLER_LIMIT, CURVE_STEP, ClipCurve, CurvePoint, curve_at, curve_events,
@@ -75,13 +81,19 @@ pub use curve::{
 pub use drum::{DrumLane, DrumMap, DrumRole};
 pub use ornament::{Fall, Scoop, Vibrato};
 pub use performance::{PerformanceContext, performed_note_slots, performed_notes};
-pub use recipe::{ClipPreset, ClipRecipe, DrumVoiceRecipe, PerformanceStyle, Subdivision};
+pub use performance_preset::{
+    PerformancePreset, PresetFamily, builtin_performance_preset, builtin_performance_presets,
+};
+pub use recipe::{
+    ClipPreset, ClipRecipe, DrumVoiceRecipe, PerformanceStyle, STRUM_VALUES, Subdivision,
+    strum_ticks,
+};
 pub use routing::{AuxSend, EffectSlot, MixerStrip, Output};
 pub use track::{
     AudioTrack, Color, ConsonantLevels, ConsonantWidths, InstrumentTrack, SingerPitch, SingerTake,
     SingerTrack, SingerVoice, Track, TrackKind, default_frame_hop,
 };
-pub use transform::{NoteTransform, StrokeDirection, performed};
+pub use transform::{NoteTransform, SUSTAIN_MAX_TICKS, StrokeDirection, performed, swing_position};
 
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -210,6 +222,14 @@ pub struct Project {
     /// it as a hint, so that material generated inside two stretches with the same label is
     /// recognisably the same material.
     pub sections: crate::structure::SectionMap,
+    /// The song's words over the timeline: the line being sung at each moment.
+    ///
+    /// Beside the sections rather than on a singer clip, because it belongs to the song: a
+    /// video caption, a lyric sheet and the agent planning the next verse ask what is sung
+    /// *here*, whichever clip holds the notes. The words on the notes are what is sung; this is
+    /// what is read. A new field, so a file from before it opens with none written.
+    #[serde(default, skip_serializing_if = "crate::lyrics::LyricMap::is_empty")]
+    pub lyrics: crate::lyrics::LyricMap,
     /// Parameter values that move along the timeline, one lane per automated parameter.
     ///
     /// The fifth timeline map, and the only one that is a collection: there is a curve per
@@ -285,6 +305,9 @@ pub struct Project {
     /// Claims are retained for audit and do not certify a recognizer or its accuracy.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub transcription_provenance: BTreeMap<ClipId, String>,
+    /// Music-linter findings this song has chosen to ignore.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub lint_suppressions: Vec<LintSuppression>,
     next_id: u64,
 }
 
@@ -300,12 +323,14 @@ impl Default for Project {
 
 impl Project {
     /// Schema version written into saved files and required when opening them.
+    /// Version 35 stores the audio sampler's samples as a map of zones rather than one sample.
+    /// Version 34 adds the sustain transform, which holds every release on like a pedal.
     /// Version 33 adds layers: instrument tracks that follow another track's notes.
     /// Version 32 stores zero or more track outputs; older files' single outputs load as one route.
     /// Version 31 adds power, added-tone, 6/9 and thirteenth chord qualities to stored harmony.
     /// Version 30 adds eleventh chord qualities to stored harmony.
     /// Version 29 adds ordered, named manual drum lanes beside generation-role assignments.
-    pub const FORMAT_VERSION: u32 = 33;
+    pub const FORMAT_VERSION: u32 = 35;
 
     /// The name a document carries until somebody — a person or the agent — gives it one.
     pub const UNTITLED: &'static str = "Untitled";
@@ -330,6 +355,7 @@ impl Project {
             signatures: SignatureMap::default(),
             harmony: Harmony::default(),
             sections: crate::structure::SectionMap::default(),
+            lyrics: crate::lyrics::LyricMap::default(),
             automation: crate::automation::Automation::new(),
             tracks: Vec::new(),
             master: MixerStrip::default(),
@@ -347,6 +373,7 @@ impl Project {
             creation_brief: None,
             composition_baseline: None,
             transcription_provenance: BTreeMap::new(),
+            lint_suppressions: Vec::new(),
             next_id: 1,
         }
     }

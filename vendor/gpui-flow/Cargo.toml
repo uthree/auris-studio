@@ -24,3 +24,7 @@ taffy = { opt-level = 3 }
 
 [lints.clippy]
 type_complexity = "allow"
+
+# Kept out of any enclosing workspace, including the one a git worktree sits inside, so that
+# this crate's own tests run from its own directory.
+[workspace]

@@ -214,6 +214,28 @@ pub fn octave_text(octave: i32) -> String {
     }
 }
 
+/// Whether a preset plays chords, and so reads the root below and the strum.
+///
+/// The chords and the pad: the two presets written by the comping writer, which is the one that
+/// strikes several notes at once.
+pub fn takes_a_chord_hand(preset: ClipPreset) -> bool {
+    matches!(preset, ClipPreset::Chords | ClipPreset::Pad)
+}
+
+/// Every strum the picker offers, together first.
+pub fn strum_choices() -> impl Iterator<Item = u16> {
+    std::iter::once(0).chain(STRUM_VALUES)
+}
+
+/// How a strum reads on its button: a note value, or the word for "together".
+pub fn strum_text(strum: u16, off: &str) -> String {
+    if strum == 0 {
+        off.to_string()
+    } else {
+        format!("1/{strum}")
+    }
+}
+
 /// Whether a preset's groove is worth offering, which is to say whether anything reads it.
 pub fn takes_a_groove(preset: ClipPreset) -> bool {
     preset.is_drums()
@@ -399,6 +421,10 @@ impl AurisApp {
 
         if takes_an_octave(recipe.preset) {
             rows.push(self.part_octave_buttons(clip, recipe.octave, cx));
+        }
+
+        if takes_a_chord_hand(recipe.preset) {
+            rows.push(self.part_chord_hand_buttons(clip, &recipe, cx));
         }
 
         for dial in dials_for(&recipe) {
@@ -636,6 +662,67 @@ impl AurisApp {
                         .debug_selector(move || format!("part-register-{octave}"))
                     })),
             )
+            .into_any_element()
+    }
+
+    /// The chord's left hand and its strum, each a row of buttons like the register's.
+    fn part_chord_hand_buttons(
+        &self,
+        clip: ClipId,
+        recipe: &ClipRecipe,
+        cx: &mut gpui::Context<Self>,
+    ) -> AnyElement {
+        let heading = |key: Key| {
+            div()
+                .text_xs()
+                .text_color(self.theme.text_muted)
+                .child(self.t(key))
+        };
+        let low_root = recipe.low_root;
+        let current_strum = recipe.strum;
+        let off = self.t(Key::ValueOff).to_string();
+        div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .py_1()
+            .child(heading(Key::PartLowRoot))
+            .child(div().flex().gap_1().children([false, true].map(|on| {
+                button(
+                    ("part-low-root", usize::from(on)),
+                    self.t(if on { Key::ValueOn } else { Key::ValueOff })
+                        .to_string(),
+                    ButtonStyle::Normal,
+                    low_root == on,
+                    self.theme.accent,
+                    &self.theme,
+                    cx.listener(move |this, _, _, cx| {
+                        this.set_clip_low_root(clip, on);
+                        cx.notify();
+                    }),
+                )
+                .flex_1()
+                .min_w_0()
+                .debug_selector(move || format!("part-low-root-{on}"))
+            })))
+            .child(heading(Key::PartStrum))
+            .child(div().flex().gap_1().children(strum_choices().map(|strum| {
+                button(
+                    ("part-strum", usize::from(strum)),
+                    strum_text(strum, &off),
+                    ButtonStyle::Normal,
+                    current_strum == strum,
+                    self.theme.accent,
+                    &self.theme,
+                    cx.listener(move |this, _, _, cx| {
+                        this.set_clip_strum(clip, strum);
+                        cx.notify();
+                    }),
+                )
+                .flex_1()
+                .min_w_0()
+                .debug_selector(move || format!("part-strum-{strum}"))
+            })))
             .into_any_element()
     }
 
@@ -1124,6 +1211,53 @@ mod tests {
     }
 
     #[gpui::test]
+    fn the_left_hand_and_strum_buttons_rewrite_a_chord_clip(cx: &mut TestAppContext) {
+        let (app, cx) = open(cx);
+        let clip = app.update(cx, |this, _| {
+            this.panels = crate::dock::PanelLayout::default();
+            this.session
+                .stamp_named_progression("axis", Ticks::ZERO, 4)
+                .unwrap();
+            let track = this.session.add_default_instrument_track("Keys").unwrap();
+            let clip = this
+                .session
+                .generate_clip(
+                    track,
+                    Ticks::ZERO,
+                    Ticks::QUARTER * 16,
+                    recipe(ClipPreset::Chords),
+                )
+                .unwrap();
+            this.select_track(track);
+            this.select_clip(Some(clip));
+            clip
+        });
+        paint(&app, cx);
+        let before = app.update(cx, |this, _| this.session.midi_clip(clip).unwrap().clone());
+        click("part-low-root-true", cx);
+        paint(&app, cx);
+        click("part-strum-64", cx);
+        app.update(cx, |this, _| {
+            let midi = this.session.midi_clip(clip).unwrap();
+            let settings = midi.recipe.as_ref().unwrap();
+            assert!(settings.low_root);
+            assert_eq!(settings.strum, 64);
+            assert!(midi.notes.len() > before.notes.len(), "no root was added");
+            assert!(
+                midi.notes
+                    .iter()
+                    .any(|note| note.start.raw() % (Ticks::QUARTER.raw() / 16) == 0
+                        && note.start.raw() % (Ticks::QUARTER.raw() / 4) != 0),
+                "nothing was strummed off the grid"
+            );
+            // Both were one undoable step each.
+            assert!(this.session.undo().is_some());
+            assert!(this.session.undo().is_some());
+            assert_eq!(this.session.midi_clip(clip), Some(&before));
+        });
+    }
+
+    #[gpui::test]
     fn melodic_role_register_and_take_buttons_edit_the_selected_clip(cx: &mut TestAppContext) {
         let (app, cx) = open(cx);
         let (clip, other, untouched) = app.update(cx, |this, _| {
@@ -1525,6 +1659,22 @@ mod tests {
                 preset.name()
             );
         }
+    }
+
+    #[test]
+    fn only_chord_parts_offer_a_left_hand_and_a_strum_read_as_note_values() {
+        for preset in ClipPreset::ALL {
+            assert_eq!(
+                takes_a_chord_hand(preset),
+                matches!(preset, ClipPreset::Chords | ClipPreset::Pad),
+                "{}",
+                preset.name()
+            );
+        }
+        let texts: Vec<_> = strum_choices()
+            .map(|strum| strum_text(strum, "Off"))
+            .collect();
+        assert_eq!(texts, ["Off", "1/16", "1/32", "1/64", "1/128"]);
     }
 
     #[test]

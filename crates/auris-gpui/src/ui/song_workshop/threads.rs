@@ -6,6 +6,11 @@ use crate::ui::prompt::{Prompt, PromptTarget};
 use atelier::{Edge, Sidebar};
 
 impl SongWorkshop {
+    /// Whether the sidebar must wait: a conversation change, or a send it would interrupt, is
+    /// still on its way. Production does not hold it; the conversation left carries on.
+    pub(crate) fn threads_locked(&self) -> bool {
+        self.switching || self.submitted
+    }
     /// Reject a rename sheet that belongs to a conversation view which has since changed.
     pub(in crate::ui) fn rename_thread(&self, identity: u64, title: String) -> bool {
         self.identity == identity
@@ -21,7 +26,7 @@ impl AurisApp {
         if self
             .song_workshop
             .as_ref()
-            .is_none_or(|s| s.busy() || s.references.midi_loading)
+            .is_none_or(|s| s.threads_locked() || s.references.midi_loading)
             || !self.commit_midi_draft()
         {
             return;
@@ -36,7 +41,8 @@ impl AurisApp {
             .map_or("default", |s| s.document.thread_id.as_str())
             .to_owned();
         let switches = matches!(&command, Command::NewThread | Command::OpenThread(_))
-            || matches!(&command, Command::ArchiveThread(thread, true) if *thread == id);
+            || matches!(&command, Command::ArchiveThread(thread, true) if *thread == id)
+            || matches!(&command, Command::DeleteThread(thread) if *thread == id);
         if state.send(Command::ThreadDraft(
             id,
             state.brief.content().to_owned(),
@@ -55,7 +61,7 @@ impl AurisApp {
         let Some(state) = &mut self.song_workshop else {
             return;
         };
-        if state.busy() {
+        if state.threads_locked() {
             return;
         }
         let title = state
@@ -83,13 +89,53 @@ impl AurisApp {
         self.request_workshop_thread(Command::ArchiveThread(id, archived), cx);
     }
 
+    /// Ask before permanently deleting the exact sidebar conversation selected by the user.
+    pub(crate) fn ask_delete_workshop_thread(&mut self, id: String, cx: &mut Context<Self>) {
+        let Some(state) = &self.song_workshop else {
+            return;
+        };
+        if state.threads_locked() {
+            return;
+        }
+        let title = state
+            .snapshot
+            .as_ref()
+            .and_then(|s| s.threads.iter().find(|t| t.id == id))
+            .map(|t| t.title.clone())
+            .filter(|t| !t.is_empty())
+            .unwrap_or_else(|| self.t(Key::WorkshopUntitledThread).to_owned());
+        let workshop = state.identity;
+        self.open_prompt(Prompt::ask(
+            self.t(Key::WorkshopDeleteThreadTitle)
+                .replace("{name}", &title),
+            crate::ui::prompt::Question::DeleteWorkshopThread { id, workshop },
+        ));
+        cx.notify();
+    }
+
+    /// Delete a conversation the user confirmed, if the workshop that asked is still open.
+    pub(crate) fn delete_workshop_thread(
+        &mut self,
+        id: String,
+        workshop: u64,
+        cx: &mut Context<Self>,
+    ) {
+        if self
+            .song_workshop
+            .as_ref()
+            .is_some_and(|s| s.identity == workshop)
+        {
+            self.request_workshop_thread(Command::DeleteThread(id), cx);
+        }
+    }
+
     /// Project-local conversation navigation, including reversible management actions.
     pub(super) fn workshop_sidebar(&self, cx: &mut Context<Self>) -> AnyElement {
         let Some(state) = &self.song_workshop else {
             return div().into_any_element();
         };
         let spacing = self.theme.atelier.spacing;
-        let busy = state.busy() || state.references.midi_loading;
+        let busy = state.threads_locked() || state.references.midi_loading;
         let active = state
             .snapshot
             .as_ref()
@@ -115,6 +161,7 @@ impl AurisApp {
                     thread.title.clone()
                 };
                 let menu_title = title.clone();
+                let working = snapshot.working.contains(&id);
                 let item = ListItem::new(
                     gpui::SharedString::from(format!("workshop-thread-{id}")),
                     title,
@@ -150,6 +197,10 @@ impl AurisApp {
                                             menu_id.clone(),
                                             !archived,
                                         ),
+                                    )
+                                    .item(
+                                        this.t(Key::WorkshopDeleteThread),
+                                        MenuCommand::WorkshopThreadDelete(menu_id.clone()),
                                     ),
                             );
                             cx.notify();
@@ -171,10 +222,18 @@ impl AurisApp {
                         state.foci[0].focus(window);
                     }
                 }));
-                list = list.child(if archived {
-                    item.description(self.t(Key::WorkshopArchivedThreads))
-                } else {
+                let description = [
+                    working.then(|| self.t(Key::WorkshopThreadWorking)),
+                    archived.then(|| self.t(Key::WorkshopArchivedThreads)),
+                ]
+                .into_iter()
+                .flatten()
+                .collect::<Vec<_>>()
+                .join(" · ");
+                list = list.child(if description.is_empty() {
                     item
+                } else {
+                    item.description(description)
                 });
             }
         }
@@ -215,13 +274,6 @@ impl AurisApp {
                     cx.notify();
                 })),
             )
-            .when(busy, |sidebar| {
-                sidebar.child(
-                    Label::new(self.t(Key::WorkshopThreadBusy))
-                        .size(TextSize::Small)
-                        .color(TextColor::Muted),
-                )
-            })
             .into_any_element()
     }
 }
@@ -247,7 +299,13 @@ mod tests {
             }
             assert!(
                 std::time::Instant::now() < deadline,
-                "workshop owner did not publish the expected conversation"
+                "workshop owner did not publish the expected conversation: {:?}",
+                app.read_with(cx, |this, _| this.song_workshop.as_ref().map(|s| (
+                    s.error.clone(),
+                    s.snapshot
+                        .as_ref()
+                        .map(|p| (p.error.clone(), p.threads.clone()))
+                )))
             );
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
@@ -356,6 +414,33 @@ mod tests {
                 .as_ref()
                 .is_some_and(|p| p.threads.iter().any(|t| t.id == "default" && !t.archived))
         });
+
+        // Deleting asks first, names the conversation, and then removes it from disk.
+        click("workshop-thread-menu-default", cx);
+        paint(&app, cx);
+        crate::harness::choose(
+            &app,
+            cx,
+            &MenuCommand::WorkshopThreadDelete("default".into()),
+        );
+        paint(&app, cx);
+        app.read_with(cx, |this, _| {
+            let prompt = this.prompt.as_ref().expect("deleting asks first");
+            assert!(prompt.title.contains("First song"));
+            assert!(matches!(
+                &prompt.body,
+                crate::ui::prompt::PromptBody::Ask(
+                    crate::ui::prompt::Question::DeleteWorkshopThread { id, .. }
+                ) if id == "default"
+            ));
+        });
+        click("prompt-ok", cx);
+        wait_for(&app, cx, |s| {
+            s.snapshot
+                .as_ref()
+                .is_some_and(|p| p.threads.iter().all(|t| t.id != "default"))
+        });
+        assert!(!directory.path().join("workshop/conversation.json").exists());
         app.update(cx, |this, _| {
             this.song_workshop.as_mut().unwrap().runtime = None;
         });

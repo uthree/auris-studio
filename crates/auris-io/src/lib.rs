@@ -49,13 +49,14 @@ pub use midi::{
     stage_midi_file, write_midi_bytes, write_midi_file,
 };
 pub use project_file::{
-    AUDIO_DIR, MAX_PROJECT_FILE_BYTES, PROJECT_EXTENSION, StagedFile, StagedProject,
-    document_in_folder, load_project, project_folder, save_project, stage_file_bytes,
-    stage_project,
+    AUDIO_DIR, MAX_PROJECT_FILE_BYTES, PROJECT_EXTENSION, StagedFile, StagedProject, WORKSPACE_DIR,
+    document_in_folder, load_project, match_folder_permissions, project_folder, save_project,
+    stage_file_bytes, stage_project,
 };
 pub use record::WavRecorder;
 pub use soundfont::{
-    SoundFontPreset, font_name, load_soundfont, preset_count, presets, soundfont_extensions,
+    SoundFontPreset, font_name, load_soundfont, preset_count, preset_name, presets,
+    soundfont_extensions,
 };
 
 /// A parsed SoundFont, as [`load_soundfont`] returns it.

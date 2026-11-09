@@ -13,11 +13,29 @@ use auris_session::prelude::*;
 use gpui::{Pixels, Point};
 
 use crate::app::AurisApp;
+use crate::dock::TimelineLane;
+use crate::ui::inline_edit::InlinePlace;
 use crate::ui::prompt::{Prompt, PromptTarget};
 
 use super::{ContextMenu, MenuCommand};
 
 impl AurisApp {
+    /// Appends a switch for every annotation strip — sections, key, chords, lyrics — to `menu`.
+    ///
+    /// On each strip's own menu and on the blank corner above the track headers, so a strip can
+    /// be put away from where it is seen and brought back from a place that never goes away.
+    pub(crate) fn with_lane_toggles(&self, mut menu: ContextMenu) -> ContextMenu {
+        menu = menu.separator();
+        for lane in TimelineLane::ALL {
+            menu = menu.toggle(
+                self.t(lane.label()),
+                MenuCommand::ToggleTimelineLane(lane),
+                self.panels.lanes.shows(lane),
+            );
+        }
+        menu
+    }
+
     /// How many bars are counted in front of a take.
     ///
     /// Hung off the metronome button, because a count-in is the click doing one particular job
@@ -167,7 +185,9 @@ impl AurisApp {
             .map(str::to_string)
             .unwrap_or_default();
         let title = self.t(Key::SetSectionTitle);
-        self.open_prompt(Prompt::new(title, PromptTarget::Section(tick), current));
+        self.open_prompt(
+            Prompt::new(title, PromptTarget::Section(tick), current).inline(InlinePlace::Target),
+        );
     }
 
     /// The menu for the structure lane.
@@ -188,7 +208,7 @@ impl AurisApp {
             None => self.t(Key::SetSectionTitle).to_string(),
         };
 
-        ContextMenu::new(anchor, title)
+        let menu = ContextMenu::new(anchor, title)
             .item(
                 self.t(Key::MenuSetSectionHere),
                 MenuCommand::SetSectionAt(tick),
@@ -202,7 +222,73 @@ impl AurisApp {
                 named,
                 self.t(Key::MenuEndSectionsHere),
                 MenuCommand::EndSectionsAt(tick),
+            );
+        self.with_lane_toggles(menu)
+    }
+
+    /// Opens the text sheet for the lyric line in force at `tick`, or a new line there.
+    pub(crate) fn prompt_for_lyric_line(&mut self, tick: Ticks) {
+        let current = self
+            .project()
+            .lyrics
+            .text_at(tick)
+            .map(str::to_string)
+            .unwrap_or_default();
+        let title = self.t(Key::SetLyricLineTitle);
+        self.open_prompt(
+            Prompt::new(title, PromptTarget::LyricLine(tick), current).inline(InlinePlace::Target),
+        );
+    }
+
+    /// The menu for the lyrics lane: headed by the line under the pointer when there is one.
+    ///
+    /// `tick` is already snapped to the grid: a new line starts on a grid position, and the
+    /// line items act on the line in force there wherever the press landed inside it.
+    pub(crate) fn lyrics_menu(&self, anchor: Point<Pixels>, tick: Ticks) -> ContextMenu {
+        let lyrics = &self.project().lyrics;
+        let sung = lyrics.text_at(tick);
+        let title = sung.map_or_else(
+            || self.t(Key::SetLyricLineTitle).to_string(),
+            |text| {
+                // A heading, not a lyric sheet: long lines are cut where they would wrap.
+                let mut heading: String = text.chars().take(24).collect();
+                if heading.len() < text.len() {
+                    heading.push('…');
+                }
+                heading
+            },
+        );
+        let has_vocals = self
+            .project()
+            .tracks
+            .iter()
+            .any(|track| track.kind.is_singer());
+        let menu = ContextMenu::new(anchor, title)
+            .item(
+                self.t(if sung.is_some() {
+                    Key::MenuEditLyricLine
+                } else {
+                    Key::MenuSetLyricLineHere
+                }),
+                MenuCommand::SetLyricLineAt(tick),
             )
+            .item_if(
+                sung.is_some(),
+                self.t(Key::MenuRemoveLyricLine),
+                MenuCommand::RemoveLyricLineAt(tick),
+            )
+            .item_if(
+                sung.is_some(),
+                self.t(Key::MenuEndLyricLineHere),
+                MenuCommand::EndLyricLineAt(tick),
+            )
+            .separator()
+            .item_greyed_unless(
+                has_vocals,
+                self.t(Key::MenuLyricsFromVocals),
+                MenuCommand::LyricsFromVocals,
+            );
+        self.with_lane_toggles(menu)
     }
 
     /// The menu for the harmony lane, aimed at whatever the pointer is over.
@@ -230,16 +316,16 @@ impl AurisApp {
         let title = match harmony.chord_at(tick) {
             Some(chord) => messages::harmony_chord(
                 self.language(),
-                &harmony
+                harmony
                     .numeral_at(tick)
                     .map(|numeral| numeral.to_string())
                     .unwrap_or_default(),
-                &chord.to_string(),
+                chord.to_string(),
             ),
             None => messages::harmony_at_bar(self.language(), signatures.bar_of(placed)),
         };
 
-        ContextMenu::new(anchor, title)
+        let menu = ContextMenu::new(anchor, title)
             .item(
                 self.t(Key::MenuSetChordHere),
                 MenuCommand::SetChordAt(target.chord),
@@ -269,7 +355,8 @@ impl AurisApp {
                     // the ruler shows even where one of them is in a different meter.
                     to: signatures.bar_start(signatures.bar_of(from) + bars.max(1) as u32),
                 },
-            )
+            );
+        self.with_lane_toggles(menu)
     }
 
     /// Every progression the composer knows by name, aimed at one position.

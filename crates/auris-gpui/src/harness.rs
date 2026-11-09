@@ -89,6 +89,23 @@ fn isolate_config() {
             std::env::set_var(auris_session::CONFIG_DIR_VAR, &config);
             std::env::set_var(auris_session::RECOVERY_DIR_VAR, &recovery);
         }
+        // The language was the one preference an isolated directory did not isolate. Every other
+        // one has a value in the file; this one defaults to `None`, which means "follow the
+        // system", so an empty directory still left the window speaking whatever the machine
+        // spoke. The suite then passed on an English machine and failed on a Japanese one — which
+        // is exactly the "depending on whose machine it ran on" this function exists to prevent,
+        // and it went unnoticed because CI's runners are English. Write the preference out, so
+        // the window opens in a language the tests chose rather than one they inherited.
+        //
+        // English because that is what the strings are written in, and because a test that wants
+        // another language sets `language` itself — `title_bar` does, to measure the longer
+        // captions. A test that merely *shows* text should compare against
+        // `Key::…get(this.language())` rather than against a literal in either language.
+        let mut settings = auris_session::Settings::load();
+        settings.language = Some(auris_i18n::Language::English);
+        settings
+            .save()
+            .expect("a test language preference can be written");
     });
 }
 

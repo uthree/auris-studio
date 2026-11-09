@@ -28,15 +28,14 @@ log.workspace = true
 # The build-time path shells out to `xcrun metal`, which lives inside Xcode and is unreachable
 # while `xcode-select -p` points at the Command Line Tools.
 gpui = { version = "=0.2.2", features = ["runtime_shaders"] }
-# Atelier's adopted Glass language, pinned to the reviewed main revision.
-atelier = { git = "https://github.com/uthree/design-language", rev = "331aa75561264716729b587d1f6c90a3d0f286b8" }
+# Atelier's adopted Glass language, pinned to its main after v0.4.0 for the Markdown and
+# message-chip layout fixes (design-language#53); back to a tag at the next release.
+atelier = { git = "https://github.com/uthree/design-language", rev = "2220fa14a34bed767e53b2fe165af900192328eb" }
 gpui-flow = { path = "../../vendor/gpui-flow" }
-# The agent transcript uses selectable Markdown without language-specific highlighting.
-# It shares gpui's version and stays wholly inside this presentation crate.
+# Menus, the rhythm grid and a few setup surfaces still draw with it; the agent transcript's
+# Markdown is Atelier's now. It shares gpui's version and stays wholly inside this crate.
 # Later component releases require GPUI snapshots; 0.5.1 is the latest compatible release.
 gpui-component = "=0.5.1"
-# Share the renderer's GFM parser; the transcript owns block and list layout.
-markdown = "1"
 # Decode voice artwork on a worker, with bounded dimensions before GPUI sees the pixels.
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
 rfd = "0.17"
@@ -58,7 +57,11 @@ objc2-foundation.workspace = true
 raw-window-handle.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
-windows = { workspace = true, features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
+windows = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_Storage_FileSystem",
+    "Win32_UI_WindowsAndMessaging",
+] }
 
 [build-dependencies]
 embed-resource = "3.0"

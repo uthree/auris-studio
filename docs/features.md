@@ -279,10 +279,13 @@ Either shape can be chosen by hand — *Fade-In Shape* and *Fade-Out Shape* on t
 which appear once that edge has a fade on it. That is for the joins made another way: a fade
 dragged out by its handle over a neighbour, or a clip trimmed back until it met one.
 
-The transport — the playback buttons, the readouts, the grid and zoom, and the meters — sits in
-the title bar when the window is at least 1280 points wide, so the window has one bar as Atelier
-asks; a narrower window gives it a row of its own under the title bar. In the title bar each
-readout is one line and names itself in a tooltip.
+The transport — the playback buttons, the readouts, the grid and zoom, and the meters — has two
+layouts, chosen under *Settings → Top toolbar → Layout*. *Spacious*, the default, gives it a row
+of its own under the title bar at every width: the grid and zoom at one end, playback and the
+captioned readouts in the middle, the meters at the other. *Compact* puts it in the title bar
+when the window is at least 1280 points wide, so the window has one bar as Atelier asks; a
+narrower window still gives it its own row. In the title bar each readout is one line and names
+itself in a tooltip.
 
 The transport's readouts are the position, the tempo and the time
 signature. The first two are typeable — double-click either and the number can be entered
@@ -647,13 +650,17 @@ a missing-string marker.
 
 A strip under the bar ruler carries the key and the chords, spanning every track because that is
 what harmony is: one thing the whole arrangement obeys at any one moment, belonging to no track.
-Like the tempo map, it changes as the song goes on.
+Like the tempo map, it changes as the song goes on. A key is marked where it *changes*: writing E
+minor at the head of three sections in E minor stores one key, not three, exactly as two bars of
+`C` are one chord.
 
-It, the structure strip above it and the tempo marks along the ruler are each shown or hidden from
-the **View** menu, and where you leave them is where they are next launch. A piece with no chords
-written pays fifty pixels a row for two empty strips; a piece being arranged around a chorus wants
-all three. Hiding a lane hides the drawing of something and never the thing — the document keeps
-its chords whether or not they are on screen.
+The structure strip, the key row, the chord row, the lyrics strip and the tempo marks along the
+ruler are each shown or hidden on their own — from the **View** menu, or from the right-click menu
+of any of the strips or of the blank corner above the track headers — and where you leave them is
+where they are next launch. A piece with no chords written pays fifty pixels a row for two empty
+strips; a piece being arranged around a chorus wants all of them. Hiding a lane hides the drawing
+of something and never the thing — the document keeps its chords whether or not they are on
+screen.
 
 Right-click it to type a chord (`IV`, `vi`, `bVII7`) or a key (`Eb`, `F# minor`), or to write one
 of the named progressions — `axis`, `marusa`, `royal-road`, `canon` and a dozen more, the same
@@ -709,6 +716,51 @@ Deliberately simple chiptune voices, enough to hear the engine working:
 
 Square and saw are PolyBLEP band-limited, so high notes stay clean instead of aliasing.
 
+### Subtractive synthesiser
+
+Seven ready-made synthesiser sounds, every one the same subtractive engine with its own settings,
+listed as separate instruments so a pad is found by looking for a pad:
+
+| Id | Name | What it is |
+| --- | --- | --- |
+| `auris.synth.supersaw` | SuperSaw | Seven detuned saws spread across the stereo field: trance leads and wide chords |
+| `auris.synth.pad` | Synth Pad | Slow detuned saws behind a gently opening filter |
+| `auris.synth.lead` | Synth Lead | A bright resonant saw lead with glide |
+| `auris.synth.bass` | Synth Bass | A saw over a sub-octave square with a punchy filter envelope |
+| `auris.synth.pwm_strings` | PWM Strings | A pulse stack whose width an LFO keeps moving |
+| `auris.synth.brass` | Synth Brass | Saws behind a slowly opening filter that swells with velocity |
+| `auris.synth.pluck` | Synth Pluck | A short filter envelope over a percussive amp |
+
+The controls are shared, so any patch can be turned into any other. A **unison stack** of up to
+seven saws, squares or triangles is spread over ±**Detune** semitones — unevenly, so the copies
+never beat in a regular pulse — with the side copies at **Mix** and alternating left and right
+across **Stereo Width**; every copy starts at its own phase. A **Sub Oscillator** an octave down
+and **Noise Level** join the stack; **PWM Depth** and **PWM Rate** move a square's width per copy,
+in opposite directions on neighbouring copies. All of it goes through a gentle saturator into a
+resonant **24 dB low-pass** (two state-variable sections), whose **Cutoff** moves with its own
+envelope by **Filter Envelope** semitones, with **Key Tracking** from C4 and **Velocity to
+Filter**. Amp ADSR, glide and the same vibrato controls as the other synths follow.
+
+In the instrument view the patch is drawn as the **unison stack** — every copy at its detune in
+cents and its level — beside the **filter**: its response over multiples of the note, faint at the
+cutoff that is set and coloured where the loudest voice's envelope has it now, with the note's
+harmonics standing under it. The waveform lanes show each voice's cycle as it leaves the filter,
+so a pluck is seen closing from a saw to a sine.
+
+The pitched voices open in the same view the physical instruments do. Where a physical model
+draws its strings, **Oscillator waveforms** draws one cycle of each sounding voice — two periods,
+so the join shows — at the height its envelope has reached: an FM note's bright attack visibly
+settling into a sine, a pulse narrowing as its duty cycle is turned, a triangle breaking into the
+bit depth's steps. At rest the first lane holds the patch's own cycle, faintly. Hold on a waveform
+to play its note, louder the farther from the centre line; it stops when let go, as a key does.
+
+Under it, the patch as a picture. For **FM 2-Op**, the two operators — the modulator at its
+ratio, the carrier, and the depth between them, live while a note sounds — and the **sidebands**
+that depth throws out: frequencies as multiples of the note, amplitudes from the Bessel functions
+of the depth, faint for the note's start and coloured for the loudest voice now. An integer ratio
+puts every line on a harmonic; 3.5 puts them between. For **Chiptune**, **one cycle** as the
+waveform, pulse width and bit depth make it, and its first sixteen harmonics.
+
 Both pitched voices have a **vibrato**, in three controls: **Vibrato Rate** in hertz, **Vibrato**
 — how far this *sound* wobbles, whatever anybody is doing with a controller — and **Mod Depth**,
 how much further the modulation wheel can push it. `Vibrato` starts at zero, so a patch nobody has
@@ -721,13 +773,21 @@ would arrive detuned by however far the wheel happened to be up. It keeps runnin
 zero, so turning the wheel up mid-note picks the cycle up where it would have been instead of
 jumping.
 
+A plugin's window draws its continuous parameters as **knobs**, packed side by side, and its
+switches and choices as rows between them, in the plugin's own order. Drag a knob up or to the
+right to turn it up; hold **Shift** to turn it a fifth as fast; the arrow keys, Home and End move
+it once Tab reaches it; a double click puts it back to its default; a right click offers the same
+menu a slider does (a typed value, automation). A turn is one Undo step however long it takes.
+The mixer's volume, pan and send levels stay sliders, because a single value on its own row reads
+better along a line.
+
 A plugin carrying all four of attack, decay, sustain and release draws them as **the shape they
-are**, above its sliders: a polyline with a handle on each corner, dragged the way Logic drags one.
+are**, above its knobs: a polyline with a handle on each corner, dragged the way Logic drags one.
 The attack and release corners move along the time axis and the middle one moves in both — sideways
 is how long the fall takes, upwards is how far it falls to, which is the pair a hand is reaching for
 anyway. The time axis is cube-rooted rather than proportional, because a default five-millisecond
 attack against a two-second range is a quarter of one per cent, and a handle a pixel wide is a
-control that does not exist. The sliders stay: a graph is how a shape is found and a number is how
+control that does not exist. The knobs stay: a graph is how a shape is found and a number is how
 it is said, and neither answers for the other. All four or none — the drum synth has a decay and
 nothing else, and inventing two corners for it would be a picture of something that is not
 happening.
@@ -807,27 +867,12 @@ happens off the audio thread; what runs on it allocates nothing.
 
 ### Shaping a font
 
-The sampler carries the same four controls the built-in instruments do — attack, decay, sustain,
-release — and the same draggable envelope above them. They sit *on top of* the font's own shape
-rather than replacing it: a piano's hammer is still a hammer, but you can fade it in, hold it
-under its own decay, or let it ring long after the key has gone.
-
-**It is off until you switch it on.** The `Envelope` toggle in the window is the whole of it, and
-while it is off the four sliders do nothing at all — the sampler is not multiplying every note by
-one, it is not running the mechanism. That matters because switching it on **costs** something:
-
-* **Polyphony drops to fifteen notes.** Channel expression is the only per-note gain the
-  synthesiser exposes and it applies to a whole MIDI channel, so a note that is to be faded on its
-  own needs a channel to itself. There are sixteen and one is reserved.
-* **A drum kit's choke groups stop working** — an open hi-hat is no longer cut off by a closed one.
-  The choke is only checked between notes sharing a channel, and now they do not.
-
-The window says so, in a strip under the graph, for as long as the switch is on. Turning it back
-off restores everything immediately, mid-note if need be.
-
-Once it is on, the envelope owns the note. A release of zero means the note stops when the key
-does, and the graph shows exactly that — a vertical drop with no tail. The default is a fifth of a
-second, which is close to how a General MIDI patch already behaves.
+The SoundFont player plays a font exactly as it was authored, its own envelope included; its one
+control is the level. It used to carry an attack, decay, sustain and release of its own, laid over
+the font through per-note MIDI channels, and that cost fourteen-note polyphony and a drum kit's
+choke groups for a fade the synthesiser was never built to take. To give a font sound a different
+attack or release — a piano cut off the moment the key lifts, say — render its notes to audio and
+play them from the audio sampler, whose envelope is its own.
 
 ## Built-in effects
 
@@ -874,11 +919,11 @@ making is drawn over that, and each band that is switched in has a node on the c
 * **Drag a node.** Sideways is the frequency, up and down is the gain.
 * **The wheel over a node** narrows the band — forwards for tighter, back for wider.
 * A high-pass or low-pass node moves **sideways only**, and sits on the centre line. Those shapes
-  have a corner, not a level; the gain the slider offers is a number the audio never reads.
+  have a corner, not a level; the gain the knob offers is a number the audio never reads.
 * A band that is switched **off** has no node and is not on the curve. Its **On** button in the
   list below is what puts it there.
 
-The sliders under the graph do everything the nodes do and reach a little further — a band can be
+The knobs under the graph do everything the nodes do and reach a little further — a band can be
 set below the 30 Hz the display starts at, and Q is a number as well as a gesture. A graph is how a
 shape is found; a number is how it is said.
 

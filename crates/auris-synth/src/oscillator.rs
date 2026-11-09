@@ -241,6 +241,17 @@ impl Oscillator {
         self.phase
     }
 
+    /// Moves the read position to `cycles` (wrapped into `0..1`) without touching anything else.
+    ///
+    /// For stacks of detuned copies that must not start together: seven saws reset to the same
+    /// phase strike as one loud edge and then flange apart, which is the opposite of a wide
+    /// unison. A non-finite value is ignored.
+    pub fn set_phase(&mut self, cycles: f32) {
+        if cycles.is_finite() {
+            self.phase = cycles - cycles.floor();
+        }
+    }
+
     /// Returns the oscillator to its start-of-note state: phase zero, noise register reseeded.
     pub fn reset(&mut self) {
         self.phase = 0.0;
@@ -280,6 +291,23 @@ impl Oscillator {
         let sample = self.evaluate(self.phase, waveform, false);
         self.advance();
         sample
+    }
+
+    /// One cycle of `waveform` spread across `out`, as a picture of what the oscillator plays,
+    /// leaving the oscillator itself untouched.
+    ///
+    /// The shape is the naive one from phase zero at the duty cycle that was asked for: a display
+    /// has no Nyquist frequency to respect, and band limiting would round off the corners that
+    /// are the point of a pulse. Noise carries on from wherever the register is now, so a display
+    /// that samples it again a frame later sees it change as the sound does.
+    pub fn cycle(&self, waveform: Waveform, out: &mut [f32]) {
+        let mut copy = self.clone();
+        copy.phase = 0.0;
+        copy.noise_phase = 0.0;
+        copy.increment = 1.0 / out.len().max(1) as f32;
+        for sample in out.iter_mut() {
+            *sample = copy.next_naive(waveform);
+        }
     }
 
     fn evaluate(&self, phase: f32, waveform: Waveform, band_limited: bool) -> f32 {
@@ -376,6 +404,24 @@ pub(crate) const RADIANS_TO_CYCLES: f32 = 1.0 / TAU;
 mod tests {
     use super::*;
     use crate::test_support::{goertzel, max_step, rms, zero_crossing_hz};
+
+    #[test]
+    fn a_cycle_is_one_period_and_leaves_the_oscillator_alone() {
+        let mut oscillator = Oscillator::new();
+        oscillator.set_frequency(440.0);
+        oscillator.set_pulse_width(0.25);
+        for _ in 0..37 {
+            oscillator.next(Waveform::Square);
+        }
+        let phase = oscillator.phase();
+        let mut cycle = [0.0; 64];
+        oscillator.cycle(Waveform::Square, &mut cycle);
+        // A quarter of the period high, the rest low.
+        assert_eq!(cycle.iter().filter(|s| **s > 0.0).count(), 16);
+        assert_eq!(oscillator.phase(), phase);
+        oscillator.cycle(Waveform::Saw, &mut cycle);
+        assert!((cycle[0] + 1.0).abs() < 1e-6 && cycle[63] > 0.9);
+    }
 
     fn render(
         waveform: Waveform,

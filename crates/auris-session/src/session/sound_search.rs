@@ -291,6 +291,9 @@ struct Catalog {
     generation: String,
     sounds: Vec<Sound>,
     errors: Vec<String>,
+    /// Fonts the document names but could not load, each with its reason; repeated in every
+    /// search page so a model looking for one of their sounds learns why it is not there.
+    unloaded_fonts: Vec<String>,
     inventory: Vec<serde_json::Value>,
     index: Mutex<IndexState>,
     completed: AtomicUsize,
@@ -966,8 +969,18 @@ fn resolve_sound(key: &str, id: &str) -> Result<Sound, String> {
     Ok(sound.as_ref().clone())
 }
 
-fn resolve_library_sound(key: &str, id: &str) -> Result<Sound, String> {
-    resolve_sound(key, id).or_else(|_| resolve_sound(&isolated_sound_library_key(key), id))
+/// Resolves a handle under the first of `keys` that issued it, each with its isolated twin.
+fn resolve_library_sound(keys: &[String], id: &str) -> Result<Sound, String> {
+    let mut error = String::from("No sound library scope to resolve in");
+    for key in keys {
+        match resolve_sound(key, id)
+            .or_else(|_| resolve_sound(&isolated_sound_library_key(key), id))
+        {
+            Ok(sound) => return Ok(sound),
+            Err(failed) => error = failed,
+        }
+    }
+    Err(error)
 }
 
 fn generated_sound_id(generation: &str, source_id: &str) -> String {
@@ -992,6 +1005,8 @@ pub struct SoundLibraryJob {
     sound_bytes: usize,
     base_truncated: bool,
     font_paths: Vec<(SoundFontId, PathBuf)>,
+    /// Fonts the document names whose samples are not loaded, each with the reason.
+    font_errors: Vec<String>,
     extra_paths: Vec<PathBuf>,
     scan_plugins: bool,
     isolated_plugin_discovery: bool,
@@ -1031,18 +1046,66 @@ fn isolated_sound_library_key(key: &str) -> String {
     format!("{key}:isolated-native-metadata-v1")
 }
 
+/// What a sound library scope names the document by: its file when it has one, so sessions
+/// opening the same file share a snapshot, and otherwise this session's own token.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum DocumentScope {
+    Saved(String),
+    Live(String),
+}
+
+/// The most earlier identities one document keeps its handles under.
+const EARLIER_SCOPE_LIMIT: usize = 4;
+
 impl Session {
+    fn document_scope(&self) -> DocumentScope {
+        match self.path() {
+            Some(path) => DocumentScope::Saved(path_identity(path)),
+            None => DocumentScope::Live(self.sound_scope.clone()),
+        }
+    }
+
+    /// Keeps handles issued before this document moves to `next` usable afterwards.
+    ///
+    /// The scope names a saved document by its file, so the first Save As would otherwise expire
+    /// every sound found before it. A workshop candidate saves a checkpoint after its first edit,
+    /// which turned "search, add a track, choose the sound" into a refusal.
+    pub(super) fn remember_sound_scope_before_saving_to(&mut self, next: &Path) {
+        let current = self.document_scope();
+        if current == DocumentScope::Saved(path_identity(next)) {
+            return;
+        }
+        self.earlier_sound_scopes.retain(|scope| *scope != current);
+        self.earlier_sound_scopes.push(current);
+        if self.earlier_sound_scopes.len() > EARLIER_SCOPE_LIMIT {
+            self.earlier_sound_scopes.remove(0);
+        }
+    }
+
     fn sound_library_scope(&self, extra_paths: &[PathBuf]) -> String {
+        self.sound_library_scope_of(&self.document_scope(), extra_paths)
+    }
+
+    /// The current scope first, then the ones this same document had before it was saved
+    /// elsewhere — the scopes a selection may resolve a handle under.
+    fn sound_library_scopes(&self, extra_paths: &[PathBuf]) -> Vec<String> {
+        std::iter::once(self.document_scope())
+            .chain(self.earlier_sound_scopes.iter().rev().cloned())
+            .map(|scope| self.sound_library_scope_of(&scope, extra_paths))
+            .collect()
+    }
+
+    fn sound_library_scope_of(&self, document: &DocumentScope, extra_paths: &[PathBuf]) -> String {
         let mut digest = Sha256::new();
         digest.update(b"auris-sound-library-scope-v1");
-        match self.path() {
-            Some(path) => {
+        match document {
+            DocumentScope::Saved(path) => {
                 digest.update(b"saved");
-                hash_scope_part(&mut digest, &path_identity(path));
+                hash_scope_part(&mut digest, path);
             }
-            None => {
+            DocumentScope::Live(token) => {
                 digest.update(b"live");
-                hash_scope_part(&mut digest, &self.sound_scope);
+                hash_scope_part(&mut digest, token);
             }
         }
         digest.update(self.sample_rate().to_bits().to_le_bytes());
@@ -1076,7 +1139,7 @@ impl Session {
         for descriptor in self
             .registry()
             .instruments()
-            .filter(|descriptor| descriptor.id != SAMPLER_ID)
+            .filter(|descriptor| !auris_sampler::needs_asset(&descriptor.id))
         {
             let _ = budget.push_sound(
                 &mut sounds,
@@ -1089,6 +1152,10 @@ impl Session {
             );
         }
         let mut font_paths = Vec::new();
+        let font_errors = self
+            .soundfonts()
+            .filter_map(|reference| self.soundfont_load_error(reference.id))
+            .collect();
         for reference in self.soundfonts() {
             if let Some(font) = self.fonts.get(reference.id) {
                 fonts.insert(reference.id, font);
@@ -1132,6 +1199,7 @@ impl Session {
             sound_bytes: budget.sound_bytes,
             base_truncated: budget.sounds_truncated,
             font_paths,
+            font_errors,
             extra_paths: extra_paths.to_vec(),
             scan_plugins: true,
             isolated_plugin_discovery: false,
@@ -1155,10 +1223,10 @@ impl Session {
         {
             return Err("Choose an instrument or drum track".into());
         }
-        let key = self.sound_library_scope(paths);
+        let keys = self.sound_library_scopes(paths);
         // Selection can run on the UI thread. Resolve only metadata previously issued by a worker;
         // rebuilding a heavy catalog here would synchronously invoke every native provider.
-        let source = resolve_library_sound(&key, id)?;
+        let source = resolve_library_sound(&keys, id)?;
         let prepare = PrepareContext::new(self.sample_rate(), 512, 2);
         match source.source {
             Source::Builtin(instrument_id) => self
@@ -1785,6 +1853,9 @@ impl SoundLibraryJob {
             errors_truncated: false,
         };
         let mut errors = Vec::new();
+        for error in &self.font_errors {
+            budget.push_error(&mut errors, error);
+        }
         let mut inventory = if self.scan_plugins {
             root_inventory(
                 &self.extra_paths,
@@ -1916,6 +1987,7 @@ impl SoundLibraryJob {
             generation,
             sounds,
             errors,
+            unloaded_fonts: self.font_errors.clone(),
             inventory,
             index: Mutex::new(IndexState::default()),
             completed: AtomicUsize::new(0),
@@ -2067,6 +2139,9 @@ fn sound_page(mut value: serde_json::Value) -> String {
 fn with_native_status(mut value: serde_json::Value, catalog: &Catalog) -> serde_json::Value {
     if let Some(status) = &catalog.native_status {
         value["native_plugins"] = status.value();
+    }
+    if !catalog.unloaded_fonts.is_empty() {
+        value["unloaded_soundfonts"] = catalog.unloaded_fonts.clone().into();
     }
     value
 }
@@ -2858,6 +2933,68 @@ mod tests {
     }
 
     #[test]
+    fn a_library_font_that_could_not_load_says_why_in_every_search_page() {
+        let _serial = serial_test();
+        let scratch = Scratch::new("unloaded-library-font");
+        let library = scratch.join("soundfonts.json");
+        let path = scratch.soundfont("Grand.sf2");
+        let with_library = || {
+            Session::new(crate::SessionOptions::headless().with_soundfont_library(&library))
+                .unwrap()
+        };
+        let font = with_library().import_soundfont(&path).unwrap();
+        // The file the library names goes away between launches, as a download folder's does.
+        std::fs::remove_file(&path).unwrap();
+        let session = with_library();
+        assert!(!session.soundfont_is_loaded(font));
+        let error = session.soundfont_load_error(font).unwrap();
+        assert!(
+            error.contains("Grand.sf2") && error.contains("not loaded"),
+            "{error}"
+        );
+
+        let response = isolated_job(&session)
+            .run(
+                SoundSearch::Text {
+                    query: "piano".into(),
+                    limit: 10,
+                    offset: 0,
+                    filter: SoundFilter::default(),
+                },
+                false,
+            )
+            .unwrap();
+        let response: serde_json::Value = serde_json::from_str(&response).unwrap();
+        assert_eq!(response["unloaded_soundfonts"][0], error.as_str());
+        assert!(response["scan_error_count"].as_u64().unwrap() >= 1);
+        let diagnostics = isolated_job(&session).diagnostics(0, 16).unwrap();
+        assert!(diagnostics.contains("not loaded"), "{diagnostics}");
+    }
+
+    #[test]
+    fn a_loaded_font_reports_no_error_and_is_shared_between_sessions() {
+        let _serial = serial_test();
+        let scratch = Scratch::new("shared-library-font");
+        let library = scratch.join("soundfonts.json");
+        let path = scratch.soundfont("Grand.sf2");
+        let with_library = || {
+            Session::new(crate::SessionOptions::headless().with_soundfont_library(&library))
+                .unwrap()
+        };
+        with_library().import_soundfont(&path).unwrap();
+        // Two sessions open beside each other, as the window and a workshop composer do.
+        let first = with_library();
+        let second = with_library();
+        let font = first.soundfonts().next().unwrap().id;
+        let other = second.soundfonts().next().unwrap().id;
+        assert_eq!(second.soundfont_load_error(other), None);
+        assert!(Arc::ptr_eq(
+            &first.fonts.get(font).unwrap(),
+            &second.fonts.get(other).unwrap()
+        ));
+    }
+
+    #[test]
     fn isolated_live_search_issues_selectable_metadata_without_loading_native_code() {
         let _serial = serial_test();
         let session = session();
@@ -2884,7 +3021,7 @@ mod tests {
             response["native_plugins"]["acoustic_similarity"],
             "not_supported"
         );
-        let source = resolve_library_sound(&session.sound_library_scope(&[]), id).unwrap();
+        let source = resolve_library_sound(&session.sound_library_scopes(&[]), id).unwrap();
         assert!(isolated_native(&source));
         assert!(!measurable(&source));
         let diagnostics = session.sound_library_job(&[]).diagnostics(0, 10).unwrap();
@@ -3231,6 +3368,7 @@ mod tests {
             generation: format!("generation-{key}"),
             sounds: Vec::new(),
             errors: Vec::new(),
+            unloaded_fonts: Vec::new(),
             inventory: Vec::new(),
             index: Mutex::new(IndexState::default()),
             completed: AtomicUsize::new(0),
@@ -3587,6 +3725,40 @@ mod tests {
             first.sound_library_job(&[plugin_b]).key
         );
         assert_ne!(key, first.sound_library_job(&[scratch.join("vendor")]).key);
+    }
+
+    #[test]
+    fn a_sound_found_before_the_first_save_can_still_be_chosen_after_it() {
+        // A workshop candidate searches, adds a track — its first edit, after which the host
+        // saves a checkpoint — and only then chooses the sound it found.
+        let _serial = serial_test();
+        let scratch = Scratch::new("sound-scope-save");
+        let mut session = session();
+        let result = query(&session, "auris", 1, 0, false).unwrap();
+        let id = result["sounds"][0]["id"].as_str().unwrap().to_owned();
+        let track = session.add_default_instrument_track("Lead").unwrap();
+        session.save_as(&scratch.join("First.auris")).unwrap();
+        session.use_library_sound(track, &id, &[]).unwrap();
+
+        // And again after the next Save As moves the same document once more.
+        let later = query(&session, "auris", 1, 0, false).unwrap();
+        let later = later["sounds"][0]["id"].as_str().unwrap().to_owned();
+        session.save_as(&scratch.join("Second.auris")).unwrap();
+        session.use_library_sound(track, &id, &[]).unwrap();
+        session.use_library_sound(track, &later, &[]).unwrap();
+
+        // Another document never inherits them, whether opened or started afresh.
+        let other = self::session()
+            .save_as(&scratch.join("Other.auris"))
+            .unwrap()
+            .document;
+        session.open(&other).unwrap();
+        let track = session.add_default_instrument_track("Lead").unwrap();
+        assert!(session.use_library_sound(track, &id, &[]).is_err());
+        assert!(session.use_library_sound(track, &later, &[]).is_err());
+        session.new_project();
+        let track = session.project().tracks[0].id;
+        assert!(session.use_library_sound(track, &later, &[]).is_err());
     }
     fn query(
         session: &Session,

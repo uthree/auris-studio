@@ -18,6 +18,8 @@ pub(super) fn family(instrument: &InstrumentTrack, drum: bool) -> &'static str {
             "winds"
         }
         "auris.synth.chiptune" => "synth",
+        // The subtractive patches are all synthesisers, whatever sound each one imitates.
+        id if auris_synth::AnalogPatch::from_id(id).is_some() => "synth",
         auris_sampler::SAMPLER_ID => {
             match auris_sampler::stored_preset(&instrument.instrument_state) {
                 Some(p) if p.bank == 128 => "drums",
@@ -53,7 +55,8 @@ pub(super) fn capabilities(instrument: &InstrumentTrack, drum: bool) -> Value {
     let dulcimer = id == "auris.physical.hammered_dulcimer";
     let sampler = id == auris_sampler::SAMPLER_ID;
     let wind = matches!(id, "auris.physical.clarinet" | "auris.physical.tin_whistle");
-    let chiptune = id == "auris.synth.chiptune";
+    // The subtractive patches read the wheel as vibrato depth exactly as the chiptune voice does.
+    let chiptune = id == "auris.synth.chiptune" || auris_synth::AnalogPatch::from_id(id).is_some();
     let native = physical || sampler || wind || chiptune || dulcimer;
     let status = |known: bool| {
         if known {

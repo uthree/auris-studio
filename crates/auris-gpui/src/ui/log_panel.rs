@@ -14,6 +14,7 @@ use log::Level;
 use crate::app::AurisApp;
 use crate::logbook::{Entry, book};
 use crate::theme::{Metrics, Theme};
+use crate::ui::lint::LogTab;
 use crate::ui::scrollbars::ScrollPanel;
 use crate::ui::widgets::{ButtonState, ButtonStyle, button, button_enabled};
 
@@ -25,6 +26,12 @@ impl AurisApp {
         cx: &mut gpui::Context<Self>,
     ) -> impl IntoElement + use<> {
         let theme = self.theme.clone();
+        let tab = self.lint.tab;
+        let problems = self.lint.diagnostics().len();
+        let problems_label = match problems {
+            0 => self.t(Key::ProblemsTab).to_string(),
+            count => format!("{} ({count})", self.t(Key::ProblemsTab)),
+        };
         let entries = book().entries();
         let empty = entries.is_empty();
 
@@ -58,77 +65,102 @@ impl AurisApp {
                     .border_color(theme.border)
                     .text_xs()
                     .text_color(theme.text_muted)
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .truncate()
-                            .child(self.t(Key::LogPanel)),
-                    )
                     .child(button(
-                        "log-report",
-                        self.t(Key::IssueReport),
-                        ButtonStyle::Normal,
-                        false,
+                        "log-tab-problems",
+                        problems_label,
+                        ButtonStyle::Ghost,
+                        tab == LogTab::Problems,
                         theme.accent,
                         &theme,
-                        cx.listener(|this, _, _, cx| this.open_issue_report(None, cx)),
-                    ))
-                    .child(button_enabled(
-                        "log-copy-all",
-                        self.t(Key::LogCopyAll),
-                        ButtonStyle::Normal,
-                        ButtonState::available(false, !empty),
-                        theme.accent,
-                        &theme,
-                        cx.listener(|_, _, _, cx| {
-                            // Read again at the click rather than captured at the frame: a line
-                            // logged in between is one somebody investigating wants too.
-                            let text = log_text(&book().entries());
-                            if !text.is_empty() {
-                                cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
-                            }
-                        }),
-                    ))
-                    .child(button(
-                        "log-clear",
-                        self.t(Key::LogClear),
-                        ButtonStyle::Normal,
-                        false,
-                        theme.accent,
-                        &theme,
-                        cx.listener(|_, _, _, cx| {
-                            book().clear();
+                        cx.listener(|this, _, _, cx| {
+                            this.lint.tab = LogTab::Problems;
                             cx.notify();
                         }),
-                    )),
-            )
-            .child(
-                self.scrolling(
-                    ScrollPanel::Log,
-                    div()
-                        .id("log-lines")
-                        .debug_selector(|| "log-lines".to_owned())
-                        .flex()
-                        .flex_col()
-                        .p_1()
-                        .overflow_y_scroll()
-                        // Newest first, because the reason anybody opened this is the thing that just
-                        // happened — scrolling to the bottom of five hundred lines to find it is the
-                        // terminal's behaviour, and a terminal is what this replaces.
-                        .children(rows)
-                        .when(empty, |this| {
-                            this.child(
-                                div()
-                                    .p_2()
-                                    .text_xs()
-                                    .text_color(theme.text_faint)
-                                    .child(self.t(Key::LogEmpty)),
-                            )
+                    ))
+                    .child(button(
+                        "log-tab-log",
+                        self.t(Key::ProblemsLogTab),
+                        ButtonStyle::Ghost,
+                        tab == LogTab::Log,
+                        theme.accent,
+                        &theme,
+                        cx.listener(|this, _, _, cx| {
+                            this.lint.tab = LogTab::Log;
+                            cx.notify();
                         }),
-                    cx,
-                ),
+                    ))
+                    .child(div().flex_1().min_w_0())
+                    .when(tab == LogTab::Log, |this| {
+                        this.child(button(
+                            "log-report",
+                            self.t(Key::IssueReport),
+                            ButtonStyle::Normal,
+                            false,
+                            theme.accent,
+                            &theme,
+                            cx.listener(|this, _, _, cx| this.open_issue_report(None, cx)),
+                        ))
+                        .child(button_enabled(
+                            "log-copy-all",
+                            self.t(Key::LogCopyAll),
+                            ButtonStyle::Normal,
+                            ButtonState::available(false, !empty),
+                            theme.accent,
+                            &theme,
+                            cx.listener(|_, _, _, cx| {
+                                // Read again at the click rather than captured at the frame: a line
+                                // logged in between is one somebody investigating wants too.
+                                let text = log_text(&book().entries());
+                                if !text.is_empty() {
+                                    cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
+                                }
+                            }),
+                        ))
+                        .child(button(
+                            "log-clear",
+                            self.t(Key::LogClear),
+                            ButtonStyle::Normal,
+                            false,
+                            theme.accent,
+                            &theme,
+                            cx.listener(|_, _, _, cx| {
+                                book().clear();
+                                cx.notify();
+                            }),
+                        ))
+                    }),
             )
+            .when(tab == LogTab::Problems, |this| {
+                this.child(self.render_problems(cx))
+            })
+            .when(tab == LogTab::Log, |this| {
+                this.child(
+                    self.scrolling(
+                        ScrollPanel::Log,
+                        div()
+                            .id("log-lines")
+                            .debug_selector(|| "log-lines".to_owned())
+                            .flex()
+                            .flex_col()
+                            .p_1()
+                            .overflow_y_scroll()
+                            // Newest first, because the reason anybody opened this is the thing that just
+                            // happened — scrolling to the bottom of five hundred lines to find it is the
+                            // terminal's behaviour, and a terminal is what this replaces.
+                            .children(rows)
+                            .when(empty, |this| {
+                                this.child(
+                                    div()
+                                        .p_2()
+                                        .text_xs()
+                                        .text_color(theme.text_faint)
+                                        .child(self.t(Key::LogEmpty)),
+                                )
+                            }),
+                        cx,
+                    ),
+                )
+            })
     }
 }
 
@@ -299,15 +331,7 @@ mod tests {
 
     #[gpui::test]
     fn the_log_can_be_copied_whole_and_line_by_line(cx: &mut TestAppContext) {
-        struct ClearLog;
-        impl Drop for ClearLog {
-            fn drop(&mut self) {
-                book().clear();
-            }
-        }
-
-        book().clear();
-        let _clear = ClearLog;
+        let _book = crate::logbook::exclusive_book();
         let (app, cx) = harness::open(cx);
         book().push(Level::Warn, "auris_session::session", "a font moved".into());
         book().push(
@@ -348,15 +372,7 @@ mod tests {
 
     #[gpui::test]
     fn a_narrow_log_keeps_severity_source_and_message_readable(cx: &mut TestAppContext) {
-        struct ClearLog;
-        impl Drop for ClearLog {
-            fn drop(&mut self) {
-                book().clear();
-            }
-        }
-
-        book().clear();
-        let _clear = ClearLog;
+        let _book = crate::logbook::exclusive_book();
         let (app, cx) = harness::open(cx);
         book().push(
             Level::Error,

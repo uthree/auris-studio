@@ -26,12 +26,17 @@ BACKEND — UI 依存なし
   crates/auris-i18n     全言語の UI テキスト、それ以外は持たない
   crates/auris-session  ドキュメント、エンジン、フロントエンドが必要とする全コマンド
   crates/auris-toolbox  言語モデル用ツールとしてのコマンド、両モデル接続で共有
+  crates/auris-video    ノートロール動画: フレームをソフトウェア描画し、導入済み ffmpeg でエンコード
 
 FRONTEND
   crates/auris-gpui     デスクトップアプリケーション（バイナリ: auris-studio）
   crates/auris-cli      コマンドラインツール（バイナリ: auris）
   crates/auris-mcp      Model Context Protocol サーバー（バイナリ: auris-mcp）
   crates/auris-agent    モデルクライアント: Ollama / OpenAI 互換（ライブラリ: バックグラウンドモデルワーカー）
+
+アプリケーションと並ぶもの
+  crates/auris-update-helper  アプリ終了後に導入済みバイナリを置き換える
+                              （バイナリ: auris-update-helper）
 
 ワークスペース外
   vendor/rustysynth     他者の crate、fork — 専用 README を参照
@@ -98,7 +103,7 @@ macOS の ⌘ コマンドはここでは Ctrl（音符を置く ⌘-click も�
 <a id="macos-without-a-full-xcode-install"></a>
 ### 完全な Xcode インストールなしの macOS
 
-macOS ビルドには13.4以降が必要で、付属 Core ML ONNX Runtime に合わせています。ワークスペースの Cargo 設定は両アーキテクチャにこの deployment target を設定し、アプリバンドルと Intel 用ランタイムも同じ最小バージョンを使います。gpui は通常 `xcrun metal` でビルド時にシェーダーをコンパイルしますが、Xcode 内にあるため `xcode-select -p` が Command Line Tools を指すと到達できません。このプロジェクトは `gpui/runtime_shaders` を有効にし、起動時に Metal framework 経由でコンパイルします。設定はすでに `Cargo.toml` にあり、Xcode があっても保持してください。起動時のシェーダーコンパイル1回が必要ですが、15 GBのダウンロードなしにビルドできます。
+macOS ビルドには13.4以降が必要で、付属 Core ML ONNX Runtime に合わせています。ワークスペースの Cargo 設定がこの deployment target を設定し、アプリバンドルも同じ最小バージョンを使います。リリースは Apple Silicon 専用で、Intel Mac には対応していません。gpui は通常 `xcrun metal` でビルド時にシェーダーをコンパイルしますが、Xcode 内にあるため `xcode-select -p` が Command Line Tools を指すと到達できません。このプロジェクトは `gpui/runtime_shaders` を有効にし、起動時に Metal framework 経由でコンパイルします。設定はすでに `Cargo.toml` にあり、Xcode があっても保持してください。起動時のシェーダーコンパイル1回が必要ですが、15 GBのダウンロードなしにビルドできます。
 
 <a id="adding-a-sound-source"></a>
 ## 音源を追加する

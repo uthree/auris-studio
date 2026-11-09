@@ -194,6 +194,28 @@ impl Subdivision {
     }
 }
 
+/// The note values a chord's strum can step by, slowest first. `0` — not in the list — is no
+/// strum at all.
+///
+/// Straight values only. The point of a strum is the order of the attacks, not where they land,
+/// and every one of these divides a quarter note exactly.
+pub const STRUM_VALUES: [u16; 4] = [16, 32, 64, 128];
+
+/// The delay a strum note value stands for: a whole note divided by it.
+///
+/// `0` is no strum. Anything else snaps to the nearest entry of [`STRUM_VALUES`] first.
+pub fn strum_ticks(value: u16) -> crate::time::Ticks {
+    if value == 0 {
+        return crate::time::Ticks::ZERO;
+    }
+    let value = STRUM_VALUES
+        .iter()
+        .copied()
+        .min_by_key(|candidate| candidate.abs_diff(value))
+        .expect("there are strum values");
+    crate::time::Ticks(crate::time::TICKS_PER_QUARTER * 4 / i64::from(value))
+}
+
 /// How a clip was written, so that it can be written again.
 ///
 /// A clip carrying one of these was produced from the harmony underneath it rather than played,
@@ -295,6 +317,23 @@ pub struct ClipRecipe {
     /// rather than an arrival, and the join is the one moment a listener is certain to notice.
     #[serde(default = "default_fill")]
     pub fill: f32,
+    /// Whether a chord part adds the chord's root below its voicing, in the octave under it.
+    ///
+    /// Read by the chords and the pad. The left hand of a piano comp: the voicing stays where
+    /// the voice leading put it, and the root is struck with it from at least an octave below
+    /// its lowest note, so the chord is heard over its own bass even with no bass part.
+    #[serde(default)]
+    pub low_root: bool,
+    /// How far apart the notes of a chord begin, as a note value: 32 is a thirty-second note
+    /// between each note and the one above it, and 0 strikes them together.
+    ///
+    /// Read by the chords and the pad. Written into the score rather than played on top of it,
+    /// which is what separates it from the stroke performance transform: the delay is a note
+    /// value and so scales with the tempo, and the piano roll shows it. Every note still ends
+    /// where the chord would have, so a strum delays the attack without lengthening anything.
+    /// See [`STRUM_VALUES`].
+    #[serde(default)]
+    pub strum: u16,
     /// The digest of the notes as the composer last wrote them —
     /// [`notes_digest`](super::notes_digest) over the clip's text at the moment of writing.
     ///
@@ -386,8 +425,19 @@ impl ClipRecipe {
             syncopation: default_syncopation(),
             octave: 0,
             fill: default_fill(),
+            low_root: false,
+            strum: 0,
             text_digest: 0,
         }
+    }
+
+    /// The delay between one note of a strummed chord and the next, or zero when it is not
+    /// strummed.
+    ///
+    /// A value outside [`STRUM_VALUES`] reads as the nearest one the picker would offer,
+    /// so a hand-edited file cannot ask for a delay that does not divide the beat.
+    pub fn strum_ticks(&self) -> crate::time::Ticks {
+        strum_ticks(self.strum)
     }
 
     /// The same recipe with a different seed, which is what "another take" means.

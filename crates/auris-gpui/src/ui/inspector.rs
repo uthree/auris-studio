@@ -15,8 +15,8 @@ use crate::theme::Metrics;
 use crate::theme::Theme;
 use crate::ui::icons::Icon;
 use crate::ui::plugin_editor::{
-    ParamControl, button_row, control_for, next_discrete_value, slider_keyboard_step, slider_row,
-    value_after_drag,
+    KNOB_CELL_WIDTH, ParamControl, button_row, control_for, knob_value_after_turn,
+    next_discrete_value, param_knob, slider_keyboard_step, slider_row, value_after_drag,
 };
 use crate::ui::plugin_window::PluginSubject;
 use crate::ui::scrollbars::ScrollPanel;
@@ -509,10 +509,15 @@ impl AurisApp {
                     .unwrap_or_else(|| self.t(Key::SingerNoVoice).to_string())
             }
         } else {
-            instrument_id
-                .as_ref()
-                .map(|id| self.instrument_label(track_id, id))
-                .unwrap_or_default()
+            // The sound by name when there is one — the header says the same — and otherwise
+            // the instrument, whose own panel below is where a sound gets chosen.
+            match self.track_sound_label(track_id) {
+                crate::i18n::TrackSoundLabel::Named { name, .. } => name,
+                _ => instrument_id
+                    .as_ref()
+                    .map(|id| self.instrument_label(track_id, id))
+                    .unwrap_or_default(),
+            }
         };
         let mut sound_rows = self.singer_rows(track_id, cx);
         if is_singer || instrument_id.is_some() {
@@ -877,7 +882,7 @@ impl AurisApp {
         .into_any_element()
     }
 
-    /// Builds controls for a slice of a plugin's parameters.
+    /// Builds one row per parameter, for a list that must give every parameter the same height.
     ///
     /// `target_for` turns a parameter index into the routing enum, which is what lets the same
     /// code drive an instrument, a track effect and a master effect.
@@ -888,113 +893,208 @@ impl AurisApp {
         id_prefix: &'static str,
         cx: &mut gpui::Context<Self>,
     ) -> Vec<AnyElement> {
-        let theme = self.theme.clone();
         descriptors
             .iter()
-            .map(|descriptor| {
-                let param_id = descriptor.id.0;
-                let target = target_for(descriptor.id);
-                let value = self.session.param_value(target, descriptor);
-                let element_id = (id_prefix, target_element_key(target, descriptor.id));
+            .map(|descriptor| self.param_control(descriptor, target_for, id_prefix, false, cx))
+            .collect()
+    }
 
-                let label = self.param_label(&descriptor.name);
-                // The label again for the menu, which the control itself consumes.
-                let menu_label = label.clone();
-                let value_text = self.format_param(descriptor, value);
-                let keyboard_descriptor = descriptor.clone();
-                match control_for(descriptor) {
-                    ParamControl::Slider => slider_row(
-                        element_id,
-                        descriptor,
-                        label,
-                        value_text,
-                        value,
-                        theme.accent,
-                        &theme,
-                        cx.listener(move |this, event: &MouseDownEvent, _, cx| {
-                            if event.click_count >= 2 {
-                                this.reset_param(target);
+    /// Builds a plugin's controls as a panel: its continuous parameters as knobs, packed into a
+    /// grid that wraps, and its switches and choices as rows.
+    ///
+    /// Knobs because a plugin's parameters are many continuous values side by side — drive,
+    /// tone, decay — which is what Atelier draws as knobs; a stack of sliders is the workaround
+    /// its rules name. The order is the plugin's: each run of continuous parameters becomes one
+    /// grid, and a switch or a choice between two runs stays between them, so a plugin that
+    /// groups its controls keeps its groups.
+    pub(crate) fn param_panel(
+        &self,
+        descriptors: &[ParamDescriptor],
+        target_for: impl Fn(ParamId) -> ParamTarget + Copy + 'static,
+        id_prefix: &'static str,
+        cx: &mut gpui::Context<Self>,
+    ) -> Vec<AnyElement> {
+        let gap = self.theme.atelier.spacing.sm;
+        let mut panel = Vec::new();
+        let mut run = Vec::new();
+        let flush = |run: &mut Vec<AnyElement>, panel: &mut Vec<AnyElement>| {
+            if !run.is_empty() {
+                panel.push(
+                    div()
+                        .flex()
+                        .flex_wrap()
+                        .items_start()
+                        .gap(gap)
+                        .py_1()
+                        .children(std::mem::take(run))
+                        .into_any_element(),
+                );
+            }
+        };
+        for descriptor in descriptors {
+            let control = self.param_control(descriptor, target_for, id_prefix, true, cx);
+            if control_for(descriptor) == ParamControl::Slider {
+                run.push(control);
+            } else {
+                flush(&mut run, &mut panel);
+                panel.push(control);
+            }
+        }
+        flush(&mut run, &mut panel);
+        panel
+    }
+
+    /// One parameter's control: a knob when `knob` is set and the parameter is continuous,
+    /// otherwise its row.
+    fn param_control(
+        &self,
+        descriptor: &ParamDescriptor,
+        target_for: impl Fn(ParamId) -> ParamTarget + Copy + 'static,
+        id_prefix: &'static str,
+        knob: bool,
+        cx: &mut gpui::Context<Self>,
+    ) -> AnyElement {
+        let theme = self.theme.clone();
+        let param_id = descriptor.id.0;
+        let target = target_for(descriptor.id);
+        let value = self.session.param_value(target, descriptor);
+        let element_id = (id_prefix, target_element_key(target, descriptor.id));
+
+        let label = self.param_label(&descriptor.name);
+        // The label again for the menu, which the control itself consumes.
+        let menu_label = label.clone();
+        let value_text = self.format_param(descriptor, value);
+        let keyboard_descriptor = descriptor.clone();
+        match control_for(descriptor) {
+            ParamControl::Slider if knob => {
+                let reading = descriptor.normalize(value);
+                div()
+                    .id(element_id)
+                    .debug_selector(move || format!("{id_prefix}-param-{param_id}"))
+                    .w(KNOB_CELL_WIDTH)
+                    .flex()
+                    .justify_center()
+                    .child(
+                        param_knob(descriptor, label, value_text, value).on_change(cx.listener(
+                            move |this, reading: &f32, window, cx| {
+                                this.turn_knob(target, *reading, window.modifiers().shift);
                                 cx.notify();
+                            },
+                        )),
+                    )
+                    // The knob turns itself; this only opens the transaction that makes the turn
+                    // one undo step, and holds the anchor Shift slows it from. A double click is
+                    // the knob going back to its default, which is a step of its own.
+                    .on_mouse_down(
+                        gpui::MouseButton::Left,
+                        cx.listener(move |this, event: &MouseDownEvent, _, _| {
+                            if event.click_count >= 2 {
                                 return;
                             }
-                            // `set_param_value` marks the document dirty once the drag actually
-                            // moves something; a click that only grabs the control is not an edit.
-                            this.begin_drag(Drag::Param {
+                            this.begin_drag(Drag::Knob {
                                 target,
-                                start_value: value,
-                                start_x: event.position.x,
+                                anchor_reading: Some(reading),
+                                anchor_value: reading,
                                 fine: event.modifiers.shift,
                             });
                         }),
-                        cx.listener(
-                            move |this, event: &crate::ui::widgets::SliderKeyboardEvent, _, cx| {
-                                this.session.set_param(
-                                    target,
-                                    keyboard_descriptor.denormalize(event.fraction),
-                                );
-                                cx.notify();
-                            },
-                        ),
                     )
-                    .debug_selector(move || format!("{id_prefix}-param-{param_id}"))
                     .on_mouse_down(
                         gpui::MouseButton::Right,
                         Self::opens_menu(cx, move |this, at| {
                             this.param_menu(at, target, menu_label.clone())
                         }),
                     )
-                    .into_any_element(),
-                    // A toggle flips on the press, because two positions are a switch. A choice
-                    // opens the list instead: cycling through eight waveforms to reach the pulse
-                    // means counting them, and overshooting means going round again.
-                    ParamControl::Toggle => {
-                        let owned = descriptor.clone();
-                        button_row(
-                            element_id,
-                            descriptor,
-                            label,
-                            value_text,
-                            value,
-                            &theme,
-                            cx.listener(move |this, _, _, cx| {
-                                let current = this.session.param_value(target, &owned);
-                                let next = next_discrete_value(&owned, current);
-                                this.session.set_param(target, next);
-                                cx.notify();
-                            }),
-                        )
-                        .on_mouse_down(
-                            gpui::MouseButton::Right,
-                            Self::opens_menu(cx, move |this, at| {
-                                this.param_menu(at, target, menu_label.clone())
-                            }),
-                        )
-                        .into_any_element()
+                    .into_any_element()
+            }
+            ParamControl::Slider => slider_row(
+                element_id,
+                descriptor,
+                label,
+                value_text,
+                value,
+                theme.accent,
+                &theme,
+                cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                    if event.click_count >= 2 {
+                        this.reset_param(target);
+                        cx.notify();
+                        return;
                     }
-                    ParamControl::Choice => {
-                        let owned = descriptor.clone();
-                        button_row(
-                            element_id,
-                            descriptor,
-                            label,
-                            value_text,
-                            value,
-                            &theme,
-                            Self::opens_menu(cx, move |this, at| {
-                                this.param_choice_menu(at, target, &owned)
-                            }),
-                        )
-                        .on_mouse_down(
-                            gpui::MouseButton::Right,
-                            Self::opens_menu(cx, move |this, at| {
-                                this.param_menu(at, target, menu_label.clone())
-                            }),
-                        )
-                        .into_any_element()
-                    }
-                }
-            })
-            .collect()
+                    // `set_param_value` marks the document dirty once the drag actually
+                    // moves something; a click that only grabs the control is not an edit.
+                    this.begin_drag(Drag::Param {
+                        target,
+                        start_value: value,
+                        start_x: event.position.x,
+                        fine: event.modifiers.shift,
+                    });
+                }),
+                cx.listener(
+                    move |this, event: &crate::ui::widgets::SliderKeyboardEvent, _, cx| {
+                        this.session
+                            .set_param(target, keyboard_descriptor.denormalize(event.fraction));
+                        cx.notify();
+                    },
+                ),
+            )
+            .debug_selector(move || format!("{id_prefix}-param-{param_id}"))
+            .on_mouse_down(
+                gpui::MouseButton::Right,
+                Self::opens_menu(cx, move |this, at| {
+                    this.param_menu(at, target, menu_label.clone())
+                }),
+            )
+            .into_any_element(),
+            // A toggle flips on the press, because two positions are a switch. A choice
+            // opens the list instead: cycling through eight waveforms to reach the pulse
+            // means counting them, and overshooting means going round again.
+            ParamControl::Toggle => {
+                let owned = descriptor.clone();
+                button_row(
+                    element_id,
+                    descriptor,
+                    label,
+                    value_text,
+                    value,
+                    &theme,
+                    cx.listener(move |this, _, _, cx| {
+                        let current = this.session.param_value(target, &owned);
+                        let next = next_discrete_value(&owned, current);
+                        this.session.set_param(target, next);
+                        cx.notify();
+                    }),
+                )
+                .on_mouse_down(
+                    gpui::MouseButton::Right,
+                    Self::opens_menu(cx, move |this, at| {
+                        this.param_menu(at, target, menu_label.clone())
+                    }),
+                )
+                .into_any_element()
+            }
+            ParamControl::Choice => {
+                let owned = descriptor.clone();
+                button_row(
+                    element_id,
+                    descriptor,
+                    label,
+                    value_text,
+                    value,
+                    &theme,
+                    Self::opens_menu(cx, move |this, at| {
+                        this.param_choice_menu(at, target, &owned)
+                    }),
+                )
+                .on_mouse_down(
+                    gpui::MouseButton::Right,
+                    Self::opens_menu(cx, move |this, at| {
+                        this.param_menu(at, target, menu_label.clone())
+                    }),
+                )
+                .into_any_element()
+            }
+        }
     }
 
     /// A gain or pan fader, sharing the parameter drag machinery.
@@ -1118,6 +1218,40 @@ impl AurisApp {
             *start_x = at;
             *held = fine;
         }
+    }
+
+    /// Applies a knob's turn: its reading, from 0 to 1, and whether Shift is held.
+    ///
+    /// During a drag the reading is taken relative to the anchor [`Drag::Knob`] holds, so Shift
+    /// can slow the turn; from the keyboard it is the value itself.
+    pub(crate) fn turn_knob(&mut self, target: ParamTarget, reading: f32, fine: bool) {
+        let Some(descriptor) = self.session.descriptor_for(target) else {
+            return;
+        };
+        let next = match self.drag.as_mut() {
+            Some(Drag::Knob {
+                target: dragged,
+                anchor_reading,
+                anchor_value,
+                fine: held,
+            }) if *dragged == target => {
+                let turned = anchor_reading.and_then(|anchor| {
+                    knob_value_after_turn(reading, anchor, *anchor_value, *held, fine)
+                });
+                match turned {
+                    Some(next) => next,
+                    None => {
+                        *anchor_reading = Some(reading);
+                        *anchor_value =
+                            descriptor.normalize(self.session.param_value(target, &descriptor));
+                        *held = fine;
+                        return;
+                    }
+                }
+            }
+            _ => reading,
+        };
+        self.session.set_param(target, descriptor.denormalize(next));
     }
 
     /// Applies a parameter drag.
@@ -1331,7 +1465,7 @@ fn sound_artwork(
             | "auris.physical.bell" => SoundIcon::Bell,
             "auris.synth.drumkit" | "auris.synth.noisedrum" => SoundIcon::Drum,
             "auris.synth.vocal" | "auris.physical.choir" => SoundIcon::Voice,
-            "auris.synth.chiptune" | "auris.synth.fm2" => SoundIcon::Synth,
+            id if super::synth_view::is_oscillator_model(id) => SoundIcon::Synth,
             _ => SoundIcon::Sound,
         }
     };

@@ -23,7 +23,6 @@ use crate::theme::{Metrics, Theme};
 use crate::ui::agent_components;
 use crate::ui::context_menu::{ContextMenu, MenuCommand};
 use crate::ui::icons::{Icon, icon};
-use crate::ui::scrollbars::ScrollPanel;
 use crate::ui::text_field::TextField;
 use crate::ui::widgets::{
     ButtonState, ButtonStyle, activity_indicator, bounded_button_enabled, bounded_picker_label,
@@ -32,6 +31,7 @@ use crate::ui::widgets::{
 
 #[cfg(test)]
 mod articulation_eval;
+pub(crate) mod chat_view;
 #[cfg(test)]
 mod composition_eval;
 pub(crate) mod controls;
@@ -122,7 +122,9 @@ mod choice_card_tests {
         let (app, cx) = crate::harness::open(cx);
         let index = offer(&app, cx, false);
         cx.run_until_parked();
-        let option: &'static str = format!("agent-choices-{index}-option-1").leak();
+        crate::harness::paint(&app, cx);
+        let card = chat_view::row(&app, cx, index, "choices");
+        let option: &'static str = format!("{card}-option-1").leak();
         crate::harness::click(option, cx);
         assert_eq!(queued(&app, cx), ["Strings"]);
         app.read_with(cx, |this, _| {
@@ -134,7 +136,7 @@ mod choice_card_tests {
             ));
         });
         crate::harness::paint(&app, cx);
-        let other: &'static str = format!("agent-choices-{index}-option-2").leak();
+        let other: &'static str = format!("{card}-option-2").leak();
         crate::harness::click(other, cx);
         assert_eq!(
             queued(&app, cx),
@@ -150,13 +152,15 @@ mod choice_card_tests {
         let (app, cx) = crate::harness::open(cx);
         let index = offer(&app, cx, true);
         cx.run_until_parked();
+        crate::harness::paint(&app, cx);
+        let card = chat_view::row(&app, cx, index, "choices");
         for option in [2, 0] {
-            let id: &'static str = format!("agent-choices-{index}-option-{option}").leak();
+            let id: &'static str = format!("{card}-option-{option}").leak();
             crate::harness::click(id, cx);
             crate::harness::paint(&app, cx);
         }
         assert!(queued(&app, cx).is_empty(), "ticking is not answering");
-        let send: &'static str = format!("agent-choices-{index}-send").leak();
+        let send: &'static str = format!("{card}-send").leak();
         crate::harness::click(send, cx);
         assert_eq!(queued(&app, cx), ["- Piano\n- Synth"]);
     }
@@ -366,25 +370,6 @@ impl ChatEntry {
     }
 }
 
-/// Preserve message boundaries while coalescing adjacent tool calls for presentation.
-fn transcript_runs(entries: &[ChatEntry]) -> impl Iterator<Item = std::ops::Range<usize>> + '_ {
-    let mut start = 0;
-    std::iter::from_fn(move || {
-        if start == entries.len() {
-            return None;
-        }
-        let mut end = start + 1;
-        if matches!(entries[start], ChatEntry::Tool { .. }) {
-            while end < entries.len() && matches!(entries[end], ChatEntry::Tool { .. }) {
-                end += 1;
-            }
-        }
-        let run = start..end;
-        start = end;
-        Some(run)
-    })
-}
-
 /// Only the newest assistant entry may show Atelier's streaming caret.
 fn entry_is_streaming(busy: bool, index: usize, len: usize, entry: &ChatEntry) -> bool {
     busy && index + 1 == len && matches!(entry, ChatEntry::Agent(_))
@@ -415,6 +400,9 @@ pub(crate) enum AgentEvent {
     /// A file-free command for the bound session.
     Edit {
         command: serde_json::Value,
+        /// What the conversation's production phase keeps fixed; the edit is withdrawn if it
+        /// changes any of it.
+        lock: Option<auris_session::phase::Lock>,
     },
     /// Previously completed text turns recovered for this project.
     History {
@@ -539,6 +527,10 @@ pub(crate) fn parse_event(line: &str) -> Option<AgentEvent> {
         },
         "edit" => AgentEvent::Edit {
             command: parsed.get("command")?.clone(),
+            lock: match parsed.get("lock") {
+                Some(lock) => Some(serde_json::from_value(lock.clone()).ok()?),
+                None => None,
+            },
         },
         "history" => AgentEvent::History {
             summary: text("summary"),
@@ -650,6 +642,35 @@ pub(crate) fn framed_say(text: &str, project: Option<&Path>) -> String {
         ),
         None => text.to_string(),
     }
+}
+
+/// What one send puts on the wire, and whether the turn must not edit.
+///
+/// A composition command reaches the model as its assignment while the transcript keeps what
+/// was typed. `/review` runs the whole turn under plan mode: the worker gets that policy for the
+/// tools it runs itself, and the window holds its own live edits to it for as long as the turn
+/// lasts.
+fn turn_wire(message: &PendingAgentSend) -> (String, bool) {
+    let command = auris_agent::PhaseCommand::parse(&message.text);
+    let said = command.map_or_else(
+        || message.text.clone(),
+        |(command, instruction)| command.assignment(instruction),
+    );
+    let read_only = command.is_some_and(|(command, _)| command.read_only());
+    let framed = format!(
+        "[Window context: {}]\n{}",
+        message.selection_context,
+        framed_say(&said, message.token.project.as_deref())
+    );
+    let wire = serde_json::json!({
+        "say": framed,
+        "display": &message.text,
+        "attachments": &message.attachments,
+        "policy": controls::turn_policy(&message.preferences.policy, read_only),
+        "auto_compact_percent": message.preferences.auto_compact_percent.unwrap_or(85)
+    })
+    .to_string();
+    (wire, read_only)
 }
 
 /// Whether two paths name the same file, asked the way the filesystem answers it.
@@ -1072,41 +1093,6 @@ struct PendingListening {
     operation: auris_session::agent_policy::Operation,
     cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
     receiver: Receiver<Result<auris_session::audio_audition::ListeningResult, String>>,
-    approval: Receiver<AudioLoadRequest>,
-}
-
-/// One invocation's load consent. Dropping the last copy cancels the waiting worker.
-#[derive(Debug)]
-pub struct AudioLoadRequest {
-    pub(crate) model: String,
-    pub(crate) response: std::sync::mpsc::Sender<bool>,
-}
-
-impl PartialEq for AudioLoadRequest {
-    fn eq(&self, other: &Self) -> bool {
-        std::ptr::eq(self, other)
-    }
-}
-
-fn await_audio_load_consent(
-    model: String,
-    requests: &std::sync::mpsc::Sender<AudioLoadRequest>,
-    cancel: &std::sync::atomic::AtomicBool,
-) -> Result<(), String> {
-    let (response, receiver) = std::sync::mpsc::channel();
-    requests
-        .send(AudioLoadRequest { model, response })
-        .map_err(|_| "Audio model loading cancelled".to_string())?;
-    loop {
-        if cancel.load(std::sync::atomic::Ordering::Relaxed) {
-            return Err("Audio model loading cancelled".into());
-        }
-        match receiver.recv_timeout(std::time::Duration::from_millis(100)) {
-            Ok(true) => return Ok(()),
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
-            _ => return Err("Audio model loading cancelled by the user; do not retry without a new user request".into()),
-        }
-    }
 }
 
 impl PendingListening {
@@ -1120,7 +1106,7 @@ impl PendingListening {
             self.cancel
                 .store(true, std::sync::atomic::Ordering::Relaxed);
             return Some(Err(
-                "The document changed during listening; request a fresh audition".into(),
+                "The document changed during listening; listen again".into()
             ));
         }
         if let auris_session::agent_policy::Decision::Deny(reason) = policy.decide(&self.operation)
@@ -1153,6 +1139,8 @@ struct PendingSoundSearch {
 struct PendingAgentJob {
     revision: u64,
     operation: auris_session::agent_policy::Operation,
+    /// The phase lock in force when the job was asked for, which its publication is held to.
+    lock: Option<auris_session::phase::Lock>,
     cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
     receiver: Receiver<Result<auris_session::live_agent::AgentResult, String>>,
 }
@@ -1197,6 +1185,7 @@ fn spawn_agent_job(
     job: auris_session::live_agent::AgentJob,
     revision: u64,
     operation: auris_session::agent_policy::Operation,
+    lock: Option<auris_session::phase::Lock>,
 ) -> Result<PendingAgentJob, String> {
     let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let worker_cancel = cancel.clone();
@@ -1213,6 +1202,7 @@ fn spawn_agent_job(
     Ok(PendingAgentJob {
         revision,
         operation,
+        lock,
         cancel,
         receiver,
     })
@@ -1389,9 +1379,6 @@ pub(crate) struct AgentChat {
     streamed_answer: bool,
     /// The chosen model's context window, when its listing said.
     pub(crate) context_window: Option<u64>,
-    /// The transcript rows clicked open to their full text.
-    pub(crate) expanded: std::collections::BTreeSet<usize>,
-    expanded_tool_groups: std::collections::BTreeSet<usize>,
     /// Running tool rows by unique call id, so parallel calls sharing a name remain distinct.
     open_tools: std::collections::BTreeMap<String, usize>,
     /// The wire a model listing comes back on.
@@ -1447,11 +1434,17 @@ pub(crate) struct AgentChat {
     pub(crate) fresh_history: bool,
     /// Apply changed provider settings after the current reply has finished.
     restart_after_turn: bool,
-    /// Where the transcript is scrolled to.
-    pub(crate) scroll: gpui::ScrollHandle,
-    /// Transcript changes that arrived while the reader was away from the tail.
-    pub(crate) unread_entries: usize,
-    /// Whether transcript changes should continue following the tail.
+    /// The conversation's view, built on the panel's first frame; see [`chat_view`].
+    chat: Option<chat_view::ChatSync>,
+    /// Bumped whenever [`AgentChat::entries`] becomes another conversation, so the view starts
+    /// over rather than editing one transcript into the other.
+    transcript_epoch: u64,
+    /// How many entries have been dropped off the front of an unmanaged transcript in all.
+    trimmed: usize,
+    /// Show the end on the next frame, as after sending.
+    jump_pending: bool,
+    /// Whether a managed transcript's window keeps to its newest entries, rather than staying
+    /// where "earlier messages" moved it.
     follow_tail: bool,
     link: Option<AgentLink>,
 }
@@ -1500,8 +1493,6 @@ impl Default for AgentChat {
             speed: SpeedMeter::default(),
             streamed_answer: false,
             context_window: None,
-            expanded: std::collections::BTreeSet::new(),
-            expanded_tool_groups: std::collections::BTreeSet::new(),
             open_tools: std::collections::BTreeMap::new(),
             models_rx: None,
             discovery_endpoint: None,
@@ -1530,8 +1521,10 @@ impl Default for AgentChat {
             produced_project: None,
             fresh_history: false,
             restart_after_turn: false,
-            scroll: gpui::ScrollHandle::new(),
-            unread_entries: 0,
+            chat: None,
+            transcript_epoch: 0,
+            trimmed: 0,
+            jump_pending: false,
             follow_tail: true,
             link: None,
         }
@@ -1544,46 +1537,25 @@ impl AgentChat {
         self.controls.pending.is_some()
     }
 
-    /// Whether the transcript is at, or close enough to resume following, its tail.
-    fn is_near_tail(&self) -> bool {
-        let remaining =
-            f32::from(self.scroll.max_offset().height) + f32::from(self.scroll.offset().y);
-        remaining <= f32::from(Metrics::CONTROL_HEIGHT) * 2.0
-    }
-
-    fn should_follow_tail(&mut self) -> bool {
-        self.follow_tail = self.is_near_tail();
-        self.follow_tail
-    }
-
-    /// Records one transcript mutation without taking the reader away from older content.
-    fn finish_transcript_change(&mut self, follow_tail: bool) {
-        self.follow_tail = follow_tail;
-        if follow_tail {
-            self.unread_entries = 0;
-            self.scroll.scroll_to_bottom();
-        } else {
-            self.unread_entries = self.unread_entries.saturating_add(1);
-        }
-    }
-
     /// Explicitly resumes automatic tail following and clears the new-message count.
     pub(crate) fn jump_to_latest(&mut self) {
         self.follow_tail = true;
-        self.unread_entries = 0;
-        self.scroll.scroll_to_bottom();
+        self.jump_pending = true;
+    }
+
+    /// The transcript is about to become another conversation's: the view starts over, at
+    /// its end.
+    pub(crate) fn new_transcript(&mut self) {
+        self.transcript_epoch = self.transcript_epoch.wrapping_add(1);
+        self.follow_tail = true;
     }
 
     /// Replaces the transcript with persisted turns and presents their newest exchange.
     fn replace_history(&mut self, summary: String, turns: Vec<(String, String)>) {
         self.entries.clear();
         self.open_tools.clear();
-        self.expanded.clear();
-        self.expanded_tool_groups.clear();
         // A new document's transcript must not inherit the old document's scroll geometry.
-        self.scroll = gpui::ScrollHandle::new();
-        self.follow_tail = true;
-        self.unread_entries = 0;
+        self.new_transcript();
         if !summary.trim().is_empty() {
             self.push_entry(ChatEntry::RestoredContext(summary));
         }
@@ -1596,19 +1568,9 @@ impl AgentChat {
 
     /// Appends one transcript row, keeping indexes coherent and following only a nearby tail.
     fn push_entry(&mut self, entry: ChatEntry) -> usize {
-        let follow_tail = self.should_follow_tail();
         if !self.conversations.managed() && self.entries.len() >= CHAT_CAPACITY {
             self.entries.remove(0);
-            self.expanded = self
-                .expanded
-                .iter()
-                .filter_map(|index| index.checked_sub(1))
-                .collect();
-            self.expanded_tool_groups = self
-                .expanded_tool_groups
-                .iter()
-                .filter_map(|index| index.checked_sub(1))
-                .collect();
+            self.trimmed += 1;
             self.open_tools.retain(|_, index| {
                 let Some(shifted) = index.checked_sub(1) else {
                     return false;
@@ -1619,7 +1581,6 @@ impl AgentChat {
         }
         let index = self.entries.len();
         self.entries.push(entry);
-        self.finish_transcript_change(follow_tail);
         index
     }
 
@@ -1860,8 +1821,6 @@ impl AgentChat {
 
     /// Converts every still-running tool row into a terminal row.
     fn finish_open_tools(&mut self, line: &str, detail: &str) {
-        let follow_tail = self.should_follow_tail();
-        let mut changed = false;
         for index in std::mem::take(&mut self.open_tools).into_values() {
             if let Some(ChatEntry::Tool {
                 ok,
@@ -1870,7 +1829,6 @@ impl AgentChat {
                 ..
             }) = self.entries.get_mut(index)
             {
-                changed = true;
                 *ok = false;
                 *row_line = line.to_string();
                 if !detail.is_empty() {
@@ -1878,16 +1836,12 @@ impl AgentChat {
                 }
             }
         }
-        if changed {
-            self.finish_transcript_change(follow_tail);
-        }
     }
 
     fn append_streamed(&mut self, reasoning: bool, text: String) {
         if text.is_empty() {
             return;
         }
-        let follow_tail = self.should_follow_tail();
         let appended = match self.entries.last_mut() {
             Some(ChatEntry::Reasoning(existing)) if reasoning => {
                 existing.push_str(&text);
@@ -1905,8 +1859,6 @@ impl AgentChat {
             } else {
                 ChatEntry::Agent(text)
             });
-        } else {
-            self.finish_transcript_change(follow_tail);
         }
     }
 
@@ -1995,7 +1947,6 @@ impl AgentChat {
                 line,
                 detail,
             } => {
-                let follow_tail = self.should_follow_tail();
                 // The call pushed a running row; this fills it in. A result with no matching
                 // call — a build mismatch, a dropped line — becomes its own row rather than
                 // being lost.
@@ -2018,7 +1969,6 @@ impl AgentChat {
                         *row_ok = ok;
                         *row_line = line;
                         *row_detail = detail;
-                        self.finish_transcript_change(follow_tail);
                     }
                     _ => {
                         self.push_entry(ChatEntry::Tool {
@@ -2421,7 +2371,33 @@ impl AurisApp {
                     .collect()
             })
             .unwrap_or_default();
+        // The comments a person can see beside what they selected: "do what the comment says"
+        // should not need a lookup first. Every other comment is in inspect_project.
+        let here: Vec<_> = self
+            .selected_track
+            .and_then(|id| project.track(id))
+            .into_iter()
+            .flat_map(|track| {
+                track.comments.iter().map(move |comment| {
+                    serde_json::json!({"track": track.id.0, "comment": comment.id.0,
+                        "bar": project.signatures.bar_of(comment.at), "text": comment.text})
+                })
+            })
+            .chain(
+                self.selected_clip
+                    .and_then(|id| project.midi_clip(id))
+                    .into_iter()
+                    .flat_map(|(_, clip)| {
+                        clip.comments.iter().map(move |comment| {
+                            serde_json::json!({"clip": clip.id.0, "comment": comment.id.0,
+                                "bar": project.signatures.bar_of(clip.start + comment.at),
+                                "pitch": comment.pitch, "text": comment.text})
+                        })
+                    }),
+            )
+            .collect();
         serde_json::json!({
+            "comments_on_selection": here,
             "selected_track": self.selected_track.and_then(|id| project.track(id)).map(|track| &track.name),
             "song_creation_reference": project.creation_brief,
             "selected_track_id": self.selected_track.map(|id| id.0),
@@ -2467,15 +2443,11 @@ impl AurisApp {
         self.agent_chat.references.attachments.clear();
         self.agent_chat.references.midi_draft = None;
         self.agent_chat.entries.clear();
-        self.agent_chat.expanded.clear();
-        self.agent_chat.expanded_tool_groups.clear();
+        self.agent_chat.new_transcript();
         self.agent_chat.open_tools.clear();
         self.agent_chat.model_label.clear();
         self.agent_chat.tokens_in = 0;
         self.agent_chat.tokens_out = 0;
-        self.agent_chat.scroll = gpui::ScrollHandle::new();
-        self.agent_chat.unread_entries = 0;
-        self.agent_chat.follow_tail = true;
         if had_transcript {
             self.agent_chat
                 .push_entry(ChatEntry::Note(Key::AgentConversationReset));
@@ -2572,6 +2544,13 @@ impl AurisApp {
         }
         if crate::ui::chat_commands::is_control_command(&text) && !self.agent_operation_busy() {
             self.agent_control_command(&text);
+            return;
+        }
+        if let Some(command) = crate::ui::chat_commands::missing_brief(&text) {
+            let note = self
+                .t(Key::AgentSlashNeedsBrief)
+                .replace("{command}", command);
+            self.agent_chat.push_entry(ChatEntry::Error(note));
             return;
         }
         if self.agent_chat.busy || !self.agent_chat.queued.is_empty() {
@@ -2774,19 +2753,7 @@ impl AurisApp {
             }
         }
 
-        let framed = format!(
-            "[Window context: {}]\n{}",
-            message.selection_context,
-            framed_say(&message.text, message.token.project.as_deref())
-        );
-        let wire = serde_json::json!({
-            "say": framed,
-            "display": &message.text,
-            "attachments": &message.attachments,
-            "policy": message.preferences.policy,
-            "auto_compact_percent": message.preferences.auto_compact_percent.unwrap_or(85)
-        })
-        .to_string();
+        let (wire, read_only) = turn_wire(&message);
         if let Some(link) = self.agent_chat.link.as_mut()
             && let Err(error) = link.send(&wire)
         {
@@ -2795,6 +2762,7 @@ impl AurisApp {
             self.agent_chat.link = None;
             return false;
         }
+        self.agent_chat.controls.read_only_turn = read_only;
         // Typed here, so it is something the user asked for. Restored turns are not, which is
         // why automatic review reads this list rather than the transcript.
         self.session.begin_agent_request();
@@ -2819,8 +2787,19 @@ impl AurisApp {
         true
     }
 
-    /// Apply one request to the bound document without touching its saved file.
+    /// An edit outside any production phase.
+    #[cfg(test)]
     fn agent_edit(&mut self, command: serde_json::Value) -> Result<String, String> {
+        self.agent_edit_locked(command, None)
+    }
+
+    /// Apply one request to the bound document without touching its saved file, withdrawing it
+    /// if it changes what the conversation's production phase keeps fixed.
+    fn agent_edit_locked(
+        &mut self,
+        command: serde_json::Value,
+        lock: Option<&auris_session::phase::Lock>,
+    ) -> Result<String, String> {
         if self.agent_chat.bound_project.as_deref() != self.session.path() {
             return Err("The open document changed; start a new conversation".into());
         }
@@ -2845,9 +2824,9 @@ impl AurisApp {
         } else {
             None
         };
-        let result = self
-            .session
-            .agent_command_with_plugin_paths(command, &self.settings.plugin_paths)?;
+        let result =
+            self.session
+                .agent_command_locked(command, lock, &self.settings.plugin_paths)?;
         if let Some(suggestion) = suggestion {
             self.agent_chat.issue_suggestion = Some(suggestion);
         }
@@ -2969,9 +2948,7 @@ impl AurisApp {
         let auris_session::live_agent::Command::Listen {
             start_bar,
             bars,
-            focus,
             compare_to,
-            aspect,
         } = serde_json::from_value(command.clone()).map_err(|error| error.to_string())?
         else {
             return Err("Expected listen".into());
@@ -2980,13 +2957,9 @@ impl AurisApp {
             "edit_project",
             &serde_json::json!({"command":command}),
         )?;
-        let job = self.session.begin_listening(
-            start_bar,
-            bars,
-            focus.as_deref(),
-            compare_to.as_deref(),
-            aspect,
-        )?;
+        let job = self
+            .session
+            .begin_listening(start_bar, bars, compare_to.as_deref())?;
         let link = self.agent_chat.link.as_mut().ok_or("The agent stopped")?;
         if link.listening.is_some() {
             return Err("A listening operation is already running".into());
@@ -2994,15 +2967,10 @@ impl AurisApp {
         let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let worker_cancel = cancel.clone();
         let (sender, receiver) = std::sync::mpsc::channel();
-        let (approval_sender, approval) = std::sync::mpsc::channel();
         std::thread::Builder::new()
             .name("auris-audio-listening".into())
             .spawn(move || {
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    let (job, model) = job.prepare_reviewer(&worker_cancel)?;
-                    if let Some(model) = model {
-                        await_audio_load_consent(model, &approval_sender, &worker_cancel)?;
-                    }
                     job.run(&worker_cancel)
                 }))
                 .unwrap_or_else(|_| Err("Audio listening worker stopped unexpectedly".into()));
@@ -3010,7 +2978,6 @@ impl AurisApp {
             })
             .map_err(|error| error.to_string())?;
         link.listening = Some(PendingListening {
-            approval,
             revision: self.session.revision(),
             operation,
             cancel,
@@ -3019,7 +2986,11 @@ impl AurisApp {
         Ok(())
     }
 
-    fn start_agent_job(&mut self, command: &serde_json::Value) -> Result<(), String> {
+    fn start_agent_job(
+        &mut self,
+        command: &serde_json::Value,
+        lock: Option<auris_session::phase::Lock>,
+    ) -> Result<(), String> {
         if self.agent_chat.bound_project.as_deref() != self.session.path() {
             return Err("The open document changed; start a new conversation".into());
         }
@@ -3045,7 +3016,7 @@ impl AurisApp {
         let job = self
             .session
             .begin_agent_job(command, self.settings.clone())?;
-        let pending = spawn_agent_job(job, self.session.revision(), operation)?;
+        let pending = spawn_agent_job(job, self.session.revision(), operation, lock)?;
         self.agent_chat
             .link
             .as_mut()
@@ -3070,11 +3041,18 @@ impl AurisApp {
             return;
         };
         let revision = self.session.revision();
-        let result =
-            result.and_then(|result| self.session.continue_agent_job(result, &pending.cancel));
+        let result = result.and_then(|result| {
+            self.session
+                .continue_agent_job_locked(result, pending.lock.as_ref(), &pending.cancel)
+        });
         let response = match result {
             Ok(auris_session::live_agent::AgentStep::Work(job)) => {
-                match spawn_agent_job(job, revision, pending.operation.clone()) {
+                match spawn_agent_job(
+                    job,
+                    revision,
+                    pending.operation.clone(),
+                    pending.lock.clone(),
+                ) {
                     Ok(next) => {
                         if let Some(link) = self.agent_chat.link.as_mut() {
                             link.job = Some(next);
@@ -3175,41 +3153,7 @@ impl AurisApp {
         let _ = link.send(&wire.to_string());
     }
 
-    pub(crate) fn approve_audio_model_load(&mut self, request: &AudioLoadRequest) {
-        let allowed = self
-            .agent_chat
-            .link
-            .as_ref()
-            .and_then(|link| link.listening.as_ref())
-            .is_some_and(|pending| {
-                pending.revision == self.session.revision()
-                    && self.agent_chat.bound_project.as_deref() == self.session.path()
-                    && !pending.cancel.load(std::sync::atomic::Ordering::Relaxed)
-                    && !matches!(
-                        self.settings.agent.policy.decide(&pending.operation),
-                        auris_session::agent_policy::Decision::Deny(_)
-                    )
-            });
-        let _ = request.response.send(allowed);
-    }
-
     fn poll_agent_listening(&mut self) {
-        if self
-            .agent_chat
-            .link
-            .as_ref()
-            .is_none_or(|link| link.listening.is_none())
-        {
-            if matches!(
-                self.prompt.as_ref().map(|prompt| &prompt.body),
-                Some(crate::ui::prompt::PromptBody::Ask(
-                    crate::ui::prompt::Question::AudioModelLoad(_)
-                ))
-            ) {
-                self.prompt = None;
-            }
-            return;
-        }
         let Some(link) = self.agent_chat.link.as_mut() else {
             return;
         };
@@ -3221,27 +3165,16 @@ impl AurisApp {
             self.agent_chat.bound_project.as_deref() == self.session.path(),
             &self.settings.agent.policy,
         ) else {
-            if self.prompt.is_none()
-                && let Ok(request) = pending.approval.try_recv()
-            {
-                self.open_prompt(crate::ui::prompt::Prompt::ask(
-                    self.t(auris_i18n::Key::AudioModelLoadTitle),
-                    crate::ui::prompt::Question::AudioModelLoad(std::sync::Arc::new(request)),
-                ));
-            }
             return;
         };
         link.listening = None;
-        if matches!(
-            self.prompt.as_ref().map(|prompt| &prompt.body),
-            Some(crate::ui::prompt::PromptBody::Ask(
-                crate::ui::prompt::Question::AudioModelLoad(_)
-            ))
-        ) {
-            self.prompt = None;
-        }
-        let result = result.and_then(|result| self.session.continue_listening(result));
-        let wire = serde_json::json!({"event":"edit_result","ok":result.is_ok(),"text":result.unwrap_or_else(|error|error)});
+        // The clips travel whole: the worker hands them to the model as audio input.
+        let wire = match result.and_then(|result| self.session.continue_listening(result)) {
+            Ok(audition) => {
+                serde_json::json!({"event":"edit_result","ok":true,"audition":audition})
+            }
+            Err(error) => serde_json::json!({"event":"edit_result","ok":false,"text":error}),
+        };
         let _ = link.send(&wire.to_string());
     }
 
@@ -3331,11 +3264,11 @@ impl AurisApp {
                 cx.notify();
                 continue;
             }
-            if let AgentEvent::Edit { command } = event {
+            if let AgentEvent::Edit { command, lock } = event {
                 if serde_json::from_value::<auris_session::live_agent::Command>(command.clone())
                     .is_ok_and(|command| command.needs_worker())
                 {
-                    if let Err(error) = self.start_agent_job(&command)
+                    if let Err(error) = self.start_agent_job(&command, lock)
                         && let Some(link) = &self.agent_chat.link
                     {
                         let _ = link.send(
@@ -3379,7 +3312,7 @@ impl AurisApp {
                     continue;
                 }
                 let revision = self.session.revision();
-                let result = self.agent_edit(command);
+                let result = self.agent_edit_locked(command, lock.as_ref());
                 let ok = result.is_ok();
                 let text = result.unwrap_or_else(|error| error);
                 let wire = serde_json::json!({"event": "edit_result", "ok": ok, "text": text});
@@ -3853,22 +3786,16 @@ impl AurisApp {
             .conversations
             .transcript_start
             .min(self.agent_chat.entries.len());
-        let rows: Vec<AnyElement> = transcript_runs(&self.agent_chat.entries[transcript_start..])
-            .map(|run| {
-                let run = (run.start + transcript_start)..(run.end + transcript_start);
-                if run.len() > 1 {
-                    self.chat_tool_group(run, &theme, window, cx)
-                } else {
-                    self.chat_row(
-                        run.start,
-                        &self.agent_chat.entries[run.start],
-                        &theme,
-                        window,
-                        cx,
-                    )
-                }
-            })
-            .collect();
+        let thinking = self.agent_operation_busy().then(|| {
+            SharedString::from(self.t(if self.agent_chat.controls.compacting {
+                Key::AgentCompacting
+            } else if self.agent_chat.controls.pending.is_some() {
+                Key::AgentAwaitingApproval
+            } else {
+                Key::AgentWorking
+            }))
+        });
+        let conversation = self.agent_chat_view(transcript_start, thinking, cx);
         let operation_busy = self.agent_operation_busy();
         let drop_bounds = self.agent_chat.drop_bounds.clone();
         let accepts_drop = !composer_locked;
@@ -4062,79 +3989,72 @@ impl AurisApp {
                             ),
                     ),
             )
-            .child(
-                self.scrolling(
-                    ScrollPanel::Agent,
+            .when(self.agent_chat.controls.rules_open, |this| {
+                this.child(
                     div()
-                        .id("agent-lines")
-                        .flex()
-                        .flex_col()
-                        .flex_1()
-                        .p(theme.atelier.spacing.lg)
-                        .gap(theme.atelier.spacing.lg)
+                        .id("agent-rules-scroll")
+                        .flex_shrink()
+                        .max_h(relative(0.5))
                         .overflow_y_scroll()
-                        .when(self.agent_chat.controls.rules_open, |this| {
-                            this.child(self.agent_rules(cx))
-                        })
-                        .when(transcript_start > 0, |this| {
-                            this.child(button(
-                                "agent-earlier-messages",
-                                self.t(Key::AgentEarlierMessages),
-                                ButtonStyle::Ghost,
-                                false,
-                                theme.accent,
-                                &theme,
-                                cx.listener(|this, _, _, cx| {
-                                    this.agent_chat.conversations.transcript_start = this
-                                        .agent_chat
-                                        .conversations
-                                        .transcript_start
-                                        .saturating_sub(CHAT_CAPACITY);
-                                    this.agent_chat.follow_tail = false;
-                                    cx.notify();
-                                }),
-                            ))
-                        })
-                        .when(
-                            self.agent_chat.entries.is_empty() && !operation_busy,
-                            |view| {
-                                view.child(super::agent_components::conversation_intro(
+                        .p(theme.atelier.spacing.lg)
+                        .child(self.agent_rules(cx)),
+                )
+            })
+            .when(transcript_start > 0, |this| {
+                this.child(
+                    div()
+                        .flex()
+                        .justify_center()
+                        .pt(theme.atelier.spacing.sm)
+                        .child(button(
+                            "agent-earlier-messages",
+                            self.t(Key::AgentEarlierMessages),
+                            ButtonStyle::Ghost,
+                            false,
+                            theme.accent,
+                            &theme,
+                            cx.listener(|this, _, _, cx| {
+                                this.agent_chat.conversations.transcript_start = this
+                                    .agent_chat
+                                    .conversations
+                                    .transcript_start
+                                    .saturating_sub(CHAT_CAPACITY);
+                                this.agent_chat.follow_tail = false;
+                                cx.notify();
+                            }),
+                        )),
+                )
+            })
+            .child(
+                div()
+                    .id("agent-lines")
+                    .debug_selector(|| "agent-lines".to_string())
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_h_0()
+                    .min_w_0()
+                    // A press in the transcript is reading, not typing: the composer lets go.
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _, _| {
+                            this.agent_chat.focused = None;
+                        }),
+                    )
+                    .map(|lines| {
+                        if self.agent_chat.entries.is_empty() && !operation_busy {
+                            lines.p(theme.atelier.spacing.lg).child(
+                                super::agent_components::conversation_intro(
                                     self.t(Key::AgentPlaceholder),
                                     self.t(Key::AgentIntro),
                                     &theme,
-                                ))
-                            },
-                        )
-                        .children(rows)
-                        .when(operation_busy, |this| {
-                            this.child(div().px_1p5().text_xs().text_color(theme.text_faint).child(
-                                self.t(if self.agent_chat.controls.compacting {
-                                    Key::AgentCompacting
-                                } else if self.agent_chat.controls.pending.is_some() {
-                                    Key::AgentAwaitingApproval
-                                } else {
-                                    Key::AgentWorking
-                                }),
-                            ))
-                        }),
-                    cx,
-                ),
-            )
-            .when(self.agent_chat.unread_entries > 0, |this| {
-                let unread = self.agent_chat.unread_entries;
-                this.child(div().flex().justify_center().px_2().py_0p5().child(button(
-                    "agent-jump-latest",
-                    format!("{} ({unread})", self.t(Key::AgentJumpLatest)),
-                    ButtonStyle::Normal,
-                    false,
-                    theme.accent,
-                    &theme,
-                    cx.listener(|this, _, _, cx| {
-                        this.agent_chat.jump_to_latest();
-                        cx.notify();
+                                ),
+                            )
+                        } else {
+                            lines.child(conversation)
+                        }
                     }),
-                )))
-            })
+            )
             .child(self.agent_approval_view(cx))
             .children(self.issue_invitation(cx))
             .when(
@@ -4286,86 +4206,6 @@ impl AurisApp {
         row.into_any_element()
     }
 
-    /// A compact, keyboard-accessible summary of consecutive tool calls.
-    fn chat_tool_group(
-        &self,
-        run: std::ops::Range<usize>,
-        theme: &Theme,
-        window: &mut Window,
-        cx: &mut gpui::Context<Self>,
-    ) -> AnyElement {
-        let start = run.start;
-        let opened = self.agent_chat.expanded_tool_groups.contains(&start);
-        let mut running = 0;
-        let mut failed = 0;
-        for entry in &self.agent_chat.entries[run.clone()] {
-            if let ChatEntry::Tool { ok, line, .. } = entry {
-                if line.is_empty() {
-                    running += 1;
-                } else if !ok {
-                    failed += 1;
-                }
-            }
-        }
-        let mut label = self
-            .t(Key::AgentToolGroup)
-            .replace("{count}", &run.len().to_string());
-        for (count, key) in [
-            (running, Key::AgentToolGroupRunning),
-            (failed, Key::AgentToolGroupFailed),
-        ] {
-            if count > 0 {
-                label.push_str(" · ");
-                label.push_str(&self.t(key).replace("{count}", &count.to_string()));
-            }
-        }
-        div()
-            .id(("agent-tool-group", start))
-            .debug_selector(move || format!("agent-tool-group-{start}"))
-            .w_full()
-            .min_w_0()
-            .flex_shrink_0()
-            .px_1p5()
-            .py_0p5()
-            .text_xs()
-            .text_color(if failed > 0 {
-                theme.danger
-            } else {
-                theme.text_muted
-            })
-            .child(
-                disclosure(
-                    SharedString::from(format!("agent-tool-group-toggle-{start}")),
-                    label,
-                    opened,
-                    theme,
-                    cx.listener(move |this, _, _, cx| {
-                        if !this.agent_chat.expanded_tool_groups.remove(&start) {
-                            this.agent_chat.expanded_tool_groups.insert(start);
-                        }
-                        cx.notify();
-                    }),
-                )
-                .when(failed > 0, |this| this.text_color(theme.danger)),
-            )
-            .when(opened, |this| {
-                this.child(
-                    div()
-                        .id(("agent-tool-group-body", start))
-                        .debug_selector(move || format!("agent-tool-group-body-{start}"))
-                        .flex()
-                        .flex_col()
-                        .mt_1()
-                        .border_l_1()
-                        .border_color(theme.border_subtle)
-                        .children(run.map(|index| {
-                            self.chat_row(index, &self.agent_chat.entries[index], theme, window, cx)
-                        })),
-                )
-            })
-            .into_any_element()
-    }
-
     /// Open an explicitly selected reference in its local editor or preview.
     pub(crate) fn open_agent_attachment(&mut self, path: PathBuf, cx: &mut gpui::Context<Self>) {
         if auris_agent::attachment_kind(&path) == Some(auris_agent::AttachmentKind::Midi) {
@@ -4384,14 +4224,11 @@ impl AurisApp {
         window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) -> AnyElement {
-        let opened = if self.agent_chat.conversations.previewing() {
-            self.agent_chat
-                .conversations
-                .preview_expanded
-                .contains(&index)
-        } else {
-            self.agent_chat.expanded.contains(&index)
-        };
+        let opened = self
+            .agent_chat
+            .conversations
+            .preview_expanded
+            .contains(&index);
         let openable = matches!(entry, ChatEntry::Reasoning(_))
             || matches!(entry, ChatEntry::Tool { args, detail, .. } if !args.is_empty() || !detail.is_empty())
             || matches!(entry, ChatEntry::RestoredContext(detail) if !detail.is_empty());
@@ -4453,22 +4290,21 @@ impl AurisApp {
             entry,
         );
         let atelier_message = matches!(entry, ChatEntry::Agent(_) | ChatEntry::You { .. });
+        let copy = agent_components::CopyLabels {
+            tooltip: self.t(Key::AgentCopyMarkdown).into(),
+            copied: self.t(Key::CopiedToClipboard).into(),
+        };
         let body: AnyElement = match entry {
             ChatEntry::Agent(_) => agent_components::assistant_message(
                 ("agent-message", index),
                 text.clone(),
-                Some(super::agent_markdown::render(
-                    SharedString::from(format!("agent-markdown-{index}")),
-                    SharedString::from(text.clone()),
-                    theme,
-                    window,
-                    cx,
-                )),
+                Some(&copy),
                 streaming,
             ),
             ChatEntry::You { .. } => agent_components::user_message(
                 ("agent-message", index),
                 text.clone(),
+                Some(&copy),
                 theme,
                 window,
                 cx,
@@ -4530,11 +4366,6 @@ impl AurisApp {
                     card,
                     picked,
                     active,
-                    agent_components::ChoiceCardText {
-                        send: self.t(Key::ChoicesSend).into(),
-                        multiple: self.t(Key::ChoicesMultiple).into(),
-                    },
-                    theme,
                     move |picked, window, cx| option(&picked, window, cx),
                     move |window, cx| send(&(), window, cx),
                 )
@@ -5861,58 +5692,6 @@ impl AurisApp {
 
 #[cfg(test)]
 mod tests {
-    #[gpui::test]
-    fn audio_load_dialog_closes_when_the_agent_has_stopped(cx: &mut gpui::TestAppContext) {
-        let (app, cx) = crate::harness::open(cx);
-        let (response, receiver) = std::sync::mpsc::channel();
-        app.update(cx, |this, _| {
-            this.open_prompt(crate::ui::prompt::Prompt::ask(
-                "Load audio model?",
-                crate::ui::prompt::Question::AudioModelLoad(std::sync::Arc::new(
-                    super::AudioLoadRequest {
-                        model: "test-audio".into(),
-                        response,
-                    },
-                )),
-            ));
-            this.poll_agent_listening();
-            assert!(this.prompt.is_none());
-        });
-        assert_eq!(
-            receiver.try_recv(),
-            Err(std::sync::mpsc::TryRecvError::Disconnected)
-        );
-    }
-
-    #[test]
-    fn local_audio_load_waits_for_consent_and_stops_on_dismissal_or_cancellation() {
-        for answer in [Some(true), Some(false), None] {
-            let (requests, receiver) = std::sync::mpsc::channel();
-            let worker = std::thread::spawn(move || {
-                super::await_audio_load_consent(
-                    "test-audio".into(),
-                    &requests,
-                    &std::sync::atomic::AtomicBool::new(false),
-                )
-            });
-            let request = receiver.recv().unwrap();
-            assert!(!worker.is_finished());
-            if let Some(answer) = answer {
-                request.response.send(answer).unwrap();
-            }
-            drop(request);
-            assert_eq!(worker.join().unwrap().is_ok(), answer == Some(true));
-        }
-        let (requests, receiver) = std::sync::mpsc::channel();
-        let result = super::await_audio_load_consent(
-            "test-audio".into(),
-            &requests,
-            &std::sync::atomic::AtomicBool::new(true),
-        );
-        assert!(result.is_err());
-        drop(receiver);
-    }
-
     use super::*;
     use auris_session::agent_policy::Mode;
     use auris_session::prelude::{Note, Ticks};
@@ -5934,6 +5713,7 @@ mod tests {
             let pending = PendingAgentJob {
                 revision: 1,
                 operation,
+                lock: None,
                 cancel: cancel.clone(),
                 receiver,
             };
@@ -5962,6 +5742,7 @@ mod tests {
         let pending = PendingAgentJob {
             revision: 1,
             operation,
+            lock: None,
             cancel: cancel.clone(),
             receiver,
         };
@@ -6092,6 +5873,187 @@ mod tests {
         crate::harness::click("agent-mode-option-1", cx);
         app.read_with(cx, |this, _| {
             assert_eq!(this.settings.agent.policy.mode, Mode::Edit)
+        });
+    }
+
+    fn pending(text: &str, mode: auris_session::agent_policy::Mode) -> PendingAgentSend {
+        let mut preferences = AgentPreferences::default();
+        preferences.policy.mode = mode;
+        PendingAgentSend {
+            token: AgentDocumentToken {
+                project: None,
+                revision: 0,
+            },
+            text: text.into(),
+            attachments: Vec::new(),
+            preferences,
+            selection_context: "{}".into(),
+        }
+    }
+
+    #[test]
+    fn composition_commands_reach_the_model_as_assignments_and_review_as_plan_mode() {
+        use auris_session::agent_policy::{Mode, Policy};
+        let wire = |text: &str| {
+            let (wire, read_only) = turn_wire(&pending(text, Mode::Bypass));
+            let wire: serde_json::Value = serde_json::from_str(&wire).unwrap();
+            let policy: Policy = serde_json::from_value(wire["policy"].clone()).unwrap();
+            (wire, policy.mode, read_only)
+        };
+
+        let (review, mode, read_only) = wire("/review the chorus feels flat");
+        assert!(read_only);
+        assert_eq!(mode, Mode::Plan, "a review overrides even bypass");
+        assert_eq!(review["display"], "/review the chorus feels flat");
+        let said = review["say"].as_str().unwrap();
+        assert!(said.contains("[/review command]"), "{said}");
+        assert!(said.ends_with("The user's direction:\nthe chorus feels flat"));
+
+        for (text, needle) in [
+            ("/compose a rainy ballad", "all three phases"),
+            (
+                "/draft a rainy ballad",
+                "Do not enter the arrangement phase",
+            ),
+            ("/mix", "enter_phase mix"),
+        ] {
+            let (sent, mode, read_only) = wire(text);
+            assert!(!read_only, "{text}");
+            assert_eq!(mode, Mode::Bypass, "{text} keeps the chosen mode");
+            assert!(sent["say"].as_str().unwrap().contains(needle), "{text}");
+            assert_eq!(sent["display"], text);
+        }
+
+        let (plain, mode, read_only) = wire("write a chorus");
+        assert!(!read_only);
+        assert_eq!(mode, Mode::Bypass);
+        assert!(plain["say"].as_str().unwrap().ends_with("\nwrite a chorus"));
+    }
+
+    #[gpui::test]
+    fn a_review_turn_refuses_every_edit_whatever_mode_was_chosen(cx: &mut gpui::TestAppContext) {
+        use auris_session::agent_policy::{Decision, Mode, Operation};
+        let (app, cx) = crate::harness::open(cx);
+        let add_track =
+            serde_json::json!({"action": "add_track", "name": "Lead", "kind": "instrument"});
+        let decide = |this: &AurisApp, tool: &str, args: serde_json::Value| {
+            this.agent_turn_policy()
+                .decide(&Operation::parse(tool, &args).unwrap())
+        };
+        app.update(cx, |this, _| {
+            this.settings.agent.policy.mode = Mode::Bypass;
+            this.settings.agent.policy.allow = vec!["*".into()];
+            this.agent_chat.controls.read_only_turn = true;
+            let revision = this.session.revision();
+            let tracks = this.session.project().tracks.len();
+            let error = this.agent_edit(add_track.clone()).unwrap_err();
+            assert!(error.starts_with("Plan mode"), "{error}");
+            assert_eq!(this.session.revision(), revision);
+            assert_eq!(this.session.project().tracks.len(), tracks);
+            // The record is document state too: a review reads it and never enters a phase.
+            for operation in [
+                serde_json::json!({"kind": "enter_phase", "phase": "mix", "reason": "review"}),
+                serde_json::json!({"kind": "set_roles", "foreground": [1]}),
+            ] {
+                assert!(matches!(
+                    decide(
+                        this,
+                        "production_record",
+                        serde_json::json!({ "operation": operation })
+                    ),
+                    Decision::Deny(_)
+                ));
+            }
+            assert_eq!(
+                decide(
+                    this,
+                    "production_record",
+                    serde_json::json!({"operation": {"kind": "read"}})
+                ),
+                Decision::Allow
+            );
+            // An ignore rule waits for a later turn and the user's confirmation.
+            assert!(matches!(
+                decide(
+                    this,
+                    "edit_project",
+                    serde_json::json!({"command": {"action": "ignore_lint", "id": "x", "reason": "deliberate"}})
+                ),
+                Decision::Deny(_)
+            ));
+
+            // The next ordinary turn is back under the chosen mode.
+            this.agent_chat.controls.read_only_turn = false;
+            this.agent_edit(add_track).unwrap();
+            assert_eq!(this.session.project().tracks.len(), tracks + 1);
+        });
+    }
+
+    #[gpui::test]
+    fn composition_commands_complete_in_the_agent_panel_and_list_in_help(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, _| {
+            this.settings.agent.model.clear();
+            this.panels.show(crate::dock::Panel::Agent);
+            this.agent_chat.models_loaded = true;
+        });
+        crate::harness::paint(&app, cx);
+        crate::harness::click("agent-input", cx);
+        crate::harness::paint(&app, cx);
+        cx.simulate_input("/rev");
+        crate::harness::paint(&app, cx);
+        assert!(cx.debug_bounds("agent-slash-option-0").is_some());
+        cx.simulate_keystrokes("tab");
+        app.read_with(cx, |this, _| {
+            assert_eq!(this.agent_chat.input.content(), "/review");
+        });
+        app.update(cx, |this, _| {
+            this.agent_chat.input = TextField::new(String::new());
+        });
+        cx.simulate_input("/dra");
+        cx.simulate_keystrokes("tab");
+        app.read_with(cx, |this, _| {
+            // A writing command waits for its brief.
+            assert_eq!(this.agent_chat.input.content(), "/draft ");
+        });
+
+        app.update(cx, |this, _| {
+            this.agent_chat.input = TextField::new("/help");
+        });
+        crate::harness::paint(&app, cx);
+        crate::harness::click("agent-send", cx);
+        app.read_with(cx, |this, _| {
+            let Some(ChatEntry::Status(help)) = this.agent_chat.entries.last() else {
+                panic!("no help");
+            };
+            for command in auris_agent::PhaseCommand::ALL {
+                assert!(help.contains(command.name()), "{help}");
+            }
+            assert!(help.contains(Key::AgentSlashReview.get(this.language())));
+        });
+    }
+
+    #[gpui::test]
+    fn a_writing_command_without_a_brief_asks_for_one_and_sends_nothing(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, _| {
+            this.settings.agent.model.clear();
+            this.panels.show(crate::dock::Panel::Agent);
+            this.agent_chat.models_loaded = true;
+            this.agent_chat.input = TextField::new("/compose");
+            this.agent_send();
+        });
+        app.read_with(cx, |this, _| {
+            assert_eq!(this.agent_chat.input.content(), "/compose");
+            assert!(this.agent_chat.link.is_none());
+            assert!(!this.agent_chat.busy);
+            assert!(this.agent_chat.entries.contains(&ChatEntry::Error(
+                "Describe the song after /compose.".into()
+            )));
         });
     }
 
@@ -6390,14 +6352,15 @@ mod tests {
             ];
         });
         crate::harness::paint(&app, cx);
-        app.read_with(cx, |this, _| assert!(this.agent_chat.expanded.is_empty()));
-        crate::harness::click("agent-line-0", cx);
-        crate::harness::click("agent-line-1", cx);
-        app.read_with(cx, |this, _| {
-            assert_eq!(
-                this.agent_chat.expanded.iter().copied().collect::<Vec<_>>(),
-                vec![0, 1]
-            );
+        app.read_with(cx, |this, cx| {
+            assert!(!this.agent_chat.chat_row_open(0, cx));
+            assert!(!this.agent_chat.chat_row_open(1, cx));
+        });
+        crate::harness::click(chat_view::row(&app, cx, 0, "reasoning"), cx);
+        crate::harness::click(chat_view::row(&app, cx, 1, "tool"), cx);
+        app.read_with(cx, |this, cx| {
+            assert!(this.agent_chat.chat_row_open(0, cx));
+            assert!(this.agent_chat.chat_row_open(1, cx));
         });
     }
 
@@ -6408,7 +6371,6 @@ mod tests {
         let (app, cx) = crate::harness::open(cx);
         let user = "**literal** <tag> & melody\n  日本語の歌詞";
         let answer = "A gentle piano melody";
-        let detail = "{\n  \"tempo\": 120\n}";
         // An answer rises into place as it arrives; this is about selecting it once it has.
         cx.update(|_, cx| atelier::motion::reduce_motion(cx));
         app.update(cx, |this, _| {
@@ -6422,16 +6384,14 @@ mod tests {
                     attachments: vec![],
                 },
                 ChatEntry::Agent(answer.into()),
-                ChatEntry::Reasoning(detail.into()),
             ];
-            this.agent_chat.expanded.insert(2);
         });
         crate::harness::resize(&app, cx, gpui::size(gpui::px(1200.0), gpui::px(1000.0)));
-        for (selector, expected) in [
-            ("agent-markdown-1-0-block", answer),
-            ("agent-message-0-text", user),
-            ("agent-detail-2-0", detail),
-        ] {
+        let answer_block: &'static str =
+            format!("{}-block-1", chat_view::row(&app, cx, 1, "answer")).leak();
+        let user_text: &'static str =
+            format!("{}-text", chat_view::row(&app, cx, 0, "user")).leak();
+        for (selector, expected) in [(answer_block, answer), (user_text, user)] {
             crate::harness::select_text(&app, cx, selector);
             cx.simulate_keystrokes("secondary-c");
             cx.update(|_, cx| {
@@ -6485,7 +6445,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn the_whole_conversation_and_any_line_of_it_can_be_copied(cx: &mut gpui::TestAppContext) {
+    fn the_whole_conversation_can_be_copied(cx: &mut gpui::TestAppContext) {
         let (app, cx) = crate::harness::open(cx);
         app.update(cx, |this, _| {
             this.panels.show(crate::dock::Panel::Agent);
@@ -6507,21 +6467,37 @@ mod tests {
                 Some(expected)
             );
         });
+    }
 
-        // An error is drawn as a notice nobody can drag across; the menu copies it instead.
-        let error = cx.debug_bounds("agent-line-2").unwrap();
-        crate::harness::right_press(cx, error.center());
-        crate::harness::paint(&app, cx);
-        crate::harness::click("menu-item-0", cx);
-        let expected = app.read_with(cx, |this, _| {
-            entry_text(&this.agent_chat.entries[2], this.language())
+    #[gpui::test]
+    fn each_message_copies_whole_from_its_footer_button(cx: &mut gpui::TestAppContext) {
+        let (app, cx) = crate::harness::open(cx);
+        // Paragraphs, a list and code spans: every one a block that selection stops at.
+        let answer = "以下をIssueのたたき台として使えます。\n\n**タイトル**\n指定したSoundFontを適用できない\n\n- インストゥルメントID: `auris.sampler.soundfont`\n- プリセット: font `3`, bank `0`";
+        let request = "Play **this** clip.\n\nKeep `120 BPM`.";
+        app.update(cx, |this, _| {
+            this.panels.show(crate::dock::Panel::Agent);
+            this.settings.agent.model = "test-model".into();
+            this.agent_chat.entries = vec![
+                ChatEntry::user(request.into()),
+                ChatEntry::Agent(answer.into()),
+            ];
         });
-        cx.update(|_, cx| {
-            assert_eq!(
-                cx.read_from_clipboard().and_then(|item| item.text()),
-                Some(expected)
-            );
-        });
+        crate::harness::resize(&app, cx, gpui::size(px(1200.), px(800.)));
+        for (selector, expected) in [
+            (chat_view::row(&app, cx, 1, "copy"), answer),
+            (chat_view::row(&app, cx, 0, "copy"), request),
+        ] {
+            crate::harness::click(selector, cx);
+            cx.update(|_, cx| {
+                assert_eq!(
+                    cx.read_from_clipboard()
+                        .and_then(|item| item.text())
+                        .as_deref(),
+                    Some(expected)
+                );
+            });
+        }
     }
 
     #[gpui::test]
@@ -6536,19 +6512,7 @@ mod tests {
             this.agent_chat.push_entry(ChatEntry::Agent(answer.into()));
         });
         crate::harness::resize(&app, cx, gpui::size(px(900.), px(600.)));
-        assert!(cx.debug_bounds("agent-copy-1").is_none());
-        let message = cx.debug_bounds("agent-line-1").unwrap();
-        crate::harness::right_press(cx, message.center());
-        crate::harness::paint(&app, cx);
-        app.read_with(cx, |this, _| {
-            let menu = this.menu.as_ref().expect("message context menu is open");
-            assert!(matches!(
-                &menu.entries[..],
-                [crate::ui::context_menu::MenuEntry::Item(item)]
-                    if item.label == this.t(Key::AgentCopyMarkdown)
-            ));
-        });
-        crate::harness::click("menu-item-0", cx);
+        crate::harness::click(chat_view::row(&app, cx, 1, "copy"), cx);
         cx.update(|_, cx| {
             assert_eq!(
                 cx.read_from_clipboard()
@@ -6557,41 +6521,6 @@ mod tests {
                 Some(answer)
             );
         });
-    }
-
-    #[gpui::test]
-    fn message_menu_copies_the_clicked_request_even_after_transcript_changes(
-        cx: &mut gpui::TestAppContext,
-    ) {
-        let (app, cx) = crate::harness::open(cx);
-        let request = "Play **this** clip.\n\nKeep `120 BPM`.";
-        app.update(cx, |this, _| {
-            this.panels.show(crate::dock::Panel::Agent);
-            this.settings.agent.model = "test-model".into();
-            this.agent_chat.entries = vec![ChatEntry::user(request.into())];
-        });
-        crate::harness::paint(&app, cx);
-        let message = cx.debug_bounds("agent-line-0").unwrap();
-        crate::harness::right_press(cx, message.center());
-        crate::harness::paint(&app, cx);
-        cx.simulate_keystrokes("escape");
-        app.read_with(cx, |this, _| assert!(this.menu.is_none()));
-
-        crate::harness::right_press(cx, message.center());
-        app.update(cx, |this, _| {
-            this.agent_chat.entries = vec![ChatEntry::Agent("Another message".into())];
-        });
-        crate::harness::paint(&app, cx);
-        cx.simulate_keystrokes("down enter");
-        cx.update(|_, cx| {
-            assert_eq!(
-                cx.read_from_clipboard()
-                    .and_then(|item| item.text())
-                    .as_deref(),
-                Some(request)
-            );
-        });
-        app.read_with(cx, |this, _| assert!(this.menu.is_none()));
     }
 
     #[gpui::test]
@@ -6661,7 +6590,7 @@ mod tests {
             this.agent_chat.entries = vec![ChatEntry::Agent(answer.into())];
         });
         crate::harness::paint(&app, cx);
-        let short = cx.debug_bounds("agent-line-0").unwrap().size.height;
+        let short = chat_view::answer_bounds(&app, cx, 0).unwrap().size.height;
         app.update(cx, |this, _| {
             // A fresh identity avoids the Markdown renderer's asynchronous update debounce.
             this.agent_chat.entries = vec![
@@ -6677,21 +6606,26 @@ mod tests {
             ];
         });
         crate::harness::paint(&app, cx);
-        let long = cx.debug_bounds("agent-line-1").unwrap().size.height;
+        let long = chat_view::answer_bounds(&app, cx, 1).unwrap().size.height;
         // Structural overflow, not font metrics or a pixel snapshot: more content must
-        // occupy more space, and scrolling must make the following tool reachable.
+        // occupy more space, and the conversation must keep the following tool reachable.
         assert!(
             long > short * 10.,
             "the answer was compressed: {short:?} -> {long:?}"
         );
-        app.update(cx, |this, _| {
-            let view = this.scroll_view(ScrollPanel::Agent);
-            assert!(view.max_offset > view.viewport);
-            this.set_scroll_offset(ScrollPanel::Agent, -view.max_offset);
-        });
-        crate::harness::paint(&app, cx);
-        crate::harness::click("agent-tool-result-2", cx);
-        app.read_with(cx, |this, _| assert!(this.agent_chat.expanded.contains(&2)));
+        let lines = cx.debug_bounds("agent-lines").unwrap();
+        assert!(
+            long > lines.size.height,
+            "the answer fits; nothing to scroll"
+        );
+        let tool = chat_view::row(&app, cx, 2, "tool");
+        let row = cx.debug_bounds(tool).unwrap();
+        assert!(
+            row.bottom() <= lines.bottom() + px(1.),
+            "a new conversation shows its end"
+        );
+        crate::harness::click(tool, cx);
+        app.read_with(cx, |this, cx| assert!(this.agent_chat.chat_row_open(2, cx)));
     }
 
     #[gpui::test]
@@ -6706,36 +6640,35 @@ mod tests {
                 .collect();
         });
         crate::harness::paint(&app, cx);
-        app.update(cx, |this, _| {
-            let view = this.scroll_view(ScrollPanel::Agent);
-            assert!(view.max_offset > view.viewport);
-            this.set_scroll_offset(ScrollPanel::Agent, -view.max_offset / 2.0);
+        let lines = cx.debug_bounds("agent-lines").unwrap();
+        // Read further up, the way a person does: with the wheel.
+        cx.simulate_event(gpui::ScrollWheelEvent {
+            position: lines.center(),
+            delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.), lines.size.height * 2.)),
+            ..Default::default()
         });
         crate::harness::paint(&app, cx);
-        let before = app.read_with(cx, |this, _| this.scroll_view(ScrollPanel::Agent).offset);
 
         app.update(cx, |this, _| {
             this.agent_chat
                 .push_entry(ChatEntry::Agent("new while reading".into()));
-            assert_eq!(this.agent_chat.unread_entries, 1);
         });
         crate::harness::paint(&app, cx);
-        app.read_with(cx, |this, _| {
-            let view = this.scroll_view(ScrollPanel::Agent);
-            assert!(
-                (view.offset - before).abs() < 1.0,
-                "reader was forced to the tail"
-            );
+        app.read_with(cx, |this, cx| {
+            assert_eq!(this.agent_chat.unread_entries(cx), 1)
         });
+        assert!(
+            chat_view::answer_bounds(&app, cx, 80).unwrap().origin.y > lines.bottom(),
+            "reader was forced to the tail"
+        );
 
-        assert!(cx.debug_bounds("agent-jump-latest").is_some());
-        crate::harness::click("agent-jump-latest", cx);
+        crate::harness::click("agent-chat-jump", cx);
         crate::harness::paint(&app, cx);
-        app.read_with(cx, |this, _| {
-            let view = this.scroll_view(ScrollPanel::Agent);
-            assert!((view.offset + view.max_offset).abs() < 1.0);
-            assert_eq!(this.agent_chat.unread_entries, 0);
+        app.read_with(cx, |this, cx| {
+            assert_eq!(this.agent_chat.unread_entries(cx), 0)
         });
+        let newest = chat_view::answer_bounds(&app, cx, 80).unwrap();
+        assert!(newest.bottom() <= lines.bottom() + px(1.));
     }
 
     #[gpui::test]
@@ -6757,15 +6690,15 @@ mod tests {
         });
         crate::harness::paint(&app, cx);
 
-        crate::harness::click("agent-tool-result-0", cx);
-        app.read_with(cx, |this, _| assert!(this.agent_chat.expanded.contains(&0)));
+        crate::harness::click(chat_view::row(&app, cx, 0, "tool"), cx);
+        app.read_with(cx, |this, cx| assert!(this.agent_chat.chat_row_open(0, cx)));
         cx.simulate_keystrokes("shift-tab tab");
         release_key("space", cx);
-        app.read_with(cx, |this, _| {
-            assert!(!this.agent_chat.expanded.contains(&0))
+        app.read_with(cx, |this, cx| {
+            assert!(!this.agent_chat.chat_row_open(0, cx))
         });
         release_key("enter", cx);
-        app.read_with(cx, |this, _| assert!(this.agent_chat.expanded.contains(&0)));
+        app.read_with(cx, |this, cx| assert!(this.agent_chat.chat_row_open(0, cx)));
     }
 
     #[test]
@@ -6792,14 +6725,11 @@ mod tests {
             )];
         });
         crate::harness::paint(&app, cx);
-        for selector in [
-            "agent-markdown-0-1-0-0-block",
-            "agent-markdown-0-1-1-0-block",
-            "agent-markdown-0-3-0-0-block",
-            "agent-markdown-0-3-1-0-block",
-        ] {
+        let answer = chat_view::row(&app, cx, 0, "answer");
+        for block in [2, 3, 5, 6] {
+            let selector: &'static str = format!("{answer}-block-{block}").leak();
             let body = cx.debug_bounds(selector).expect("list body is rendered");
-            let message = cx.debug_bounds("agent-line-0").unwrap();
+            let message = chat_view::answer_bounds(&app, cx, 0).unwrap();
             assert!(
                 body.size.width > message.size.width / 2. && body.size.height > gpui::px(0.),
                 "list body collapsed: {selector}: {body:?}; message: {message:?}"
@@ -6823,8 +6753,14 @@ mod tests {
             ];
         });
         crate::harness::paint(&app, cx);
-        let short = cx.debug_bounds("agent-line-0").unwrap().size.height;
-        let long = cx.debug_bounds("agent-line-1").unwrap().size.height;
+        let height = |cx: &mut gpui::VisualTestContext, index| {
+            chat_view::answer_bounds(&app, cx, index)
+                .unwrap()
+                .size
+                .height
+        };
+        let short = height(cx, 0);
+        let long = height(cx, 1);
         assert!(
             long > short * 3.,
             "list text does not wrap: {short:?} -> {long:?}"
@@ -6844,8 +6780,14 @@ mod tests {
             ];
         });
         crate::harness::paint(&app, cx);
-        let short = cx.debug_bounds("agent-line-0").unwrap().size.height;
-        let long = cx.debug_bounds("agent-line-1").unwrap().size.height;
+        let height = |cx: &mut gpui::VisualTestContext, index| {
+            chat_view::answer_bounds(&app, cx, index)
+                .unwrap()
+                .size
+                .height
+        };
+        let short = height(cx, 0);
+        let long = height(cx, 1);
         assert!(
             long > short * 10.,
             "list paragraphs share a horizontal row: {short:?} -> {long:?}"
@@ -6861,7 +6803,7 @@ mod tests {
             let before = this.project().clone();
             assert!(this.session.path().is_none());
             let event = parse_event(r#"{"event":"edit","command":{"action":"add_track","name":"Agent lead","kind":"instrument"}}"#).unwrap();
-            let AgentEvent::Edit { command } = event else { panic!() };
+            let AgentEvent::Edit { command, .. } = event else { panic!() };
             this.agent_edit(command).unwrap();
             assert!(this.project().tracks.iter().any(|track| track.name == "Agent lead"));
             assert!(this.session.is_dirty());
@@ -6965,7 +6907,6 @@ mod tests {
         )
         .unwrap();
         let pending = PendingListening {
-            approval: std::sync::mpsc::channel().1,
             revision: 7,
             operation,
             cancel: cancel.clone(),
@@ -7681,33 +7622,6 @@ mod tests {
                 ChatEntry::Agent("answer".into())
             ]
         );
-        assert!(chat.expanded.is_empty());
-    }
-
-    #[test]
-    fn consecutive_tools_group_without_crossing_message_boundaries() {
-        let tool = || ChatEntry::Tool {
-            name: "inspect".into(),
-            args: "{}".into(),
-            ok: true,
-            line: "done".into(),
-            detail: String::new(),
-        };
-        let entries = [
-            tool(),
-            tool(),
-            ChatEntry::Agent("answer".into()),
-            tool(),
-            ChatEntry::user("next request".into()),
-            tool(),
-            tool(),
-            tool(),
-        ];
-        assert_eq!(
-            transcript_runs(&entries).collect::<Vec<_>>(),
-            vec![0..2, 2..3, 3..4, 4..5, 5..8]
-        );
-        assert_eq!(transcript_runs(&[]).count(), 0);
     }
 
     #[test]
@@ -7747,32 +7661,22 @@ mod tests {
                 .push(ChatEntry::Agent("Visible answer".into()));
         });
         crate::harness::paint(&app, cx);
-        let group = cx.debug_bounds("agent-tool-group-0").unwrap();
-        assert!(group.size.height < Metrics::CONTROL_HEIGHT * 2.0);
-        assert!(cx.debug_bounds("agent-line-0").is_none());
-        assert!(cx.debug_bounds("agent-line-40").is_some());
+        // One frame holds the run, every call a row of its own; the answer follows it.
+        let first = chat_view::bounds(&app, cx, 0, "tool").unwrap();
+        let last = chat_view::bounds(&app, cx, 39, "tool").unwrap();
+        let answer = chat_view::answer_bounds(&app, cx, 40).unwrap();
+        assert!(first.size.height < Metrics::CONTROL_HEIGHT * 2.0);
+        assert!(first.origin.y < last.origin.y && last.bottom() <= answer.origin.y);
 
-        crate::harness::click("agent-tool-group-toggle-0", cx);
+        let tool = chat_view::row(&app, cx, 39, "tool");
+        let collapsed = cx.debug_bounds(tool).unwrap().size.height;
+        crate::harness::click(tool, cx);
         crate::harness::paint(&app, cx);
-        assert!(cx.debug_bounds("agent-tool-group-body-0").is_some());
-        let collapsed = cx.debug_bounds("agent-line-0").unwrap().size.height;
-        crate::harness::click("agent-tool-result-0", cx);
-        crate::harness::paint(&app, cx);
-        assert!(cx.debug_bounds("agent-line-0").unwrap().size.height > collapsed);
-        app.read_with(cx, |this, _| {
-            assert!(this.agent_chat.expanded_tool_groups.contains(&0));
-            assert!(this.agent_chat.expanded.contains(&0));
+        app.read_with(cx, |this, cx| {
+            assert!(this.agent_chat.chat_row_open(39, cx));
+            assert!(!this.agent_chat.chat_row_open(0, cx));
         });
-
-        crate::harness::click("agent-tool-group-toggle-0", cx);
-        release_key("space", cx);
-        app.read_with(cx, |this, _| {
-            assert!(this.agent_chat.expanded_tool_groups.contains(&0))
-        });
-        release_key("enter", cx);
-        app.read_with(cx, |this, _| {
-            assert!(!this.agent_chat.expanded_tool_groups.contains(&0))
-        });
+        assert!(cx.debug_bounds(tool).unwrap().size.height >= collapsed);
     }
 
     #[test]
@@ -8978,17 +8882,14 @@ mod tests {
             cx.update(|window, _| window.set_rem_size(px(font_size)));
             crate::harness::resize(&app, cx, gpui::size(px(720.0), px(720.0)));
             let panel = cx.debug_bounds("agent-panel").unwrap();
-            let group = cx.debug_bounds("agent-message-attachments-0").unwrap();
             for selector in [
                 "agent-message-attachment-0-0",
                 "agent-message-attachment-0-1",
             ] {
-                let row = cx.debug_bounds(selector).unwrap();
-                assert_eq!(row.left(), group.left());
-                assert_eq!(row.right(), group.right());
-                assert!(row.left() >= panel.left() && row.right() <= panel.right());
+                let chip = cx.debug_bounds(selector).unwrap();
+                assert!(chip.left() >= panel.left() && chip.right() <= panel.right());
             }
-            assert!(cx.debug_bounds("agent-message-attachments-1").is_none());
+            assert!(cx.debug_bounds("agent-message-attachment-1-0").is_none());
             assert!(cx.debug_bounds("agent-attachment-remove-0").is_none());
         }
         app.read_with(cx, |this, _| {
@@ -9020,7 +8921,7 @@ mod tests {
         });
         crate::harness::paint(&app, cx);
         assert_eq!(cx.opened_url(), None);
-        crate::harness::click("agent-message-attachment-0-0", cx);
+        crate::harness::click("agent-message-attachment-0-0-open", cx);
         cx.run_until_parked();
         app.read_with(cx, |this, _| {
             assert_eq!(this.attachment_preview.as_ref().unwrap().path, paths[0])
@@ -9063,8 +8964,8 @@ mod tests {
         });
         crate::harness::paint(&app, cx);
         for selector in [
-            "agent-message-attachment-0-0",
-            "agent-message-attachment-0-1",
+            "agent-message-attachment-0-0-open",
+            "agent-message-attachment-0-1-open",
         ] {
             crate::harness::click(selector, cx);
             cx.run_until_parked();

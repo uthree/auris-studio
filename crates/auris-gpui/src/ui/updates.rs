@@ -11,7 +11,7 @@ use crate::app::AurisApp;
 use crate::ui::prompt::{PendingAction, Prompt, PromptBody, Question};
 use crate::update_check::{
     ReadyUpdate, ReleaseAsset, UpdateOutcome, UpdateStatus, check_latest_release, download_update,
-    installed_target, take_update_result,
+    installed_target, prune_update_folder, take_update_result,
 };
 
 /// One release operation at a time, with a verified package retained until quit.
@@ -24,6 +24,8 @@ pub(crate) enum UpdatePhase {
     Available {
         current: String,
         latest: String,
+        /// The terminal command that upgrades a copy installed with `cargo install`.
+        upgrade: Option<String>,
     },
     Failed,
     Downloading {
@@ -42,7 +44,9 @@ impl AurisApp {
             .as_ref()
             .is_some_and(|prompt| match &prompt.body {
                 PromptBody::Ask(
-                    Question::RestartForUpdate { .. } | Question::OpenUpdateRelease { .. },
+                    Question::RestartForUpdate { .. }
+                    | Question::OpenUpdateRelease { .. }
+                    | Question::CargoUpgrade { .. },
                 ) => true,
                 PromptBody::Notice(_) => prompt.title.as_ref() == self.t(Key::CmdCheckForUpdates),
                 _ => false,
@@ -82,6 +86,9 @@ impl AurisApp {
 
     /// Starts one quiet check shortly after launch and repeats while the app remains open.
     pub(crate) fn start_auto_updates(&mut self, cx: &mut Context<Self>) {
+        cx.background_executor()
+            .spawn(async { prune_update_folder() })
+            .detach();
         if let Some(UpdateOutcome::Failure(detail)) = take_update_result() {
             log::warn!("previous update failed: {detail}");
             let message = self.t(Key::UpdateInstallFailed).to_owned();
@@ -187,15 +194,25 @@ impl AurisApp {
                     .replace("{current}", &current)
                     .replace("{version}", &latest);
                 self.set_status(&message);
+                // The updater replaces installers, and Cargo's copy was not made by one: what it
+                // gets instead is the command that does for it what the installer would.
+                let upgrade =
+                    crate::cargo_install::current().map(|install| install.upgrade_command(&latest));
                 self.update_phase = UpdatePhase::Available {
                     current: current.clone(),
                     latest: latest.clone(),
+                    upgrade: upgrade.clone(),
                 };
                 if manual && self.prompt.is_none() {
-                    self.open_prompt(Prompt::ask(
-                        title,
-                        Question::OpenUpdateRelease { current, latest },
-                    ));
+                    let question = match upgrade {
+                        Some(command) => Question::CargoUpgrade {
+                            current,
+                            latest,
+                            command,
+                        },
+                        None => Question::OpenUpdateRelease { current, latest },
+                    };
+                    self.open_prompt(Prompt::ask(title, question));
                 }
             }
             Ok(UpdateStatus::Current(version)) if manual => {
@@ -349,15 +366,26 @@ impl AurisApp {
         let (message, action) = match &self.update_phase {
             UpdatePhase::Idle => return None,
             UpdatePhase::Checking { .. } => (self.t(Key::UpdateChecking).to_owned(), None),
-            UpdatePhase::Available { current, latest } => (
-                self.t(Key::UpdateAvailable)
+            UpdatePhase::Available {
+                current,
+                latest,
+                upgrade,
+            } => {
+                let message = self
+                    .t(Key::UpdateAvailable)
                     .replace("{current}", current)
-                    .replace("{version}", latest),
-                Some(
+                    .replace("{version}", latest);
+                let release =
                     atelier::Button::new("startup-update-release", self.t(Key::UpdateOpenRelease))
-                        .on_click(|_, _, cx| cx.open_url(crate::update_check::RELEASE_PAGE)),
-                ),
-            ),
+                        .on_click(|_, _, cx| cx.open_url(crate::update_check::RELEASE_PAGE));
+                match upgrade {
+                    None => (message, Some(release.into_any_element())),
+                    Some(command) => (
+                        message,
+                        Some(self.render_cargo_upgrade(command, release, cx)),
+                    ),
+                }
+            }
             UpdatePhase::Downloading {
                 version,
                 total,
@@ -380,14 +408,16 @@ impl AurisApp {
                     atelier::Button::new("startup-update-restart", self.t(Key::UpdateRestartNow))
                         .on_click(
                             cx.listener(|this, _, window, cx| this.restart_for_update(window, cx)),
-                        ),
+                        )
+                        .into_any_element(),
                 ),
             ),
             UpdatePhase::Failed => (
                 self.t(Key::UpdateDownloadFailed).to_owned(),
                 Some(
                     atelier::Button::new("startup-update-retry", self.t(Key::CmdCheckForUpdates))
-                        .on_click(cx.listener(|this, _, _, cx| this.check_for_updates(cx))),
+                        .on_click(cx.listener(|this, _, _, cx| this.check_for_updates(cx)))
+                        .into_any_element(),
                 ),
             ),
         };
@@ -407,6 +437,143 @@ impl AurisApp {
             .children(action)
             .into_any_element();
         Some((notice, message))
+    }
+
+    /// What a Cargo copy shows under "a newer version is available": the command, and a button
+    /// that puts it on the clipboard.
+    fn render_cargo_upgrade(
+        &self,
+        command: &str,
+        release: atelier::Button,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let theme = &self.theme;
+        let spacing = theme.atelier.spacing;
+        let copied = command.to_owned();
+        div()
+            .flex()
+            .flex_col()
+            .gap(spacing.sm)
+            .child(
+                div()
+                    .text_color(theme.text_muted)
+                    .child(self.t(Key::CargoUpdateBody).to_owned()),
+            )
+            .child(
+                div()
+                    .id("startup-update-command")
+                    .debug_selector(|| "startup-update-command".into())
+                    .px(spacing.md)
+                    .py(spacing.sm)
+                    .rounded(theme.atelier.shape.radius_md)
+                    .bg(theme.atelier.window_fill())
+                    .border_1()
+                    .border_color(theme.border_subtle)
+                    .flex()
+                    .flex_col()
+                    .children(command.lines().map(|line| div().child(line.to_owned()))),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .gap(spacing.sm)
+                    .child(
+                        atelier::Button::new("startup-update-copy", self.t(Key::CargoUpdateCopy))
+                            .primary()
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.copy_upgrade_command(copied.clone(), cx);
+                            })),
+                    )
+                    .child(release),
+            )
+            .into_any_element()
+    }
+
+    /// Puts a Cargo copy's upgrade command on the clipboard and says so.
+    pub(crate) fn copy_upgrade_command(&mut self, command: String, cx: &mut Context<Self>) {
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string(command));
+        self.set_status(self.t(Key::CargoUpdateCopied));
+        cx.notify();
+    }
+
+    /// Where this platform keeps the shortcut [`crate::cargo_install::create_shortcut`] makes,
+    /// in the words the interface uses for it.
+    fn shortcut_place(&self) -> &'static str {
+        self.t(if cfg!(target_os = "macos") {
+            Key::CargoShortcutPlaceMac
+        } else if cfg!(target_os = "windows") {
+            Key::CargoShortcutPlaceWindows
+        } else {
+            Key::CargoShortcutPlaceLinux
+        })
+    }
+
+    /// The start screen's offer to give a Cargo copy the application shortcut Cargo does not
+    /// make. Gone once the shortcut exists.
+    pub(crate) fn render_cargo_shortcut_offer(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if !crate::cargo_install::offers_shortcut() {
+            return None;
+        }
+        let theme = &self.theme;
+        let place = self.shortcut_place();
+        Some(
+            div()
+                .id("startup-cargo-shortcut")
+                .debug_selector(|| "startup-cargo-shortcut".into())
+                .flex()
+                .flex_col()
+                .flex_shrink_0()
+                .gap(theme.atelier.spacing.sm)
+                .px(theme.atelier.spacing.xxl)
+                .pb(theme.atelier.spacing.md)
+                .text_size(theme.atelier.typography.size_sm)
+                .text_color(theme.text)
+                .child(self.t(Key::CargoShortcutOffer).replace("{place}", place))
+                .child(
+                    atelier::Button::new(
+                        "startup-cargo-shortcut-create",
+                        self.t(Key::CargoShortcutCreate).replace("{place}", place),
+                    )
+                    .on_click(cx.listener(|this, _, _, cx| this.create_cargo_shortcut(cx))),
+                )
+                .into_any_element(),
+        )
+    }
+
+    /// Makes the shortcut off the main thread: on macOS it copies the whole executable and signs
+    /// the bundle, which is seconds rather than a frame.
+    fn create_cargo_shortcut(&mut self, cx: &mut Context<Self>) {
+        let Some(install) = crate::cargo_install::current() else {
+            return;
+        };
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move { crate::cargo_install::create_shortcut(install) })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                let place = this.shortcut_place();
+                match result {
+                    Ok(path) => {
+                        log::info!("created {}", path.display());
+                        this.set_status(
+                            this.t(Key::CargoShortcutCreated).replace("{place}", place),
+                        );
+                    }
+                    Err(error) => {
+                        log::warn!("could not create the application shortcut: {error}");
+                        this.set_failed_status(
+                            this.t(Key::CargoShortcutFailed)
+                                .replace("{place}", place)
+                                .replace("{error}", &error.to_string()),
+                        );
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     /// Use the same save guard as Quit before requesting an update restart.
@@ -460,6 +627,11 @@ mod tests {
                     cx,
                 );
                 assert!(this.prompt.is_none());
+                // The test binary is not a Cargo install, so it gets the release page.
+                assert!(matches!(
+                    this.update_phase,
+                    UpdatePhase::Available { upgrade: None, .. }
+                ));
             });
         });
         resize(&app, cx, size(px(720.0), px(600.0)));
@@ -471,6 +643,56 @@ mod tests {
         );
         click("chooser-confirm", cx);
         app.read_with(cx, |this, _| assert!(this.project_chooser.is_none()));
+    }
+
+    #[gpui::test]
+    fn a_cargo_install_is_shown_and_given_its_upgrade_command(cx: &mut TestAppContext) {
+        let (app, cx) = open(cx);
+        let command = "cargo install --locked --git https://github.com/uthree/auris-studio \
+                       --tag v0.16.0 auris-gpui";
+        cx.update(|window, cx| {
+            app.update(cx, |this, cx| {
+                this.show_project_chooser(window, cx);
+                this.update_phase = UpdatePhase::Available {
+                    current: "0.15.1".into(),
+                    latest: "0.16.0".into(),
+                    upgrade: Some(command.into()),
+                };
+                cx.notify();
+            });
+        });
+        resize(&app, cx, size(px(720.0), px(600.0)));
+        assert!(cx.debug_bounds("startup-update-command").is_some());
+        assert!(cx.debug_bounds("startup-update-release").is_some());
+        click("startup-update-copy", cx);
+        assert_eq!(
+            cx.read_from_clipboard()
+                .and_then(|item| item.text())
+                .as_deref(),
+            Some(command)
+        );
+
+        // Help → Check for Updates asks the same thing as a question.
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string(String::new()));
+        app.update(cx, |this, cx| {
+            this.open_prompt(Prompt::ask(
+                this.t(Key::CmdCheckForUpdates),
+                Question::CargoUpgrade {
+                    current: "0.15.1".into(),
+                    latest: "0.16.0".into(),
+                    command: command.into(),
+                },
+            ));
+            cx.notify();
+        });
+        paint(&app, cx);
+        click("prompt-ok", cx);
+        assert_eq!(
+            cx.read_from_clipboard()
+                .and_then(|item| item.text())
+                .as_deref(),
+            Some(command)
+        );
     }
 
     #[gpui::test]

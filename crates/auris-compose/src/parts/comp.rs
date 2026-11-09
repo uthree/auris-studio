@@ -212,6 +212,45 @@ fn voiced(
         })
 }
 
+/// The lowest a chord part's own bass note goes: the bottom string of a bass guitar.
+///
+/// Below this a piano's left hand is rumble rather than a pitch, and a voicing pushed down by the
+/// octave dial would otherwise drag its root out of anything a speaker can reproduce.
+const LOWEST_ROOT: i32 = 28;
+
+/// The chord's bass note placed under a voicing: the highest one at least an octave below the
+/// voicing's lowest note, which is where a pianist's left hand sits under the right.
+///
+/// The slash bass when the chord has one — `C/E` is asked for with E underneath, and a C there
+/// would be a different chord. `None` when the voicing is already so low that nothing fits above
+/// [`LOWEST_ROOT`] and below it.
+fn low_root(chord: Chord, voicing: &[i32]) -> Option<i32> {
+    let lowest = *voicing.iter().min()?;
+    let class = chord.bass_class();
+    let ceiling = lowest - OCTAVE;
+    // How far the ceiling sits above the nearest note of the class at or below it.
+    let mut root = ceiling - class.distance_up_to(crate::theory::pitch::PitchClass::new(ceiling));
+    while root < LOWEST_ROOT {
+        root += OCTAVE;
+    }
+    (root < lowest).then_some(root)
+}
+
+/// How late each note of a strummed chord begins, for `count` notes sounding `length`, lowest
+/// first.
+///
+/// `strum` apart, unless the chord is struck too briefly for that: then the strum is squeezed so
+/// the top note still begins inside the first half of the strike. A strum that ran past the
+/// strike would leave its top notes sounding only after the chord has been let go — or never.
+fn strum_offsets(count: usize, strum: Ticks, length: Ticks) -> Vec<Ticks> {
+    if count < 2 || strum <= Ticks::ZERO {
+        return vec![Ticks::ZERO; count];
+    }
+    let steps = count as i64 - 1;
+    let step = strum.raw().min(length.raw() / 2 / steps).max(0);
+    (0..count as i64).map(|index| Ticks(index * step)).collect()
+}
+
 /// Chords, either comped in rhythm or held as a pad.
 pub(super) fn comp(
     settings: &ScoreSettings,
@@ -329,6 +368,17 @@ pub(super) fn comp(
             settings.style,
         );
         previous.clone_from(&voicing);
+        // The root under the voicing is struck with it but is not part of the voice leading:
+        // `previous` keeps only the voicing, so the next chord is led from the right hand and
+        // the left hand simply finds the next root under wherever that lands.
+        let mut voicing = voicing;
+        if part.low_root
+            && let Some(root) = low_root(event.chord, &voicing)
+        {
+            voicing.insert(0, root);
+        }
+        // Lowest first, which is the order a strum reaches them in.
+        voicing.sort_unstable();
 
         // Which rhythm the chord is struck on. Chosen per bar from the section's own stream, so a
         // repeat of the section comps the same way and a different seed comps differently — the
@@ -367,7 +417,10 @@ pub(super) fn comp(
                 ))
             })
             .unwrap_or(push_early);
+        // Only a change is anticipated: restriking a chord that is already sounding half a
+        // beat early is a stumble, not a push.
         let push = pushing
+            && !section.continues_chord(event_index)
             && !pad
             && !written
             && drive == 0.0
@@ -437,7 +490,9 @@ pub(super) fn comp(
                 .map(|onset| event.start + grid.tick_of(*onset))
                 .unwrap_or_else(|| event.end());
             let weight = grid.weight(grid.step_of(event.start));
-            for pitch in &voicing {
+            let length = (sounds_to - (event.start - pushed_by)).max(Ticks(1));
+            let delays = strum_offsets(voicing.len(), auris_core::strum_ticks(part.strum), length);
+            for (pitch, delay) in voicing.iter().zip(&delays) {
                 notes.push(Draft {
                     section: index,
                     pitch: (*pitch).clamp(0, 127) as u8,
@@ -445,8 +500,8 @@ pub(super) fn comp(
                         * if held { 0.7 } else { 0.9 }
                         * phrase_shape(grid, section, event.start - pushed_by, settings.dynamics))
                     .clamp(0.05, 1.0),
-                    start: boundary,
-                    length: (sounds_to - (event.start - pushed_by)).max(Ticks(1)),
+                    start: boundary + *delay,
+                    length: (length - *delay).max(Ticks(1)),
                 });
             }
         }
@@ -468,7 +523,10 @@ pub(super) fn comp(
             };
             let length = (next - at).min(event.end() - at).max(Ticks(1));
             let weight = grid.weight(grid.step_of(at));
-            for pitch in &voicing {
+            // Every note of a strum still lets go where the strike does: the strum delays the
+            // attacks, it does not move the chord.
+            let delays = strum_offsets(voicing.len(), auris_core::strum_ticks(part.strum), length);
+            for (pitch, delay) in voicing.iter().zip(&delays) {
                 // A pad holds whatever two chords have in common rather than striking it again.
                 // This is most of what makes a pad a pad and not a comp playing whole notes: the
                 // voices with somewhere to go move, and the ones without stay exactly where they
@@ -489,8 +547,8 @@ pub(super) fn comp(
                         * if held { 0.7 } else { 0.9 }
                         * phrase_shape(grid, section, at, settings.dynamics))
                     .clamp(0.05, 1.0),
-                    start: section.start + at,
-                    length,
+                    start: section.start + at + *delay,
+                    length: (length - *delay).max(Ticks(1)),
                 });
                 if pad {
                     still_sounding.push((*pitch, notes.len() - 1));
@@ -888,6 +946,90 @@ mod tests {
                 "the pad struck at {} which is not a chord change",
                 at.raw()
             );
+        }
+    }
+
+    #[test]
+    fn a_chord_held_over_the_bar_line_is_accompanied_like_one_written_twice() {
+        // The document stores `| I | I |` as one I lasting two bars, and the accompaniment must
+        // not hear the difference: every part keeps its figure going in the second bar.
+        for seed in 1..=6u64 {
+            let (spec, frame, parts) = draft(&format!(
+                r#"
+                    form = "verse"
+                    chords = "| I | I | V | V |"
+                    humanize = 0
+                    syncopation = 0.8
+                    ending = "none"
+                    seed = {seed}
+                    [section.verse]
+                    bars = 4
+                    [[part]]
+                    name = "chords"
+                    [[part]]
+                    name = "pad"
+                    [[part]]
+                    name = "bass"
+                    [[part]]
+                    name = "arp"
+                    [[part]]
+                    name = "kick"
+                    "#
+            ));
+            let mut merged = frame.clone();
+            let events = &mut merged.sections[0].events;
+            assert_eq!(events.len(), 4, "the chart spells each bar");
+            events[0].length = events[0].length + events[1].length;
+            events[2].length = events[2].length + events[3].length;
+            events.remove(3);
+            events.remove(1);
+            let again = crate::parts::write_parts(
+                &crate::parts::ScoreSettings::from(&spec),
+                &spec.parts,
+                &merged,
+            );
+            for name in ["chords", "pad", "bass", "arp"] {
+                let notes = |drafts: &[crate::parts::PartDraft]| {
+                    part(drafts, name)
+                        .notes
+                        .iter()
+                        .map(|note| (note.start.raw(), note.pitch, note.length.raw()))
+                        .collect::<Vec<_>>()
+                };
+                assert_eq!(notes(&parts), notes(&again), "seed {seed}: {name}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_comp_never_pushes_a_chord_that_is_already_sounding() {
+        for seed in 1..=12u64 {
+            let (_, frame, parts) = draft(&format!(
+                r#"
+                    form = "verse"
+                    chords = "| I | I | I | I |"
+                    humanize = 0
+                    syncopation = 1
+                    ending = "none"
+                    seed = {seed}
+                    [section.verse]
+                    bars = 4
+                    [[part]]
+                    name = "chords"
+                    "#
+            ));
+            let bar = frame.grid.bar_ticks();
+            let chords = part(&parts, "chords");
+            for line in 1..4 {
+                let at = bar * line;
+                assert!(
+                    !chords
+                        .notes
+                        .iter()
+                        .any(|note| note.start < at && note.start + note.length > at),
+                    "seed {seed}: a strike ran over bar line {line} as if anticipating a change"
+                );
+            }
         }
     }
 }

@@ -48,8 +48,8 @@ use auris_core::plugin::{CC_EXPRESSION, pitch_to_hz};
 use auris_core::project::{ClipCurve, CurvePoint, curve_at};
 use auris_core::time::{Seconds, TempoMap, Ticks};
 use auris_core::{
-    ConsonantLevels, ConsonantWidths, Fall, Scoop, SingerTrack, Vibrato, default_frame_hop,
-    loop_passes,
+    ConsonantLevels, ConsonantWidths, Fall, NoteTransform, Scoop, SingerTrack, Vibrato,
+    default_frame_hop, loop_passes, swing_position,
 };
 
 use crate::ornament::ornament_offset;
@@ -417,9 +417,16 @@ fn score_lyric(lyric: &str, phonemes: &[String]) -> String {
     // Keep ordinary kana score labels, including their script, unchanged.
     let phrase_on_one_mora = crate::split_kana_lyric(lyric).is_some_and(|moras| moras.len() > 1)
         && crate::phoneme_moras(phonemes).len() == 1;
+    // The particles は and へ are stored with their spoken phonemes, *wa* and *e*, and a
+    // backend that reads the label rather than the phonemes must be told わ and え.
+    let read_otherwise = matches!(
+        (lyric, phonemes),
+        ("は" | "ハ", [w, a]) if w == "w" && a == "a"
+    ) || matches!((lyric, phonemes), ("へ" | "ヘ", [e]) if e == "e");
     if lyric == "+"
         || lyric.is_empty()
         || phrase_on_one_mora
+        || read_otherwise
         || (lyric != "ー" && crate::kana_phonemes(lyric).is_none())
     {
         crate::kana::phonemes_to_kana(phonemes).unwrap_or_else(|| match lyric {
@@ -451,14 +458,30 @@ fn timed_notes_with_origins<'a>(
             continue;
         }
         let expression = clip.curve(ClipCurve::Controller(CC_EXPRESSION));
+        // A swung clip has to be sung swung, or the voice stays on the straight grid while
+        // the band it shares the offbeats with plays them late. Both ends move, so a legato
+        // line stays legato; the other transforms are the band's and leave the voice alone.
+        let swung = |position: Ticks| {
+            clip.transforms
+                .iter()
+                .fold(position, |position, transform| match transform {
+                    NoteTransform::Swing {
+                        percent,
+                        subdivision,
+                    } => swing_position(position, *percent, *subdivision),
+                    _ => position,
+                })
+        };
         for (offset, span) in loop_passes(clip.length, clip.loop_end) {
             let base = clip.start + offset;
             for (index, note) in clip.playable_notes_with_indices() {
                 if note.start >= span {
                     continue;
                 }
-                let length = note.length.min(span - note.start);
-                let start = base + note.start;
+                let from = swung(note.start);
+                let length =
+                    (swung(note.start + note.length.min(span - note.start)) - from).max(Ticks(1));
+                let start = base + from;
                 let (phonemes, phoneme_seconds) = match note.phonemes.is_empty() {
                     true => (vec!["a".to_string()], Vec::new()),
                     false => (note.phonemes.clone(), note.phoneme_seconds.clone()),
@@ -763,6 +786,38 @@ mod tests {
         );
         assert_eq!(track.clips[0].notes[0].lyric, "光");
         assert_eq!(track.clips[0].notes[1].lyric, "+");
+    }
+
+    #[test]
+    fn a_swung_clip_is_sung_swung_and_stays_legato() {
+        let notes = vec![
+            sung(60, 0.0, 0.5, &["a"]),
+            sung(62, 0.5, 0.5, &["i"]),
+            sung(64, 1.0, 0.5, &["u"]),
+        ];
+        let mut track = track(notes);
+        track.clips[0].transforms = vec![NoteTransform::Swing {
+            percent: 67,
+            subdivision: auris_core::Subdivision::Eighth,
+        }];
+        let timed = timed_notes(&track, &map());
+        let seconds = |ticks: i64| ticks as f64 / 960.0 * 0.5;
+        // The offbeat lands at 643 ticks, and the note before it holds until it does.
+        assert!((timed[1].start - seconds(643)).abs() < 1e-9);
+        assert!((timed[0].end - seconds(643)).abs() < 1e-9);
+        assert!((timed[2].start - seconds(960)).abs() < 1e-9);
+        // Without the transform the voice sits on the straight grid.
+        track.clips[0].transforms.clear();
+        assert!((timed_notes(&track, &map())[1].start - seconds(480)).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_kana_label_follows_the_phonemes_it_is_sung_as() {
+        let wa = vec!["w".to_string(), "a".to_string()];
+        assert_eq!(score_lyric("は", &wa), "わ");
+        assert_eq!(score_lyric("へ", &["e".to_string()]), "え");
+        // Agreement keeps the label, script and all.
+        assert_eq!(score_lyric("ハ", &["h".to_string(), "a".to_string()]), "ハ");
     }
 
     #[test]

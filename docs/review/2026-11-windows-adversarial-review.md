@@ -46,18 +46,19 @@ heading, so the fixes can land in any order.
 
 ## Findings
 
-### AN-01 — Applied installers and helper copies are never deleted (open)
+### AN-01 — Applied installers and helper copies are never deleted (fixed)
 
 `download_update` keeps the installer in `<config>/updates`, and `spawn_update_helper` copies the
 helper there as `auris-update-helper-<pid>.exe`. Nothing ever removes either. On the review
 machine the folder held **540 MB**: eight installers from v0.11.0 to v0.17.0, about 70 MB each, and
 nine helper copies. It grows by one installer per release.
 
-**Direction.** Once per process, delete installers for versions no newer than the running one and
-helper copies belonging to other processes. Keep a newer, not yet applied installer, because
-`download_update` reuses one that still verifies.
+**Fix.** `prune_update_folder`, run once per process when a window starts its update checks, deletes
+installers for versions no newer than the running one and helper copies belonging to other
+processes. A newer, not yet applied installer is kept. A helper that is still running cannot be
+deleted on Windows; the error is ignored and the file goes on the next launch.
 
-### AN-02 — An approved audio URL can redirect to loopback, the LAN or plain HTTP (open)
+### AN-02 — An approved audio URL can redirect to loopback, the LAN or plain HTTP (fixed)
 
 `audio_assets` `import_url` asks for approval of one URL, then `download` follows up to five
 redirects with no check beyond `audio_url`'s scheme and credential rules. A public HTTPS address
@@ -67,11 +68,13 @@ only lands in the project if it decodes as audio, so this is a blind request rat
 but the VOICEVOX client and the audio reviewer already refuse to reach non-loopback services
 automatically, and this was the one path that let a remote server pick the destination.
 
-**Direction.** Follow a redirect within the approved origin; to another origin, only over HTTPS
-and only to a host that is not `localhost` or a loopback, private, link-local, CGNAT or
-unspecified address.
+**Fix.** `redirect_allowed`: a redirect within the approved origin is followed as before; one to
+another origin must be HTTPS and must not name `localhost` or a loopback, private, link-local,
+CGNAT or unspecified address. The address the person typed is still trusted, so a local server
+they chose works. A hostname that *resolves* to a private address is not caught; that would need
+the resolver's answer, and is left.
 
-### AN-03 — Every window opens saying there is no audio output (open)
+### AN-03 — Every window opens saying there is no audio output (fixed)
 
 The same finding as MR-08. A desktop window starts with its audio suspended and claims the device
 on the first explicit audio command (`acquire_audio`), so that a second project window does not
@@ -79,10 +82,11 @@ take the output from the first. `audio_line` only looks at whether a stream is r
 launch reports "No audio output — editing and export still work" on a machine with working
 speakers. It was in the log of the run above, which is how it was found.
 
-**Direction.** Pass `audio_line` whether the session is suspended, and say that output opens on
-Play in that case.
+**Fix.** `audio_line` takes whether the session is suspended, and says "Audio output opens when you press
+Play" (「再生すると音声出力を開きます」) in that case. "No audio output" is kept for a session that
+tried to open a device and could not.
 
-### AN-04 — Issue-report redaction misses other spellings of a Windows path (open)
+### AN-04 — Issue-report redaction misses other spellings of a Windows path (fixed)
 
 `issue_report::redact` replaces `USERPROFILE`, `HOME`, the project folder and the configuration
 folder as typed, with `/` and doubled `\\` variants. Windows paths have more spellings than that.
@@ -92,18 +96,22 @@ message then carry a spelling that does not match. Paths are also case-insensiti
 `c:\users\alice` survives redaction. The review machine's user name is short, so this was
 reasoned rather than reproduced.
 
-**Direction.** On Windows, compare case-insensitively and add each private path's
-`GetShortPathNameW` spelling to the list.
+**Fix.** `redact` matches every spelling without regard to ASCII case, on every platform (a default macOS
+volume ignores case too). The desktop adds the temporary folder to the private paths, and on
+Windows each private path's `GetShortPathNameW` spelling. On the review machine the volume keeps
+8.3 names, and the new test checks an added short spelling against the folder it names.
 
-### AN-05 — The audio-file search lists any folder without asking (open)
+### AN-05 — The audio-file search lists any folder without asking (fixed)
 
 `audio_assets` `search` takes any absolute `root` and is not marked `requires_confirmation`, so
 the agent can list the names and sizes of audio files anywhere the user can read, eight levels
 deep, without a prompt. A native CLI read outside the project does ask (`cli_file_read` with
 `within_project` false). Only audio file names are returned, which keeps this low.
 
-**Direction.** Ask when `root` is given and lies outside the project folder and the OS Music and
-Downloads folders that the default search uses.
+**Fix.** `Operation::requires_confirmation` is true for a `search` with a `root`, so the agent panel asks
+before listing a folder the model names. The default search of the Music and Downloads folders
+still runs without asking. The project folder is not exempted: the rule has no project context,
+and the project's own audio is already in the project.
 
 ### AN-06 — The installer does not associate `.auris` files with the application (open)
 

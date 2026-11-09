@@ -49,7 +49,6 @@ pub mod audio_inspection;
 pub mod choices;
 pub use audio_attachment::{AudioAttachmentCopy, copy_audio_attachment, prepare_audio_attachment};
 pub mod audio_input;
-pub mod audio_review;
 pub mod conversation_attachments;
 pub mod conversations;
 pub mod execution_trace;
@@ -58,6 +57,7 @@ pub mod issue_report;
 pub mod live_agent;
 pub mod midi_reference;
 pub mod music_reference;
+pub mod phase;
 pub mod production_record;
 pub use export_inspection::{ExportInspection, inspect_export};
 pub mod note_pitch;
@@ -82,8 +82,10 @@ pub use plugin_worker::{
 pub mod guide;
 pub mod history;
 pub mod library;
+pub mod lint;
 pub mod mixer_graph;
 pub mod param;
+pub mod performance_presets;
 pub mod progressions;
 pub mod registry;
 pub mod render;
@@ -115,7 +117,9 @@ pub use auris_analysis::{AnalysisControl, AnalysisError};
 /// Workspace-owned error variants exposed for frontend localisation.
 pub use auris_core::CoreError;
 /// Mechanical observations exposed through the session boundary.
-pub use auris_core::motion::{MotionFrame, MotionGeometry, MotionVoice};
+pub use auris_core::motion::{
+    MOTION_POINTS, MOTION_VOICES, MotionFrame, MotionGeometry, MotionVoice,
+};
 /// PCM-derived drum measurements, exposed without a frontend DSP dependency.
 pub use auris_dsp::drum_analysis::{AcousticCharacter, DrumAcoustics, DrumSpectrum};
 /// Upper bound on populated groups in a refined library timbre map.
@@ -136,14 +140,16 @@ pub use library::{
     voice_source_kind,
 };
 pub use param::ParamTarget;
-pub use registry::{DEFAULT_INSTRUMENT, default_registry, plugin_catalogue};
+pub use registry::{DEFAULT_INSTRUMENT, default_registry, plugin_catalogue, registry_with_samples};
 pub use render::{ExportSummary, RenderJob, StemRenderFailure, StemSummary, stem_tracks};
 pub use session::InstalledPluginFiles;
 pub use session::NoteSelectionPreview;
+pub use session::SungLine;
 pub use session::accompaniment;
 pub use session::arrangement;
 pub use session::lyric_harness;
-pub use session::prepare_output_preview;
+pub use session::source_material;
+pub use session::workspace_relative;
 pub use session::{
     AccompanyReport, Arm, AudioStatus, AutosaveJob, AutosaveResult, BalanceReport, CEILING_DB,
     ChordPreview, ChordPreviewJob, Clipboard, CollectAssetsJob, CollectAssetsResult,
@@ -168,8 +174,13 @@ pub use session::{
     ClipInstrumentAnalysis, analyze_audio_file, analyze_instrument_file,
 };
 pub use session::{CheckpointJob, CheckpointOperation, CheckpointResult};
+pub use session::{ClipEvent, ClipEventKind, EventEdit, EventRef, clip_events};
 pub use session::{CompositionPreview, CompositionTrackPreview};
+pub use session::{
+    DEFAULT_SAMPLE_ROOT, DetectedPitch, SampleZoneView, detect_pitch, parse_root_note,
+};
 pub use session::{ENVELOPE_PITCHES, SoundEnvelope};
+pub use session::{prepare_looping_output_preview, prepare_output_preview};
 pub mod workshop;
 pub use session::{
     DrumKitAnalysis, DrumProbeFont, DrumProbeRequest, DrumProbeSample, DrumScanOptions,
@@ -266,6 +277,7 @@ pub fn midi_extensions() -> &'static [&'static str] {
 /// text. Both names would compile — an explicit `use` beats a glob — but a reader would have to
 /// know that rule to tell which `Key` a line means, and one of the two would be wrong silently.
 pub mod prelude {
+    pub use crate::session::CommentHost;
     pub use crate::session::{PlaybackReadiness, PlaybackState};
     pub use crate::session::{RhythmGrid, RhythmRow};
     pub use crate::session::{TrackConversion, TrackConversionJob};
@@ -308,15 +320,17 @@ pub mod prelude {
         AudioBuffer, AudioClip, AudioSource, AuxSend, ClipId, ClipPreset, ClipRecipe, Color,
         ConsonantWidths, DrumMap, DrumRole, EffectSlot, EffectSlotId, FadeCurve, Fall, GhostNotes,
         GhostPattern, LayerShape, LayerVoice, MAX_LAYER_OFFSET, MidiClip, MixerStrip, Note,
-        NoteTransform, Output, PluginRegistry, PresetRef, Project, Scoop, SectionMap, SectionPoint,
-        SectionSpan, SendId, SingerPitch, SingerTrack, SoundFontId, SoundFontRef, SourceId,
-        StrokeDirection, Subdivision, Track, TrackId, TrackKind, Vibrato, default_frame_hop,
-        default_loop_end, loop_passes, sounding_length,
+        NoteTransform, Output, PluginRegistry, PresetRef, Project, STRUM_VALUES, SUSTAIN_MAX_TICKS,
+        Scoop, SectionMap, SectionPoint, SectionSpan, SendId, SingerPitch, SingerTrack,
+        SoundFontId, SoundFontRef, SourceId, StrokeDirection, Subdivision, Track, TrackId,
+        TrackKind, Vibrato, default_frame_hop, default_loop_end, loop_passes, sounding_length,
     };
+    pub use auris_core::{Comment, CommentId, JoinRefusal};
     pub use auris_core::{
         Expression, GroovePoint, GrooveTemplate, PitchPerformance, Strum, StrumClock,
         VolumeContour, VolumeContourPreset,
     };
+    pub use auris_core::{PerformancePreset, PresetFamily, builtin_performance_presets};
     /// Offline source analysis, prepared through [`Session::spectrogram_job`].
     pub use auris_dsp::Spectrogram;
     /// The equalizer's band table, the settings a display reads out of one, and the curve those
@@ -368,7 +382,10 @@ pub mod prelude {
         AudioExportFormat, AudioExportSettings, Mp3Bitrate, SoundFontPreset, WavBitDepth,
         WavExportSettings,
     };
-    pub use auris_sampler::{SAMPLER_ENVELOPE_KEY, SAMPLER_ID};
+    pub use auris_sampler::{
+        AUDIO_SAMPLER_ID, AUDIO_SAMPLER_LOOP_KEY, KeyRange, MAX_SAMPLE_ZONES, SAMPLER_ID,
+        SampleZone, VelocityRange,
+    };
 
     pub use crate::{
         Acceleration, AccompanyReport, Arm, AudioPreferences, AutosaveJob, AutosaveResult,
@@ -386,4 +403,4 @@ pub mod prelude {
 }
 
 /// A coherent stereo analysis snapshot.
-pub use session::{VisualizerFrame, VisualizerSpectrum};
+pub use session::{VisualizerFrame, VisualizerLoudness, VisualizerSpectrum, VisualizerTap};
