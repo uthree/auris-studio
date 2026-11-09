@@ -21,6 +21,15 @@ const SPEED_WANDER: f32 = 0.35;
 /// How far one string's gap wanders at full variation, as a fraction of an even gap.
 const GAP_WANDER: f32 = 0.5;
 
+/// The chord velocity a sweep takes its nominal time at.
+const NOMINAL_VELOCITY: f32 = 0.8;
+
+/// How much slower a sweep gets per unit of velocity below [`NOMINAL_VELOCITY`], at full
+/// variation. A guitarist who plays a chord softer or behind the beat moves the hand more slowly
+/// across the strings (Câmara et al., 2024): at variation 0.3 a chord at velocity 0.5 sweeps 9%
+/// slower than one at 0.8, and one at 1.0 6% quicker.
+const SOFT_SLOWING: f32 = 1.0;
+
 /// What advances alternating strokes.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -117,7 +126,9 @@ pub(super) fn strum(
             .map(|&i| notes[i].length.raw())
             .min()
             .unwrap_or(1);
-        let stroke = Stroke::drawn(settings, played.len(), absolute, context.pass);
+        let velocity =
+            played.iter().map(|&i| notes[i].velocity).sum::<f32>() / played.len().max(1) as f32;
+        let stroke = Stroke::drawn(settings, played.len(), velocity, absolute, context.pass);
         let spread = if stroke.spread_ms <= 0.0 {
             0
         } else {
@@ -154,12 +165,14 @@ struct Stroke {
 }
 
 impl Stroke {
-    /// The sweep over `strings` notes of the chord at `absolute`, wandering by `variation`.
+    /// The sweep over `strings` notes of the chord at `absolute`, struck at mean `velocity`,
+    /// wandering by `variation`. A softer chord sweeps more slowly, by as much as the variation
+    /// lets it, so a variation of zero still strikes every chord identically.
     ///
     /// Each chord draws from a stream named by its timeline position and loop pass, so the
     /// wander of one chord never depends on the chords around it or on an edit elsewhere, and a
     /// copied clip is struck differently from its original.
-    fn drawn(settings: &Strum, strings: usize, absolute: Ticks, pass: u64) -> Self {
+    fn drawn(settings: &Strum, strings: usize, velocity: f32, absolute: Ticks, pass: u64) -> Self {
         let variation = settings.variation.clamp(0.0, 1.0);
         let mut draw = Rng::stream(
             0,
@@ -170,7 +183,8 @@ impl Stroke {
             ],
         );
         let mut wander = |amount: f32| 1.0 + amount * variation * (2.0 * draw.unit() - 1.0);
-        let speed = wander(SPEED_WANDER);
+        let softness = (NOMINAL_VELOCITY - velocity).clamp(-0.5, 0.5);
+        let speed = wander(SPEED_WANDER) * (1.0 + SOFT_SLOWING * variation * softness);
         let gaps: Vec<f64> = (1..strings)
             .map(|_| f64::from(wander(GAP_WANDER)))
             .collect();
@@ -389,7 +403,9 @@ mod tests {
             );
             let spread = *stroke.last().unwrap() as f32;
             assert!(spread >= even * (1.0 - SPEED_WANDER) - 1.0, "{stroke:?}");
-            assert!(spread <= even * (1.0 + SPEED_WANDER) + 1.0, "{stroke:?}");
+            // The chords are struck at 0.5, softer than nominal, so they may sweep slower too.
+            let soft = 1.0 + SOFT_SLOWING * (NOMINAL_VELOCITY - 0.5);
+            assert!(spread <= even * (1.0 + SPEED_WANDER) * soft + 1.0, "{stroke:?}");
         }
         let distinct: std::collections::BTreeSet<_> = strokes.iter().collect();
         assert!(distinct.len() > 4, "strokes should differ: {strokes:?}");
@@ -405,5 +421,21 @@ mod tests {
             output[0].start > output[3].start,
             "one sixteenth after the 3/4 bar line is up"
         );
+    }
+
+    #[test]
+    fn a_softer_chord_sweeps_more_slowly_unless_nothing_may_vary() {
+        let span = |velocity: f32, variation: f32| {
+            let settings = Strum {
+                variation,
+                ..Strum::default()
+            };
+            Stroke::drawn(&settings, 4, velocity, Ticks(1920), 0).spread_ms
+        };
+        // The same chord position draws the same wander; only the velocity differs.
+        let (soft, nominal, hard) = (span(0.5, 0.3), span(0.8, 0.3), span(1.0, 0.3));
+        assert!((soft / nominal - 1.09).abs() < 1e-4, "{soft} {nominal}");
+        assert!((hard / nominal - 0.94).abs() < 1e-4, "{hard} {nominal}");
+        assert_eq!(span(0.5, 0.0), span(1.0, 0.0));
     }
 }
