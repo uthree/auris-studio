@@ -107,6 +107,7 @@ pub fn lint_score(project: &Project) -> Vec<Diagnostic> {
     diagnostics.extend(clip_rules(project));
     diagnostics.extend(limit(tight_strums(project)));
     diagnostics.extend(limit(unfrettable_chords(project)));
+    diagnostics.extend(limit(position_jumps(project)));
     diagnostics.extend(limit(impossible_drum_hits(project)));
     diagnostics.extend(limit(breathless_phrases(project)));
     diagnostics.extend(singer_rules(project));
@@ -866,6 +867,172 @@ fn frettable(pitches: &[u8]) -> bool {
     place(pitches, &mut [false; 6], u8::MAX, 0)
 }
 
+/// Frets a hand moving along the neck may leap between two onsets closer than [`JUMP_MS`].
+pub const JUMP_FRETS: u8 = 9;
+/// Milliseconds under which a leap of [`JUMP_FRETS`] or more cannot be made cleanly.
+pub const JUMP_MS: f32 = 80.0;
+
+/// The hand positions `pitches` can be fretted at: the lowest fretted finger of each fingering,
+/// or 0 for one on open strings alone, which leaves the hand anywhere.
+fn hand_positions(pitches: &[u8]) -> Vec<u8> {
+    fn place(pitches: &[u8], used: &mut [bool; 6], low: u8, high: u8, out: &mut Vec<u8>) {
+        let Some((&pitch, rest)) = pitches.split_first() else {
+            let position = if low == u8::MAX { 0 } else { low };
+            if !out.contains(&position) {
+                out.push(position);
+            }
+            return;
+        };
+        for (string, &open) in GUITAR_STRINGS.iter().enumerate() {
+            if used[string] || pitch < open || pitch - open > TOP_FRET {
+                continue;
+            }
+            let fret = pitch - open;
+            let (lo, hi) = if fret == 0 {
+                (low, high)
+            } else {
+                (low.min(fret), high.max(fret))
+            };
+            if lo != u8::MAX && hi - lo > FRET_STRETCH {
+                continue;
+            }
+            used[string] = true;
+            place(rest, used, lo, hi, out);
+            used[string] = false;
+        }
+    }
+    let mut out = Vec::new();
+    if pitches.len() <= GUITAR_STRINGS.len() {
+        place(pitches, &mut [false; 6], u8::MAX, 0, &mut out);
+    }
+    out
+}
+
+/// The hand position at each onset that moves the hand least over the whole part, found by
+/// dynamic programming over every onset's fingerings; `None` where an onset cannot be fretted.
+fn hand_path(onsets: &[Vec<u8>]) -> Vec<Option<u8>> {
+    let options: Vec<Vec<u8>> = onsets.iter().map(|p| hand_positions(p)).collect();
+    let moved = |a: u8, b: u8| {
+        if a == 0 || b == 0 {
+            0
+        } else {
+            u32::from(a.abs_diff(b))
+        }
+    };
+    // cost[i][k]: least movement to reach option k of onset i; from[i][k]: the option before.
+    let mut cost: Vec<Vec<u32>> = Vec::with_capacity(options.len());
+    let mut from: Vec<Vec<usize>> = Vec::with_capacity(options.len());
+    for (index, here) in options.iter().enumerate() {
+        let before = index.checked_sub(1).map(|i| (&options[i], &cost[i]));
+        let (row, back): (Vec<u32>, Vec<usize>) = here
+            .iter()
+            .map(|&position| match before {
+                Some((previous, costs)) if !previous.is_empty() => previous
+                    .iter()
+                    .zip(costs)
+                    .enumerate()
+                    .map(|(k, (&p, &c))| (c + moved(p, position), k))
+                    .min()
+                    .unwrap(),
+                _ => (0, 0),
+            })
+            .unzip();
+        cost.push(row);
+        from.push(back);
+    }
+    let mut path = vec![None; options.len()];
+    let mut pick = cost
+        .last()
+        .and_then(|row| (0..row.len()).min_by_key(|&k| row[k]));
+    for index in (0..options.len()).rev() {
+        match pick {
+            Some(k) if k < options[index].len() => {
+                path[index] = Some(options[index][k]);
+                pick = (index > 0 && !options[index - 1].is_empty()).then(|| from[index][k]);
+            }
+            _ => {
+                pick = (index > 0)
+                    .then(|| (0..cost[index - 1].len()).min_by_key(|&k| cost[index - 1][k]))
+                    .flatten();
+            }
+        }
+    }
+    path
+}
+
+/// Guitar parts whose hand must leap along the neck faster than a hand moves: one report per
+/// clip, at the first such leap, counting all. The hand's route is the one that moves it least,
+/// so a leap reported is one no fingering avoids.
+fn position_jumps(project: &Project) -> Vec<Diagnostic> {
+    let mut found = Vec::new();
+    for track in project.tracks.iter().filter(|t| !t.mixer.mute) {
+        let TrackKind::Instrument(instrument) = &track.kind else {
+            continue;
+        };
+        if crate::performance_presets::family_hint(track) != PresetFamily::Guitar {
+            continue;
+        }
+        for clip in instrument.clips.iter().filter(|clip| !clip.muted) {
+            let mut by_onset: BTreeMap<Ticks, Vec<(usize, auris_core::project::Note)>> =
+                BTreeMap::new();
+            for (index, note) in clip.playable_notes_with_indices() {
+                by_onset.entry(note.start).or_default().push((index, note));
+            }
+            let groups: Vec<_> = by_onset.into_iter().collect();
+            let pitches: Vec<Vec<u8>> = groups
+                .iter()
+                .map(|(_, notes)| {
+                    let mut p: Vec<u8> = notes.iter().map(|(_, n)| n.pitch).collect();
+                    p.sort_unstable();
+                    p.dedup();
+                    p
+                })
+                .collect();
+            let path = hand_path(&pitches);
+            let mut leaps = Vec::new();
+            for index in 1..groups.len() {
+                let (Some(a), Some(b)) = (path[index - 1], path[index]) else {
+                    continue;
+                };
+                if a == 0 || b == 0 || a.abs_diff(b) < JUMP_FRETS {
+                    continue;
+                }
+                let at = clip.start + groups[index].0;
+                let gap = groups[index].0 - groups[index - 1].0;
+                let bpm = project.tempo_map.bpm_at(at) as f32;
+                let ms = gap.raw() as f32 / Ticks::QUARTER.raw() as f32 * 60_000.0 / bpm;
+                if ms < JUMP_MS {
+                    leaps.push((index, a.abs_diff(b)));
+                }
+            }
+            let Some(&(first, frets)) = leaps.first() else {
+                continue;
+            };
+            let (start, notes) = &groups[first];
+            let end = notes.iter().map(|(_, n)| n.end()).max().unwrap_or(*start);
+            let mut diagnostic = Diagnostic::new(
+                Rule::GuitarPositionJump,
+                Severity::Warning,
+                clip.start + *start,
+                clip.start + end,
+            );
+            diagnostic.track = Some(track.id);
+            diagnostic.notes = notes
+                .iter()
+                .map(|(index, _)| NoteRef {
+                    clip: clip.id,
+                    index: *index,
+                })
+                .collect();
+            diagnostic.pitches = sorted_pitches(notes.iter().map(|(_, n)| n.pitch));
+            diagnostic.value = Some(f32::from(frets));
+            diagnostic.limit = Some(JUMP_MS);
+            found.push(diagnostic);
+        }
+    }
+    found
+}
+
 /// Guitar chords no hand could fret, one report per clip naming the first and counting all.
 ///
 /// Read on the written chords, before any strum spreads them: a keyboard voicing pasted onto a
@@ -1538,5 +1705,22 @@ mod tests {
         assert!(!frettable(&[41, 42, 43, 44]));
         // F on the low string under a note fifteen frets up the top string: no hand spans it.
         assert!(!frettable(&[41, 79]));
+    }
+
+    #[test]
+    fn the_hand_takes_the_route_that_moves_it_least_and_a_forced_leap_is_found() {
+        // B can be fretted at the seventh fret of the low string or the second of the A string;
+        // beside an open E chord, whose B sits at the second fret, the hand stays there.
+        assert_eq!(
+            hand_path(&[vec![47], vec![40, 47, 52], vec![47]]),
+            [Some(2), Some(2), Some(2)]
+        );
+        // E on the top string's 12th fret can only be fretted high up; F on the low string's
+        // first fret only at the nut: the leap between them is eleven frets whatever route.
+        let path = hand_path(&[vec![41, 45], vec![76, 79]]);
+        let (a, b) = (path[0].unwrap(), path[1].unwrap());
+        assert!(a.abs_diff(b) >= JUMP_FRETS, "{path:?}");
+        // An unfrettable onset is skipped, not guessed.
+        assert_eq!(hand_path(&[vec![41, 42, 43, 44]]), [None]);
     }
 }

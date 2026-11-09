@@ -102,6 +102,8 @@ pub enum Rule {
     /// A guitar chord no hand can fret: more notes than strings, or no way to put them on
     /// separate strings within one hand's stretch.
     UnfrettableChord,
+    /// A guitar part whose hand must leap along the neck faster than a hand moves.
+    GuitarPositionJump,
     /// The rendered mix reaches full scale.
     Clipping,
     /// The rendered mix is far louder than any delivery target.
@@ -120,7 +122,7 @@ pub enum Rule {
 
 impl Rule {
     /// Every rule, score rules first.
-    pub const ALL: [Rule; 23] = [
+    pub const ALL: [Rule; 24] = [
         Rule::CrowdedOnset,
         Rule::DenseNotes,
         Rule::HarshInterval,
@@ -137,6 +139,7 @@ impl Rule {
         Rule::ImpossibleDrumHit,
         Rule::NoBreath,
         Rule::UnfrettableChord,
+        Rule::GuitarPositionJump,
         Rule::Clipping,
         Rule::TooLoud,
         Rule::TooQuiet,
@@ -165,6 +168,7 @@ impl Rule {
             Rule::ImpossibleDrumHit => "impossible_drum_hit",
             Rule::NoBreath => "no_breath",
             Rule::UnfrettableChord => "unfrettable_chord",
+            Rule::GuitarPositionJump => "guitar_position_jump",
             Rule::Clipping => "clipping",
             Rule::TooLoud => "too_loud",
             Rule::TooQuiet => "too_quiet",
@@ -408,6 +412,9 @@ impl Diagnostic {
             ),
             Rule::UnfrettableChord => format!(
                 "{value:.0} guitar chords like {pitches} cannot be fretted: no hand puts them on separate strings within {limit:.0} frets; voice them as a guitarist would, or move them to a keyboard"
+            ),
+            Rule::GuitarPositionJump => format!(
+                "the guitarist's hand must leap {value:.0} frets along the neck in under {limit:.0} ms to reach {pitches}; give it time, or voice the chords nearer each other"
             ),
             Rule::TightStrum => format!(
                 "this guitar strikes every string of its chords within {value:.0} ms (under {limit:.0} ms), heard as one hit; widen the strum or set string_ms"
