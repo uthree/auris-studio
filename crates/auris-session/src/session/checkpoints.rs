@@ -24,7 +24,8 @@ pub enum CheckpointOperation {
     },
     /// Preserve the current document under a new name; existing names are refused.
     Create {
-        /// 1..80 bytes of letters, digits, hyphens or underscores.
+        /// 1..80 bytes of letters, digits, hyphens or underscores. Letters of any script count;
+        /// spaces and punctuation, including ：and ・, do not, because the name becomes a file name.
         name: String,
     },
     /// Restore one snapshot as an undoable edit; requires the current document revision.
