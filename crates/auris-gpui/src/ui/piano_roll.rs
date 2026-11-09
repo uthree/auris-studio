@@ -787,6 +787,10 @@ impl AurisApp {
             .collect();
 
         let layer_tabs = (!self.reference_editor).then(|| self.score_layer_tabs(cx));
+        let event_list = (editable && !self.reference_editor && self.panels.event_list)
+            .then_some(self.selected_clip)
+            .flatten()
+            .map(|clip| self.render_event_list(clip, cx));
         div()
             .flex()
             .flex_col()
@@ -915,7 +919,7 @@ impl AurisApp {
                             "roll-lanes",
                             self.t(Key::CurveLanes),
                             ButtonStyle::Ghost,
-                            !self.panels.curve_lanes().is_empty(),
+                            !self.panels.curve_lanes().is_empty() || self.panels.event_list,
                             theme.accent_soft,
                             &theme,
                             Self::opens_menu(cx, |this, at| this.curve_lane_menu(at)),
@@ -924,74 +928,83 @@ impl AurisApp {
                     .child(self.zoom_slider("roll-zoom", cx)),
             )
             .child(
-                div()
-                    .flex()
-                    .flex_1()
-                    .min_h_0()
-                    .child(
-                        div()
-                            .id("keyboard")
-                            .w(Metrics::KEYBOARD_WIDTH)
-                            .flex_shrink_0()
-                            .h_full()
-                            .child({
-                                let theme = theme.clone();
-                                let pitch_view = pitch_view.clone();
-                                canvas(
-                                    |_, _, _| (),
-                                    move |bounds, _, window, cx| {
-                                        paint::clipped(window, bounds, |window| {
-                                            paint::keyboard(
-                                                window,
-                                                cx,
-                                                bounds,
-                                                &pitch_view,
-                                                &theme,
-                                            );
-                                        });
-                                    },
+                // The event list down the left, beside everything that scrolls with time.
+                div().flex().flex_1().min_h_0().children(event_list).child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .flex_1()
+                        .min_w_0()
+                        .min_h_0()
+                        .child(
+                            div()
+                                .flex()
+                                .flex_1()
+                                .min_h_0()
+                                .child(
+                                    div()
+                                        .id("keyboard")
+                                        .w(Metrics::KEYBOARD_WIDTH)
+                                        .flex_shrink_0()
+                                        .h_full()
+                                        .child({
+                                            let theme = theme.clone();
+                                            let pitch_view = pitch_view.clone();
+                                            canvas(
+                                                |_, _, _| (),
+                                                move |bounds, _, window, cx| {
+                                                    paint::clipped(window, bounds, |window| {
+                                                        paint::keyboard(
+                                                            window,
+                                                            cx,
+                                                            bounds,
+                                                            &pitch_view,
+                                                            &theme,
+                                                        );
+                                                    });
+                                                },
+                                            )
+                                            .size_full()
+                                        })
+                                        .on_mouse_down(
+                                            MouseButton::Left,
+                                            cx.listener(|this, event: &MouseDownEvent, _, cx| {
+                                                this.audition_from_keyboard(event, cx);
+                                            }),
+                                        )
+                                        .on_mouse_up(
+                                            MouseButton::Left,
+                                            cx.listener(|this, _, _, _| this.stop_audition()),
+                                        )
+                                        // The keyboard scrolls with the rows beside it. It is the strip a
+                                        // user reaches for when they want to see a different octave, and the
+                                        // wheel did nothing there while working on the grid an inch away.
+                                        .on_scroll_wheel(cx.listener(
+                                            |this, event: &gpui::ScrollWheelEvent, _, cx| {
+                                                this.scroll_roll(event, cx);
+                                            },
+                                        )),
                                 )
-                                .size_full()
-                            })
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(|this, event: &MouseDownEvent, _, cx| {
-                                    this.audition_from_keyboard(event, cx);
-                                }),
-                            )
-                            .on_mouse_up(
-                                MouseButton::Left,
-                                cx.listener(|this, _, _, _| this.stop_audition()),
-                            )
-                            // The keyboard scrolls with the rows beside it. It is the strip a
-                            // user reaches for when they want to see a different octave, and the
-                            // wheel did nothing there while working on the grid an inch away.
-                            .on_scroll_wheel(cx.listener(
-                                |this, event: &gpui::ScrollWheelEvent, _, cx| {
-                                    this.scroll_roll(event, cx);
-                                },
-                            )),
-                    )
-                    .child(
-                        div()
-                            .id("roll")
-                            .relative()
-                            .flex_1()
-                            .min_w_0()
-                            .h_full()
-                            .overflow_hidden()
-                            // The grid says which tool is in hand under the pointer as well as in
-                            // the header. A mode is only dangerous while it is invisible, and the
-                            // header is the one place the eye is not while editing notes.
-                            .when(editable && self.tool == RollTool::Velocity, |this| {
-                                this.cursor(gpui::CursorStyle::ResizeUpDown)
-                            })
-                            .child({
-                                let theme = theme.clone();
-                                let view = view.clone();
-                                let pitch_view = pitch_view.clone();
-                                let recorded = self.canvas.roll.clone();
-                                canvas(
+                                .child(
+                                    div()
+                                        .id("roll")
+                                        .relative()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .h_full()
+                                        .overflow_hidden()
+                                        // The grid says which tool is in hand under the pointer as well as in
+                                        // the header. A mode is only dangerous while it is invisible, and the
+                                        // header is the one place the eye is not while editing notes.
+                                        .when(editable && self.tool == RollTool::Velocity, |this| {
+                                            this.cursor(gpui::CursorStyle::ResizeUpDown)
+                                        })
+                                        .child({
+                                            let theme = theme.clone();
+                                            let view = view.clone();
+                                            let pitch_view = pitch_view.clone();
+                                            let recorded = self.canvas.roll.clone();
+                                            canvas(
                                     move |bounds, window, _| {
                                         recorded.set(Some(bounds));
                                         note_ends
@@ -1162,47 +1175,47 @@ impl AurisApp {
                                     },
                                 )
                                 .size_full()
-                            })
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(|this, event: &MouseDownEvent, _, cx| {
-                                    this.begin_note_drag(event, cx);
-                                }),
-                            )
-                            .children(comment_tags)
-                            .on_mouse_down(
-                                MouseButton::Right,
-                                cx.listener(|this, event: &MouseDownEvent, _, cx| {
-                                    this.open_roll_menu(event, cx);
-                                }),
-                            )
-                            .on_scroll_wheel(cx.listener(
-                                |this, event: &gpui::ScrollWheelEvent, _, cx| {
-                                    this.scroll_roll(event, cx);
-                                },
-                            ))
-                            // Over the canvas, so a squiggle's hover is the squiggle's.
-                            .children(lint_strips),
-                    ),
-            )
-            .child(
-                div()
-                    .pl(Metrics::KEYBOARD_WIDTH)
-                    .child(self.time_scrollbar(crate::ui::scrollbars::ScrollPanel::EditorTime, cx)),
-            )
-            // The strips scroll among themselves once they would take more than half the panel.
-            // A lane is seventy pixels and there are a hundred and twenty-nine of them to open:
-            // without this, opening a fifth one squeezes the notes it is supposed to be shaping
-            // down to nothing, and the way back is a lane you can no longer see to close.
-            .child(
-                div()
-                    .id("curve-lanes")
-                    .flex()
-                    .flex_col()
-                    .flex_shrink_0()
-                    .max_h(gpui::relative(0.5))
-                    .overflow_y_scroll()
-                    .children(lanes),
+                                        })
+                                        .on_mouse_down(
+                                            MouseButton::Left,
+                                            cx.listener(|this, event: &MouseDownEvent, _, cx| {
+                                                this.begin_note_drag(event, cx);
+                                            }),
+                                        )
+                                        .children(comment_tags)
+                                        .on_mouse_down(
+                                            MouseButton::Right,
+                                            cx.listener(|this, event: &MouseDownEvent, _, cx| {
+                                                this.open_roll_menu(event, cx);
+                                            }),
+                                        )
+                                        .on_scroll_wheel(cx.listener(
+                                            |this, event: &gpui::ScrollWheelEvent, _, cx| {
+                                                this.scroll_roll(event, cx);
+                                            },
+                                        ))
+                                        // Over the canvas, so a squiggle's hover is the squiggle's.
+                                        .children(lint_strips),
+                                ),
+                        )
+                        .child(div().pl(Metrics::KEYBOARD_WIDTH).child(
+                            self.time_scrollbar(crate::ui::scrollbars::ScrollPanel::EditorTime, cx),
+                        ))
+                        // The strips scroll among themselves once they would take more than half the panel.
+                        // A lane is seventy pixels and there are a hundred and twenty-nine of them to open:
+                        // without this, opening a fifth one squeezes the notes it is supposed to be shaping
+                        // down to nothing, and the way back is a lane you can no longer see to close.
+                        .child(
+                            div()
+                                .id("curve-lanes")
+                                .flex()
+                                .flex_col()
+                                .flex_shrink_0()
+                                .max_h(gpui::relative(0.5))
+                                .overflow_y_scroll()
+                                .children(lanes),
+                        ),
+                ),
             )
             .into_any_element()
     }
@@ -1367,9 +1380,18 @@ impl AurisApp {
             .selected_midi_clip()
             .map(|clip| clip.curves().collect())
             .unwrap_or_default();
-        curve_lane_choices(&open, &carried).into_iter().fold(
-            ContextMenu::new(at, self.t(Key::CurveLanes)),
-            |menu, which| {
+        // The event list first: it is not a strip but it is the other way of seeing the same
+        // controllers, and the header has no room left for a button of its own.
+        let menu = ContextMenu::new(at, self.t(Key::CurveLanes))
+            .toggle(
+                self.t(Key::CmdShowEventList),
+                MenuCommand::ShowEventList(!self.panels.event_list),
+                self.panels.event_list,
+            )
+            .separator();
+        curve_lane_choices(&open, &carried)
+            .into_iter()
+            .fold(menu, |menu, which| {
                 let shown = self.panels.curve_lane(which);
                 let label = match carried.contains(&which) {
                     true => format!("{} •", curve_label(which, language)),
@@ -1383,8 +1405,7 @@ impl AurisApp {
                     },
                     shown,
                 )
-            },
-        )
+            })
     }
 
     /// The strip in the header saying which tool the roll has in hand.
@@ -2163,11 +2184,14 @@ impl AurisApp {
         self.selected_notes.clear();
         self.selected_notes.insert(index);
         let title = self.t(Key::PromptLyric);
-        self.open_prompt(crate::ui::prompt::Prompt::new(
-            title,
-            crate::ui::prompt::PromptTarget::Lyric { clip, index },
-            note.lyric.clone(),
-        ));
+        self.open_prompt(
+            crate::ui::prompt::Prompt::new(
+                title,
+                crate::ui::prompt::PromptTarget::Lyric { clip, index },
+                note.lyric.clone(),
+            )
+            .inline(crate::ui::inline_edit::InlinePlace::Target),
+        );
     }
 
     /// Opens the sheet that corrects one note's phonemes.
@@ -2186,11 +2210,14 @@ impl AurisApp {
         self.selected_notes.clear();
         self.selected_notes.insert(index);
         let title = self.t(Key::PromptPhonemes);
-        self.open_prompt(crate::ui::prompt::Prompt::new(
-            title,
-            crate::ui::prompt::PromptTarget::Phonemes { clip, index },
-            note.phonemes.join(" "),
-        ));
+        self.open_prompt(
+            crate::ui::prompt::Prompt::new(
+                title,
+                crate::ui::prompt::PromptTarget::Phonemes { clip, index },
+                note.phonemes.join(" "),
+            )
+            .inline(crate::ui::inline_edit::InlinePlace::Target),
+        );
     }
 
     /// Opens the sheet that lays a phrase across the selected notes.

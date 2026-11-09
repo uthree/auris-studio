@@ -18,6 +18,7 @@ use gpui::{
 
 use crate::app::AurisApp;
 use crate::theme::{Metrics, Theme};
+use crate::ui::inline_edit::InlinePlace;
 use crate::ui::paint;
 use crate::ui::text_field::TextField;
 use crate::ui::widgets::{ButtonState, ButtonStyle, Latch, button, button_enabled};
@@ -48,6 +49,13 @@ pub enum PromptTarget {
     },
     /// A reusable sound captured from a track.
     SaveSound(TrackId),
+    /// The name of a performance preset kept from a clip's current performance.
+    SavePerformancePreset {
+        /// The clip whose performance is kept.
+        clip: ClipId,
+        /// The instrument family it is filed under.
+        family: PresetFamily,
+    },
     /// The saved user sound retained by this prompt.
     RenameSound,
     /// A new copy of the saved user sound retained by this prompt.
@@ -173,6 +181,18 @@ pub enum PromptTarget {
     ClipSourceTempo(ClipId),
     /// Where the playhead sits, as bar, beat and hundredth.
     Position,
+    /// One cell of the piano roll's event list.
+    ///
+    /// Return commits the value and walks on to the same cell of the next row, the way the
+    /// lyric sheet walks from note to note.
+    Event {
+        /// The clip the list shows.
+        clip: ClipId,
+        /// Which row.
+        event: auris_session::EventRef,
+        /// Which column of it.
+        column: crate::ui::event_list::EventColumn,
+    },
     /// One of the note-roll video's colours, as a code such as `#3D7BFF`.
     ///
     /// The picker's sliders find a colour by eye; this is for the one that is already known —
@@ -250,6 +270,7 @@ impl PromptTarget {
             PromptTarget::Position => Notation::Position,
             PromptTarget::VideoColour(_) => Notation::Colour,
             PromptTarget::SaveSound(_)
+            | PromptTarget::SavePerformancePreset { .. }
             | PromptTarget::WorkshopThreadName { .. }
             | PromptTarget::WorkshopFeedback { .. }
             | PromptTarget::AgentConversationName
@@ -270,7 +291,9 @@ impl PromptTarget {
             | PromptTarget::LintReason(_)
             // No shared notation: every parameter is written in its own units, and the range
             // and the unit are in the prompt's title instead, where they can name this one.
-            | PromptTarget::Param(_) => return None,
+            | PromptTarget::Param(_)
+            // Each column has its own rule, stated by its own hint.
+            | PromptTarget::Event { .. } => return None,
         })
     }
 
@@ -283,6 +306,8 @@ impl PromptTarget {
     pub fn hint(self) -> Option<Key> {
         if matches!(self, Self::AgentChordReference { .. }) {
             Some(Key::AgentChordsHint)
+        } else if let Self::Event { event, column, .. } = self {
+            Some(column.hint(event))
         } else {
             self.notation().map(Notation::hint)
         }
@@ -552,8 +577,6 @@ pub enum Answer {
 /// A question the sheet is asking, and what turns on the answer.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Question {
-    /// Consent to load a local audio model for this one listening request.
-    AudioModelLoad(std::sync::Arc<crate::ui::agent_chat::AudioLoadRequest>),
     /// A verified update can be installed now or when the app later quits.
     RestartForUpdate {
         /// Downloaded release version shown in the question.
@@ -675,6 +698,13 @@ pub struct Prompt {
     chord_key: Option<MusicalKey>,
     /// The source entry for a library edit, so concurrent changes are detected on commit.
     sound: Option<std::sync::Arc<auris_session::SoundPreset>>,
+    /// Where the field is drawn in place of a sheet, when it is.
+    ///
+    /// Only a request: [`AurisApp::inline_bounds`] decides from what is on screen, and a prompt
+    /// whose label cannot be found is drawn as the sheet instead.
+    place: Option<InlinePlace>,
+    /// What the field held when it opened, so leaving it untouched can close it without an edit.
+    initial: String,
 }
 
 impl Prompt {
@@ -693,19 +723,49 @@ impl Prompt {
         target: PromptTarget,
         text: impl Into<String>,
     ) -> Self {
+        let text = text.into();
         Self {
             feedback_foci: None,
             title: title.into(),
             body: PromptBody::Text {
                 target,
-                field: TextField::new(text),
+                field: TextField::new(text.clone()),
             },
             error: None,
             completing: None,
             vocabulary: None,
             chord_key: None,
             sound: None,
+            place: None,
+            initial: text,
         }
+    }
+
+    /// The same prompt, drawn over its label at `place` rather than as a sheet.
+    pub(crate) fn inline(mut self, place: InlinePlace) -> Self {
+        self.place = Some(place);
+        self
+    }
+
+    /// Where this prompt asked to be drawn in place, if it did.
+    pub(crate) fn place(&self) -> Option<&InlinePlace> {
+        self.place.as_ref()
+    }
+
+    /// The last rejected answer, while it is waiting to be corrected.
+    pub(crate) fn error(&self) -> Option<&SharedString> {
+        self.error.as_ref()
+    }
+
+    /// Whether leaving the field now would write nothing worth writing: its text is what it
+    /// opened with, or it was emptied where an empty answer means nothing.
+    pub(crate) fn is_untouched(&self) -> bool {
+        let Some(field) = self.field() else {
+            return true;
+        };
+        let text = field.content().trim();
+        text == self.initial.trim()
+            || (text.is_empty() && self.target().is_none_or(|t| !empty_prompt_is_meaningful(t)))
     }
 
     /// Edits a saved sound's name while retaining the exact entry being renamed.
@@ -740,6 +800,8 @@ impl Prompt {
             vocabulary: None,
             chord_key: None,
             sound: None,
+            place: None,
+            initial: String::new(),
         }
     }
 
@@ -757,6 +819,8 @@ impl Prompt {
             vocabulary: None,
             chord_key: None,
             sound: None,
+            place: None,
+            initial: String::new(),
         }
     }
 
@@ -881,7 +945,7 @@ pub(crate) fn recovery_name(snapshot: &RecoverySnapshot, language: Language) -> 
 /// The focused recovery decision for one registry entry.
 pub(crate) fn recovery_prompt(snapshot: &RecoverySnapshot, language: Language) -> Prompt {
     Prompt::ask(
-        messages::recover_title(language, &recovery_name(snapshot, language)),
+        messages::recover_title(language, recovery_name(snapshot, language)),
         Question::Recovery(snapshot.clone()),
     )
 }
@@ -1049,6 +1113,10 @@ impl AurisApp {
                     Err(error) => Err(error),
                 }
             }
+            PromptTarget::SavePerformancePreset { clip, family } => self
+                .session
+                .keep_clip_performance(clip, &text, family, "", false)
+                .map(|_| ()),
             PromptTarget::Track(track) => self.session.rename_track(track, text),
             PromptTarget::Clip(clip) => self.session.rename_clip(clip, text),
             PromptTarget::Lyric { clip, index } => {
@@ -1071,6 +1139,28 @@ impl AurisApp {
                         return;
                     }
                 }
+            }
+            PromptTarget::Event {
+                clip,
+                event,
+                column,
+            } => {
+                // Closed first so the walk can open the next cell's sheet in its place.
+                let field = self.prompt.take();
+                match self.commit_event_prompt(clip, event, column, &text) {
+                    Ok(()) => {
+                        if let Some(error) = field.and_then(|prompt| prompt.error)
+                            && self.status == error.as_ref()
+                        {
+                            self.set_status("");
+                        }
+                    }
+                    Err(error) => {
+                        self.prompt = field;
+                        self.reject_prompt(error);
+                    }
+                }
+                return;
             }
             PromptTarget::Phonemes { clip, index } => {
                 let phonemes: Vec<String> =
@@ -1333,6 +1423,8 @@ impl AurisApp {
                 Key::EditSetDrumAssignment
             } else if matches!(target, PromptTarget::SaveSound(_)) {
                 Key::SaveSound
+            } else if matches!(target, PromptTarget::SavePerformancePreset { .. }) {
+                Key::PerformPresetSave
             } else if matches!(target, PromptTarget::DuplicateSound) {
                 Key::DuplicateSound
             } else {
@@ -1410,10 +1502,6 @@ impl AurisApp {
         cx: &mut Context<Self>,
     ) {
         match (question, answer) {
-            (Question::AudioModelLoad(request), Answer::Confirm) => {
-                self.approve_audio_model_load(&request);
-            }
-            (Question::AudioModelLoad(_), Answer::Deny) => {}
             (Question::RestartForUpdate { .. }, Answer::Confirm) => {
                 self.restart_for_update(window, cx);
             }
@@ -1748,6 +1836,7 @@ impl AurisApp {
         let Some(prompt) = self.prompt.as_mut() else {
             return false;
         };
+        let target = prompt.target();
         // A question has no field to type into, so only its explicit answer keys apply. A Mac's
         // key labelled Delete reports `backspace`; accepting that spelling only on macOS avoids
         // making an ordinary PC Backspace permanently discard recovery data.
@@ -1766,18 +1855,24 @@ impl AurisApp {
         // platform has already offered them to it before we see them.
         let composing = field.marked().is_some();
 
+        // A comment is written over several lines: Shift-Return breaks the line, Return still
+        // commits, and Up and Down move between the lines rather than to the ends.
+        let multiline = target.is_some_and(crate::ui::inline_edit::is_multiline);
         match event.keystroke.key.as_str() {
             "escape" if !composing => {
                 self.cancel_prompt();
             }
+            "enter" if !composing && multiline && shift => field.insert("\n"),
             "enter" if !composing => {
                 self.commit_prompt(window, cx);
             }
+            "up" if multiline => field.move_up(shift),
+            "down" if multiline => field.move_down(shift),
             "up" => field.move_home(shift),
             "down" => field.move_end(shift),
             // Editing and clipboard shortcuts are shared with every other text field.
             key => {
-                return field.apply_key_with_clipboard(key, shift, command, false, cx)
+                return field.apply_key_with_clipboard(key, shift, command, multiline, cx)
                     != crate::ui::text_field::KeyEffect::Ignored;
             }
         }
@@ -1801,8 +1896,11 @@ impl AurisApp {
     }
 
     /// Draws the sheet over everything else.
-    pub(crate) fn render_prompt(&self, cx: &mut Context<Self>) -> Option<impl IntoElement + use<>> {
+    pub(crate) fn render_prompt(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
         let prompt = self.prompt.as_ref()?;
+        if let Some(bounds) = self.inline_bounds(prompt) {
+            return self.render_inline_prompt(prompt, bounds, cx);
+        }
         let theme = self.theme.clone();
         let title = prompt.title.clone();
         let focus = self.focus.clone();
@@ -1830,6 +1928,8 @@ impl AurisApp {
                     .children(self.render_feedback_rating(prompt, cx))
                     .child(if matches!(target, PromptTarget::WorkshopFeedback { .. }) {
                         self.render_feedback_comment(field, cx).into_any_element()
+                    } else if crate::ui::inline_edit::is_multiline(*target) {
+                        self.render_prompt_area(field, cx).into_any_element()
                     } else {
                         self.render_prompt_field(
                             field.content().to_string().into(),
@@ -1865,7 +1965,9 @@ impl AurisApp {
                     None,
                     // The default button names the edit the sheet will commit.
                     match target {
-                        PromptTarget::SaveSound(_) => self.t(Key::CmdSave).into(),
+                        PromptTarget::SaveSound(_) | PromptTarget::SavePerformancePreset { .. } => {
+                            self.t(Key::CmdSave).into()
+                        }
                         PromptTarget::WorkshopThreadName { .. } => self.t(Key::Rename).into(),
                         PromptTarget::WorkshopFeedback { .. } => {
                             self.t(Key::WorkshopFeedbackSend).into()
@@ -2011,8 +2113,53 @@ impl AurisApp {
                                 .child(body),
                         )
                         .child(buttons),
-                ),
+                )
+                .into_any_element(),
         )
+    }
+
+    /// The box a comment is typed into on the sheet: several lines, as in place.
+    fn render_prompt_area(
+        &self,
+        field: &TextField,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
+        let theme = self.theme.clone();
+        div()
+            .id("prompt-text-area")
+            .debug_selector(|| "prompt-text-field".into())
+            .h(crate::ui::text_area::area_height(field.content(), 3, 8))
+            .w_full()
+            .rounded(Metrics::RADIUS_SM)
+            .bg(theme.surface_sunken)
+            .border_1()
+            .border_color(theme.accent)
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                    if let Some(field) = this.prompt.as_mut().and_then(Prompt::field_mut) {
+                        match crate::ui::text_area::area_offset_at(
+                            window,
+                            field.content(),
+                            event.position,
+                        ) {
+                            Some(offset) => field.place_caret(offset, event.modifiers.shift),
+                            None => field.caret_to_end(),
+                        }
+                    }
+                    this.focus.focus(window);
+                    cx.notify();
+                }),
+            )
+            .child(crate::ui::text_area::editable_area(
+                field.content().to_owned().into(),
+                field.selection(),
+                field.marked(),
+                Vec::new(),
+                self.focus.clone(),
+                cx.entity(),
+                theme,
+            ))
     }
 
     /// Change the explicit star choice without altering the user's written impressions.
@@ -2167,7 +2314,7 @@ impl AurisApp {
     /// Pressing one fills the field *and* commits, because every one of them is a whole answer
     /// rather than a prefix of one. A chip that only filled the box would be asking for a second
     /// press to do what the first one already said.
-    fn render_prompt_completions(
+    pub(crate) fn render_prompt_completions(
         &self,
         prompt: &Prompt,
         cx: &mut Context<Self>,
@@ -2335,13 +2482,6 @@ impl AurisApp {
         question: &Question,
     ) -> (SharedString, SharedString, Option<SharedString>) {
         match question {
-            Question::AudioModelLoad(request) => (
-                self.t(Key::AudioModelLoadBody)
-                    .replace("{model}", &request.model)
-                    .into(),
-                self.t(Key::AudioModelLoadConfirm).into(),
-                None,
-            ),
             Question::RestartForUpdate { version } => (
                 self.t(Key::UpdateRestartBody)
                     .replace("{version}", version)
@@ -2409,7 +2549,7 @@ impl AurisApp {
                     snapshot.source_document().map_or_else(
                         || self.t(Key::RecoveryUnsavedBody).to_owned(),
                         |source| {
-                            messages::recovery_from(self.language(), &source.display().to_string())
+                            messages::recovery_from(self.language(), source.display().to_string())
                         },
                     ),
                     self.t(Key::RecoveryKeyboardHint),
@@ -2419,7 +2559,7 @@ impl AurisApp {
                 Some(self.t(Key::DiscardRecovery).into()),
             ),
             Question::Replace { existing, .. } => (
-                messages::would_replace(self.language(), &existing.display().to_string()).into(),
+                messages::would_replace(self.language(), existing.display().to_string()).into(),
                 self.t(Key::Replace).into(),
                 None,
             ),
@@ -2830,6 +2970,10 @@ mod tests {
             PromptTarget::DuplicateSound,
             PromptTarget::RenameSound,
             PromptTarget::SaveSound(TrackId(1)),
+            PromptTarget::SavePerformancePreset {
+                clip: ClipId(1),
+                family: PresetFamily::Keys,
+            },
             PromptTarget::Track(TrackId(1)),
             PromptTarget::Clip(ClipId(1)),
             PromptTarget::Key(AT),
@@ -2879,10 +3023,16 @@ mod tests {
             PromptTarget::ClipSourceTempo(ClipId(1)),
             PromptTarget::Position,
             PromptTarget::VideoColour(crate::ui::video_export::VideoColourSlot::Single),
+            PromptTarget::Event {
+                clip: ClipId(1),
+                event: auris_session::EventRef::Note(0),
+                column: crate::ui::event_list::EventColumn::Value,
+            },
         ];
         for target in &representatives {
             match target {
                 PromptTarget::SaveSound(_)
+                | PromptTarget::SavePerformancePreset { .. }
                 | PromptTarget::AgentConversationName
                 | PromptTarget::AgentChordReference { .. }
                 | PromptTarget::WorkshopFeedback { .. }
@@ -2914,7 +3064,8 @@ mod tests {
                 | PromptTarget::DrumLaneNote { .. }
                 | PromptTarget::ClipSourceTempo(_)
                 | PromptTarget::Position
-                | PromptTarget::VideoColour(_) => {}
+                | PromptTarget::VideoColour(_)
+                | PromptTarget::Event { .. } => {}
             }
         }
         representatives
@@ -2923,6 +3074,12 @@ mod tests {
     #[test]
     fn everything_that_is_a_notation_rather_than_a_name_says_so() {
         for target in every_target() {
+            // An event-list cell is written in whichever notation its column takes, and says so
+            // through that column's own hint rather than through one shared notation.
+            if matches!(target, PromptTarget::Event { .. }) {
+                assert!(target.hint().is_some());
+                continue;
+            }
             assert_eq!(
                 target.hint().is_some(),
                 target.notation().is_some(),
@@ -3180,31 +3337,6 @@ mod tests {
 /// here: the sheet's three buttons carry names a test can find them by.
 #[cfg(test)]
 mod window_tests {
-    #[gpui::test]
-    fn audio_load_dialog_escape_cancels_without_sending_consent(cx: &mut gpui::TestAppContext) {
-        let (app, cx) = crate::harness::open(cx);
-        let (response, receiver) = std::sync::mpsc::channel();
-        app.update(cx, |this, _| {
-            this.open_prompt(super::Prompt::ask(
-                this.t(auris_i18n::Key::AudioModelLoadTitle),
-                super::Question::AudioModelLoad(std::sync::Arc::new(
-                    crate::ui::agent_chat::AudioLoadRequest {
-                        model: "test-audio".into(),
-                        response,
-                    },
-                )),
-            ));
-        });
-        crate::harness::paint(&app, cx);
-        cx.simulate_keystrokes("escape");
-        crate::harness::paint(&app, cx);
-        app.read_with(cx, |this, _| assert!(this.prompt.is_none()));
-        assert_eq!(
-            receiver.try_recv(),
-            Err(std::sync::mpsc::TryRecvError::Disconnected)
-        );
-    }
-
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 

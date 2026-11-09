@@ -237,6 +237,10 @@ impl AurisApp {
                             .text_color(theme.text)
                             .truncate()
                             .child(name)
+                            .child(crate::ui::inline_edit::spot(
+                                &self.canvas.spots,
+                                crate::ui::inline_edit::strip_name_spot(track_id),
+                            ))
                             .tooltip(self.tip(Key::MenuRename, ""))
                             .on_mouse_down(
                                 MouseButton::Left,
@@ -244,7 +248,10 @@ impl AurisApp {
                                     if event.click_count < 2 {
                                         return;
                                     }
-                                    this.prompt_to_rename_track(track_id);
+                                    this.prompt_to_rename_track_at(
+                                        track_id,
+                                        crate::ui::inline_edit::strip_name_spot(track_id),
+                                    );
                                     cx.stop_propagation();
                                     cx.notify();
                                 }),

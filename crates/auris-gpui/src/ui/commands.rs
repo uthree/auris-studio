@@ -1099,7 +1099,7 @@ impl AurisApp {
                                 (1, _) => messages::opened_missing_one(
                                     language,
                                     &shown,
-                                    &missing[0].display().to_string(),
+                                    missing[0].display().to_string(),
                                 ),
                                 (n, _) => messages::opened_missing_many(language, &shown, n),
                             });
@@ -1185,7 +1185,7 @@ impl AurisApp {
                                     1 => messages::recovered_missing_one(
                                         language,
                                         &name,
-                                        &missing[0].display().to_string(),
+                                        missing[0].display().to_string(),
                                     ),
                                     count => {
                                         messages::recovered_missing_many(language, &name, count)
@@ -1369,7 +1369,7 @@ impl AurisApp {
                 return;
             }
         };
-        let label = messages::opening(self.language(), &path.display().to_string());
+        let label = messages::opening(self.language(), path.display().to_string());
         let Some((id, cancelled, _)) = self.start_background_command(label, false) else {
             return;
         };
@@ -2900,7 +2900,7 @@ impl AurisApp {
             let path = handle.path().to_path_buf();
 
             let Ok(rate) = this.update(cx, |this, cx| {
-                let text = messages::importing(this.language(), &path.display().to_string());
+                let text = messages::importing(this.language(), path.display().to_string());
                 this.set_status(text);
                 cx.notify();
                 // Read while the session is in hand: the decode has to land on the project's
@@ -2929,10 +2929,11 @@ impl AurisApp {
         .detach();
     }
 
-    /// Prompts for an audio file and loads it into a track's sampler.
+    /// Prompts for audio files and adds them to a track's sampler map.
     ///
     /// The other way an audio file enters a song: rather than a clip on the timeline, a sound the
-    /// track plays from its notes. Decoded on a worker, like every other import.
+    /// track plays from its notes. Several may be chosen at once, each becoming a zone at the
+    /// root its name spells. Decoded on a worker, like every other import.
     pub(crate) fn load_sample(&mut self, track: TrackId, cx: &mut Context<Self>) {
         let extensions: Vec<String> = auris_session::supported_audio_extensions()
             .iter()
@@ -2941,29 +2942,42 @@ impl AurisApp {
         let language = self.language();
         cx.spawn(async move |this, cx| {
             let extension_refs: Vec<&str> = extensions.iter().map(String::as_str).collect();
-            let handle = rfd::AsyncFileDialog::new()
+            let handles = rfd::AsyncFileDialog::new()
                 .set_title(Key::DialogLoadSample.get(language))
                 .add_filter(Key::FilterAudio.get(language), &extension_refs)
-                .pick_file()
+                .pick_files()
                 .await;
-            let Some(handle) = handle else { return };
-            let path = handle.path().to_path_buf();
+            let Some(handles) = handles.filter(|handles| !handles.is_empty()) else {
+                return;
+            };
+            let paths: Vec<PathBuf> = handles
+                .iter()
+                .map(|handle| handle.path().to_path_buf())
+                .collect();
             let Ok(rate) = this.update(cx, |this, cx| {
-                let text = messages::importing(this.language(), &path.display().to_string());
+                let text = messages::importing(this.language(), paths[0].display().to_string());
                 this.set_status(text);
                 cx.notify();
                 this.project().sample_rate
             }) else {
                 return;
             };
-            let loaded = read_file(
-                cx.background_executor().clone(),
-                Reading::Audio { rate },
-                path.clone(),
-            )
-            .await;
+            let mut loaded = Vec::with_capacity(paths.len());
+            for path in &paths {
+                let read = read_file(
+                    cx.background_executor().clone(),
+                    Reading::Audio { rate },
+                    path.clone(),
+                )
+                .await;
+                loaded.push((path.clone(), read));
+            }
             let _ = this.update(cx, |this, cx| {
-                match loaded.and_then(|loaded| this.take_sample(track, &path, loaded)) {
+                let decoded = loaded
+                    .into_iter()
+                    .map(|(path, read)| read.map(|read| (path, read)))
+                    .collect::<Result<Vec<_>, _>>();
+                match decoded.and_then(|decoded| this.take_samples(track, decoded)) {
                     Ok(line) => this.set_status(line),
                     Err(error) => {
                         this.set_failed_status(this.failure(Key::SamplerLoadSample, &error))
@@ -2976,21 +2990,40 @@ impl AurisApp {
     }
 
     /// Gives decoded audio to a track's sampler, and says so.
+    #[cfg(test)]
     pub(crate) fn take_sample(
         &mut self,
         track: TrackId,
         path: &Path,
         loaded: Loaded,
     ) -> Result<String, SessionError> {
-        let Loaded::Audio(buffer) = loaded else {
-            return Err(SessionError::EmptySample(path.to_path_buf()));
-        };
-        self.session.place_sample(track, path, buffer)?;
-        let name = self
-            .session
-            .track_sample_name(track)
-            .unwrap_or_else(|| path.display().to_string());
-        Ok(messages::sample_loaded(self.language(), &name))
+        self.take_samples(track, vec![(path.to_path_buf(), loaded)])
+    }
+
+    /// Adds several decoded files to a track's sampler map in one undo step, and says so.
+    pub(crate) fn take_samples(
+        &mut self,
+        track: TrackId,
+        loaded: Vec<(PathBuf, Loaded)>,
+    ) -> Result<String, SessionError> {
+        let samples = loaded
+            .into_iter()
+            .map(|(path, loaded)| match loaded {
+                Loaded::Audio(buffer) => Ok((path, buffer)),
+                _ => Err(SessionError::EmptySample(path)),
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let count = samples.len();
+        let first = samples
+            .first()
+            .and_then(|(path, _)| path.file_stem())
+            .map(|stem| stem.to_string_lossy().to_string())
+            .unwrap_or_default();
+        self.session.place_samples(track, samples, false)?;
+        Ok(match count {
+            1 => messages::sample_loaded(self.language(), &first),
+            _ => messages::samples_loaded(self.language(), count),
+        })
     }
 
     /// Gives a file that has been read to the document, and says what happened.
@@ -3025,7 +3058,7 @@ impl AurisApp {
         }
         Ok(messages::imported(
             self.language(),
-            &path.display().to_string(),
+            path.display().to_string(),
         ))
     }
 
@@ -3050,7 +3083,7 @@ impl AurisApp {
             let path = handle.path().to_path_buf();
 
             let shown = this.update(cx, |this, cx| {
-                let text = messages::importing(this.language(), &path.display().to_string());
+                let text = messages::importing(this.language(), path.display().to_string());
                 this.set_status(text);
                 cx.notify();
             });
@@ -3142,7 +3175,7 @@ impl AurisApp {
         for path in &dropped.rejected {
             outcome.failed.push(messages::cannot_import(
                 language,
-                &path.display().to_string(),
+                path.display().to_string(),
             ));
         }
         if dropped.accepted.is_empty() {
@@ -3155,7 +3188,7 @@ impl AurisApp {
         cx.spawn(async move |this, cx| {
             for (path, kind) in dropped.accepted {
                 let Ok(rate) = this.update(cx, |this, cx| {
-                    let text = messages::importing(this.language(), &path.display().to_string());
+                    let text = messages::importing(this.language(), path.display().to_string());
                     this.set_status(text);
                     cx.notify();
                     this.project().sample_rate
@@ -3339,17 +3372,25 @@ impl AurisApp {
     /// change it is a step nobody takes twice — which is how a project ends up with eight tracks
     /// called Audio 1.
     pub(crate) fn prompt_to_rename_track(&mut self, track: TrackId) {
+        self.prompt_to_rename_track_at(track, crate::ui::inline_edit::header_name_spot(track));
+    }
+
+    /// Asks for a track's new name, typed over the label recorded as `spot`.
+    pub(crate) fn prompt_to_rename_track_at(&mut self, track: TrackId, spot: gpui::SharedString) {
         let name = self
             .project()
             .track(track)
             .map(|track| track.name.clone())
             .unwrap_or_default();
         let title = self.t(Key::RenameTrackTitle);
-        self.open_prompt(crate::ui::prompt::Prompt::new(
-            title,
-            crate::ui::prompt::PromptTarget::Track(track),
-            name,
-        ));
+        self.open_prompt(
+            crate::ui::prompt::Prompt::new(
+                title,
+                crate::ui::prompt::PromptTarget::Track(track),
+                name,
+            )
+            .inline(crate::ui::inline_edit::InlinePlace::Spot(spot)),
+        );
     }
 
     /// Shows a track's automation lane on `target`, or hides it when it is already on that one.
@@ -3534,7 +3575,7 @@ impl AurisApp {
                         let text = messages::exported_stems(
                             language,
                             written,
-                            &folder.display().to_string(),
+                            folder.display().to_string(),
                         );
                         this.set_status(text.clone());
                         Ok(text)
@@ -3687,8 +3728,8 @@ impl AurisApp {
                     Ok(summary) => {
                         let text = messages::exported(
                             language,
-                            &path.display().to_string(),
-                            &Seconds(summary.seconds).format_clock(),
+                            path.display().to_string(),
+                            Seconds(summary.seconds).format_clock(),
                             summary.peak_db,
                         );
                         this.set_status(text.clone());
@@ -3746,7 +3787,7 @@ impl AurisApp {
         messages::failed(
             self.language(),
             self.t(action),
-            &error_text(error, self.language()),
+            error_text(error, self.language()),
         )
     }
 
@@ -3985,7 +4026,7 @@ mod tests {
             assert!(!app.session.is_dirty());
         });
         assert!(document.is_file());
-        std::fs::remove_dir_all(root).unwrap();
+        crate::harness::remove_project_folder(&app, cx, &root);
     }
 
     #[test]

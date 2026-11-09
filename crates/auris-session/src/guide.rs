@@ -344,41 +344,34 @@
 //! What a song does on purpose is recorded in the document, not in anyone's settings:
 //! [`auris_core::project::LintSuppression`] names one rule or every rule, over the whole song,
 //! a track, a clip or every section with one label, and [`crate::Session::suppress_lint`] adds
-//! one as an Undo step. Suppressed findings are counted, not reported, at both doors. Ignoring
+//! one as an Undo step. The agent adds one only through `ignore_lint`, from a finding's id and
+//! with a reason, and the policy has it confirmed the way a removal is: silencing a check is
+//! the user's decision. Suppressed findings are counted, not reported, at both doors. Ignoring
 //! changes what is shown and not what sounds, so it carries the last audio pass forward rather
 //! than asking for another render.
 //!
-//! # Auditory feedback on unsaved music
+//! # Hearing unsaved music
 //!
-//! The live `listen` operation captures the open document through
-//! [`crate::Session::begin_listening`]. The desktop authorizes the network operation,
-//! renders and submits actual WAV bytes on a worker, then accepts the result through
-//! [`crate::Session::continue_listening`] only while the document revision still matches.
-//! Neither saving nor an audio output device is required; reviewing adds no Undo step.
-//! Local reviewer selection probes advertised audio-input capabilities before uploading.
-//! It prefers the configured endpoint, then the local audio bridge and installed Ollama models.
-//! Discovery is bounded and never downloads models or switches to a remote provider.
-//! Explicit remote endpoints remain fixed; results disclose the selected model and fallback.
-//! The critic has no editing tools. Its observations are untrusted, fallible evidence for
-//! the controller, which chooses a supported local edit, reads back the result and requests
-//! another audition of the same bars. Failed or uncertain reviews must remain explicit.
-//! Diagnosis accepts a descriptive focus. Comparison requires a typed aspect, rejects focus,
-//! and supplies anonymous A/B audio in randomized order. Reviews are short, untrusted prose;
-//! no structured verdict, confidence or preference is extracted. A backend may describe
-//! the excerpts independently. Successful delivery does not establish perceptual accuracy.
+//! The live `listen` operation lets the model in the conversation hear the open document
+//! itself. [`crate::Session::begin_listening`] snapshots it, a worker renders the bars and
+//! encodes exact 48 kHz 16-bit stereo WAV bytes, and [`crate::Session::continue_listening`]
+//! accepts the [`crate::audio_audition::Audition`] only while the document revision still
+//! matches. Neither saving nor an audio output device is required, and listening adds no Undo
+//! step. Nothing at this layer talks to a model: the frontend that dispatched the call hands
+//! the clips to the model that asked, as audio input. `auris-agent` places them in the request
+//! that follows the tool result, once, because neither rig's tool results nor an
+//! OpenAI-compatible tool message can carry audio; `auris-mcp` returns them as MCP audio
+//! content. A model that cannot take audio is never offered the tool, so no text stands in
+//! for listening.
 //!
 //! The session retains at most four immutable raw excerpts behind opaque IDs. A comparison
-//! requires identical bars and timing; replacing the document clears the IDs. Both excerpts
-//! receive one common attenuation when needed for the -1 dB estimated true-peak ceiling.
-//! Measurements describe both the source and the exact decoded 16-bit WAV; audition
-//! protection never changes project faders or conceals a source overload. Temporary files
-//! live only for the request, and encoded bytes are hashed. The true-peak estimate uses
-//! 4x FIR interpolation, not a certified BS.1770 meter.
-//!
-//! Cancellation is checked around render, encode and network stages. An HTTP request already
-//! in flight can finish up to its bounded timeout; stopped or stale work is never adopted.
-//! Saved-project MCP keeps its file-based `listen` workflow, using the same protected WAV
-//! encoder for previews. Its saved document is independent of the live unsaved snapshot.
+//! requires identical bars and timing and delivers the baseline (`before`) ahead of the
+//! current render (`after`); replacing the document clears the IDs. Both excerpts receive one
+//! common attenuation when needed for the -1 dB estimated true-peak ceiling, so their relative
+//! level is the mix's own. Measurements describe both the source and the exact decoded WAV;
+//! audition protection never changes project faders or conceals a source overload. The
+//! true-peak estimate uses 4x FIR interpolation, not a certified BS.1770 meter. Cancellation
+//! is checked around render and encode, and stopped or stale work is never adopted.
 //!
 //!
 //! # Offline music recognition
@@ -611,7 +604,9 @@ pub mod architecture {
     //! Comments are the source-code habit brought to a score: text pinned to a place that
     //! nothing plays. A track holds them in song time along its lane and a note clip in its own
     //! time, optionally on a piano-roll row, so they move, copy and split with the notes they are
-    //! about ([`Comment`](auris_core::Comment)). The session's comment commands
+    //! about ([`Comment`](auris_core::Comment)). A node of the mixer graph holds them too, on its
+    //! strip or effect slot and with no moment, so they leave with the effect they describe
+    //! ([`CommentHost::Mixer`](crate::session::CommentHost::Mixer)). The session's comment commands
     //! ([`Session::add_comment`](crate::Session::add_comment) and its neighbours) are undoable and
     //! touch nothing audible. `inspect_project` lists every comment for an agent and
     //! `edit_comments` writes them; the instructions tell a model to read the comments in a
@@ -758,13 +753,12 @@ pub mod architecture {
     //! validates a whole parameter batch before making one undo step. Authored motif and rhythm
     //! travel with each clip recipe, so local regeneration keeps those musical choices.
     //!
-    //! Audio review is a separate session service, [`audio_review`](crate::audio_review): it
-    //! sends actual WAV excerpts to an audio-capable model through an OpenAI-compatible API.
-    //! The common `listen` command renders a short excerpt, optionally attaches a retained
-    //! immutable audition for comparison, and returns the critic's observations to the controlling
-    //! model. Saved calls retain an opaque listening context across fresh sessions; both adapters
-    //! share bounded excerpt retention and protective gain. Numeric inspection presents measurements
-    //! and a spectrogram without sending audio to a critic. Short preview files receive protective
+    //! The common `listen` command, [`audio_audition`](crate::audio_audition), renders a short
+    //! excerpt, optionally pairs it with a retained immutable audition for comparison, and
+    //! returns the WAV for the controlling model to hear itself (see "Hearing unsaved music").
+    //! Saved calls retain an opaque listening context across fresh sessions; both adapters
+    //! share bounded excerpt retention and protective gain. Numeric inspection presents
+    //! measurements and a spectrogram. Short preview files receive protective
     //! attenuation independently of ordinary delivery renders and never change project gain.
     //! MCP clients can therefore repeat listen, localized edit and listen,
     //! even when the controlling model accepts only text. The critic has no editing tools.
@@ -930,13 +924,20 @@ pub mod architecture {
     //! discarded. Elapsed-time images are split at tempo changes to follow the musical ruler.
     //!
     //! The live visualizer has a separate stereo scope from the plugin editor. Each tap copies
-    //! paired post-fader samples under one sequence counter, without allocation or waiting on
-    //! the audio thread. `Session::visualizer_frame` carries those channels and their sample rate
-    //! to the frontend for a triggered time-domain oscilloscope, then transforms the channels
-    //! independently and averages their power, preserving right-only and opposite-polarity
-    //! signals. Undefined correlation is explicit for silent channels. The frontend owns freeze,
-    //! display history and saved comparisons; none of these changes the document or rendered
-    //! audio.
+    //! paired samples under one sequence counter, without allocation or waiting on the audio
+    //! thread, from before a strip's fader or after it as the visualizer asks
+    //! ([`crate::VisualizerTap`]). `Session::visualizer_frame` carries those channels and their
+    //! sample rate to the frontend for a triggered time-domain oscilloscope, then transforms the
+    //! channels independently and averages their power, preserving right-only and
+    //! opposite-polarity signals. Undefined correlation is explicit for silent channels.
+    //!
+    //! Loudness is the one reading that has to hear *every* sample, so it does not come from a
+    //! window. The scope also counts what it has published, `Session::measure_visualizer_loudness`
+    //! takes exactly the frames since its last call into an [`auris_dsp::LoudnessMeter`], and the
+    //! ring is long enough that a missed repaint or two loses nothing. The meter runs on the UI
+    //! thread, where its growing integrated history is allowed to allocate. The frontend owns
+    //! freeze, display history and saved comparisons; none of these changes the document or
+    //! rendered audio.
     //!
     //! # The third thread, and why recording needed one
     //!
@@ -1086,8 +1087,15 @@ pub mod architecture {
     //!
     //! [`auris_engine::render_block`] is the single implementation of "produce N frames".
     //! Realtime playback calls it from the device callback; [`auris_engine::render_project`] calls
-    //! it in a loop as fast as the CPU allows. Because there is only one path, an export matches
-    //! what was heard, sample for sample — there is no second implementation that could drift.
+    //! it in a loop as fast as the CPU allows. Both execute the same track DSP, event scheduling,
+    //! automation and delay compensation. Offline rendering groups tracks into dependency
+    //! generations, including outputs, sends and sidechain keys, and uses Rayon for wide
+    //! generations. Workers only modify their own track; the caller then commits outputs in
+    //! stable order before the next generation starts. Reordering independent contributions
+    //! can introduce floating-point roundoff relative to playback, while output length and
+    //! sample timing remain unchanged. Caller-placed plugins stay on the rendering caller's
+    //! thread until their native worker-migration contracts are established. Realtime rendering
+    //! retains the serial routing order and never dispatches to or waits for Rayon.
     //!
     //! # How it gets there: outputs, buses and sends
     //!
@@ -1250,8 +1258,11 @@ pub mod architecture {
     //! **A layer holds no clips.** [`TrackKind::holds_notes`](auris_core::TrackKind::holds_notes)
     //! is `false` for one, which is what keeps every command that writes, pastes or moves notes off
     //! it. Removing the source detaches its layers in the same step:
-    //! [`Session::detach_layer`](crate::Session::detach_layer) copies the source's clips and writes
-    //! the shape into them, so a layer goes on sounding as it did.
+    //! [`Session::detach_layer`](crate::Session::detach_layer) preserves the sound in ordinary
+    //! clips. An identity shape retains the source's editable loops, performance stack and recipe.
+    //! A shaped layer freezes every performed pass before applying its shape, then removes the
+    //! baked stack and recipe. Its curves keep their original reset boundaries; when those differ
+    //! from the frozen note clip's boundaries, separate control clips preserve their timing.
 }
 
 pub mod realtime {
@@ -1321,6 +1332,12 @@ pub mod realtime {
     //! because a delay feeding a reverb keeps feeding it for the whole of its own decay — and for
     //! the same reason a track's tail, its bus's and the master's add end to end. The offline
     //! renderer uses the longest such path to decide how far past the last clip to keep going.
+    //! Before processing, it asks
+    //! [`Effect::tail_frames_with_context`](auris_core::plugin::Effect::tail_frames_with_context)
+    //! with the planned tempo bounds. A synced delay can therefore size its echo at the song's
+    //! tempo without advancing audio or plugin state. The bounds include tempo changes during
+    //! whole-project ring-out; ranged exports stop their transport, and cycle warm-up uses only
+    //! the cycle's tempos. Effects without a tempo-dependent tail retain their ordinary report.
     //!
     //! Both figures come from plugins, so the arithmetic that combines them saturates rather than
     //! wrapping: a plugin reporting an absurd tail should pad an export, not overflow it.
@@ -1467,6 +1484,15 @@ pub mod plugins {
     //! ([`MotionGeometry::Tract`](auris_core::motion::MotionGeometry::Tract)); the dulcimer
     //! publishes each course as the sum of its modes' shapes.
     //!
+    //! The two oscillator synthesisers, [`Fm2`](auris_synth::Fm2) and
+    //! [`Chiptune`](auris_synth::Chiptune), have no body and publish through the same channel
+    //! anyway, as [`MotionGeometry::Oscillator`](auris_core::motion::MotionGeometry::Oscillator):
+    //! one cycle of each sounding voice's waveform at its envelope's level, that cycle's first
+    //! eight harmonics, and for the operator pair the modulation index the voice has decayed to.
+    //! A frontend therefore draws and plays every built-in pitched instrument with one view,
+    //! whose second picture — the operators and their sidebands, or the chip voice's cycle — it
+    //! computes from the parameters, because that has to be there before a note is played.
+    //!
     //! A body can also be touched.
     //! [`Session::touch_instrument`](crate::Session::touch_instrument) sends
     //! [`TOUCH_CONTROLLER`](auris_core::motion::TOUCH_CONTROLLER) ahead of a note, and the
@@ -1580,10 +1606,12 @@ pub mod plugins {
     //! through the state.
     //!
     //! The audio sampler, [`auris_sampler::AudioSampler`], is the second plugin built that way,
-    //! and the cheaper one, because its samples are not a new kind of asset at all. Loading a file
-    //! into it ([`crate::Session::load_sample`]) adds an ordinary audio source to the document —
+    //! and the cheaper one, because its samples are not a new kind of asset at all. Loading files
+    //! into it ([`crate::Session::load_samples`]) adds ordinary audio sources to the document —
     //! copied into the project folder, relocated, reported when missing — and places no clip; the
-    //! track's instrument state names the source by id. The session mirrors its decoded sources
+    //! track's instrument state holds a map of [`auris_sampler::SampleZone`]s naming the sources
+    //! by id. A note plays the zone with the nearest root inside its velocity layer, unless a zone
+    //! names its own keys; [`auris_sampler::zones`] gives the rule and why it is that one. The session mirrors its decoded sources
     //! into an [`auris_sampler::SampleBank`] in [`crate::Session::rebuild_graph`], the one moment
     //! a sampler reads it, so no edit has to remember to keep the two in step.
     //! [`auris_sampler::needs_asset`] names both samplers for whatever picks an instrument on
@@ -1645,34 +1673,19 @@ pub mod plugins {
     //! `attack`, `decay`, `sustain` and `release` is drawn one, and dragging its corners writes
     //! those four parameters. All four or none — three of them is not an envelope with a piece
     //! missing but a different shape, and the drum synth's lone decay would be drawn as a ramp
-    //! with two corners invented for it. That is why [`auris_sampler`] gained the picture the day
-    //! it gained the parameters, without a line changing in the frontend.
+    //! with two corners invented for it. That is why a sampler gains the picture the day
+    //! it gains the parameters, without a line changing in the frontend.
     //!
     //! # An envelope over a sound that already has one
     //!
-    //! [`auris_sampler`] does not synthesise its own voices — a font's regions carry their own
-    //! volume envelopes, and rustysynth neither exposes them nor lets a caller reach a voice. The
-    //! one per-note gain there is, is *channel expression*, so a note that is to be faded on its
-    //! own has to be given a channel of its own: fifteen of the library's sixteen, one note each.
-    //!
-    //! That trade is real — fifteen notes instead of 128 voices, and a drum kit's choke groups
-    //! only work between notes sharing a channel — so the whole mechanism sits behind a switch:
-    //! an `envelope` toggle, off by default, and while it is off the sampler plays the font
-    //! exactly as it is written. Two rules came out of it, and both generalise:
-    //!
-    //! **A feature that costs something is switched on explicitly, not inferred.** An earlier
-    //! version turned the mechanism on when any of the four sliders left its default, which is
-    //! tidier and wrong: a control that arms itself when you nudge it to see what it does is a
-    //! control nobody can disarm with confidence. The test for "on" is a free function
-    //! (`auris_sampler`'s `shaping`), so it can be read and asserted on rather than inferred from
-    //! the audio.
-    //!
-    //! **A cost the user cannot see is a cost the window has to say out loud.** Missing polyphony
-    //! shows up as "the top note of my chord dropped out", which is the kind of symptom that gets
-    //! blamed on anything but the switch that caused it, so the plugin window carries a caution
-    //! strip for as long as the envelope is on. Which plugin warns, and about what, is decided in
-    //! `auris_gpui::ui::plugin_window::caution` — the frontend, for the same reason it decides
-    //! which plugin gets a curve.
+    //! The SoundFont player does not synthesise its own voices: a font's regions carry their own
+    //! volume envelopes, and rustysynth neither exposes them nor lets a caller reach a voice. It
+    //! once laid an envelope over them anyway, by giving each note a MIDI channel of its own and
+    //! fading that channel's expression, which cost the player all but fourteen notes of
+    //! polyphony and a drum kit's choke groups. That mechanism is gone. The player plays the font
+    //! as it was written, and a sound that needs a different attack or release is rendered and
+    //! played from the audio sampler, whose envelope is its own. The lesson generalises: when a
+    //! library does not offer a control, reshaping the *material* beats forcing the library.
     //!
     //! # Where a new plugin goes
     //!
@@ -2603,6 +2616,8 @@ pub mod documents {
     //!   MySong.auris
     //!   Audio/
     //!     kick.wav
+    //!   Workspace/
+    //!     renders/mix.wav
     //! ```
     //!
     //! [`Session::save_as`](crate::Session::save_as) creates that folder rather than trusting
@@ -2610,6 +2625,17 @@ pub mod documents {
     //! `MySong.auris` gives `MySong/MySong.auris`. The invariant being defended is **one folder,
     //! one project** — two documents sharing a folder would share its `Audio/`, and saving one
     //! under a new name would leave both pointing at the same files.
+    //!
+    //! `Workspace/` is the agents' half of the folder. A file tool given a path *relative* to it
+    //! — `render` to `renders/mix.wav`, `load_sample` from `samples/kick.wav` — runs without a
+    //! permission prompt, because [`workspace_relative`](crate::workspace_relative) and
+    //! [`Session::resolve_workspace_path`](crate::Session::resolve_workspace_path) together
+    //! guarantee it names nothing outside the folder, by `..` or by a link; an absolute path could
+    //! be anything on the machine and is still asked about. The document never refers into the
+    //! workspace: loading or importing from it copies the file into `Audio/` like any import, so
+    //! the user may tidy the workspace away without silencing a track. It belongs to the folder all
+    //! the same, so Save As and the move of an unsaved song into its recovery folder carry it — which
+    //! is also what keeps a workshop candidate's renders with it from checkpoint to finished song.
     //!
     //! # Why an asset reference is not a path
     //!
@@ -2942,6 +2968,26 @@ pub mod harmony {
     //! a changed curve is not proof that an external instrument responds. Agents independently
     //! read back the measured effect and compare the same audio range before claiming an
     //! audible change. These diagnostics never bake performance into the score.
+    //!
+    //! A stack has a dozen controls, and most are answered the same way for every part of one
+    //! kind, so there are **presets**: a named stack filed under an instrument family
+    //! ([`PerformancePreset`](auris_core::PerformancePreset)). The built-ins are a catalogue in
+    //! `auris-core`; the ones a person saves from the panel, or an agent saves with
+    //! `performance_presets`, are one file in the configuration directory
+    //! ([`PerformancePresetBook`](crate::performance_presets::PerformancePresetBook)) shared by
+    //! every project and every door. Applying one
+    //! ([`apply_performance_preset`](crate::Session::apply_performance_preset)) *copies* its
+    //! stages into the clip, reseeded as that clip's own take, in one undo step; the clip keeps no
+    //! link to the preset, so a document stays portable and a preset edited later rewrites no
+    //! song — the same reason a kept chord progression is copied rather than quoted. No built-in
+    //! swings, because swing is the song's decision rather than one part's.
+    //!
+    //! A writer installs its own stack as it writes; notes typed by hand, by a person or an agent,
+    //! arrive with none and play exactly on the grid. Listing presets for a clip therefore answers
+    //! with a [`suggested_preset`](crate::performance_presets::suggested_preset) read off the
+    //! instrument and the clip's shape, and the agent's arrangement instructions ask it to give
+    //! every part it wrote a starting feel. Nothing applies one unasked.
+    //!
     //! Every wander draws from a seed
     //! the transform stores, through the same named streams the composer draws from
     //! ([`auris_core::rng`]), and it draws per loop pass — a repeated bar is loose differently
@@ -3093,9 +3139,9 @@ pub mod platforms {
     //!
     //! # Windows sets no locale variables
     //!
-    //! [`Language::from_system_locale`](auris_i18n::Language::from_system_locale) is what makes a
-    //! Japanese Windows install come up in Japanese; reading `LANG` alone would leave it in
-    //! English.
+    //! [`Language::from_system`](auris_i18n::Language::from_system) asks the operating system
+    //! after the locale variables, which is what makes a Japanese Windows install come up in
+    //! Japanese; reading `LANG` alone would leave it in English.
     //!
     //! # What differs at runtime
     //!

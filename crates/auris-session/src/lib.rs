@@ -49,7 +49,6 @@ pub mod audio_inspection;
 pub mod choices;
 pub use audio_attachment::{AudioAttachmentCopy, copy_audio_attachment, prepare_audio_attachment};
 pub mod audio_input;
-pub mod audio_review;
 pub mod conversation_attachments;
 pub mod conversations;
 pub mod execution_trace;
@@ -58,6 +57,7 @@ pub mod issue_report;
 pub mod live_agent;
 pub mod midi_reference;
 pub mod music_reference;
+pub mod phase;
 pub mod production_record;
 pub use export_inspection::{ExportInspection, inspect_export};
 pub mod note_pitch;
@@ -85,6 +85,7 @@ pub mod library;
 pub mod lint;
 pub mod mixer_graph;
 pub mod param;
+pub mod performance_presets;
 pub mod progressions;
 pub mod registry;
 pub mod render;
@@ -148,6 +149,7 @@ pub use session::accompaniment;
 pub use session::arrangement;
 pub use session::lyric_harness;
 pub use session::source_material;
+pub use session::workspace_relative;
 pub use session::{
     AccompanyReport, Arm, AudioStatus, AutosaveJob, AutosaveResult, BalanceReport, CEILING_DB,
     ChordPreview, ChordPreviewJob, Clipboard, CollectAssetsJob, CollectAssetsResult,
@@ -172,7 +174,11 @@ pub use session::{
     ClipInstrumentAnalysis, analyze_audio_file, analyze_instrument_file,
 };
 pub use session::{CheckpointJob, CheckpointOperation, CheckpointResult};
+pub use session::{ClipEvent, ClipEventKind, EventEdit, EventRef, clip_events};
 pub use session::{CompositionPreview, CompositionTrackPreview};
+pub use session::{
+    DEFAULT_SAMPLE_ROOT, DetectedPitch, SampleZoneView, detect_pitch, parse_root_note,
+};
 pub use session::{ENVELOPE_PITCHES, SoundEnvelope};
 pub use session::{prepare_looping_output_preview, prepare_output_preview};
 pub mod workshop;
@@ -319,11 +325,12 @@ pub mod prelude {
         SoundFontId, SoundFontRef, SourceId, StrokeDirection, Subdivision, Track, TrackId,
         TrackKind, Vibrato, default_frame_hop, default_loop_end, loop_passes, sounding_length,
     };
-    pub use auris_core::{Comment, CommentId};
+    pub use auris_core::{Comment, CommentId, JoinRefusal};
     pub use auris_core::{
         Expression, GroovePoint, GrooveTemplate, PitchPerformance, Strum, StrumClock,
         VolumeContour, VolumeContourPreset,
     };
+    pub use auris_core::{PerformancePreset, PresetFamily, builtin_performance_presets};
     /// Offline source analysis, prepared through [`Session::spectrogram_job`].
     pub use auris_dsp::Spectrogram;
     /// The equalizer's band table, the settings a display reads out of one, and the curve those
@@ -376,8 +383,8 @@ pub mod prelude {
         WavExportSettings,
     };
     pub use auris_sampler::{
-        AUDIO_SAMPLER_ID, AUDIO_SAMPLER_LOOP_KEY, AUDIO_SAMPLER_ROOT_KEY, SAMPLER_ENVELOPE_KEY,
-        SAMPLER_ID,
+        AUDIO_SAMPLER_ID, AUDIO_SAMPLER_LOOP_KEY, KeyRange, MAX_SAMPLE_ZONES, SAMPLER_ID,
+        SampleZone, VelocityRange,
     };
 
     pub use crate::{
@@ -396,4 +403,4 @@ pub mod prelude {
 }
 
 /// A coherent stereo analysis snapshot.
-pub use session::{VisualizerFrame, VisualizerSpectrum};
+pub use session::{VisualizerFrame, VisualizerLoudness, VisualizerSpectrum, VisualizerTap};

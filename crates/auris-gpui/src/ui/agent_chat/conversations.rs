@@ -244,7 +244,8 @@ impl AurisApp {
                 .collect(),
             draft: self.agent_chat.input.content().into(),
             attachments: self.agent_chat.references.attachments.clone(),
-            scroll_y: self.agent_chat.scroll.offset().y.into(),
+            // The conversation view keeps where it is read; a reopened one shows its end.
+            scroll_y: 0.0,
             interrupted: self.agent_chat.busy,
             queued: self
                 .agent_chat
@@ -413,6 +414,14 @@ impl AurisApp {
         self.conversation_operation(Operation::Initialize);
     }
 
+    /// Takes any finished conversation-storage answer, then says whether a write is still
+    /// running on its thread.
+    #[cfg(test)]
+    pub(crate) fn conversation_storage_busy(&mut self, cx: &mut gpui::Context<Self>) -> bool {
+        self.poll_conversations(cx);
+        self.agent_chat.conversations.pending.is_some()
+    }
+
     pub(super) fn poll_conversations(&mut self, cx: &mut gpui::Context<Self>) {
         let answer = self
             .agent_chat
@@ -529,6 +538,7 @@ impl AurisApp {
         self.agent_chat.history_load = None;
         let restoring_entries = !initial || self.agent_chat.entries.is_empty();
         if restoring_entries {
+            self.agent_chat.new_transcript();
             self.agent_chat.entries = conversation
                 .transcript
                 .messages
@@ -560,10 +570,6 @@ impl AurisApp {
             self.agent_chat.input = draft;
             self.agent_chat.references.attachments = attachments;
         }
-        self.agent_chat
-            .scroll
-            .set_offset(gpui::point(px(0.0), px(conversation.transcript.scroll_y)));
-        self.agent_chat.follow_tail = false;
         self.agent_chat.loaded_history = Some(memory);
         self.agent_chat.history_project = self.session.path().map(Path::to_path_buf);
         navigation.active = Some(conversation);
@@ -1218,11 +1224,7 @@ impl AurisApp {
 
 impl AgentChat {
     pub(super) fn toggle_conversation_entry(&mut self, index: usize) {
-        let expanded = if self.conversations.previewing() {
-            &mut self.conversations.preview_expanded
-        } else {
-            &mut self.expanded
-        };
+        let expanded = &mut self.conversations.preview_expanded;
         if !expanded.remove(&index) {
             expanded.insert(index);
         }
@@ -1326,9 +1328,34 @@ mod tests {
     use super::*;
     use crate::harness::{click, open, paint};
 
+    /// Blocks until the storage operation in flight, if any, has answered.
+    ///
+    /// The answer is put back on a fresh channel, so `poll_conversations` still takes it and does
+    /// everything it would have done. Waiting on the worker itself rather than spinning against a
+    /// deadline is what keeps a loaded machine from failing a test that is merely slow; the
+    /// timeout only turns a worker that never answers into a failure rather than a hang.
+    fn await_storage(app: &gpui::Entity<AurisApp>, cx: &mut gpui::VisualTestContext) {
+        app.update(cx, |this, _| {
+            let conversations = &mut this.agent_chat.conversations;
+            let Some(pending) = conversations.pending.take() else {
+                return;
+            };
+            let (sender, receiver) = std::sync::mpsc::channel();
+            match pending.recv_timeout(Duration::from_secs(60)) {
+                Ok(answer) => sender.send(answer).unwrap(),
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                    panic!("conversation storage did not answer within a minute")
+                }
+                // Dropping the sender leaves a disconnected channel, which the poll reports.
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => drop(sender),
+            }
+            conversations.pending = Some(receiver);
+        });
+    }
+
     fn settle(app: &gpui::Entity<AurisApp>, cx: &mut gpui::VisualTestContext) {
-        let deadline = Instant::now() + Duration::from_secs(10);
         loop {
+            await_storage(app, cx);
             app.update(cx, |this, cx| this.poll_conversations(cx));
             let pending = app.read_with(cx, |this, _| {
                 assert!(
@@ -1341,8 +1368,6 @@ mod tests {
             if !pending {
                 break;
             }
-            assert!(Instant::now() < deadline, "conversation storage timed out");
-            std::thread::yield_now();
         }
         paint(app, cx);
     }
@@ -1639,7 +1664,7 @@ mod tests {
         assert!(cx.debug_bounds("agent-message-attachment-0-0").is_some());
         assert!(cx.debug_bounds("agent-message-attachment-0-1").is_some());
         assert_eq!(cx.opened_url(), None);
-        click("agent-message-attachment-0-0", cx);
+        click("agent-message-attachment-0-0-open", cx);
         cx.run_until_parked();
         app.read_with(cx, |this, _| {
             assert_eq!(this.attachment_preview.as_ref().unwrap().path, reference)
@@ -1842,6 +1867,67 @@ mod tests {
     }
 
     #[gpui::test]
+    fn saving_the_same_project_with_an_absolute_path_keeps_chat_available(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let cwd = std::env::current_dir().unwrap();
+        let root = tempfile::tempdir_in(&cwd).unwrap();
+        let relative = root.path().strip_prefix(&cwd).unwrap().join("Song.auris");
+        let (app, cx) = open(cx);
+        app.update(cx, |this, _| {
+            this.session.save_as(&relative).unwrap();
+            assert!(!this.session.path().unwrap().is_absolute());
+            this.panels.show(crate::dock::Panel::Agent);
+            this.agent_chat.models_loaded = true;
+        });
+        paint(&app, cx);
+        settle(&app, cx);
+        let id = app.update(cx, |this, _| {
+            this.agent_chat.input = TextField::new("Keep this draft after replacing the same file");
+            let id = this
+                .agent_chat
+                .conversations
+                .active_id()
+                .unwrap()
+                .to_owned();
+            let previous = this.session.path().unwrap().to_path_buf();
+            let absolute = previous.canonicalize().unwrap();
+            let original_store = this
+                .agent_chat
+                .conversations
+                .store
+                .as_ref()
+                .unwrap()
+                .root()
+                .canonicalize()
+                .unwrap();
+            this.session.save_as_replacing(&absolute).unwrap();
+            assert_eq!(
+                ConversationStore::for_project(this.session.project_folder().unwrap())
+                    .root()
+                    .canonicalize()
+                    .unwrap(),
+                original_store,
+                "Save As changes only the spelling of the conversation store"
+            );
+            this.agent_document_saved_from(Some(&previous));
+            id
+        });
+        settle(&app, cx);
+        app.read_with(cx, |this, _| {
+            assert_eq!(this.agent_chat.conversations.active_id(), Some(id.as_str()));
+            assert!(!this.agent_chat.conversations.unavailable());
+            assert_eq!(
+                this.agent_chat.input.content(),
+                "Keep this draft after replacing the same file"
+            );
+            let store = this.agent_chat.conversations.store.as_ref().unwrap();
+            assert!(store.load(&id).is_ok());
+            assert!(this.session.path().unwrap().is_absolute());
+        });
+    }
+
+    #[gpui::test]
     fn rename_and_archive_keep_the_conversation_accessible_without_changing_music(
         cx: &mut gpui::TestAppContext,
     ) {
@@ -1927,13 +2013,11 @@ mod tests {
             this.conversation_operation(Operation::Save);
             id
         });
-        let deadline = Instant::now() + Duration::from_secs(10);
         while app.read_with(cx, |this, _| {
             this.agent_chat.conversations.pending.is_some()
         }) {
+            await_storage(&app, cx);
             app.update(cx, |this, cx| this.poll_conversations(cx));
-            assert!(Instant::now() < deadline);
-            std::thread::yield_now();
         }
         app.update(cx, |this, cx| {
             assert!(

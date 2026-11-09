@@ -213,8 +213,8 @@ and regeneration, not generic GUI regeneration of those clips. For music assessm
 `target/quality-evidence/listening/listening.html` contains six anonymous A/B pairs and a
 rating form; the separate key reveals their identities. Original levels are retained.
 No human preference ratings have been collected, so musical improvement remains unproven.
-The [critic calibration](audio-critic-calibration.md) likewise did not validate the current
-audio model for automatic musical selection.
+A separate critic-calibration experiment, since retired, likewise did not validate its audio
+model for automatic musical selection.
 
 ## Follow-up validation of production records and candidates
 
@@ -222,6 +222,6 @@ The [follow-up report](composition-quality-validation-2026-10-24.md) covers
 conversation records, immutable candidates, scoped variation, modular prompts
 and real backend trials. It retains all 24 holdout deliveries and the six-trial
 development prompt ablation, including recovered tool errors and runtime-smoke
-failures. Human preference remains unscored. The candidate catalog and modular
-prompt stay opt-in; see [candidate tools](composition-candidates.md) and
-[workflow configuration](composition-workflows.md).
+failures. Human preference remains unscored. The candidate catalog stays opt-in;
+the phased prompt is now the default. See [candidate tools](composition-candidates.md)
+and [production phases](composition-workflows.md).

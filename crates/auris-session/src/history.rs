@@ -87,6 +87,8 @@ pub enum Edit {
     RenameTrack,
     /// A track was given a different colour.
     SetTrackColor,
+    /// Several tracks were recoloured together, such as by their sounds' timbre clusters.
+    SetTrackColors,
     /// A track's lane was made taller or shorter.
     SetTrackHeight,
     /// A track was muted or unmuted.
@@ -124,6 +126,8 @@ pub enum Edit {
     DuplicateClip,
     /// A clip was divided in two.
     SplitClip,
+    /// Clips on one track were joined into one.
+    JoinClips,
     /// A clip was renamed.
     RenameClip,
     /// A clip was muted or unmuted.
@@ -171,6 +175,11 @@ pub enum Edit {
     MoveNotes,
     /// A note's length changed.
     ResizeNote,
+    /// One field of one row of a clip's event list was rewritten.
+    ///
+    /// Its own step whichever column it was, because the list is a different gesture from the
+    /// drag that would have made the same change: a value typed is a decision made once.
+    EditEvent,
     /// Notes were snapped onto a division of the beat.
     QuantizeNotes,
     /// A note was given its word.
@@ -257,8 +266,10 @@ pub enum Edit {
     ImportSoundFont,
     /// A track was pointed at one of a SoundFont's sounds.
     ChoosePreset,
-    /// An audio file was loaded into a track's sampler.
+    /// Audio files were loaded into a track's sampler.
     LoadSample,
+    /// A sampler's map changed: a recording's root, keys, layer or level, or one removed.
+    EditSampleMap,
     /// The key changed somewhere on the timeline.
     SetKey,
     /// A chord changed somewhere on the timeline.
@@ -344,6 +355,8 @@ pub struct History {
     future: VecDeque<Snapshot>,
     limit: usize,
     pub(crate) recording_agent: Option<AgentGroup>,
+    /// Snapshots ever appended to `past`, so a [`Mark`] knows how many to take back off.
+    appended: u64,
 }
 
 #[derive(Clone, Copy)]
@@ -352,6 +365,18 @@ pub(crate) struct AgentGroup {
     pub(crate) interrupted: bool,
 }
 
+/// Where the history stood before an edit that may yet be withdrawn.
+///
+/// An agent's edits within one request share a single snapshot, so withdrawing one of them by
+/// undoing would take the request's earlier, accepted edits with it. A mark instead lets the
+/// history be put back exactly as it was, with the redo branch the edit cleared.
+pub(crate) struct Mark {
+    appended: u64,
+    last_agent: Option<Option<AgentGroup>>,
+    future: Option<VecDeque<Snapshot>>,
+}
+
+#[derive(Clone)]
 struct Snapshot {
     edit: Edit,
     project: Project,
@@ -397,6 +422,36 @@ impl History {
             future: VecDeque::new(),
             limit: limit.max(1),
             recording_agent: None,
+            appended: 0,
+        }
+    }
+
+    /// Remember the present state so [`Self::rollback`] can return to it.
+    ///
+    /// The redo branch is copied only when there is one, which during an agent's request there
+    /// almost never is.
+    pub(crate) fn mark(&self) -> Mark {
+        Mark {
+            appended: self.appended,
+            last_agent: self.past.back().map(|snapshot| snapshot.agent),
+            future: (!self.future.is_empty()).then(|| self.future.clone()),
+        }
+    }
+
+    /// Forget every step recorded since `mark`, restoring the redo branch they cleared.
+    ///
+    /// A step that eviction pushed off the far end in the meantime stays gone; it was the oldest
+    /// in a full history, and losing it is the price of not copying the whole stack per edit.
+    pub(crate) fn rollback(&mut self, mark: Mark) {
+        for _ in mark.appended..self.appended {
+            self.past.pop_back();
+        }
+        self.appended = mark.appended;
+        if let (Some(last), Some(agent)) = (self.past.back_mut(), mark.last_agent) {
+            last.agent = agent;
+        }
+        if let Some(future) = mark.future {
+            self.future = future;
         }
     }
 
@@ -422,6 +477,7 @@ impl History {
             project: project.clone(),
             agent: self.recording_agent,
         });
+        self.appended += 1;
         // A deque, so dropping the oldest step is not a move of every other whole document.
         while self.past.len() > self.limit {
             self.past.pop_front();

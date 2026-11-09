@@ -1,8 +1,10 @@
 //! The physical instrument's body, live, beside its parameter editor — and a body to touch.
 //!
-//! Drawn with Atelier's physical-model plots: one [`StringLane`] per sounding string, bar,
-//! shell, bore or vocal tract, a circular [`Heatmap`] per drum head or cymbal, and the modes the
-//! body rings in on a stem plot. Every body is also a surface. Pressing it excites the model at
+//! Each body is drawn as what it is: a [`StringLane`] per plucked, struck or bowed string, a
+//! circular [`Heatmap`] per drum head or cymbal, and for the rest the painters in
+//! [`super::physical_bodies`] — a piano string between its hammer and damper, a mallet bar on its
+//! supports, a bell's rim as a ring, a bore or a vocal tract as a tube of air. The modes the body
+//! rings in are on a stem plot beside them. Every body is also a surface. Pressing it excites the model at
 //! that place, the way the instrument itself is played: a string is pulled and let go, a head or
 //! a struck string is pressed, a bowed string, a bore or a tract sounds for as long as the press
 //! is held. The note is the voice the lane is showing, or the audition note when the lane is at
@@ -10,10 +12,12 @@
 
 use std::{cell::Cell, rc::Rc};
 
+use super::physical_bodies::{BodyPlot, BoreEnd, LANE_INSET, Shape, ring_fraction};
 use super::plugin_window::PluginSubject;
+use super::synth_view::is_oscillator_model;
 use crate::{app::AurisApp, theme::Theme};
 use atelier::plot::{LinePlot, Series};
-use atelier::viz::{Heatmap, StringLane};
+use atelier::viz::{Heatmap, StringLane, Waveform};
 use atelier::{
     Badge, Button, Card, ControlSize, IconName, Label, LevelMeter, PianoKeyboard, SectionHeader,
     StatusDot, TextColor, TextSize,
@@ -27,8 +31,6 @@ use gpui::{
 
 /// Lanes on screen, which is every voice a motion frame carries.
 const LANES: usize = auris_session::MOTION_VOICES;
-/// The margin [`StringLane`] leaves at each anchor, so a pointer maps onto the drawn string.
-const LANE_INSET: f32 = 10.;
 
 #[derive(Debug)]
 pub(crate) struct PhysicalView {
@@ -48,6 +50,11 @@ pub(crate) struct PhysicalView {
     pub(crate) ringing: Option<u8>,
     /// Where each body was laid out on the last frame, to turn a pointer into a place on it.
     surfaces: Rc<[Cell<Option<Bounds<Pixels>>>; LANES]>,
+    /// Where each editable picture of an oscillator patch was laid out on the last frame, so a
+    /// drag on it is measured against the plot the person saw.
+    pub(crate) plots: super::synth_edit::PlotBounds,
+    /// Wheel travel over a picture whose wheel steps a count, not yet worth a whole step.
+    pub(crate) wheel: f32,
 }
 impl Default for PhysicalView {
     fn default() -> Self {
@@ -64,6 +71,8 @@ impl Default for PhysicalView {
             touch: None,
             ringing: None,
             surfaces: Rc::default(),
+            plots: Rc::default(),
+            wheel: 0.0,
         }
     }
 }
@@ -108,6 +117,8 @@ impl Gesture {
             | "auris.physical.clarinet"
             | "auris.physical.tin_whistle"
             | "auris.physical.choir" => Self::Sustain,
+            // An oscillator is played like a key: it sounds while held and stops when let go.
+            id if is_oscillator_model(id) => Self::Key,
             _ => Self::Strike,
         }
     }
@@ -218,7 +229,7 @@ fn is_surface(geometry: MotionGeometry) -> bool {
 }
 
 /// The colour of a voice in every plot it appears in, from the pitch it plays.
-fn voice_color(theme: &Theme, pitch: f32) -> Hsla {
+pub(crate) fn voice_color(theme: &Theme, pitch: f32) -> Hsla {
     let series = &theme.atelier.colors.series;
     series[pitch.round().clamp(0., 127.) as usize % series.len()]
 }
@@ -366,12 +377,16 @@ impl AurisApp {
         let Some(bounds) = self.physical_view.surfaces.get(lane).and_then(Cell::get) else {
             return;
         };
-        let (at, pull) = if is_surface(self.lane_geometry(lane)) {
+        let geometry = self.lane_geometry(lane);
+        let (at, pull) = if is_surface(geometry) {
             let Some(radius) = head_touch(bounds, position) else {
                 return;
             };
             // A stick lands as hard wherever it lands on the head; how hard is the audition's.
             (radius, 0.65)
+        } else if geometry == MotionGeometry::Shell {
+            // A bell is struck around its rim, as hard wherever it is struck.
+            (ring_fraction(bounds.center(), position), 0.65)
         } else {
             lane_touch(bounds, position)
         };
@@ -446,6 +461,7 @@ impl AurisApp {
         let (track, id) = self.physical_view.source.clone()?;
         let piano = id == "auris.physical.piano";
         let drums = is_drum_model(&id);
+        let oscillator = is_oscillator_model(&id);
         let gesture = Gesture::of(&id);
         let frame = self.physical_view.frame.unwrap_or_default();
         let theme = self.theme.clone();
@@ -488,12 +504,17 @@ impl AurisApp {
         };
         let hint = self.t(if drums {
             Key::PhysicalTouchHead
+        } else if oscillator {
+            Key::SynthTouchKey
         } else {
             match (gesture, frame.geometry, id.as_str()) {
                 (Gesture::Pluck, ..) => Key::PhysicalTouchPluck,
                 (Gesture::Sustain, _, "auris.physical.violin") => Key::PhysicalTouchBow,
                 (Gesture::Sustain, _, "auris.physical.choir") => Key::PhysicalTouchSing,
                 (Gesture::Sustain, ..) => Key::PhysicalTouchBlow,
+                (Gesture::Key, ..) => Key::PhysicalTouchKey,
+                (_, _, "auris.physical.mallet") => Key::PhysicalTouchBar,
+                (_, _, "auris.physical.bell") => Key::PhysicalTouchRim,
                 _ => Key::PhysicalTouchStrike,
             }
         });
@@ -513,7 +534,13 @@ impl AurisApp {
             },
             resting_contact,
             resting_pitch: self.physical_view.pitch,
+            resting_cycle: if oscillator {
+                self.oscillator_resting_cycle(track, &id)
+            } else {
+                Vec::new()
+            },
             drums,
+            instrument: id.clone(),
             language,
         };
         let motion = self.physical_bodies(&bodies, &theme, cx);
@@ -522,32 +549,37 @@ impl AurisApp {
             .flex_wrap()
             .items_center()
             .gap(spacing.sm)
-            .child(
-                Button::new(
-                    "physical-gain",
-                    format!("{}: {gain:.0}×", self.t(Key::VisualizerDisplayGain)),
-                )
-                .ghost()
-                .size(ControlSize::Small)
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.physical_view.gain = match this.physical_view.gain as u32 {
-                        6 => 24.,
-                        24 => 96.,
-                        _ => 6.,
-                    };
-                    cx.notify();
-                })),
-            )
-            .child(
-                Button::new("physical-effects", self.t(Key::VisualizerEffects))
-                    .ghost()
-                    .size(ControlSize::Small)
-                    .selected(!effects_disabled)
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.physical_view.effects_disabled = !this.physical_view.effects_disabled;
-                        cx.notify();
-                    })),
-            )
+            // A waveform is drawn at the size it is played, and has no trails to switch.
+            .when(!oscillator, |toolbar| {
+                toolbar
+                    .child(
+                        Button::new(
+                            "physical-gain",
+                            format!("{}: {gain:.0}×", self.t(Key::VisualizerDisplayGain)),
+                        )
+                        .ghost()
+                        .size(ControlSize::Small)
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.physical_view.gain = match this.physical_view.gain as u32 {
+                                6 => 24.,
+                                24 => 96.,
+                                _ => 6.,
+                            };
+                            cx.notify();
+                        })),
+                    )
+                    .child(
+                        Button::new("physical-effects", self.t(Key::VisualizerEffects))
+                            .ghost()
+                            .size(ControlSize::Small)
+                            .selected(!effects_disabled)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.physical_view.effects_disabled =
+                                    !this.physical_view.effects_disabled;
+                                cx.notify();
+                            })),
+                    )
+            })
             .child(
                 Button::new(
                     "physical-freeze",
@@ -582,15 +614,23 @@ impl AurisApp {
             .p(spacing.lg)
             .gap(spacing.md)
             .child(
-                SectionHeader::new(self.t(Key::PhysicalMotion))
-                    .description(self.t(Key::PhysicalObserved))
-                    .action(Badge::new(self.t(if frozen {
-                        Key::PhysicalFrozen
-                    } else if frame.active > 0 {
-                        Key::PhysicalLive
-                    } else {
-                        Key::VisualizerWaiting
-                    }))),
+                SectionHeader::new(self.t(if oscillator {
+                    Key::SynthWaveforms
+                } else {
+                    Key::PhysicalMotion
+                }))
+                .description(self.t(if oscillator {
+                    Key::SynthObserved
+                } else {
+                    Key::PhysicalObserved
+                }))
+                .action(Badge::new(self.t(if frozen {
+                    Key::PhysicalFrozen
+                } else if frame.active > 0 {
+                    Key::PhysicalLive
+                } else {
+                    Key::VisualizerWaiting
+                }))),
             )
             .child(toolbar)
             .child(motion)
@@ -604,7 +644,11 @@ impl AurisApp {
                     .size(TextSize::Small)
                     .color(TextColor::Muted),
             );
-        let analysis = self.physical_analysis(&id, &frame, &theme);
+        let analysis = if oscillator {
+            Some(self.oscillator_analysis(track, &id, &frame, &theme, cx))
+        } else {
+            self.physical_analysis(&id, &frame, &theme)
+        };
         let audition = self.physical_audition(drums, playing, &note, cx);
         Some(
             div()
@@ -637,7 +681,7 @@ impl AurisApp {
             .flex()
             .gap(spacing.sm)
             .child(self.touch_tracker(cx));
-        container = if bodies.drums {
+        container = if bodies.cells() {
             container.flex_row().flex_wrap()
         } else {
             container.flex_col()
@@ -700,7 +744,7 @@ impl AurisApp {
                         .color(TextColor::Faint),
                 );
             let level = shown.map_or(0., |voice| voice.level.clamp(0., 1.));
-            container = container.child(if bodies.drums {
+            container = container.child(if bodies.cells() {
                 div()
                     .flex()
                     .flex_col()
@@ -839,6 +883,21 @@ impl AurisApp {
         }
         let gain = self.physical_view.gain;
         let mut plot = LinePlot::new().x_range(1., 8.).y_range(0., 1.);
+        if tract && lane_voices(frame).iter().all(Option::is_none) {
+            // Nobody is singing, but the tract still has a shape: the neutral one a lane at rest
+            // is drawn with, faintly, rather than an empty plot.
+            plot = plot.series(
+                Series::line(
+                    tract_areas(None)
+                        .iter()
+                        .enumerate()
+                        .map(|(n, area)| (n as f32 + 1., *area))
+                        .collect(),
+                )
+                .color(tokens.colors.text_faint)
+                .faint(),
+            );
+        }
         for index in lane_voices(frame).into_iter().flatten() {
             let voice = &frame.voices[index];
             let color = voice_color(theme, voice.pitch);
@@ -987,7 +1046,11 @@ struct Bodies {
     /// Where the instrument's own position control excites it, shown on the resting body.
     resting_contact: Option<f32>,
     resting_pitch: u8,
+    /// One cycle of an oscillator's patch, drawn faintly on its first lane at rest.
+    resting_cycle: Vec<f32>,
     drums: bool,
+    /// The instrument's id, which tells one string-like body from another.
+    instrument: String,
     language: Language,
 }
 
@@ -1029,25 +1092,14 @@ impl Bodies {
             (_, Some(voice)) => body_points(voice, geometry, self.gain),
             (_, None) => vec![0.; auris_session::MOTION_POINTS],
         };
-        let mut plot = StringLane::new(points).color(color);
         let contact = match (touch, shown) {
             (Some(touch), _) => Some(touch.at),
             (_, Some(voice)) => Some(voice.contact),
             (_, None) => self.resting_contact,
-        };
-        match geometry {
-            // A shell is a ring opened out; it has no one place it was struck.
-            MotionGeometry::Shell => {}
-            // Air is set going at the mouthpiece or the glottis, the first point.
-            MotionGeometry::Bore | MotionGeometry::Tract => plot = plot.contact(0.),
-            _ => {
-                if let Some(contact) = contact.filter(|contact| contact.is_finite()) {
-                    plot = plot.contact(contact);
-                }
-            }
         }
-        if let (Some(index), Some(voice)) = (voice, shown) {
-            let trails = self
+        .filter(|contact| contact.is_finite());
+        let trails = match (voice, shown) {
+            (Some(index), Some(_)) => self
                 .history
                 .iter()
                 .rev()
@@ -1058,15 +1110,86 @@ impl Bodies {
                     let matched = match_history(&self.frame, past)[index]?;
                     Some(body_points(&past.voices[matched], geometry, self.gain))
                 })
-                .collect();
-            plot = plot.trails(trails);
-            if !voice.held {
-                plot = plot.inactive();
+                .collect(),
+            _ => Vec::new(),
+        };
+        // Drawn at full strength while a note is held or a press is on the body.
+        let active = match shown {
+            Some(voice) => voice.held,
+            None => touch.is_some(),
+        };
+        if geometry == MotionGeometry::Oscillator {
+            let cycle: Vec<f32> = match (touch, shown) {
+                (_, Some(voice)) => voice.points.to_vec(),
+                // Pressed and not yet heard from: the patch, at the strength of the press.
+                (Some(touch), None) => self
+                    .resting_cycle
+                    .iter()
+                    .map(|sample| sample * touch_velocity(touch.pull))
+                    .collect(),
+                (None, None) if lane == 0 => self
+                    .resting_cycle
+                    .iter()
+                    .map(|sample| sample * 0.6)
+                    .collect(),
+                (None, None) => vec![0.; auris_session::MOTION_POINTS],
+            };
+            // Two periods, so the join between one cycle and the next is seen as well.
+            let samples = cycle.iter().chain(cycle.iter()).copied().collect();
+            let color = if active { color } else { color.opacity(0.55) };
+            return Waveform::new(samples)
+                .color(color)
+                .filled()
+                .into_any_element();
+        }
+        let shape = match geometry {
+            MotionGeometry::String if self.instrument == "auris.physical.piano" => {
+                Some(Shape::Piano {
+                    hammer: contact,
+                    striking: shown.is_some_and(|voice| voice.excitation > 0.05)
+                        || touch.is_some_and(|touch| touch.sounding),
+                    // The damper is off a held key, and off every string under the pedal.
+                    damped: !(active || self.frame.pedal),
+                })
             }
-        } else if touch.is_none() {
+            MotionGeometry::Bar => Some(Shape::Bar { mallet: contact }),
+            MotionGeometry::Shell => Some(Shape::Ring { contact }),
+            MotionGeometry::Bore => Some(Shape::Bore(
+                if self.instrument == "auris.physical.tin_whistle" {
+                    BoreEnd::Fipple
+                } else {
+                    BoreEnd::Reed
+                },
+            )),
+            MotionGeometry::Tract => Some(Shape::Tract(tract_areas(shown))),
+            _ => None,
+        };
+        if let Some(shape) = shape {
+            let plot = BodyPlot::new(shape, points, color, theme).trails(trails);
+            return if active { plot } else { plot.inactive() }.into_any_element();
+        }
+        let mut plot = StringLane::new(points).color(color).trails(trails);
+        if let Some(contact) = contact {
+            plot = plot.contact(contact);
+        }
+        if !active {
             plot = plot.inactive();
         }
         plot.into_any_element()
+    }
+
+    /// Whether the bodies sit side by side in square cells, as heads and bells do, rather
+    /// than one lane under another.
+    fn cells(&self) -> bool {
+        self.drums || self.resting == MotionGeometry::Shell
+    }
+}
+
+/// The eight tubes a voice's tract is made of, or a neutral vowel's while nobody sings.
+fn tract_areas(voice: Option<&MotionVoice>) -> [f32; 8] {
+    match voice {
+        Some(voice) if voice.modes.iter().any(|area| *area > 0.) => voice.modes,
+        _ => [0.45, 0.4, 0.45, 0.55, 0.65, 0.7, 0.65, 0.55],
     }
 }
 
@@ -1082,6 +1205,7 @@ fn resting_geometry(id: &str, observed: MotionGeometry) -> MotionGeometry {
         "auris.physical.clarinet" | "auris.physical.tin_whistle" => MotionGeometry::Bore,
         "auris.physical.choir" => MotionGeometry::Tract,
         "auris.synth.drumkit" => MotionGeometry::Membrane,
+        id if is_oscillator_model(id) => MotionGeometry::Oscillator,
         id if id.starts_with("auris.physical.") => MotionGeometry::String,
         _ => observed,
     }
@@ -1110,7 +1234,9 @@ pub(crate) fn model_thumbnail(
         resting: geometry,
         resting_contact: None,
         resting_pitch: 60,
+        resting_cycle: Vec::new(),
         drums: is_drum_model(&id),
+        instrument: id,
         language: Language::English,
     }
     .plot(0, loudest, geometry, &theme)

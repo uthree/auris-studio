@@ -62,6 +62,7 @@ impl ConversationDigest {
 /// A preference summary in flight, folding exactly `folded` into the earlier summary.
 pub(super) struct PreferenceDigest {
     folded: Vec<Selection>,
+    earlier: String,
     job: CompletionJob,
 }
 
@@ -88,7 +89,11 @@ impl PreferenceDigest {
         )
         .map_err(|e| log::warn!("preference summary not started: {e}"))
         .ok()?;
-        Some(Self { folded, job })
+        Some(Self {
+            folded,
+            earlier: preferences.digest.clone(),
+            job,
+        })
     }
 
     /// How many choices were stored when this summary was requested.
@@ -99,6 +104,8 @@ impl PreferenceDigest {
     /// Store a finished summary under the preference lock; `None` while it is still running.
     pub(super) fn poll(&self) -> Option<Result<Preferences, String>> {
         let text = self.job.poll()?;
-        Some(text.and_then(|text| auris_session::workshop::digest_preferences(&self.folded, &text)))
+        Some(text.and_then(|text| {
+            auris_session::workshop::digest_preferences(&self.folded, &self.earlier, &text)
+        }))
     }
 }

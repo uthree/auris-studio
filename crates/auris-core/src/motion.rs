@@ -46,6 +46,13 @@ pub enum MotionGeometry {
     /// Vocal tract from the glottis (point zero) to the lips: points are acoustic pressure, and
     /// the eight `modes` are the cross-sections of its eight tubes, relative to the widest.
     Tract,
+    /// An oscillator, which has no body: `points` are one cycle of the voice's output waveform
+    /// from the start of its period to the end, scaled by its envelope; `modes` are the
+    /// magnitudes of that cycle's first eight harmonics, relative to the strongest, before the
+    /// envelope; and `excitation` is the voice's own timbre control as it stands right now — for
+    /// phase modulation, the modulation index in radians; for the subtractive patches, the
+    /// filter's cutoff in hertz.
+    Oscillator,
 }
 
 /// One vibrating body, sampled from the live DSP state.
@@ -141,6 +148,7 @@ impl MotionMonitor {
                     4 => MotionGeometry::Plate,
                     5 => MotionGeometry::Bore,
                     6 => MotionGeometry::Tract,
+                    7 => MotionGeometry::Oscillator,
                     _ => MotionGeometry::String,
                 },
                 active: words[1] as usize,
@@ -164,6 +172,7 @@ impl MotionMonitor {
                     5 => Some(MotionGeometry::Plate),
                     6 => Some(MotionGeometry::Bore),
                     7 => Some(MotionGeometry::Tract),
+                    8 => Some(MotionGeometry::Oscillator),
                     _ => None,
                 };
                 for (i, point) in voice.points.iter_mut().enumerate() {
@@ -218,6 +227,7 @@ impl MotionCapture {
             MotionGeometry::Plate => 4,
             MotionGeometry::Bore => 5,
             MotionGeometry::Tract => 6,
+            MotionGeometry::Oscillator => 7,
         };
         words[1] = frame.active as u32;
         words[2] = frame.expression.to_bits();
@@ -239,6 +249,7 @@ impl MotionCapture {
                 Some(MotionGeometry::Plate) => 5,
                 Some(MotionGeometry::Bore) => 6,
                 Some(MotionGeometry::Tract) => 7,
+                Some(MotionGeometry::Oscillator) => 8,
             };
             for (i, point) in voice.points.iter().enumerate() {
                 words[start + 6 + i] = point.to_bits();
@@ -272,6 +283,7 @@ mod tests {
             MotionGeometry::Plate,
             MotionGeometry::Bore,
             MotionGeometry::Tract,
+            MotionGeometry::Oscillator,
         ] {
             let mut frame = MotionFrame {
                 geometry,
@@ -283,7 +295,11 @@ mod tests {
             frame.voices[1].geometry = Some(MotionGeometry::Plate);
             frame.voices[1].modes[7] = 0.03;
             frame.voices[2].geometry = Some(MotionGeometry::Bore);
-            frame.voices[3].geometry = Some(MotionGeometry::Tract);
+            frame.voices[3].geometry = Some(if geometry == MotionGeometry::Oscillator {
+                MotionGeometry::Oscillator
+            } else {
+                MotionGeometry::Tract
+            });
             writer.publish(&frame);
             assert_eq!(monitor.read(), Some(frame));
         }

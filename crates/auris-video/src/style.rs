@@ -109,6 +109,11 @@ pub struct NoteRollStyle {
     /// How far a sounding note sinks, as if pressed like a key, as a multiple of the usual
     /// depth: 0 keeps notes still.
     pub sink: f32,
+    /// How far apart the tracks are spread in depth, as a multiple of the usual spread: the
+    /// first track nearest and scrolling a little faster than the music, the last farthest,
+    /// slower, fainter and thinner. Every note still meets the playhead the moment it sounds.
+    /// 0 keeps the roll flat.
+    pub parallax: f32,
     /// Draw drum tracks as well as pitched ones.
     pub include_drums: bool,
     /// Show the chord sounding now in the top corner, with the next one beside it.
@@ -176,6 +181,7 @@ impl Default for NoteRollStyle {
             flash: true,
             particles: 1.0,
             sink: 1.0,
+            parallax: 0.0,
             include_drums: false,
             chords: true,
             chord_color: Color(0xffffff),
@@ -197,6 +203,8 @@ impl NoteRollStyle {
     pub const MAX_PARTICLES: f32 = 3.0;
     /// The most [`Self::sink`] can be turned up to.
     pub const MAX_SINK: f32 = 3.0;
+    /// The most [`Self::parallax`] can be turned up to.
+    pub const MAX_PARALLAX: f32 = 3.0;
     /// The longest [`Self::lead_in`] or [`Self::tail`] can be, in seconds.
     pub const MAX_PADDING: f32 = 10.0;
 
@@ -236,6 +244,11 @@ impl NoteRollStyle {
                 self.sink.clamp(0.0, Self::MAX_SINK)
             } else {
                 defaults.sink
+            },
+            parallax: if self.parallax.is_finite() {
+                self.parallax.clamp(0.0, Self::MAX_PARALLAX)
+            } else {
+                defaults.parallax
             },
             lead_in: padding(self.lead_in, defaults.lead_in),
             tail: padding(self.tail, defaults.tail),

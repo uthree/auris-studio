@@ -1,4 +1,4 @@
-//! Comments: notes pinned to a track or inside a clip, which nothing ever plays.
+//! Comments: notes pinned to a track, inside a clip or on a mixer node, which nothing ever plays.
 //!
 //! The commands here are the whole of the editing. A comment never changes a note, a sound or a
 //! render, so the only thing an edit here touches is the document's text — and the undo history,
@@ -10,19 +10,31 @@ use auris_core::{ClipId, Comment, CommentId, Comments, TrackId};
 
 use crate::error::SessionError;
 use crate::history::Edit;
+use crate::mixer_graph::MixerNode;
 
 use super::Session;
 
 /// What a comment is pinned to.
 ///
 /// A track holds comments in song time along its lane; a note clip holds them in its own time,
-/// optionally on a pitch row, so that they travel with the notes.
+/// optionally on a pitch row, so that they travel with the notes. A node of the mixer graph
+/// holds them with no position at all: they are about how the part sits in the mix, not about
+/// a moment of it.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum CommentHost {
     /// A track's lane in the arrangement.
     Track(TrackId),
     /// Inside a note clip, as the piano roll shows it.
     Clip(ClipId),
+    /// A strip or an insert in the mixer graph.
+    Mixer(MixerNode),
+}
+
+impl CommentHost {
+    /// Whether a comment here has a moment: everywhere but the mixer graph.
+    pub fn is_timed(self) -> bool {
+        !matches!(self, Self::Mixer(_))
+    }
 }
 
 impl Session {
@@ -37,6 +49,20 @@ impl Session {
                 Some((_, clip)) => Ok(clip as &dyn Comments),
                 None => Err(self.not_a_note_clip(id)),
             },
+            CommentHost::Mixer(node) => {
+                let missing = || SessionError::UnknownMixerNode(node.key());
+                match node {
+                    MixerNode::Strip(owner) => self
+                        .strip(owner)
+                        .map(|strip| strip as &dyn Comments)
+                        .ok_or_else(missing),
+                    MixerNode::Effect(owner, slot) => self
+                        .strip(owner)
+                        .and_then(|strip| strip.effects.iter().find(|effect| effect.id == slot))
+                        .map(|effect| effect as &dyn Comments)
+                        .ok_or_else(missing),
+                }
+            }
         }
     }
 
@@ -57,6 +83,20 @@ impl Session {
                 .midi_clip_mut(id)
                 .map(|clip| clip as &mut dyn Comments)
                 .ok_or(SessionError::UnknownClip(id.0)),
+            CommentHost::Mixer(node) => {
+                let missing = SessionError::UnknownMixerNode(node.key());
+                match node {
+                    MixerNode::Strip(owner) => self
+                        .strip_mut(owner)
+                        .map(|strip| strip as &mut dyn Comments)
+                        .ok_or(missing),
+                    MixerNode::Effect(owner, slot) => self
+                        .strip_mut(owner)
+                        .and_then(|strip| strip.effects.iter_mut().find(|effect| effect.id == slot))
+                        .map(|effect| effect as &mut dyn Comments)
+                        .ok_or(missing),
+                }
+            }
         }
     }
 
@@ -80,8 +120,9 @@ impl Session {
         self.comment_holder(host).ok()?.comment(id)
     }
 
-    /// Pins a comment to `host` at `at` — song time on a track, clip time inside a clip — and
-    /// optionally on a piano-roll row. Text is trimmed; empty text is refused.
+    /// Pins a comment to `host` at `at` — song time on a track, clip time inside a clip, and
+    /// ignored on a mixer node — and optionally on a piano-roll row. Text is trimmed and may run
+    /// over several lines; empty text is refused.
     pub fn add_comment(
         &mut self,
         host: CommentHost,
@@ -93,8 +134,10 @@ impl Session {
         if Comment::clean_text(text).is_none() {
             return Err(SessionError::EmptyComment);
         }
-        // A pitch means nothing on a track lane, which has no rows.
+        // A pitch means nothing on a track lane, which has no rows, and neither a pitch nor a
+        // moment means anything on a mixer node.
         let pitch = pitch.filter(|_| matches!(host, CommentHost::Clip(_)));
+        let at = if host.is_timed() { at } else { Ticks::ZERO };
         self.record(Edit::SetComment);
         self.comment_holder_mut(host)?
             .add_comment(at, pitch, text)
@@ -131,6 +174,7 @@ impl Session {
             .comment(host, id)
             .ok_or(SessionError::UnknownComment(id.0))?;
         let pitch = pitch.filter(|_| matches!(host, CommentHost::Clip(_)));
+        let at = if host.is_timed() { at } else { Ticks::ZERO };
         if current.at == at.max_zero() && current.pitch == pitch {
             return Ok(());
         }
@@ -233,6 +277,56 @@ mod tests {
             session.remove_comment(CommentHost::Track(track), on_track),
             Err(SessionError::UnknownComment(_))
         ));
+    }
+
+    #[test]
+    fn mixer_comments_sit_on_their_node_and_leave_with_it() {
+        let mut session = session();
+        let track = session.add_singer_track("Vocal");
+        let slot = session.add_effect(Some(track), "auris.fx.reverb").unwrap();
+        let strip = CommentHost::Mixer(MixerNode::Strip(Some(track)));
+        let effect = CommentHost::Mixer(MixerNode::Effect(Some(track), slot));
+        let master = CommentHost::Mixer(MixerNode::Strip(None));
+
+        let on_strip = session
+            .add_comment(
+                strip,
+                Ticks(1920),
+                Some(60),
+                "keep it under the vocal\nexcept the chorus",
+            )
+            .unwrap();
+        let stored = session.comment(strip, on_strip).unwrap();
+        assert_eq!(
+            (stored.at, stored.pitch),
+            (Ticks::ZERO, None),
+            "a node has no moment"
+        );
+        assert_eq!(stored.text, "keep it under the vocal\nexcept the chorus");
+        session
+            .add_comment(effect, Ticks::ZERO, None, "short tail")
+            .unwrap();
+        session
+            .add_comment(master, Ticks::ZERO, None, "-14 LUFS")
+            .unwrap();
+        assert_eq!(session.project().master.comments.len(), 1);
+        assert!(
+            session.project().track(track).unwrap().comments.is_empty(),
+            "not on the lane"
+        );
+
+        session.remove_effect(slot);
+        assert!(matches!(
+            session.add_comment(effect, Ticks::ZERO, None, "again"),
+            Err(SessionError::UnknownMixerNode(_))
+        ));
+        assert!(session.comments(effect).is_empty(), "gone with its effect");
+        session.undo();
+        assert_eq!(
+            session.comments(effect)[0].text,
+            "short tail",
+            "and back with it"
+        );
     }
 
     #[test]

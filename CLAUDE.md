@@ -29,7 +29,7 @@ keep them alive:
 * **The keystroke a user sees is not the keystroke that is stored.** `secondary-s` is stored;
   `actions::normalise_keystroke` turns it into what the keyboard reports, for comparing, and
   `actions::menu_keystroke` into ⌘S or Ctrl+S, for reading.
-* **Windows sets no locale variables, and neither does Finder.** `Language::from_system_locale`
+* **Windows sets no locale variables, and neither does Finder.** `Language::from_system`
   is what makes a Japanese Windows install, and the Mac application opened from Finder rather
   than a terminal, come up in Japanese.
 
@@ -77,7 +77,8 @@ crates/auris-analysis    offline music recognition: DSP and local model inferenc
 crates/auris-compose     score-based automatic composition; depends on auris-core only
 crates/auris-vocal       singing: lyrics to IPA phonemes, notes to voice-model frames;
                          depends on auris-core only
-crates/auris-i18n        interface text in every language; no local dependencies
+crates/auris-i18n        interface text in every language: `locales/<tag>.toml`, compiled in by
+                         atelier-i18n's generator; no local dependencies
 crates/auris-session     headless session: the document, the engine, every command
 crates/auris-toolbox     the session's commands as tools for a language model;
                          shared by auris-mcp and auris-agent
@@ -146,6 +147,10 @@ whole thing work is **one folder, one project**: two documents in one folder wou
   copies the fonts too, for archiving.
 * Never `Path::join` a stored relative path — an absolute one would discard the folder.
   `AssetPath::resolve` rebuilds it component by component for exactly that reason.
+* `Workspace/` is where agents read and write without asking: a file tool given a path relative
+  to it is checked by `Session::resolve_workspace_path` and skips the permission prompt. Nothing in
+  the document points into it (loading from it copies into `Audio/`), but Save As and recovery
+  carry it with the folder.
 * A file that has moved is searched for by name and confirmed by size, and what is found is
   written back into the document. Missing assets are reported, never fatal: the project opens
   with that one track silent.

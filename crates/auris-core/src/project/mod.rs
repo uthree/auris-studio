@@ -52,6 +52,7 @@ mod strum;
 pub use strum::{Strum, StrumClock};
 mod ornament;
 mod performance;
+mod performance_preset;
 mod pitch_performance;
 mod volume_contour;
 pub use ghost::{GhostNotes, GhostPattern};
@@ -69,9 +70,10 @@ mod transform;
 mod fixtures;
 
 pub use clip::{
-    AudioClip, AudioSource, AudioSourceBank, FadeCurve, MAX_STRETCH, MIN_STRETCH, MidiClip, Note,
-    UNSTRETCHED, default_loop_end, loop_passes, notes_digest, notes_trimmed_from_front,
-    quantised_stretch, sounding_length, stretch_key, validated_loop_pass_count,
+    AudioClip, AudioSource, AudioSourceBank, FadeCurve, JoinRefusal, MAX_STRETCH, MIN_STRETCH,
+    MidiClip, Note, UNSTRETCHED, default_loop_end, loop_passes, notes_digest,
+    notes_trimmed_from_front, quantised_stretch, sounding_length, stretch_key,
+    validated_loop_pass_count,
 };
 pub use curve::{
     BEND_LIMIT, CONTROLLER_LIMIT, CURVE_STEP, ClipCurve, CurvePoint, curve_at, curve_events,
@@ -79,6 +81,9 @@ pub use curve::{
 pub use drum::{DrumLane, DrumMap, DrumRole};
 pub use ornament::{Fall, Scoop, Vibrato};
 pub use performance::{PerformanceContext, performed_note_slots, performed_notes};
+pub use performance_preset::{
+    PerformancePreset, PresetFamily, builtin_performance_preset, builtin_performance_presets,
+};
 pub use recipe::{
     ClipPreset, ClipRecipe, DrumVoiceRecipe, PerformanceStyle, STRUM_VALUES, Subdivision,
     strum_ticks,
@@ -318,13 +323,14 @@ impl Default for Project {
 
 impl Project {
     /// Schema version written into saved files and required when opening them.
+    /// Version 35 stores the audio sampler's samples as a map of zones rather than one sample.
     /// Version 34 adds the sustain transform, which holds every release on like a pedal.
     /// Version 33 adds layers: instrument tracks that follow another track's notes.
     /// Version 32 stores zero or more track outputs; older files' single outputs load as one route.
     /// Version 31 adds power, added-tone, 6/9 and thirteenth chord qualities to stored harmony.
     /// Version 30 adds eleventh chord qualities to stored harmony.
     /// Version 29 adds ordered, named manual drum lanes beside generation-role assignments.
-    pub const FORMAT_VERSION: u32 = 34;
+    pub const FORMAT_VERSION: u32 = 35;
 
     /// The name a document carries until somebody — a person or the agent — gives it one.
     pub const UNTITLED: &'static str = "Untitled";

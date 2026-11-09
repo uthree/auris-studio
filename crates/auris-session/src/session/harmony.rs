@@ -196,9 +196,9 @@ impl Session {
     /// so clearing from bar 1 extends that key instead. Writing a key and clearing one at once
     /// is a contradiction the caller refuses; here a written key wins.
     ///
-    /// Whatever is written, the boundaries are left without redundant changes: a key change
-    /// restating the key already in force is removed, so clearing or rewriting a range never
-    /// leaves an invisible "C major → C major" marker that nothing can remove later.
+    /// Whatever is written, the boundaries are left without redundant changes: the key map never
+    /// stores a change restating the key already in force, so clearing or rewriting a range never
+    /// leaves a "C major → C major" marker that nothing can remove later.
     pub(crate) fn write_bounded_harmony(
         &mut self,
         start_bar: u32,
@@ -229,7 +229,6 @@ impl Session {
                 self.project.harmony.keys.remove_point(tick);
             }
             self.project.harmony.keys.set_point(end, resumes);
-            self.coalesce_key_change(end);
         }
         if let Some(key) = key {
             let resumes = self.project.harmony.key_at(end);
@@ -247,8 +246,6 @@ impl Session {
             }
             self.project.harmony.keys.set_point(start, key);
             self.project.harmony.keys.set_point(end, resumes);
-            self.coalesce_key_change(end);
-            self.coalesce_key_change(start);
         }
         if clear_chords || chart.is_some() {
             let resumes = self.project.harmony.numeral_at(end);
@@ -303,19 +300,6 @@ impl Session {
         }
         self.record(Edit::MoveSection);
         self.project.sections.move_point(from, to)
-    }
-
-    /// Removes the key change at `at` when it restates the key already in force before it.
-    ///
-    /// The anchor at tick zero is the song's key and always stays.
-    fn coalesce_key_change(&mut self, at: Ticks) {
-        let points = self.project.harmony.keys.points();
-        let Some(index) = points.iter().position(|point| point.tick == at) else {
-            return;
-        };
-        if index > 0 && points[index - 1].key == points[index].key {
-            self.project.harmony.keys.remove_point(at);
-        }
     }
 
     /// Removes the section change at `at` when it changes nothing: the same label as the

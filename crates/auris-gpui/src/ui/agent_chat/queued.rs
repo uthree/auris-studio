@@ -343,208 +343,76 @@ impl AurisApp {
         }
     }
 
+    /// The messages waiting for the turn to end, as Atelier's `MessageQueue`.
+    ///
+    /// The queue names a message by where it stood when it was drawn, and a turn can finish
+    /// between paint and click and send the first one; each handler therefore resolves the
+    /// message it was drawn for by identity, through a [`QueuedTarget`], before acting on it.
     pub(super) fn agent_queue_view(&self, cx: &mut gpui::Context<Self>) -> AnyElement {
-        let theme = &self.theme;
-        let paused = self.agent_chat.queue_paused;
         let enabled = self.agent_queue_available() && !self.agent_chat.interrupting;
-        let can_edit = enabled
-            && self.agent_chat.input.content().is_empty()
+        let can_edit = self.agent_chat.input.content().is_empty()
             && self.agent_chat.references.attachments.is_empty();
-        let title = self
-            .t(if paused {
-                Key::AgentQueuePaused
+        let conversation = self.agent_chat.conversations.active_id().map(str::to_owned);
+        let targets: std::rc::Rc<Vec<QueuedTarget>> = std::rc::Rc::new(
+            self.agent_chat
+                .queued
+                .iter()
+                .map(|message| QueuedTarget {
+                    conversation: conversation.clone(),
+                    id: message.id,
+                })
+                .collect(),
+        );
+        let messages = self.agent_chat.queued.iter().map(|message| {
+            let queued = atelier::agent::QueuedMessage::new(message.text.clone());
+            if message.attachments.is_empty() {
+                queued
             } else {
-                Key::AgentQueued
-            })
-            .replace("{count}", &self.agent_chat.queued.len().to_string());
-        div()
-            .id("agent-queue")
-            .debug_selector(|| "agent-queue".into())
-            .flex()
-            .flex_col()
-            .min_w_0()
-            .px_1p5()
-            .py_1()
-            .gap_1()
-            .border_b_1()
-            .border_color(theme.border_subtle)
-            .child(
-                div()
-                    .flex()
-                    .flex_wrap()
-                    .items_center()
-                    .gap_1()
-                    .child(
-                        div()
-                            .flex_1()
-                            .text_xs()
-                            .text_color(theme.text_muted)
-                            .child(title),
-                    )
-                    .child(button_enabled(
-                        "agent-queue-toggle",
-                        self.t(if paused {
-                            Key::AgentQueueResume
-                        } else {
-                            Key::AgentQueuePause
-                        }),
-                        ButtonStyle::Ghost,
-                        ButtonState::available(false, enabled),
-                        theme.accent,
-                        theme,
-                        cx.listener(|this, _, _, cx| {
-                            this.agent_chat.queue_paused = !this.agent_chat.queue_paused;
-                            if !this.agent_chat.queue_paused {
-                                this.agent_chat.history_error_project = None;
-                            }
-                            cx.notify();
-                        }),
-                    )),
-            )
-            .child(
-                div()
-                    .id("agent-queued-messages")
-                    .flex()
-                    .flex_col()
-                    .min_w_0()
-                    .max_h(px(144.0))
-                    .overflow_y_scroll()
-                    .children(
-                        self.agent_chat
-                            .queued
-                            .iter()
-                            .enumerate()
-                            .map(|(index, message)| {
-                                // A turn can finish between paint and click. Resolve the displayed
-                                // identity again instead of acting on an index that has shifted.
-                                let target = QueuedTarget {
-                                    conversation: self
-                                        .agent_chat
-                                        .conversations
-                                        .active_id()
-                                        .map(str::to_owned),
-                                    id: message.id,
-                                };
-                                let prioritize = target.clone();
-                                let edit = target.clone();
-                                let preview = message
-                                    .text
-                                    .split_whitespace()
-                                    .collect::<Vec<_>>()
-                                    .join(" ");
-                                let preview = if message.attachments.is_empty() {
-                                    preview
-                                } else {
-                                    format!(
-                                        "{preview} · {}",
-                                        self.t(Key::AgentQueuedAttachments).replace(
-                                            "{count}",
-                                            &message.attachments.len().to_string()
-                                        )
-                                    )
-                                };
-                                div()
-                                    .id(("agent-queued-message", message.id))
-                                    .debug_selector(move || format!("agent-queued-message-{index}"))
-                                    .flex()
-                                    .flex_col()
-                                    .min_w_0()
-                                    .py_1()
-                                    .gap_1()
-                                    .border_t_1()
-                                    .border_color(theme.border_subtle)
-                                    .tooltip(crate::ui::tooltip::keyed_tip(
-                                        message.text.clone(),
-                                        "",
-                                        theme,
-                                    ))
-                                    .child(div().text_sm().truncate().child(preview))
-                                    .child(
-                                        div()
-                                            .flex()
-                                            .flex_wrap()
-                                            .items_center()
-                                            .gap_1()
-                                            .child(
-                                                button_enabled(
-                                                    ("agent-queued-now", index),
-                                                    self.t(Key::AgentSendNow),
-                                                    ButtonStyle::Ghost,
-                                                    ButtonState::available(false, enabled),
-                                                    theme.accent,
-                                                    theme,
-                                                    cx.listener(move |this, _, _, cx| {
-                                                        if let Some(index) =
-                                                            prioritize.position(&this.agent_chat)
-                                                        {
-                                                            this.prioritize_queued_agent_message(
-                                                                index, cx,
-                                                            );
-                                                        }
-                                                        cx.notify();
-                                                    }),
-                                                )
-                                                .tooltip(crate::ui::tooltip::keyed_tip(
-                                                    self.t(Key::AgentSendNowHint),
-                                                    "",
-                                                    theme,
-                                                )),
-                                            )
-                                            .child(
-                                                button_enabled(
-                                                    ("agent-queued-edit", index),
-                                                    self.t(Key::AgentQueueEditShort),
-                                                    ButtonStyle::Ghost,
-                                                    ButtonState::available(false, can_edit),
-                                                    theme.accent,
-                                                    theme,
-                                                    cx.listener(move |this, _, _, cx| {
-                                                        if let Some(index) =
-                                                            edit.position(&this.agent_chat)
-                                                        {
-                                                            this.edit_queued_agent_message(index);
-                                                        }
-                                                        cx.notify();
-                                                    }),
-                                                )
-                                                .tooltip(crate::ui::tooltip::keyed_tip(
-                                                    self.t(Key::AgentQueueEdit),
-                                                    "",
-                                                    theme,
-                                                )),
-                                            )
-                                            .child(
-                                                button_enabled(
-                                                    ("agent-queued-remove", index),
-                                                    "",
-                                                    ButtonStyle::Ghost,
-                                                    ButtonState::available(false, enabled),
-                                                    theme.accent,
-                                                    theme,
-                                                    cx.listener(move |this, _, _, cx| {
-                                                        if let Some(index) =
-                                                            target.position(&this.agent_chat)
-                                                        {
-                                                            this.agent_chat.queued.remove(index);
-                                                        }
-                                                        cx.notify();
-                                                    }),
-                                                )
-                                                .child(icon(
-                                                    Icon::Cross,
-                                                    px(12.0),
-                                                    theme.text_muted,
-                                                ))
-                                                .tooltip(crate::ui::tooltip::keyed_tip(
-                                                    self.t(Key::AgentQueueRemove),
-                                                    "",
-                                                    theme,
-                                                )),
-                                            ),
-                                    )
-                            }),
-                    ),
-            )
+                queued.attachment(
+                    self.t(Key::AgentQueuedAttachments)
+                        .replace("{count}", &message.attachments.len().to_string()),
+                )
+            }
+        });
+        let resolve = |targets: &std::rc::Rc<Vec<QueuedTarget>>| {
+            let targets = targets.clone();
+            move |this: &Self, index: usize| {
+                targets
+                    .get(index)
+                    .and_then(|target| target.position(&this.agent_chat))
+            }
+        };
+        let (now, edit, remove) = (resolve(&targets), resolve(&targets), resolve(&targets));
+        atelier::agent::MessageQueue::new("agent-queue")
+            .messages(messages)
+            .paused(self.agent_chat.queue_paused)
+            .disabled(!enabled)
+            .editable(can_edit)
+            .on_pause(cx.listener(|this, paused: &bool, _, cx| {
+                this.agent_chat.queue_paused = *paused;
+                if !*paused {
+                    this.agent_chat.history_error_project = None;
+                }
+                cx.notify();
+            }))
+            .on_send_now(cx.listener(move |this, index: &usize, _, cx| {
+                if let Some(index) = now(this, *index) {
+                    this.prioritize_queued_agent_message(index, cx);
+                }
+                cx.notify();
+            }))
+            .on_edit(cx.listener(move |this, index: &usize, _, cx| {
+                if let Some(index) = edit(this, *index) {
+                    this.edit_queued_agent_message(index);
+                }
+                cx.notify();
+            }))
+            .on_remove(cx.listener(move |this, index: &usize, _, cx| {
+                if let Some(index) = remove(this, *index) {
+                    this.agent_chat.queued.remove(index);
+                }
+                cx.notify();
+            }))
             .into_any_element()
     }
 }
@@ -733,8 +601,8 @@ mod tests {
         paint(&app, cx);
         assert!(cx.debug_bounds("agent-send").is_some());
         assert!(cx.debug_bounds("agent-stop").is_some());
-        assert!(cx.debug_bounds("agent-queued-message-1").is_some());
-        click("agent-queued-now-1", cx);
+        assert!(cx.debug_bounds("agent-queue-message-1").is_some());
+        click("agent-queue-send-now-1", cx);
         app.read_with(cx, |this, _| {
             assert_eq!(
                 this.agent_chat.queued.front().unwrap().text,
@@ -743,9 +611,9 @@ mod tests {
             assert!(!this.agent_chat.queue_paused);
         });
         // No worker is constructed in this test; exercise only the real queue controls.
-        click("agent-queue-toggle", cx);
+        click("agent-queue-pause", cx);
         paint(&app, cx);
-        click("agent-queued-edit-0", cx);
+        click("agent-queue-edit-0", cx);
         app.read_with(cx, |this, _| {
             assert!(this.agent_chat.queue_paused);
             assert_eq!(this.agent_chat.input.content(), "Then soften the drums");

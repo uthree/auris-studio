@@ -6,6 +6,7 @@ use auris_core::AudioBuffer;
 use auris_core::param::{ParamDescriptor, ParamId, ParamUnit, ParamValueCurve};
 use auris_core::plugin::{
     Effect, Parameterized, PluginCategory, PluginDescriptor, PrepareContext, ProcessContext,
+    TailContext,
 };
 
 use crate::MILLISECONDS_PER_SECOND;
@@ -146,8 +147,12 @@ impl Delay {
     /// range the time knob offers — the delay lines are sized for [`MAX_TIME_MS`] and a whole
     /// note at a crawl does not get to read past them.
     fn delay_in_samples(&self) -> f32 {
+        self.delay_in_samples_at_bpm(self.bpm)
+    }
+
+    fn delay_in_samples_at_bpm(&self, bpm: f64) -> f32 {
         let milliseconds = match sync_beats(self.params.at(P_SYNC).round() as usize) {
-            Some(beats) => (beats * 60.0 * MILLISECONDS_PER_SECOND / self.bpm as f32)
+            Some(beats) => (beats * 60.0 * MILLISECONDS_PER_SECOND / bpm as f32)
                 .clamp(MIN_TIME_MS, MAX_TIME_MS),
             None => self.params.at(P_TIME_MS),
         };
@@ -171,6 +176,20 @@ impl Delay {
         }
         let a = 1.0 - (-std::f32::consts::TAU * cutoff / self.sample_rate).exp();
         a.clamp(0.0, 1.0)
+    }
+
+    fn tail_frames_at_bpm(&self, bpm: f64) -> usize {
+        let delay_samples = self.delay_in_samples_at_bpm(bpm).max(1.0);
+        let feedback = self.params.at(P_FEEDBACK);
+        // Each trip round the loop scales the signal by `feedback`; count the trips it takes to
+        // fall 60 dB (a factor of 1000).
+        let repeats = if feedback <= 1.0e-4 {
+            1.0
+        } else {
+            ((0.001f32).ln() / feedback.ln()).max(1.0)
+        };
+        let frames = delay_samples * repeats;
+        frames.clamp(0.0, MAX_TAIL_SECONDS * self.sample_rate) as usize
     }
 }
 
@@ -221,6 +240,8 @@ impl Effect for Delay {
             line.reset();
         }
         self.damping_state.fill(0.0);
+        // A fresh pass must snap to its own first tempo rather than glide from the last pass.
+        self.tempo_heard = false;
         self.snap_to_params();
     }
 
@@ -312,17 +333,17 @@ impl Effect for Delay {
     }
 
     fn tail_frames(&self) -> usize {
-        let delay_samples = self.delay_in_samples().max(1.0);
-        let feedback = self.params.at(P_FEEDBACK);
-        // Each trip round the loop scales the signal by `feedback`; count the trips it takes to
-        // fall 60 dB (a factor of 1000).
-        let repeats = if feedback <= 1.0e-4 {
-            1.0
+        self.tail_frames_at_bpm(self.bpm)
+    }
+
+    fn tail_frames_with_context(&self, context: &TailContext) -> usize {
+        // A slower tempo lengthens every synced choice; free time ignores tempo entirely.
+        let bpm = if context.min_bpm.is_finite() && context.min_bpm > 0.0 {
+            context.min_bpm
         } else {
-            ((0.001f32).ln() / feedback.ln()).max(1.0)
+            self.bpm
         };
-        let frames = delay_samples * repeats;
-        (frames).clamp(0.0, MAX_TAIL_SECONDS * self.sample_rate) as usize
+        self.tail_frames_at_bpm(bpm)
     }
 }
 
@@ -596,6 +617,41 @@ mod tests {
             &ProcessContext::realtime(SR, 512, 0, 60.0, true),
         );
         assert_eq!(plugin.tail_frames(), 48_000);
+    }
+
+    #[test]
+    fn planning_a_tempo_dependent_tail_does_not_retime_or_advance_the_delay() {
+        let mut plugin = dry_tap(350.0);
+        plugin.set_param_by_key("sync", 5.0);
+        plugin.prepare(&PrepareContext::new(SR, 48_001, 2));
+        assert_eq!(
+            plugin.tail_frames_with_context(&TailContext {
+                min_bpm: 60.0,
+                max_bpm: 180.0,
+            }),
+            48_000
+        );
+        assert_eq!(
+            plugin.tail_frames(),
+            24_000,
+            "planning must not set the live tempo"
+        );
+
+        let mut buffer = impulse(48_001);
+        plugin.process(&mut buffer, &context(48_001));
+        assert!((buffer.channel(0)[24_000] - 1.0).abs() < 1e-6);
+        assert_eq!(buffer.channel(0)[48_000], 0.0);
+
+        plugin.set_param_by_key("sync", 0.0);
+        plugin.set_param_by_key("time_ms", 500.0);
+        assert_eq!(
+            plugin.tail_frames_with_context(&TailContext {
+                min_bpm: 10.0,
+                max_bpm: 999.0,
+            }),
+            24_000,
+            "free time ignores the planned tempos"
+        );
     }
 
     #[test]

@@ -169,7 +169,7 @@ classified for confirmation. Existing deny rules remain enforced for this tool.
 
 Read back the affected notes, performance and automation with independent calls. Render
 the same bars before and after using `inspect_audio`/`preview`; use `listen` and its
-comparison ID when a configured audio critic is available. Recheck level balance and
+comparison ID when the model can hear. Recheck level balance and
 handover tails after revoicing. A saved setting, a nonzero event count or changed PCM
 does not establish that an arrangement sounds better. Keep local repair attempts bounded
 to two and report unresolved musical or resource conditions.

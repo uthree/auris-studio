@@ -11,7 +11,8 @@ use auris_session::prelude::*;
 use gpui::{Context, Pixels, Point};
 
 use crate::app::{AurisApp, FadeEdge};
-use crate::dock::{Dock, Panel};
+use crate::dock::{Dock, Panel, TimelineLane};
+use crate::ui::inline_edit::InlinePlace;
 use crate::ui::prompt::{Prompt, PromptTarget};
 
 use super::timeline::progression_target;
@@ -28,6 +29,7 @@ impl MenuCommand {
             Self::DeleteClip(_) | Self::DeleteNotes => "edit.delete",
             Self::ToggleClipMute(_) => "clip.mute",
             Self::SplitClipAtPlayhead(_) => "clip.split",
+            Self::JoinClips(_) => "clip.join",
             Self::ToggleClipLoop(_) => "clip.loop",
             Self::DuplicateNotes => "edit.duplicate",
             Self::CutNotes => "edit.cut",
@@ -40,6 +42,12 @@ impl MenuCommand {
             Self::ToggleTrackSolo(_) => "track.solo",
             Self::ToggleLoop => "transport.loop",
             Self::TogglePunch => "transport.punch",
+            Self::ToggleTimelineLane(lane) => match lane {
+                TimelineLane::Structure => "view.structure_lane",
+                TimelineLane::Keys => "view.key_lane",
+                TimelineLane::Chords => "view.chord_lane",
+                TimelineLane::Lyrics => "view.lyrics_lane",
+            },
             _ => return None,
         })
     }
@@ -235,6 +243,8 @@ pub enum MenuCommand {
     ToggleTrackSolo(TrackId),
     /// Tint a track with a palette entry.
     SetTrackColor(TrackId, Color),
+    /// Tint a track in its sound's timbre-cluster colour, scanning the library first if need be.
+    ColorTrackByTimbre(TrackId),
     /// Open the clip content and spectrogram choices for a track.
     ShowAudioDisplayPicker {
         /// The track whose clips are drawn.
@@ -251,6 +261,8 @@ pub enum MenuCommand {
     },
     /// Show or hide the whole project's rendered spectrogram.
     SetProjectSpectrogram(bool),
+    /// Show or hide one of the annotation strips over the arrangement.
+    ToggleTimelineLane(TimelineLane),
     /// Drop every recipe on a track, so nothing on it is written again.
     FreezeTrack(TrackId),
     /// Show a track's automation lane on a parameter, or hide it when it is already showing that
@@ -357,6 +369,8 @@ pub enum MenuCommand {
         /// Whether it should be showing afterwards.
         shown: bool,
     },
+    /// Show or hide the piano roll's event list.
+    ShowEventList(bool),
     /// Open the list of places a track's output could go.
     ShowOutputPicker {
         /// Track being routed.
@@ -427,6 +441,8 @@ pub enum MenuCommand {
     ToggleClipMute(ClipId),
     /// Divide a clip at the playhead.
     SplitClipAtPlayhead(ClipId),
+    /// Join the selection a clip belongs to into one clip, or a lone clip with its neighbour.
+    JoinClips(ClipId),
     /// Set the cycle region to a clip's extent.
     LoopOverClip(ClipId),
     /// Repeat a clip out to the next one on its lane, or stop it repeating.
@@ -542,6 +558,17 @@ pub enum MenuCommand {
         track: TrackId,
         /// The channels to read, or `None` to disarm it.
         input: Option<InputChannels>,
+    },
+    /// Put one recording of a sampler's map in a velocity layer.
+    SetSampleVelocity {
+        /// The sampler's track.
+        track: TrackId,
+        /// Which zone of its map.
+        zone: usize,
+        /// Softest velocity answered, 0..1.
+        low: f32,
+        /// Hardest velocity answered, 0..1.
+        high: f32,
     },
     /// Point one effect at a track to key from, or stop it listening to one.
     SetEffectSidechain {
@@ -739,6 +766,43 @@ pub enum MenuCommand {
         /// The grid whose offbeats the swing delays.
         subdivision: Subdivision,
     },
+    /// Replace a clip's performance with a preset's stages.
+    ApplyPerformPreset {
+        /// Clip whose performance is being shaped.
+        clip: ClipId,
+        /// The preset's name, built in or kept.
+        name: String,
+    },
+    /// Open one instrument family's presets.
+    ShowPerformPresetFamily {
+        /// Clip whose performance is being shaped.
+        clip: ClipId,
+        /// The family to list.
+        family: PresetFamily,
+        /// Where the menu stays anchored.
+        at: Point<Pixels>,
+    },
+    /// Ask which family to keep the clip's performance under.
+    ShowPerformPresetSave {
+        /// Clip whose performance is kept.
+        clip: ClipId,
+        /// Where the menu stays anchored.
+        at: Point<Pixels>,
+    },
+    /// Name a preset kept from the clip's performance.
+    SavePerformPreset {
+        /// Clip whose performance is kept.
+        clip: ClipId,
+        /// The family it is filed under.
+        family: PresetFamily,
+    },
+    /// List the kept presets for deletion.
+    ShowPerformPresetDelete {
+        /// Where the menu stays anchored.
+        at: Point<Pixels>,
+    },
+    /// Delete a kept preset.
+    DeletePerformPreset(String),
     /// Set the pitch order of a chord stroke.
     SetPerformStrokeDirection {
         /// Clip whose performance is being shaped.
@@ -1060,6 +1124,7 @@ impl AurisApp {
             MenuCommand::SetTrackColor(track, color) => {
                 let _ = self.session.set_track_color(track, color);
             }
+            MenuCommand::ColorTrackByTimbre(track) => self.color_tracks_by_timbre(Some(track), cx),
             MenuCommand::ShowAudioDisplayPicker { track, at } => {
                 let menu = self.audio_display_menu(at, track);
                 self.open_menu(menu);
@@ -1070,6 +1135,7 @@ impl AurisApp {
             MenuCommand::SetProjectSpectrogram(enabled) => {
                 self.set_project_spectrogram(enabled, cx);
             }
+            MenuCommand::ToggleTimelineLane(lane) => self.toggle_timeline_lane(lane, cx),
             MenuCommand::FreezeTrack(track) => self.freeze_track(track),
             MenuCommand::ShowAutomation(track, target) => self.show_automation(track, target),
             MenuCommand::ClearAutomation(target) => {
@@ -1138,6 +1204,10 @@ impl AurisApp {
             MenuCommand::ClipSourceTempo(clip) => self.prompt_for_clip_source_tempo(clip),
             MenuCommand::ShowCurveLane { which, shown } => {
                 self.panels.set_curve_lane(which, shown);
+                self.remember_layout();
+            }
+            MenuCommand::ShowEventList(shown) => {
+                self.panels.event_list = shown;
                 self.remember_layout();
             }
             MenuCommand::ShowOutputPicker { track, at } => {
@@ -1245,7 +1315,9 @@ impl AurisApp {
                     .map(|name| name.to_string())
                     .unwrap_or_default();
                 let title = self.t(Key::RenameClipTitle);
-                self.open_prompt(Prompt::new(title, PromptTarget::Clip(clip), name));
+                self.open_prompt(
+                    Prompt::new(title, PromptTarget::Clip(clip), name).inline(InlinePlace::Target),
+                );
             }
             MenuCommand::DeleteClip(clip) => {
                 let doomed = self.clips_for_command(clip);
@@ -1267,6 +1339,7 @@ impl AurisApp {
                 let at = self.playhead_ticks();
                 self.split_clips_for_command(clip, at);
             }
+            MenuCommand::JoinClips(clip) => self.join_clips_for_command(clip),
             MenuCommand::LoopOverClip(clip) => {
                 // The *sounding* extent, repeats included: cycling over a looped clip and
                 // hearing only its first bar would be a cycle region nobody could explain.
@@ -1415,6 +1488,12 @@ impl AurisApp {
                 slot,
                 source,
             } => self.set_effect_sidechain(track, slot, source),
+            MenuCommand::SetSampleVelocity {
+                track,
+                zone,
+                low,
+                high,
+            } => self.set_sample_velocity(track, zone, low, high),
             MenuCommand::AddEffect { track, effect_id } => self.add_effect_to(track, &effect_id),
 
             MenuCommand::ShowProgressionPicker { at, anchor } => {
@@ -1520,6 +1599,31 @@ impl AurisApp {
             MenuCommand::SetPerformStrokeDirection { clip, direction } => {
                 self.set_perform_stroke_direction(clip, direction)
             }
+            MenuCommand::ApplyPerformPreset { clip, name } => {
+                if let Err(error) = self.session.apply_performance_preset(clip, &name) {
+                    self.set_status(crate::i18n::error_text(&error, self.language()));
+                }
+            }
+            MenuCommand::ShowPerformPresetFamily { clip, family, at } => {
+                let menu = self.perform_preset_family_menu(at, clip, family);
+                self.open_menu(menu);
+            }
+            MenuCommand::ShowPerformPresetSave { clip, at } => {
+                let menu = self.perform_preset_save_menu(at, clip);
+                self.open_menu(menu);
+            }
+            MenuCommand::SavePerformPreset { clip, family } => {
+                self.prompt_for_perform_preset(clip, family)
+            }
+            MenuCommand::ShowPerformPresetDelete { at } => {
+                let menu = self.perform_preset_delete_menu(at);
+                self.open_menu(menu);
+            }
+            MenuCommand::DeletePerformPreset(name) => {
+                if let Err(error) = self.session.forget_performance_preset(&name) {
+                    self.set_status(crate::i18n::error_text(&error, self.language()));
+                }
+            }
             MenuCommand::SetParamChoice { target, value } => self.session.set_param(target, value),
             MenuCommand::ResetParam(target) => self.reset_param(target),
             MenuCommand::SetParamValue(target) => self.prompt_for_param(target),
@@ -1537,7 +1641,10 @@ impl AurisApp {
             MenuCommand::SetKeyAt(tick) => {
                 let current = self.project().harmony.key_at(tick).to_text();
                 let title = self.t(Key::SetKeyTitle);
-                self.open_prompt(Prompt::new(title, PromptTarget::Key(tick), current));
+                self.open_prompt(
+                    Prompt::new(title, PromptTarget::Key(tick), current)
+                        .inline(InlinePlace::Target),
+                );
             }
             MenuCommand::RemoveKeyAt(tick) => self.session.remove_key(tick),
             MenuCommand::SetTempoAt(tick) => self.prompt_for_tempo_from(tick),
@@ -1581,7 +1688,10 @@ impl AurisApp {
                     .map(|numeral| numeral.to_string())
                     .unwrap_or_default();
                 let title = self.t(Key::SetChordTitle);
-                self.open_prompt(Prompt::new(title, PromptTarget::Chord(tick), current));
+                self.open_prompt(
+                    Prompt::new(title, PromptTarget::Chord(tick), current)
+                        .inline(InlinePlace::Target),
+                );
             }
             MenuCommand::RemoveChordAt(tick) => self.session.remove_chord(tick),
             MenuCommand::ClearHarmony { from, to } => self.session.clear_harmony(from, to),

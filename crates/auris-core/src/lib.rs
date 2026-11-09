@@ -50,20 +50,22 @@ pub use param::{ParamDescriptor, ParamId, ParamTarget, ParamUnit, ParamValueCurv
 pub use plugin::{
     CC_EXPRESSION, CC_MODULATION, CONTROLLER_MAX, Effect, Instrument, NoteEvent, Parameterized,
     PluginCategory, PluginDescriptor, PluginKind, PluginState, PrepareContext, ProcessContext,
+    TailContext,
 };
 pub use project::{
     AudioClip, AudioSource, AudioSourceBank, AudioTrack, AuxSend, ClipId, ClipPreset, ClipRecipe,
     Color, Comment, CommentId, Comments, CompositionBaseline, CompositionClipBaseline,
     CompositionTrackBaseline, ConsonantLevels, ConsonantWidths, DrumMap, DrumRole, DrumVoiceRecipe,
     EffectSlot, EffectSlotId, Expression, FadeCurve, Fall, GhostNotes, GhostPattern, GroovePoint,
-    GrooveTemplate, InstrumentTrack, LayerShape, LayerVoice, MAX_LAYER_OFFSET, MidiClip,
-    MixerStrip, Note, NoteSource, NoteTransform, Output, PerformanceContext, PerformanceStyle,
-    PitchPerformance, PlayedClips, PresetRef, Project, STRUM_VALUES, SUSTAIN_MAX_TICKS, Scoop,
-    SendId, SingerPitch, SingerTake, SingerTrack, SingerVoice, SoundFontId, SoundFontRef, SourceId,
-    StrokeDirection, Strum, StrumClock, Subdivision, Track, TrackId, TrackKind, Vibrato,
-    VolumeContour, VolumeContourPreset, default_frame_hop, default_loop_end, loop_passes,
-    notes_digest, notes_trimmed_from_front, performed, performed_note_slots, performed_notes,
-    sounding_length, strum_ticks, swing_position,
+    GrooveTemplate, InstrumentTrack, JoinRefusal, LayerShape, LayerVoice, MAX_LAYER_OFFSET,
+    MidiClip, MixerStrip, Note, NoteSource, NoteTransform, Output, PerformanceContext,
+    PerformancePreset, PerformanceStyle, PitchPerformance, PlayedClips, PresetFamily, PresetRef,
+    Project, STRUM_VALUES, SUSTAIN_MAX_TICKS, Scoop, SendId, SingerPitch, SingerTake, SingerTrack,
+    SingerVoice, SoundFontId, SoundFontRef, SourceId, StrokeDirection, Strum, StrumClock,
+    Subdivision, Track, TrackId, TrackKind, Vibrato, VolumeContour, VolumeContourPreset,
+    builtin_performance_preset, builtin_performance_presets, default_frame_hop, default_loop_end,
+    loop_passes, notes_digest, notes_trimmed_from_front, performed, performed_note_slots,
+    performed_notes, sounding_length, strum_ticks, swing_position,
 };
 pub use registry::{PluginPack, PluginRegistry};
 pub use structure::{SectionMap, SectionPoint, SectionSpan};
@@ -79,6 +81,7 @@ pub mod prelude {
     pub use crate::plugin::{
         CC_EXPRESSION, CC_MODULATION, CONTROLLER_MAX, Effect, Instrument, NoteEvent, Parameterized,
         PluginCategory, PluginDescriptor, PluginKind, PluginState, PrepareContext, ProcessContext,
+        TailContext,
     };
     pub use crate::registry::PluginRegistry;
 }

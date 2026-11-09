@@ -23,7 +23,10 @@ becomes Stop during a turn.
 Settings > Agent includes **Tool calls per request**, shared with AI song creation.
 The default is 1000; choices range from 100 to 10000. Reads, reference/help tools,
 and failed calls reaching the Auris tool host all count. The next call beyond the
-allowance is refused before execution and the worker stops. Completed panel edits
+allowance is refused before execution and the worker stops. A song-creation
+composer is told its allowance with the assignment, and once a tenth of it (at least
+twenty calls) remains, every tool result carries the calls left in a `tool_budget`
+field, so a model that scripts its calls can finish within it. Completed panel edits
 remain in the document; candidate progress remains checkpointed. Increase the limit
 and send a new panel instruction or choose **Resume recovery** on the candidate.
 Reaching this limit does not trigger automatic candidate recovery. Changes apply
@@ -61,9 +64,11 @@ See [Codex speed](https://learn.chatgpt.com/docs/agent-configuration/speed),
 [Claude Code fast mode](https://code.claude.com/docs/en/fast-mode), and
 [OpenAI API fast mode](https://developers.openai.com/api/docs/guides/fast-mode).
 
-Consecutive tool calls share a collapsed summary showing their count and any
-running or failed calls. Open the group to inspect each call's arguments and
-result; user messages and assistant replies keep separate groups apart.
+The conversation is Atelier's `ChatView`. Consecutive tool calls share one frame
+headed by their count, each call a row with its state; open a row to read its
+arguments and result. User messages and assistant replies keep separate groups
+apart. Reading further up stops the conversation following new entries, and a
+"jump to latest" button counts what arrived meanwhile.
 
 Type `/model ` in the composer to list available models. Arrow keys choose a
 candidate, Tab completes its name, and Enter switches immediately. Escape hides

@@ -10,7 +10,7 @@ use gpui::{
 
 use crate::actions;
 use crate::app::{AudioExportTarget, AurisApp, Drag, ExportOutcome, OrnamentHandle, Pane};
-use crate::dock::{Dock, Panel, PanelLayout};
+use crate::dock::{Dock, Panel, PanelLayout, TimelineLane};
 use crate::gestures::past_drag_threshold;
 use crate::menu::MenuRow;
 use crate::theme::Theme;
@@ -177,13 +177,13 @@ impl Render for AurisApp {
             .get()
             .map_or(window.viewport_size().width, |bounds| bounds.size.width);
 
-        // Keep the playhead on screen while the transport rolls, but never fight the user's
-        // own scrolling when it is stopped.
-        if self.is_playing() {
-            let playhead = self.playhead_ticks();
-            let width = self.arrangement_width;
-            self.timeline.scroll_to_reveal(playhead, width);
-        }
+        // Keep the playhead on screen while the transport rolls, until a hand scrolls it out
+        // of view — see `PlayheadFollow` for when following comes back.
+        let playing = self.is_playing();
+        let playhead = self.playhead_ticks();
+        let width = self.arrangement_width;
+        self.playhead_follow
+            .update(&mut self.timeline, playhead, width, playing);
 
         // The taskbar and the Alt-Tab list are where a user looks to tell one project's window
         // from another's, and they were both showing a constant. Only on a change: setting it is
@@ -315,6 +315,12 @@ impl AurisApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
+        // Every window that draws the document starts a frame of painted spots here, before
+        // the early return, so a label that stops being painted in it is forgotten.
+        self.canvas
+            .spots
+            .borrow_mut()
+            .next_frame(window.window_handle().window_id());
         if self
             .event_window
             .is_some_and(|id| id != window.window_handle().window_id())
@@ -400,6 +406,7 @@ impl AurisApp {
             .on_action(Self::window_listener(cx, Self::on_undo))
             .on_action(Self::window_listener(cx, Self::on_redo))
             .on_action(Self::window_listener(cx, Self::on_zoom_in))
+            .on_action(Self::window_listener(cx, Self::on_reveal_playhead))
             .on_action(Self::window_listener(cx, Self::on_zoom_out))
             .on_action(Self::window_listener(cx, Self::on_panic_stop))
     }
@@ -508,6 +515,7 @@ impl AurisApp {
                     .on_action(Self::window_listener(cx, Self::on_select_all_clips))
                     .on_action(Self::window_listener(cx, Self::on_duplicate_clip))
                     .on_action(Self::window_listener(cx, Self::on_split_clip))
+                    .on_action(Self::window_listener(cx, Self::on_join_clips))
                     .on_action(Self::window_listener(cx, Self::on_toggle_clip_mute))
                     .on_action(Self::window_listener(cx, Self::on_toggle_clip_loop))
                     .on_action(Self::window_listener(cx, Self::on_set_tempo))
@@ -537,10 +545,12 @@ impl AurisApp {
                     ))
                     .on_action(Self::window_listener(cx, Self::on_toggle_agent))
                     .on_action(Self::window_listener(cx, Self::on_toggle_structure_lane))
-                    .on_action(Self::window_listener(cx, Self::on_toggle_harmony_lane))
+                    .on_action(Self::window_listener(cx, Self::on_toggle_key_lane))
+                    .on_action(Self::window_listener(cx, Self::on_toggle_chord_lane))
                     .on_action(Self::window_listener(cx, Self::on_toggle_lyrics_lane))
                     .on_action(Self::window_listener(cx, Self::on_toggle_tempo_marks))
                     .on_action(Self::window_listener(cx, Self::on_toggle_bend_lane))
+                    .on_action(Self::window_listener(cx, Self::on_toggle_event_list))
                     .on_action(Self::window_listener(cx, Self::on_toggle_modulation_lane))
                     .on_action(Self::window_listener(cx, Self::on_open_settings))
                     .on_action(Self::window_listener(cx, Self::on_open_command_palette))
@@ -604,8 +614,8 @@ impl AurisApp {
                     ))
                     .on_action(Self::window_listener(
                         cx,
-                        |this, _: &actions::VisualizerEffects, _, cx| {
-                            this.visualizer_command(super::visualizer::VisualizerCommand::Effects);
+                        |this, _: &actions::VisualizerTap, _, cx| {
+                            this.visualizer_command(super::visualizer::VisualizerCommand::Tap);
                             cx.notify();
                         },
                     ))
@@ -646,8 +656,10 @@ impl AurisApp {
                     ))
                     .on_action(Self::window_listener(
                         cx,
-                        |this, _: &actions::VisualizerView, _, cx| {
-                            this.visualizer_command(super::visualizer::VisualizerCommand::ViewNext);
+                        |this, _: &actions::VisualizerLoudnessReset, _, cx| {
+                            this.visualizer_command(
+                                super::visualizer::VisualizerCommand::LoudnessReset,
+                            );
                             cx.notify();
                         },
                     ))
@@ -1261,7 +1273,7 @@ impl AurisApp {
             // The press is acknowledged before the render notices it: a block has to finish
             // first, and an overlay that looked untouched for that long reads as a dead button.
             None if export.cancelling() => self.t(Key::ExportCancelling).to_string(),
-            None => messages::rendering(self.language(), &export.path.display().to_string()),
+            None => messages::rendering(self.language(), export.path.display().to_string()),
         };
 
         Some(
@@ -1964,6 +1976,8 @@ impl AurisApp {
                     .collect();
                 let _ = self.session.resize_notes(clip, &ends);
             }
+            // The knob follows the pointer itself and reports through `turn_knob`.
+            Drag::Knob { .. } => {}
             Drag::Param {
                 target,
                 start_value,
@@ -1988,6 +2002,7 @@ impl AurisApp {
                 subject, handle, ..
             } => self.drag_envelope_handle(subject, handle, event.position),
             Drag::EqNode { subject, band, .. } => self.drag_eq_node(subject, band, event.position),
+            Drag::SynthPlot { .. } => self.drag_synth_plot(event.position, event.modifiers),
             Drag::PartDial {
                 clip,
                 dial,
@@ -3334,6 +3349,18 @@ impl AurisApp {
         cx.notify();
     }
 
+    fn on_join_clips(
+        &mut self,
+        _: &actions::JoinClips,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(clip) = self.selected_clip {
+            self.run_menu_command(MenuCommand::JoinClips(clip), cx);
+        }
+        cx.notify();
+    }
+
     fn on_toggle_clip_mute(
         &mut self,
         _: &actions::ToggleClipMute,
@@ -3471,6 +3498,16 @@ impl AurisApp {
 
     fn on_zoom_in(&mut self, _: &actions::ZoomIn, _window: &mut Window, cx: &mut Context<Self>) {
         self.timeline.zoom_by(1.3, px(0.0));
+        cx.notify();
+    }
+
+    fn on_reveal_playhead(
+        &mut self,
+        _: &actions::RevealPlayhead,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.reveal_playhead();
         cx.notify();
     }
 
@@ -3636,26 +3673,41 @@ impl AurisApp {
         cx.notify();
     }
 
+    /// Shows or hides one of the annotation strips over the arrangement, and keeps the choice.
+    ///
+    /// The one place they are switched, so the View menu, the shortcuts and the strips' own
+    /// right-click menus cannot disagree about what turning one off means.
+    pub(crate) fn toggle_timeline_lane(&mut self, lane: TimelineLane, cx: &mut Context<Self>) {
+        self.panels.lanes.toggle(lane);
+        self.remember_layout();
+        cx.notify();
+    }
+
     fn on_toggle_structure_lane(
         &mut self,
         _: &actions::ToggleStructureLane,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.panels.lanes.structure = !self.panels.lanes.structure;
-        self.remember_layout();
-        cx.notify();
+        self.toggle_timeline_lane(TimelineLane::Structure, cx);
     }
 
-    fn on_toggle_harmony_lane(
+    fn on_toggle_key_lane(
         &mut self,
-        _: &actions::ToggleHarmonyLane,
+        _: &actions::ToggleKeyLane,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.panels.lanes.harmony = !self.panels.lanes.harmony;
-        self.remember_layout();
-        cx.notify();
+        self.toggle_timeline_lane(TimelineLane::Keys, cx);
+    }
+
+    fn on_toggle_chord_lane(
+        &mut self,
+        _: &actions::ToggleChordLane,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_timeline_lane(TimelineLane::Chords, cx);
     }
 
     fn on_toggle_lyrics_lane(
@@ -3664,9 +3716,7 @@ impl AurisApp {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.panels.lanes.lyrics = !self.panels.lanes.lyrics;
-        self.remember_layout();
-        cx.notify();
+        self.toggle_timeline_lane(TimelineLane::Lyrics, cx);
     }
 
     fn on_toggle_tempo_marks(
@@ -3687,6 +3737,16 @@ impl AurisApp {
         cx: &mut Context<Self>,
     ) {
         self.toggle_curve_lane(ClipCurve::Bend);
+        cx.notify();
+    }
+
+    fn on_toggle_event_list(
+        &mut self,
+        _: &actions::ToggleEventList,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_event_list();
         cx.notify();
     }
 

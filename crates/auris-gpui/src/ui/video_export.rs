@@ -516,8 +516,8 @@ impl AurisApp {
                     Ok(summary) => {
                         let text = messages::exported_video(
                             language,
-                            &path.display().to_string(),
-                            &Seconds(summary.seconds).format_clock(),
+                            path.display().to_string(),
+                            Seconds(summary.seconds).format_clock(),
                         );
                         this.set_status(text.clone());
                         Ok(text)
@@ -1490,6 +1490,21 @@ impl AurisApp {
                 |style, direction| {
                     style.particles = (style.particles + 0.25 * direction)
                         .clamp(0.0, NoteRollStyle::MAX_PARTICLES);
+                },
+            ))
+            .child(self.stepper(
+                "video-parallax",
+                Key::VideoParallax,
+                if style.parallax <= 0.0 {
+                    self.t(Key::VideoParticlesOff).to_string()
+                } else {
+                    format!("{:.0}%", style.parallax * 100.0)
+                },
+                theme,
+                cx,
+                |style, direction| {
+                    style.parallax =
+                        (style.parallax + 0.25 * direction).clamp(0.0, NoteRollStyle::MAX_PARALLAX);
                 },
             ))
             .child(

@@ -98,11 +98,14 @@ pub(crate) async fn prompt(
         "opencode" => backends::opencode::complete(&prefs, input).await,
         "antigravity" => backends::antigravity::complete(&prefs, input).await,
         "" | "rig" => {
-            let Command::Run(options) =
+            let Command::Run(mut options) =
                 parse_command(&[], &|name| std::env::var(name).ok(), &prefs)?
             else {
                 return Err("Expected text-only model settings".into());
             };
+            // The same capability checks as a conversation: a model that cannot think must
+            // not be sent the panel's reasoning effort here either.
+            crate::runtime::preflight(&mut options).await?;
             let agent = build_with(&options, |builder| {
                 builder
                     .preamble(instructions)

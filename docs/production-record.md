@@ -11,7 +11,7 @@ no permissions. Updates replace one key and preserve other entries.
 `inspect_project` returns the reconciled record on every turn. Explicit record reads
 also inspect the current document, so a caller cannot accidentally rely on a cached
 revision after editing. Missing clip IDs and stale observations remain visible.
-The host stores genuine `inspect_audio` measurements and `listen` responses only
+The host stores genuine `inspect_audio` measurements and `listen` reports only
 when their numeric revision matches the latest project inspection. Refresh inspection
 after edits and before measuring. No note-writing operation can set tool evidence.
 
@@ -20,7 +20,7 @@ editing or undoing conservatively invalidates it. Coverage includes short sectio
 section boundaries, the ending and the loop seam. Track-solo measurements do not cover
 the mix; separate measurements of loop edges do not verify a contiguous loop join.
 The ledger never asserts human listening. Retain user feedback as attributed notes;
-current measurements and model criticism do not constitute musical preference.
+current measurements and a model's listening do not constitute the user's musical preference.
 
 The record is bounded to 64 entries and 32 observations in `memory.production.json`.
 Persistence uses the model-history generation lock, so a late writer cannot recreate

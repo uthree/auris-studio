@@ -152,6 +152,8 @@ actions!(
         NudgeClipsRight,
         /// Cut the selected clip in two where the playhead is.
         SplitClip,
+        /// Join the selected clips on one track into one, or the selected clip with the next.
+        JoinClips,
         /// Mute or unmute the selected clip.
         ToggleClipMute,
         /// Repeat the selected clip out to the next one, or stop it repeating.
@@ -184,6 +186,8 @@ actions!(
         ZoomIn,
         /// Zoom the timeline out.
         ZoomOut,
+        /// Scroll the timeline back to the playhead and follow it again.
+        RevealPlayhead,
         /// Make every track lane taller.
         IncreaseTrackHeight,
         /// Make every track lane shorter.
@@ -204,8 +208,10 @@ actions!(
         ToggleAgent,
         /// Show or hide the strip of section names above the arrangement.
         ToggleStructureLane,
-        /// Show or hide the key and chord strip above the arrangement.
-        ToggleHarmonyLane,
+        /// Show or hide the strip of key changes above the chords.
+        ToggleKeyLane,
+        /// Show or hide the chord strip above the arrangement.
+        ToggleChordLane,
         /// Show or hide the song-wide lyrics strip under the chords.
         ToggleLyricsLane,
         /// Show or hide the tempo changes marked along the ruler.
@@ -214,6 +220,8 @@ actions!(
         ToggleBendLane,
         /// Show or hide the modulation strip under the piano roll.
         ToggleModulationLane,
+        /// Show or hide the event list down the side of the piano roll.
+        ToggleEventList,
         /// Open the settings window.
         OpenSettings,
         /// Open the command palette.
@@ -235,17 +243,17 @@ actions!(
         ToggleVisualizer,
         VisualizerSource,
         VisualizerFreeze,
-        VisualizerEffects,
+        VisualizerTap,
         VisualizerAverage,
         VisualizerPeaks,
         VisualizerSave,
         VisualizerReset,
         VisualizerTimebase,
-        VisualizerView,
         VisualizerSpectrumChannel,
         VisualizerCorrelationReset,
         VisualizerOscilloscopeGain,
         VisualizerStereoAutoGain,
+        VisualizerLoudnessReset,
         /// Move keyboard focus to the next panel.
         FocusNextPane,
         /// Move keyboard focus to the previous panel.
@@ -568,17 +576,20 @@ bindable! {
         "view.about",           GroupHelp,      CmdAbout,              "" => ShowAbout;
         "help.report_problem",  GroupHelp,      IssueReport,           "" => ReportProblem;
         "help.check_updates",   GroupHelp,      CmdCheckForUpdates,    "" => CheckForUpdates;
-        // The three strips over the arrangement. Out on `secondary-alt-` because they are
+        // The strips over the arrangement. Out on `secondary-alt-` because they are
         // arrangement furniture rather than things reached mid-take, and because the plain and
         // shifted forms of these letters are all spoken for.
         "view.structure_lane",  GroupView,      CmdShowStructureLane,  "secondary-alt-s" => ToggleStructureLane;
-        "view.harmony_lane",    GroupView,      CmdShowHarmonyLane,    "secondary-alt-h" => ToggleHarmonyLane;
+        "view.key_lane",        GroupView,      CmdShowKeyLane,        "secondary-alt-k" => ToggleKeyLane;
+        "view.chord_lane",      GroupView,      CmdShowChordLane,      "secondary-alt-h" => ToggleChordLane;
         "view.lyrics_lane",     GroupView,      CmdShowLyricsLane,     "secondary-alt-y" => ToggleLyricsLane;
         "view.tempo_marks",     GroupView,      CmdShowTempoMarks,     "secondary-alt-t" => ToggleTempoMarks;
         "view.bend_lane",       GroupView,      CmdShowBendLane,       "secondary-alt-b" => ToggleBendLane;
         "view.modulation_lane", GroupView,      CmdShowModulationLane, "secondary-alt-w" => ToggleModulationLane;
+        "view.event_list",      GroupView,      CmdShowEventList,      "" => ToggleEventList;
         "view.zoom_in",         GroupView,      CmdZoomIn,             "secondary-=" => ZoomIn;
         "view.zoom_out",        GroupView,      CmdZoomOut,            "secondary--" => ZoomOut;
+        "view.reveal_playhead", GroupView,      CmdRevealPlayhead,     "" => RevealPlayhead;
         "view.track_height_increase", GroupView, CmdIncreaseTrackHeight, "" => IncreaseTrackHeight;
         "view.track_height_decrease", GroupView, CmdDecreaseTrackHeight, "" => DecreaseTrackHeight;
         "view.settings",        GroupView,      CmdSettings,           "secondary-," => OpenSettings;
@@ -598,17 +609,17 @@ bindable! {
         "visualizer.toggle", GroupAnalysis, VisualizerTitle, "" => ToggleVisualizer;
         "visualizer.source", GroupAnalysis, VisualizerSelected, "" => VisualizerSource;
         "visualizer.freeze", GroupAnalysis, VisualizerFreeze, "" => VisualizerFreeze;
-        "visualizer.effects", GroupAnalysis, VisualizerEffects, "" => VisualizerEffects;
+        "visualizer.tap", GroupAnalysis, VisualizerTap, "" => VisualizerTap;
         "visualizer.average", GroupAnalysis, VisualizerAverage, "" => VisualizerAverage;
         "visualizer.peaks", GroupAnalysis, VisualizerPeaks, "" => VisualizerPeaks;
         "visualizer.save", GroupAnalysis, VisualizerSave, "" => VisualizerSave;
         "visualizer.reset", GroupAnalysis, VisualizerReset, "" => VisualizerReset;
         "visualizer.timebase", GroupAnalysis, VisualizerTimebase, "" => VisualizerTimebase;
-        "visualizer.view", GroupAnalysis, VisualizerView, "" => VisualizerView;
         "visualizer.spectrum_channel", GroupAnalysis, VisualizerSpectrumChannel, "" => VisualizerSpectrumChannel;
         "visualizer.correlation_reset", GroupAnalysis, VisualizerCorrelationReset, "" => VisualizerCorrelationReset;
         "visualizer.oscilloscope_gain", GroupAnalysis, VisualizerDisplayGain, "" => VisualizerOscilloscopeGain;
         "visualizer.stereo_auto_gain", GroupAnalysis, VisualizerStereoAutoGain, "" => VisualizerStereoAutoGain;
+        "visualizer.loudness_reset", GroupAnalysis, VisualizerLoudnessReset, "" => VisualizerLoudnessReset;
         "analysis.results", GroupAnalysis, AnalysisResults, "" => OpenAnalysisResults;
     }
 
@@ -671,6 +682,8 @@ bindable! {
         // X is the scissors everywhere that has a pair. Not ⌘T, which Logic splits with and
         // which is the instrument track here.
         "clip.split",           GroupClip,      CmdSplitClip,          "alt-x"       => SplitClip;
+        // Logic's Join, and the pair of the scissors above it.
+        "clip.join",            GroupClip,      CmdJoinClips,          "secondary-j" => JoinClips;
         "clip.mute",            GroupClip,      CmdToggleClipMute,     ""            => ToggleClipMute;
         // Logic's own key for looping a region, and a bare letter is free here for the reason
         // `edit.next_tool` is: the arrangement is not a place anything types.
