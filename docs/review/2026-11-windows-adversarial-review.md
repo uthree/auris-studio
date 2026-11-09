@@ -125,14 +125,16 @@ user) with the `AurisStudio.Project` ProgID, whose open command is
 script has not been compiled on the review machine, which has no Inno Setup; the release
 workflow compiles it.
 
-### AN-07 — `auris render` replaces an existing WAV without `--force` (open)
+### AN-07 — `auris render` replaces an existing WAV without `--force` (fixed)
 
 Rendering to a mix path that already exists replaces it silently. `compose` and `new` refuse an
 existing destination unless given `--force`, stem export refuses existing stems, and the desktop
 asks before replacing. Re-running the same command line after editing the output name by hand is
 the way a delivered master gets lost.
 
-**Direction.** Refuse an existing output unless `--force`, as `compose` does.
+**Fix.** `render` refuses an existing mix destination before opening the project, with a message naming
+`--force`, which replaces it. The evaluation scripts under `tools/eval`, which render into the
+same working folder on every run, pass `--force` so they behave as before.
 
 ## Covered without findings
 

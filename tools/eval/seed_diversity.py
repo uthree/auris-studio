@@ -136,7 +136,7 @@ def corpus(args) -> None:
             elif reference_context != context:
                 raise ValueError(f"Seed changed controlled musical context: {label}")
             wav = out / "audio" / f"{label}.wav"
-            render_command = [str(cli), "render", str(project_path), "--bit-depth", "32", "--no-tail", "-o", str(wav)]
+            render_command = [str(cli), "render", str(project_path), "--bit-depth", "32", "--no-tail", "--force", "-o", str(wav)]
             run(render_command, out / "logs" / f"{label}-render.log", env)
             audio, rate = sf.read(wav, dtype="float32", always_2d=True)
             if rate != 48000 or audio.shape[1] != 2 or not np.isfinite(audio).all():
