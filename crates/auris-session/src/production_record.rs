@@ -487,6 +487,7 @@ fn phase_checks(
                 check("lyrics_annotated", list("unannotated_lyric_lines")),
                 check("vocal_takes_current", behind_takes),
                 check("foreground_covers_song", foreground_unmet(roles, facts)),
+                check("melody_rhythm_varied", rhythm_unmet(roles, facts)),
                 // Read again in every later phase, since an arrangement can add findings too.
                 check("lint_warnings_resolved", lint_unmet(facts)),
             ]
@@ -546,6 +547,31 @@ fn bars_with_notes(project: &Project, clips: &[auris_core::project::MidiClip]) -
         }
     }
     runs
+}
+
+/// The rhythm warnings `melody_shape` gives a sung foreground track, which the score phase is
+/// not finished with: every line entering at one point of the bar, a melody with no
+/// syncopation, every line one length, or most notes one spacing apart.
+fn rhythm_unmet(roles: Option<&Roles>, facts: &Value) -> Vec<Value> {
+    let Some(roles) = roles else {
+        return vec![];
+    };
+    facts["tracks"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|track| {
+            track["track"]
+                .as_u64()
+                .is_some_and(|id| roles.foreground.contains(&id))
+        })
+        .filter(|track| {
+            track["melody_rhythm"]
+                .as_array()
+                .is_some_and(|warnings| !warnings.is_empty())
+        })
+        .map(|track| json!({"track":track["track"],"melody_shape":track["melody_rhythm"]}))
+        .collect()
 }
 
 /// How many of the song's bars at least one foreground track sounds in, against the song's
@@ -684,6 +710,8 @@ pub fn phase_facts(session: &crate::Session) -> Value {
                     _ => "missing",
                 }
                 .into();
+                fact["melody_rhythm"] =
+                    crate::session::melody_form::rhythm_warnings(project, track.id).into();
             }
             Some(fact)
         })
@@ -987,6 +1015,66 @@ mod tests {
             json!({"kind":"enter_phase","phase":"score","reason":"「サビのメロを変えたい」"}),
         );
         assert_eq!(record.lock(), None);
+    }
+
+    #[test]
+    fn a_sung_lead_on_one_rhythm_throughout_is_unmet_structure() {
+        use auris_core::project::Note;
+        let mut session =
+            crate::Session::new(crate::SessionOptions::headless().with_balance(false)).unwrap();
+        let lead = session.add_singer_track("Lead");
+        let bar = Ticks(Ticks::QUARTER.raw() * 4);
+        // Eight two-bar lines, each four quarter notes from the downbeat and a bar's rest.
+        let clip = session
+            .add_midi_clip(lead, "Verse", Ticks::ZERO, bar * 16)
+            .unwrap();
+        let notes = (0..8)
+            .flat_map(|line| {
+                (0..4).map(move |i| {
+                    Note::new(
+                        60 + i as u8,
+                        bar * (2 * line) + Ticks::QUARTER * i,
+                        Ticks(Ticks::QUARTER.raw() * 3 / 4),
+                    )
+                })
+            })
+            .collect();
+        session.replace_notes(clip, notes).unwrap();
+        let mut record = Record::default();
+        record
+            .update(Operation::EnterPhase {
+                phase: Phase::Score,
+                reason: "new song".into(),
+                writing_order: None,
+            })
+            .unwrap();
+        record
+            .update(Operation::SetRoles {
+                foreground: vec![lead.0],
+                guide: vec![],
+                no_foreground: None,
+            })
+            .unwrap();
+        let rhythm: Vec<Value> = unmet_structure(&record, &session)
+            .into_iter()
+            .filter(|c| c["check"] == "melody_rhythm_varied")
+            .collect();
+        assert_eq!(rhythm.len(), 1, "{rhythm:?}");
+        let text = rhythm[0]["unmet"].to_string();
+        assert!(text.contains("same point of the bar"), "{text}");
+        // A track that is not the foreground is not held to it.
+        record
+            .update(Operation::SetRoles {
+                foreground: vec![],
+                guide: vec![],
+                no_foreground: Some("an instrumental".into()),
+            })
+            .unwrap();
+        assert!(
+            unmet_structure(&record, &session)
+                .iter()
+                .all(|c| c["check"] != "melody_rhythm_varied")
+        );
     }
 
     #[test]

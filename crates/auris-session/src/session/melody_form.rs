@@ -227,10 +227,25 @@ fn letters(lines: &[Line]) -> Vec<String> {
 
 /// The line-by-line shape of a track's melody, with warnings only at the extremes.
 pub fn melody_form(project: &Project, track: TrackId) -> (Value, Vec<String>) {
+    let (report, warnings, _) = form(project, track);
+    (report, warnings)
+}
+
+/// The warnings of [`melody_form`] about the melody's rhythm alone: every line entering at one
+/// point of the bar, no syncopation, one note count for every line, one spacing between most
+/// notes. These are the ones a score phase is not finished with, because a melody sung to one
+/// rhythm throughout sounds like a drill whatever its pitches do.
+pub fn rhythm_warnings(project: &Project, track: TrackId) -> Vec<String> {
+    form(project, track).2
+}
+
+/// [`melody_form`]'s report and warnings, with the rhythm warnings among them also listed apart.
+fn form(project: &Project, track: TrackId) -> (Value, Vec<String>, Vec<String>) {
     let lines = lines_of(project, track);
     let mut warnings = Vec::new();
+    let mut rhythm = Vec::new();
     if lines.is_empty() {
-        return (json!(null), warnings);
+        return (json!(null), warnings, rhythm);
     }
     let letters = letters(&lines);
     let bits = predictability(&lines);
@@ -299,19 +314,19 @@ pub fn melody_form(project: &Project, track: TrackId) -> (Value, Vec<String>) {
     }
     if lines.len() >= UNIFORM_LINES {
         if entries.len() == 1 {
-            warnings.push(format!(
+            rhythm.push(format!(
                 "All {} lines enter at the same point of the bar; let some enter with a pickup (弱起) or late",
                 lines.len()
             ));
         }
         if syncopated == 0 {
-            warnings.push(format!(
+            rhythm.push(format!(
                 "No note in {} lines starts off the beat and holds across it; anticipate a strong beat (食い) where the drive helps",
                 lines.len()
             ));
         }
         if note_counts.len() == 1 {
-            warnings.push(format!(
+            rhythm.push(format!(
                 "Every line has {} notes; let line lengths differ where no hook repeats",
                 lines[0].notes.len()
             ));
@@ -322,12 +337,13 @@ pub fn melody_form(project: &Project, track: TrackId) -> (Value, Vec<String>) {
         && let Some((value, count)) = spacings.iter().max_by_key(|(_, count)| **count)
         && *count as f64 / total as f64 >= UNIFORM_SPACING_SHARE
     {
-        warnings.push(format!(
+        rhythm.push(format!(
             "{:.0}% of the melody's notes start {:.2} beats after the one before; mix shorter and longer values",
             *count as f64 * 100.0 / total as f64,
             *value as f64 / Ticks::QUARTER.raw() as f64
         ));
     }
+    warnings.extend(rhythm.iter().cloned());
     if endings >= 4 && tonic_endings == 0 {
         warnings.push(format!(
             "None of {endings} lines ends on the tonic; land at least the last chorus there unless the song should stay open"
@@ -364,6 +380,7 @@ pub fn melody_form(project: &Project, track: TrackId) -> (Value, Vec<String>) {
             "note": "Lines follow the song-wide lyric annotation, else rests of a beat. Letters: same onsets and pitches share one; same onsets under other pitches add a prime. bits_per_note is a short-term model that learns only from this song: an exact repeat falls towards zero.",
         }),
         warnings,
+        rhythm,
     )
 }
 
@@ -450,5 +467,20 @@ mod tests {
         });
         let (_, warnings) = melody_form(&project, track);
         assert!(warnings.is_empty(), "{warnings:?}");
+    }
+
+    #[test]
+    fn the_rhythm_warnings_are_the_rhythm_part_of_the_form_warnings() {
+        let (project, track) = song(8, template);
+        let rhythm = rhythm_warnings(&project, track);
+        let (_, warnings) = melody_form(&project, track);
+        assert_eq!(rhythm.len(), 4, "{rhythm:?}");
+        assert!(rhythm.iter().all(|w| warnings.contains(w)));
+        // Pitch and form warnings stay out: the tonic ending, the repeated line.
+        assert!(
+            rhythm
+                .iter()
+                .all(|w| !w.contains("tonic") && !w.contains("pitches"))
+        );
     }
 }
