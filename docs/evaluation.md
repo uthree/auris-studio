@@ -165,13 +165,34 @@ report the spread their strum stage gives each chord.
 
 Flags mark extremes only: every line of a section identical, every line entering on one beat,
 no syncopated note at all, every line one note count, one onset spacing for most notes, no line
-ending on the tonic, a section other than a chorus singing an earlier section's lines again note
-for note, three sections
+ending on the tonic, several lines in a row predictable from the song so far, three sections
 sharing one drum bar, a chorus looping the verse's progression from another chord, and a guitar
 strummed over less than 10 ms (below every shipped preset) or not at all. The song whose
 friends' feedback prompted the script raises all of them
 ([plan](song-feedback-improvement-plan-2026-11-09.ja.md)). None is a target, an absent flag is
 not a judgement, and the model knows nothing about a genre's conventions.
+
+### How conventional a melody is against a corpus
+
+```
+uv run tools/eval/melody_corpus.py train corpus/ --out model.json --name "corpus name"
+uv run tools/eval/melody_corpus.py score MySong/MySong.auris --model model.json
+```
+
+The long-term half of the same IDyOM-style model. `train` counts a PPM model over the same
+(interval, inter-onset interval) symbols from a folder of MusicXML or MIDI melodies, and
+cross-validates the corpus in five folds. `score` gives each line of a song its information
+content under the frozen model, and the song's mean as a z-score against the corpus's own
+cross-validated songs. Low means the melody is made of the corpus's commonplaces; it is never a
+target in either direction.
+
+Two corpora were tried. PJS (100 short songs written for phoneme balance, CC BY-SA 4.0) is
+Japanese but nothing like a fast rock song, and every trial song scored above it. 620 lead
+sheets with lyrics tagged pop or rock from PDMX's conflict-free, deduplicated subset (CC0 and
+public domain; 189,217 notes; cross-validated 5.57 ± 1.65 bits a note) are the better reference:
+fourteen trial songs fell between -0.6 and +1.3 sd of it. The PDMX melody is the first non-drum
+track's top line, which is a piano's right hand where a score has no lead part. Both models are
+kept on the machine that trained them; a model inherits its corpus's licence.
 
 `tools/eval/fixtures/vocal-phrases.asong` supplies a fixed lyric probe with shared verses and
 unvoiced closures. Use the same dictionary and sound assets for both renders. An instrument
