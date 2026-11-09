@@ -500,6 +500,29 @@ pub(crate) fn reference_editor(app: &Entity<AurisApp>, cx: &VisualTestContext) -
     })
 }
 
+/// Removes a test's project folder once the window has stopped writing into it.
+///
+/// Saving or opening a project points the conversation store at its folder, and the store
+/// writes on a thread of its own. Removing the folder while that write is still running races
+/// it: on Windows the removal fails with `DirectoryNotEmpty`, and only when the suite is loaded
+/// enough that the write is late. So the write is waited for, not outrun.
+pub(crate) fn remove_project_folder(
+    app: &Entity<AurisApp>,
+    cx: &mut VisualTestContext,
+    root: &std::path::Path,
+) {
+    // A hang guard, not a budget: one small JSON write per pass.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    while app.update(cx, |this, cx| this.conversation_storage_busy(cx)) {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "conversation storage never finished"
+        );
+        std::thread::yield_now();
+    }
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -903,7 +926,7 @@ mod tests {
         // The project directories are disposable fixtures. Windows cannot remove them until
         // every handle from the asynchronous open has returned, which run_until_parked ensures.
         drop(first);
-        std::fs::remove_dir_all(&root).unwrap();
+        remove_project_folder(&app, cx, &root);
     }
 
     /// Another writer at the open file, seen from the window: a clean window follows the
@@ -1006,7 +1029,7 @@ mod tests {
         app.read_with(cx, |this, _| {
             assert!(this.external_change.is_none(), "the offer comes down");
         });
-        std::fs::remove_dir_all(&root).unwrap();
+        remove_project_folder(&app, cx, &root);
     }
 
     /// A pointer at a position, hit-testing against a real frame — the path a keystroke never
