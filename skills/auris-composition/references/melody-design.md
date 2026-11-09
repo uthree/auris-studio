@@ -39,6 +39,16 @@ register, rhythmic density, note length, contour, harmonic arrival, texture, or
 silence can open a chorus. A refrain may keep the motif while widening range or
 lengthening its arrival; this is a compositional inference, not a pop-law.
 
+For a song that should open at the chorus, make the lift measurable. Compare the
+chorus with the section just before it (usually the pre-chorus): its average
+pitch should sit at least a minor third higher, it should hold the song's
+highest notes, and its hook should leap at least a fourth where the pre-chorus
+moved by step. Bolder choruses leap a sixth or an octave, even back and forth.
+Keep the pre-chorus lower and narrower so the chorus has room, and prepare the
+entrance with a held note, a rest or a rising line. Agents writing well inside
+the voice tend to lift a semitone or two and call it a chorus; read the notes
+section by section before accepting it.
+
 ## Build the pitch skeleton against harmony
 
 Decide whether the interest lives mainly in the line itself or in its interaction

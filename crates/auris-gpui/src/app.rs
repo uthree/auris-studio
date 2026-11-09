@@ -37,7 +37,7 @@ use crate::ui::menu_bar::OpenMenu;
 use crate::ui::piano_roll::RollTool;
 use crate::ui::prompt::Prompt;
 use crate::ui::score_layer::{ScoreLayer, ScorePreview};
-use crate::ui::timeline::{PitchView, TimelineView};
+use crate::ui::timeline::{PitchView, PlayheadFollow, TimelineView};
 use crate::voice_setup_window::VoiceSetupWindow;
 
 /// What a press or a sweep at one position should do to whatever is already sounding.
@@ -591,6 +591,21 @@ pub enum Drag {
         /// value exactly where it was and changes only what happens next.
         fine: bool,
     },
+    /// Turning a parameter's knob.
+    ///
+    /// The knob follows the pointer itself — Atelier's `Knob` owns the gesture and reports a
+    /// value — so this holds only what the knob does not: the transaction that makes the turn
+    /// one undo step, and the anchor that lets Shift slow it down as it does every other drag.
+    Knob {
+        /// What is being changed.
+        target: ParamTarget,
+        /// The knob's own reading, from 0 to 1, where the drag was last anchored.
+        anchor_reading: Option<f32>,
+        /// The parameter's normalised value at the anchor.
+        anchor_value: f32,
+        /// Whether the fine modifier was held at the anchor.
+        fine: bool,
+    },
     /// Dragging a point along one of a clip's curves.
     CurvePoint {
         /// Whose curve.
@@ -616,6 +631,28 @@ pub enum Drag {
         /// two it moves.
         target: ParamTarget,
     },
+    /// Dragging one of an oscillator patch's pictures: the unison stack, the filter, the FM
+    /// sidebands or the chiptune cycle.
+    ///
+    /// Measured from where the press landed, as [`Drag::Param`] is, so the press can be anywhere
+    /// on the plot. See [`crate::ui::synth_edit`].
+    SynthPlot {
+        /// Whose instrument.
+        track: TrackId,
+        /// Which picture.
+        plot: crate::ui::synth_edit::SynthPlot,
+        /// The horizontal parameter, which the whole drag is filed under.
+        target: ParamTarget,
+        /// How the horizontal axis turns into its parameter, signed for the side of a stack the
+        /// press landed on.
+        scale: crate::ui::synth_edit::PlotScale,
+        /// Where the drag is measured from.
+        anchor: Point<Pixels>,
+        /// The horizontal and vertical parameters at the anchor.
+        start: (f32, f32),
+        /// Whether Shift was held when the anchor was taken.
+        fine: bool,
+    },
     /// Dragging one band's node around the equalizer's curve.
     ///
     /// Absolute rather than measured from where the drag began, for [`Drag::EnvelopeHandle`]'s
@@ -636,6 +673,15 @@ pub enum Drag {
         at: Ticks,
         /// How far into the section the pointer took hold, kept so the boundary does not jump
         /// to the pointer on the first move.
+        grab_offset: Ticks,
+    },
+    /// Dragging a comment along its track's lane or around the piano roll.
+    Comment {
+        /// What holds it.
+        host: CommentHost,
+        /// Which comment.
+        id: CommentId,
+        /// How far right of the comment's pin the pointer took hold.
         grab_offset: Ticks,
     },
     /// Dragging the start of a lyric line along the lyrics lane.
@@ -849,13 +895,17 @@ impl Drag {
                 OrnamentHandle::Fall => Edit::SetFall(*clip, *index),
                 OrnamentHandle::Vibrato => Edit::SetVibrato(*clip, *index),
             }),
-            Drag::Param { target, .. } => Some(Edit::AdjustParameter(*target)),
+            Drag::Param { target, .. } | Drag::Knob { target, .. } => {
+                Some(Edit::AdjustParameter(*target))
+            }
             // The decay corner moves two parameters and this names one of them. The undo step is
             // one either way — the whole drag is a transaction — so this only decides the label.
             Drag::EnvelopeHandle { target, .. } => Some(Edit::AdjustParameter(*target)),
             // The same arrangement: a node moves a frequency and a gain, and this names the one
             // it always moves.
             Drag::EqNode { target, .. } => Some(Edit::AdjustParameter(*target)),
+            // Two parameters again, filed under the one the sideways axis moves.
+            Drag::SynthPlot { target, .. } => Some(Edit::AdjustParameter(*target)),
             // One undo step for the whole sweep, and the same label the right-click menu's
             // "Write It Again" uses — moving a dial is writing the part again with one thing
             // changed, and a stack full of "Adjusted parameter" would say nothing about which.
@@ -877,6 +927,7 @@ impl Drag {
             Drag::HarmonyChord { .. } => Some(Edit::MoveChord),
             Drag::SectionLabel { .. } => Some(Edit::MoveSection),
             Drag::LyricLine { .. } => Some(Edit::MoveLyricLine),
+            Drag::Comment { .. } => Some(Edit::MoveComment),
             // How far in the view is zoomed is a property of the window, like a panel's width.
             Drag::TimeZoom { .. } => None,
             // The video's look is an application setting, not part of the document.
@@ -1367,6 +1418,8 @@ pub struct CanvasBounds {
     /// hundred and twenty-nine of them, they are a machine word each, and a lane closed and
     /// reopened wants the rectangle it had.
     curves: CurveBounds,
+    /// Where labels that can be edited in place were painted, for an inline prompt to cover.
+    pub spots: crate::ui::inline_edit::SpotBook,
 }
 
 impl CanvasBounds {
@@ -1442,11 +1495,16 @@ pub struct AurisApp {
     /// Persistent appearance choices, including palettes created in the settings window.
     pub(crate) appearance: Appearance,
     pub(crate) timeline: TimelineView,
+    /// Whether the timeline keeps the playhead in view during playback, or a scroll has
+    /// released it.
+    pub(crate) playhead_follow: PlayheadFollow,
     /// Fractional time-signature wheel notches carried between precise-scroll events.
     pub(crate) signature_scroll_remainder: f32,
     pub(crate) pitch: PitchView,
     /// The drum editor's independent row scrolling and MIDI-address visibility.
     pub(crate) drum_editor: crate::ui::drum_editor::DrumEditorState,
+    /// The piano roll's event list: where it is scrolled, and its selected curve row.
+    pub(crate) event_list: crate::ui::event_list::EventListState,
     pub(crate) selected_track: Option<TrackId>,
     /// Monitor dropouts already reported, so the frame loop says something once per new gap
     /// rather than thirty times a second for as long as the count stands.
@@ -1544,6 +1602,8 @@ pub struct AurisApp {
     pub(crate) drum_analysis: crate::ui::drums::DrumAnalysisState,
     /// Whether the dedicated analysis panel is open.
     pub(crate) analysis_panel: bool,
+    /// The music linter's findings and its two schedules.
+    pub(crate) lint: crate::ui::lint::LintState,
     /// CPU music-analysis jobs and their unapplied draft.
     pub(crate) music_analysis: crate::ui::music_analysis::MusicAnalysisState,
     pub(crate) visualizer: crate::ui::visualizer::VisualizerState,
@@ -1798,6 +1858,10 @@ fn session_options(settings: &Settings) -> SessionOptions {
         gpu: live,
         shipped_fonts: live,
         soundfont_library: live.then(|| auris_session::config_dir().join("soundfonts.json")),
+        // Off in a test for the library's reason: a suite must not keep presets in the user's
+        // configuration, nor read the ones somebody kept there.
+        performance_presets: live
+            .then(auris_session::performance_presets::PerformancePresetBook::path),
         // Off in a test for the fonts' reason: a checkout with the dictionary fetched would
         // otherwise run a different suite than a CI machine without it.
         shipped_dictionary: live,
@@ -2017,6 +2081,7 @@ impl AurisApp {
                         this.watch_disk(cx);
                         this.drain_agent(cx);
                         this.poll_auto_sing(cx);
+                        this.poll_lint(cx);
                         this.poll_drum_analysis(cx);
                         this.poll_sung_preview(cx);
                         // Also here rather than in a command, because a monitor breaking up
@@ -2071,9 +2136,11 @@ impl AurisApp {
             theme,
             appearance,
             timeline: TimelineView::default(),
+            playhead_follow: PlayheadFollow::default(),
             signature_scroll_remainder: 0.0,
             pitch: PitchView::default(),
             drum_editor: crate::ui::drum_editor::DrumEditorState::default(),
+            event_list: crate::ui::event_list::EventListState::default(),
             selected_track,
             monitor_gaps: 0,
             selected_clip,
@@ -2111,6 +2178,7 @@ impl AurisApp {
             sung_preview_rendering: false,
             drum_analysis: Default::default(),
             analysis_panel: false,
+            lint: Default::default(),
             music_analysis: Default::default(),
             visualizer: Default::default(),
             video_export: Default::default(),
@@ -2616,8 +2684,20 @@ impl AurisApp {
     }
 
     /// Moves the playhead.
+    ///
+    /// A playhead moved on purpose is one somebody wants to see, so a view that a scroll had
+    /// released follows it again.
     pub(crate) fn seek(&mut self, tick: Ticks) {
         self.session.seek(tick);
+        self.playhead_follow.engage();
+    }
+
+    /// Brings the playhead back into view and follows it again.
+    pub(crate) fn reveal_playhead(&mut self) {
+        self.playhead_follow.engage();
+        let playhead = self.playhead_ticks();
+        let width = self.arrangement_width;
+        self.timeline.scroll_to_reveal(playhead, width);
     }
 
     // ---------------------------------------------------------------- selection
@@ -3546,7 +3626,7 @@ impl AurisApp {
             Ok(handle) => self.settings_window = Some(handle),
             Err(error) => {
                 let text =
-                    messages::failed(self.language, self.t(Key::Settings), &error.to_string());
+                    messages::failed(self.language, self.t(Key::Settings), error.to_string());
                 self.set_status(text);
             }
         }

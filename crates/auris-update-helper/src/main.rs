@@ -231,7 +231,7 @@ fn validate_args(args: &ApplyArgs) -> Result<(), UpdateError> {
         validate_suffix(&args.package, "-windows-x86_64-setup.exe")?;
         validate_file_name(&args.app, "auris-studio.exe")?;
     } else if cfg!(target_os = "macos") {
-        validate_suffix(&args.package, "-macos-universal.dmg")?;
+        validate_suffix(&args.package, "-macos-aarch64.dmg")?;
         validate_file_name(&args.app, "Auris Studio.app")?;
         let home = env::var_os("HOME").map(PathBuf::from);
         if !is_macos_app_path(&args.app, home.as_deref()) {

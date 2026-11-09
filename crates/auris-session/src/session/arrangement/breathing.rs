@@ -20,7 +20,13 @@ pub(super) fn envelope_controls(registry: &PluginRegistry, project: &Project, tr
         return Value::Null;
     };
     let id = source.instrument_id.as_str();
-    if !(id.starts_with("auris.physical.") || id == "auris.synth.chiptune") {
+    // The audio sampler shapes every note with the same `auris_dsp::Adsr` as the built-in voices,
+    // so its four controls mean what theirs do. A SoundFont plays the envelope its font wrote.
+    if !(id.starts_with("auris.physical.")
+        || id == "auris.synth.chiptune"
+        || auris_synth::AnalogPatch::from_id(id).is_some()
+        || id == auris_sampler::AUDIO_SAMPLER_ID)
+    {
         return Value::Null;
     }
     let Ok(instrument) = registry.create_instrument(id) else {
@@ -31,6 +37,23 @@ pub(super) fn envelope_controls(registry: &PluginRegistry, project: &Project, tr
         json!({"key":p.key,"base_value":p.clamp(source.instrument_state.params.get(p.key.as_ref()).copied().unwrap_or(p.default)),"unit":p.unit,
             "automated":project.automation.lane(target).is_some(),"target":automation::ControlTarget::Instrument { track, param: p.key.to_string() }})
     }).collect::<Vec<_>>())
+}
+
+/// What a SoundFont track can do instead, since it lists no native envelope: the font's own
+/// envelope plays, and the way to shape it is to turn one rendered note into an audio sample.
+pub(super) fn envelope_route(project: &Project, track: u64) -> Value {
+    let soundfont = project
+        .track(auris_core::TrackId(track))
+        .and_then(|t| t.kind.as_instrument())
+        .is_some_and(|source| source.instrument_id == auris_sampler::SAMPLER_ID);
+    if !soundfont {
+        return Value::Null;
+    }
+    json!(
+        "This SoundFont plays its font's own envelope. To shape attack/release, write one held note, \
+render stems and load_sample that track's WAV with that root_note, then set the \
+sampler's attack/decay/sustain/release with set_instrument_params. load_sample replaces the font."
+    )
 }
 
 fn window(start: i64, end: i64) -> Result<(), String> {

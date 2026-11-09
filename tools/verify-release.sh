@@ -9,8 +9,8 @@ version="${release#v}"
 
 expected=(
   "auris-${release}-linux-x86_64.tar.gz"
-  "auris-studio-${release}-macos-universal.dmg"
-  "auris-studio-${release}-macos-universal.tar.gz"
+  "auris-studio-${release}-macos-aarch64.dmg"
+  "auris-studio-${release}-macos-aarch64.tar.gz"
   "auris-studio-${release}-windows-x86_64-setup.exe"
   "auris-studio-${release}-windows-x86_64.zip"
 )
@@ -34,7 +34,7 @@ for platform in linux macos windows; do
       binaries=(auris)
       ;;
     macos)
-      stage="auris-studio-${release}-macos-universal"
+      stage="auris-studio-${release}-macos-aarch64"
       tar -xzf "$artifacts/$stage.tar.gz" -C "$destination"
       binaries=(auris-studio auris auris-mcp auris-update-helper)
       ;;

@@ -552,26 +552,6 @@ fn validate_voicevox_styles(styles: &[VoicevoxSpeakerChoice]) -> Result<(), Voic
     Ok(())
 }
 
-/// Reads the saved singing styles for a library shelf without contacting the Engine.
-pub fn saved_voicevox_speakers(path: &Path) -> Result<Vec<String>, VoiceSetupError> {
-    let raw = read_voice_config(path)?;
-    let file: serde_json::Value = serde_json::from_slice(&raw)
-        .map_err(|error| VoiceSetupError::Invalid(error.to_string()))?;
-    if file
-        .get("format_version")
-        .and_then(serde_json::Value::as_u64)
-        != Some(1)
-    {
-        return Err(VoiceSetupError::Invalid(
-            "Unsupported VOICEVOX connection format".into(),
-        ));
-    }
-    let styles: Vec<VoicevoxSpeakerChoice> = serde_json::from_value(file["styles"].clone())
-        .map_err(|error| VoiceSetupError::Invalid(error.to_string()))?;
-    validate_voicevox_styles(&styles)?;
-    Ok(styles.into_iter().map(|style| style.name).collect())
-}
-
 pub(crate) fn read_voicevox_connection(
     path: &Path,
     speaker: Option<&str>,

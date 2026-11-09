@@ -109,6 +109,10 @@ pub enum VideoColourSlot {
     Background,
     /// The chord caption in the corner.
     Chords,
+    /// The tempo and the beat counter in the other corner.
+    Meter,
+    /// The lyric subtitles along the bottom.
+    Lyrics,
 }
 
 impl VideoColourSlot {
@@ -119,6 +123,8 @@ impl VideoColourSlot {
             VideoColourSlot::Single => Some(style.single_color),
             VideoColourSlot::Background => Some(style.background),
             VideoColourSlot::Chords => Some(style.chord_color),
+            VideoColourSlot::Meter => Some(style.meter_color),
+            VideoColourSlot::Lyrics => Some(style.lyric_color),
         }
     }
 
@@ -133,6 +139,8 @@ impl VideoColourSlot {
             VideoColourSlot::Single => style.single_color = color,
             VideoColourSlot::Background => style.background = color,
             VideoColourSlot::Chords => style.chord_color = color,
+            VideoColourSlot::Meter => style.meter_color = color,
+            VideoColourSlot::Lyrics => style.lyric_color = color,
         }
     }
 
@@ -147,6 +155,8 @@ impl VideoColourSlot {
             VideoColourSlot::Single => style.coloring == NoteColoring::Single,
             VideoColourSlot::Background => true,
             VideoColourSlot::Chords => style.chords,
+            VideoColourSlot::Meter => style.tempo || style.beat_counter,
+            VideoColourSlot::Lyrics => style.lyrics,
         }
     }
 
@@ -157,6 +167,8 @@ impl VideoColourSlot {
             VideoColourSlot::Single => "single".to_owned(),
             VideoColourSlot::Background => "background".to_owned(),
             VideoColourSlot::Chords => "chords".to_owned(),
+            VideoColourSlot::Meter => "meter".to_owned(),
+            VideoColourSlot::Lyrics => "lyrics".to_owned(),
         }
     }
 }
@@ -504,8 +516,8 @@ impl AurisApp {
                     Ok(summary) => {
                         let text = messages::exported_video(
                             language,
-                            &path.display().to_string(),
-                            &Seconds(summary.seconds).format_clock(),
+                            path.display().to_string(),
+                            Seconds(summary.seconds).format_clock(),
                         );
                         this.set_status(text.clone());
                         Ok(text)
@@ -602,7 +614,9 @@ impl AurisApp {
             .child(self.video_background_section(&style, &theme, cx))
             .child(self.video_motion_section(&style, &theme, cx))
             .child(self.video_chords_section(&style, &theme, cx))
-            .child(self.video_lyrics_section(&style, &theme, cx));
+            .child(self.video_lyrics_section(&style, &theme, cx))
+            .child(self.video_meter_section(&style, &theme, cx))
+            .child(self.video_padding_section(&style, &theme, cx));
 
         let body = if stacked {
             div()
@@ -1208,7 +1222,8 @@ impl AurisApp {
         theme: &Theme,
         cx: &mut Context<Self>,
     ) -> gpui::Div {
-        self.section(Key::VideoLyricSection, theme)
+        let mut section = self
+            .section(Key::VideoLyricSection, theme)
             .child(self.toggle(
                 "video-lyrics",
                 Key::VideoLyrics,
@@ -1216,8 +1231,98 @@ impl AurisApp {
                 theme,
                 cx,
                 |style| style.lyrics = !style.lyrics,
+            ));
+        if style.lyrics {
+            section = section
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(self.picker_swatch(
+                            VideoColourSlot::Lyrics,
+                            style.lyric_color,
+                            theme,
+                            cx,
+                        ))
+                        .child(self.note(self.t(Key::VideoLyricColour), theme)),
+                )
+                .children(self.video_colour_picker(VideoColourSlot::Lyrics, &CAPTIONS, theme, cx));
+        }
+        section.child(self.note(self.t(Key::VideoLyricsHint), theme))
+    }
+
+    /// The silence before the first beat and after the last sound, in half seconds.
+    fn video_padding_section(
+        &self,
+        style: &NoteRollStyle,
+        theme: &Theme,
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
+        self.section(Key::VideoPadding, theme)
+            .child(self.stepper(
+                "video-lead-in",
+                Key::VideoLeadIn,
+                format!("{:.1} s", style.lead_in),
+                theme,
+                cx,
+                |style, direction| style.lead_in = half_second_step(style.lead_in, direction),
             ))
-            .child(self.note(self.t(Key::VideoLyricsHint), theme))
+            .child(self.stepper(
+                "video-tail",
+                Key::VideoTail,
+                format!("{:.1} s", style.tail),
+                theme,
+                cx,
+                |style, direction| style.tail = half_second_step(style.tail, direction),
+            ))
+            .child(self.note(self.t(Key::VideoPaddingHint), theme))
+    }
+
+    /// The tempo and the beat counter: two switches, since either is worth having alone, and
+    /// one colour for the corner they share.
+    fn video_meter_section(
+        &self,
+        style: &NoteRollStyle,
+        theme: &Theme,
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
+        let mut section = self
+            .section(Key::VideoMeterSection, theme)
+            .child(self.toggle(
+                "video-tempo",
+                Key::VideoTempo,
+                style.tempo,
+                theme,
+                cx,
+                |style| style.tempo = !style.tempo,
+            ))
+            .child(self.toggle(
+                "video-beat-counter",
+                Key::VideoBeatCounter,
+                style.beat_counter,
+                theme,
+                cx,
+                |style| style.beat_counter = !style.beat_counter,
+            ));
+        if style.tempo || style.beat_counter {
+            section = section
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(self.picker_swatch(
+                            VideoColourSlot::Meter,
+                            style.meter_color,
+                            theme,
+                            cx,
+                        ))
+                        .child(self.note(self.t(Key::VideoChordColour), theme)),
+                )
+                .children(self.video_colour_picker(VideoColourSlot::Meter, &CAPTIONS, theme, cx));
+        }
+        section.child(self.note(self.t(Key::VideoMeterHint), theme))
     }
 
     fn video_background_section(
@@ -1387,6 +1492,21 @@ impl AurisApp {
                         .clamp(0.0, NoteRollStyle::MAX_PARTICLES);
                 },
             ))
+            .child(self.stepper(
+                "video-parallax",
+                Key::VideoParallax,
+                if style.parallax <= 0.0 {
+                    self.t(Key::VideoParticlesOff).to_string()
+                } else {
+                    format!("{:.0}%", style.parallax * 100.0)
+                },
+                theme,
+                cx,
+                |style, direction| {
+                    style.parallax =
+                        (style.parallax + 0.25 * direction).clamp(0.0, NoteRollStyle::MAX_PARALLAX);
+                },
+            ))
             .child(
                 div()
                     .text_xs()
@@ -1427,6 +1547,15 @@ impl AurisApp {
                 },
             ))
     }
+}
+
+/// `value` moved half a second in `direction`, onto the half-second grid and within the
+/// padding a style allows.
+fn half_second_step(value: f32, direction: f32) -> f32 {
+    ((value + 0.5 * direction) * 2.0)
+        .round()
+        .clamp(0.0, 2.0 * NoteRollStyle::MAX_PADDING)
+        / 2.0
 }
 
 #[cfg(test)]
@@ -1638,6 +1767,94 @@ mod tests {
         });
         harness::paint(&app, &mut cx);
         app.read_with(&cx, |app, _| assert_eq!(app.video_export.picking, None));
+        app.update(&mut cx, |app, _| {
+            app.edit_video_style(|style| *style = original);
+        });
+    }
+
+    #[gpui::test]
+    fn the_lyric_subtitles_take_any_colour_while_they_are_shown(cx: &mut TestAppContext) {
+        let (app, mut cx, original) = open_window(cx);
+        app.update(&mut cx, |app, _| {
+            app.edit_video_style(|style| style.lyrics = true);
+        });
+        harness::resize(&app, &mut cx, gpui::size(px(1100.), px(1800.)));
+        harness::click("video-swatch-lyrics", &mut cx);
+        harness::paint(&app, &mut cx);
+        harness::click("video-preset-lyrics-3", &mut cx);
+        harness::paint(&app, &mut cx);
+        app.read_with(&cx, |app, _| {
+            assert_eq!(app.settings.video.lyric_color, CAPTIONS[3]);
+            assert_eq!(
+                app.settings.video.playhead_color, original.playhead_color,
+                "the playhead line keeps its own colour"
+            );
+            assert_eq!(app.settings.video.chord_color, original.chord_color);
+        });
+        app.update(&mut cx, |app, _| {
+            app.edit_video_style(|style| style.lyrics = false);
+            assert!(!VideoColourSlot::Lyrics.shown(&app.settings.video));
+            app.edit_video_style(|style| *style = original);
+        });
+    }
+
+    #[test]
+    fn the_padding_steps_by_half_seconds_within_its_range() {
+        assert_eq!(half_second_step(1.0, 1.0), 1.5);
+        assert_eq!(half_second_step(1.0, -1.0), 0.5);
+        assert_eq!(half_second_step(0.0, -1.0), 0.0, "never below none");
+        assert_eq!(
+            half_second_step(0.3, 1.0),
+            1.0,
+            "a hand-typed value joins the grid"
+        );
+        assert_eq!(
+            half_second_step(NoteRollStyle::MAX_PADDING, 1.0),
+            NoteRollStyle::MAX_PADDING
+        );
+    }
+
+    #[gpui::test]
+    fn the_tempo_and_the_beat_counter_switch_on_and_off_on_their_own(cx: &mut TestAppContext) {
+        let (app, mut cx, original) = open_window(cx);
+        app.update(&mut cx, |app, _| {
+            app.edit_video_style(|style| {
+                style.tempo = true;
+                style.beat_counter = true;
+            });
+        });
+        // Tall enough that the last section of the settings is on screen.
+        harness::resize(&app, &mut cx, gpui::size(px(1100.), px(1800.)));
+        harness::click("video-tempo", &mut cx);
+        harness::paint(&app, &mut cx);
+        app.read_with(&cx, |app, _| {
+            assert!(!app.settings.video.tempo);
+            assert!(app.settings.video.beat_counter, "the counter stays on");
+        });
+        harness::click("video-beat-counter", &mut cx);
+        harness::paint(&app, &mut cx);
+        app.read_with(&cx, |app, _| {
+            assert!(!app.settings.video.beat_counter);
+            assert!(!app.settings.video.tempo, "and the tempo stays off");
+            // Debug bounds outlive a removed element, so ask the state rather than the tree.
+            assert!(
+                !VideoColourSlot::Meter.shown(&app.settings.video),
+                "with both off there is no colour to choose"
+            );
+        });
+        harness::click("video-tempo", &mut cx);
+        harness::paint(&app, &mut cx);
+        harness::click("video-swatch-meter", &mut cx);
+        harness::paint(&app, &mut cx);
+        harness::click("video-preset-meter-3", &mut cx);
+        harness::paint(&app, &mut cx);
+        app.read_with(&cx, |app, _| {
+            assert_eq!(app.settings.video.meter_color, CAPTIONS[3]);
+            assert_eq!(
+                app.settings.video.chord_color, original.chord_color,
+                "the chords keep their own colour"
+            );
+        });
         app.update(&mut cx, |app, _| {
             app.edit_video_style(|style| *style = original);
         });

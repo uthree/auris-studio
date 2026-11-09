@@ -721,12 +721,6 @@ impl Vst3Plugin {
         }
     }
 
-    /// Consumes native editor notifications and reports whether the source changed.
-    ///
-    /// Prefer [`Self::take_source_changes`] when the caller must persist parameter values.
-    pub fn take_source_changed(&self) -> Result<bool, Vst3Error> {
-        Ok(self.take_source_changes()?.source_changed)
-    }
     /// Restores an opaque state blob previously produced by this class.
     pub fn load_state(&self, bytes: &[u8]) -> Result<(), Vst3Error> {
         let mut plugin = self.lock()?;

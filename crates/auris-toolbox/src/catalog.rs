@@ -383,8 +383,8 @@ pub mod tool_help {
                 {"project":project,"track":1,"name":"Manual","start_bar":5,"bars":2}
             ]),
             "listen" => serde_json::json!([
-                {"project":project,"start_bar":1,"bars":4,"focus":"Is the lead buried by the accompaniment?"},
-                {"project":project,"start_bar":1,"bars":4,"compare_to":"audition:copy-from-listen","aspect":"balance"}
+                {"project":project,"start_bar":1,"bars":4},
+                {"project":project,"start_bar":1,"bars":4,"compare_to":"audition:copy-from-listen"}
             ]),
             "edit_clip" => serde_json::json!([
                 {"project":project,"clip":2,"operation":{"kind":"resize","end_tick":30720}},

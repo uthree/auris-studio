@@ -187,20 +187,49 @@ impl Session {
 
     /// Writes validated, bar-addressed agent harmony without pointer-grid snapping.
     /// The caller groups this with section edits in one transaction.
+    ///
+    /// A written key replaces the key changes inside the range; with no key, `clear_key`
+    /// instead returns the range to the key in force before it.
+    ///
+    /// `clear_key` removes every key change from the range's first bar up to its end, so the
+    /// key before the range runs through it; the song's own key at tick zero is never removed,
+    /// so clearing from bar 1 extends that key instead. Writing a key and clearing one at once
+    /// is a contradiction the caller refuses; here a written key wins.
+    ///
+    /// Whatever is written, the boundaries are left without redundant changes: the key map never
+    /// stores a change restating the key already in force, so clearing or rewriting a range never
+    /// leaves a "C major → C major" marker that nothing can remove later.
     pub(crate) fn write_bounded_harmony(
         &mut self,
         start_bar: u32,
         bars: u32,
         key: Option<MusicalKey>,
+        clear_key: bool,
         chart: Option<&Chart>,
         clear_chords: bool,
     ) {
-        if key.is_none() && chart.is_none() && !clear_chords {
+        if key.is_none() && !clear_key && chart.is_none() && !clear_chords {
             return;
         }
         self.record(Edit::StampProgression);
         let start = self.project.signatures.bar_start(start_bar);
         let end = self.project.signatures.bar_start(start_bar + bars);
+        if key.is_none() && clear_key {
+            let resumes = self.project.harmony.key_at(end);
+            let changes = self
+                .project
+                .harmony
+                .keys
+                .points()
+                .iter()
+                .filter(|point| point.tick >= start && point.tick < end)
+                .map(|point| point.tick)
+                .collect::<Vec<_>>();
+            for tick in changes {
+                self.project.harmony.keys.remove_point(tick);
+            }
+            self.project.harmony.keys.set_point(end, resumes);
+        }
         if let Some(key) = key {
             let resumes = self.project.harmony.key_at(end);
             let internal = self
@@ -271,6 +300,21 @@ impl Session {
         }
         self.record(Edit::MoveSection);
         self.project.sections.move_point(from, to)
+    }
+
+    /// Removes the section change at `at` when it changes nothing: the same label as the
+    /// stretch before it, or an unnamed stretch where nothing was named.
+    pub(crate) fn coalesce_section_change(&mut self, at: Ticks) {
+        let points = self.project.sections.points();
+        let Some(index) = points.iter().position(|point| point.tick == at) else {
+            return;
+        };
+        let before = index
+            .checked_sub(1)
+            .and_then(|previous| points[previous].label.as_deref());
+        if before == points[index].label.as_deref() {
+            self.project.sections.remove_point(at);
+        }
     }
 
     /// The start of the bar `at` falls in, which is the only place a section may begin.

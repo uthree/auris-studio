@@ -42,7 +42,7 @@ setLanguage(root.dataset.lang);
 // its installer instead. Until that answers, or if it never does (offline, rate-limited), the
 // links lead to the latest release's page, which still has the files on it.
 const INSTALLERS = {
-  macos: { suffix: "-macos-universal.dmg", en: "Download for macOS", ja: "macOS 版をダウンロード" },
+  macos: { suffix: "-macos-aarch64.dmg", en: "Download for macOS", ja: "macOS 版をダウンロード" },
   windows: { suffix: "-windows-x86_64-setup.exe", en: "Download for Windows", ja: "Windows 版をダウンロード" },
 };
 

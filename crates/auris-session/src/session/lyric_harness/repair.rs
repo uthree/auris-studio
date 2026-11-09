@@ -192,8 +192,13 @@ impl Session {
                 reading: complete.then(|| moras.iter().map(|m| m.text.as_str()).collect()),
                 text,
                 reading_source: ReadingSource::Stored,
+                // Stored notes already sing one mora each; their count is the note count.
+                min_notes: moras.len(),
+                max_notes: moras.len(),
                 moras,
                 error,
+                note_reading: None,
+                fit: None,
             }],
         })
     }

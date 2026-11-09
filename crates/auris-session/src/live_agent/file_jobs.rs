@@ -18,14 +18,14 @@ use std::{
 #[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum AudioDestination {
-    /// One encoded WAV mix at a new absolute path.
+    /// One encoded WAV mix at a new path.
     Mix {
-        /// Absolute new WAV file path.
+        /// New WAV file path, relative to the project workspace (renders/mix.wav) or absolute.
         path: String,
     },
     /// One WAV per source track; existing stem files are refused.
     Stems {
-        /// Absolute destination folder.
+        /// Destination folder, relative to the project workspace (stems/v1) or absolute.
         folder: String,
     },
 }
@@ -56,6 +56,15 @@ enum Work {
         rate: f64,
         render_rate: f64,
     },
+    LoadSample {
+        samples: Vec<(PathBuf, crate::session::AgentSample)>,
+        folder: PathBuf,
+        track: TrackId,
+        append: bool,
+        looped: Option<bool>,
+        rate: f64,
+        render_rate: f64,
+    },
     ImportMidi {
         job: crate::MidiImportJob,
         path: PathBuf,
@@ -76,6 +85,10 @@ enum Work {
         job: crate::MidiExportJob,
         guard: crate::render::ExportGuard,
         path: PathBuf,
+    },
+    Lint {
+        job: Box<crate::lint::AudioLintJob>,
+        request: super::lint::LintRequest,
     },
     Verify {
         path: PathBuf,
@@ -103,10 +116,18 @@ enum Outcome {
         bytes: u64,
         provenance: std::collections::BTreeMap<String, String>,
     },
+    LoadedSample {
+        staged: Vec<(StagedSource, String, crate::session::AgentSample)>,
+        folder: PathBuf,
+        track: TrackId,
+        append: bool,
+        looped: Option<bool>,
+    },
     ImportedMidi(Box<crate::MidiImportResult>, Ticks),
     Audio(Vec<StagedAudio>, Option<Box<analysis::Manifest>>),
     Midi(crate::MidiExportResult),
     Verified(String),
+    Linted(Box<crate::lint::AudioLintResult>, super::lint::LintRequest),
 }
 
 struct StagedAudio {
@@ -119,12 +140,91 @@ struct StagedAudio {
     source_inspection: Option<crate::ExportInspection>,
 }
 
+/// An audio file copied into the project's audio folder and decoded, not yet in the document.
+pub(crate) struct StagedSource {
+    pub(crate) file: tempfile::NamedTempFile,
+    pub(crate) prepared: crate::PreparedAudioSource,
+    pub(crate) bytes: u64,
+    pub(crate) provenance: std::collections::BTreeMap<String, String>,
+}
+
+/// Copies `path` into `folder`'s audio directory under a private name, hashing as it goes, and
+/// decodes the copy — everything an import does that may take a while.
+fn stage_audio(
+    path: &std::path::Path,
+    folder: &std::path::Path,
+    rate: f64,
+    render_rate: f64,
+    check: &dyn Fn() -> Result<(), String>,
+) -> Result<StagedSource, String> {
+    use sha2::Digest;
+    use std::io::{Read, Write};
+    let mut digest = sha2::Sha256::new();
+    let mut input = std::fs::File::open(path).map_err(|e| e.to_string())?;
+    if !input.metadata().map_err(|e| e.to_string())?.is_file() {
+        return Err("Audio input must be a regular file".into());
+    }
+    let directory = folder.join(auris_io::AUDIO_DIR);
+    std::fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
+    let mut file = tempfile::Builder::new()
+        .prefix("import-")
+        .suffix(&format!(
+            ".{}",
+            path.extension().and_then(|e| e.to_str()).unwrap_or("audio")
+        ))
+        .tempfile_in(&directory)
+        .map_err(|e| e.to_string())?;
+    let mut chunk = [0u8; 65536];
+    let mut bytes = 0u64;
+    loop {
+        check()?;
+        let size = input.read(&mut chunk).map_err(|e| e.to_string())?;
+        if size == 0 {
+            break;
+        }
+        bytes += size as u64;
+        if bytes > 512 * 1024 * 1024 {
+            return Err("Audio input exceeds 512 MiB".into());
+        }
+        digest.update(&chunk[..size]);
+        file.write_all(&chunk[..size]).map_err(|e| e.to_string())?;
+    }
+    file.flush().map_err(|e| e.to_string())?;
+    let buffer = crate::decode_audio(file.path(), rate).map_err(|e| e.to_string())?;
+    let prepared = crate::prepare_audio_source(buffer, render_rate).map_err(|e| e.to_string())?;
+    check()?;
+    Ok(StagedSource {
+        file,
+        prepared,
+        bytes,
+        provenance: std::collections::BTreeMap::from([
+            ("source_path".into(), path.display().to_string()),
+            ("sha256".into(), hex::encode(digest.finalize())),
+        ]),
+    })
+}
+
 fn local_path(value: &str) -> Result<PathBuf, String> {
     let path = PathBuf::from(value);
     if !path.is_absolute() || value.starts_with("\\\\") || value.starts_with("//") {
-        return Err("Use an absolute local file path".into());
+        return Err("Use a path relative to the project workspace (renders/mix.wav) or an absolute local file path".into());
     }
     Ok(path)
+}
+
+impl Session {
+    /// An agent's file argument: relative names the project workspace, absolute anything local.
+    ///
+    /// The permission policy reads the same distinction from the text alone
+    /// ([`Command::uses_only_workspace`]), which is why a relative path is resolved here and
+    /// nowhere else: what was let through unasked must be what is opened.
+    pub(crate) fn agent_path(&self, value: &str) -> Result<PathBuf, String> {
+        if crate::workspace_relative(value).is_some() {
+            self.resolve_workspace_path(value)
+        } else {
+            local_path(value)
+        }
+    }
 }
 
 impl FileJob {
@@ -139,6 +239,10 @@ impl FileJob {
         };
         check()?;
         let outcome = match self.work {
+            Work::Lint { job, request } => Outcome::Linted(
+                Box::new(job.run(cancelled).map_err(|e| e.to_string())?),
+                request,
+            ),
             Work::ImportMidi { job, path, at } => {
                 let metadata = std::fs::metadata(&path).map_err(|e| e.to_string())?;
                 if !metadata.is_file() || metadata.len() > 32 * 1024 * 1024 {
@@ -161,54 +265,43 @@ impl FileJob {
                 rate,
                 render_rate,
             } => {
-                use sha2::Digest;
-                use std::io::{Read, Write};
-                let mut digest = sha2::Sha256::new();
-                let mut input = std::fs::File::open(&path).map_err(|e| e.to_string())?;
-                if !input.metadata().map_err(|e| e.to_string())?.is_file() {
-                    return Err("Audio input must be a regular file".into());
-                }
-                let directory = folder.join(auris_io::AUDIO_DIR);
-                std::fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
-                let mut file = tempfile::Builder::new()
-                    .prefix("import-")
-                    .suffix(&format!(
-                        ".{}",
-                        path.extension().and_then(|e| e.to_str()).unwrap_or("audio")
-                    ))
-                    .tempfile_in(&directory)
-                    .map_err(|e| e.to_string())?;
-                let mut chunk = [0u8; 65536];
-                let mut bytes = 0u64;
-                loop {
-                    check()?;
-                    let size = input.read(&mut chunk).map_err(|e| e.to_string())?;
-                    if size == 0 {
-                        break;
-                    }
-                    bytes += size as u64;
-                    if bytes > 512 * 1024 * 1024 {
-                        return Err("Audio input exceeds 512 MiB".into());
-                    }
-                    digest.update(&chunk[..size]);
-                    file.write_all(&chunk[..size]).map_err(|e| e.to_string())?;
-                }
-                file.flush().map_err(|e| e.to_string())?;
-                let buffer = crate::decode_audio(file.path(), rate).map_err(|e| e.to_string())?;
-                let prepared =
-                    crate::prepare_audio_source(buffer, render_rate).map_err(|e| e.to_string())?;
-                check()?;
+                let staged = stage_audio(&path, &folder, rate, render_rate, &check)?;
                 Outcome::ImportedAudio {
-                    file,
-                    prepared,
+                    file: staged.file,
+                    prepared: staged.prepared,
                     folder,
                     name,
                     at,
-                    bytes,
-                    provenance: std::collections::BTreeMap::from([
-                        ("source_path".into(), path.display().to_string()),
-                        ("sha256".into(), hex::encode(digest.finalize())),
-                    ]),
+                    bytes: staged.bytes,
+                    provenance: staged.provenance,
+                }
+            }
+            Work::LoadSample {
+                samples,
+                folder,
+                track,
+                append,
+                looped,
+                rate,
+                render_rate,
+            } => {
+                let mut staged = Vec::with_capacity(samples.len());
+                for (path, request) in samples {
+                    let source = stage_audio(&path, &folder, rate, render_rate, &check)
+                        .map_err(|e| format!("{}: {e}", path.display()))?;
+                    let name = path
+                        .file_stem()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .into_owned();
+                    staged.push((source, name, request));
+                }
+                Outcome::LoadedSample {
+                    staged,
+                    folder,
+                    track,
+                    append,
+                    looped,
                 }
             }
             Work::Audio {
@@ -331,7 +424,7 @@ impl Session {
                         "Use nonnegative at_tick and a nonempty name up to 256 bytes".into(),
                     );
                 }
-                let path = local_path(&path)?;
+                let path = self.agent_path(&path)?;
                 let name = name.unwrap_or_else(|| {
                     path.file_stem()
                         .unwrap_or_default()
@@ -350,11 +443,46 @@ impl Session {
                     render_rate: self.sample_rate(),
                 }
             }
+            Command::LoadSample {
+                track,
+                samples,
+                append,
+                looped,
+            } => {
+                let track = TrackId(track);
+                self.require_sampler_target(track)
+                    .map_err(|e| e.to_string())?;
+                if samples.is_empty() || samples.len() > 128 {
+                    return Err("Give 1..128 samples".into());
+                }
+                if samples
+                    .iter()
+                    .any(|sample| sample.root_note.is_some_and(|note| note > 127))
+                {
+                    return Err("root_note must be a MIDI note 0..127 (60 is C4)".into());
+                }
+                let samples = samples
+                    .into_iter()
+                    .map(|sample| Ok((self.agent_path(&sample.path)?, sample)))
+                    .collect::<Result<Vec<_>, String>>()?;
+                Work::LoadSample {
+                    samples,
+                    folder: self
+                        .project_folder()
+                        .ok_or("Missing project folder")?
+                        .to_owned(),
+                    track,
+                    append: append.unwrap_or(false),
+                    looped,
+                    rate: self.project().sample_rate,
+                    render_rate: self.sample_rate(),
+                }
+            }
             Command::ImportMidi { path, at_tick } => {
                 if at_tick < 0 {
                     return Err("at_tick must be nonnegative".into());
                 }
-                let path = local_path(&path)?;
+                let path = self.agent_path(&path)?;
                 Work::ImportMidi {
                     job: self.begin_midi_import(&path).map_err(|e| e.to_string())?,
                     path,
@@ -423,9 +551,9 @@ impl Session {
                 };
                 let job = self.job_for_at(render_project, options.sample_rate);
                 let (mut targets, folder) = match destination {
-                    AudioDestination::Mix { path } => (vec![(local_path(&path)?, None)], None),
+                    AudioDestination::Mix { path } => (vec![(self.agent_path(&path)?, None)], None),
                     AudioDestination::Stems { folder } => {
-                        let folder = local_path(&folder)?;
+                        let folder = self.agent_path(&folder)?;
                         let tracks = job.stem_tracks();
                         if tracks.is_empty() {
                             return Err("No source tracks to export".into());
@@ -448,7 +576,7 @@ impl Session {
                         }
                         targets[0].1 = Some(TrackId(track));
                     }
-                    let path = local_path(&request.manifest_path)?;
+                    let path = self.agent_path(&request.manifest_path)?;
                     self.export_guard()
                         .check_file(&path)
                         .map_err(|e| e.to_string())?;
@@ -514,7 +642,7 @@ impl Session {
                 }
             }
             Command::ExportMidi { output } => {
-                let path = local_path(&output)?;
+                let path = self.agent_path(&output)?;
                 Work::Midi {
                     job: self.begin_midi_export(&path),
                     guard: self.export_guard(),
@@ -538,13 +666,23 @@ impl Session {
                     return Err("Invalid delivery target, tolerance or ending limit".into());
                 }
                 Work::Verify {
-                    path: local_path(&path)?,
+                    path: self.agent_path(&path)?,
                     target_lufs,
                     ceiling_db,
                     tolerance_lu,
                     ending_rms_max_db,
                 }
             }
+            Command::LintProject {
+                audio: true,
+                start_bar,
+                bars,
+                offset,
+                limit,
+            } => Work::Lint {
+                request: super::lint::LintRequest::new(start_bar, bars, offset, limit)?,
+                job: Box::new(self.audio_lint_job()),
+            },
             _ => return Err("Expected render, preview, export_midi or verify_render".into()),
         };
         Ok(FileJob {
@@ -608,13 +746,30 @@ impl Session {
                 }
                 self.adopt_agent_audio(file, prepared, name, at, bytes, provenance)
             }
+            Outcome::LoadedSample {
+                staged,
+                folder,
+                track,
+                append,
+                looped,
+            } => {
+                if self.project_folder() != Some(folder.as_path()) {
+                    return Err("Document folder/rate changed while loading the samples".into());
+                }
+                self.adopt_agent_samples(staged, track, append, looped)
+            }
             Outcome::Verified(text) => Ok(text),
+            Outcome::Linted(result, request) => {
+                self.lint_audio = Some(*result);
+                self.agent_lint_report(&request)
+            }
             Outcome::Midi(result) => {
                 let report = self
                     .continue_midi_export(result, cancelled)
                     .map_err(|e| e.to_string())?
                     .ok_or("MIDI export became stale")?;
                 Ok(serde_json::json!({
+                    "workspace_path": self.workspace_path_of(&report.path),
                     "path": report.path,
                     "notes": report.notes,
                     "duration_ticks": report.duration_ticks,
@@ -676,7 +831,7 @@ impl Session {
                     encoded.publish_noclobber().map_err(|e| {
                         format!("Publication failed: {e}; already published: {files:?}")
                     })?;
-                    files.push(serde_json::json!({"path":path,"encoded":inspection,"attenuation_db":attenuation_db,"source_true_peak_db":source_true_peak_db,"ceiling_db":if manifest.is_some(){None}else{Some(ceiling_db)},"source":source_inspection}));
+                    files.push(serde_json::json!({"path":path,"workspace_path":self.workspace_path_of(&path),"encoded":inspection,"attenuation_db":attenuation_db,"source_true_peak_db":source_true_peak_db,"ceiling_db":if manifest.is_some(){None}else{Some(ceiling_db)},"source":source_inspection}));
                 }
                 if let (Some(file), Some(manifest)) = (staged_manifest, &manifest) {
                     file.persist_noclobber(&manifest.path).map_err(|e| {
@@ -1026,6 +1181,62 @@ mod tests {
             ceiling_db: None,
             analysis: None,
         }
+    }
+
+    #[test]
+    fn a_relative_render_lands_in_the_workspace_and_a_sample_loads_back_from_it() {
+        let mut live = fixture();
+        let cancelled = AtomicBool::new(false);
+        let run = |live: &mut Session, command: Command| {
+            let result = live
+                .begin_agent_file_job(command)
+                .unwrap()
+                .run(&cancelled)
+                .unwrap();
+            live.continue_agent_file_job(result, &cancelled).unwrap()
+        };
+        let response: serde_json::Value = serde_json::from_str(&run(
+            &mut live,
+            render(std::path::Path::new("renders/mix.wav")),
+        ))
+        .unwrap();
+        assert_eq!(response["files"][0]["workspace_path"], "renders/mix.wav");
+        let rendered = live.workspace_folder().join("renders").join("mix.wav");
+        assert!(rendered.is_file());
+        // An escape is refused before anything is rendered.
+        assert!(
+            live.begin_agent_file_job(render(std::path::Path::new("../mix.wav")))
+                .is_err()
+        );
+        // The bounce plays back as an instrument, copied into Audio/ like any sample.
+        let track = live.project().tracks[0].id;
+        run(
+            &mut live,
+            Command::LoadSample {
+                track: track.0,
+                samples: vec![crate::session::AgentSample {
+                    path: "renders/mix.wav".into(),
+                    root_note: Some(60),
+                    low_key: None,
+                    high_key: None,
+                    low_velocity: None,
+                    high_velocity: None,
+                    tune: None,
+                    gain_db: None,
+                }],
+                append: None,
+                looped: None,
+            },
+        );
+        let source = live.project().audio_sources.values().next().unwrap();
+        assert!(source.path.is_inside());
+        assert!(
+            source
+                .path
+                .resolve(live.project_folder())
+                .unwrap()
+                .starts_with(live.project_folder().unwrap().join(auris_io::AUDIO_DIR))
+        );
     }
 
     #[test]

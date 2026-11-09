@@ -207,7 +207,7 @@ impl MixerNode {
 }
 
 impl Session {
-    fn graph_node(&self, key: &str) -> Result<MixerNode, String> {
+    pub(crate) fn graph_node(&self, key: &str) -> Result<MixerNode, String> {
         self.mixer_graph()
             .nodes
             .into_iter()
@@ -730,6 +730,15 @@ impl Session {
                     row["enabled"] = strip.effects[index].enabled.into();
                     row["accepts_sidechain"] = self.effect_wants_sidechain(owner, *slot).into();
                 }
+            }
+            // People's notes about this node; edit_comments with mixer_node changes them.
+            let comments = self.comments(crate::session::CommentHost::Mixer(*node));
+            if !comments.is_empty() {
+                row["comments"] = comments
+                    .iter()
+                    .map(|comment| json!({"comment":comment.id.0,"text":comment.text}))
+                    .collect::<Vec<_>>()
+                    .into();
             }
             nodes.push(row);
         }

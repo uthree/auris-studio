@@ -1378,56 +1378,32 @@ impl Theme {
         self.categorical_color(source.h - anchor.h, source.s / anchor.s)
     }
 
-    /// Stable categorical colour for a visualized channel, string or resonant mode.
+    /// The document colour that tints a track in a timbre cluster's hue.
     ///
-    /// Uses the active scheme's track palette, including custom overrides, with contrast
-    /// against the visualization surfaces. Slots wrap without changing their identity.
-    pub fn visualizer_color(&self, slot: usize) -> Hsla {
-        self.readable_visualizer_color(self.track_palette[slot % self.track_palette.len()])
-    }
-
-    /// Continuous palette colour from the low to the high end of a visualized frequency range.
-    ///
-    /// Interpolates the active track palette in RGB, preserving authored endpoint colours.
-    /// Out-of-range positions are clamped; non-finite positions use the low endpoint.
-    pub fn visualizer_gradient(&self, position: f32) -> Hsla {
-        let position = if position.is_finite() {
-            position.clamp(0.0, 1.0)
+    /// The Find Sounds map marks cluster `n` with [`atelier`]'s `n`th categorical colour, a hue
+    /// placed relative to the accent. A track keeps only an RGB value, and
+    /// [`track_color`](Self::track_color) reads any value outside the palette as a hue offset
+    /// from the accent, so the value stored is the one carrying that same offset: in this theme
+    /// the track draws in the cluster's hue, and under another theme both move together.
+    /// Lightness and saturation stay the track palette's, so a recoloured track still reads as a
+    /// track. Palette values mean palette *slots*, so a result that lands on one is nudged off it.
+    pub fn timbre_cluster_track_color(&self, cluster: usize) -> auris_session::prelude::Color {
+        use auris_session::prelude::Color;
+        let offset = self.atelier.categorical(cluster).h - self.accent.h;
+        let anchor: Hsla = rgb(Color::PALETTE[0].0).into();
+        let tint = gpui::Rgba::from(hsla(
+            (anchor.h + offset).rem_euclid(1.0),
+            anchor.s,
+            anchor.l,
+            1.0,
+        ));
+        let channel = |value: f32| (value.clamp(0.0, 1.0) * 255.0).round() as u32;
+        let packed = channel(tint.r) << 16 | channel(tint.g) << 8 | channel(tint.b);
+        if Color::PALETTE.iter().any(|slot| slot.0 == packed) {
+            Color(packed ^ 1)
         } else {
-            0.0
-        } * (self.track_palette.len() - 1) as f32;
-        let left = position.floor() as usize;
-        let right = (left + 1).min(self.track_palette.len() - 1);
-        let amount = position - left as f32;
-        if amount < f32::EPSILON {
-            return self.visualizer_color(left);
+            Color(packed)
         }
-        let from: gpui::Rgba = self.track_palette[left].into();
-        let to: gpui::Rgba = self.track_palette[right].into();
-        self.readable_visualizer_color(
-            gpui::Rgba {
-                r: from.r + (to.r - from.r) * amount,
-                g: from.g + (to.g - from.g) * amount,
-                b: from.b + (to.b - from.b) * amount,
-                a: 1.0,
-            }
-            .into(),
-        )
-    }
-
-    fn readable_visualizer_color(&self, mut color: Hsla) -> Hsla {
-        color.a = 1.0;
-        let step = if self.background.l < 0.5 { 0.01 } else { -0.01 };
-        for _ in 0..=100 {
-            if [self.surface_sunken, self.surface]
-                .into_iter()
-                .all(|surface| contrast_ratio(color, surface) >= 3.2)
-            {
-                break;
-            }
-            color.l = (color.l + step).clamp(0.0, 1.0);
-        }
-        color
     }
 
     /// A translucent variant of `color`, for clip fills over a grid.
@@ -1479,8 +1455,13 @@ impl Metrics {
     /// Height of the harmony lane, between the structure lane and the clip lanes.
     ///
     /// Two rows: a thin strip of key changes over a taller strip of chords. See
-    /// [`paint::harmony_rows`](crate::ui::paint::harmony_rows) for why they are not one.
+    /// [`paint::harmony_rows`](crate::ui::paint::harmony_rows) for why they are not one. Either
+    /// can be hidden, and the lane then takes only the other's height.
     pub const HARMONY_LANE_HEIGHT: Pixels = px(34.0);
+    /// Height of the strip of key changes along the top of the harmony lane.
+    pub const KEY_ROW_HEIGHT: Pixels = px(13.0);
+    /// Height of the chord blocks under the key strip: the rest of the harmony lane.
+    pub const CHORD_ROW_HEIGHT: Pixels = px(21.0);
     /// Height of the structure lane, between the ruler and the harmony.
     ///
     /// One row of section names — イントロ, Aメロ, サビ — coarser than the harmony below it,
@@ -1597,54 +1578,6 @@ mod tests {
                     .blend(Theme::translucent(edited.accent, 0.14))
             );
             assert_ne!(edited.atelier.colors.accent, actual.atelier.colors.accent);
-        }
-    }
-
-    #[test]
-    fn visualization_colours_follow_the_palette_and_remain_visible_in_every_scheme() {
-        for scheme in SCHEMES {
-            let theme = Theme::from_scheme(scheme);
-            for slot in 0..8 {
-                let color = theme.visualizer_color(slot);
-                assert_eq!(color.h, theme.track_palette[slot].h);
-                assert_eq!(color.s, theme.track_palette[slot].s);
-                assert_eq!(color, theme.visualizer_color(slot + 8));
-            }
-            for step in 0..=200 {
-                let color = theme.visualizer_gradient(step as f32 / 200.0);
-                for surface in [theme.surface_sunken, theme.surface] {
-                    assert!(
-                        contrast_ratio(color, surface) >= 3.0,
-                        "{} at {step}",
-                        scheme.id
-                    );
-                }
-            }
-            assert_eq!(theme.visualizer_gradient(0.0), theme.visualizer_color(0));
-            assert_eq!(theme.visualizer_gradient(1.0), theme.visualizer_color(7));
-            assert_eq!(
-                theme.visualizer_gradient(f32::NAN),
-                theme.visualizer_color(0)
-            );
-            assert_eq!(theme.visualizer_gradient(-1.0), theme.visualizer_color(0));
-            assert_eq!(theme.visualizer_gradient(2.0), theme.visualizer_color(7));
-        }
-    }
-
-    #[test]
-    fn custom_visualization_colours_keep_their_hues_and_gain_surface_contrast() {
-        for base in [0.06, 0.97] {
-            let mut custom = SCHEMES[0];
-            custom.base = base;
-            custom.track_palette[0] = Some(0xffffcc);
-            custom.track_palette[7] = Some(0x110033);
-            let theme = Theme::from_scheme(&custom);
-            for slot in [0, 7] {
-                let color = theme.visualizer_color(slot);
-                assert_eq!(color.h, theme.track_palette[slot].h);
-                assert!(contrast_ratio(color, theme.surface_sunken) >= 3.0);
-                assert!(contrast_ratio(color, theme.surface) >= 3.0);
-            }
         }
     }
 
@@ -2164,6 +2097,34 @@ mod tests {
             for neutral in [0x000000, 0x888888, 0xffffff] {
                 assert_eq!(theme.track_color(neutral).s, 0.0);
             }
+        }
+    }
+
+    #[test]
+    fn timbre_cluster_tracks_draw_in_their_cluster_hue_in_every_scheme() {
+        let hue_gap = |a: f32, b: f32| {
+            let d = (a - b).rem_euclid(1.0);
+            d.min(1.0 - d)
+        };
+        for scheme in SCHEMES {
+            let theme = Theme::from_scheme(scheme);
+            let mut stored = Vec::new();
+            for cluster in 0..auris_session::MAX_TIMBRE_CLUSTERS {
+                let color = theme.timbre_cluster_track_color(cluster);
+                assert!(!auris_session::prelude::Color::PALETTE.contains(&color));
+                let track = theme.track_color(color.0);
+                let marker = theme.atelier.categorical(cluster);
+                assert!(
+                    hue_gap(track.h, marker.h) < 0.01,
+                    "cluster {cluster}: track hue {} vs map hue {}",
+                    track.h,
+                    marker.h
+                );
+                stored.push(color);
+            }
+            stored.sort_by_key(|color| color.0);
+            stored.dedup();
+            assert_eq!(stored.len(), auris_session::MAX_TIMBRE_CLUSTERS);
         }
     }
 

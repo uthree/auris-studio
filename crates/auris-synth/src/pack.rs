@@ -8,7 +8,7 @@ use crate::drumkit::DrumKit;
 use crate::fm2::Fm2;
 use crate::noisedrum::NoiseDrum;
 use crate::vocal::Vocal;
-use crate::{Choir, HammeredDulcimer, Model, Physical, TinWhistle};
+use crate::{Analog, AnalogPatch, Choir, HammeredDulcimer, Model, Physical, TinWhistle};
 
 /// Installs the built-in instruments into a registry.
 ///
@@ -33,6 +33,9 @@ impl PluginPack for SynthPack {
         registry.register_instrument(|| Box::new(Choir::new()));
         registry.register_instrument(|| Box::new(Chiptune::new()));
         registry.register_instrument(|| Box::new(Fm2::new()));
+        for patch in AnalogPatch::ALL {
+            registry.register_instrument(move || Box::new(Analog::new(patch)));
+        }
         registry.register_instrument(|| Box::new(NoiseDrum::new()));
         registry.register_instrument(|| Box::new(DrumKit::new()));
         registry.register_instrument(|| Box::new(Vocal::new()));
@@ -121,14 +124,21 @@ mod tests {
                 "auris.physical.piano",
                 "auris.physical.tin_whistle",
                 "auris.physical.violin",
+                "auris.synth.bass",
+                "auris.synth.brass",
                 "auris.synth.chiptune",
                 "auris.synth.drumkit",
                 "auris.synth.fm2",
+                "auris.synth.lead",
                 "auris.synth.noisedrum",
+                "auris.synth.pad",
+                "auris.synth.pluck",
+                "auris.synth.pwm_strings",
+                "auris.synth.supersaw",
                 "auris.synth.vocal"
             ]
         );
-        assert_eq!(registry.len(), 16);
+        assert_eq!(registry.len(), 23);
         assert_eq!(registry.effects().count(), 0);
     }
 
@@ -172,8 +182,11 @@ mod tests {
                 buffer.channel(0).iter().all(|s| s.is_finite()),
                 "{id} produced a non-finite sample"
             );
-            // Every physical instrument places its notes across the stereo field.
-            if id.starts_with("auris.physical.") {
+            // Every physical instrument places its notes across the stereo field, and so do
+            // the subtractive patches with a stereo width (all but the bass).
+            let stereo = id.starts_with("auris.physical.")
+                || crate::AnalogPatch::from_id(&id).is_some_and(|p| p != crate::AnalogPatch::Bass);
+            if stereo {
                 assert!(buffer.channel(1).iter().all(|s| s.is_finite()));
                 assert!(
                     peak(buffer.channel(1)) > 0.0,

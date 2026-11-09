@@ -216,6 +216,13 @@ const PLUGIN_NAMES: &[(&str, &str)] = &[
     ("Physical Choir", "合唱"),
     ("Chiptune", "チップチューン"),
     ("FM 2-Op", "FM 2 オペレーター"),
+    ("SuperSaw", "スーパーソウ"),
+    ("Synth Pad", "シンセパッド"),
+    ("Synth Lead", "シンセリード"),
+    ("Synth Bass", "シンセベース"),
+    ("PWM Strings", "PWM ストリングス"),
+    ("Synth Brass", "シンセブラス"),
+    ("Synth Pluck", "シンセプラック"),
     ("Noise Drum", "ノイズドラム"),
     ("Drum Kit", "ドラムキット"),
     ("Vocal", "ボーカル"),
@@ -229,6 +236,7 @@ const PLUGIN_NAMES: &[(&str, &str)] = &[
     ("Limiter", "リミッター"),
     ("Reverb", "リバーブ"),
     ("SoundFont", "サウンドフォント"),
+    ("Sampler", "サンプラー"),
 ];
 
 /// Japanese versions of the one-line descriptions shown in the plugin browser.
@@ -290,6 +298,34 @@ const PLUGIN_DESCRIPTIONS: &[(&str, &str)] = &[
         "帯域制限したパルス・ノコギリ・三角波と LFSR ノイズ。ユニゾンとビットクラッシュ付き",
     ),
     (
+        "Seven detuned saws spread across the stereo field: trance leads and wide chords",
+        "7 本のノコギリ波をデチューンして左右に広げた音。トランスのリードや厚いコード向き",
+    ),
+    (
+        "Slow detuned saws behind a gently opening filter: warm sustained pads",
+        "ゆっくり立ち上がるデチューン・ノコギリ波に、徐々に開くフィルター。暖かいパッド向き",
+    ),
+    (
+        "Bright resonant saw lead with glide and wheel vibrato",
+        "レゾナンスの効いた明るいノコギリ波リード。グライドとホイールのビブラート付き",
+    ),
+    (
+        "Saw over a sub-octave square with a punchy filter envelope",
+        "ノコギリ波に 1 オクターブ下の矩形波を重ね、フィルターエンベロープでアタックを出すベース",
+    ),
+    (
+        "Pulse-width-modulated stack: the lush string machine sound",
+        "パルス幅を揺らしたパルス波の重なり。ストリングスマシンの厚い音",
+    ),
+    (
+        "Saws behind a slowly opening filter: swelling synth brass",
+        "ゆっくり開くフィルターを通したノコギリ波。膨らむシンセブラス",
+    ),
+    (
+        "Short filter envelope over a percussive amp: plucks and arpeggios",
+        "短いフィルターエンベロープと減衰する音量。プラックやアルペジオ向き",
+    ),
+    (
         "Two-operator phase modulation: bells, basses and electric pianos",
         "2 オペレーターの位相変調。ベル、ベース、エレピ向き",
     ),
@@ -341,6 +377,10 @@ const PLUGIN_DESCRIPTIONS: &[(&str, &str)] = &[
         "Plays an imported SoundFont",
         "読み込んだサウンドフォントを再生します",
     ),
+    (
+        "Plays audio files across the keyboard",
+        "オーディオファイルを鍵盤に割り当て、近いルート音のサンプルを音程を変えて鳴らします",
+    ),
 ];
 
 /// Japanese names for parameters. Shared across plugins on purpose — see the module note.
@@ -378,6 +418,8 @@ const PARAMETERS: &[(&str, &str)] = &[
     ("Cabinet", "キャビネット"),
     ("Bow speed", "運弓速度"),
     ("Bow response", "運弓の応答時間"),
+    ("Live Quality", "再生時の演算精度"),
+    ("Render Quality", "書き出し時の演算精度"),
     ("Legato", "レガート"),
     ("Attack", "アタック"),
     ("Bit Depth", "ビット深度"),
@@ -389,6 +431,12 @@ const PARAMETERS: &[(&str, &str)] = &[
     ("Detune", "デチューン"),
     ("Drive", "ドライブ"),
     ("Envelope", "エンベロープ"),
+    ("Fine Tune", "微調整"),
+    ("Key Tracking", "キー追従"),
+    ("Loop", "ループ"),
+    ("Loop End", "ループ終点"),
+    ("Loop Start", "ループ始点"),
+    ("Root Note", "ルートノート"),
     ("Feedback", "フィードバック"),
     ("Gain", "ゲイン"),
     ("Glide", "グライド"),
@@ -419,6 +467,18 @@ const PARAMETERS: &[(&str, &str)] = &[
     ("Vibrato", "ビブラート"),
     ("Vibrato Rate", "ビブラート速度"),
     ("Mod Depth", "モジュレーション深さ"),
+    ("PWM Depth", "PWM の深さ"),
+    ("PWM Rate", "PWM の速度"),
+    ("Sub Oscillator", "サブオシ"),
+    ("Noise Level", "ノイズ量"),
+    ("Cutoff", "カットオフ"),
+    ("Resonance", "レゾナンス"),
+    ("Filter Envelope", "Fエンベロープ"),
+    ("Velocity to Filter", "Fベロシティ"),
+    ("Filter Attack", "Fアタック"),
+    ("Filter Decay", "Fディケイ"),
+    ("Filter Sustain", "Fサステイン"),
+    ("Filter Release", "Fリリース"),
     ("Unison Spread", "ユニゾン幅"),
     ("Waveform", "波形"),
     ("Width", "ステレオ幅"),
@@ -660,6 +720,9 @@ const CHOICES: &[(&str, &str)] = &[
     ("Fold", "フォールド"),
     ("Bitcrush", "ビットクラッシュ"),
     ("Free", "フリー"),
+    ("Draft", "軽量"),
+    ("Standard", "標準"),
+    ("High", "高精度"),
     // The delay's note values read the same in any language; the entries exist so the
     // completeness test can tell a considered label from a forgotten one.
     ("1/1", "1/1"),

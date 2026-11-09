@@ -89,6 +89,12 @@ pub struct OutputPreviewOptions {
     pub position_seconds: f64,
     /// Linear audition-only volume in 0..=1; zero is muted.
     pub volume: f32,
+    /// Where playback wraps to on reaching the end, for audio that is one cycle of a loop.
+    ///
+    /// `None` plays once and completes. The wrap happens inside the audio callback, mid-block,
+    /// so a buffer rendered as a seamless cycle stays seamless; a start at or past the end is
+    /// treated as `None`.
+    pub loop_start_seconds: Option<f64>,
 }
 
 impl Default for OutputPreviewOptions {
@@ -96,6 +102,7 @@ impl Default for OutputPreviewOptions {
         Self {
             position_seconds: 0.0,
             volume: 1.0,
+            loop_start_seconds: None,
         }
     }
 }
@@ -106,6 +113,8 @@ pub(crate) struct OutputPreviewControls {
     pub(crate) position: AtomicU64,
     pub(crate) seek: AtomicU64,
     pub(crate) volume: AtomicU32,
+    /// Frame playback wraps to at the end; `u64::MAX` plays once.
+    pub(crate) loop_start: AtomicU64,
 }
 
 impl OutputPreviewStatus {
@@ -143,6 +152,20 @@ impl OutputPreviewStatus {
                 .seek
                 .store(frame.min(self.frames), Ordering::Relaxed);
         }
+    }
+
+    /// Whether this audition wraps back to a loop start instead of completing.
+    pub fn is_looping(&self) -> bool {
+        self.controls.loop_start.load(Ordering::Relaxed) < self.frames
+    }
+
+    fn set_loop_start_seconds(&self, seconds: Option<f64>) {
+        let frame = seconds
+            .filter(|seconds| seconds.is_finite())
+            .map(|seconds| (seconds.max(0.0) * self.sample_rate).round() as u64)
+            .filter(|frame| *frame < self.frames)
+            .unwrap_or(u64::MAX);
+        self.controls.loop_start.store(frame, Ordering::Relaxed);
     }
 
     /// Sets audition-only linear volume in 0..=1; zero mutes the output.
@@ -200,6 +223,7 @@ impl OutputPreviewRequest {
                     position: AtomicU64::new(0),
                     seek: AtomicU64::new(u64::MAX),
                     volume: AtomicU32::new(1.0f32.to_bits()),
+                    loop_start: AtomicU64::new(u64::MAX),
                 }),
             },
             buffer,
@@ -262,7 +286,7 @@ impl EngineHandle {
         self.play_output_preview_with(buffer, OutputPreviewOptions::default())
     }
 
-    /// Queues PCM with its initial position and volume already applied.
+    /// Queues PCM with its initial position, volume and loop point already applied.
     pub fn play_output_preview_with(
         &self,
         buffer: Arc<auris_core::AudioBuffer>,
@@ -272,6 +296,7 @@ impl EngineHandle {
         let status = request.status.clone();
         status.seek_seconds(options.position_seconds);
         status.set_volume(options.volume);
+        status.set_loop_start_seconds(options.loop_start_seconds);
         self.send(EngineCommand::PlayOutputPreview(request))?;
         Ok(status)
     }

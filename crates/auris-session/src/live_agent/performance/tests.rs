@@ -638,7 +638,7 @@ fn invalid_batches_and_unknown_fields_leave_document_and_history_untouched() {
     for settings in [
         json!({}),
         json!({"gate":0.5,"strum":{}}),
-        json!({"reset":vec!["gate";13]}),
+        json!({"reset":vec!["gate";14]}),
         json!({"gate":0.5,"reset":["expression"],"ghost":{"length_ms":500}}),
         json!({"swing_percent":49}),
         json!({"pitch":{"vibrato_hz":12}}),
@@ -815,4 +815,79 @@ fn performance_inspection_is_read_only_and_exposes_panel_units() {
     assert_eq!(result["settings"]["gate"], 1.0);
     assert_eq!(result["units"]["times"], "milliseconds");
     assert_eq!(session.project(), &before);
+}
+
+#[test]
+fn swinging_one_part_alone_is_reported_and_swinging_every_part_is_not() {
+    let (mut session, lead) = fixture();
+    let track = session.add_default_instrument_track("Bass").unwrap();
+    let bass = session
+        .add_midi_clip(track, "Bass", Ticks::ZERO, Ticks::QUARTER * 4)
+        .unwrap();
+    session
+        .add_note(bass, Note::new(36, Ticks(480), Ticks::QUARTER))
+        .unwrap();
+    let swung = edit(
+        &mut session,
+        lead,
+        json!({"swing_percent":57,"swing_grid":"eighth"}),
+        None,
+    )
+    .unwrap();
+    let warning = swung["swing_warning"].as_str().unwrap();
+    assert!(warning.contains("57% eighth"), "{warning}");
+    assert!(warning.contains("straight: Bass"), "{warning}");
+    let together = edit(
+        &mut session,
+        bass,
+        json!({"swing_percent":57,"swing_grid":"eighth"}),
+        None,
+    )
+    .unwrap();
+    assert!(together.get("swing_warning").is_none(), "{together}");
+    // A setting that leaves swing alone says nothing about it.
+    let gate = edit(&mut session, lead, json!({"gate":0.8}), None).unwrap();
+    assert!(gate.get("swing_warning").is_none());
+}
+
+#[test]
+fn sustain_holds_releases_reads_back_and_resets_to_nothing() {
+    let (mut session, clip) = fixture();
+    let result = edit(&mut session, clip, json!({"sustain_ticks":960}), None).unwrap();
+    assert_eq!(result["settings"]["sustain_ticks"], 960);
+    let target = session.project().midi_clip(clip).unwrap().1.clone();
+    assert_eq!(
+        target.transforms,
+        vec![NoteTransform::Sustain { ticks: 960 }]
+    );
+    let heard: Vec<_> = target.sounding_notes(120.0).collect();
+    assert_eq!(heard[0].length, Ticks(1920));
+    assert_eq!(heard[1].length, Ticks(1920));
+    assert_eq!(
+        target.notes[0].length,
+        Ticks::QUARTER,
+        "the score is untouched"
+    );
+    assert!(edit(&mut session, clip, json!({"sustain_ticks":4000}), None).is_err());
+    edit(&mut session, clip, json!({"reset":["sustain"]}), None).unwrap();
+    assert!(
+        session
+            .project()
+            .midi_clip(clip)
+            .unwrap()
+            .1
+            .transforms
+            .is_empty()
+    );
+    edit(&mut session, clip, json!({"sustain_ticks":480}), None).unwrap();
+    edit(&mut session, clip, json!({"sustain_ticks":0}), None).unwrap();
+    assert!(
+        session
+            .project()
+            .midi_clip(clip)
+            .unwrap()
+            .1
+            .transforms
+            .is_empty()
+    );
 }

@@ -1,6 +1,6 @@
 //! The notes a video draws, taken from the document once and kept in seconds.
 
-use auris_core::{Color, Project, Ticks, TrackKind};
+use auris_core::{Color, Project, Ticks};
 
 /// One sounding note, placed in time.
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -50,6 +50,30 @@ pub struct ScoreLyric {
     pub text: String,
 }
 
+/// The tempo from a moment of the song onwards.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct ScoreTempo {
+    /// When the tempo takes over, in seconds from the start of the song.
+    pub start: f64,
+    /// Quarter notes per minute, as the tempo map holds it.
+    pub bpm: f64,
+}
+
+/// One notated beat of one bar, placed in seconds.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct ScoreBeat {
+    /// When the beat falls, in seconds from the start of the song.
+    pub start: f64,
+    /// When the next beat falls.
+    pub end: f64,
+    /// The 1-based bar the beat belongs to.
+    pub bar: u32,
+    /// Which beat of its bar it is, from 1.
+    pub beat: u32,
+    /// How many beats its bar has: the upper number of the time signature in force.
+    pub beats: u32,
+}
+
 /// Every note a video draws, sorted by start, and the chords they make.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct NoteScore {
@@ -65,6 +89,10 @@ pub struct NoteScore {
     pub chords: Vec<ScoreChord>,
     /// The song-wide lyrics, sorted and never overlapping, from the project's lyric annotation.
     pub lyrics: Vec<ScoreLyric>,
+    /// The tempo changes, sorted, the first at the start of the song.
+    pub tempos: Vec<ScoreTempo>,
+    /// Every beat from the start of the song to the end of the bar the music ends in, sorted.
+    pub beats: Vec<ScoreBeat>,
 }
 
 impl NoteScore {
@@ -74,23 +102,20 @@ impl NoteScore {
     ///
     /// Singer tracks contribute their melody. Audio tracks and buses have no notes to show.
     pub fn from_project(project: &Project) -> Self {
-        let soloing = project.tracks.iter().any(|track| track.mixer.solo);
+        let audible = project.solo_resolution();
         let mut score = Self::default();
-        for track in &project.tracks {
-            if track.mixer.mute || (soloing && !track.mixer.solo) {
+        for (track, audible) in project.tracks.iter().zip(audible) {
+            if track.mixer.mute || !audible {
                 continue;
             }
-            let (clips, drum) = match &track.kind {
-                TrackKind::Instrument(instrument) => (&instrument.clips, false),
-                TrackKind::Drum(instrument) => (&instrument.clips, true),
-                TrackKind::Singer(singer) => (&singer.clips, false),
-                TrackKind::Audio(_) | TrackKind::Bus => continue,
+            let Some(played) = project.played_clips(track) else {
+                continue;
             };
             let index = score.tracks.len();
             let before = score.notes.len();
-            for clip in clips.iter().filter(|clip| !clip.muted) {
+            for clip in played.clips.iter().filter(|clip| !clip.muted) {
                 let bpm = project.tempo_map.bpm_at(clip.start);
-                for note in clip.sounding_notes_with_meter(bpm, project.signatures.clone()) {
+                for note in played.sounding_notes(clip, bpm, project.signatures.clone()) {
                     let start = clip.start + note.start;
                     let start_seconds = project.tempo_map.ticks_to_seconds(start).0;
                     let end_seconds = project.tempo_map.ticks_to_seconds(start + note.length).0;
@@ -110,7 +135,7 @@ impl NoteScore {
                 score.tracks.push(ScoreTrack {
                     name: track.name.clone(),
                     color: track.color,
-                    drum,
+                    drum: track.kind.is_drum(),
                 });
             }
         }
@@ -145,7 +170,38 @@ impl NoteScore {
                 });
             }
         }
+
+        for point in project.tempo_map.points() {
+            let start = project.tempo_map.ticks_to_seconds(point.tick).0;
+            if start.is_finite() && point.bpm.is_finite() && point.bpm > 0.0 {
+                score.tempos.push(ScoreTempo {
+                    start,
+                    bpm: point.bpm,
+                });
+            }
+        }
+        let until = project
+            .end_tick()
+            .max(project.harmony.chords.end())
+            .max(project.lyrics.end());
+        score.beats = beats(project, until);
         score
+    }
+
+    /// The tempo in force at `seconds`, if the score knows any.
+    pub fn tempo_at(&self, seconds: f64) -> Option<f64> {
+        let after = self.tempos.partition_point(|tempo| tempo.start <= seconds);
+        self.tempos
+            .get(after.saturating_sub(1))
+            .map(|tempo| tempo.bpm)
+    }
+
+    /// The index into [`Self::beats`] of the beat sounding at `seconds`, if any: nothing before
+    /// the first and nothing once the last bar is over.
+    pub fn beat_at(&self, seconds: f64) -> Option<usize> {
+        let after = self.beats.partition_point(|beat| beat.start <= seconds);
+        let index = after.checked_sub(1)?;
+        (seconds < self.beats[index].end).then_some(index)
     }
 
     /// The index into [`Self::lyrics`] of the line being sung at `seconds`, if any.
@@ -207,6 +263,8 @@ impl NoteScore {
                 .collect(),
             chords: self.chords.clone(),
             lyrics: self.lyrics.clone(),
+            tempos: self.tempos.clone(),
+            beats: self.beats.clone(),
         }
     }
 
@@ -231,10 +289,58 @@ impl NoteScore {
     }
 }
 
+/// The most beats a score lists: hours of music at any sensible tempo, and a bound on what a
+/// hand-edited file with a tempo of thousands could ask for.
+const MAX_BEATS: usize = 200_000;
+
+/// Every notated beat from the start of the song until the bar holding `until` is over.
+///
+/// The beat is the one the lower number of the signature names — a quarter in 3/4, an eighth in
+/// 6/8 — so a counter shows the upper number's worth of beats, which is what is written.
+fn beats(project: &Project, until: Ticks) -> Vec<ScoreBeat> {
+    let mut beats = Vec::new();
+    if until <= Ticks::ZERO {
+        return beats;
+    }
+    let seconds = |tick: Ticks| project.tempo_map.ticks_to_seconds(tick).0;
+    'spans: for span in project.signatures.spans() {
+        let per_beat = span.signature.ticks_per_beat().raw().max(1);
+        let count = span.signature.numerator.max(1);
+        let stop = span.end.unwrap_or(until).min(until);
+        let mut bar_start = span.start;
+        let mut bar = span.first_bar;
+        while bar_start < stop {
+            for beat in 0..count {
+                let start = bar_start + Ticks(per_beat * i64::from(beat));
+                let (from, to) = (seconds(start), seconds(start + Ticks(per_beat)));
+                if !(from.is_finite() && to.is_finite()) || to <= from {
+                    continue;
+                }
+                beats.push(ScoreBeat {
+                    start: from,
+                    end: to,
+                    bar,
+                    beat: beat + 1,
+                    beats: count,
+                });
+                if beats.len() >= MAX_BEATS {
+                    break 'spans;
+                }
+            }
+            bar_start += Ticks(per_beat * i64::from(count));
+            bar = bar.saturating_add(1);
+        }
+    }
+    beats
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use auris_core::{ClipId, MidiClip, Note, TICKS_PER_QUARTER, Ticks};
+    use auris_core::{
+        AuxSend, ClipId, MidiClip, Note, NoteTransform, Output, SendId, TICKS_PER_QUARTER, Ticks,
+        TrackId,
+    };
 
     fn note(pitch: u8, start: i64, length: i64) -> Note {
         Note {
@@ -266,6 +372,159 @@ mod tests {
             track.kind.as_instrument_mut().unwrap().clips.push(clip);
         }
         project
+    }
+
+    fn add_part(project: &mut Project, name: &str, pitch: u8) -> TrackId {
+        let track = project.add_instrument_track(name, "test");
+        let clip = project
+            .add_midi_clip(track, name, Ticks::ZERO, Ticks::QUARTER)
+            .unwrap();
+        project.midi_clip_mut(clip).unwrap().notes = vec![note(pitch, 0, TICKS_PER_QUARTER)];
+        track
+    }
+
+    #[test]
+    fn a_layer_shows_its_performed_notes_independently_of_the_sources_mute_and_solo() {
+        let mut project = Project::default();
+        let source = add_part(&mut project, "Source", 60);
+        let clip = project.track(source).unwrap().kind.note_clips().unwrap()[0].id;
+        project
+            .midi_clip_mut(clip)
+            .unwrap()
+            .transforms
+            .push(NoteTransform::Transpose { semitones: 12 });
+        let layer = project.add_layer_track(source, "Octave", "test").unwrap();
+        let shape = &mut project
+            .track_mut(layer)
+            .unwrap()
+            .kind
+            .layer_mut()
+            .unwrap()
+            .shape;
+        shape.lowest = 72;
+        shape.transpose = 12;
+        shape.offset = Ticks::QUARTER;
+        shape.length = 0.5;
+        shape.velocity = 0.5;
+        project.track_mut(source).unwrap().mixer.mute = true;
+        project.track_mut(layer).unwrap().mixer.solo = true;
+
+        let score = NoteScore::from_project(&project);
+        assert_eq!(score.tracks.len(), 1);
+        assert_eq!(score.tracks[0].name, "Octave");
+        assert_eq!(score.notes.len(), 1);
+        assert_eq!(
+            score.notes[0].pitch, 84,
+            "source performance precedes layer shape"
+        );
+        assert_eq!(score.notes[0].track, 0);
+        assert!((score.notes[0].velocity - 0.4).abs() < 1e-6);
+        let beat = 60.0 / project.tempo_map.bpm_at(Ticks::ZERO);
+        assert!((score.notes[0].start - beat).abs() < 1e-9);
+        assert!((score.notes[0].end - beat * 1.5).abs() < 1e-9);
+
+        project.track_mut(layer).unwrap().mixer.mute = true;
+        assert!(NoteScore::from_project(&project).notes.is_empty());
+        project.track_mut(layer).unwrap().mixer.mute = false;
+        project.track_mut(layer).unwrap().mixer.solo = false;
+        project.track_mut(source).unwrap().mixer.solo = true;
+        assert!(
+            NoteScore::from_project(&project).notes.is_empty(),
+            "following notes does not make a layer an audio feeder of its soloed source"
+        );
+        project.track_mut(source).unwrap().mixer.solo = false;
+        project.midi_clip_mut(clip).unwrap().muted = true;
+        assert!(
+            NoteScore::from_project(&project).notes.is_empty(),
+            "muted clips stay muted on layers"
+        );
+    }
+
+    #[test]
+    fn solo_buses_include_their_feeders_but_a_soloed_feeder_does_not_include_its_siblings() {
+        let mut project = Project::default();
+        let lead = add_part(&mut project, "Lead", 60);
+        let backing = add_part(&mut project, "Backing", 48);
+        add_part(&mut project, "Unrelated", 90);
+        let bus = project.add_bus_track("Music");
+        for track in [lead, backing] {
+            project.track_mut(track).unwrap().outputs = vec![Output::Bus(bus)];
+        }
+        project.track_mut(bus).unwrap().mixer.solo = true;
+        let score = NoteScore::from_project(&project);
+        assert_eq!(
+            score.notes.iter().map(|n| n.pitch).collect::<Vec<_>>(),
+            [60, 48]
+        );
+        assert_eq!(
+            score.notes.iter().map(|n| n.track).collect::<Vec<_>>(),
+            [0, 1]
+        );
+        assert_eq!(
+            score
+                .tracks
+                .iter()
+                .map(|t| t.name.as_str())
+                .collect::<Vec<_>>(),
+            ["Lead", "Backing"]
+        );
+
+        project.track_mut(backing).unwrap().mixer.mute = true;
+        assert_eq!(NoteScore::from_project(&project).notes.len(), 1);
+        project.track_mut(backing).unwrap().mixer.mute = false;
+        project.track_mut(bus).unwrap().mixer.solo = false;
+        project.track_mut(lead).unwrap().mixer.solo = true;
+        let score = NoteScore::from_project(&project);
+        assert_eq!(score.notes.len(), 1);
+        assert_eq!(score.notes[0].pitch, 60);
+    }
+
+    #[test]
+    fn send_routes_share_audio_solo_resolution_and_keep_muted_senders_out() {
+        let mut project = Project::default();
+        let sent = add_part(&mut project, "Sent", 60);
+        let sibling = add_part(&mut project, "Sibling", 65);
+        let bus = project.add_bus_track("Aux");
+        for (index, track) in [sent, sibling].into_iter().enumerate() {
+            let mut send = AuxSend::new(SendId(index as u64 + 100), bus);
+            send.pre_fader = true;
+            project.track_mut(track).unwrap().sends.push(send);
+        }
+        project.track_mut(bus).unwrap().mixer.solo = true;
+        assert_eq!(NoteScore::from_project(&project).notes.len(), 2);
+        project.track_mut(sent).unwrap().mixer.mute = true;
+        let score = NoteScore::from_project(&project);
+        assert_eq!(score.notes.len(), 1);
+        assert_eq!(score.notes[0].pitch, 65);
+        assert_eq!(score.notes[0].track, 0);
+        project.track_mut(sent).unwrap().mixer.mute = false;
+        project.track_mut(bus).unwrap().mixer.solo = false;
+        project.track_mut(sent).unwrap().mixer.solo = true;
+        let score = NoteScore::from_project(&project);
+        assert_eq!(score.notes.len(), 1);
+        assert_eq!(score.notes[0].pitch, 60);
+    }
+
+    #[test]
+    fn dropping_drums_remaps_the_layer_track_index() {
+        let q = TICKS_PER_QUARTER;
+        let mut project = project_with(vec![note(60, 0, q)], vec![note(36, 0, q)]);
+        let source = project.tracks[0].id;
+        let kit = project.tracks[1].id;
+        project.add_layer_track(source, "Layer", "test").unwrap();
+        project.move_track(kit, 0);
+        project.track_mut(source).unwrap().mixer.mute = true;
+        let score = NoteScore::from_project(&project);
+        assert_eq!(
+            score.notes.iter().map(|n| n.track).collect::<Vec<_>>(),
+            [0, 1]
+        );
+        let pitched = score.without_drums();
+        assert_eq!(pitched.tracks.len(), 1);
+        assert_eq!(pitched.tracks[0].name, "Layer");
+        assert_eq!(pitched.notes.len(), 1);
+        assert_eq!(pitched.notes[0].pitch, 60);
+        assert_eq!(pitched.notes[0].track, 0);
     }
 
     #[test]
@@ -351,6 +610,75 @@ mod tests {
         assert_eq!(score.chord_at(5.0 * beat), None, "the gap shows no chord");
         assert_eq!(score.chord_at(7.0 * beat), Some(2));
         assert_eq!(score.without_drums().chords, score.chords);
+    }
+
+    #[test]
+    fn beats_follow_the_signature_and_tempo_changes() {
+        use auris_core::TimeSignature;
+        let q = TICKS_PER_QUARTER;
+        // A clip of eight quarters: a bar of 4/4 at 120, then 3/4 at 60 from bar 2.
+        let mut project = project_with(vec![note(60, 0, q * 7)], vec![]);
+        project.tempo_map = auris_core::TempoMap::constant(120.0);
+        project.tempo_map.set_point(Ticks(q * 4), 60.0);
+        project
+            .signatures
+            .set_point(Ticks(q * 4), TimeSignature::new(3, 4));
+        let score = NoteScore::from_project(&project);
+        let counted: Vec<_> = score
+            .beats
+            .iter()
+            .map(|beat| (beat.bar, beat.beat, beat.beats))
+            .collect();
+        assert_eq!(
+            counted,
+            [
+                (1, 1, 4),
+                (1, 2, 4),
+                (1, 3, 4),
+                (1, 4, 4),
+                (2, 1, 3),
+                (2, 2, 3),
+                (2, 3, 3),
+                (3, 1, 3),
+                (3, 2, 3),
+                (3, 3, 3),
+            ],
+            "the bar the clip ends in is counted out to its end"
+        );
+        assert!(
+            (score.beats[1].start - 0.5).abs() < 1e-9,
+            "half a second at 120"
+        );
+        assert!(
+            (score.beats[5].start - 3.0).abs() < 1e-9,
+            "a whole second at 60"
+        );
+        assert_eq!(score.beat_at(2.1), Some(4));
+        assert_eq!(score.beat_at(5.0), Some(7));
+        assert_eq!(score.beat_at(8.5), None, "nothing once the song is over");
+        assert_eq!(score.tempo_at(1.0), Some(120.0));
+        assert_eq!(score.tempo_at(2.5), Some(60.0));
+        assert_eq!(score.without_drums().beats, score.beats);
+    }
+
+    #[test]
+    fn compound_time_counts_the_written_eighths() {
+        use auris_core::TimeSignature;
+        let q = TICKS_PER_QUARTER;
+        let mut project = project_with(vec![note(60, 0, q * 3)], vec![]);
+        project.signatures.set_initial(TimeSignature::new(6, 8));
+        let score = NoteScore::from_project(&project);
+        assert_eq!(score.beats.len(), 18, "eight quarters end in the third bar");
+        assert!(score.beats.iter().all(|beat| beat.beats == 6));
+        let eighth = 30.0 / project.tempo_map.bpm_at(Ticks::ZERO);
+        assert!((score.beats[1].start - eighth).abs() < 1e-9);
+    }
+
+    #[test]
+    fn an_empty_song_has_no_beats() {
+        let score = NoteScore::from_project(&Project::default());
+        assert!(score.beats.is_empty());
+        assert!(score.tempo_at(0.0).is_some(), "but it still has a tempo");
     }
 
     #[test]

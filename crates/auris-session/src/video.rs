@@ -35,7 +35,8 @@ pub fn ffmpeg_install_page() -> &'static str {
 /// What a video export produced.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct VideoSummary {
-    /// Length in seconds, the effect tail included.
+    /// Length in seconds: the mix with its effect tail, and the style's lead-in and tail of
+    /// silence around it.
     pub seconds: f64,
     /// Frames encoded.
     pub frames: u64,
@@ -173,8 +174,9 @@ impl VideoJob {
                 },
             )
         })?;
+        let style = renderer.style();
         Ok(VideoSummary {
-            seconds: audio.seconds,
+            seconds: f64::from(style.lead_in) + audio.seconds + f64::from(style.tail),
             frames,
             codec: ffmpeg.codec(),
         })

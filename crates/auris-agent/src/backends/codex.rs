@@ -178,9 +178,11 @@ fn command(
     ] {
         command.args(["-c", setting]);
     }
-    // Model discovery and independent approval review have no native execution tools.
+    // Model discovery and independent approval review have no native execution tools, and
+    // neither has a live conversation whose policy refuses the shell.
+    let shell = token.is_some() && super::native_tools(prefs);
     for feature in ["shell_tool", "unified_exec", "apply_patch_freeform"] {
-        command.args(["-c", &format!("features.{feature}={}", token.is_some())]);
+        command.args(["-c", &format!("features.{feature}={shell}")]);
     }
     for setting in overrides {
         command.args(["-c", setting]);
