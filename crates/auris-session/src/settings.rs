@@ -64,11 +64,43 @@ pub fn read_config_text(path: &Path) -> std::io::Result<String> {
     Ok(text)
 }
 
+/// Reads a file that [`write_file_atomic`] publishes, refusing one larger than `limit` bytes.
+///
+/// Every reader of such a file goes through here or through [`read_config_text`], never
+/// `std::fs::read`: on Windows the publishing rename fails with `PermissionDenied` for as long as
+/// another thread has the destination open, so the read holds the lock the rename takes. A file
+/// over `limit`, including one that grows past it while it is read, is
+/// [`std::io::ErrorKind::FileTooLarge`], for the caller to word in its own terms.
+pub fn read_published_file(path: &Path, limit: u64) -> std::io::Result<Vec<u8>> {
+    let too_large = || {
+        std::io::Error::new(
+            std::io::ErrorKind::FileTooLarge,
+            format!("file is larger than {limit} bytes"),
+        )
+    };
+    let _read = CONFIG_FILE_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let file = File::open(path)?;
+    let size = file.metadata()?.len();
+    if size > limit {
+        return Err(too_large());
+    }
+    let mut bytes = Vec::new();
+    bytes
+        .try_reserve_exact(size as usize)
+        .map_err(|_| std::io::Error::other("not enough memory to read the file"))?;
+    file.take(limit.saturating_add(1)).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > limit {
+        return Err(too_large());
+    }
+    Ok(bytes)
+}
+
 /// Writes configuration bytes through a private sibling and atomically replaces `path`.
 ///
-/// The temporary file is exclusively created and synchronised before the short publication step,
-/// so a crash cannot leave a partially truncated settings or conversation file. The caller must
-/// create the parent directory before calling this function.
+/// The eight-megabyte ceiling is for hand-editable preferences. Machine-managed files with
+/// their own budgets — agent transcripts allow 64 MiB — use [`write_file_atomic`] directly.
 pub fn write_config_bytes(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     if bytes.len() as u64 > CONFIG_TEXT_MAX_BYTES {
         return Err(std::io::Error::new(
@@ -76,6 +108,15 @@ pub fn write_config_bytes(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
             "configuration file is larger than 8 MiB",
         ));
     }
+    write_file_atomic(path, bytes)
+}
+
+/// Writes bytes through a private sibling and atomically replaces `path`, with no size ceiling.
+///
+/// The temporary file is exclusively created and synchronised before the short publication step,
+/// so a crash cannot leave a partially truncated settings or conversation file. The caller must
+/// create the parent directory and enforce its own budget before calling this function.
+pub fn write_file_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let parent = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
@@ -693,6 +734,12 @@ pub struct Settings {
     /// On unless turned off. The snapshot never replaces the user-chosen project file; see
     /// [`should_autosave`](crate::session::should_autosave).
     pub autosave: bool,
+    /// Let the editor render and measure the song in the background after an edit, for the
+    /// music linter's audio rules.
+    ///
+    /// On by default. It runs only once the document has held still after a change and nothing
+    /// else is playing or rendering; see [`crate::lint`].
+    pub background_lint: bool,
     /// Check for and install desktop updates automatically when a release is available.
     ///
     /// On by default. Older settings files omit this field and receive the default so the
@@ -771,6 +818,7 @@ impl Default for Settings {
             // and a settings file written before this field existed is filled in from exactly
             // this value.
             autosave: true,
+            background_lint: true,
             auto_update: true,
             snap_note_lengths: true,
             piano_roll_grid: PianoRollGrid::default(),

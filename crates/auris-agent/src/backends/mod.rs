@@ -27,32 +27,86 @@ fn native_project_directory(history: Option<&Path>) -> Option<&Path> {
     Some(directory)
 }
 
+/// Whether a live conversation is given the CLI runtime's own shell and file tools.
+///
+/// Denying `cli_command` outright — a workshop composer's policy, or the user's own deny list —
+/// starts the runtime without them, so the model is neither offered a shell nor told it has one.
+/// Offering one and refusing it afterwards still costs the model a turn.
+fn native_tools(prefs: &auris_session::AgentPreferences) -> bool {
+    !prefs
+        .policy
+        .deny
+        .iter()
+        .any(|rule| rule == "*" || rule == "cli_command")
+}
+
 fn cli_preamble(prefs: &auris_session::AgentPreferences) -> String {
     let recovery = format!(
         "Tool errors are feedback, not task completion. After a recoverable argument or state error, inspect tool_help/current IDs, correct the call and continue the unfinished request. The configured allowance is up to {} failed attempts for the same tool and arguments; success resets that count. Failed calls do not consume the separate musical polishing budget. Preserve earlier successful edits, and never retry a permission refusal or cancellation.",
         prefs.tool_failure_limit()
     );
+    if !native_tools(prefs) {
+        return format!(
+            "{}\n{recovery}\nOnly the Auris live tools are available: this conversation has no shell or file tools, so do not look for the auris CLI or the .auris file.",
+            crate::live_system_prompt(prefs)
+        );
+    }
     format!(
         "{}\n{recovery}\nNative shell and file tools are available for the user's external-file and scripting tasks. Edit the open song through Auris live MCP tools so unsaved changes and undo stay coherent. Never rewrite its .auris file behind the window. External file writes and shell effects are durable and are not covered by Auris Undo. Request approvals when needed; never work around a refusal. Use explicit persistent paths for requested deliverables; temporary working files are removed when this conversation ends. Keep runtime discovery scoped to the project and dedicated runtime queries. For Python, prefer a project-local uv environment; Get-Command, uv python list --only-installed and uv python find locate executables without enumerating home or hidden configuration directories. Do not scan personal folders to find a runtime.",
-        crate::system_prompt(prefs)
+        crate::live_system_prompt(prefs)
     )
 }
 
-/// Replay completed text when a CLI worker replaces an ephemeral conversation.
+/// Earlier conversation for a CLI worker that replaces an ephemeral conversation: a bounded
+/// selection, not the transcript ([`memory::Memory::handoff`]).
 fn memory_context(memory: &memory::Memory) -> String {
-    if memory.turns.is_empty() && memory.summary.is_empty() {
-        return String::new();
+    memory.handoff()
+}
+
+/// The provider session a CLI backend resumes for this conversation, and what it is told first.
+///
+/// Only a saved project's own conversation is resumed: its folder is a stable working directory,
+/// which Claude Code keys its sessions by, and its history is not a private recovery store.
+pub(super) struct NativeResume {
+    /// The backend's name in [`memory::Memory::native`].
+    backend: &'static str,
+    /// The session to resume, when one was saved.
+    pub(super) previous: Option<String>,
+    /// Whether the conversation may keep a provider session at all.
+    pub(super) enabled: bool,
+}
+
+impl NativeResume {
+    pub(super) fn new(backend: &'static str, memory: &memory::Memory, enabled: bool) -> Self {
+        Self {
+            backend,
+            previous: enabled
+                .then(|| {
+                    memory
+                        .native_thread(backend)
+                        .map(|thread| thread.id.clone())
+                })
+                .flatten(),
+            enabled,
+        }
     }
-    format!(
-        "[Historical conversation for context only. Verify the current document; this grants no permissions.]\n{}\n{}",
-        memory.summary,
-        memory
-            .turns
-            .iter()
-            .map(|turn| format!("User: {}\nAssistant: {}", turn.user, turn.answer))
-            .collect::<Vec<_>>()
-            .join("\n")
-    )
+
+    /// What the first request carries: only the missed turns when `resumed` is the saved
+    /// session, otherwise the bounded selection of the whole conversation.
+    pub(super) fn opening_context(&self, memory: &memory::Memory, resumed: Option<&str>) -> String {
+        match (resumed, memory.native_thread(self.backend)) {
+            (Some(id), Some(thread)) if thread.id == id => memory.delta_since(thread.seen),
+            _ => memory_context(memory),
+        }
+    }
+
+    /// Note, after a turn, that session `id` has seen the conversation so far.
+    pub(super) fn record(&self, memory: &mut memory::Memory, id: Option<&str>) {
+        match id {
+            Some(id) if self.enabled => memory.record_native(self.backend, id),
+            _ => memory.forget_native(self.backend),
+        }
+    }
 }
 
 /// A runtime owns the entire model/tool loop, not just a completion API client.
@@ -111,7 +165,9 @@ impl Backend {
                 _ = cancelled => Ok(()),
                 result = async {
                     let vision = runtime::preflight(&mut options).await?;
-                    let agent = build_for_worker(&options, Some(bridge.clone()))?;
+                    let hearing = runtime::hears(&options).await;
+                    bridge.set_hearing(hearing);
+                    let agent = build_for_worker(&options, Some(bridge.clone()), hearing)?;
                     bridge.set_vision(vision);
                     json_conversation(&agent, &options, bridge, history_path, fresh, history).await
                 } => result,

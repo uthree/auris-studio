@@ -982,6 +982,24 @@ impl SettingsWindow {
             )
             .into_any_element(),
         );
+        // The workshop's learned preferences are the other text the model is given about this
+        // person, so the page that holds the system prompt points at where they are edited.
+        rows.push(
+            FormField::new(self.t(Key::PreferenceHeading))
+                .description(self.t(Key::AgentPreferencesLinkHelp))
+                .child(
+                    atelier::Button::new(
+                        "agent-preferences-link",
+                        self.t(Key::AgentPreferencesLink),
+                    )
+                    .ghost()
+                    .icon(IconName::Music)
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.select_tab(SettingsTab::Personalization, window, cx)
+                    })),
+                )
+                .into_any_element(),
+        );
         rows.push(
             button_enabled(
                 "agent-apply",

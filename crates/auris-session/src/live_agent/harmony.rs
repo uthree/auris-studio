@@ -35,7 +35,20 @@ pub(super) fn deserialize_chords<'de, D: Deserializer<'de>>(
     }
 }
 
+/// What one `edit_harmony` call writes or clears over its bar range.
+pub(super) struct HarmonyWrite<'a> {
+    pub key: Option<&'a str>,
+    pub chords: Option<&'a str>,
+    pub section: Option<&'a str>,
+    pub clear_chords: bool,
+    pub clear_key: bool,
+    pub clear_section: bool,
+}
+
 impl Session {
+    /// The write-only form the tests use; the command path goes through
+    /// `agent_edit_harmony_clearing`.
+    #[cfg(test)]
     pub(super) fn agent_edit_harmony(
         &mut self,
         start_bar: u32,
@@ -45,18 +58,58 @@ impl Session {
         clear_chords: bool,
         section: Option<&str>,
     ) -> Result<String, String> {
+        self.agent_edit_harmony_clearing(
+            start_bar,
+            bars,
+            HarmonyWrite {
+                key,
+                chords,
+                section,
+                clear_chords,
+                clear_key: false,
+                clear_section: false,
+            },
+        )
+    }
+
+    pub(super) fn agent_edit_harmony_clearing(
+        &mut self,
+        start_bar: u32,
+        bars: u32,
+        write: HarmonyWrite<'_>,
+    ) -> Result<String, String> {
+        let HarmonyWrite {
+            key,
+            chords,
+            section,
+            clear_chords,
+            clear_key,
+            clear_section,
+        } = write;
         if start_bar == 0 || !(1..=4096).contains(&bars) {
             return Err("start_bar must be at least 1 and bars within 1..4096".into());
         }
-        if (key.is_none() && chords.is_none() && !clear_chords && section.is_none())
-            || (clear_chords && chords.is_some())
+        if key.is_none()
+            && chords.is_none()
+            && section.is_none()
+            && !clear_chords
+            && !clear_key
+            && !clear_section
         {
-            return Err("provide key, chords, section, or clear_chords without chords".into());
+            return Err(
+                "provide key, chords or section to write, or clear_key, clear_chords or clear_section to remove".into(),
+            );
+        }
+        if (clear_chords && chords.is_some())
+            || (clear_key && key.is_some())
+            || (clear_section && section.is_some())
+        {
+            return Err("supply a value or its clear_ flag, not both: clear_key with key, clear_chords with chords or clear_section with section contradict each other".into());
         }
         if section.is_some_and(|label| {
             label.trim().is_empty() || label.len() > 256 || label.chars().any(char::is_control)
         }) {
-            return Err("section must be a nonempty label within 256 UTF-8 bytes, without control characters".into());
+            return Err("section must be a nonempty label within 256 UTF-8 bytes, without control characters; to delete a section name use clear_section".into());
         }
         if chords.is_some_and(|text| {
             let text = text.trim();
@@ -93,13 +146,25 @@ impl Session {
             })
             .transpose()?;
         self.begin_transaction(crate::Edit::StampProgression);
-        self.write_bounded_harmony(start_bar, bars, key, chart.as_ref(), clear_chords);
-        if let Some(label) = section {
+        self.write_bounded_harmony(
+            start_bar,
+            bars,
+            key,
+            clear_key,
+            chart.as_ref(),
+            clear_chords,
+        );
+        if section.is_some() || clear_section {
             for tick in internal_sections {
                 self.remove_section(tick);
             }
-            self.set_section(start, Some(label.trim().to_owned()));
+            self.set_section(start, section.map(|label| label.trim().to_owned()));
             self.set_section(end, previous_section);
+            // Restating the stretch already in force is no change: without this, writing the
+            // label a range already had, or clearing an unnamed one, would leave a boundary
+            // nothing displays and nothing removes.
+            self.coalesce_section_change(end);
+            self.coalesce_section_change(start);
         }
         self.end_transaction();
         let chord_changes = self
@@ -139,10 +204,16 @@ mod tests {
             serde_json::from_str(&session.agent_command(command).unwrap()).unwrap();
         for offset in 0..8 {
             let at = session.project().signatures.bar_start(25 + offset);
-            assert_eq!(session.harmony().chords.change_at(at), Some(at));
+            // The two bars of V are one chord held across the bar line, not two changes.
+            let starts = if offset % 4 == 3 {
+                session.project().signatures.bar_start(24 + offset)
+            } else {
+                at
+            };
+            assert_eq!(session.harmony().chords.change_at(at), Some(starts));
             assert_eq!(
                 session.harmony().chords.change_at(at + Ticks::QUARTER),
-                Some(at)
+                Some(starts)
             );
             assert_eq!(
                 session.harmony().chord_at(at).unwrap().to_string(),
@@ -150,13 +221,162 @@ mod tests {
             );
         }
         assert_eq!(result["chart_bars"], 4);
-        assert_eq!(result["chord_changes"], 8);
+        assert_eq!(result["chord_changes"], 6);
         assert_eq!(session.project().tracks, before.tracks);
         let after = session.project().clone();
         session.undo();
         assert_eq!(session.project(), &before);
         session.redo();
         assert_eq!(session.project(), &after);
+    }
+
+    fn edit(session: &mut Session, args: serde_json::Value) -> Result<String, String> {
+        let mut args = args;
+        args["action"] = "edit_harmony".into();
+        session.agent_command(serde_json::from_value(args).map_err(|e| e.to_string())?)
+    }
+
+    #[test]
+    fn clear_section_deletes_labels_and_keeps_the_section_after_the_range() {
+        let mut s = Session::new(crate::SessionOptions::headless().with_balance(false)).unwrap();
+        edit(
+            &mut s,
+            serde_json::json!({"start_bar":1,"bars":4,"section":"Intro"}),
+        )
+        .unwrap();
+        edit(
+            &mut s,
+            serde_json::json!({"start_bar":5,"bars":8,"section":"Verse"}),
+        )
+        .unwrap();
+        edit(
+            &mut s,
+            serde_json::json!({"start_bar":13,"bars":8,"section":"Chorus"}),
+        )
+        .unwrap();
+        let before = s.project().clone();
+        edit(
+            &mut s,
+            serde_json::json!({"start_bar":5,"bars":8,"clear_section":true}),
+        )
+        .unwrap();
+        let bar = |s: &Session, n| s.project().signatures.bar_start(n);
+        assert_eq!(s.project().sections.label_at(bar(&s, 1)), Some("Intro"));
+        assert_eq!(s.project().sections.label_at(bar(&s, 5)), None);
+        assert_eq!(s.project().sections.label_at(bar(&s, 12)), None);
+        assert_eq!(s.project().sections.label_at(bar(&s, 13)), Some("Chorus"));
+        s.undo();
+        assert_eq!(s.project(), &before);
+
+        // Clearing every section leaves no boundary behind at all.
+        edit(
+            &mut s,
+            serde_json::json!({"start_bar":1,"bars":40,"clear_section":true}),
+        )
+        .unwrap();
+        assert!(
+            s.project().sections.is_empty(),
+            "{:?}",
+            s.project().sections
+        );
+    }
+
+    #[test]
+    fn clear_key_returns_the_range_to_the_key_before_it_without_leftover_markers() {
+        let mut s = Session::new(crate::SessionOptions::headless().with_balance(false)).unwrap();
+        edit(
+            &mut s,
+            serde_json::json!({"start_bar":1,"bars":8,"key":"A minor"}),
+        )
+        .unwrap();
+        edit(
+            &mut s,
+            serde_json::json!({"start_bar":9,"bars":8,"key":"D major"}),
+        )
+        .unwrap();
+        let bar = |s: &Session, n| s.project().signatures.bar_start(n);
+        assert_eq!(s.harmony().key_at(bar(&s, 9)).to_text(), "D major");
+        edit(
+            &mut s,
+            serde_json::json!({"start_bar":9,"bars":8,"clear_key":true}),
+        )
+        .unwrap();
+        assert_eq!(s.harmony().key_at(bar(&s, 9)).to_text(), "A minor");
+        assert_eq!(s.harmony().key_at(bar(&s, 20)).to_text(), "C major");
+        // A minor at bar 1 and C major restored at bar 9 after clearing, nothing redundant.
+        let keys = s
+            .harmony()
+            .keys
+            .points()
+            .iter()
+            .map(|p| (p.tick, p.key.to_text()))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            keys,
+            vec![
+                (Ticks::ZERO, "A minor".to_string()),
+                (bar(&s, 17), "C major".to_string())
+            ]
+        );
+    }
+
+    #[test]
+    fn clearing_a_modulation_leaves_the_song_in_one_key() {
+        let mut s = Session::new(crate::SessionOptions::headless().with_balance(false)).unwrap();
+        edit(
+            &mut s,
+            serde_json::json!({"start_bar":5,"bars":4,"key":"E major"}),
+        )
+        .unwrap();
+        assert_eq!(s.harmony().keys.points().len(), 3);
+        edit(
+            &mut s,
+            serde_json::json!({"start_bar":5,"bars":4,"clear_key":true}),
+        )
+        .unwrap();
+        assert!(s.harmony().keys.is_constant(), "{:?}", s.harmony().keys);
+        // Bar 1 cannot lose the song's own key; clearing there removes only later changes.
+        edit(
+            &mut s,
+            serde_json::json!({"start_bar":3,"bars":2,"key":"G major"}),
+        )
+        .unwrap();
+        edit(
+            &mut s,
+            serde_json::json!({"start_bar":1,"bars":4,"clear_key":true}),
+        )
+        .unwrap();
+        assert!(s.harmony().keys.is_constant(), "{:?}", s.harmony().keys);
+        assert_eq!(s.harmony().key_at(Ticks::ZERO).to_text(), "C major");
+    }
+
+    #[test]
+    fn rewriting_the_key_in_force_leaves_no_redundant_change() {
+        let mut s = Session::new(crate::SessionOptions::headless().with_balance(false)).unwrap();
+        edit(
+            &mut s,
+            serde_json::json!({"start_bar":5,"bars":4,"key":"C major","section":"Verse"}),
+        )
+        .unwrap();
+        assert!(s.harmony().keys.is_constant(), "{:?}", s.harmony().keys);
+        edit(
+            &mut s,
+            serde_json::json!({"start_bar":5,"bars":4,"section":"Verse"}),
+        )
+        .unwrap();
+        assert_eq!(s.project().sections.points().len(), 2);
+    }
+
+    #[test]
+    fn a_value_and_its_clear_flag_together_are_refused() {
+        let mut s = Session::new(crate::SessionOptions::headless().with_balance(false)).unwrap();
+        for args in [
+            serde_json::json!({"start_bar":1,"bars":4,"key":"D major","clear_key":true}),
+            serde_json::json!({"start_bar":1,"bars":4,"section":"Verse","clear_section":true}),
+        ] {
+            assert!(edit(&mut s, args).is_err());
+        }
+        assert!(!s.can_undo());
     }
 
     #[test]

@@ -1243,7 +1243,7 @@ impl AurisApp {
                                 this.open_prompt(crate::ui::prompt::Prompt::ask(
                                     messages::remove_plugin_folder_title(
                                         this.language(),
-                                        &path_for_remove.display().to_string(),
+                                        path_for_remove.display().to_string(),
                                     ),
                                     crate::ui::prompt::Question::RemovePluginPath(
                                         path_for_remove.clone(),

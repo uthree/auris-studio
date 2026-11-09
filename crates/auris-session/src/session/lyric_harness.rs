@@ -4,6 +4,7 @@
 //! Character offsets refer to the original text, never to dictionary output. An explicit
 //! reading is a diagnostic override and does not change a saved lyric's pronunciation.
 
+use super::lyric_slots::{grouped_reading, mora_slots, note_groups, note_range};
 use super::{Session, lyrics};
 use auris_compose::SongSpec;
 use auris_vocal::{SungMora, split_kana_lyric};
@@ -12,6 +13,7 @@ use serde::{Deserialize, Serialize};
 mod repair;
 #[cfg(test)]
 mod tests;
+pub use super::lyric_slots::{MoraSlot, NOTE_SEPARATOR};
 pub use repair::{ClipComparison, LyricCandidate, NoteSpan, RepairRequest};
 
 const MAX_TEXT_BYTES: usize = 65_536;
@@ -21,10 +23,48 @@ const MAX_PHRASES: usize = 512;
 #[derive(Clone, Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PhraseReading {
-    /// One-based phrase number, after splitting at line breaks and sentence punctuation.
+    /// Phrase number counted from 1 (the first line is 1, not 0), after splitting at line
+    /// breaks and sentence punctuation.
+    #[schemars(range(min = 1))]
     pub phrase: usize,
     /// Kana pronunciation; does not replace the original text or persist to a project.
     pub kana: String,
+}
+
+/// A note count a phrase must be sung on, such as the notes of a repeated motif.
+#[derive(Clone, Debug, Deserialize, Serialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PhraseFit {
+    /// Phrase number counted from 1 (the first line is 1, not 0), after splitting at line
+    /// breaks and sentence punctuation.
+    #[schemars(range(min = 1))]
+    pub phrase: usize,
+    /// Notes available to the phrase, 1..=256.
+    #[schemars(range(min = 1, max = 256))]
+    pub notes: usize,
+}
+
+/// Whether a phrase fits the notes it was given.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FitVerdict {
+    /// The phrase fits, holding long vowels where needed.
+    Fits,
+    /// More moras than notes even with every long vowel held (字余り).
+    TooManyMoras,
+    /// Fewer moras than notes even with every long vowel on its own note (字足らず).
+    TooFewMoras,
+}
+
+/// The answer to one [`PhraseFit`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct NoteFit {
+    /// The requested note count.
+    pub notes: usize,
+    /// Whether, and which way, it misses.
+    pub verdict: FitVerdict,
+    /// Moras to remove (positive) or add (negative) before it fits; zero when it fits.
+    pub excess: isize,
 }
 
 /// How a pronunciation was obtained.
@@ -58,6 +98,9 @@ pub struct MoraAnalysis {
     pub nasal: bool,
     /// Whether the reading explicitly spells a prolonged-sound mark.
     pub long_vowel_mark: bool,
+    /// note, hold (a long vowel that may end the previous note) or rest (っ, the rest after
+    /// the previous note).
+    pub slot: MoraSlot,
 }
 
 /// One musical phrase with an honest source location and optional pronunciation.
@@ -81,6 +124,15 @@ pub struct PhraseAnalysis {
     pub moras: Vec<MoraAnalysis>,
     /// Complete-phrase error; no guessed character alignment is reported.
     pub error: Option<String>,
+    /// Fewest notes the phrase can be sung on: every long vowel held, っ as rests.
+    pub min_notes: usize,
+    /// Most notes: every mora but っ on a note of its own.
+    pub max_notes: usize,
+    /// The reading cut into notes with '|' for write_lyrics: for the requested fit when it
+    /// fits, otherwise for max_notes. Null when unreadable.
+    pub note_reading: Option<String>,
+    /// The answer to a requested note count.
+    pub fit: Option<NoteFit>,
 }
 
 /// Analysis that does not require a voice model, audio device or project edit.
@@ -203,11 +255,27 @@ fn mora_analysis(mora: &SungMora, position: usize) -> MoraAnalysis {
         closure: mora.phonemes == ["ʔ"],
         nasal: mora.phonemes == ["ɴ"],
         long_vowel_mark: mora.text == "ー",
+        slot: MoraSlot::Note,
     }
 }
 
 fn delimiter(c: char) -> bool {
     matches!(c, '\n' | '\r' | '、' | '。' | '！' | '？' | '!' | '?')
+}
+
+/// Refuses a phrase number outside 1..=found, saying which entry and what the numbers are.
+fn phrase_number(field: &str, index: usize, phrase: usize, found: usize) -> Result<(), String> {
+    if phrase == 0 {
+        return Err(format!(
+            "{field}[{index}].phrase is 0; phrases are numbered from 1, so the first line is phrase 1"
+        ));
+    }
+    if phrase > found {
+        return Err(format!(
+            "{field}[{index}].phrase is {phrase}, but the text has {found} phrases (numbered 1..={found}, split at line breaks and sentence punctuation)"
+        ));
+    }
+    Ok(())
 }
 
 /// Source locations use Unicode scalars; dictionary segmentation never fabricates spans.
@@ -236,37 +304,85 @@ impl Session {
         text: &str,
         readings: &[PhraseReading],
     ) -> Result<LyricsAnalysis, String> {
-        if text.len() > MAX_TEXT_BYTES || readings.len() > MAX_PHRASES {
-            return Err("Lyrics are limited to 65536 bytes and 512 phrase readings".into());
+        self.analyze_lyrics_fitted(text, readings, &[])
+    }
+
+    /// [`Self::analyze_lyrics`], also checking phrases against the note counts they must fit.
+    pub fn analyze_lyrics_fitted(
+        &self,
+        text: &str,
+        readings: &[PhraseReading],
+        fits: &[PhraseFit],
+    ) -> Result<LyricsAnalysis, String> {
+        if text.len() > MAX_TEXT_BYTES || readings.len() > MAX_PHRASES || fits.len() > MAX_PHRASES {
+            return Err("Lyrics are limited to 65536 bytes and 512 phrase readings or fits".into());
         }
         let sources = source_phrases(text);
         if sources.len() > MAX_PHRASES {
             return Err("Lyrics are limited to 512 musical phrases".into());
         }
+        let phrases_found = sources.len();
         let mut overrides = std::collections::BTreeMap::new();
-        for reading in readings {
-            if reading.phrase == 0
-                || reading.phrase > sources.len()
-                || overrides
-                    .insert(reading.phrase, reading.kana.as_str())
-                    .is_some()
-                || reading.kana.len() > MAX_TEXT_BYTES
+        for (index, reading) in readings.iter().enumerate() {
+            phrase_number("readings", index, reading.phrase, phrases_found)?;
+            if overrides
+                .insert(reading.phrase, reading.kana.as_str())
+                .is_some()
+            {
+                return Err(format!(
+                    "readings[{index}] names phrase {} a second time",
+                    reading.phrase
+                ));
+            }
+            if reading.kana.len() > MAX_TEXT_BYTES
                 || reading.kana.chars().any(delimiter)
                 || split_kana_lyric(&reading.kana).is_none_or(|m| m.is_empty())
             {
-                return Err("Readings need unique existing one-based phrases and nonempty kana without phrase breaks".into());
+                return Err(format!(
+                    "readings[{index}] needs nonempty kana without line breaks or sentence punctuation"
+                ));
+            }
+        }
+        let mut targets = std::collections::BTreeMap::new();
+        for (index, fit) in fits.iter().enumerate() {
+            phrase_number("fit", index, fit.phrase, phrases_found)?;
+            if !(1..=256).contains(&fit.notes) {
+                return Err(format!("fit[{index}] needs 1..=256 notes"));
+            }
+            if targets.insert(fit.phrase, fit.notes).is_some() {
+                return Err(format!(
+                    "fit[{index}] names phrase {} a second time",
+                    fit.phrase
+                ));
             }
         }
         let mut phrases = Vec::with_capacity(sources.len());
         for (index, (line, start_char, end_char, text)) in sources.into_iter().enumerate() {
             let phrase = index + 1;
             let explicit = overrides.get(&phrase);
+            let mut word_starts = Vec::new();
             let read = match explicit {
-                Some(kana) => auris_vocal::kana_accent_phrase(kana)
-                    .map(|p| p.moras)
-                    .ok_or_else(|| "Invalid explicit reading".to_string()),
+                Some(kana) => {
+                    super::lyric_slots::spoken_reading(text, kana, self.japanese.as_ref())
+                        .filter(|moras| !moras.is_empty())
+                        .map(|moras| {
+                            moras
+                                .into_iter()
+                                .map(|(text, phonemes)| SungMora { text, phonemes })
+                                .collect::<Vec<_>>()
+                        })
+                        .ok_or_else(|| "Invalid explicit reading".to_string())
+                }
                 None => lyrics::read_lyrics(text, self.japanese.as_ref())
-                    .map(|p| p.into_iter().flat_map(|p| p.moras).collect())
+                    .map(|read| {
+                        let mut moras = Vec::new();
+                        for phrase in read {
+                            let offset = moras.len();
+                            word_starts.extend(phrase.group_starts.iter().map(|at| at + offset));
+                            moras.extend(phrase.moras);
+                        }
+                        moras
+                    })
                     .map_err(|e| e.to_string()),
             };
             let (reading_source, moras, error) = match read {
@@ -288,6 +404,39 @@ impl Session {
                 ),
                 Err(error) => (ReadingSource::Unavailable, Vec::new(), Some(error)),
             };
+            let borrowed: Vec<(&str, &[String])> = moras
+                .iter()
+                .map(|m| (m.text.as_str(), m.phonemes.as_slice()))
+                .collect();
+            let slots = mora_slots(&borrowed, &word_starts);
+            let (min_notes, max_notes) = note_range(&slots);
+            let fit = targets
+                .get(&phrase)
+                .filter(|_| error.is_none())
+                .map(|&notes| NoteFit {
+                    notes,
+                    verdict: if notes < min_notes {
+                        FitVerdict::TooManyMoras
+                    } else if notes > max_notes {
+                        FitVerdict::TooFewMoras
+                    } else {
+                        FitVerdict::Fits
+                    },
+                    excess: if notes < min_notes {
+                        (min_notes - notes) as isize
+                    } else if notes > max_notes {
+                        -((notes - max_notes) as isize)
+                    } else {
+                        0
+                    },
+                });
+            let layout = fit
+                .as_ref()
+                .filter(|fit| fit.verdict == FitVerdict::Fits)
+                .map_or(max_notes, |fit| fit.notes);
+            let texts: Vec<&str> = borrowed.iter().map(|(t, _)| *t).collect();
+            let note_reading = note_groups(&slots, layout)
+                .map(|sizes| grouped_reading(&texts, &sizes, &word_starts));
             phrases.push(PhraseAnalysis {
                 phrase,
                 line,
@@ -301,9 +450,16 @@ impl Session {
                 moras: moras
                     .iter()
                     .enumerate()
-                    .map(|(i, m)| mora_analysis(m, i + 1))
+                    .map(|(i, m)| MoraAnalysis {
+                        slot: slots[i],
+                        ..mora_analysis(m, i + 1)
+                    })
                     .collect(),
                 error,
+                min_notes,
+                max_notes,
+                note_reading,
+                fit,
             });
         }
         Ok(LyricsAnalysis {

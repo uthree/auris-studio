@@ -88,6 +88,22 @@ This is a small metadata fixture, not an estimate of accuracy on an audio librar
 `cargo test -p auris-agent live_configured_model_selects_icons_from_metadata -- --ignored --nocapture`;
 it sends those synthetic names and counts to the configured backend.
 
+## Track colors from clusters
+
+**Colour Tracks by Group**, beside the legend, tints every track whose sound the map measured in
+its cluster's color, as one undoable step. A single track's menu offers the same thing as
+**Colour: Sound Group**; before any scan, choosing it opens the map, scans, and colors that track
+when the scan finishes (closing the map or rescanning first forgets the request). Only what was
+measured is answered for: a melodic track on a SoundFont preset, matched by font, bank and patch,
+or a built-in instrument still on its default patch. Drum kits, singers, audio, buses, hosted
+plugins and edited built-in patches keep their colors.
+
+Unlike the cluster labels, the result is part of the document: a track stores an RGB value, and a
+value outside the eight palette slots is read as a hue offset from the theme's accent. The value
+stored is the one carrying the same offset as the cluster's categorical hue, so the track draws in
+the map's hue in this theme and both move together under another. Cluster ids are only stable
+within a scan, so nothing re-colors a track by itself after a rescan; run the command again.
+
 ## Measurement and coordinates
 
 ### Sound character and impression search

@@ -9,6 +9,9 @@ use serde_json::{Value, json};
 
 use crate::{Session, TimbreSound};
 
+/// Chord and timbre references are a few kilobytes; this only refuses something that is not one.
+const MAX_MUSIC_REFERENCE_BYTES: usize = 256 * 1024;
+
 /// Parse bar-delimited chords in a captured key and meter without changing the song.
 /// Chords within a bar divide its duration equally; both absolute names and numerals work.
 pub fn chord_reference(text: &str, key: Key, meter: TimeSignature) -> Result<Value, String> {
@@ -70,7 +73,7 @@ pub fn sound_reference(session: &Session, sound: &TimbreSound) -> Value {
 /// Save an immutable, bounded JSON attachment. No source project is modified.
 pub fn save_snapshot(value: &Value, directory: &Path, label: &str) -> Result<PathBuf, String> {
     let bytes = serde_json::to_vec_pretty(value).map_err(|e| e.to_string())?;
-    if bytes.len() > crate::midi_reference::MAX_REFERENCE_BYTES {
+    if bytes.len() > MAX_MUSIC_REFERENCE_BYTES {
         return Err("Music reference is too large".into());
     }
     std::fs::create_dir_all(directory).map_err(|e| e.to_string())?;

@@ -400,6 +400,7 @@ impl AurisApp {
             Ok(()) => {
                 self.set_status(crate::app::audio_line(
                     &self.session.audio_status(),
+                    self.session.audio_suspended(),
                     self.language(),
                 ));
                 true

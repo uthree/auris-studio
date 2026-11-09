@@ -49,6 +49,7 @@ impl AurisApp {
             self.canvas.ruler.set(None);
             self.canvas.structure.set(None);
             self.canvas.harmony.set(None);
+            self.canvas.lyrics.set(None);
         } else {
             self.track_grid.frozen = false;
             self.track_grid.frames.clear();
@@ -210,10 +211,7 @@ impl AurisApp {
         };
         let theme = &self.theme;
         let instrument = instrument_id(&track.kind);
-        let label = instrument.map_or_else(
-            || self.t(crate::i18n::track_kind_key(&track.kind)).to_owned(),
-            |instrument| self.instrument_label(id, instrument),
-        );
+        let label = self.track_sound_label(id).text(self.language);
         let selected = self.selected_track == Some(id);
         let frame = self
             .track_grid
@@ -481,7 +479,7 @@ mod tests {
                 .unwrap();
             let chip = app
                 .session
-                .add_instrument_track("Chip", "auris.synth.chiptune")
+                .add_instrument_track("Noise", "auris.synth.noisedrum")
                 .unwrap();
             let audio = app.session.add_audio_track("Audio");
             let bus = app.session.add_bus_track("Bus");

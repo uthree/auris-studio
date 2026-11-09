@@ -253,6 +253,16 @@ fn run(program: &Path, arguments: &[&str]) -> Result<String, VideoError> {
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
+/// The audio filter that starts the soundtrack `delay` seconds in and pads it with silence.
+fn audio_filter(delay: f64) -> String {
+    let milliseconds = (delay.max(0.0) * 1000.0).round() as u64;
+    if milliseconds == 0 {
+        "apad".to_owned()
+    } else {
+        format!("adelay=delays={milliseconds}:all=1,apad")
+    }
+}
+
 /// A running ffmpeg turning raw frames into an `.mp4`.
 ///
 /// Dropping it before [`Self::finish`] stops the process, which is how a cancelled export ends.
@@ -266,6 +276,11 @@ pub struct VideoWriter {
 impl VideoWriter {
     /// Starts ffmpeg writing `output`, from frames of `size` at `fps` and the audio in `audio`.
     ///
+    /// The audio starts `audio_delay` seconds into the video, and when it is shorter than the
+    /// frames it is padded with silence to their end: the soundtrack is written out sample by
+    /// sample, rather than left to end early or to start late on a timestamp, which some
+    /// players and upload sites ignore.
+    ///
     /// Frames are RGBA, eight bits a channel, rows top to bottom with no padding — what a
     /// `tiny_skia::Pixmap` holds when everything in it is opaque.
     pub fn start(
@@ -273,6 +288,7 @@ impl VideoWriter {
         size: VideoSize,
         fps: u32,
         audio: Option<&Path>,
+        audio_delay: f64,
         output: &Path,
     ) -> Result<Self, VideoError> {
         let mut command = command(&ffmpeg.path);
@@ -295,6 +311,9 @@ impl VideoWriter {
         }
         command.args(ffmpeg.codec.arguments(size, fps));
         if audio.is_some() {
+            command.arg("-af").arg(audio_filter(audio_delay));
+            // The frames say how long the video is; the padded soundtrack would go on for ever.
+            command.arg("-shortest");
             command.args(["-c:a", "aac", "-b:a", "256k"]);
         }
         command.args(["-movflags", "+faststart", "-f", "mp4"]);

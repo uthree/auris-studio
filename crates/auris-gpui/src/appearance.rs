@@ -150,6 +150,20 @@ impl CustomScheme {
     }
 }
 
+/// How the top of the editor window is arranged.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum TopBarLayout {
+    /// The title bar with the menus, and under it the transport in a row of its own: grid and
+    /// zoom at one end, playback and the captioned readouts in the middle, the meters at the
+    /// other. Roomier and easier to read, at the cost of one more row.
+    #[default]
+    Spacious,
+    /// One bar: in a window wide enough to hold it, the title bar carries the transport too,
+    /// each readout on one line with its caption in a tooltip.
+    Compact,
+}
+
 /// Everything in `appearance.json`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -167,6 +181,8 @@ pub struct Appearance {
     pub glass_effect: bool,
     /// Palettes created in the settings window.
     pub custom_schemes: Vec<CustomScheme>,
+    /// Whether the transport keeps a row of its own or joins the title bar.
+    pub top_bar_layout: TopBarLayout,
 }
 
 impl Default for Appearance {
@@ -178,6 +194,7 @@ impl Default for Appearance {
             animate_mixer_signals: true,
             glass_effect: true,
             custom_schemes: Vec::new(),
+            top_bar_layout: TopBarLayout::Spacious,
         }
     }
 }
@@ -295,6 +312,19 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_spacious_top_bar_is_the_default_and_the_compact_one_is_remembered() {
+        let empty: Appearance = serde_json::from_str("{}").unwrap();
+        assert_eq!(empty.top_bar_layout, TopBarLayout::Spacious);
+        let compact: Appearance = serde_json::from_str(r#"{"top_bar_layout":"compact"}"#).unwrap();
+        assert_eq!(compact.top_bar_layout, TopBarLayout::Compact);
+        assert!(
+            serde_json::to_string(&compact)
+                .unwrap()
+                .contains(r#""top_bar_layout":"compact""#)
+        );
+    }
+
+    #[test]
     fn an_empty_or_unreadable_file_is_the_default_scheme() {
         let empty: Appearance = serde_json::from_str("{}").unwrap();
         assert_eq!(empty, Appearance::default());
@@ -390,6 +420,7 @@ mod tests {
             custom_schemes: vec![custom],
             animate_mixer_signals: false,
             glass_effect: false,
+            top_bar_layout: TopBarLayout::Compact,
         };
         let text = serde_json::to_string(&appearance).unwrap();
         let loaded = serde_json::from_str::<Appearance>(&text)
@@ -525,6 +556,7 @@ mod tests {
             custom_schemes: vec![invalid, valid.clone()],
             animate_mixer_signals: false,
             glass_effect: false,
+            top_bar_layout: TopBarLayout::Spacious,
         }
         .normalised();
         assert_eq!(appearance.scheme, DEFAULT_SCHEME);

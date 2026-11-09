@@ -453,6 +453,11 @@ impl AurisApp {
         move |event: &E, window: &mut Window, cx: &mut gpui::App| {
             let at = event.menu_at();
             view.update(cx, |this, cx| {
+                // A menu is drawn only in the window that last claimed input. A trigger in a
+                // utility window clicked straight after work in the main one would otherwise
+                // open its menu in the main window, out of sight — the plugin window's choices
+                // did exactly that until this claimed the window first.
+                this.claim_event_window(window);
                 let menu = build(this, at);
                 let opened = !menu.is_empty();
                 if opened && this.menu_focus_return.is_none() {
@@ -955,6 +960,7 @@ mod window_tests {
             ("signature", this.signature_menu(at, Ticks::ZERO)),
             ("structure", this.structure_menu(at, Ticks::ZERO)),
             ("harmony", this.harmony_menu(at, Ticks::ZERO)),
+            ("lyrics", this.lyrics_menu(at, Ticks::ZERO)),
             (
                 "progression picker",
                 this.progression_picker_menu(at, Ticks::ZERO),
@@ -962,6 +968,49 @@ mod window_tests {
             ("count-in", this.count_in_menu(at)),
             ("recent", this.recent_menu(at)),
         ]
+    }
+
+    #[gpui::test]
+    fn the_lyrics_lane_menu_fills_retypes_and_ends_lines(cx: &mut TestAppContext) {
+        let (app, cx) = open(cx);
+        app.update(cx, |this, cx| {
+            let track = this.session.add_singer_track("Vocal");
+            let clip = this
+                .session
+                .add_midi_clip(track, "Verse", Ticks::ZERO, Ticks(3840))
+                .unwrap();
+            for beat in 0..3 {
+                this.session
+                    .add_note(clip, Note::new(67, Ticks(beat * 960), Ticks(960)))
+                    .unwrap();
+            }
+            this.session
+                .write_lyrics(clip, &[0, 1, 2], "さくら")
+                .unwrap();
+            assert!(
+                this.project().lyrics.is_empty(),
+                "a clip edit leaves the lane alone"
+            );
+
+            this.run_menu_command(super::MenuCommand::LyricsFromVocals, cx);
+            assert_eq!(this.project().lyrics.text_at(Ticks(100)), Some("さくら"));
+            let menu = this.lyrics_menu(point(px(100.0), px(100.0)), Ticks(100));
+            assert_eq!(
+                menu.title.as_ref(),
+                "さくら",
+                "headed by the line under the pointer"
+            );
+            let removable = menu.entries.iter().any(|entry| {
+                matches!(entry, super::MenuEntry::Item(item)
+                    if matches!(item.command, super::MenuCommand::RemoveLyricLineAt(_)))
+            });
+            assert!(removable);
+
+            this.run_menu_command(super::MenuCommand::EndLyricLineAt(Ticks(960)), cx);
+            assert_eq!(this.project().lyrics.text_at(Ticks(1000)), None);
+            assert!(this.session.undo().is_some());
+            assert_eq!(this.project().lyrics.text_at(Ticks(1000)), Some("さくら"));
+        });
     }
 
     #[gpui::test]

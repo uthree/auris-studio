@@ -64,12 +64,6 @@ DeepSeek試行は送信、編集、エクスポートを証明しますが、厳
 
 標準編集／エクスポート、アレンジ、メロディー呼吸には `ui::agent_chat::tool_surface_eval` の該当テストを実行します。アレンジと呼吸には `AURIS_ARRANGEMENT_HARNESS=1` も必要です。
 
-完全な作曲とA/B聴取では、絶対 `workspace`、新規 `output`、UTF-8 `prompt`、`backend: "opencode"`、利用可能な `model`、`effort: "default"`、`timeout_seconds: 600`、`listening_required: true` を含む `AURIS_CODEX_TRANSCRIPTION_EVAL` を設定します。`allow_operations` の既定値は空です。必要なフィクスチャ許可だけを列挙してください。`AURIS_AUDIO_URL` と `AURIS_AUDIO_MODEL` を実音声対応批評モデルに向け、次を実行します。
-
-```sh
-cargo test -p auris-gpui --bins -- --ignored --exact ui::agent_chat::transcription_eval::installed_cli_composes_and_relistens_in_the_window --nocapture
-```
-
 独立ワーカーテスト `backends::opencode::evaluation::installed_opencode_checks_native_permissions_references_memory_and_stop` は `AURIS_OPENCODE_EVAL_MODEL` と新しい絶対 `AURIS_OPENCODE_EVAL_OUTPUT` を使います。ネイティブ拒否／承認、テキスト添付内容、交代ワーカーの会話メモリ、未対応手動圧縮、ファイルを作らない保留権限中のStopを確認します。
 
-別の無視テスト `installed_opencode_reads_image_and_audio_references` は、標準エクスポートの48 kHz・2秒WAVを指す `AURIS_OPENCODE_EVAL_AUDIO` も受け取ります。視覚対応コントローラーを選び、生成画像の色、音声長、`audio_sent: false` を確認します。この添付経路はローカル測定値を渡し、`listen` は実WAVバイトを別の批評モデルに送ります。
+別の無視テスト `installed_opencode_reads_image_and_audio_references` は、標準エクスポートの48 kHz・2秒WAVを指す `AURIS_OPENCODE_EVAL_AUDIO` も受け取ります。視覚対応コントローラーを選び、生成画像の色、音声長、`audio_sent: false` を確認します。この添付経路はローカル測定値を渡します。`listen` は音声入力を受け付けるモデルにしか使えないため、OpenCode には提示しません。

@@ -59,24 +59,32 @@ jobs:
       - name: Lint
         run: cargo clippy --workspace --all-targets --locked
 
+      # `--tests` builds and runs every unit and integration test but leaves the examples alone.
+      # Plain `cargo test` also links every example — more than two dozen executables, each
+      # carrying the whole dependency graph — and runs nothing in them; Clippy's `--all-targets`
+      # above already type-checks them. Doctests are platform-independent, so they run here
+      # only, as their own step.
       - name: Test
-        run: cargo test --workspace --locked --timings
+        run: cargo test --workspace --tests --locked --timings
+
+      - name: Doctests
+        run: cargo test --workspace --doc --locked
 
       - name: Test the release update helper
         run: cargo test -p auris-update-helper --release --locked
 
-      # The forks are excluded from the workspace, so `--workspace` never reached them and
-      # nothing was running the tests that guard them. For `vendor/vst3-host` that is the whole
-      # of its cover: its 240 tests include the single-owner realtime path the fork exists for
-      # and the process isolation around a plugin that crashes, while `crates/auris-vst3` has
-      # thirteen tests of its own and its one end-to-end test needs an external plugin bundle, so
-      # it is `#[ignore]`d here. Two steps rather than one `run:` with two lines, because a
-      # multi-command `run:` on the Windows job reports only the last command's exit code.
+      # The forks are excluded from the workspace, so `--workspace` never reaches them and nothing
+      # else runs the tests that guard them. For `vendor/vst3-host` that is the whole of its cover:
+      # the single-owner realtime path the fork exists for and the process isolation around a
+      # plugin that crashes. Two steps rather than one `run:` with two lines, because a
+      # multi-command `run:` on the Windows job reports only the last command's exit code. Not
+      # `--locked`: each fork's lock file is gitignored on purpose (see `.gitignore`), so there is
+      # no lock to hold them to.
       - name: Test the vendored VST3 host
-        run: cargo test --manifest-path vendor/vst3-host/Cargo.toml --locked
+        run: cargo test --manifest-path vendor/vst3-host/Cargo.toml
 
       - name: Test the vendored synthesiser
-        run: cargo test --manifest-path vendor/rustysynth/Cargo.toml --locked
+        run: cargo test --manifest-path vendor/rustysynth/Cargo.toml
 
       # The documentation is checked the same way the code is, and on this job because it is the
       # one that builds every crate including the frontend. Nothing was checking it before, which
@@ -105,8 +113,9 @@ jobs:
   # gpui's `platform` modifier is ⌘ on macOS and the Windows key on Windows, and half the
   # behaviour that follows from that is decided by `cfg!` rather than by types.
   #
-  # Exercise the default WASAPI build before preparing ASIO's optional LLVM dependency,
-  # then test the feature used by the shipped Windows binaries in the same cached job.
+  # This is the default WASAPI build, which needs no LLVM; the ASIO build the releases ship is
+  # the next job. They were one job, and since `asio` changes cpal's features every workspace
+  # crate compiled twice in a row on the slowest runner — the critical path of the whole run.
   windows:
     name: Test on Windows
     runs-on: windows-latest
@@ -131,8 +140,9 @@ jobs:
       # No audio device and no GPU on the runner; every test that needs either checks first and
       # skips. What this does exercise is every `cfg!(target_os = ...)` arm the other two jobs
       # never take — the key bindings, the pointer gestures, the menu bar and the locale.
+      # `--tests` skips linking the examples, as on macOS.
       - name: Test the default Windows build
-        run: cargo test --workspace --locked --timings
+        run: cargo test --workspace --tests --locked --timings
 
       # Unit tests run on test-runner threads with larger stacks. Launch the actual
       # optimized helper too, using the same main-thread stack as the shipped binary.
@@ -143,10 +153,44 @@ jobs:
       # a different file per platform, and the Windows one — a private-namespace `LoadLibrary`
       # with its own tests — compiles nowhere else.
       - name: Test the vendored VST3 host
-        run: cargo test --manifest-path vendor/vst3-host/Cargo.toml --locked
+        run: cargo test --manifest-path vendor/vst3-host/Cargo.toml
 
       - name: Test the vendored synthesiser
-        run: cargo test --manifest-path vendor/rustysynth/Cargo.toml --locked
+        run: cargo test --manifest-path vendor/rustysynth/Cargo.toml
+
+      - name: Upload build timings
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cargo-timings-${{ runner.os }}-${{ runner.arch }}
+          path: target/cargo-timings/*.html
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # The feature the shipped Windows binaries are built with, alongside the default build rather
+  # than after it.
+  windows-asio:
+    name: Test on Windows with ASIO
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Install the toolchain
+        run: rustup toolchain install stable --profile minimal --component clippy
+
+      # Restore the default Windows job's cache rather than keep one of its own: rust-cache
+      # keys by job, and a key of this job's own started cold on every pull request until main
+      # had saved it (52 minutes on the first run). Everything below cpal is the same build; only
+      # cpal, asio-sys and what depends on them compile again. Only the default job saves, so
+      # the two never race for the key.
+      - name: Cache the build
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          prefix-key: v1-build-performance
+          shared-key: windows
+          save-if: false
 
       - name: Prepare LLVM for ASIO
         shell: pwsh
@@ -156,13 +200,13 @@ jobs:
         run: cargo clippy --workspace --all-targets --locked --features asio
 
       - name: Test with ASIO
-        run: cargo test --workspace --locked --features asio --timings
+        run: cargo test --workspace --tests --locked --features asio --timings
 
       - name: Upload build timings
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: cargo-timings-${{ runner.os }}-${{ runner.arch }}
+          name: cargo-timings-${{ runner.os }}-${{ runner.arch }}-asio
           path: target/cargo-timings/*.html
           if-no-files-found: ignore
           retention-days: 7
@@ -201,16 +245,16 @@ jobs:
       # The runner has no audio device and no GPU. Every test that needs either checks first and
       # skips, so this exercises the DSP, the document model and the whole render path.
       - name: Test
-        run: cargo test --workspace --exclude auris-gpui --locked --timings
+        run: cargo test --workspace --exclude auris-gpui --tests --locked --timings
 
       # The forks are part of the backend this job exists to keep honest, and this is where the
       # XCB headers above are installed for — so the host's third module loader is compiled here
       # and may as well be tested here.
       - name: Test the vendored VST3 host
-        run: cargo test --manifest-path vendor/vst3-host/Cargo.toml --locked
+        run: cargo test --manifest-path vendor/vst3-host/Cargo.toml
 
       - name: Test the vendored synthesiser
-        run: cargo test --manifest-path vendor/rustysynth/Cargo.toml --locked
+        run: cargo test --manifest-path vendor/rustysynth/Cargo.toml
 
       - name: Upload build timings
         if: always()

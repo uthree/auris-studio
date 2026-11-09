@@ -2,7 +2,7 @@
 
 use super::{Session, SingerTakeState};
 use auris_core::TrackId;
-use auris_sampler::SAMPLER_ID;
+use auris_sampler::{AUDIO_SAMPLER_ID, SAMPLER_ID};
 
 /// What will play for a track, independently of its mute/solo state.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
@@ -12,6 +12,8 @@ pub enum PlaybackState {
     Ready,
     /// The sampler has no loaded font and valid preset.
     MissingSoundfont,
+    /// The audio sampler names no sample, or its file could not be loaded.
+    MissingSample,
     /// The requested instrument could not be loaded.
     MissingInstrument,
     /// Singer notes play through the temporary guide synthesizer.
@@ -76,6 +78,12 @@ impl Session {
                         } else {
                             PlaybackState::MissingSoundfont
                         }
+                    } else if instrument.instrument_id == AUDIO_SAMPLER_ID {
+                        if self.track_sample_is_loaded(track.id) {
+                            PlaybackState::Ready
+                        } else {
+                            PlaybackState::MissingSample
+                        }
                     } else if self.registry.has_instrument(&instrument.instrument_id)
                         || self.hosted_instrument_name(track.id).is_some()
                     {
@@ -104,9 +112,13 @@ mod tests {
             .add_instrument_track("Empty sampler", SAMPLER_ID)
             .unwrap();
         session.add_singer_track("Unsung");
+        session
+            .add_instrument_track("Empty audio sampler", AUDIO_SAMPLER_ID)
+            .unwrap();
         let report = session.playback_readiness();
         assert_eq!(report[0].state, PlaybackState::MissingSoundfont);
         assert_eq!(report[1].state, PlaybackState::GuideVoice);
+        assert_eq!(report[2].state, PlaybackState::MissingSample);
         assert!(!session.general_midi_available());
         assert!(session.general_midi_presets().is_empty());
     }

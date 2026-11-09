@@ -74,6 +74,8 @@ pub(super) struct Tract {
     radiation_memory: f32,
     radiation_output: f32,
     radiation_pole: f32,
+    /// The profile being sung, glottis to lips, kept for the display.
+    areas: [f32; SECTIONS],
 }
 
 impl Tract {
@@ -94,6 +96,7 @@ impl Tract {
             radiation_memory: 0.0,
             radiation_output: 0.0,
             radiation_pole: (-std::f32::consts::TAU * RADIATION_HZ / sample_rate).exp(),
+            areas: AREAS[1],
         }
     }
 
@@ -124,6 +127,7 @@ impl Tract {
             profiles[first][i] + (profiles[first + 1][i] - profiles[first][i]) * blend
         });
         self.radiation_pole = (-std::f32::consts::TAU * radiation_hz / sample_rate).exp();
+        self.areas = areas;
         for (target, pair) in self.targets.iter_mut().zip(areas.windows(2)) {
             *target = (pair[0] - pair[1]) / (pair[0] + pair[1]);
         }
@@ -148,6 +152,25 @@ impl Tract {
         self.output_gain = self.target_output_gain;
         self.radiation_memory = 0.0;
         self.radiation_output = 0.0;
+    }
+
+    /// Pressure along the tract, glottis first, and each tube's cross-section relative to the
+    /// widest. Both waves are read where they are inside each tube: the one travelling to the
+    /// lips has come `s` of the way through it, the one travelling back `1 − s`.
+    pub(super) fn motion(&self, points: &mut [f32], areas: &mut [f32]) {
+        let last = points.len().saturating_sub(1).max(1) as f32;
+        let span = (self.delay - 1.0).max(0.0);
+        for (index, point) in points.iter_mut().enumerate() {
+            let along = index as f32 / last * SECTIONS as f32;
+            let section = (along as usize).min(SECTIONS - 1);
+            let s = (along - section as f32).clamp(0.0, 1.0);
+            *point = self.forward[section].read(1.0 + s * span)
+                + self.backward[section].read(1.0 + (1.0 - s) * span);
+        }
+        let widest = self.areas.iter().fold(0.0_f32, |a, b| a.max(*b)).max(1e-6);
+        for (out, area) in areas.iter_mut().zip(self.areas) {
+            *out = area / widest;
+        }
     }
 
     pub(super) fn next(&mut self, excitation: f32) -> f32 {

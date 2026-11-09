@@ -1,5 +1,6 @@
 //! Typed, partial edits of the open clip's non-destructive performance.
 mod effects;
+pub mod presets;
 #[cfg(test)]
 mod tests;
 use super::*;
@@ -69,6 +70,7 @@ fn family(stage: &NoteTransform) -> Option<ResetStage> {
     Some(match stage {
         NoteTransform::Swing { .. } => ResetStage::Swing,
         NoteTransform::Gate { .. } => ResetStage::Gate,
+        NoteTransform::Sustain { .. } => ResetStage::Sustain,
         NoteTransform::Expression { .. } | NoteTransform::Humanize { .. } => ResetStage::Expression,
         NoteTransform::Strum { .. } | NoteTransform::Stroke { .. } => ResetStage::Strum,
         NoteTransform::Ghost { .. } | NoteTransform::Brush { .. } => ResetStage::Ghost,
@@ -94,8 +96,9 @@ fn rank(stage: &NoteTransform) -> usize {
         NoteTransform::Strum { .. } | NoteTransform::Stroke { .. } => 6,
         NoteTransform::Lean { .. } | NoteTransform::ForDrumVoice { .. } => 7,
         NoteTransform::Humanize { .. } | NoteTransform::Expression { .. } => 8,
-        NoteTransform::Pitch { .. } => 9,
-        NoteTransform::Octaves { .. } => 10,
+        NoteTransform::Sustain { .. } => 9,
+        NoteTransform::Pitch { .. } => 10,
+        NoteTransform::Octaves { .. } => 11,
     }
 }
 
@@ -260,7 +263,8 @@ impl Session {
                 "swing_percent": "50..75 percent",
                 "times": "milliseconds",
                 "pitch_depths": "semitones",
-                "lean_ticks": "960 ticks per quarter note"
+                "lean_ticks": "960 ticks per quarter note",
+                "sustain_ticks": "960 ticks per quarter note"
             },
             "settings": {
                 "humanize": match scalar(ResetStage::Expression) {
@@ -279,6 +283,10 @@ impl Session {
                 "gate": match scalar(ResetStage::Gate) {
                     Some(NoteTransform::Gate { amount }) => *amount,
                     _ => 1.0
+                },
+                "sustain_ticks": match scalar(ResetStage::Sustain) {
+                    Some(NoteTransform::Sustain { ticks }) => *ticks,
+                    _ => 0
                 },
                 "mute": match scalar(ResetStage::Mute) {
                     Some(NoteTransform::Mute { amount }) => *amount,
@@ -340,6 +348,9 @@ impl Session {
         voice: Option<&str>,
         patch: PerformancePatch,
     ) -> Result<String, String> {
+        let swing_changed = patch.swing_percent.is_some()
+            || patch.swing_grid.is_some()
+            || patch.reset.contains(&ResetStage::Swing);
         let outer = self.prepare_agent_performance(clip, voice, patch)?;
         self.begin_transaction(crate::Edit::SetClipTransforms(clip));
         let result = self
@@ -347,7 +358,16 @@ impl Session {
             .map_err(|e| e.to_string());
         self.end_transaction();
         result?;
-        self.agent_inspect_performance(clip, voice)
+        let report = self.agent_inspect_performance(clip, voice)?;
+        match swing_changed.then(|| mixed_swing(self.project())).flatten() {
+            Some(warning) => {
+                let mut report: serde_json::Value =
+                    serde_json::from_str(&report).map_err(|e| e.to_string())?;
+                report["swing_warning"] = warning.into();
+                Ok(report.to_string())
+            }
+            None => Ok(report),
+        }
     }
 
     pub(crate) fn prepare_agent_performance(
@@ -362,7 +382,27 @@ impl Session {
                 "Supply at least one performance setting or an explicit reset stage".into(),
             );
         }
-        let (mut stack, melodic) = self.performance_scope(clip, voice)?;
+        let (stack, melodic) = self.performance_scope(clip, voice)?;
+        let stack = self.patched_stack(stack, melodic, clip.0, &patch)?;
+        let mut outer = self
+            .clip_transforms(clip)
+            .map_err(|e| e.to_string())?
+            .to_vec();
+        scope_into(&mut outer, voice, stack);
+        Ok(outer)
+    }
+
+    /// Applies a validated patch's edits to one stage list, which may be empty.
+    ///
+    /// `seed` is the take a newly installed random stage starts from; `melodic` false refuses
+    /// the pitch and octave controls.
+    pub(crate) fn patched_stack(
+        &self,
+        mut stack: Vec<NoteTransform>,
+        melodic: bool,
+        seed: u64,
+        patch: &PerformancePatch,
+    ) -> Result<Vec<NoteTransform>, String> {
         if !melodic
             && (patch.pitch.is_some()
                 || patch.octave_above.is_some()
@@ -378,7 +418,7 @@ impl Session {
                 .iter()
                 .any(|s| matches!(s, NoteTransform::Expression { .. }))
             {
-                let mut settings = expression(&stack, clip.0);
+                let mut settings = expression(&stack, seed);
                 let peak = settings.timing.max(settings.velocity);
                 if peak > 0.0 {
                     settings.timing *= amount / peak;
@@ -398,7 +438,7 @@ impl Session {
                     .find(|s| matches!(s, NoteTransform::Humanize { .. }))
                 {
                     Some(NoteTransform::Humanize { seed, .. }) => *seed,
-                    _ => clip.0,
+                    _ => seed,
                 };
                 replace(
                     &mut stack,
@@ -408,7 +448,7 @@ impl Session {
             }
         }
         if let Some(update) = &patch.expression {
-            let settings = merge(expression(&stack, clip.0), update)?;
+            let settings = merge(expression(&stack, seed), update)?;
             replace(
                 &mut stack,
                 ResetStage::Expression,
@@ -441,6 +481,13 @@ impl Session {
                 &mut stack,
                 ResetStage::Gate,
                 (amount < 1.0).then_some(NoteTransform::Gate { amount }),
+            );
+        }
+        if let Some(ticks) = patch.sustain_ticks {
+            replace(
+                &mut stack,
+                ResetStage::Sustain,
+                (ticks > 0).then_some(NoteTransform::Sustain { ticks }),
             );
         }
         if let Some(amount) = patch.mute {
@@ -480,7 +527,7 @@ impl Session {
             );
         }
         if patch.brush.is_some() || patch.ghost.is_some() {
-            let mut settings = ghost(&stack, clip.0);
+            let mut settings = ghost(&stack, seed);
             if let Some(brush) = patch.brush {
                 settings.velocity = 0.3 * brush;
             }
@@ -558,41 +605,83 @@ impl Session {
                 }),
             );
         }
-        let mut outer = self
-            .clip_transforms(clip)
-            .map_err(|e| e.to_string())?
-            .to_vec();
-        if let Some(voice) = voice {
-            let at = outer.iter().position(
-                |s| matches!(s,NoteTransform::ForDrumVoice{voice:held,..} if held==voice),
-            );
-            match (at, stack.is_empty()) {
-                (Some(at), _) => {
-                    outer[at] = NoteTransform::ForDrumVoice {
+        Ok(stack)
+    }
+}
+
+/// Writes `stack` into `outer`: as the whole clip's stages, or as one drum writer's scope.
+fn scope_into(outer: &mut Vec<NoteTransform>, voice: Option<&str>, stack: Vec<NoteTransform>) {
+    if let Some(voice) = voice {
+        let at = outer
+            .iter()
+            .position(|s| matches!(s,NoteTransform::ForDrumVoice{voice:held,..} if held==voice));
+        match (at, stack.is_empty()) {
+            (Some(at), _) => {
+                outer[at] = NoteTransform::ForDrumVoice {
+                    voice: voice.into(),
+                    transforms: stack,
+                }
+            }
+            (None, false) => {
+                let at = outer
+                    .iter()
+                    .position(|s| rank(s) > 7)
+                    .unwrap_or(outer.len());
+                outer.insert(
+                    at,
+                    NoteTransform::ForDrumVoice {
                         voice: voice.into(),
                         transforms: stack,
-                    }
-                }
-                (None, false) => {
-                    let at = outer
-                        .iter()
-                        .position(|s| rank(s) > 7)
-                        .unwrap_or(outer.len());
-                    outer.insert(
-                        at,
-                        NoteTransform::ForDrumVoice {
-                            voice: voice.into(),
-                            transforms: stack,
-                        },
-                    );
-                }
-                (None, true) => {}
+                    },
+                );
             }
-        } else {
-            outer = stack;
+            (None, true) => {}
         }
-        Ok(outer)
+    } else {
+        *outer = stack;
     }
+}
+
+/// Says which tracks are swung differently, when the song's parts disagree about swing.
+///
+/// Swing is one decision for the whole band: a part swung alone, or at another amount, plays
+/// its offbeats against the others' at a different time, and that is heard as the part being
+/// out of time rather than as a feel. A track counts by the swing on its clips that hold notes;
+/// a clip-level swing is the only one there is, so a track whose clips disagree counts twice.
+pub(crate) fn mixed_swing(project: &auris_core::Project) -> Option<String> {
+    let mut feels: std::collections::BTreeMap<String, Vec<&str>> = Default::default();
+    for track in &project.tracks {
+        let Some(clips) = track.kind.note_clips() else {
+            continue;
+        };
+        let mut seen = std::collections::BTreeSet::new();
+        for clip in clips.iter().filter(|clip| !clip.notes.is_empty()) {
+            let feel = clip
+                .transforms
+                .iter()
+                .find_map(|stage| match stage {
+                    NoteTransform::Swing {
+                        percent,
+                        subdivision,
+                    } if *percent > 50 => Some(format!("{percent}% {}", subdivision.name())),
+                    _ => None,
+                })
+                .unwrap_or_else(|| "straight".to_owned());
+            if seen.insert(feel.clone()) {
+                feels.entry(feel).or_default().push(&track.name);
+            }
+        }
+    }
+    (feels.len() > 1).then(|| {
+        let parts: Vec<String> = feels
+            .iter()
+            .map(|(feel, tracks)| format!("{feel}: {}", tracks.join(", ")))
+            .collect();
+        format!(
+            "Parts disagree about swing ({}). Give every part sharing the grid, vocal included, the same swing, or leave them all straight.",
+            parts.join("; ")
+        )
+    })
 }
 
 /// Edits selected controls without rewriting a clip's stored notes.
@@ -600,12 +689,16 @@ impl Session {
 #[serde(default, deny_unknown_fields)]
 pub struct PerformancePatch {
     /// Remove selected stage families before applying the supplied edits.
-    #[schemars(length(max = 12))]
+    #[schemars(length(max = 13))]
     pub reset: Vec<ResetStage>,
     /// Combined timing/velocity wander, 0..1; individual expression fields override it.
     #[schemars(range(min = 0, max = 1))]
     pub humanize: Option<f32>,
-    /// Offbeat position, 50..75 percent; 50 is straight.
+    /// Offbeat position, 50..75 percent; 50 is straight. Swing is the song's feel, not
+    /// seasoning: leave a straight song (most pop, rock, J-pop and EDM) at 50. Where the genre
+    /// swings (shuffle, jazz, funk), give every part sharing the grid, vocal included, the same
+    /// percent and grid. A part swung alone plays its offbeats late against the rest: 57% eighth
+    /// swing is about 35 ms at 120 BPM, which a listener hears as the part dragging.
     #[schemars(range(min = 50, max = 75))]
     pub swing_percent: Option<u8>,
     /// Swing subdivision.
@@ -614,6 +707,11 @@ pub struct PerformancePatch {
     /// Held fraction of written note lengths, 0.05..1.
     #[schemars(range(min = 0.05, max = 1))]
     pub gate: Option<f32>,
+    /// Ticks added to every release, like a held sustain pedal; 960 ticks is one quarter note
+    /// and 0 removes it. A note stops where the same pitch is struck again and at the clip end;
+    /// attacks do not move and no notes are added.
+    #[schemars(range(min = 0, max = 3840))]
+    pub sustain_ticks: Option<i64>,
     /// Muted retrigger strength, 0..1.
     #[schemars(range(min = 0, max = 1))]
     pub mute: Option<f32>,
@@ -796,6 +894,8 @@ pub enum ResetStage {
     Swing,
     /// Remove the gate family, including its legacy representation.
     Gate,
+    /// Remove the sustain (held release) stage.
+    Sustain,
     /// Remove the expression family, including its legacy representation.
     Expression,
     /// Remove the strum family, including its legacy representation.
@@ -827,8 +927,8 @@ fn bounded(name: &str, value: f64, min: f64, max: f64) -> Result<(), String> {
 
 impl PerformancePatch {
     fn validate(&self) -> Result<(), String> {
-        if self.reset.len() > 12 {
-            return Err("reset accepts at most 12 stage families".into());
+        if self.reset.len() > 13 {
+            return Err("reset accepts at most 13 stage families".into());
         }
         let fields = serde_json::to_value(self).map_err(|e| e.to_string())?;
         for name in ["expression", "strum", "ghost", "pitch", "groove"] {
@@ -844,6 +944,9 @@ impl PerformancePatch {
         }
         if let Some(value) = self.gate {
             bounded("PerformancePatch.gate", value as f64, 0.05, 1.0)?;
+        }
+        if let Some(value) = self.sustain_ticks {
+            bounded("PerformancePatch.sustain_ticks", value as f64, 0.0, 3840.0)?;
         }
         if let Some(value) = self.mute {
             bounded("PerformancePatch.mute", value as f64, 0.0, 1.0)?;

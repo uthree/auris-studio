@@ -1,6 +1,7 @@
 //! Local slash commands and completion shared by both conversation composers.
 use super::agent_chat::{ModelOption, model_search};
 use crate::{app::AurisApp, theme::Theme};
+use auris_agent::PhaseCommand;
 use auris_i18n::{Key, Language};
 use auris_session::agent_policy::OPERATIONS;
 use gpui::{AnyElement, IntoElement, MouseButton, MouseDownEvent, div, prelude::*};
@@ -179,12 +180,48 @@ impl Completions {
 
 /// Localized help always reflects the same catalogue as completion.
 pub(crate) fn help(scope: Scope, language: Language) -> String {
-    SLASH_COMMANDS
-        .iter()
-        .filter(|(name, _, _)| scope.supports(name))
+    catalogue(scope)
         .map(|(name, _, description)| format!("{name} — {}", description.get(language)))
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// What a composition command says it does, beside its name.
+fn phase_key(command: PhaseCommand) -> Key {
+    match command {
+        PhaseCommand::Compose => Key::AgentSlashCompose,
+        PhaseCommand::Draft => Key::AgentSlashDraft,
+        PhaseCommand::Mix => Key::AgentSlashMix,
+        PhaseCommand::Review => Key::AgentSlashReview,
+    }
+}
+
+/// Every command a scope offers: the local controls, then the composition commands, which go
+/// to the model as an assignment and so exist only where a model is driven from this panel.
+fn catalogue(scope: Scope) -> impl Iterator<Item = (&'static str, bool, Key)> {
+    let phases = matches!(scope, Scope::Agent)
+        .then_some(PhaseCommand::ALL)
+        .into_iter()
+        .flatten()
+        .map(|command| {
+            (
+                command.name(),
+                command.needs_instruction(),
+                phase_key(command),
+            )
+        });
+    SLASH_COMMANDS
+        .iter()
+        .copied()
+        .filter(move |(name, _, _)| scope.supports(name))
+        .chain(phases)
+}
+
+/// The composition command that was typed without the brief it needs, if any.
+pub(crate) fn missing_brief(text: &str) -> Option<&'static str> {
+    PhaseCommand::parse(text)
+        .filter(|(command, instruction)| command.needs_instruction() && instruction.is_empty())
+        .map(|(command, _)| command.name())
 }
 
 const SLASH_COMMANDS: &[(&str, bool, Key)] = &[
@@ -215,10 +252,8 @@ pub(crate) fn slash_matches(value: &str, models: &[ModelOption], scope: Scope) -
         return Vec::new();
     }
     let Some((command, argument)) = value.split_once(' ') else {
-        return SLASH_COMMANDS
-            .iter()
-            .copied()
-            .filter(|(name, _, _)| scope.supports(name) && name.starts_with(value))
+        return catalogue(scope)
+            .filter(|(name, _, _)| name.starts_with(value))
             .map(|(name, takes_argument, description)| SlashMatch {
                 fill: format!("{name}{}", if takes_argument { " " } else { "" }),
                 label: name.to_string(),

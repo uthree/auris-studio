@@ -82,6 +82,11 @@ impl AurisApp {
                         Some(crate::ui::prompt::PromptTarget::AgentChordReference { .. })
                             | Some(crate::ui::prompt::PromptTarget::WorkshopFeedback { .. })
                             | Some(crate::ui::prompt::PromptTarget::WorkshopThreadName { .. })
+                    ) || matches!(
+                        &p.body,
+                        crate::ui::prompt::PromptBody::Ask(
+                            crate::ui::prompt::Question::DeleteWorkshopThread { .. }
+                        )
                     )
                 }))
     }

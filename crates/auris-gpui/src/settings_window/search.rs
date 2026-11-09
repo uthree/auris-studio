@@ -67,6 +67,8 @@ impl Section {
                 Key::PreferenceHelp,
                 Key::WorkshopMemory,
                 Key::WorkshopForget,
+                Key::PreferenceDigest,
+                Key::PreferenceDigestEdit,
             ],
             Self::Agent => &[
                 Key::AgentPanel,
@@ -153,6 +155,10 @@ impl Section {
             Self::Host => &[Key::AudioHost, Key::RefreshAudioDevices],
             Self::Toolbar => &[
                 Key::ToolbarHeading,
+                Key::TopBarLayout,
+                Key::TopBarLayoutNote,
+                Key::TopBarSpacious,
+                Key::TopBarCompact,
                 Key::ToolbarNote,
                 Key::ToolbarPlayback,
                 Key::ToolbarVisualizer,

@@ -110,7 +110,10 @@ impl ServerHandler for LiveTools {
         request: CallToolRequestParams,
         context: RequestContext<rmcp::RoleServer>,
     ) -> Result<CallToolResponse, ErrorData> {
-        let result = if self.active.load(Ordering::Acquire) {
+        let result = if request.name == crate::host::LISTEN {
+            // Not listed here: these runtimes have no way to put audio in front of their model.
+            Err("listen is not offered to this model: it cannot take audio input".into())
+        } else if self.active.load(Ordering::Acquire) {
             tokio::select! {
                 biased;
                 _ = self.failure.cancelled() => Err("The live tool connection closed".into()),

@@ -17,7 +17,8 @@ quit. The update helper applies it after Auris Studio exits. Turn background upd
 **Settings → General → Automatic Updates**.
 
 **Help → Check for Updates** starts the same check immediately. Portable copies and builds from
-source show **Open Release Page** instead of replacing themselves. If a release has no suitable
+source show **Open Release Page** instead of replacing themselves; a copy installed with
+`cargo install` also shows the command that upgrades it. If a release has no suitable
 installer, use the release page and the platform steps below.
 
 ## Windows
@@ -45,7 +46,11 @@ after the publisher and download source have been checked.
 
 ## macOS
 
-Open `auris-studio-v<version>-macos-universal.dmg` and drag `Auris Studio.app` to
+Auris Studio runs on Apple Silicon Macs; Intel Macs are no longer supported. Builds up to 0.18
+were universal and look for an update under the old `macos-universal` name, so updating from one
+of them is a manual download, once.
+
+Open `auris-studio-v<version>-macos-aarch64.dmg` and drag `Auris Studio.app` to
 **Applications**. The app contains matching command-line executables and the dictionary:
 
 ```sh
@@ -93,9 +98,28 @@ cargo install --locked --path crates/auris-mcp
 For a CLI-only installation, including on Linux, run only the `auris-cli` command above.
 Cargo builds release binaries and installs them in its bin directory (by default
 `~/.cargo/bin`, or `%USERPROFILE%\.cargo\bin` on Windows). With that directory on `PATH`,
-run `auris-studio`, `auris help`, or `auris-mcp`. This installs executables; it does not create
-an app bundle or OS shortcuts. To update, pull the desired source revision and repeat the
-install commands.
+run `auris-studio`, `auris help`, or `auris-mcp`. Cargo can also install a release straight
+from its tag, without a checkout:
+
+```sh
+cargo install --locked --git https://github.com/uthree/auris-studio --tag v<version> \
+  auris-gpui auris-cli auris-mcp
+```
+
+Cargo installs executables only. When `auris-studio` starts from Cargo's bin directory, the start
+screen offers to add it to the system as an application: `~/Applications/Auris Studio.app` on
+macOS, a Start menu shortcut on Windows, or a `.desktop` entry in `~/.local/share/applications`
+on Linux. The Windows and Linux shortcuts open Cargo's executable directly. The macOS bundle
+holds a copy, because the bundle an executable is in is what gives it its name, icon and
+microphone permission; when a later `cargo install` replaces Cargo's executable, the next launch
+from the bundle copies the new one in first. An existing shortcut that this offer did not make,
+such as a released `Auris Studio.app`, is never replaced.
+
+Cargo installs are not updated by the in-app updater. When a newer release is published, the
+start screen and **Help → Check for Updates** show the command that upgrades this installation
+instead, with a button that copies it: `cargo install … --tag v<version>` for an install from
+Git, or `git pull` followed by the same `cargo install --path` commands for an install from a
+checkout.
 
 Cargo does not install the Japanese lyrics dictionary. Follow the dictionary setup in
 [Development](development.md#building-on-each-platform) if you use kanji lyrics.

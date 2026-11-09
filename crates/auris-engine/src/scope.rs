@@ -19,7 +19,7 @@
 //! attaches a separate scope to each render track and enables publication only while displayed.
 //! Each scope has one audio-thread producer; independent readers never change one another's source.
 
-use std::sync::atomic::{AtomicI64, AtomicU32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
 /// How many samples one spectrum or oscilloscope window displays.
 ///
@@ -66,6 +66,20 @@ impl ScopeSource {
     }
 }
 
+/// Where on a strip a [`Scope`] listens: before its fader and pan, or after them.
+///
+/// After is what the strip sends to the bus, and so what is heard; before is what its chain made,
+/// which is the signal a level is *set* from. The plugin editor and the overview always listen
+/// after; the utility visualizer lets the user choose.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum ScopeTap {
+    /// After the chain, before the fader, pan and mute.
+    PreFader,
+    /// What the strip sends on: chain, fader, pan and mute applied.
+    #[default]
+    PostFader,
+}
+
 /// The most recent window of one strip's signal.
 #[derive(Debug)]
 pub struct Scope {
@@ -75,9 +89,22 @@ pub struct Scope {
     sequence: AtomicUsize,
     /// The next slot the audio thread writes; it is also the oldest retained sample.
     write: AtomicUsize,
+    /// Every frame ever published, so a reader can take exactly the ones it has not seen.
+    written: AtomicU64,
     source: AtomicI64,
+    pre_fader: AtomicBool,
+    /// [`Scope::identity`] of what the ring currently holds.
     published_source: AtomicI64,
     rate: AtomicU32,
+}
+
+/// What [`Scope::read_new`] found.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct FreshSamples {
+    /// How many frames were copied, oldest first, into the front of each buffer.
+    pub frames: usize,
+    /// Whether more was written than the ring holds since the last read, so some was lost.
+    pub gap: bool,
 }
 
 impl Default for Scope {
@@ -87,16 +114,54 @@ impl Default for Scope {
 }
 
 impl Scope {
-    /// An empty scope, following nothing.
+    /// An empty scope, following nothing, retaining [`SCOPE_HISTORY`] frames.
     pub fn new() -> Self {
+        Self::with_history(SCOPE_HISTORY)
+    }
+
+    /// An empty scope retaining `frames` frames, never fewer than [`SCOPE_HISTORY`].
+    ///
+    /// A longer ring costs the audio thread nothing — it writes each block once whatever the
+    /// ring's length — and buys a reader that measures *every* sample, such as a loudness meter,
+    /// the slack to miss a repaint or two without losing any.
+    pub fn with_history(frames: usize) -> Self {
+        let frames = frames.max(SCOPE_HISTORY);
         Self {
-            samples: (0..SCOPE_HISTORY).map(|_| AtomicU32::new(0)).collect(),
-            right: (0..SCOPE_HISTORY).map(|_| AtomicU32::new(0)).collect(),
+            samples: (0..frames).map(|_| AtomicU32::new(0)).collect(),
+            right: (0..frames).map(|_| AtomicU32::new(0)).collect(),
             sequence: AtomicUsize::new(0),
             write: AtomicUsize::new(0),
+            written: AtomicU64::new(0),
             source: AtomicI64::new(ScopeSource::Off.encode()),
-            published_source: AtomicI64::new(ScopeSource::Off.encode()),
+            pre_fader: AtomicBool::new(false),
+            published_source: AtomicI64::new(Self::identity(ScopeSource::Off, false)),
             rate: AtomicU32::new(0.0f32.to_bits()),
+        }
+    }
+
+    /// How many frames the ring retains.
+    pub fn history(&self) -> usize {
+        self.samples.len()
+    }
+
+    /// One number for a source and a tap, so the ring can be cleared when either changes.
+    fn identity(source: ScopeSource, pre_fader: bool) -> i64 {
+        source.encode() * 2 + i64::from(pre_fader)
+    }
+
+    /// Chooses where on the strip to listen. Takes effect on the renderer's next block, which
+    /// clears the ring the way a change of source does.
+    pub fn set_tap(&self, tap: ScopeTap) {
+        self.pre_fader
+            .store(tap == ScopeTap::PreFader, Ordering::Relaxed);
+    }
+
+    /// Where on the strip this scope listens.
+    pub fn tap(&self) -> ScopeTap {
+        if self.pre_fader.load(Ordering::Relaxed) {
+            ScopeTap::PreFader
+        } else {
+            ScopeTap::PostFader
         }
     }
 
@@ -129,7 +194,7 @@ impl Scope {
 
     /// Publishes paired channels without allocating or waiting on the audio thread.
     pub fn publish_stereo(&self, samples: &[f32], right: &[f32], sample_rate: f64) {
-        self.publish_from(self.watching(), samples, right, sample_rate);
+        self.publish_tapped(self.watching(), self.tap(), samples, right, sample_rate);
     }
 
     /// Publishes an explicitly identified strip, rejecting a concurrently changed selection.
@@ -140,10 +205,24 @@ impl Scope {
         right: &[f32],
         sample_rate: f64,
     ) {
-        if source == ScopeSource::Off || source != self.watching() {
+        self.publish_tapped(source, ScopeTap::PostFader, samples, right, sample_rate);
+    }
+
+    /// Publishes one point on an explicitly identified strip. A block from the other tap, or for
+    /// a strip nobody is watching any more, is ignored.
+    pub fn publish_tapped(
+        &self,
+        source: ScopeSource,
+        tap: ScopeTap,
+        samples: &[f32],
+        right: &[f32],
+        sample_rate: f64,
+    ) {
+        if source == ScopeSource::Off || source != self.watching() || tap != self.tap() {
             return;
         }
-        let source = source.encode();
+        let history = self.samples.len();
+        let source = Self::identity(source, tap == ScopeTap::PreFader);
         // The odd count has to become visible before any store below it, and the even one
         // after every store — that ordering *is* the tear detection. With everything Relaxed
         // there was none: a weakly ordered machine was free to let the sample stores overtake
@@ -160,19 +239,20 @@ impl Scope {
         }
         // Only the new block is written on the audio thread. The reader starts from the cursor
         // and reconstructs chronological order away from the realtime path.
-        let taken = samples.len().min(right.len()).min(SCOPE_HISTORY);
+        let frames = samples.len().min(right.len());
+        let taken = frames.min(history);
         let write = self.write.load(Ordering::Relaxed);
         for (offset, sample) in right[right.len() - taken..].iter().enumerate() {
             let value = if sample.is_finite() { *sample } else { 0.0 };
-            self.right[(write + offset) % SCOPE_HISTORY].store(value.to_bits(), Ordering::Relaxed);
+            self.right[(write + offset) % history].store(value.to_bits(), Ordering::Relaxed);
         }
         for (offset, sample) in samples[samples.len() - taken..].iter().enumerate() {
             let value = if sample.is_finite() { *sample } else { 0.0 };
-            self.samples[(write + offset) % SCOPE_HISTORY]
-                .store(value.to_bits(), Ordering::Relaxed);
+            self.samples[(write + offset) % history].store(value.to_bits(), Ordering::Relaxed);
         }
         self.write
-            .store((write + taken) % SCOPE_HISTORY, Ordering::Relaxed);
+            .store((write + taken) % history, Ordering::Relaxed);
+        self.written.fetch_add(frames as u64, Ordering::Relaxed);
         self.rate
             .store((sample_rate as f32).to_bits(), Ordering::Relaxed);
         self.published_source.store(source, Ordering::Relaxed);
@@ -195,34 +275,79 @@ impl Scope {
             return false;
         }
         let write = self.write.load(Ordering::Relaxed);
-        let count = out.len().min(SCOPE_HISTORY);
         // The tail of the window, so a caller with a shorter buffer sees the most recent samples
         // rather than the oldest.
-        let start = (write + SCOPE_HISTORY - count) % SCOPE_HISTORY;
+        self.copy_tail(write, out, out.len());
+        let count = right.len();
+        self.copy_tail_right(write, right, count);
+        self.settled(before)
+    }
+
+    /// Copies every frame published since `cursor` into the front of `left` and `right`, which
+    /// must each hold [`Scope::history`] frames, and moves the cursor past them.
+    ///
+    /// Nothing is copied and the cursor stays put when the copy was torn; the next call picks up
+    /// the same frames. A cursor from before a reset or from another scope is moved to now.
+    pub fn read_new(
+        &self,
+        cursor: &mut u64,
+        left: &mut [f32],
+        right: &mut [f32],
+    ) -> Option<FreshSamples> {
+        let before = self.sequence.load(Ordering::Acquire);
+        if before % 2 == 1 {
+            return None;
+        }
+        let written = self.written.load(Ordering::Relaxed);
+        let write = self.write.load(Ordering::Relaxed);
+        let fresh = written.saturating_sub(*cursor);
+        let count = (fresh.min(self.history() as u64) as usize)
+            .min(left.len())
+            .min(right.len());
+        self.copy_tail(write, left, count);
+        self.copy_tail_right(write, right, count);
+        if !self.settled(before) {
+            return None;
+        }
+        let gap = fresh > count as u64;
+        *cursor = written;
+        Some(FreshSamples { frames: count, gap })
+    }
+
+    fn copy_tail(&self, write: usize, out: &mut [f32], count: usize) {
+        let history = self.samples.len();
+        let count = count.min(history).min(out.len());
+        let start = (write + history - count) % history;
         for (offset, slot) in out.iter_mut().enumerate().take(count) {
-            *slot = f32::from_bits(
-                self.samples[(start + offset) % SCOPE_HISTORY].load(Ordering::Relaxed),
-            );
+            *slot =
+                f32::from_bits(self.samples[(start + offset) % history].load(Ordering::Relaxed));
         }
-        let count = right.len().min(SCOPE_HISTORY);
-        let start = (write + SCOPE_HISTORY - count) % SCOPE_HISTORY;
-        for (offset, slot) in right.iter_mut().enumerate().take(count) {
-            *slot = f32::from_bits(
-                self.right[(start + offset) % SCOPE_HISTORY].load(Ordering::Relaxed),
-            );
+    }
+
+    fn copy_tail_right(&self, write: usize, out: &mut [f32], count: usize) {
+        let history = self.right.len();
+        let count = count.min(history).min(out.len());
+        let start = (write + history - count) % history;
+        for (offset, slot) in out.iter_mut().enumerate().take(count) {
+            *slot = f32::from_bits(self.right[(start + offset) % history].load(Ordering::Relaxed));
         }
+    }
+
+    /// Whether a copy that began at sequence `before` is whole and of what is being watched.
+    fn settled(&self, before: usize) -> bool {
         // The fence keeps the sample loads above from drifting past the re-check below — the
         // reader's half of the ordering the writer's fence promises.
         std::sync::atomic::fence(Ordering::Acquire);
         self.sequence.load(Ordering::Relaxed) == before
-            && self.published_source.load(Ordering::Relaxed) == self.source.load(Ordering::Relaxed)
+            && self.published_source.load(Ordering::Relaxed)
+                == Self::identity(self.watching(), self.tap() == ScopeTap::PreFader)
     }
 
     /// Empties the window and stops following anything.
     pub fn reset(&self) {
         self.watch(ScopeSource::Off);
         self.published_source
-            .store(ScopeSource::Off.encode(), Ordering::Relaxed);
+            .store(Self::identity(ScopeSource::Off, false), Ordering::Relaxed);
         self.write.store(0, Ordering::Relaxed);
         for slot in &self.samples {
             slot.store(0, Ordering::Relaxed);
@@ -385,5 +510,82 @@ mod tests {
         let mut out = vec![0.0; SCOPE_WINDOW];
         assert!(scope.read(&mut out));
         assert!(out.iter().all(|sample| *sample == 0.0));
+    }
+
+    #[test]
+    fn a_continuous_reader_gets_every_frame_exactly_once() {
+        let scope = Scope::with_history(SCOPE_HISTORY * 4);
+        scope.watch(ScopeSource::Master);
+        let mut cursor = 0;
+        let mut left = vec![0.0; scope.history()];
+        let mut right = left.clone();
+        let mut seen = Vec::new();
+        let mut next = 0.0f32;
+        for block in [256, 300, 1, 1000, 512] {
+            let samples: Vec<f32> = (0..block).map(|n| next + n as f32).collect();
+            next += block as f32;
+            scope.publish(&samples, 48_000.0);
+            let fresh = scope.read_new(&mut cursor, &mut left, &mut right).unwrap();
+            assert!(!fresh.gap);
+            seen.extend_from_slice(&left[..fresh.frames]);
+        }
+        let expected: Vec<f32> = (0..next as usize).map(|n| n as f32).collect();
+        assert_eq!(seen, expected);
+        let fresh = scope.read_new(&mut cursor, &mut left, &mut right).unwrap();
+        assert_eq!(fresh.frames, 0, "nothing new was published");
+    }
+
+    #[test]
+    fn a_reader_that_falls_behind_is_told_it_missed_some() {
+        let scope = Scope::new();
+        scope.watch(ScopeSource::Master);
+        let mut cursor = 0;
+        let mut left = vec![0.0; scope.history()];
+        let mut right = left.clone();
+        let samples: Vec<f32> = (0..SCOPE_HISTORY * 2).map(|n| n as f32).collect();
+        scope.publish(&samples[..SCOPE_HISTORY], 48_000.0);
+        scope.publish(&samples[SCOPE_HISTORY..], 48_000.0);
+        let fresh = scope.read_new(&mut cursor, &mut left, &mut right).unwrap();
+        assert!(fresh.gap);
+        assert_eq!(fresh.frames, SCOPE_HISTORY);
+        assert_eq!(
+            left,
+            &samples[SCOPE_HISTORY..],
+            "the newest frames are the ones kept"
+        );
+    }
+
+    #[test]
+    fn a_block_from_the_other_tap_is_ignored_and_switching_clears_the_ring() {
+        let scope = Scope::new();
+        scope.watch(ScopeSource::Master);
+        scope.set_tap(ScopeTap::PreFader);
+        scope.publish_tapped(
+            ScopeSource::Master,
+            ScopeTap::PostFader,
+            &[1.0; 8],
+            &[1.0; 8],
+            48_000.0,
+        );
+        let mut out = vec![0.0; 8];
+        assert!(!scope.read(&mut out), "nothing from the chosen tap yet");
+        scope.publish_tapped(
+            ScopeSource::Master,
+            ScopeTap::PreFader,
+            &[2.0; 8],
+            &[2.0; 8],
+            48_000.0,
+        );
+        assert!(scope.read(&mut out));
+        assert_eq!(out, vec![2.0; 8]);
+        scope.set_tap(ScopeTap::PostFader);
+        assert!(
+            !scope.read(&mut out),
+            "a copy of the old tap is not the new one"
+        );
+        scope.publish_from(ScopeSource::Master, &[3.0; 4], &[3.0; 4], 48_000.0);
+        let mut window = vec![0.0; 8];
+        assert!(scope.read(&mut window));
+        assert_eq!(window, vec![0.0, 0.0, 0.0, 0.0, 3.0, 3.0, 3.0, 3.0]);
     }
 }

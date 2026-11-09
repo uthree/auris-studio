@@ -1,4 +1,4 @@
-//! Explicit lossless audio input agreements shared by native agents and review endpoints.
+//! Explicit lossless audio input agreements for audio a model receives: attachments and auditions.
 
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -72,13 +72,29 @@ impl AudioInputContract {
     /// Check exact original WAV bytes and finite decoded samples without modifying the signal.
     /// Returns transfer metadata; bytes are sent unchanged, including over-range finite floats.
     pub fn inspect(&self, path: &Path, bytes: u64) -> Result<serde_json::Value, String> {
+        let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
+        self.inspect_reader(std::io::BufReader::new(file), bytes)
+    }
+
+    /// [`Self::inspect`] for WAV bytes already in memory, such as a rendered audition.
+    pub fn inspect_bytes(&self, wav: &[u8]) -> Result<serde_json::Value, String> {
+        let mut report = self.inspect_reader(std::io::Cursor::new(wav), wav.len() as u64)?;
+        report["sha256"] = hex::encode(Sha256::digest(wav)).into();
+        Ok(report)
+    }
+
+    fn inspect_reader(
+        &self,
+        reader: impl std::io::Read,
+        bytes: u64,
+    ) -> Result<serde_json::Value, String> {
         self.validate()?;
         if bytes > self.max_bytes {
             return Err(
                 "Audio exceeds the agreed per-input byte limit; no conversion was performed".into(),
             );
         }
-        let mut wav = hound::WavReader::open(path)
+        let mut wav = hound::WavReader::new(reader)
             .map_err(|e| format!("Agreed audio input requires a lossless WAV: {e}"))?;
         let spec = wav.spec();
         let format = match (spec.sample_format, spec.bits_per_sample) {

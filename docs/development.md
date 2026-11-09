@@ -25,12 +25,17 @@ BACKEND — no UI dependency of any kind
   crates/auris-i18n     interface text in every language, and nothing else
   crates/auris-session  the document, the engine and every command a frontend needs
   crates/auris-toolbox  the commands as tools for a language model, shared by both model doors
+  crates/auris-video    note-roll videos: frames in software, encoded by an installed ffmpeg
 
 FRONTEND
   crates/auris-gpui     the desktop application  (binary: auris-studio)
   crates/auris-cli      the command line tool    (binary: auris)
   crates/auris-mcp      the Model Context Protocol server (binary: auris-mcp)
   crates/auris-agent    the model client: Ollama / OpenAI-compatible (library: background model worker)
+
+ALONGSIDE THE APPLICATION
+  crates/auris-update-helper  replaces the installed binary once the app has exited
+                              (binary: auris-update-helper)
 
 NOT THE WORKSPACE
   vendor/rustysynth     somebody else's crate, forked — see its own README
@@ -143,8 +148,8 @@ when no adapter is available.
 ### macOS without a full Xcode install
 
 macOS builds require 13.4 or later, matching the shipped Core ML ONNX Runtime. The workspace's
-Cargo configuration sets that deployment target for both architectures; the app bundle and
-the Intel runtime build use the same minimum version.
+Cargo configuration sets that deployment target and the app bundle uses the same minimum
+version. Releases are built for Apple Silicon only; Intel Macs are not supported.
 
 gpui normally compiles its Metal shaders at build time by shelling out to `xcrun metal`, which
 lives inside Xcode and is unreachable while `xcode-select -p` points at the Command Line
@@ -281,39 +286,49 @@ find it by, from one line each. `debug_selector` compiles to nothing unless gpui
 
 ## Live audio visualizer
 
-Open **Window > Audio Visualizer** to inspect a post-fader signal. It follows the master by
-default; **Follow selected track** follows the selected track instead. The EQ editor has an
-independent tap, so both windows can remain open on different strips. Choose **Waveform**,
-**Spectrum**, **Stereo**, or the scrolling **All** view. Controls that affect only one meter stay
-inside that meter; all of them are also available through the command palette.
+Open **Window > Audio Visualizer** to inspect a strip. The window is the Atelier analyser: a
+spectrum beside a loudness meter, a spectrogram beside a goniometer, and an oscilloscope under
+them, each a card drawn with `atelier::viz`. The toolbar chooses **Master** or the **Selected
+track**, and **Pre-fader** (after the chain, before fader, pan and mute) or **Post-fader** (what the
+strip sends on). The EQ editor has an independent tap, so both windows can remain open on
+different strips. Every control is also in the command palette. Below 900 px the cards stack in
+one column.
 
-The spectrum can show the equal-power stereo average, either channel, the larger L/R value in
-each bin, or the mono sum. **Average** smooths power with a time-based 200 ms response, so delayed
-repaints do not change its meaning. **Peak hold** keeps the largest observed value per band.
-**Freeze** holds the current display. **Save comparison** retains the displayed spectrum across
-track changes, and **Clear comparison / peaks** starts a new comparison. The FFT is skipped while
-only a waveform or stereo view is visible.
+The spectrum is sixty sixth-octave bars from 20 Hz to 20.48 kHz, exactly ten octaves so each grid
+division is one, over 72 dB. It is taken over 4096 samples (85 ms at 48 kHz), four times the EQ
+editor's window, and a band too narrow to hold a bin of its own shows the nearest bin
+(`auris_dsp::bands_from_bins_nearest`) rather than a hole. It can show the equal-power stereo
+average, either channel, the larger L/R value in each bin, or the mono sum. **Average** smooths
+power with a time-based 200 ms response, so delayed repaints do not change its meaning. **Peak
+hold** keeps the largest observed value per band. **Save comparison** draws the displayed spectrum
+as a line over the bars, and **Clear comparison / peaks** starts again.
 
-Visualization colours follow the active theme's track palette, including custom colours.
-The waveform distinguishes the two channels; the spectrum interpolates the palette from low
-to high frequency. **Effects** toggles waveform halos, spectrum shading and stereo trails
-without changing the measured values. It is available in every view and in the command palette.
+The loudness card is an EBU R128 meter (`auris_dsp::LoudnessMeter`): momentary (400 ms),
+short-term (3 s), integrated and loudness range since the last reset, and the four-times
+oversampled true peak, all with the same K-weighting and gates as the offline `integrated_lufs`.
+It measures every sample: the session reads what the scope has published since its last read
+(`Scope::read_new`) on every repaint, frozen or not, from a ring of 32768 frames, so only a window
+that goes two thirds of a second without repainting loses any. Changing source or tap starts it
+again. The badge compares the integrated loudness with the −14 LUFS the streaming services
+normalise to (±1 LU) and the true peak with their −1 dBTP ceiling. The two bars beside it are
+each channel's sample peak, held for two seconds.
 
-The oscilloscope draws the left and right sample amplitudes directly against time. Its automatic
-trigger aligns a rising zero crossing from the louder channel, keeping periodic signals stable
-without delaying or modifying playback. The audio thread writes only the new block into a
-2048-sample circular history; the display searches the older half for a trigger and draws at most
-the newest 1024 samples. **Time span** cycles through one quarter, one half, and the full display
-window. **Display gain** cycles through 1x, 2x, 4x, and automatic scaling. Both controls change
-only the display; values outside full scale are clipped only when painted.
+The spectrogram keeps the last three seconds in 25 ms columns, high frequencies on top, on the
+theme's heat ramp.
 
-The stereo scope plots side horizontally and mid vertically. Mono signals form a vertical trace,
-opposite-polarity signals a horizontal trace. Optional automatic gain affects only the display,
-and five fading traces make motion visible without an unbounded history. Correlation ranges from
--1 to +1 and shows the range seen in the last three seconds. The most negative value is held until
-**Reset correlation**; an undefined current value (one or both channels silent) is shown as a
-dash. Negative correlation is a reason to listen in mono, not an automatic assessment of musical
-quality. The visualizer is not a loudness or true-peak meter.
+The oscilloscope overlays the left and right channels. Its automatic trigger aligns a rising zero
+crossing from the louder channel, keeping periodic signals stable without delaying or modifying
+playback. **Time span** chooses one quarter, one half, or the full 1024-sample window; **Display
+gain** 1×, 2×, 4× or automatic. Both change only the display.
+
+The goniometer plots side horizontally and mid vertically: mono is a vertical trace, opposite
+polarity a horizontal one. Optional automatic gain affects only the display. The correlation bar
+grows from the centre towards −1 or +1; the lowest value is held until **Reset correlation**, and an
+undefined value (one or both channels silent) is shown as a dash. Negative correlation is a reason
+to listen in mono, not an automatic assessment of musical quality.
+
+**Freeze** holds every card, the loudness numbers included, while the loudness meter goes on
+measuring underneath.
 
 For CLAP playback stalls, parameter-display snapshots and the reproducible concurrent
 playback probe, see [Hosted plugin playback performance](hosted-plugin-performance.md).

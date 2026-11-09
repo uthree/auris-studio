@@ -90,7 +90,7 @@ impl ServerHandler for AurisMcp {
         let result = REQUEST_CANCELLATION
             .scope(
                 cancellation,
-                blocking_tool(name == "inspect_audio", move || {
+                blocking_tool(Answer::of(&name), move || {
                     toolbox::runtime::call_saved(&groups, &call_name, call_args)
                 }),
             )
@@ -167,26 +167,64 @@ async fn blocking(
     finished(run_blocking(work).await?)
 }
 
+/// What a tool's text answer becomes on the wire.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Answer {
+    /// The text itself.
+    Text,
+    /// `inspect_audio`: measurements and a PNG.
+    Inspection,
+    /// `listen`: the report and each clip as audio content, for a client whose model hears.
+    Audition,
+}
+
+impl Answer {
+    fn of(tool: &str) -> Self {
+        match tool {
+            "inspect_audio" => Self::Inspection,
+            "listen" => Self::Audition,
+            _ => Self::Text,
+        }
+    }
+}
+
 /// The image presenter is shared with the live host; transport only supplies MCP content blocks.
 async fn blocking_tool(
-    inspection: bool,
+    answer: Answer,
     work: impl FnOnce() -> Result<String, String> + Send + 'static,
 ) -> Result<CallToolResult, ErrorData> {
-    if !inspection {
+    if answer == Answer::Text {
         return blocking(work).await;
     }
-    match run_blocking(work).await? {
-        Err(error) => finished(Err(error)),
-        Ok(text) => match serde_json::from_str(&text)
+    let text = match run_blocking(work).await? {
+        Err(error) => return finished(Err(error)),
+        Ok(text) => text,
+    };
+    let blocks = if answer == Answer::Inspection {
+        serde_json::from_str(&text)
             .map_err(|e| e.to_string())
             .and_then(|report| toolbox::audio_inspection::present(&report))
-        {
-            Ok(report) => Ok(CallToolResult::success(vec![
-                ContentBlock::text(report.text),
-                ContentBlock::image(report.png, "image/png"),
-            ])),
-            Err(error) => finished(Err(error)),
-        },
+            .map(|report| {
+                vec![
+                    ContentBlock::text(report.text),
+                    ContentBlock::image(report.png, "image/png"),
+                ]
+            })
+    } else {
+        serde_json::from_str::<auris_session::audio_audition::Audition>(&text)
+            .map_err(|e| e.to_string())
+            .map(|audition| {
+                let mut blocks = vec![ContentBlock::text(audition.text())];
+                for clip in &audition.clips {
+                    blocks.push(ContentBlock::text(audition.caption(clip)));
+                    blocks.push(ContentBlock::audio(clip.wav_base64.clone(), "audio/wav"));
+                }
+                blocks
+            })
+    };
+    match blocks {
+        Ok(blocks) => Ok(CallToolResult::success(blocks)),
+        Err(error) => finished(Err(error)),
     }
 }
 
@@ -272,7 +310,7 @@ mod tests {
         }
         let original = std::fs::read(&path).unwrap();
         let project = path.clone();
-        let result = blocking_tool(true, move || {
+        let result = blocking_tool(Answer::Inspection, move || {
             toolbox::runtime::call_saved(
                 &toolbox::ToolGroups::default(),
                 "inspect_audio",
@@ -286,6 +324,56 @@ mod tests {
         assert_eq!(content["content"][0]["type"], "text");
         assert_eq!(content["content"][1]["type"], "image");
         assert_eq!(content["content"][1]["mimeType"], "image/png");
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+    }
+
+    #[tokio::test]
+    async fn saved_listening_is_delivered_as_a_report_and_wav_audio() {
+        use auris_session::{Session, SessionOptions, prelude::*};
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("Listen.auris");
+        {
+            let mut session = Session::new(SessionOptions::headless()).unwrap();
+            let track = session.add_default_instrument_track("Lead").unwrap();
+            let clip = session
+                .add_midi_clip(track, "Phrase", Ticks::ZERO, Ticks(3840))
+                .unwrap();
+            session
+                .replace_notes(clip, vec![Note::new(60, Ticks::ZERO, Ticks(997))])
+                .unwrap();
+            session.save(&path).unwrap();
+        }
+        let original = std::fs::read(&path).unwrap();
+        let project = path.clone();
+        let result = blocking_tool(Answer::of("listen"), move || {
+            toolbox::runtime::call_saved(
+                &toolbox::ToolGroups::default(),
+                "listen",
+                serde_json::json!({"project":project,"start_bar":1,"bars":1}),
+            )
+        })
+        .await
+        .unwrap();
+        let content = serde_json::to_value(result).unwrap();
+        assert_ne!(content["isError"], true, "{content}");
+        let report: serde_json::Value =
+            serde_json::from_str(content["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert!(report["audition_id"].is_string());
+        assert!(
+            content["content"][1]["text"]
+                .as_str()
+                .unwrap()
+                .contains("(excerpt)")
+        );
+        assert_eq!(content["content"][2]["type"], "audio");
+        assert_eq!(content["content"][2]["mimeType"], "audio/wav");
+        let wav = auris_session::audio_audition::AuditionClip {
+            label: "excerpt".into(),
+            wav_base64: content["content"][2]["data"].as_str().unwrap().into(),
+        }
+        .wav()
+        .unwrap();
+        assert_eq!(&wav[..4], b"RIFF");
         assert_eq!(std::fs::read(&path).unwrap(), original);
     }
 

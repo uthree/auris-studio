@@ -9,10 +9,12 @@ use auris_core::{
 };
 
 use crate::lfo::Lfo;
+use crate::observe::{Observer, harmonics, recent_voices};
 use crate::oscillator::{Oscillator, RADIANS_TO_CYCLES, Waveform};
 use crate::params::{ParamBank, finite_or};
 use crate::render::{SegmentRenderer, render_segments, spread_to_all_channels};
-use crate::voice::VoiceAllocator;
+use crate::voice::{VoiceAllocator, VoiceState};
+use auris_core::motion::{MOTION_POINTS, MotionFrame, MotionGeometry};
 use auris_dsp::Adsr;
 
 /// Voices in the pool.
@@ -116,6 +118,7 @@ pub struct Fm2 {
     /// How far the vibrato swings right now, in semitones.
     vibrato_depth: f32,
     output_gain: f32,
+    observer: Observer,
 }
 
 impl Default for Fm2 {
@@ -142,9 +145,46 @@ impl Fm2 {
             channel_volume: 1.0,
             vibrato_depth: 0.0,
             output_gain: 1.0,
+            observer: Observer::default(),
         };
         synth.refresh();
         synth
+    }
+
+    /// The newest notes as their waveforms: one carrier period at the modulation depth each
+    /// voice has decayed to, which is how the bright attack settling into a sine is seen.
+    fn publish_motion(&mut self) {
+        let mut frame = MotionFrame {
+            geometry: MotionGeometry::Oscillator,
+            active: self.allocator.active_count(),
+            expression: self.channel_volume,
+            ..MotionFrame::default()
+        };
+        let voices = &self.voices;
+        let selected = recent_voices(&self.allocator, |index| voices[index].envelope.is_active());
+        for (observed, index) in frame.voices.iter_mut().zip(selected) {
+            let Some(index) = index else {
+                break;
+            };
+            let voice = &self.voices[index];
+            let depth = voice.mod_envelope.level() * self.index_cycles;
+            let mut cycle = [0.0; MOTION_POINTS];
+            fm_cycle(self.ratio, depth, &mut cycle);
+            harmonics(&cycle, &mut observed.modes);
+            let level = voice.envelope.level() * voice.velocity;
+            for (point, sample) in observed.points.iter_mut().zip(cycle) {
+                *point = sample * level;
+            }
+            observed.pitch = voice.pitch + self.bend;
+            observed.level = level;
+            observed.contact = 0.0;
+            observed.excitation = depth * std::f32::consts::TAU;
+            observed.held = self
+                .allocator
+                .slot(index)
+                .is_some_and(|slot| slot.state == VoiceState::Held);
+        }
+        self.observer.publish(&frame);
     }
 
     fn refresh(&mut self) {
@@ -197,6 +237,17 @@ impl Fm2 {
                 voice.mod_envelope.release();
             }
         }
+    }
+}
+
+/// One carrier period of the operator pair, the carrier and modulator both starting at phase
+/// zero as a note-on starts them: `depth` is the modulation index in cycles.
+fn fm_cycle(ratio: f32, depth: f32, out: &mut [f32]) {
+    use std::f32::consts::TAU;
+    let length = out.len().max(1) as f32;
+    for (index, sample) in out.iter_mut().enumerate() {
+        let x = index as f32 / length;
+        *sample = (TAU * (x + depth * (TAU * ratio * x).sin())).sin();
     }
 }
 
@@ -400,6 +451,7 @@ impl Instrument for Fm2 {
             voice.modulator.reset();
         }
         self.allocator.clear();
+        self.observer.reset(MotionGeometry::Oscillator);
         self.bend = 0.0;
         self.modulation = 0.0;
         self.channel_volume = 1.0;
@@ -414,6 +466,13 @@ impl Instrument for Fm2 {
         let frames = ctx.block_frames.min(out.frame_count());
         render_segments(self, events, out, frames);
         spread_to_all_channels(out, frames);
+        if self.observer.due(frames, self.sample_rate) {
+            self.publish_motion();
+        }
+    }
+
+    fn motion_monitor(&self) -> Option<std::sync::Arc<auris_core::motion::MotionMonitor>> {
+        Some(self.observer.monitor())
     }
 
     fn active_voices(&self) -> usize {

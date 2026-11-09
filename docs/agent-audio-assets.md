@@ -15,7 +15,8 @@ Local discovery matches words in filenames and relative paths, not their sound:
 {"operation":{"kind":"search","root":"C:/Sounds","query":"door","recursive":true,"limit":20}}
 ```
 
-Omit `root` to search the OS Music and Downloads folders. Follow `next_offset`; inspect
+Omit `root` to search the OS Music and Downloads folders. In the agent panel a named `root` asks
+the user first, as a native read outside the project does; the default folders do not. Follow `next_offset`; inspect
 `scan_complete` and warnings before claiming that nothing was found. Each call examines at
 most 10,000 entries, at most eight directory levels. Symlinks are skipped. Search neither
 reads unrelated file contents nor indexes the entire computer. Import a chosen absolute
