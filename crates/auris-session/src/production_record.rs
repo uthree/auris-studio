@@ -514,6 +514,14 @@ fn phase_checks(
                         .map(|t| t["track"].clone())
                         .collect(),
                 ),
+                check(
+                    "drums_follow_sections",
+                    facts["drum_dynamics"]
+                        .as_str()
+                        .map(|warning| json!({"arrangement_shape": warning}))
+                        .into_iter()
+                        .collect(),
+                ),
             ]
         }
         Phase::Mix => vec![check(
@@ -729,6 +737,7 @@ pub fn phase_facts(session: &crate::Session) -> Value {
     json!({"bars":bars,"unsectioned_bars":unsectioned.into_iter().take(CAP).collect::<Vec<_>>(),
         "sections_without_chords":without_chords,"tracks":tracks,"unannotated_lyric_lines":unannotated,
         "lint":session.unresolved_lint_counts(),
+        "drum_dynamics":crate::session::arrangement_shape::flat_drums(project, &spans),
         "score_bars":crate::phase::score_bars(project)})
 }
 
@@ -1204,5 +1213,57 @@ mod tests {
             json!([7])
         );
         assert!(serde_json::from_value::<Operation>(json!({"kind":"put","evidence":[]})).is_err());
+    }
+
+    #[test]
+    fn drums_struck_alike_in_every_section_are_unmet_arrangement_until_shaded() {
+        use auris_core::project::Note;
+        let mut session =
+            crate::Session::new(crate::SessionOptions::headless().with_balance(false)).unwrap();
+        let bar = Ticks(Ticks::QUARTER.raw() * 4);
+        let drums = session.add_default_drum_track("Drums").unwrap();
+        let clip = session
+            .add_midi_clip(drums, "Drums", Ticks::ZERO, bar * 12)
+            .unwrap();
+        let strike = |velocity: &dyn Fn(i64) -> f32| -> Vec<Note> {
+            (0..12)
+                .map(|index| {
+                    let mut note = Note::new(36, bar * index, Ticks::QUARTER);
+                    note.velocity = velocity(index);
+                    note
+                })
+                .collect()
+        };
+        session.replace_notes(clip, strike(&|_| 0.8)).unwrap();
+        for (at, label) in [(0, "Verse"), (4, "Pre-chorus"), (8, "Chorus")] {
+            session.set_section(bar * at, Some(label.into()));
+        }
+        let mut record = Record::default();
+        record
+            .update(Operation::SetRoles {
+                foreground: vec![],
+                guide: vec![],
+                no_foreground: Some("a drum study".into()),
+            })
+            .unwrap();
+        for phase in [Phase::Score, Phase::Arrangement] {
+            record
+                .update(Operation::EnterPhase {
+                    phase,
+                    reason: "test".into(),
+                    writing_order: None,
+                })
+                .unwrap();
+        }
+        let flat = |record: &Record, session: &crate::Session| {
+            unmet_structure(record, session)
+                .iter()
+                .any(|c| c["check"] == "drums_follow_sections")
+        };
+        assert!(flat(&record, &session));
+        session
+            .replace_notes(clip, strike(&|index| if index < 4 { 0.5 } else { 0.85 }))
+            .unwrap();
+        assert!(!flat(&record, &session));
     }
 }

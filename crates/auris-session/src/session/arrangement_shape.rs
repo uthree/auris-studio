@@ -393,8 +393,9 @@ fn cadence(project: &Project, span: &auris_core::SectionSpan) -> Value {
 }
 
 /// A warning when the drums play every section at one written strength: a verse and the last
-/// chorus struck alike is heard as a machine, however the notes differ.
-fn flat_drums(project: &Project, spans: &[auris_core::SectionSpan]) -> Option<String> {
+/// chorus struck alike is heard as a machine, however the notes differ. The arrangement phase's
+/// `drums_follow_sections` check reads it too.
+pub(crate) fn flat_drums(project: &Project, spans: &[auris_core::SectionSpan]) -> Option<String> {
     let mut sums = vec![(0.0_f64, 0_usize); spans.len()];
     for track in project.tracks.iter().filter(|track| track.kind.is_drum()) {
         for clip in track.kind.note_clips().into_iter().flatten() {
