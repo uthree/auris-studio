@@ -513,3 +513,20 @@ fn phrase_count_and_capacity_diagnostics_use_the_actual_fixed_bar_allocator() {
     );
     assert!(session.validate_song_lyrics(&spec).is_err());
 }
+
+#[test]
+fn a_misfit_offers_the_melody_side_ways_to_close_it() {
+    assert_eq!(
+        melody_options(2),
+        [
+            MelodyOption::AddPickup { notes: 2 },
+            MelodyOption::Split { notes: 2 }
+        ]
+    );
+    assert_eq!(melody_options(-1), [MelodyOption::Merge { notes: 1 }]);
+    assert!(melody_options(0).is_empty());
+    assert_eq!(
+        serde_json::to_value(MelodyOption::AddPickup { notes: 1 }).unwrap(),
+        serde_json::json!({"kind": "add_pickup", "notes": 1})
+    );
+}
