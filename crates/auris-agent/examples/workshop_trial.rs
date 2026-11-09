@@ -10,10 +10,6 @@
 //! receives `composer-log.jsonl` and `song/song.auris` exactly as a workshop candidate would.
 //! A candidate that continued a parent continues the same parent here.
 //!
-//! A phased round is tried by overriding the logged direction: `AURIS_TRIAL_PHASE=score`
-//! composes it as a demo, and `AURIS_TRIAL_PHASE=finish` with `AURIS_TRIAL_PARENT` set to an
-//! earlier demo's output folder finishes that demo.
-//!
 //! `AURIS_TRIAL_DIRECT=1` asks the director for the round again first, from the conversation as
 //! it stood, and composes its first direction instead of the logged one; the new direction is
 //! written to `direction.json` beside the song. That tries a change to the director's guidance.
@@ -30,7 +26,7 @@ use std::path::PathBuf;
 
 use auris_agent::workshop::{compose_trial, direct_trial};
 use auris_session::lint::Severity;
-use auris_session::workshop::{Candidate, Document, RoundPhase};
+use auris_session::workshop::{Candidate, Document};
 use auris_session::{Session, SessionOptions, Settings};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -68,20 +64,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .rounds
         .retain(|earlier| earlier.after_message < round.after_message);
     let mut direction = candidate.direction.clone();
-    let mut parent = candidate
+    let parent = candidate
         .parent
         .map(|parent| thread.join(parent.to_string()).join("song/song.auris"));
-    match std::env::var("AURIS_TRIAL_PHASE").as_deref() {
-        Ok("score") => direction.phase = Some(RoundPhase::Score),
-        Ok("finish") => {
-            direction.phase = Some(RoundPhase::Finish);
-            let demo = std::env::var("AURIS_TRIAL_PARENT")
-                .map_err(|_| "AURIS_TRIAL_PHASE=finish needs AURIS_TRIAL_PARENT")?;
-            parent = Some(PathBuf::from(demo).join("song/song.auris"));
-        }
-        Ok(other) => return Err(format!("unknown AURIS_TRIAL_PHASE {other}").into()),
-        Err(_) => {}
-    }
     let settings = Settings::load();
     let mut prefs = settings.agent.clone();
     if let Ok(backend) = std::env::var("AURIS_TRIAL_BACKEND") {
@@ -102,9 +87,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if directions.is_empty() {
             return Err("the director proposed no direction".into());
         }
-        let phase = direction.phase;
         direction = directions.remove(0);
-        direction.phase = direction.phase.or(phase);
         eprintln!("{}", serde_json::to_string_pretty(&direction)?);
     }
     eprintln!(
