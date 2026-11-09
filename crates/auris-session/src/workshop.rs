@@ -965,13 +965,19 @@ fn try_update_preferences_at(
     Ok(preferences)
 }
 
+/// Reads a file [`write`] publishes, or the default when there is none.
+///
+/// Through [`crate::settings::read_config_text`] rather than `std::fs::read`, because `write`
+/// replaces the file by renaming over it, and on Windows that rename fails with `PermissionDenied`
+/// for as long as any other thread has the file open. The shared lock keeps a read from overlapping
+/// the rename; reading around it made a song workshop's routine preference reload refuse the
+/// settings window's edit.
 fn read_or_default<T: serde::de::DeserializeOwned + Default>(path: &Path) -> Result<T, String> {
-    match std::fs::metadata(path) {
+    match crate::settings::read_config_text(path) {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(T::default()),
+        // Its own message names the 8 MiB ceiling, or the bytes that were not UTF-8.
         Err(e) => Err(e.to_string()),
-        Ok(meta) if meta.len() > 8 * 1024 * 1024 => Err("Workshop history is too large".into()),
-        Ok(_) => serde_json::from_slice(&std::fs::read(path).map_err(|e| e.to_string())?)
-            .map_err(|e| e.to_string()),
+        Ok(text) => serde_json::from_str(&text).map_err(|e| e.to_string()),
     }
 }
 
@@ -1644,6 +1650,43 @@ mod tests {
         });
         document.messages.push(long);
         assert_eq!(document.digest_due(), Some(1));
+    }
+
+    #[test]
+    fn an_update_succeeds_while_another_thread_reads_the_preferences() {
+        // On Windows the update's rename fails for as long as a reader has the file open, which
+        // a reader going around the shared lock did on most attempts. Elsewhere this is a plain
+        // check that concurrent reads and writes neither fail nor tear the file.
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_path_buf();
+        try_update_preferences_at(&root, |_| Ok(())).unwrap();
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let reader = {
+            let (root, stop) = (root.clone(), stop.clone());
+            std::thread::spawn(move || {
+                let mut reads = 0;
+                while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                    read_or_default::<Preferences>(&root.join("song-preferences.json")).unwrap();
+                    reads += 1;
+                }
+                reads
+            })
+        };
+        let written = (0..200).map(|id| {
+            try_update_preferences_at(&root, |p| {
+                p.record(selection(id, id));
+                Ok(())
+            })
+        });
+        let failures: Vec<_> = written.filter_map(Result::err).collect();
+        stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        assert!(reader.join().unwrap() > 0, "the reader ran");
+        assert!(
+            failures.is_empty(),
+            "{} updates failed: {:?}",
+            failures.len(),
+            failures.first()
+        );
     }
 
     #[test]
