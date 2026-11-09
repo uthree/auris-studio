@@ -1649,7 +1649,10 @@ const CHECKPOINT_RECORD: &str = "checkpoint/production.json";
 fn read_record(
     path: &std::path::Path,
 ) -> Result<auris_session::production_record::Record, AttemptError> {
-    let bytes = std::fs::read(path).map_err(|e| AttemptError::permanent(e.to_string()))?;
+    // Under the lock `keep_record`'s rename takes, since on Windows that rename fails for as long
+    // as another thread has the file open. The limit is the ceiling `keep_record` writes under.
+    let bytes = auris_session::settings::read_published_file(path, 8 * 1024 * 1024)
+        .map_err(|e| AttemptError::permanent(e.to_string()))?;
     serde_json::from_slice(&bytes)
         .map_err(|e| AttemptError::permanent(format!("Production record is unreadable: {e}")))
 }
@@ -2734,6 +2737,24 @@ mod tests {
         );
     }
     use super::*;
+
+    #[test]
+    fn a_checkpoint_succeeds_while_another_thread_reads_the_record() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(CHECKPOINT_RECORD);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let read = path.clone();
+        let bytes =
+            serde_json::to_vec(&auris_session::production_record::Record::default()).unwrap();
+        crate::tests::assert_writes_survive_a_reader(
+            move || read_record(&read).map(drop).map_err(|e| e.message),
+            |_| {
+                auris_session::settings::write_config_bytes(&path, &bytes)
+                    .map_err(|e| e.to_string())
+            },
+        );
+    }
+
     #[test]
     #[ignore = "real model inference; requires AURIS_WORKSHOP_EVAL_OUTPUT and AURIS_WORKSHOP_EVAL_MODEL"]
     fn installed_composer_finishes_music_and_publishes_audio_before_completion() {
