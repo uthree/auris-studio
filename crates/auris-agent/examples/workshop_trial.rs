@@ -14,6 +14,9 @@
 //! it stood, and composes its first direction instead of the logged one; the new direction is
 //! written to `direction.json` beside the song. That tries a change to the director's guidance.
 //!
+//! `AURIS_TRIAL_GUIDANCE=bare` composes the baseline instead: the user's words and how to work
+//! the tools, without the director's assignment, the phases or the send-backs.
+//!
 //! Another composer is tried without touching the settings: `AURIS_TRIAL_BACKEND` and
 //! `AURIS_TRIAL_MODEL` replace the configured backend and model, and `AURIS_TRIAL_FAST=0` or
 //! `1` the faster service tier. The other agent preferences, effort among them, are kept.
@@ -24,7 +27,7 @@
 
 use std::path::PathBuf;
 
-use auris_agent::workshop::{compose_trial, direct_trial};
+use auris_agent::workshop::{Guidance, compose_trial, direct_trial};
 use auris_session::lint::Severity;
 use auris_session::workshop::{Candidate, Document};
 use auris_session::{Session, SessionOptions, Settings};
@@ -95,9 +98,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         direction.title, prefs.backend, prefs.model
     );
     let chosen = direction.clone();
+    let guidance = match std::env::var("AURIS_TRIAL_GUIDANCE").as_deref() {
+        Ok("bare") => Guidance::Bare,
+        Ok("full") | Err(_) => Guidance::Full,
+        Ok(other) => return Err(format!("unknown AURIS_TRIAL_GUIDANCE {other}").into()),
+    };
     let started = std::time::Instant::now();
     let result = compose_trial(
         direction,
+        guidance,
         &planned,
         prefs,
         settings,
