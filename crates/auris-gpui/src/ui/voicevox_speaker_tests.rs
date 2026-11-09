@@ -10,7 +10,7 @@ use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 struct Scratch {
     root: PathBuf,
@@ -122,10 +122,11 @@ impl Engine {
         let url = format!("http://{}", listener.local_addr().unwrap());
         let stop = Arc::new(AtomicBool::new(false));
         let stopped = Arc::clone(&stop);
+        // No deadline of its own: the clock would start while the window is still opening,
+        // which on a loaded machine can outlast any budget. The test stops it instead.
         let worker = std::thread::spawn(move || {
-            let deadline = Instant::now() + Duration::from_secs(8);
             let mut paths = Vec::new();
-            while paths.len() < 2 && Instant::now() < deadline && !stopped.load(Ordering::Relaxed) {
+            while paths.len() < 2 && !stopped.load(Ordering::Relaxed) {
                 let (mut stream, _) = match listener.accept() {
                     Ok(connection) => connection,
                     Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
@@ -181,7 +182,13 @@ impl Engine {
         }
     }
 
+    /// Stops serving and checks what was asked for.
+    ///
+    /// Called once the picker's fetch has run to completion, so every request it will ever
+    /// make has already been answered: a request is recorded in the same pass that answers it,
+    /// and the stop is read only between passes.
     fn finish(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
         let paths = self.worker.take().unwrap().join().unwrap();
         assert_eq!(paths, ["/version", "/singers"]);
     }

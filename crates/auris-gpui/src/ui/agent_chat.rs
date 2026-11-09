@@ -7023,7 +7023,7 @@ mod tests {
             );
             assert_eq!(this.agent_chat.history_project, current.project);
         });
-        std::fs::remove_dir_all(root).unwrap();
+        crate::harness::remove_project_folder(&app, cx, &root);
     }
 
     #[gpui::test]
@@ -7099,7 +7099,7 @@ mod tests {
                 this.agent_selection_context().to_string()
             );
         });
-        std::fs::remove_dir_all(root).unwrap();
+        crate::harness::remove_project_folder(&app, cx, &root);
     }
 
     #[gpui::test]
@@ -7197,7 +7197,7 @@ mod tests {
                 );
             });
         });
-        std::fs::remove_dir_all(root).unwrap();
+        crate::harness::remove_project_folder(&app, cx, &root);
     }
 
     #[gpui::test]
@@ -7241,7 +7241,7 @@ mod tests {
             .recv_timeout(std::time::Duration::from_secs(5))
             .expect("the background history read finishes before cleanup")
             .expect("a project without saved conversation history loads as empty");
-        std::fs::remove_dir_all(root).unwrap();
+        crate::harness::remove_project_folder(&app, cx, &root);
     }
 
     #[gpui::test]
@@ -7281,7 +7281,7 @@ mod tests {
             );
             assert!(sender.send(Err("stale load".into())).is_err());
         });
-        std::fs::remove_dir_all(root).unwrap();
+        crate::harness::remove_project_folder(&app, cx, &root);
     }
 
     #[gpui::test]

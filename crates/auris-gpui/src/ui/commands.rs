@@ -4026,7 +4026,7 @@ mod tests {
             assert!(!app.session.is_dirty());
         });
         assert!(document.is_file());
-        std::fs::remove_dir_all(root).unwrap();
+        crate::harness::remove_project_folder(&app, cx, &root);
     }
 
     #[test]

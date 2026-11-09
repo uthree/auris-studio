@@ -414,6 +414,14 @@ impl AurisApp {
         self.conversation_operation(Operation::Initialize);
     }
 
+    /// Takes any finished conversation-storage answer, then says whether a write is still
+    /// running on its thread.
+    #[cfg(test)]
+    pub(crate) fn conversation_storage_busy(&mut self, cx: &mut gpui::Context<Self>) -> bool {
+        self.poll_conversations(cx);
+        self.agent_chat.conversations.pending.is_some()
+    }
+
     pub(super) fn poll_conversations(&mut self, cx: &mut gpui::Context<Self>) {
         let answer = self
             .agent_chat
