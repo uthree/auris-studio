@@ -1473,10 +1473,6 @@ impl AurisApp {
                     .icon(IconName::Check),
             );
         }
-        // A demo of a phased round has no arrangement yet; the badge says so before listening.
-        if candidate.direction.phase == Some(auris_session::workshop::RoundPhase::Score) {
-            badges = badges.child(Badge::new(self.t(Key::WorkshopDemoBadge)));
-        }
         if let Some(audio) = audition.as_ref() {
             let seconds = audio.duration_seconds().round() as u64;
             badges = badges.child(Badge::new(format!("{}:{:02}", seconds / 60, seconds % 60)));
@@ -2508,7 +2504,6 @@ mod tests {
                                 instructions: String::new(),
                                 protected_tracks: Vec::new(),
                                 sources: Vec::new(),
-                                phase: None,
                             },
                         })
                         .collect(),
@@ -3031,7 +3026,6 @@ mod tests {
                                 instructions: String::new(),
                                 protected_tracks: vec![],
                                 sources: vec![],
-                                phase: None,
                             },
                         })
                         .collect(),
@@ -3112,7 +3106,6 @@ mod tests {
                         instructions: "Private composer instructions".into(),
                         protected_tracks: vec![],
                         sources: vec![],
-                        phase: None,
                     },
                 }],
             });
@@ -3209,7 +3202,6 @@ mod tests {
                             instructions: String::new(),
                             protected_tracks: Vec::new(),
                             sources: vec![],
-                            phase: None,
                         },
                     })
                     .collect(),
@@ -3383,7 +3375,6 @@ mod tests {
                         instructions: String::new(),
                         protected_tracks: Vec::new(),
                         sources: vec![],
-                        phase: None,
                     },
                 }],
             });
@@ -3530,7 +3521,6 @@ mod tests {
                         instructions: "Continue".into(),
                         protected_tracks: vec![],
                         sources: vec![],
-                        phase: None,
                     },
                 }],
             });

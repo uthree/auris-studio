@@ -10,10 +10,6 @@
 //! receives `composer-log.jsonl` and `song/song.auris` exactly as a workshop candidate would.
 //! A candidate that continued a parent continues the same parent here.
 //!
-//! A phased round is tried by overriding the logged direction: `AURIS_TRIAL_PHASE=score`
-//! composes it as a demo, and `AURIS_TRIAL_PHASE=finish` with `AURIS_TRIAL_PARENT` set to an
-//! earlier demo's output folder finishes that demo.
-//!
 //! Another composer is tried without touching the settings: `AURIS_TRIAL_BACKEND` and
 //! `AURIS_TRIAL_MODEL` replace the configured backend and model, and `AURIS_TRIAL_FAST=0` or
 //! `1` the faster service tier. The other agent preferences, effort among them, are kept.
@@ -26,7 +22,7 @@ use std::path::PathBuf;
 
 use auris_agent::workshop::compose_trial;
 use auris_session::lint::Severity;
-use auris_session::workshop::{Candidate, Document, RoundPhase};
+use auris_session::workshop::{Candidate, Document};
 use auris_session::{Session, SessionOptions, Settings};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -63,21 +59,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     planned
         .rounds
         .retain(|earlier| earlier.after_message < round.after_message);
-    let mut direction = candidate.direction.clone();
-    let mut parent = candidate
+    let direction = candidate.direction.clone();
+    let parent = candidate
         .parent
         .map(|parent| thread.join(parent.to_string()).join("song/song.auris"));
-    match std::env::var("AURIS_TRIAL_PHASE").as_deref() {
-        Ok("score") => direction.phase = Some(RoundPhase::Score),
-        Ok("finish") => {
-            direction.phase = Some(RoundPhase::Finish);
-            let demo = std::env::var("AURIS_TRIAL_PARENT")
-                .map_err(|_| "AURIS_TRIAL_PHASE=finish needs AURIS_TRIAL_PARENT")?;
-            parent = Some(PathBuf::from(demo).join("song/song.auris"));
-        }
-        Ok(other) => return Err(format!("unknown AURIS_TRIAL_PHASE {other}").into()),
-        Err(_) => {}
-    }
     let settings = Settings::load();
     let mut prefs = settings.agent.clone();
     if let Ok(backend) = std::env::var("AURIS_TRIAL_BACKEND") {
