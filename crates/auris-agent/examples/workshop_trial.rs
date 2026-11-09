@@ -16,6 +16,9 @@
 //!
 //! `AURIS_TRIAL_GUIDANCE=bare` composes the baseline instead: the user's words and how to work
 //! the tools, without the director's assignment, the phases or the send-backs.
+//! `AURIS_TRIAL_REQUEST` replaces the user's last message before the round, so the same theme
+//! can be asked for in other words; the logged direction is kept unless the director is asked
+//! again.
 //!
 //! Another composer is tried without touching the settings: `AURIS_TRIAL_BACKEND` and
 //! `AURIS_TRIAL_MODEL` replace the configured backend and model, and `AURIS_TRIAL_FAST=0` or
@@ -66,6 +69,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     planned
         .rounds
         .retain(|earlier| earlier.after_message < round.after_message);
+    if let Ok(request) = std::env::var("AURIS_TRIAL_REQUEST") {
+        let last = planned
+            .messages
+            .iter_mut()
+            .rev()
+            .find(|message| message.user)
+            .ok_or("the conversation has no request to replace")?;
+        last.text = request;
+    }
     let mut direction = candidate.direction.clone();
     let parent = candidate
         .parent
