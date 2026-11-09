@@ -1941,8 +1941,12 @@ mod tests {
                 .session
                 .library_sound_key(&sound.instrument_id, sound.preset)
                 .unwrap();
+            // Saved, read from what the save recorded rather than from the file: every test in
+            // this binary shares one configuration directory, and another test's settings write
+            // can replace the file between this click and a `Settings::load()`. The baseline
+            // moves only once `save_changes` has returned, so it is this test's own write.
             assert_eq!(
-                auris_session::Settings::load().sound_icons.get(&key),
+                this.settings_baseline.borrow().sound_icons.get(&key),
                 Some(&SoundIcon::Guitar)
             );
             let map = this.timbre_map.map.as_ref().unwrap();
@@ -1998,7 +2002,9 @@ mod tests {
                 .library_sound_key(&sound.instrument_id, sound.preset)
                 .unwrap();
             assert!(
-                !auris_session::Settings::load()
+                !this
+                    .settings_baseline
+                    .borrow()
                     .sound_icons
                     .contains_key(&key)
             );
