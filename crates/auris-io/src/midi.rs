@@ -218,6 +218,15 @@ pub struct MidiTrack {
     /// Which MIDI channel the notes came from, 0-based. Channel 9 is the drum channel by
     /// convention, which is the only hint a file gives about what a track is *for*.
     pub channel: u8,
+    /// The General MIDI program the channel selected before its first note, if it selected one.
+    ///
+    /// One value per track is already more than a MIDI channel can hold — a channel may change
+    /// program part way through — and the first note is where the choice can still be honoured:
+    /// the notes after a later change were written for a timbre this model has no second track
+    /// for. Bank selects are deliberately not kept: a General MIDI file writes bank 0, a GS
+    /// variation bank recolours the family the program number already names, and a kit lives on
+    /// channel 9 rather than at an address.
+    pub program: Option<u8>,
     /// Every note, positioned from the start of the song rather than from a clip.
     pub notes: Vec<Note>,
     /// The pitch bend, positioned the same way.
@@ -459,6 +468,9 @@ fn read_smf_with_limits(smf: &Smf, limits: ImportLimits) -> Result<MidiImport> {
                                 .entry((channel, pitch.as_int()))
                                 .or_default()
                                 .push((at, vel.as_int()));
+                            if let Some(part) = parts.get_mut(&key) {
+                                part.started = true;
+                            }
                         }
                         MidiMessage::NoteOn { key: pitch, vel: _ }
                         | MidiMessage::NoteOff { key: pitch, vel: _ } => {
@@ -469,6 +481,17 @@ fn read_smf_with_limits(smf: &Smf, limits: ImportLimits) -> Result<MidiImport> {
                                 && let Some(part) = parts.get_mut(&key)
                             {
                                 part.notes.push(note(started, at, pitch, per_quarter));
+                            }
+                        }
+                        // The last selection before the first note wins, the way a synth hearing
+                        // the same stream reads it. After that the part's timbre is settled, and a
+                        // change written for a later phrase is dropped rather than applied to a
+                        // clip that has only one instrument to give it.
+                        MidiMessage::ProgramChange { program } => {
+                            if let Some(part) = parts.get_mut(&key)
+                                && !part.started
+                            {
+                                part.program = Some(program.as_int());
                             }
                         }
                         MidiMessage::PitchBend { bend } => {
@@ -558,6 +581,7 @@ fn read_smf_with_limits(smf: &Smf, limits: ImportLimits) -> Result<MidiImport> {
                 MidiTrack {
                     name: part.name.unwrap_or_else(|| default_name(key.1)),
                     channel: key.1,
+                    program: part.program,
                     notes,
                     bend,
                     controllers,
@@ -603,12 +627,15 @@ fn signature_map(mut meters: Vec<SignaturePoint>) -> SignatureMap {
 struct InstrumentSeed {
     track_index: usize,
     channel: u4,
+    program: Option<u8>,
 }
 
 struct ExportTrackPlan {
     track_index: usize,
     channel: u4,
     bend_range: f32,
+    /// The General MIDI program the track is announced as, when its instrument names one.
+    program: Option<u8>,
     event_capacity: usize,
     end_tick: Ticks,
 }
@@ -711,7 +738,11 @@ fn played_clips(project: &Project, track_index: usize) -> Result<auris_core::Pla
 /// Proves the complete expansion fits before any performed-note or performance-curve vector is
 /// created. A later track therefore cannot evade the file-wide budget after earlier tracks have
 /// already consumed memory.
-fn preflight_export(project: &Project, limits: ExportLimits) -> Result<ExportPlan> {
+fn preflight_export(
+    project: &Project,
+    limits: ExportLimits,
+    programs: &[(&str, u8)],
+) -> Result<ExportPlan> {
     let mut seeds = Vec::new();
     reserve_export(
         &mut seeds,
@@ -730,9 +761,24 @@ fn preflight_export(project: &Project, limits: ExportLimits) -> Result<ExportPla
             melodic_index = (melodic_index + 1) % 15;
             channel
         });
+        // Channel 10 is the kit in General MIDI, and a program change on it selects a *kit*, not
+        // a melodic voice. Drums are announced by the channel they are on and by nothing else.
+        //
+        // A channel that repeats — the sixteenth melodic track onward — repeats its program too,
+        // because one channel cannot hold two voices. This reader keeps tracks apart, so a file
+        // written here comes back whole; a plain General MIDI receiver hears the last
+        // announcement win, which is all the wire can carry.
+        let program = match track.kind.is_drum() {
+            true => None,
+            false => track
+                .kind
+                .as_instrument()
+                .and_then(|inner| program_for(programs, &inner.instrument_id)),
+        };
         seeds.push(InstrumentSeed {
             track_index,
             channel,
+            program,
         });
     }
 
@@ -797,7 +843,8 @@ fn preflight_export(project: &Project, limits: ExportLimits) -> Result<ExportPla
         let mut track_notes = 0;
         let mut track_curve_events = 0;
         let mut track_events = 0;
-        let fixed_events = 2 + u128::from(bend_range > BEND_RANGE) * 6;
+        let fixed_events =
+            2 + u128::from(bend_range > BEND_RANGE) * 6 + u128::from(seed.program.is_some());
         add_export_count(
             &mut track_events,
             fixed_events,
@@ -873,6 +920,7 @@ fn preflight_export(project: &Project, limits: ExportLimits) -> Result<ExportPla
             track_index: seed.track_index,
             channel: seed.channel,
             bend_range,
+            program: seed.program,
             event_capacity: usize::try_from(track_events).map_err(|_| {
                 export_too_large(
                     MidiExportResource::TrackEvents,
@@ -894,6 +942,27 @@ fn preflight_export(project: &Project, limits: ExportLimits) -> Result<ExportPla
         conductor_end_tick,
         instrument_tracks,
     })
+}
+
+/// The program an instrument is exported as, when the caller named one for it.
+///
+/// The map belongs to the caller because which program an instrument answers to is a fact about
+/// the instruments, and this crate writes files rather than knowing voices.
+fn program_for(programs: &[(&str, u8)], instrument: &str) -> Option<u8> {
+    programs
+        .iter()
+        .find(|(id, _)| *id == instrument)
+        .map(|(_, program)| *program)
+}
+
+/// A program change, the voice a channel plays from here on.
+fn program_message(channel: u4, program: u8) -> TrackEventKind<'static> {
+    TrackEventKind::Midi {
+        channel,
+        message: MidiMessage::ProgramChange {
+            program: u7::new(program.min(127)),
+        },
+    }
 }
 
 /// A complete, synchronised MIDI file awaiting atomic publication.
@@ -947,8 +1016,18 @@ impl StagedMidi {
 /// This is the worker half of a two-phase export. Encoding, allocation, flushing and file sync
 /// happen before this function returns; publication is one short rename after the caller has
 /// revalidated cancellation and live document ownership.
-pub fn stage_midi_file(path: &Path, project: &Project) -> Result<StagedMidi> {
-    let (smf_tracks, notes, duration_ticks) = build_tracks(project)?;
+///
+/// `programs` names the General MIDI program each instrument id is announced as, and is the
+/// caller's because it is a fact about the instruments rather than about the file. A track whose
+/// instrument is not in it — a SoundFont preset, a hosted plug-in — exports with no program
+/// change at all rather than a guess, which leaves the reader's own default in charge.
+/// Drum tracks are on channel 10, which is already the announcement.
+pub fn stage_midi_file(
+    path: &Path,
+    project: &Project,
+    programs: &[(&str, u8)],
+) -> Result<StagedMidi> {
+    let (smf_tracks, notes, duration_ticks) = build_tracks(project, programs)?;
     let smf = Smf {
         header: Header::new(
             Format::Parallel,
@@ -977,16 +1056,17 @@ pub fn stage_midi_file(path: &Path, project: &Project) -> Result<StagedMidi> {
 /// exactly the notes that went into it.
 ///
 /// What does not travel, because a MIDI file has nowhere to put it: audio tracks, which have no
-/// notes; every mixer setting, including mute and solo; the instrument each track plays; and the
-/// automation. A `.mid` is the notes and the clock, and saying so here is better than a reader
-/// discovering it by comparing two files.
-pub fn write_midi_file(path: &Path, project: &Project) -> Result<usize> {
-    stage_midi_file(path, project)?.publish()
+/// notes; every mixer setting, including mute and solo; the instrument itself, which travels as
+/// the General MIDI program `programs` names for its id, if it names one; and the automation. A
+/// `.mid` is the notes, the clock and a hint at the voice, and saying so here is better than a
+/// reader discovering it by comparing two files.
+pub fn write_midi_file(path: &Path, project: &Project, programs: &[(&str, u8)]) -> Result<usize> {
+    stage_midi_file(path, project, programs)?.publish()
 }
 
 /// [`write_midi_file`] into memory, so a round trip can be tested without a filesystem.
-pub fn write_midi_bytes(project: &Project) -> Result<Vec<u8>> {
-    let (tracks, _, _) = build_tracks(project)?;
+pub fn write_midi_bytes(project: &Project, programs: &[(&str, u8)]) -> Result<Vec<u8>> {
+    let (tracks, _, _) = build_tracks(project, programs)?;
     let smf = Smf {
         header: Header::new(
             Format::Parallel,
@@ -1001,8 +1081,11 @@ pub fn write_midi_bytes(project: &Project) -> Result<Vec<u8>> {
 }
 
 /// The file's tracks, and how many notes went into them.
-fn build_tracks(project: &Project) -> Result<(Vec<Vec<TrackEvent<'static>>>, usize, Ticks)> {
-    let plan = preflight_export(project, EXPORT_LIMITS)?;
+fn build_tracks(
+    project: &Project,
+    programs: &[(&str, u8)],
+) -> Result<(Vec<Vec<TrackEvent<'static>>>, usize, Ticks)> {
+    let plan = preflight_export(project, EXPORT_LIMITS, programs)?;
     let mut tracks = Vec::new();
     reserve_export(
         &mut tracks,
@@ -1026,6 +1109,11 @@ fn build_tracks(project: &Project) -> Result<(Vec<Vec<TrackEvent<'static>>>, usi
             "an exported MIDI track",
         )?;
         let bend_range = track_plan.bend_range;
+        if let Some(program) = track_plan.program {
+            // Before every note, and before the RPN handshake below, so a reader knows the voice
+            // before it is asked to play it. At tick zero the sort cannot move it behind a note.
+            events.push((Ticks::ZERO, program_message(channel, program)));
+        }
         if bend_range > BEND_RANGE {
             // RPN 0 is pitch-bend sensitivity, followed by a null RPN selection.
             for (number, value) in [
@@ -1353,6 +1441,13 @@ const MAX_DENOMINATOR_POWER: u32 = 4;
 struct Part {
     bend_state: BendState,
     name: Option<String>,
+    /// The program last selected before the first note, and whether the first note has arrived.
+    ///
+    /// The flag rather than `notes.is_empty()`: a note is only pushed when it is released, so an
+    /// empty note list also describes the gap between a note-on and its note-off, which is the
+    /// one moment a program change must *not* be accepted.
+    program: Option<u8>,
+    started: bool,
     notes: Vec<Note>,
     /// The bend, at absolute ticks. Rebased onto the clip once the clip's start is known.
     bend: Vec<CurvePoint>,
@@ -1586,6 +1681,65 @@ mod tests {
                 },
             },
         )
+    }
+
+    fn program_change(delta: u32, program: u8) -> TrackEvent<'static> {
+        event(
+            delta,
+            TrackEventKind::Midi {
+                channel: u4::new(0),
+                message: MidiMessage::ProgramChange {
+                    program: u7::new(program),
+                },
+            },
+        )
+    }
+
+    #[test]
+    fn the_program_selected_before_the_first_note_is_the_one_kept() {
+        // A file may select a voice and change its mind before playing anything. The last choice
+        // before the first note is the one a synth hearing the same stream would use.
+        let imported = metrical(vec![vec![
+            program_change(0, 0),
+            program_change(0, 40),
+            note_on(0, 60, 100),
+            note_off(480, 60),
+        ]]);
+        assert_eq!(imported.tracks[0].program, Some(40));
+    }
+
+    #[test]
+    fn a_program_change_after_the_first_note_does_not_rewrite_the_part() {
+        // One track has one instrument to give. Applying a later change would put two timbres in
+        // one clip with nothing on screen to say why, and would recolour notes already sounding.
+        let imported = metrical(vec![vec![
+            program_change(0, 40),
+            note_on(0, 60, 100),
+            // Before the release, so the note list is still empty: the `started` flag is what
+            // makes this a change after the part was settled rather than a change before it.
+            program_change(0, 73),
+            note_off(480, 60),
+            note_on(0, 62, 100),
+            note_off(480, 62),
+        ]]);
+        assert_eq!(imported.tracks[0].program, Some(40));
+        assert_eq!(imported.tracks[0].notes.len(), 2);
+    }
+
+    #[test]
+    fn a_track_that_never_names_a_program_keeps_none() {
+        let imported = metrical(vec![vec![note_on(0, 60, 100), note_off(480, 60)]]);
+        assert_eq!(imported.tracks[0].program, None);
+    }
+
+    #[test]
+    fn a_program_selected_after_every_note_is_dropped() {
+        let imported = metrical(vec![vec![
+            note_on(0, 60, 100),
+            note_off(480, 60),
+            program_change(0, 40),
+        ]]);
+        assert_eq!(imported.tracks[0].program, None);
     }
 
     #[test]
@@ -2178,7 +2332,7 @@ mod tests {
         );
         project.add_audio_clip(audio, source, Ticks::ZERO).unwrap();
 
-        let bytes = write_midi_bytes(&project).unwrap();
+        let bytes = write_midi_bytes(&project, &[]).unwrap();
         assert_eq!(track_end_ticks(&bytes, 0), 64 * TICKS_PER_QUARTER as u32);
         assert_eq!(track_end_ticks(&bytes, 1), 64 * TICKS_PER_QUARTER as u32);
     }
@@ -2193,7 +2347,7 @@ mod tests {
         let clip = project.midi_clip_mut(clip).unwrap();
         clip.notes = vec![Note::new(60, Ticks::ZERO, Ticks::QUARTER)];
         clip.loop_end = Ticks::QUARTER * 4;
-        let bytes = write_midi_bytes(&project).unwrap();
+        let bytes = write_midi_bytes(&project, &[]).unwrap();
         let imported = read_midi_bytes(&bytes).unwrap();
         assert_eq!(imported.tracks[0].notes.len(), 2);
         assert_eq!(imported.tracks[0].notes[0].start, Ticks::ZERO);
@@ -2201,6 +2355,116 @@ mod tests {
         assert_eq!(imported.tracks[0].notes[1].start, Ticks::QUARTER * 2);
         assert_eq!(imported.tracks[0].notes[1].length, Ticks::QUARTER);
         assert_eq!(track_end_ticks(&bytes, 1), (Ticks::QUARTER).0 as u32 * 4);
+    }
+
+    #[test]
+    fn an_exported_track_announces_its_program_before_its_first_note() {
+        let project = project_with(
+            vec![Note::new(60, Ticks::ZERO, Ticks::QUARTER)],
+            Ticks::QUARTER,
+        );
+        let bytes = write_midi_bytes(&project, &[("auris.synth.chiptune", 80)]).unwrap();
+        let smf = Smf::parse(&bytes).unwrap();
+        let channel_events: Vec<&TrackEvent> = smf.tracks[1]
+            .iter()
+            .filter(|event| matches!(event.kind, TrackEventKind::Midi { .. }))
+            .collect();
+        assert_eq!(channel_events[0].delta.as_int(), 0);
+        assert_eq!(channel_events[0].kind, program_change(0, 80).kind);
+        assert!(
+            matches!(
+                channel_events[1].kind,
+                TrackEventKind::Midi {
+                    message: MidiMessage::NoteOn { .. },
+                    ..
+                }
+            ),
+            "the program change came after a note"
+        );
+    }
+
+    #[test]
+    fn an_exported_program_reads_back_on_the_same_track() {
+        let project = project_with(
+            vec![Note::new(60, Ticks::ZERO, Ticks::QUARTER)],
+            Ticks::QUARTER,
+        );
+        let bytes = write_midi_bytes(&project, &[("auris.synth.chiptune", 80)]).unwrap();
+        assert_eq!(read_midi_bytes(&bytes).unwrap().tracks[0].program, Some(80));
+    }
+
+    #[test]
+    fn an_instrument_the_caller_did_not_name_exports_without_a_program_change() {
+        let project = project_with(
+            vec![Note::new(60, Ticks::ZERO, Ticks::QUARTER)],
+            Ticks::QUARTER,
+        );
+        for programs in [
+            &[][..],
+            // Another track's instrument is not this track's program.
+            &[("auris.physical.violin", 40)][..],
+        ] {
+            let bytes = write_midi_bytes(&project, programs).unwrap();
+            let smf = Smf::parse(&bytes).unwrap();
+            assert!(
+                smf.tracks[1].iter().all(|event| !matches!(
+                    event.kind,
+                    TrackEventKind::Midi {
+                        message: MidiMessage::ProgramChange { .. },
+                        ..
+                    }
+                )),
+                "a program change was invented for {programs:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_drum_track_is_announced_by_its_channel_and_not_a_program() {
+        let mut project = Project::new("Kit", 48_000.0);
+        let track = project.add_drum_track("Kit", "auris.synth.drumkit");
+        let clip = project
+            .add_midi_clip(track, "Beat", Ticks::ZERO, Ticks::QUARTER)
+            .unwrap();
+        project.midi_clip_mut(clip).unwrap().notes =
+            vec![Note::new(36, Ticks::ZERO, Ticks::QUARTER)];
+        let bytes = write_midi_bytes(&project, &[("auris.synth.drumkit", 0)]).unwrap();
+        let smf = Smf::parse(&bytes).unwrap();
+        assert!(
+            smf.tracks[1].iter().all(|event| !matches!(
+                event.kind,
+                TrackEventKind::Midi {
+                    message: MidiMessage::ProgramChange { .. },
+                    ..
+                }
+            )),
+            "channel 10 already says which voice this is"
+        );
+        assert!(smf.tracks[1].iter().any(|event| matches!(
+            event.kind,
+            TrackEventKind::Midi { channel, .. } if channel.as_int() == 9
+        )));
+    }
+
+    #[test]
+    fn the_program_change_is_charged_to_the_export_budget() {
+        let project = project_with(
+            vec![Note::new(60, Ticks::ZERO, Ticks::QUARTER)],
+            Ticks::QUARTER,
+        );
+        let plain = preflight_export(&project, roomy_export_limits(), &[]).unwrap();
+        let announced = preflight_export(
+            &project,
+            roomy_export_limits(),
+            &[("auris.synth.chiptune", 80)],
+        )
+        .unwrap();
+        assert_eq!(announced.instrument_tracks[0].program, Some(80));
+        assert_eq!(
+            announced.instrument_tracks[0].event_capacity,
+            plain.instrument_tracks[0].event_capacity + 1,
+            "the announced program was not charged to the track's event budget"
+        );
     }
 
     #[test]
@@ -2221,7 +2485,7 @@ mod tests {
         ])
         .unwrap();
         let destination = TempFile::new("tempo-duration.mid");
-        let staged = stage_midi_file(destination.path(), &project).unwrap();
+        let staged = stage_midi_file(destination.path(), &project, &[]).unwrap();
         assert_eq!(staged.duration_ticks(), Ticks::QUARTER * 8);
         assert!((staged.duration_seconds() - 6.0).abs() < 0.0001);
     }
@@ -2241,7 +2505,7 @@ mod tests {
         let mut limits = roomy_export_limits();
         limits.track_notes = 1;
         assert!(matches!(
-            preflight_export(&one_track, limits),
+            preflight_export(&one_track, limits, &[]),
             Err(IoError::MidiExportTooLarge {
                 resource: MidiExportResource::TrackNotes,
                 observed: 2,
@@ -2256,7 +2520,7 @@ mod tests {
         limits.track_notes = 2;
         limits.file_notes = 3;
         assert!(matches!(
-            preflight_export(&project, limits),
+            preflight_export(&project, limits, &[]),
             Err(IoError::MidiExportTooLarge {
                 resource: MidiExportResource::FileNotes,
                 observed: 4,
@@ -2281,7 +2545,7 @@ mod tests {
         let mut limits = roomy_export_limits();
         limits.track_curve_events = 6;
         assert!(matches!(
-            preflight_export(&project, limits),
+            preflight_export(&project, limits, &[]),
             Err(IoError::MidiExportTooLarge {
                 resource: MidiExportResource::TrackCurveEvents,
                 observed: 7,
@@ -2293,7 +2557,7 @@ mod tests {
         limits.track_curve_events = 7;
         limits.file_curve_events = 13;
         assert!(matches!(
-            preflight_export(&project, limits),
+            preflight_export(&project, limits, &[]),
             Err(IoError::MidiExportTooLarge {
                 resource: MidiExportResource::FileCurveEvents,
                 observed: 14,
@@ -2306,7 +2570,7 @@ mod tests {
         let mut limits = roomy_export_limits();
         limits.track_events = 5;
         assert!(matches!(
-            preflight_export(&note_events, limits),
+            preflight_export(&note_events, limits, &[]),
             Err(IoError::MidiExportTooLarge {
                 resource: MidiExportResource::TrackEvents,
                 observed: 6,
@@ -2320,7 +2584,7 @@ mod tests {
         let mut limits = roomy_export_limits();
         limits.file_events = 7;
         assert!(matches!(
-            preflight_export(&empty_tracks, limits),
+            preflight_export(&empty_tracks, limits, &[]),
             Err(IoError::MidiExportTooLarge {
                 resource: MidiExportResource::FileEvents,
                 observed: 8,
@@ -2340,7 +2604,7 @@ mod tests {
             Ticks::QUARTER,
         );
 
-        let staged = stage_midi_file(&destination, &project).unwrap();
+        let staged = stage_midi_file(&destination, &project, &[]).unwrap();
         assert_eq!(staged.notes(), 1);
         assert_eq!(staged.duration_ticks(), Ticks::QUARTER);
         assert_eq!(staged.ticks_per_quarter(), 960);
@@ -2350,11 +2614,11 @@ mod tests {
 
         let mut invalid = project.clone();
         invalid.tracks[0].kind.as_instrument_mut().unwrap().clips[0].start = Ticks(0x1000_0000);
-        assert!(write_midi_file(&destination, &invalid).is_err());
+        assert!(write_midi_file(&destination, &invalid, &[]).is_err());
         assert_eq!(std::fs::read(&destination).unwrap(), b"previous MIDI bytes");
         assert_eq!(std::fs::read_dir(folder.path()).unwrap().count(), 1);
 
-        assert_eq!(write_midi_file(&destination, &project).unwrap(), 1);
+        assert_eq!(write_midi_file(&destination, &project, &[]).unwrap(), 1);
         assert_eq!(&std::fs::read(&destination).unwrap()[..4], b"MThd");
         assert_eq!(std::fs::read_dir(folder.path()).unwrap().count(), 1);
     }
@@ -2371,7 +2635,7 @@ mod tests {
         );
         let destination = folder.path().join("tool-output.mid");
         assert_eq!(
-            stage_midi_file(&destination, &project)
+            stage_midi_file(&destination, &project, &[])
                 .unwrap()
                 .publish_noclobber()
                 .unwrap(),
@@ -2381,7 +2645,7 @@ mod tests {
         assert_eq!(read_midi_file(&destination).unwrap().note_count(), 1);
 
         let raced = folder.path().join("raced.mid");
-        let staged = stage_midi_file(&raced, &project).unwrap();
+        let staged = stage_midi_file(&raced, &project, &[]).unwrap();
         std::fs::write(&raced, b"winning writer").unwrap();
         assert!(matches!(
             staged.publish_noclobber(),
@@ -2392,7 +2656,7 @@ mod tests {
     }
 
     fn round_trip(project: &Project) -> MidiImport {
-        let bytes = write_midi_bytes(project).expect("writable");
+        let bytes = write_midi_bytes(project, &[]).expect("writable");
         read_midi_bytes(&bytes).expect("readable")
     }
 
@@ -2645,7 +2909,7 @@ mod tests {
                 ..auris_core::PitchPerformance::default()
             },
         }];
-        let bytes = write_midi_bytes(&project).unwrap();
+        let bytes = write_midi_bytes(&project, &[]).unwrap();
         let smf = Smf::parse(&bytes).unwrap();
         let events = &smf.tracks[1];
         let first_on = events.iter().position(|e| matches!(e.kind, TrackEventKind::Midi { message: MidiMessage::NoteOn { vel, .. }, .. } if vel.as_int() > 0)).unwrap();
@@ -2728,7 +2992,7 @@ mod tests {
                     }];
                 }
             }
-            let bytes = write_midi_bytes(&project).unwrap();
+            let bytes = write_midi_bytes(&project, &[]).unwrap();
             let smf = Smf::parse(&bytes).unwrap();
             let bend = smf.tracks[narrow + 1]
                 .iter()

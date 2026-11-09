@@ -21,7 +21,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use auris_core::project::CurvePoint;
 use auris_core::time::Ticks;
 use auris_core::{
-    AssetPath, AudioBuffer, ClipId, Note, Project, SoundFontId, SoundFontRef, SourceId, TrackId,
+    AssetPath, AudioBuffer, ClipId, Note, PluginState, Project, SoundFontId, SoundFontRef,
+    SourceId, TrackId,
 };
 use auris_io::{
     IoError, SoundFont, SoundFontPreset, byte_size, document_in_folder, font_name,
@@ -33,6 +34,7 @@ use crate::error::SessionError;
 use crate::history::Edit;
 
 use super::assets::{PreparedAssets, prepare_project_assets};
+use super::physical_sounds::{GM_PROGRAMS, native_sound};
 use super::{CachedFont, MidiReport, SaveReport, Session};
 
 /// Decodes an audio file to `sample_rate`, without a session and without touching a document.
@@ -62,7 +64,12 @@ pub fn read_soundfont(path: &Path) -> Result<LoadedFont, SessionError> {
 }
 
 /// The instrument a track that played on the drum channel is given.
-const DRUM_INSTRUMENT: &str = "auris.synth.noisedrum";
+///
+/// General MIDI percussion keys are exactly the pads [`auris_synth::DrumKit`] assigns, so an
+/// imported drum part lands on the kit and not on the one-shot noise voice, which transposes on
+/// the note number and would turn a kit's kick and snare into a melody of thumps. A registry
+/// without the kit falls back to its default instrument, as it does for any other part.
+const DRUM_INSTRUMENT: &str = auris_synth::DrumKit::ID;
 
 /// MIDI's drum channel, 0-based. Channel 10, counting the way a musician does.
 const DRUM_CHANNEL: u8 = 9;
@@ -303,15 +310,35 @@ impl MidiImportJob {
             if cancelled.load(Ordering::Relaxed) {
                 return Ok(None);
             }
-            let instrument = match track.channel {
-                DRUM_CHANNEL => self.drums.clone(),
-                _ => self.fallback.clone(),
+            let drums = track.channel == DRUM_CHANNEL;
+            let (instrument, state) = match drums {
+                // General MIDI addresses a kit by the channel, not by a program, and its kit
+                // numbers select palettes this application answers with one kit.
+                true => (self.drums.clone(), PluginState::empty()),
+                false => track
+                    .program
+                    .and_then(|program| native_sound(0, i32::from(program)))
+                    // The hint is only worth taking when the registry can play what it names; a
+                    // session built without the built-in pack must land on its own fallback
+                    // rather than a track pointing at a plugin it does not have.
+                    .filter(|(id, _)| self.owner.has_instrument(id))
+                    .map(|(id, state)| (id.to_string(), state))
+                    .unwrap_or_else(|| (self.fallback.clone(), PluginState::empty())),
             };
-            let track_id = if track.channel == DRUM_CHANNEL {
-                project.add_drum_track(&track.name, instrument)
+            let track_id = if drums {
+                project.add_drum_track(&track.name, &instrument)
             } else {
-                project.add_instrument_track(&track.name, instrument)
+                project.add_instrument_track(&track.name, &instrument)
             };
+            if !state.params.is_empty()
+                && let Some(inner) = project
+                    .track_mut(track_id)
+                    .and_then(|entry| entry.kind.as_instrument_mut())
+            {
+                // A program is a starting point, not a claim to reproduce the patch: the model's
+                // own controls carry the difference between, say, a vibraphone and a marimba.
+                inner.instrument_state = state;
+            }
             let Some(first) = track.notes.iter().map(|note| note.start).min() else {
                 continue;
             };
@@ -365,7 +392,7 @@ impl MidiExportJob {
         if cancelled.load(Ordering::Relaxed) {
             return Ok(None);
         }
-        let staged = auris_io::stage_midi_file(&self.path, &self.project)?;
+        let staged = auris_io::stage_midi_file(&self.path, &self.project, GM_PROGRAMS)?;
         if cancelled.load(Ordering::Relaxed) {
             return Ok(None);
         }
@@ -645,9 +672,15 @@ impl Session {
     /// clears the history and the path, so the imported piece has to be saved somewhere new
     /// rather than over the `.auris` that happened to be open.
     ///
-    /// A track that played on **channel 10** gets the noise-drum instrument where the registry has
-    /// one. It is the only thing a bare MIDI file says about what a track is *for*, and a General
-    /// MIDI drum part played on a lead synth is not something anyone would keep.
+    /// A track that played on **channel 10** is a drum part and gets [`auris_synth::DrumKit`]
+    /// where the registry has it: the channel is the only thing a bare MIDI file says about what a
+    /// track is *for*, and General MIDI's percussion keys are the kit's pads.
+    ///
+    /// Every other track asks the General MIDI program it selected before its first note. A
+    /// family with a native answer becomes that editable instrument, carrying the program's
+    /// starting controls; anything else — no program, a family no built-in voice covers, or an
+    /// instrument this registry does not have — keeps the registry's default. The shipped font is
+    /// not adopted behind the user's back: choosing a sound from it stays an explicit command.
     pub fn import_midi(&mut self, path: &Path) -> Result<MidiReport, SessionError> {
         let cancelled = AtomicBool::new(false);
         let result = self
@@ -764,7 +797,7 @@ impl Session {
             Ok(created) => {
                 self.end_transaction();
                 self.invalidate_graph();
-                Ok(serde_json::json!({"created":created,"notes":result.report.notes,"timeline_preserved":true,"instrument_mapping":"default instruments; review timbres","revision":self.agent_document_revision()?}).to_string())
+                Ok(serde_json::json!({"created":created,"notes":result.report.notes,"timeline_preserved":true,"instrument_mapping":"General MIDI programs where a built-in voice covers the family, the default instrument otherwise; review timbres","revision":self.agent_document_revision()?}).to_string())
             }
             Err(error) => {
                 self.revert_transaction();
@@ -823,10 +856,11 @@ impl Session {
     /// Writes the open document's instrument tracks as a Standard MIDI File.
     ///
     /// Returns how many notes were written. What a `.mid` has nowhere to put — audio tracks, the
-    /// mixer, which instrument each track plays, the automation — is left behind; see
-    /// [`auris_io::midi`] for the whole list.
+    /// mixer, the automation — is left behind, and the instrument travels only as the General
+    /// MIDI program the built-in voices table names for it; see [`auris_io::midi`] for the whole
+    /// list.
     pub fn export_midi(&self, path: &Path) -> Result<usize, SessionError> {
-        Ok(auris_io::write_midi_file(path, &self.project)?)
+        Ok(auris_io::write_midi_file(path, &self.project, GM_PROGRAMS)?)
     }
 
     /// Captures the open document for a worker-side MIDI export.
@@ -2222,7 +2256,7 @@ mod tests {
             .unwrap()
             .notes
             .push(Note::new(60, Ticks::ZERO, Ticks::QUARTER));
-        auris_io::write_midi_file(&midi, &source).unwrap();
+        auris_io::write_midi_file(&midi, &source, GM_PROGRAMS).unwrap();
 
         let mut live = session();
         let job = live.begin_midi_import(&midi).unwrap();
@@ -3163,7 +3197,7 @@ mod tests {
                 value: 0.75,
             }],
         );
-        auris_io::write_midi_file(&midi, &source).unwrap();
+        auris_io::write_midi_file(&midi, &source, GM_PROGRAMS).unwrap();
 
         let live = session();
         let result = live

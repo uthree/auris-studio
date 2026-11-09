@@ -113,15 +113,17 @@ before listing a folder the model names. The default search of the Music and Dow
 still runs without asking. The project folder is not exempted: the rule has no project context,
 and the project's own audio is already in the project.
 
-### AN-06 — The installer does not associate `.auris` files with the application (open)
+### AN-06 — The installer does not associate `.auris` files with the application (fixed)
 
 `main` opens a project passed as the first argument (`project_argument`), and the macOS bundle
 declares the document type, but `tools/installer/auris-studio.iss` has no `[Registry]` section.
 On Windows, double-clicking `MySong.auris` asks which program to use.
 
-**Direction.** Register `.auris` under `HKCU\Software\Classes` (the installer is per-user, with
-`PrivilegesRequired=lowest`), with `"{app}\auris-studio.exe" "%1"` as the open command and the
-`uninsdeletekey` flag.
+**Fix.** The installer registers `.auris` under `HKA\Software\Classes` (HKCU, since it installs per
+user) with the `AurisStudio.Project` ProgID, whose open command is
+`"{app}\auris-studio.exe" "%1"`, and sets `ChangesAssociations`. Uninstall removes all of it. The
+script has not been compiled on the review machine, which has no Inno Setup; the release
+workflow compiles it.
 
 ### AN-07 — `auris render` replaces an existing WAV without `--force` (fixed)
 

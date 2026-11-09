@@ -126,6 +126,26 @@ impl CurveTarget {
     }
 }
 
+/// The lanes a clip actually carries, in the shape [`CurveTarget`] takes.
+///
+/// A clip could hold a hundred and twenty-nine lanes and normally holds one or two. Without this,
+/// the only way to answer "which controllers does this clip use" through the tools was to read all
+/// of them: a real trial spent 258 of its 357 calls sweeping every controller number twice, to find
+/// the single modulation lane that existed. Every read says what is there, so one call answers it.
+pub(super) fn authored_curves(clip: &auris_core::project::MidiClip) -> Vec<serde_json::Value> {
+    clip.curves()
+        .map(|curve| {
+            let points = clip.curve(curve).len();
+            match curve.controller() {
+                Some(number) => {
+                    serde_json::json!({"kind":"controller","number":number,"points":points})
+                }
+                None => serde_json::json!({"kind":"bend","points":points}),
+            }
+        })
+        .collect()
+}
+
 /// One exact authored curve point.
 #[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -466,6 +486,7 @@ impl Session {
             .midi_clip(clip)
             .ok_or("Unknown MIDI clip ID")?;
         if let CurveOperation::Read { offset } = operation {
+            let lanes = authored_curves(midi);
             let all = midi.curve(curve);
             if offset > all.len() {
                 return Err("Offset exceeds point count".into());
@@ -477,7 +498,7 @@ impl Session {
                 .map(|point| serde_json::json!({"at_tick":point.at.raw(),"value":point.value}))
                 .collect();
             let next = offset + points.len();
-            return Ok(serde_json::json!({"clip":clip.0,"revision":self.agent_document_revision()?,"points":points,"total":all.len(),"next_offset":(next<all.len()).then_some(next),"range":curve.range()}).to_string());
+            return Ok(serde_json::json!({"clip":clip.0,"revision":self.agent_document_revision()?,"points":points,"total":all.len(),"next_offset":(next<all.len()).then_some(next),"range":curve.range(),"authored_curves":lanes}).to_string());
         }
         if expected_revision.as_deref() != Some(self.agent_document_revision()?.as_str()) {
             return Err(
@@ -781,6 +802,57 @@ mod tests {
         assert_eq!(after.length.raw(), 1000);
         session.undo();
         assert_eq!(session.project().midi_clip(clip).unwrap().1, &before);
+    }
+
+    #[test]
+    fn every_curve_read_lists_exactly_the_lanes_the_clip_carries() {
+        let (mut session, _, clip) = fixture();
+        let empty: serde_json::Value = serde_json::from_str(
+            &session
+                .agent_clip_curve(
+                    clip.0,
+                    CurveTarget::Bend,
+                    CurveOperation::Read { offset: 0 },
+                    None,
+                )
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(empty["authored_curves"], serde_json::json!([]));
+
+        session.set_curve_point(clip, auris_core::project::ClipCurve::Bend, Ticks(13), 0.25);
+        session.set_curve_point(
+            clip,
+            auris_core::project::ClipCurve::Controller(1),
+            Ticks(0),
+            0.4,
+        );
+        session.set_curve_point(
+            clip,
+            auris_core::project::ClipCurve::Controller(1),
+            Ticks(480),
+            0.8,
+        );
+        // Reading one lane answers which lanes exist, so no sweep of all 128 is ever needed.
+        let read: serde_json::Value = serde_json::from_str(
+            &session
+                .agent_clip_curve(
+                    clip.0,
+                    CurveTarget::Controller { number: 64 },
+                    CurveOperation::Read { offset: 0 },
+                    None,
+                )
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(read["total"], 0);
+        assert_eq!(
+            read["authored_curves"],
+            serde_json::json!([
+                {"kind":"bend","points":1},
+                {"kind":"controller","number":1,"points":2},
+            ])
+        );
     }
 
     #[test]
