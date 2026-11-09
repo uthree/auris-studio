@@ -117,6 +117,6 @@ pub use offline::{
     render_project_using, render_project_with_progress,
 };
 pub use renderer::render_block;
-pub use scope::{SCOPE_HISTORY, SCOPE_WINDOW, Scope, ScopeSource};
+pub use scope::{FreshSamples, SCOPE_HISTORY, SCOPE_WINDOW, Scope, ScopeSource, ScopeTap};
 pub use signal_meter::{SignalMeters, SignalRoute};
 pub use transport::{CountIn, Transport};

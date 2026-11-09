@@ -613,8 +613,8 @@ impl AurisApp {
                     ))
                     .on_action(Self::window_listener(
                         cx,
-                        |this, _: &actions::VisualizerEffects, _, cx| {
-                            this.visualizer_command(super::visualizer::VisualizerCommand::Effects);
+                        |this, _: &actions::VisualizerTap, _, cx| {
+                            this.visualizer_command(super::visualizer::VisualizerCommand::Tap);
                             cx.notify();
                         },
                     ))
@@ -655,8 +655,10 @@ impl AurisApp {
                     ))
                     .on_action(Self::window_listener(
                         cx,
-                        |this, _: &actions::VisualizerView, _, cx| {
-                            this.visualizer_command(super::visualizer::VisualizerCommand::ViewNext);
+                        |this, _: &actions::VisualizerLoudnessReset, _, cx| {
+                            this.visualizer_command(
+                                super::visualizer::VisualizerCommand::LoudnessReset,
+                            );
                             cx.notify();
                         },
                     ))

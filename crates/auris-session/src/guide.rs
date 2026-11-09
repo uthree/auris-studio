@@ -924,13 +924,20 @@ pub mod architecture {
     //! discarded. Elapsed-time images are split at tempo changes to follow the musical ruler.
     //!
     //! The live visualizer has a separate stereo scope from the plugin editor. Each tap copies
-    //! paired post-fader samples under one sequence counter, without allocation or waiting on
-    //! the audio thread. `Session::visualizer_frame` carries those channels and their sample rate
-    //! to the frontend for a triggered time-domain oscilloscope, then transforms the channels
-    //! independently and averages their power, preserving right-only and opposite-polarity
-    //! signals. Undefined correlation is explicit for silent channels. The frontend owns freeze,
-    //! display history and saved comparisons; none of these changes the document or rendered
-    //! audio.
+    //! paired samples under one sequence counter, without allocation or waiting on the audio
+    //! thread, from before a strip's fader or after it as the visualizer asks
+    //! ([`crate::VisualizerTap`]). `Session::visualizer_frame` carries those channels and their
+    //! sample rate to the frontend for a triggered time-domain oscilloscope, then transforms the
+    //! channels independently and averages their power, preserving right-only and
+    //! opposite-polarity signals. Undefined correlation is explicit for silent channels.
+    //!
+    //! Loudness is the one reading that has to hear *every* sample, so it does not come from a
+    //! window. The scope also counts what it has published, `Session::measure_visualizer_loudness`
+    //! takes exactly the frames since its last call into an [`auris_dsp::LoudnessMeter`], and the
+    //! ring is long enough that a missed repaint or two loses nothing. The meter runs on the UI
+    //! thread, where its growing integrated history is allowed to allocate. The frontend owns
+    //! freeze, display history and saved comparisons; none of these changes the document or
+    //! rendered audio.
     //!
     //! # The third thread, and why recording needed one
     //!
