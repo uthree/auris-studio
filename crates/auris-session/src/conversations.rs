@@ -5,7 +5,6 @@
 //! agent runtime and lives beside, rather than inside, the readable transcript.
 
 use std::fs::{File, OpenOptions};
-use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -523,15 +522,10 @@ impl ConversationStore {
             let target = destination.folder(&info.id)?;
             if target.join("meta.json").exists() {
                 let existing: ConversationInfo = read_json(&target.join("meta.json"))?;
-                let same_transcript = std::fs::read(source.join("transcript.json"))
-                    .map_err(|e| e.to_string())?
-                    == std::fs::read(target.join("transcript.json")).map_err(|e| e.to_string())?;
+                let same_transcript = read_bytes(&source.join("transcript.json"))?
+                    == read_bytes(&target.join("transcript.json"))?;
                 let same_production = ["memory.production.json"].into_iter().all(|name| {
-                    let read = |folder: &Path| match std::fs::read(folder.join(name)) {
-                        Ok(bytes) => Ok(Some(bytes)),
-                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-                        Err(error) => Err(error),
-                    };
+                    let read = |folder: &Path| read_bytes_if_present(&folder.join(name));
                     matches!((read(&source), read(&target)), (Ok(a), Ok(b)) if a == b)
                 });
                 if existing == info && same_transcript && same_production {
@@ -544,9 +538,11 @@ impl ConversationStore {
             }
             std::fs::create_dir_all(&target).map_err(|e| e.to_string())?;
             for name in ["transcript.json", "memory.json", "memory.production.json"] {
-                let path = source.join(name);
-                if path.exists() {
-                    std::fs::copy(path, target.join(name)).map_err(|e| e.to_string())?;
+                // Read and republished rather than `std::fs::copy`, which holds the source open
+                // outside the lock a concurrent agent's save renames under.
+                if let Some(bytes) = read_bytes_if_present(&source.join(name))? {
+                    crate::settings::write_file_atomic(&target.join(name), &bytes)
+                        .map_err(|e| e.to_string())?;
                 }
             }
             write_json(&target.join("meta.json"), &info)?;
@@ -613,19 +609,34 @@ fn preview(text: &str, limit: usize) -> String {
         .collect()
 }
 
+/// The bytes of a file [`write_json`] publishes, read under the lock its rename takes.
+///
+/// A plain read here made the rename fail with `PermissionDenied` on Windows for as long as the
+/// file was open, so this goes through [`crate::settings::read_published_file`]. A file that is
+/// not one of this store's own, such as an attachment, needs no such care.
+fn read_bytes(path: &Path) -> Result<Vec<u8>, String> {
+    crate::settings::read_published_file(path, READ_LIMIT).map_err(read_error)
+}
+
+/// [`read_bytes`], or `None` when there is no such file.
+fn read_bytes_if_present(path: &Path) -> Result<Option<Vec<u8>>, String> {
+    match crate::settings::read_published_file(path, READ_LIMIT) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(read_error(e)),
+    }
+}
+
+fn read_error(error: std::io::Error) -> String {
+    if error.kind() == std::io::ErrorKind::FileTooLarge {
+        "Conversation file is too large".into()
+    } else {
+        error.to_string()
+    }
+}
+
 fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T, String> {
-    let file = File::open(path).map_err(|e| e.to_string())?;
-    if file.metadata().map_err(|e| e.to_string())?.len() > READ_LIMIT {
-        return Err("Conversation file is too large".into());
-    }
-    let mut bytes = Vec::new();
-    file.take(READ_LIMIT + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|e| e.to_string())?;
-    if bytes.len() as u64 > READ_LIMIT {
-        return Err("Conversation file is too large".into());
-    }
-    serde_json::from_slice(&bytes).map_err(|e| format!("Cannot read conversation: {e}"))
+    serde_json::from_slice(&read_bytes(path)?).map_err(|e| format!("Cannot read conversation: {e}"))
 }
 
 fn write_json(path: &Path, value: &impl Serialize) -> Result<(), String> {
@@ -639,6 +650,39 @@ fn write_json(path: &Path, value: &impl Serialize) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_write_succeeds_while_another_thread_reads_the_file() {
+        // On Windows the write's rename fails for as long as a reader has the file open, which a
+        // reader going around the shared lock did on most attempts. Elsewhere this is a plain
+        // check that concurrent reads and writes neither fail nor tear the file.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("transcript.json");
+        write_json(&path, &0_u32).unwrap();
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let reader = {
+            let (path, stop) = (path.clone(), stop.clone());
+            std::thread::spawn(move || {
+                let mut reads = 0;
+                while !stop.load(Ordering::Relaxed) {
+                    read_json::<u32>(&path).unwrap();
+                    reads += 1;
+                }
+                reads
+            })
+        };
+        let failures: Vec<_> = (1..=200_u32)
+            .filter_map(|n| write_json(&path, &n).err())
+            .collect();
+        stop.store(true, Ordering::Relaxed);
+        assert!(reader.join().unwrap() > 0, "the reader ran");
+        assert!(
+            failures.is_empty(),
+            "{} writes failed: {:?}",
+            failures.len(),
+            failures.first()
+        );
+    }
 
     #[test]
     fn copying_store_aliases_and_opposite_directions_does_not_block() {

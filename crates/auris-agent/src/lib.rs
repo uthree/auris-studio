@@ -1961,6 +1961,40 @@ mod tests {
         )
     }
 
+    /// Asserts that 200 `write`s all succeed while another thread `read`s in a loop.
+    ///
+    /// On Windows a publishing rename fails for as long as a reader has the file open, which a
+    /// reader going around `auris_session::settings`' shared lock did on most attempts. Elsewhere
+    /// this is a plain check that concurrent reads and writes neither fail nor tear the file.
+    pub(super) fn assert_writes_survive_a_reader(
+        read: impl Fn() -> Result<(), String> + Send + 'static,
+        mut write: impl FnMut(u32) -> Result<(), String>,
+    ) {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        write(0).unwrap();
+        let stop = std::sync::Arc::new(AtomicBool::new(false));
+        let reader = {
+            let stop = stop.clone();
+            std::thread::spawn(move || {
+                let mut reads = 0;
+                while !stop.load(Ordering::Relaxed) {
+                    read().unwrap();
+                    reads += 1;
+                }
+                reads
+            })
+        };
+        let failures: Vec<_> = (1..=200).filter_map(|n| write(n).err()).collect();
+        stop.store(true, Ordering::Relaxed);
+        assert!(reader.join().unwrap() > 0, "the reader ran");
+        assert!(
+            failures.is_empty(),
+            "{} writes failed: {:?}",
+            failures.len(),
+            failures.first()
+        );
+    }
+
     #[test]
     fn output_limit_preferences_are_validated_and_defaulted() {
         let mut prefs = auris_session::AgentPreferences {

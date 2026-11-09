@@ -1,6 +1,5 @@
 //! Per-conversation channels and cancellation; no process-global session or working directory.
 use super::*;
-use std::io::Read;
 use std::path::Path;
 use std::sync::{
     Arc,
@@ -122,21 +121,23 @@ fn history_file_lock(path: &Path) -> Result<std::fs::File, String> {
 
 fn read_history_generation(path: &Path) -> Result<u64, String> {
     let generation_path = path.with_extension("generation");
-    let file = match std::fs::File::open(&generation_path) {
-        Ok(file) => file,
+    // Under the lock `advance_history_generation`'s rename takes: on Windows that rename fails
+    // for as long as another thread has the file open.
+    let bytes = match auris_session::settings::read_published_file(
+        &generation_path,
+        HISTORY_GENERATION_BYTES,
+    ) {
+        Ok(bytes) => bytes,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(error) if error.kind() == std::io::ErrorKind::FileTooLarge => {
+            return Err("Conversation history generation is invalid".into());
+        }
         Err(error) => return Err(error.to_string()),
     };
-    if file.metadata().map_err(|error| error.to_string())?.len() > HISTORY_GENERATION_BYTES {
-        return Err("Conversation history generation is invalid".into());
-    }
-    let mut text = String::new();
-    file.take(HISTORY_GENERATION_BYTES + 1)
-        .read_to_string(&mut text)
-        .map_err(|error| error.to_string())?;
-    text.trim()
-        .parse()
-        .map_err(|_| "Conversation history generation is invalid".into())
+    std::str::from_utf8(&bytes)
+        .ok()
+        .and_then(|text| text.trim().parse().ok())
+        .ok_or_else(|| "Conversation history generation is invalid".into())
 }
 
 /// Advance the tombstone and remove the older generation while the stable file lock is held.
@@ -866,6 +867,17 @@ pub fn list_models_background(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_reset_succeeds_while_another_thread_reads_the_generation() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("memory.json");
+        let read = path.clone();
+        crate::tests::assert_writes_survive_a_reader(
+            move || read_history_generation(&read).map(drop),
+            |_| advance_history_generation(&path).map(drop),
+        );
+    }
 
     #[test]
     fn worker_uses_configured_tool_call_limit_and_can_exceed_the_old_caps() {
