@@ -5696,6 +5696,32 @@ mod tests {
     use auris_session::agent_policy::Mode;
     use auris_session::prelude::{Note, Ticks};
 
+    /// Removes a test's project folder once the window has stopped writing into it.
+    ///
+    /// Saving the project points the conversation store at the folder, and the store writes on
+    /// a thread of its own. Removing the folder while that write is still running races it: on
+    /// Windows the removal fails with `DirectoryNotEmpty`, and only when the suite is loaded
+    /// enough that the write is late. So the write is waited for, not outrun.
+    fn remove_project_folder(
+        app: &gpui::Entity<AurisApp>,
+        cx: &mut gpui::VisualTestContext,
+        root: &std::path::Path,
+    ) {
+        // A hang guard, not a budget: one small JSON write per pass.
+        let deadline = Instant::now() + Duration::from_secs(60);
+        while app.update(cx, |this, cx| {
+            this.poll_conversations(cx);
+            this.conversation_storage_busy()
+        }) {
+            assert!(
+                Instant::now() < deadline,
+                "conversation storage never finished"
+            );
+            std::thread::yield_now();
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn pending_vocals_cancel_on_document_switch_policy_revocation_and_drop() {
         for (revision, same_document, mode) in [
@@ -7023,7 +7049,7 @@ mod tests {
             );
             assert_eq!(this.agent_chat.history_project, current.project);
         });
-        std::fs::remove_dir_all(root).unwrap();
+        remove_project_folder(&app, cx, &root);
     }
 
     #[gpui::test]
@@ -7099,7 +7125,7 @@ mod tests {
                 this.agent_selection_context().to_string()
             );
         });
-        std::fs::remove_dir_all(root).unwrap();
+        remove_project_folder(&app, cx, &root);
     }
 
     #[gpui::test]
@@ -7197,7 +7223,7 @@ mod tests {
                 );
             });
         });
-        std::fs::remove_dir_all(root).unwrap();
+        remove_project_folder(&app, cx, &root);
     }
 
     #[gpui::test]
@@ -7241,7 +7267,7 @@ mod tests {
             .recv_timeout(std::time::Duration::from_secs(5))
             .expect("the background history read finishes before cleanup")
             .expect("a project without saved conversation history loads as empty");
-        std::fs::remove_dir_all(root).unwrap();
+        remove_project_folder(&app, cx, &root);
     }
 
     #[gpui::test]
@@ -7281,7 +7307,7 @@ mod tests {
             );
             assert!(sender.send(Err("stale load".into())).is_err());
         });
-        std::fs::remove_dir_all(root).unwrap();
+        remove_project_folder(&app, cx, &root);
     }
 
     #[gpui::test]

@@ -414,6 +414,12 @@ impl AurisApp {
         self.conversation_operation(Operation::Initialize);
     }
 
+    /// Whether a conversation-storage write is still running on its thread.
+    #[cfg(test)]
+    pub(super) fn conversation_storage_busy(&self) -> bool {
+        self.agent_chat.conversations.pending.is_some()
+    }
+
     pub(super) fn poll_conversations(&mut self, cx: &mut gpui::Context<Self>) {
         let answer = self
             .agent_chat
