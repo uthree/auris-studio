@@ -1266,7 +1266,7 @@ fn render(args: &[String]) -> Result<(), String> {
     if stems.is_none() && !force && output.exists() {
         return Err(messages::output_exists(
             LANGUAGE,
-            &output.display().to_string(),
+            output.display().to_string(),
         ));
     }
 
