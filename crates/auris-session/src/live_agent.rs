@@ -1273,8 +1273,14 @@ impl Session {
                 crate::session::arrangement_shape::arrangement_shape(self.project()).to_string(),
             ),
             Command::MelodyShape { track } => {
-                crate::session::melody_shape::melody_shape(self.project(), TrackId(track))
-                    .map(|report| report.to_string())
+                crate::session::melody_shape::melody_shape(self.project(), TrackId(track)).map(
+                    |mut report| {
+                        if let Some(accent) = self.accent_fit(TrackId(track)) {
+                            report["accent"] = accent;
+                        }
+                        report.to_string()
+                    },
+                )
             }
             Command::ReportStatus { status } => report_status(&status)
                 .map(|status| serde_json::json!({ "shown": status }).to_string()),
