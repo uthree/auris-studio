@@ -24,6 +24,12 @@ pub const MIN_FRAME_BARS: f64 = 8.0;
 /// count as fuller with the same parts.
 const FULLER: f64 = 1.15;
 
+/// Sections with drums that must sound before one strength throughout is reported.
+pub const DYNAMIC_SECTIONS: usize = 3;
+/// The spread of the drums' mean velocity across sections under which they are one strength:
+/// about what a performance stage's random jitter alone moves a section's mean.
+pub const FLAT_DYNAMICS: f64 = 0.04;
+
 /// One part's notes, each as its position within its bar, pitch and length, grouped by bar.
 type Bars = BTreeMap<i64, Vec<(i64, u8, i64)>>;
 
@@ -166,6 +172,7 @@ pub fn arrangement_shape(project: &Project) -> Value {
     // Sections that share one main drum bar, and choruses that loop the verse's progression.
     warnings.extend(shared_grooves(project, &spans, &parts));
     warnings.extend(borrowed_progressions(project, &spans));
+    warnings.extend(flat_drums(project, &spans));
 
     // The intro and outro around the voice. The song ends with the bar its last sound is in: a
     // final hit on the downbeat of the last bar still owns that bar.
@@ -256,6 +263,42 @@ fn shared_grooves(
 }
 
 /// A section label without its number or a final/last marker: サビ2 and 最終サビ are both サビ.
+/// A warning when the drums play every section at one written strength: a verse and the last
+/// chorus struck alike is heard as a machine, however the notes differ.
+fn flat_drums(project: &Project, spans: &[auris_core::SectionSpan]) -> Option<String> {
+    let mut sums = vec![(0.0_f64, 0_usize); spans.len()];
+    for track in project.tracks.iter().filter(|track| track.kind.is_drum()) {
+        for clip in track.kind.note_clips().into_iter().flatten() {
+            if clip.muted {
+                continue;
+            }
+            for (offset, span) in loop_passes(clip.length, clip.loop_end) {
+                for note in clip.playable_notes().filter(|note| note.start < span) {
+                    let at = clip.start + offset + note.start;
+                    if let Some(index) = spans.iter().position(|s| s.start <= at && at < s.end) {
+                        sums[index].0 += f64::from(note.velocity);
+                        sums[index].1 += 1;
+                    }
+                }
+            }
+        }
+    }
+    let means: Vec<f64> = sums
+        .iter()
+        .filter(|(_, count)| *count > 0)
+        .map(|(sum, count)| sum / *count as f64)
+        .collect();
+    let (low, high) = means
+        .iter()
+        .fold((f64::MAX, f64::MIN), |(lo, hi), v| (lo.min(*v), hi.max(*v)));
+    (means.len() >= DYNAMIC_SECTIONS && high - low < FLAT_DYNAMICS).then(|| {
+        format!(
+            "The drums play all {} sections at one strength (mean velocity {low:.2} to {high:.2}); strike the verses and a bridge softer and the choruses harder",
+            means.len()
+        )
+    })
+}
+
 fn section_kind(label: &str) -> String {
     let mut kind = label.to_lowercase();
     for word in ["final", "last", "最終", "ラスト", "ラス"] {
@@ -483,5 +526,26 @@ mod tests {
             .chords
             .set_point(bar * 16, Some(Numeral::parse("iv").unwrap()));
         assert!(!warnings(&project).iter().any(|w| w.contains("loops")));
+    }
+
+    #[test]
+    fn drums_struck_alike_in_every_section_are_reported_and_a_softer_verse_is_not() {
+        let flat = song((4, 16), 20, &groove);
+        assert!(
+            warnings(&flat).iter().any(|w| w.contains("one strength")),
+            "{:?}",
+            warnings(&flat)
+        );
+        // The Aメロ (bars 4 to 8) at 0.5, everything else at 0.8.
+        let shaded = song((4, 16), 20, &|index| {
+            let mut notes = groove(index);
+            notes[0].velocity = if (4..8).contains(&index) { 0.5 } else { 0.8 };
+            notes
+        });
+        assert!(
+            !warnings(&shaded).iter().any(|w| w.contains("one strength")),
+            "{:?}",
+            warnings(&shaded)
+        );
     }
 }
