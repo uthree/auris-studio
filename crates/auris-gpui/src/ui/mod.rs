@@ -70,6 +70,7 @@ pub(crate) mod song_workshop;
 pub(crate) mod spectrogram;
 pub mod status_bar;
 pub(crate) mod strum;
+pub(crate) mod synth_edit;
 pub(crate) mod synth_view;
 pub mod text_area;
 pub mod text_field;

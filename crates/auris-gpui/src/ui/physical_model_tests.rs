@@ -619,3 +619,136 @@ fn nonphysical_instrument_replaces_the_motion_surface_and_releases_preview(
     });
     harness::paint(&app, cx);
 }
+
+/// Reads one of a track's instrument parameters by key.
+fn param(app: &Entity<AurisApp>, cx: &mut VisualTestContext, track: TrackId, key: &str) -> f32 {
+    app.update(cx, |app, _| app.instrument_param(track, key).unwrap())
+}
+
+/// Opens `id` in a window tall enough that the patch's pictures are on screen without
+/// scrolling.
+fn open_tall(
+    app: &Entity<AurisApp>,
+    cx: &mut VisualTestContext,
+    id: &str,
+) -> (TrackId, VisualTestContext) {
+    let (track, mut utility) = open_model(app, cx, id);
+    harness::resize(app, &mut utility, size(px(1080.), px(1600.)));
+    harness::paint(app, &mut utility);
+    (track, utility)
+}
+
+/// Drags across a picture from its centre by `(dx, dy)` pixels and lets go.
+fn drag_plot(
+    app: &Entity<AurisApp>,
+    cx: &mut VisualTestContext,
+    selector: &'static str,
+    from: (f32, f32),
+    by: (f32, f32),
+) {
+    let bounds = cx.debug_bounds(selector).expect(selector);
+    assert!(
+        app.read_with(cx, |app, _| app.drag.is_none()),
+        "nothing is held before {selector}"
+    );
+    let at = point(
+        bounds.center().x + px(from.0),
+        bounds.center().y + px(from.1),
+    );
+    let to = point(at.x + px(by.0), at.y + px(by.1));
+    harness::press(cx, at);
+    harness::paint(app, cx);
+    harness::drag_to(cx, point(at.x + px(by.0 / 2.), at.y + px(by.1 / 2.)));
+    harness::paint(app, cx);
+    harness::drag_to(cx, to);
+    harness::paint(app, cx);
+    harness::release(cx, to);
+    harness::paint(app, cx);
+}
+
+#[gpui::test]
+fn the_subtractive_pictures_are_dragged_like_curves(cx: &mut gpui::TestAppContext) {
+    let (app, cx) = harness::open(cx);
+    let (track, mut utility) = open_tall(&app, cx, "auris.synth.pad");
+    let cutoff = param(&app, &mut utility, track, "cutoff");
+    let resonance = param(&app, &mut utility, track, "resonance");
+    // Right and up: the knee moves to a higher harmonic and peaks harder.
+    drag_plot(&app, &mut utility, "synth-filter", (0., 0.), (60., -30.));
+    let opened = param(&app, &mut utility, track, "cutoff");
+    let peaked = param(&app, &mut utility, track, "resonance");
+    assert!(opened > cutoff + 100., "{cutoff} Hz → {opened} Hz");
+    assert!(peaked > resonance + 0.1, "{resonance} → {peaked}");
+    // The whole drag, both parameters, is one step back.
+    app.update(&mut utility, |app, _| {
+        app.session.undo();
+    });
+    assert_eq!(param(&app, &mut utility, track, "cutoff"), cutoff);
+    assert_eq!(param(&app, &mut utility, track, "resonance"), resonance);
+
+    // A stack widens whichever side it is pulled out from, and the axis holds still under it.
+    let detune = param(&app, &mut utility, track, "detune");
+    drag_plot(&app, &mut utility, "synth-stack", (-40., 0.), (-30., 0.));
+    let left = param(&app, &mut utility, track, "detune");
+    assert!(left > detune, "pulled left: {detune} → {left}");
+    drag_plot(&app, &mut utility, "synth-stack", (40., 0.), (30., 0.));
+    let right = param(&app, &mut utility, track, "detune");
+    assert!(right > left, "pulled right: {left} → {right}");
+    // Down lowers the side copies.
+    let mix = param(&app, &mut utility, track, "mix");
+    drag_plot(&app, &mut utility, "synth-stack", (40., 0.), (0., 20.));
+    assert!(param(&app, &mut utility, track, "mix") < mix);
+
+    // The wheel adds a copy a notch.
+    let copies = param(&app, &mut utility, track, "unison");
+    let stack = utility.debug_bounds("synth-stack").unwrap();
+    utility.simulate_event(gpui::ScrollWheelEvent {
+        position: stack.center(),
+        delta: gpui::ScrollDelta::Lines(point(0., -1.)),
+        ..Default::default()
+    });
+    harness::paint(&app, &mut utility);
+    let after = param(&app, &mut utility, track, "unison");
+    assert_eq!((after - copies).abs(), 1.0, "{copies} → {after}");
+
+    // A double click puts the filter back where the patch has it.
+    drag_plot(&app, &mut utility, "synth-filter", (0., 0.), (40., -20.));
+    let filter = utility.debug_bounds("synth-filter").unwrap();
+    harness::double_click(&mut utility, filter.center());
+    harness::paint(&app, &mut utility);
+    let defaults = app.update(&mut utility, |app, _| {
+        let descriptors = app.session.instrument_descriptors(track);
+        let default = |key: &str| {
+            descriptors
+                .iter()
+                .find(|descriptor| descriptor.key == key)
+                .unwrap()
+                .default
+        };
+        (default("cutoff"), default("resonance"))
+    });
+    assert_eq!(param(&app, &mut utility, track, "cutoff"), defaults.0);
+    assert_eq!(param(&app, &mut utility, track, "resonance"), defaults.1);
+}
+
+#[gpui::test]
+fn the_fm_and_chiptune_pictures_take_a_drag(cx: &mut gpui::TestAppContext) {
+    let (app, cx) = harness::open(cx);
+    let (track, mut utility) = open_tall(&app, cx, "auris.synth.fm2");
+    let ratio = param(&app, &mut utility, track, "ratio");
+    let index = param(&app, &mut utility, track, "index");
+    drag_plot(&app, &mut utility, "synth-sidebands", (0., 0.), (40., -20.));
+    assert!(param(&app, &mut utility, track, "ratio") > ratio);
+    assert!(param(&app, &mut utility, track, "index") > index);
+
+    let (track, mut utility) = open_tall(&app, cx, "auris.synth.chiptune");
+    assert!(utility.debug_bounds("synth-chip-stack").is_some());
+    let width = param(&app, &mut utility, track, "pulse_width");
+    let bits = param(&app, &mut utility, track, "bits");
+    // The default square: sideways moves the duty cycle, down crushes the bits.
+    drag_plot(&app, &mut utility, "synth-cycle", (0., 0.), (-40., 40.));
+    assert!(param(&app, &mut utility, track, "pulse_width") < width);
+    assert!(param(&app, &mut utility, track, "bits") < bits);
+    let spread = param(&app, &mut utility, track, "spread");
+    drag_plot(&app, &mut utility, "synth-chip-stack", (30., 0.), (40., 0.));
+    assert!(param(&app, &mut utility, track, "spread") > spread);
+}

@@ -1999,6 +1999,7 @@ impl AurisApp {
                 subject, handle, ..
             } => self.drag_envelope_handle(subject, handle, event.position),
             Drag::EqNode { subject, band, .. } => self.drag_eq_node(subject, band, event.position),
+            Drag::SynthPlot { .. } => self.drag_synth_plot(event.position, event.modifiers),
             Drag::PartDial {
                 clip,
                 dial,
