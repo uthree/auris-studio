@@ -163,6 +163,10 @@ pub(crate) fn styled_performance(
                 part.instrument.as_str(),
                 "auris.synth.chiptune"
                     | "auris.synth.fm2"
+                    | "auris.synth.supersaw"
+                    | "auris.synth.lead"
+                    | "auris.synth.bass"
+                    | "auris.synth.brass"
                     | "auris.physical.guitar"
                     | "auris.physical.electric_guitar"
                     | "auris.physical.bass"

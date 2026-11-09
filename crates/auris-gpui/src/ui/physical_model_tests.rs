@@ -192,6 +192,7 @@ fn every_physical_model_shows_its_bodies_in_every_direction(cx: &mut gpui::TestA
         ("auris.synth.drumkit", true),
         ("auris.synth.fm2", true),
         ("auris.synth.chiptune", true),
+        ("auris.synth.supersaw", true),
     ] {
         let (track, mut utility) = open_model(&app, cx, id);
         app.read_with(&utility, |app, _| {
@@ -322,6 +323,8 @@ fn an_oscillator_is_drawn_as_its_waveform_and_played_like_a_key(cx: &mut gpui::T
     for (id, pictures) in [
         ("auris.synth.fm2", ["synth-operators", "synth-sidebands"]),
         ("auris.synth.chiptune", ["synth-cycle", "synth-harmonics"]),
+        ("auris.synth.supersaw", ["synth-stack", "synth-filter"]),
+        ("auris.synth.pluck", ["synth-stack", "synth-filter"]),
     ] {
         let (track, mut utility) = open_model(&app, cx, id);
         for picture in pictures {
