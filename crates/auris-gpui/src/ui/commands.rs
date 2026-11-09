@@ -1099,7 +1099,7 @@ impl AurisApp {
                                 (1, _) => messages::opened_missing_one(
                                     language,
                                     &shown,
-                                    &missing[0].display().to_string(),
+                                    missing[0].display().to_string(),
                                 ),
                                 (n, _) => messages::opened_missing_many(language, &shown, n),
                             });
@@ -1185,7 +1185,7 @@ impl AurisApp {
                                     1 => messages::recovered_missing_one(
                                         language,
                                         &name,
-                                        &missing[0].display().to_string(),
+                                        missing[0].display().to_string(),
                                     ),
                                     count => {
                                         messages::recovered_missing_many(language, &name, count)
@@ -1369,7 +1369,7 @@ impl AurisApp {
                 return;
             }
         };
-        let label = messages::opening(self.language(), &path.display().to_string());
+        let label = messages::opening(self.language(), path.display().to_string());
         let Some((id, cancelled, _)) = self.start_background_command(label, false) else {
             return;
         };
@@ -2900,7 +2900,7 @@ impl AurisApp {
             let path = handle.path().to_path_buf();
 
             let Ok(rate) = this.update(cx, |this, cx| {
-                let text = messages::importing(this.language(), &path.display().to_string());
+                let text = messages::importing(this.language(), path.display().to_string());
                 this.set_status(text);
                 cx.notify();
                 // Read while the session is in hand: the decode has to land on the project's
@@ -2955,7 +2955,7 @@ impl AurisApp {
                 .map(|handle| handle.path().to_path_buf())
                 .collect();
             let Ok(rate) = this.update(cx, |this, cx| {
-                let text = messages::importing(this.language(), &paths[0].display().to_string());
+                let text = messages::importing(this.language(), paths[0].display().to_string());
                 this.set_status(text);
                 cx.notify();
                 this.project().sample_rate
@@ -3058,7 +3058,7 @@ impl AurisApp {
         }
         Ok(messages::imported(
             self.language(),
-            &path.display().to_string(),
+            path.display().to_string(),
         ))
     }
 
@@ -3083,7 +3083,7 @@ impl AurisApp {
             let path = handle.path().to_path_buf();
 
             let shown = this.update(cx, |this, cx| {
-                let text = messages::importing(this.language(), &path.display().to_string());
+                let text = messages::importing(this.language(), path.display().to_string());
                 this.set_status(text);
                 cx.notify();
             });
@@ -3175,7 +3175,7 @@ impl AurisApp {
         for path in &dropped.rejected {
             outcome.failed.push(messages::cannot_import(
                 language,
-                &path.display().to_string(),
+                path.display().to_string(),
             ));
         }
         if dropped.accepted.is_empty() {
@@ -3188,7 +3188,7 @@ impl AurisApp {
         cx.spawn(async move |this, cx| {
             for (path, kind) in dropped.accepted {
                 let Ok(rate) = this.update(cx, |this, cx| {
-                    let text = messages::importing(this.language(), &path.display().to_string());
+                    let text = messages::importing(this.language(), path.display().to_string());
                     this.set_status(text);
                     cx.notify();
                     this.project().sample_rate
@@ -3575,7 +3575,7 @@ impl AurisApp {
                         let text = messages::exported_stems(
                             language,
                             written,
-                            &folder.display().to_string(),
+                            folder.display().to_string(),
                         );
                         this.set_status(text.clone());
                         Ok(text)
@@ -3728,8 +3728,8 @@ impl AurisApp {
                     Ok(summary) => {
                         let text = messages::exported(
                             language,
-                            &path.display().to_string(),
-                            &Seconds(summary.seconds).format_clock(),
+                            path.display().to_string(),
+                            Seconds(summary.seconds).format_clock(),
                             summary.peak_db,
                         );
                         this.set_status(text.clone());
@@ -3787,7 +3787,7 @@ impl AurisApp {
         messages::failed(
             self.language(),
             self.t(action),
-            &error_text(error, self.language()),
+            error_text(error, self.language()),
         )
     }
 

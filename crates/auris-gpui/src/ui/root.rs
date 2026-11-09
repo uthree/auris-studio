@@ -1270,7 +1270,7 @@ impl AurisApp {
             // The press is acknowledged before the render notices it: a block has to finish
             // first, and an overlay that looked untouched for that long reads as a dead button.
             None if export.cancelling() => self.t(Key::ExportCancelling).to_string(),
-            None => messages::rendering(self.language(), &export.path.display().to_string()),
+            None => messages::rendering(self.language(), export.path.display().to_string()),
         };
 
         Some(
@@ -1973,6 +1973,8 @@ impl AurisApp {
                     .collect();
                 let _ = self.session.resize_notes(clip, &ends);
             }
+            // The knob follows the pointer itself and reports through `turn_knob`.
+            Drag::Knob { .. } => {}
             Drag::Param {
                 target,
                 start_value,

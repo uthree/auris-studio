@@ -540,11 +540,6 @@ impl AurisApp {
             card,
             &picked,
             open,
-            agent_components::ChoiceCardText {
-                send: self.t(Key::ChoicesSend).into(),
-                multiple: self.t(Key::ChoicesMultiple).into(),
-            },
-            &self.theme,
             move |picked, window, cx| option(&picked, window, cx),
             move |window, cx| send(&(), window, cx),
         )
@@ -1740,7 +1735,7 @@ impl AurisApp {
             card = card.child(
                 Label::new(messages::saved(
                     self.language(),
-                    &saved.display().to_string(),
+                    saved.display().to_string(),
                 ))
                 .size(TextSize::Small)
                 .color(TextColor::Faint),
@@ -2801,7 +2796,7 @@ mod tests {
             "Stop is not a cue for the next message"
         );
         crate::harness::paint(&app, cx);
-        crate::harness::click("workshop-queue-toggle", cx);
+        crate::harness::click("workshop-queue-pause", cx);
         assert_eq!(sent_text(&commands).as_deref(), Some("later"));
     }
 
@@ -3320,8 +3315,8 @@ mod tests {
         // The same blocks the editor's transcript draws for a list: one per item, not one line of
         // asterisks and dashes.
         for selector in [
-            "workshop-markdown-song-workshop-message-0-1-0-0-block",
-            "workshop-markdown-song-workshop-message-0-1-1-0-block",
+            "song-workshop-message-0-block-2",
+            "song-workshop-message-0-block-3",
         ] {
             assert!(cx.debug_bounds(selector).is_some(), "{selector} is drawn");
         }
@@ -3385,21 +3380,13 @@ mod tests {
             });
         });
         crate::harness::resize(&app, cx, gpui::size(gpui::px(700.0), gpui::px(800.0)));
-        let root = cx
-            .debug_bounds("workshop-markdown-song-workshop-message-0-root")
-            .unwrap();
-        let last = cx
-            .debug_bounds("workshop-markdown-song-workshop-message-0-1-block")
-            .unwrap();
+        let first = cx.debug_bounds("song-workshop-message-0-block-1").unwrap();
         assert!(
-            last.size.height > gpui::px(30.0),
-            "the list wraps at this width, which is what the measurement got wrong"
+            first.size.height > gpui::px(30.0),
+            "the opening paragraph wraps at this width, which is what the measurement got wrong"
         );
-        assert_eq!(
-            root.bottom(),
-            last.bottom(),
-            "the answer ends with its last block"
-        );
+        // The paragraph, then one block per item of the numbered list.
+        let root = cx.debug_bounds("song-workshop-message-0-block-4").unwrap();
         let card = cx.debug_bounds("song-candidate-0").unwrap();
         assert!(
             card.top() - root.bottom() < gpui::px(200.0),

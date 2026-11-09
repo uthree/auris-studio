@@ -387,7 +387,7 @@ impl AurisApp {
                         .when(wide, |pane| pane.min_h_0().overflow_y_scroll())
                         .when(!wide, |pane| pane.w_full())
                         .child(atelier::SectionHeader::new(self.t(Key::PhysicalParameters)))
-                        .children(self.param_controls(
+                        .children(self.param_panel(
                             &descriptors,
                             move |param| subject.param_target(param),
                             subject.id_prefix(),
@@ -413,7 +413,7 @@ impl AurisApp {
                 .flex_col()
                 .gap_1()
                 .p_2()
-                .children(self.param_controls(
+                .children(self.param_panel(
                     &descriptors,
                     move |param| subject.param_target(param),
                     subject.id_prefix(),

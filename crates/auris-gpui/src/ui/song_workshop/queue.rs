@@ -197,109 +197,65 @@ impl AurisApp {
         }
     }
 
-    /// The waiting messages, drawn over the composer while there are any.
+    /// Puts a queued message back in the composer to be edited, while the composer is empty.
+    fn edit_queued_workshop_brief(&mut self, index: usize) {
+        let Some(s) = &mut self.song_workshop else {
+            return;
+        };
+        if !s.brief.content().is_empty() || !s.references.attachments.is_empty() {
+            return;
+        }
+        if let Some(message) = s.queued.remove(index) {
+            s.brief = TextField::new(message.text);
+            s.references.attachments = message.attachments;
+        }
+    }
+
+    /// The waiting messages, drawn over the composer while there are any, as Atelier's
+    /// `MessageQueue`.
     pub(super) fn workshop_queue_view(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let s = self.song_workshop.as_ref()?;
         if s.queued.is_empty() {
             return None;
         }
-        let theme = &self.theme;
-        let paused = s.queue_paused;
-        let title = self
-            .t(if paused {
-                Key::AgentQueuePaused
+        let messages = s.queued.iter().map(|message| {
+            let queued = atelier::agent::QueuedMessage::new(message.text.clone());
+            if message.attachments.is_empty() {
+                queued
             } else {
-                Key::AgentQueued
-            })
-            .replace("{count}", &s.queued.len().to_string());
-        let rows = s.queued.iter().enumerate().map(|(index, message)| {
-            let preview = message
-                .text
-                .split_whitespace()
-                .collect::<Vec<_>>()
-                .join(" ");
-            let preview = if message.attachments.is_empty() {
-                preview
-            } else {
-                format!(
-                    "{preview} · {}",
+                queued.attachment(
                     self.t(Key::AgentQueuedAttachments)
-                        .replace("{count}", &message.attachments.len().to_string())
+                        .replace("{count}", &message.attachments.len().to_string()),
                 )
-            };
-            div()
-                .id(("workshop-queued-message", index))
-                .debug_selector(move || format!("workshop-queued-message-{index}"))
-                .flex()
-                .items_center()
-                .min_w_0()
-                .gap(theme.atelier.spacing.xs)
-                .child(div().flex_1().min_w_0().text_sm().truncate().child(preview))
-                .child(
-                    Button::new(("workshop-queued-now", index), self.t(Key::AgentSendNow))
-                        .ghost()
-                        .size(atelier::ControlSize::Small)
-                        .disabled(s.switching)
-                        .tooltip(self.t(Key::AgentSendNowHint))
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.prioritize_workshop_brief(index);
-                            cx.notify();
-                        })),
-                )
-                .child(
-                    Button::icon_only(("workshop-queued-remove", index), IconName::Close)
-                        .ghost()
-                        .size(atelier::ControlSize::Small)
-                        .tooltip(self.t(Key::AgentQueueRemove))
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            if let Some(s) = &mut this.song_workshop {
-                                s.queued.remove(index);
-                            }
-                            cx.notify();
-                        })),
-                )
+            }
         });
         Some(
-            div()
-                .id("workshop-queue")
-                .debug_selector(|| "workshop-queue".into())
-                .flex()
-                .flex_col()
-                .min_w_0()
-                .gap(theme.atelier.spacing.xs)
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap(theme.atelier.spacing.xs)
-                        .child(
-                            div()
-                                .flex_1()
-                                .text_xs()
-                                .text_color(theme.text_muted)
-                                .child(title),
-                        )
-                        .child(
-                            Button::new(
-                                "workshop-queue-toggle",
-                                self.t(if paused {
-                                    Key::AgentQueueResume
-                                } else {
-                                    Key::AgentQueuePause
-                                }),
-                            )
-                            .ghost()
-                            .size(atelier::ControlSize::Small)
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                if let Some(s) = &mut this.song_workshop {
-                                    s.queue_paused = !s.queue_paused;
-                                }
-                                this.dispatch_queued_workshop_brief();
-                                cx.notify();
-                            })),
-                        ),
-                )
-                .children(rows)
+            atelier::agent::MessageQueue::new("workshop-queue")
+                .messages(messages)
+                .paused(s.queue_paused)
+                .disabled(s.switching)
+                .editable(s.brief.content().is_empty() && s.references.attachments.is_empty())
+                .on_pause(cx.listener(|this, paused: &bool, _, cx| {
+                    if let Some(s) = &mut this.song_workshop {
+                        s.queue_paused = *paused;
+                    }
+                    this.dispatch_queued_workshop_brief();
+                    cx.notify();
+                }))
+                .on_send_now(cx.listener(|this, index: &usize, _, cx| {
+                    this.prioritize_workshop_brief(*index);
+                    cx.notify();
+                }))
+                .on_edit(cx.listener(|this, index: &usize, _, cx| {
+                    this.edit_queued_workshop_brief(*index);
+                    cx.notify();
+                }))
+                .on_remove(cx.listener(|this, index: &usize, _, cx| {
+                    if let Some(s) = &mut this.song_workshop {
+                        s.queued.remove(*index);
+                    }
+                    cx.notify();
+                }))
                 .into_any_element(),
         )
     }

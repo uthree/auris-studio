@@ -591,6 +591,21 @@ pub enum Drag {
         /// value exactly where it was and changes only what happens next.
         fine: bool,
     },
+    /// Turning a parameter's knob.
+    ///
+    /// The knob follows the pointer itself — Atelier's `Knob` owns the gesture and reports a
+    /// value — so this holds only what the knob does not: the transaction that makes the turn
+    /// one undo step, and the anchor that lets Shift slow it down as it does every other drag.
+    Knob {
+        /// What is being changed.
+        target: ParamTarget,
+        /// The knob's own reading, from 0 to 1, where the drag was last anchored.
+        anchor_reading: Option<f32>,
+        /// The parameter's normalised value at the anchor.
+        anchor_value: f32,
+        /// Whether the fine modifier was held at the anchor.
+        fine: bool,
+    },
     /// Dragging a point along one of a clip's curves.
     CurvePoint {
         /// Whose curve.
@@ -858,7 +873,9 @@ impl Drag {
                 OrnamentHandle::Fall => Edit::SetFall(*clip, *index),
                 OrnamentHandle::Vibrato => Edit::SetVibrato(*clip, *index),
             }),
-            Drag::Param { target, .. } => Some(Edit::AdjustParameter(*target)),
+            Drag::Param { target, .. } | Drag::Knob { target, .. } => {
+                Some(Edit::AdjustParameter(*target))
+            }
             // The decay corner moves two parameters and this names one of them. The undo step is
             // one either way — the whole drag is a transaction — so this only decides the label.
             Drag::EnvelopeHandle { target, .. } => Some(Edit::AdjustParameter(*target)),
@@ -3569,7 +3586,7 @@ impl AurisApp {
             Ok(handle) => self.settings_window = Some(handle),
             Err(error) => {
                 let text =
-                    messages::failed(self.language, self.t(Key::Settings), &error.to_string());
+                    messages::failed(self.language, self.t(Key::Settings), error.to_string());
                 self.set_status(text);
             }
         }

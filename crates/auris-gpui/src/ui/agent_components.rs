@@ -159,15 +159,40 @@ pub(crate) fn user_message(
         .into_any_element()
 }
 
+/// Draws a person's message that carried files, each a chip that opens it.
+///
+/// `ChatView` draws a message's attachments as labels only; the editor's open the file they
+/// name, so the panel draws this message itself.
+pub(crate) fn user_message_with_attachments(
+    // atelier: allow — the person's message is still Atelier's UserMessage, chips and all.
+    id: impl Into<ElementId>,
+    text: impl Into<SharedString>,
+    chips: impl IntoIterator<Item = atelier::agent::ContextChip>,
+) -> AnyElement {
+    let id = id.into();
+    let text = text.into();
+    let mut message = UserMessage::new(text.clone())
+        .id(id.clone())
+        .action(CopyButton::new(
+            SharedString::from(format!("{id}-copy")),
+            text,
+        ));
+    for chip in chips {
+        message = message.attachment(chip);
+    }
+    message.into_any_element()
+}
+
 /// Draws an agent answer: the prose alone, with no avatar or name above it.
 ///
 /// Both conversations have exactly two voices, and the person's own sits in an accent bubble on
 /// the trailing edge; whatever is not in a bubble is the agent, so the identity line is left out.
+/// The message draws the answer as Atelier's `Markdown` under its own id: each block is
+/// selectable as `{id}-block-N`, code blocks carry a copy button, and links open.
 pub(crate) fn assistant_message(
-    // atelier: allow — the shared adapter supplies the application's selectable Markdown body.
+    // atelier: allow — both conversations delegate their answers to AssistantMessage.
     id: impl Into<ElementId>,
     text: impl Into<SharedString>,
-    body: Option<AnyElement>,
     copy: Option<&CopyLabels>,
     streaming: bool,
 ) -> AnyElement {
@@ -178,15 +203,14 @@ pub(crate) fn assistant_message(
         .id(id)
         .anonymous()
         .streaming(streaming)
-        .when_some(body, |message, body| message.body(body))
         .when_some(copy, |message, copy| message.action(copy))
         .into_any_element()
 }
 
 /// Draws a workshop message through the same shared agent transcript primitives.
 ///
-/// The agent's side is Markdown, rendered the way the editor's transcript renders it; the
-/// person's side is shown as typed.
+/// The agent's side is Markdown, as the editor's transcript draws it; the person's side is
+/// shown as typed.
 pub(crate) fn workshop_message(
     id: impl Into<ElementId>,
     user: bool,
@@ -196,19 +220,10 @@ pub(crate) fn workshop_message(
     window: &mut gpui::Window,
     cx: &mut gpui::App,
 ) -> AnyElement {
-    let id = id.into();
-    let text = text.into();
     if user {
         user_message(id, text, copy, theme, window, cx)
     } else {
-        let body = super::agent_markdown::render(
-            SharedString::from(format!("workshop-markdown-{id}")),
-            text.clone(),
-            theme,
-            window,
-            cx,
-        );
-        assistant_message(id, text, Some(body), copy, false)
+        assistant_message(id, text, copy, false)
     }
 }
 
@@ -362,129 +377,48 @@ pub(crate) fn composer_action(
         .child(command)
 }
 
-/// What the person sees on a choice card, besides the card itself: the words the card needs.
-pub(crate) struct ChoiceCardText {
-    /// The commit of a multiple-choice card.
-    pub(crate) send: SharedString,
-    /// The caption that says several answers may be picked.
-    pub(crate) multiple: SharedString,
-}
-
 /// Draws a question the agent asked with fixed answers, in either conversation.
 ///
-/// A card is not a tool row folded into the log: it is the turn's whole point, and the agent
-/// is waiting on it. An exclusive card answers on the first click, the way a person answers a
-/// question out loud, so each option is an Atelier `ListItem` — a tab stop that Enter and Space
-/// also choose. A multiple-choice card holds its picks in `Checkbox`es until Send. Once answered,
-/// or once the person typed something else, the card stays readable but takes no more input:
-/// `picked` then shows what was chosen.
-#[allow(clippy::too_many_arguments)]
+/// Atelier's `ChoiceCard`: the card is the turn's whole point, not a tool row folded into the
+/// log. An exclusive card answers on the first press; a multiple-choice card ticks its answers
+/// and sends them together. The application keeps the ticks (`picked`) because they outlive a
+/// redraw of the transcript, and says whether the card still takes input: once answered, or
+/// once the person typed something else, it stays readable with `picked` and takes no more.
+///
+/// Options are `{id}-option-{index}` and the Send button `{id}-send`, as the card names them.
 pub(crate) fn choice_card(
     id: impl Into<SharedString>,
     card: &auris_session::choices::ChoiceCard,
     picked: &[usize],
     active: bool,
-    text: ChoiceCardText,
-    theme: &Theme,
     on_option: impl Fn(usize, &mut gpui::Window, &mut gpui::App) + 'static,
     on_send: impl Fn(&mut gpui::Window, &mut gpui::App) + 'static,
 ) -> AnyElement {
     let id: SharedString = id.into();
-    let on_option = std::rc::Rc::new(on_option);
-    let options = card.options.iter().enumerate().map(|(index, option)| {
-        let chosen = picked.contains(&index);
-        let option_id = SharedString::from(format!("{id}-option-{index}"));
-        let on_option = on_option.clone();
-        if card.multiple {
-            let mut checkbox = atelier::Checkbox::new(ElementId::Name(option_id.clone()), chosen)
-                .label(option.label.clone())
-                .disabled(!active);
-            if active {
-                checkbox = checkbox.on_click(move |_, window, cx| on_option(index, window, cx));
-            }
-            div()
-                .flex()
-                .flex_col()
-                .gap(theme.atelier.spacing.xxs)
-                .px(theme.atelier.spacing.sm)
-                .py(theme.atelier.spacing.xs)
-                .min_w_0()
-                .child(checkbox)
-                .children(option.detail.clone().map(|detail| {
-                    // Under the label, past the box and its gap, so the two read as one option.
-                    div().pl(gpui::px(16.0) + theme.atelier.spacing.sm).child(
-                        atelier::Label::new(detail)
-                            .size(atelier::TextSize::Small)
-                            .color(atelier::TextColor::Muted),
-                    )
-                }))
-                .into_any_element()
-        } else {
-            let mut row = atelier::ListItem::new(ElementId::Name(option_id), option.label.clone())
-                .icon(if chosen {
-                    atelier::IconName::Check
-                } else {
-                    atelier::IconName::ChevronRight
-                })
-                .selected(chosen)
-                .disabled(!active && !chosen);
-            if let Some(detail) = option.detail.clone() {
-                row = row.description(detail).description_lines(2);
-            }
-            if active {
-                row = row.on_click(move |_, window, cx| on_option(index, window, cx));
-            }
-            row.into_any_element()
+    let options = card.options.iter().map(|option| {
+        let choice = atelier::agent::Choice::new(option.label.clone());
+        match option.detail.clone() {
+            Some(detail) => choice.detail(detail),
+            None => choice,
         }
     });
-    let send = (card.multiple && active).then(|| {
-        div()
-            .flex()
-            .justify_end()
-            .pt(theme.atelier.spacing.xs)
-            .child(
-                atelier::Button::new(ElementId::Name(format!("{id}-send").into()), text.send)
-                    .icon(atelier::IconName::ArrowUp)
-                    .size(atelier::ControlSize::Small)
-                    .variant(atelier::ButtonVariant::Primary)
-                    .disabled(picked.is_empty())
-                    .on_click(move |_, window, cx| on_send(window, cx)),
-            )
-    });
-    let selector = id.clone();
-    div()
-        .id(ElementId::Name(id.clone()))
-        .debug_selector(move || selector.to_string())
-        .w_full()
-        .min_w_0()
-        .flex_shrink_0()
-        .child(
-            atelier::Card::new()
-                .p(theme.atelier.spacing.sm)
-                .gap(theme.atelier.spacing.xxs)
-                .min_w_0()
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap(theme.atelier.spacing.xxs)
-                        .px(theme.atelier.spacing.sm)
-                        .pt(theme.atelier.spacing.xs)
-                        .pb(theme.atelier.spacing.xs)
-                        .child(
-                            atelier::Label::new(card.question.clone())
-                                .weight(theme.atelier.typography.label_weight),
-                        )
-                        .when(card.multiple, |header| {
-                            header.child(
-                                atelier::Label::new(text.multiple)
-                                    .size(atelier::TextSize::XSmall)
-                                    .color(atelier::TextColor::Faint),
-                            )
-                        }),
-                )
-                .children(options)
-                .children(send),
-        )
-        .into_any_element()
+    let view = atelier::agent::ChoiceCard::new(ElementId::Name(id), card.question.clone())
+        .options(options)
+        .multiple(card.multiple);
+    if !active {
+        return view.answered(picked.to_vec()).into_any_element();
+    }
+    let on_option = std::rc::Rc::new(on_option);
+    let view = view.picked(picked.to_vec());
+    if card.multiple {
+        view.on_toggle(move |index, window, cx| on_option(*index, window, cx))
+            .on_choose(move |_, window, cx| on_send(window, cx))
+    } else {
+        view.on_choose(move |picked, window, cx| {
+            if let Some(&index) = picked.first() {
+                on_option(index, window, cx);
+            }
+        })
+    }
+    .into_any_element()
 }

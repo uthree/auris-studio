@@ -32,8 +32,6 @@ pub(crate) enum ScrollPanel {
     Lanes,
     /// The channel strips, the one panel that scrolls sideways.
     Mixer,
-    /// The agent conversation on the right.
-    Agent,
     /// The central overview of all tracks.
     TrackGrid,
     /// The arrangement's horizontal musical time axis.
@@ -44,13 +42,12 @@ pub(crate) enum ScrollPanel {
 
 impl ScrollPanel {
     /// Every panel there is, in the order that indexes the arrays keyed by one.
-    pub(crate) const ALL: [ScrollPanel; 9] = [
+    pub(crate) const ALL: [ScrollPanel; 8] = [
         ScrollPanel::Library,
         ScrollPanel::Inspector,
         ScrollPanel::Log,
         ScrollPanel::Lanes,
         ScrollPanel::Mixer,
-        ScrollPanel::Agent,
         ScrollPanel::TrackGrid,
         ScrollPanel::ArrangementTime,
         ScrollPanel::EditorTime,
@@ -82,7 +79,6 @@ impl ScrollPanel {
             ScrollPanel::Log => "log-scrollbar",
             ScrollPanel::Lanes => "lanes-scrollbar",
             ScrollPanel::Mixer => "mixer-scrollbar",
-            ScrollPanel::Agent => "agent-scrollbar",
             ScrollPanel::TrackGrid => "track-grid-scrollbar",
             ScrollPanel::ArrangementTime => "arrangement-time-scrollbar",
             ScrollPanel::EditorTime => "editor-time-scrollbar",
@@ -152,7 +148,6 @@ impl AurisApp {
             ScrollPanel::Inspector => Some(&self.inspector_scroll),
             ScrollPanel::Log => Some(&self.log_scroll),
             ScrollPanel::Mixer => Some(&self.mixer_scroll),
-            ScrollPanel::Agent => Some(&self.agent_chat.scroll),
             ScrollPanel::TrackGrid => Some(&self.track_grid.scroll),
             ScrollPanel::Lanes | ScrollPanel::ArrangementTime | ScrollPanel::EditorTime => None,
         }

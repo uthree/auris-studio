@@ -516,8 +516,8 @@ impl AurisApp {
                     Ok(summary) => {
                         let text = messages::exported_video(
                             language,
-                            &path.display().to_string(),
-                            &Seconds(summary.seconds).format_clock(),
+                            path.display().to_string(),
+                            Seconds(summary.seconds).format_clock(),
                         );
                         this.set_status(text.clone());
                         Ok(text)
