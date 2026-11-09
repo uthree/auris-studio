@@ -225,9 +225,54 @@ model of Lv et al. (Overall, Singing, Melody, Arrange and AudioQ, 0-100). Each s
 with Demucs `htdemucs`, cut into 10-second windows every 5 seconds, and embedded with MuQ. Windows
 with a silent vocal or a silent accompaniment are skipped. Both write the same report format as
 `songeval.py`. Against a set of commercial songs, only the second model kept rendered songs apart:
-every rendered vocal song scored below the lowest commercial one. Audiobox PQ rates clean renders
-above commercial masters. On an instrumental the separator hears the lead as a voice, so the
-multi-stem model's score there means nothing.
+every rendered vocal song scored below the lowest commercial one. That held at the commercial
+songs' own loudness, which is about six decibels above a -14 LUFS render (see below). Audiobox PQ
+rates clean renders above commercial masters. On an instrumental the separator hears the lead as
+a voice, so the multi-stem model's score there means nothing.
+
+### What the learned scorers were trained on
+
+None of these models was trained on Japanese songs, so none of them can say whether a Japanese
+lyric is natural, how well its prosody fits, or how its moras are laid on the notes. Those
+questions are for the symbolic checks: `melody_shape`, the lyric fit and the score linter.
+
+| Scorer | Training data | Japanese |
+| --- | --- | --- |
+| SongEval | 2,399 songs, English and Chinese, mostly AI-generated | none |
+| Multi-stem SAE (Lv et al.) | the SongEval set, plus 1,569 Chinese songs, mostly made by people, scored on its five axes by four experts | none |
+| Audiobox Aesthetics | 97k clips of speech, sound and music in roughly equal shares; the music sources are not named, and the speech is mostly English | not stated |
+| TuneJury | 17.5k preference pairs from AIME, SongEval, MusicPrefs and Music Arena | not stated |
+| MuQ `MuQ-large-msd-iter`, the encoder SongEval and SAE embed with | the Million Song Dataset | no breakdown published |
+
+Use them on a Japanese vocal song this way:
+
+* SongEval catches only gross audio regressions there.
+* SAE's Arrange and AudioQ axes read the accompaniment and the mix. Its Singing and Melody axes
+  carry the four experts' taste for Chinese pop.
+* On an instrumental, SAE has nothing to score, so SongEval is the main learned reference, read
+  alongside Audiobox.
+
+### Render the same way before comparing
+
+* **Sample rate.** The workshop's `audition.wav` is a 22.05 kHz preview. On 「限界線を蹴り破れ」
+  and on the 「限界線を蹴り飛ばせ」 candidate, auditions scored about three points lower on SAE
+  Overall than 48 kHz renders of the same projects, and five to six lower on Singing and AudioQ. It also narrowed the gap between two songs: 3.4 points of
+  Arrange between two auditions became 1.0 between their 48 kHz renders.
+  * Score `auris render` output, never auditions.
+* **Loudness.** SAE rises with loudness.
+  * Raising the master limiter's input by 4 dB, from -14.0 to -10.7 LUFS, added 2.0 to 2.6
+    points of Overall and about 2 of AudioQ on both songs tried.
+  * Gain-matching the commercial set from about -8 LUFS down to -14 LUFS took 2.2 points off
+    its Overall mean.
+  * Compare at matched integrated loudness, and normalise reference songs to the renders'
+    target rather than scoring their masters as they are.
+* **What else moves it.** At matched loudness, mix and performance changes left SAE where it
+  was. Each was tried on three songs and moved Melody, Arrange and Singing by under half a point:
+  limiting harder and turning the result down, a glue compressor on the master, brighter
+  guitars, a vocal delay, drums and bass up 2 dB, and vibrato on every note of half a second or
+  more. Overall wandered by up to two points, and in both directions on the same change. Singing
+  the take again with the same seed moved Singing by 0.1 at most and AudioQ by 0.4. Read SAE as telling songs
+  apart. It cannot steer a mix.
 
 `songeval.py` and `song_aesthetics.py` take `--device cuda:0`, which a ROCm build of PyTorch also
 answers. Audiobox takes the GPU whenever one is visible. On a GPU, scores match the CPU's to
