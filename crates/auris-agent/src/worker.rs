@@ -902,17 +902,22 @@ mod tests {
             };
             let worker = Worker::spawn(prefs, None, true, None).unwrap();
             worker.send(r#"{"say":"Inspect capabilities"}"#).unwrap();
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+            // The deadline guards against a hang, not against a slow machine: every event renews
+            // it, so a loaded `cargo test --workspace` that stretches the whole run past any
+            // fixed budget still passes for as long as the worker keeps making progress.
+            let stall = std::time::Duration::from_secs(60);
+            let mut last_event = std::time::Instant::now();
             let mut permissions = 0;
             loop {
-                assert!(
-                    std::time::Instant::now() < deadline,
-                    "worker did not finish"
-                );
                 let Ok(event) = worker.try_recv() else {
+                    assert!(
+                        last_event.elapsed() < stall,
+                        "worker stalled after {permissions} calls"
+                    );
                     std::thread::sleep(std::time::Duration::from_millis(1));
                     continue;
                 };
+                last_event = std::time::Instant::now();
                 match event["event"].as_str() {
                     Some("permission") => {
                         permissions += 1;
