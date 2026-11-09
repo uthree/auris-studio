@@ -24,9 +24,9 @@ pub const UNIFORM_SPACING_COUNT: usize = 50;
 /// Bits a note under which a line counts as predictable from the song so far.
 pub const PREDICTABLE_BITS: f64 = 1.0;
 /// Lines a section other than a chorus must hold before singing an earlier section's lines
-/// again, note for note, is reported: a second verse copied from the first. A chorus repeats by
-/// design.
-pub const RESTATED_SECTION_LINES: usize = 2;
+/// again, note for note, is reported: a second verse copied from the first. One is enough, since
+/// a lyric annotation may make a whole verse one line. A chorus repeats by design.
+pub const RESTATED_SECTION_LINES: usize = 1;
 /// Longest context the short-term model predicts from, in notes.
 const PPM_ORDER: usize = 4;
 /// Distinct (interval, spacing) symbols the model can name: ±12 semitones by 1..=16 sixteenths.

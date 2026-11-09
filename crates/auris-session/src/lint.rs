@@ -99,6 +99,9 @@ pub enum Rule {
     ImpossibleDrumHit,
     /// A singer asked to sing for longer than a breath lasts without a gap to take one.
     NoBreath,
+    /// A guitar chord no hand can fret: more notes than strings, or no way to put them on
+    /// separate strings within one hand's stretch.
+    UnfrettableChord,
     /// The rendered mix reaches full scale.
     Clipping,
     /// The rendered mix is far louder than any delivery target.
@@ -117,7 +120,7 @@ pub enum Rule {
 
 impl Rule {
     /// Every rule, score rules first.
-    pub const ALL: [Rule; 22] = [
+    pub const ALL: [Rule; 23] = [
         Rule::CrowdedOnset,
         Rule::DenseNotes,
         Rule::HarshInterval,
@@ -133,6 +136,7 @@ impl Rule {
         Rule::TightStrum,
         Rule::ImpossibleDrumHit,
         Rule::NoBreath,
+        Rule::UnfrettableChord,
         Rule::Clipping,
         Rule::TooLoud,
         Rule::TooQuiet,
@@ -160,6 +164,7 @@ impl Rule {
             Rule::TightStrum => "tight_strum",
             Rule::ImpossibleDrumHit => "impossible_drum_hit",
             Rule::NoBreath => "no_breath",
+            Rule::UnfrettableChord => "unfrettable_chord",
             Rule::Clipping => "clipping",
             Rule::TooLoud => "too_loud",
             Rule::TooQuiet => "too_quiet",
@@ -400,6 +405,9 @@ impl Diagnostic {
             ),
             Rule::NoBreath => format!(
                 "the voice sings for {value:.0} s without a gap of {limit:.2} s to breathe; leave a rest inside the phrase"
+            ),
+            Rule::UnfrettableChord => format!(
+                "{value:.0} guitar chords like {pitches} cannot be fretted: no hand puts them on separate strings within {limit:.0} frets; voice them as a guitarist would, or move them to a keyboard"
             ),
             Rule::TightStrum => format!(
                 "this guitar strikes every string of its chords within {value:.0} ms (under {limit:.0} ms), heard as one hit; widen the strum or set string_ms"

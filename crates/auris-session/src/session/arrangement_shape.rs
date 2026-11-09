@@ -109,6 +109,7 @@ pub fn arrangement_shape(project: &Project) -> Value {
         sections.push(json!({
             "section": span.label, "parts": playing.iter().collect::<Vec<_>>(),
             "part_count": playing.len(), "notes_per_bar": (density * 10.0).round() / 10.0,
+            "cadence": cadence(project, span),
         }));
         sets.push(playing);
         densities.push(density);
@@ -263,6 +264,38 @@ fn shared_grooves(
 }
 
 /// A section label without its number or a final/last marker: サビ2 and 最終サビ are both サビ.
+/// How a section's harmony ends, from its last two chords: `authentic` (V to I), `plagal`
+/// (IV to I), `subtonic` (VII to I), `tonic` (another way onto I), `deceptive` (V to vi),
+/// `half` (onto V) or `open` (anywhere else), with the two chords; `null` when the section has
+/// no chord. Degrees are read in the key, so a minor song's v–i is authentic too.
+fn cadence(project: &Project, span: &auris_core::SectionSpan) -> Value {
+    let chords = &project.harmony.chords;
+    let Some(last) = chords.numeral_at(span.end - Ticks(1)) else {
+        return Value::Null;
+    };
+    let before = chords
+        .points()
+        .iter()
+        .rev()
+        .filter(|point| point.tick > span.start && point.tick < span.end)
+        .skip_while(|point| point.chord == Some(last))
+        .find_map(|point| point.chord.filter(|chord| *chord != last))
+        .or_else(|| chords.numeral_at(span.start).filter(|chord| *chord != last));
+    let plain = |numeral: &auris_core::theory::numeral::Numeral| {
+        (numeral.accidental == 0 && numeral.secondary_of.is_none()).then_some(numeral.degree)
+    };
+    let kind = match (before.as_ref().and_then(plain), plain(&last)) {
+        (Some(5), Some(1)) => "authentic",
+        (Some(4), Some(1)) => "plagal",
+        (Some(7), Some(1)) => "subtonic",
+        (_, Some(1)) => "tonic",
+        (Some(5), Some(6)) => "deceptive",
+        (_, Some(5)) => "half",
+        _ => "open",
+    };
+    json!({"kind": kind, "chords": [before.map(|c| c.to_string()), last.to_string()]})
+}
+
 /// A warning when the drums play every section at one written strength: a verse and the last
 /// chorus struck alike is heard as a machine, however the notes differ.
 fn flat_drums(project: &Project, spans: &[auris_core::SectionSpan]) -> Option<String> {
@@ -547,5 +580,36 @@ mod tests {
             "{:?}",
             warnings(&shaded)
         );
+    }
+
+    #[test]
+    fn each_section_names_how_its_harmony_ends() {
+        use auris_core::theory::numeral::Numeral;
+        let mut project = song((4, 16), 20, &groove);
+        let bar = Ticks::QUARTER * 4;
+        // Aメロ ends I–V, Bメロ ii–V–vi, サビ IV–V–I.
+        for (at, chord) in [
+            (4, "I"),
+            (7, "V"),
+            (8, "ii"),
+            (10, "V"),
+            (11, "vi"),
+            (12, "IV"),
+            (14, "V"),
+            (15, "I"),
+        ] {
+            project
+                .harmony
+                .chords
+                .set_point(bar * at, Numeral::parse(chord));
+        }
+        let report = arrangement_shape(&project);
+        let kinds: Vec<&str> = report["sections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|section| section["cadence"]["kind"].as_str())
+            .collect();
+        assert_eq!(kinds, ["half", "deceptive", "authentic"], "{report}");
     }
 }

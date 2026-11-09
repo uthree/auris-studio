@@ -106,6 +106,7 @@ pub fn lint_score(project: &Project) -> Vec<Diagnostic> {
     diagnostics.extend(limit(missing_chords(project, &events)));
     diagnostics.extend(clip_rules(project));
     diagnostics.extend(limit(tight_strums(project)));
+    diagnostics.extend(limit(unfrettable_chords(project)));
     diagnostics.extend(limit(impossible_drum_hits(project)));
     diagnostics.extend(limit(breathless_phrases(project)));
     diagnostics.extend(singer_rules(project));
@@ -817,6 +818,112 @@ fn tight_strums(project: &Project) -> Vec<Diagnostic> {
     found
 }
 
+/// Standard tuning, low string first.
+const GUITAR_STRINGS: [u8; 6] = [40, 45, 50, 55, 59, 64];
+/// The highest fret a guitar chord is looked for on.
+const TOP_FRET: u8 = 22;
+/// Frets one hand spans between its lowest and highest fretted finger, open strings aside.
+pub const FRET_STRETCH: u8 = 4;
+
+/// Whether `pitches` (two or more, at one onset) can be fretted: each on its own string, every
+/// fretted note within [`FRET_STRETCH`] frets of the others. A note below the low string or
+/// above the top fret is left to the range rule and passes here.
+fn frettable(pitches: &[u8]) -> bool {
+    if pitches.len() > GUITAR_STRINGS.len() {
+        return false;
+    }
+    if pitches
+        .iter()
+        .any(|&p| p < GUITAR_STRINGS[0] || p > GUITAR_STRINGS[5] + TOP_FRET)
+    {
+        return true;
+    }
+    fn place(pitches: &[u8], used: &mut [bool; 6], low: u8, high: u8) -> bool {
+        let Some((&pitch, rest)) = pitches.split_first() else {
+            return true;
+        };
+        for (string, &open) in GUITAR_STRINGS.iter().enumerate() {
+            if used[string] || pitch < open || pitch - open > TOP_FRET {
+                continue;
+            }
+            let fret = pitch - open;
+            let (lo, hi) = if fret == 0 {
+                (low, high)
+            } else {
+                (low.min(fret), high.max(fret))
+            };
+            if lo != u8::MAX && hi - lo > FRET_STRETCH {
+                continue;
+            }
+            used[string] = true;
+            if place(rest, used, lo, hi) {
+                return true;
+            }
+            used[string] = false;
+        }
+        false
+    }
+    place(pitches, &mut [false; 6], u8::MAX, 0)
+}
+
+/// Guitar chords no hand could fret, one report per clip naming the first and counting all.
+///
+/// Read on the written chords, before any strum spreads them: a keyboard voicing pasted onto a
+/// guitar track, three octaves wide or with seconds piled up, sounds like nothing a guitarist
+/// plays even when every note is in the guitar's range.
+fn unfrettable_chords(project: &Project) -> Vec<Diagnostic> {
+    let mut found = Vec::new();
+    for track in project.tracks.iter().filter(|t| !t.mixer.mute) {
+        let TrackKind::Instrument(instrument) = &track.kind else {
+            continue;
+        };
+        if crate::performance_presets::family_hint(track) != PresetFamily::Guitar {
+            continue;
+        }
+        for clip in instrument.clips.iter().filter(|clip| !clip.muted) {
+            let mut by_onset: BTreeMap<Ticks, Vec<(usize, auris_core::project::Note)>> =
+                BTreeMap::new();
+            for (index, note) in clip.playable_notes_with_indices() {
+                by_onset.entry(note.start).or_default().push((index, note));
+            }
+            let mut bad = by_onset.values().filter(|notes| {
+                let mut pitches: Vec<u8> = notes.iter().map(|(_, note)| note.pitch).collect();
+                pitches.sort_unstable();
+                pitches.dedup();
+                pitches.len() >= 2 && !frettable(&pitches)
+            });
+            let Some(first) = bad.next() else {
+                continue;
+            };
+            let count = 1 + bad.count();
+            let end = first
+                .iter()
+                .map(|(_, note)| note.end())
+                .max()
+                .unwrap_or(first[0].1.start);
+            let mut diagnostic = Diagnostic::new(
+                Rule::UnfrettableChord,
+                Severity::Warning,
+                clip.start + first[0].1.start,
+                clip.start + end,
+            );
+            diagnostic.track = Some(track.id);
+            diagnostic.notes = first
+                .iter()
+                .map(|(index, _)| NoteRef {
+                    clip: clip.id,
+                    index: *index,
+                })
+                .collect();
+            diagnostic.pitches = sorted_pitches(first.iter().map(|(_, note)| note.pitch));
+            diagnostic.value = Some(count as f32);
+            diagnostic.limit = Some(f32::from(FRET_STRETCH));
+            found.push(diagnostic);
+        }
+    }
+    found
+}
+
 /// What a voice cannot do: sing two notes at once, or sing a note with no words on it.
 ///
 /// Overlaps are read within a clip, where trimming the earlier note is the obvious repair: a
@@ -1418,5 +1525,18 @@ mod tests {
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].value, Some(4.0));
         assert!(found[0].pitches.is_empty());
+    }
+
+    #[test]
+    fn open_and_barre_chords_fret_and_a_keyboard_spread_does_not() {
+        // Open E, a barre A at the fifth fret, a power chord: all playable.
+        assert!(frettable(&[40, 47, 52, 56, 59, 64]));
+        assert!(frettable(&[45, 52, 57, 61, 64, 69]));
+        assert!(frettable(&[40, 47, 52]));
+        // Seven notes, and a cluster of four semitones low on the neck, are not.
+        assert!(!frettable(&[40, 45, 50, 55, 59, 64, 67]));
+        assert!(!frettable(&[41, 42, 43, 44]));
+        // F on the low string under a note fifteen frets up the top string: no hand spans it.
+        assert!(!frettable(&[41, 79]));
     }
 }

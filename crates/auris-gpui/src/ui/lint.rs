@@ -241,6 +241,7 @@ impl AurisApp {
             }
             Rule::ImpossibleDrumHit => Key::LintImpossibleDrumHit,
             Rule::NoBreath => Key::LintNoBreath,
+            Rule::UnfrettableChord => Key::LintUnfrettableChord,
             Rule::Clipping => Key::LintClipping,
             Rule::TooLoud => Key::LintTooLoud,
             Rule::TooQuiet => Key::LintTooQuiet,
@@ -474,6 +475,7 @@ impl AurisApp {
             Rule::TightStrum => Key::LintNameTightStrum,
             Rule::ImpossibleDrumHit => Key::LintNameImpossibleDrumHit,
             Rule::NoBreath => Key::LintNameNoBreath,
+            Rule::UnfrettableChord => Key::LintNameUnfrettableChord,
             Rule::Clipping => Key::LintNameClipping,
             Rule::TooLoud => Key::LintNameTooLoud,
             Rule::TooQuiet => Key::LintNameTooQuiet,
