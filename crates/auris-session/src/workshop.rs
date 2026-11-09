@@ -29,11 +29,19 @@ pub struct Reference {
     pub path: PathBuf,
     /// Decoded note, chord or instrument data; never an audio-listening claim.
     pub text: String,
+    /// Storage only: the file in the conversation folder that holds [`Reference::text`] when it
+    /// was too long to keep inline. [`Store::load`] reads it back and clears this, so it is
+    /// always `None` in memory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snapshot: Option<String>,
 }
 
 /// One independent candidate assignment.
+///
+/// Unknown fields are ignored rather than refused: conversations and preference history keep
+/// every direction ever dispatched, and a field a later build no longer reads must not stop them
+/// opening.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct Direction {
     /// Short, user-facing name.
     pub title: String,
@@ -44,6 +52,10 @@ pub struct Direction {
     /// Exact parent track IDs whose note clips must remain unchanged.
     #[serde(default)]
     pub protected_tracks: Vec<u64>,
+    /// Earlier candidates of this conversation, other than the parent, whose saved clips the
+    /// composer may restore exactly; for example the version a user asks to go back to.
+    #[serde(default)]
+    pub sources: Vec<u64>,
 }
 
 /// Persisted candidate identity; IDs also name private artifact directories.
@@ -274,6 +286,17 @@ impl Document {
         self.title = title.to_owned();
         Ok(())
     }
+    /// The name a person calls a candidate by, such as `1B` for the second song of the first
+    /// round; see [`candidate_label`]. `None` for an ID this conversation never offered.
+    pub fn candidate_label(&self, id: u64) -> Option<String> {
+        self.rounds.iter().enumerate().find_map(|(round, r)| {
+            r.candidates
+                .iter()
+                .position(|c| c.id == id)
+                .map(|position| candidate_label(round, position))
+        })
+    }
+
     /// Record or replace feedback only for a completed candidate in this conversation.
     pub fn record_feedback(&mut self, id: u64, feedback: Feedback) -> Result<(), String> {
         feedback.validate()?;
@@ -286,6 +309,24 @@ impl Document {
         candidate.feedback = Some(feedback);
         Ok(())
     }
+}
+
+/// A candidate's label: the round counted from 1, then its place in that round as a letter.
+///
+/// `1B` is the second song of the first round. A person can say "1B's chorus" where an ID would
+/// mean nothing to them, and the label stays the same when the conversation is reopened, because
+/// rounds and their candidates keep their order. Past `Z` the letters run on as `AA`, `AB`, the
+/// way spreadsheet columns do, though a round never offers that many.
+pub fn candidate_label(round: usize, position: usize) -> String {
+    let mut letters = Vec::new();
+    let mut rest = position + 1;
+    while rest > 0 {
+        rest -= 1;
+        letters.push(char::from(b'A' + (rest % 26) as u8));
+        rest /= 26;
+    }
+    letters.reverse();
+    format!("{}{}", round + 1, letters.into_iter().collect::<String>())
 }
 
 /// A choice is evidence of a relative preference, never a dislike of every other song.
@@ -320,6 +361,9 @@ pub struct Preferences {
     pub digest: String,
     /// How many archived choices [`Preferences::digest`] covers.
     pub digested: u64,
+    /// Whether the person rewrote [`Preferences::digest`] by hand since a model last wrote it,
+    /// so the director is told it is the person's own account rather than a model's guess.
+    pub digest_edited: bool,
 }
 
 impl Default for Preferences {
@@ -329,6 +373,7 @@ impl Default for Preferences {
             selections: Vec::new(),
             digest: String::new(),
             digested: 0,
+            digest_edited: false,
         }
     }
 }
@@ -401,7 +446,11 @@ impl Preferences {
             evidence["older_choices_summary"] = serde_json::json!({
                 "choices": self.digested,
                 "summary": self.digest,
-                "source": "model-written summary of recorded choices",
+                "source": if self.digest_edited {
+                    "summary of recorded choices, corrected by the user"
+                } else {
+                    "model-written summary of recorded choices"
+                },
             });
         }
         evidence.to_string()
@@ -604,8 +653,14 @@ impl Store {
             Err(e) => return Err(e.to_string()),
         }
         let mut threads = Vec::new();
+        let others = ids.len() > 1;
         for id in ids {
             let store = self.thread(&id)?;
+            // The first conversation always exists in memory; once deleted, or never written,
+            // it is not listed beside conversations that do exist.
+            if id == "default" && others && !store.root.join("conversation.json").is_file() {
+                continue;
+            }
             let document = store.load()?;
             let updated = std::fs::metadata(store.root.join("conversation.json"))
                 .and_then(|m| m.modified())
@@ -644,6 +699,12 @@ impl Store {
             for reference in &mut message.references {
                 reference.path =
                     crate::conversation_attachments::resolve(&self.root, &reference.path);
+                if let Some(name) = reference.snapshot.take() {
+                    match self.read_snapshot(&name) {
+                        Ok(text) => reference.text = text,
+                        Err(e) => log::warn!("song conversation reference {name} is missing: {e}"),
+                    }
+                }
             }
         }
         Ok(document)
@@ -659,9 +720,77 @@ impl Store {
             for reference in &mut message.references {
                 reference.path =
                     crate::conversation_attachments::portable(&self.root, &reference.path);
+                if reference.text.len() > REFERENCE_INLINE_BYTES {
+                    reference.snapshot = Some(self.write_snapshot(&reference.text)?);
+                    reference.text.clear();
+                }
             }
         }
         write(&self.root.join("conversation.json"), &document)
+    }
+    /// Keep a long decoded reference beside the transcript, named by its content, so that the
+    /// transcript stays small enough to rewrite on every turn however many scores are attached.
+    fn write_snapshot(&self, text: &str) -> Result<String, String> {
+        use sha2::{Digest, Sha256};
+        let name = format!("{}.txt", hex::encode(Sha256::digest(text.as_bytes())));
+        let directory = self.root.join(REFERENCE_DIR);
+        let path = directory.join(&name);
+        if path.is_file() {
+            return Ok(name);
+        }
+        std::fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
+        let mut staging = tempfile::NamedTempFile::new_in(&directory).map_err(|e| e.to_string())?;
+        std::io::Write::write_all(&mut staging, text.as_bytes()).map_err(|e| e.to_string())?;
+        match staging.persist_noclobber(&path) {
+            Ok(_) => Ok(name),
+            Err(e) if e.error.kind() == std::io::ErrorKind::AlreadyExists => Ok(name),
+            Err(e) => Err(e.error.to_string()),
+        }
+    }
+    /// Read a reference written by [`Store::write_snapshot`]; the stored name is never a path.
+    fn read_snapshot(&self, name: &str) -> Result<String, String> {
+        let valid = name
+            .strip_suffix(".txt")
+            .is_some_and(|hash| hash.len() == 64 && hash.bytes().all(|c| c.is_ascii_hexdigit()));
+        if !valid {
+            return Err("invalid reference name".into());
+        }
+        std::fs::read_to_string(self.root.join(REFERENCE_DIR).join(name)).map_err(|e| e.to_string())
+    }
+    /// Permanently remove one conversation: its transcript, attachments and generated songs.
+    ///
+    /// The conversation must not be open in any window, which its lease enforces; the workshop
+    /// owner switches away first when it is the open one. Learned song preferences are a
+    /// separate memory with their own reset, and are left as they are.
+    pub fn delete_thread(&self, id: &str) -> Result<(), String> {
+        let store = self.thread(id)?;
+        if !store.root.exists() {
+            return Ok(());
+        }
+        // Hold the lease only to prove nobody has it; Windows cannot remove an open file.
+        drop(store.lease()?);
+        if id != "default" {
+            return std::fs::remove_dir_all(&store.root).map_err(|e| e.to_string());
+        }
+        // The first conversation lives at the library root, beside every other one.
+        for entry in std::fs::read_dir(&store.root).map_err(|e| e.to_string())? {
+            let entry = entry.map_err(|e| e.to_string())?;
+            let name = entry.file_name();
+            if ["threads", "active-thread.json", "workshop.lock"]
+                .iter()
+                .any(|kept| name == *kept)
+            {
+                continue;
+            }
+            let path = entry.path();
+            if entry.file_type().map_err(|e| e.to_string())?.is_dir() {
+                std::fs::remove_dir_all(&path)
+            } else {
+                std::fs::remove_file(&path)
+            }
+            .map_err(|e| e.to_string())?;
+        }
+        Ok(())
     }
     /// Preserve explicitly attached files before passing them to the director.
     pub fn capture_attachments(&self, paths: &[PathBuf]) -> Result<Vec<PathBuf>, String> {
@@ -690,17 +819,23 @@ pub fn update_preferences(update: impl FnOnce(&mut Preferences)) -> Result<Prefe
     })
 }
 
-/// Fold `folded` — the oldest stored choices when the summary was requested — into `summary`,
-/// moving them to `song-preferences-archive.jsonl` rather than deleting them. Refused, with
-/// nothing changed, when another window has edited those choices since or the summary is empty
+/// Fold `folded` — the oldest stored choices when the summary was requested — and `earlier`,
+/// the summary they were folded into, into `summary`, moving the choices to
+/// `song-preferences-archive.jsonl` rather than deleting them. Refused, with nothing changed,
+/// when another window has edited those choices or that summary since, or the summary is empty
 /// or too long.
-pub fn digest_preferences(folded: &[Selection], summary: &str) -> Result<Preferences, String> {
-    digest_preferences_at(&crate::config_dir(), folded, summary)
+pub fn digest_preferences(
+    folded: &[Selection],
+    earlier: &str,
+    summary: &str,
+) -> Result<Preferences, String> {
+    digest_preferences_at(&crate::config_dir(), folded, earlier, summary)
 }
 
 fn digest_preferences_at(
     root: &Path,
     folded: &[Selection],
+    earlier: &str,
     summary: &str,
 ) -> Result<Preferences, String> {
     let summary = summary.trim().to_owned();
@@ -708,7 +843,10 @@ fn digest_preferences_at(
         return Err("The model returned an empty or oversized preference summary".into());
     }
     try_update_preferences_at(root, |preferences| {
-        if folded.is_empty() || !preferences.selections.starts_with(folded) {
+        if folded.is_empty()
+            || !preferences.selections.starts_with(folded)
+            || preferences.digest != earlier
+        {
             return Err("The preference history changed while it was being summarized".into());
         }
         let mut lines = Vec::new();
@@ -726,6 +864,42 @@ fn digest_preferences_at(
         preferences.selections.drain(..folded.len());
         preferences.digest = summary;
         preferences.digested += folded.len() as u64;
+        preferences.digest_edited = false;
+        Ok(())
+    })
+}
+
+/// Replace the summary of earlier choices with the person's own wording, refused when it has
+/// changed since `original` was read — another window, or the workshop summarizing again.
+/// An empty `revised` removes the summary; the archived choices behind it stay until the
+/// history is cleared.
+pub fn revise_preference_digest(original: &str, revised: &str) -> Result<Preferences, String> {
+    revise_preference_digest_at(&crate::config_dir(), original, revised)
+}
+
+fn revise_preference_digest_at(
+    root: &Path,
+    original: &str,
+    revised: &str,
+) -> Result<Preferences, String> {
+    let revised = revised.trim().to_owned();
+    if revised.chars().count() > digest_policy::PREFERENCE_SUMMARY_CHARS {
+        return Err(format!(
+            "Keep the summary within {} characters.",
+            digest_policy::PREFERENCE_SUMMARY_CHARS
+        ));
+    }
+    try_update_preferences_at(root, |preferences| {
+        if preferences.digest != original {
+            return Err("This summary changed. Refresh the history and try again.".to_owned());
+        }
+        if revised != preferences.digest {
+            preferences.digest_edited = !revised.is_empty();
+            if revised.is_empty() {
+                preferences.digested = 0;
+            }
+            preferences.digest = revised;
+        }
         Ok(())
     })
 }
@@ -744,12 +918,19 @@ fn forget_preferences_at(root: &Path) -> Result<Preferences, String> {
         preferences.selections.clear();
         preferences.digest.clear();
         preferences.digested = 0;
+        preferences.digest_edited = false;
         Ok(())
     })
 }
 
 /// Every choice a summary has replaced, one JSON object per line, oldest first.
 const PREFERENCE_ARCHIVE: &str = "song-preferences-archive.jsonl";
+
+/// Decoded references longer than this are kept beside the transcript rather than inside it.
+const REFERENCE_INLINE_BYTES: usize = 4 * 1024;
+
+/// The folder, inside a conversation, holding its long decoded references.
+const REFERENCE_DIR: &str = "references";
 
 /// Atomically correct or remove an existing preference without overwriting concurrent changes.
 pub fn revise_preference(
@@ -784,13 +965,19 @@ fn try_update_preferences_at(
     Ok(preferences)
 }
 
+/// Reads a file [`write`] publishes, or the default when there is none.
+///
+/// Through [`crate::settings::read_config_text`] rather than `std::fs::read`, because `write`
+/// replaces the file by renaming over it, and on Windows that rename fails with `PermissionDenied`
+/// for as long as any other thread has the file open. The shared lock keeps a read from overlapping
+/// the rename; reading around it made a song workshop's routine preference reload refuse the
+/// settings window's edit.
 fn read_or_default<T: serde::de::DeserializeOwned + Default>(path: &Path) -> Result<T, String> {
-    match std::fs::metadata(path) {
+    match crate::settings::read_config_text(path) {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(T::default()),
+        // Its own message names the 8 MiB ceiling, or the bytes that were not UTF-8.
         Err(e) => Err(e.to_string()),
-        Ok(meta) if meta.len() > 8 * 1024 * 1024 => Err("Workshop history is too large".into()),
-        Ok(_) => serde_json::from_slice(&std::fs::read(path).map_err(|e| e.to_string())?)
-            .map_err(|e| e.to_string()),
+        Ok(text) => serde_json::from_str(&text).map_err(|e| e.to_string()),
     }
 }
 
@@ -843,6 +1030,7 @@ mod tests {
                         description: "Piano".into(),
                         instructions: "Compose".into(),
                         protected_tracks: Vec::new(),
+                        sources: vec![],
                     },
                     ready,
                     error: None,
@@ -852,6 +1040,38 @@ mod tests {
                 })
                 .collect(),
         }
+    }
+
+    #[test]
+    fn a_direction_saved_with_a_field_no_longer_read_still_opens() {
+        // Directions dispatched as demo rounds carried a phase; those rounds are gone.
+        let direction: Direction = serde_json::from_value(serde_json::json!({
+            "title": "Demo", "description": "", "instructions": "Compose",
+            "phase": "score"
+        }))
+        .unwrap();
+        assert_eq!(direction.instructions, "Compose");
+        assert!(!serde_json::to_string(&direction).unwrap().contains("phase"));
+    }
+
+    #[test]
+    fn a_candidate_is_labelled_by_its_round_and_its_place_in_it() {
+        let document = Document {
+            rounds: vec![
+                round(&[1, 2], true),
+                round(&[3], true),
+                round(&[7, 5], true),
+            ],
+            ..Default::default()
+        };
+        let labels: Vec<_> = [1, 2, 3, 7, 5]
+            .into_iter()
+            .map(|id| document.candidate_label(id).unwrap())
+            .collect();
+        assert_eq!(labels, ["1A", "1B", "2A", "3A", "3B"]);
+        assert_eq!(document.candidate_label(4), None);
+        assert_eq!(candidate_label(0, 25), "1Z");
+        assert_eq!(candidate_label(9, 26), "10AA");
     }
 
     #[test]
@@ -1101,6 +1321,7 @@ mod tests {
             references: vec![Reference {
                 path: attachments[0].clone(),
                 text: "夜の雨".into(),
+                snapshot: None,
             }],
             attachments,
         });
@@ -1128,6 +1349,7 @@ mod tests {
                 description: "Sparse".into(),
                 instructions: "Private production instructions".into(),
                 protected_tracks: vec![],
+                sources: vec![],
             }],
             chosen: 0,
         }
@@ -1281,6 +1503,96 @@ mod tests {
         assert_eq!(restored.messages[0].text, "歌詞\n二行目");
         assert_eq!(restored.selected, Some(7));
     }
+    #[test]
+    fn long_references_live_beside_the_transcript_and_read_back_whole() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path().into());
+        let score = "C4 0 480 100\n".repeat(200_000);
+        let mut document = Document::default();
+        for _ in 0..3 {
+            let mut message = chat(true, "Use this melody");
+            message.references.push(Reference {
+                path: "melody.mid".into(),
+                text: score.clone(),
+                snapshot: None,
+            });
+            message.references.push(Reference {
+                path: "short.txt".into(),
+                text: "Am F C G".into(),
+                snapshot: None,
+            });
+            document.messages.push(message);
+        }
+        // Three copies of a 2.6 MB score would pass the 8 MiB transcript limit if inlined.
+        store.save(&document).unwrap();
+        let transcript = std::fs::metadata(dir.path().join("workshop/conversation.json")).unwrap();
+        assert!(transcript.len() < 4096, "{} bytes", transcript.len());
+        let files = std::fs::read_dir(dir.path().join("workshop").join(REFERENCE_DIR))
+            .unwrap()
+            .count();
+        assert_eq!(files, 1, "identical scores are stored once");
+        let restored = store.load().unwrap();
+        for message in &restored.messages {
+            assert_eq!(message.references[0].text, score);
+            assert_eq!(message.references[0].snapshot, None);
+            assert_eq!(message.references[1].text, "Am F C G");
+        }
+        // A saved snapshot name is never trusted as a path.
+        let raw = std::fs::read_to_string(dir.path().join("workshop/conversation.json")).unwrap();
+        let mut forged: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        forged["messages"][0]["references"][0]["snapshot"] = "../conversation.json".into();
+        std::fs::write(
+            dir.path().join("workshop/conversation.json"),
+            forged.to_string(),
+        )
+        .unwrap();
+        let reopened = store.load().unwrap();
+        assert!(reopened.messages[0].references[0].text.is_empty());
+    }
+
+    #[test]
+    fn deleting_a_conversation_removes_its_songs_and_leaves_the_others() {
+        let dir = tempfile::tempdir().unwrap();
+        let library = Store::new(dir.path().into());
+        let mut first = Document::default();
+        first.messages.push(chat(true, "First song"));
+        library.save(&first).unwrap();
+        std::fs::create_dir_all(library.candidate_path(1)).unwrap();
+        std::fs::write(library.candidate_path(1).join("song.auris"), "first").unwrap();
+        let second = library.create_thread().unwrap();
+        let mut document = Document::default();
+        document.messages.push(chat(true, "Second song"));
+        second.save(&document).unwrap();
+        std::fs::create_dir_all(second.candidate_path(1)).unwrap();
+        let third = library.create_thread().unwrap();
+        third.set_active_thread().unwrap();
+        let held = third.lease().unwrap();
+        assert!(
+            library.delete_thread(&third.thread_id).is_err(),
+            "an open one is refused"
+        );
+        drop(held);
+
+        library.delete_thread(&second.thread_id).unwrap();
+        assert!(!second.root.exists());
+        let ids: Vec<_> = library
+            .threads()
+            .unwrap()
+            .into_iter()
+            .map(|t| t.id)
+            .collect();
+        assert_eq!(ids.len(), 2);
+        assert!(ids.contains(&"default".to_owned()));
+
+        // The first conversation shares the library root with every other one.
+        library.delete_thread("default").unwrap();
+        assert!(!library.candidate_path(1).exists());
+        assert!(!dir.path().join("workshop/conversation.json").exists());
+        let threads = library.threads().unwrap();
+        assert_eq!(threads.len(), 1);
+        assert_eq!(threads[0].id, third.thread_id);
+        assert_eq!(library.active_thread().unwrap().thread_id, third.thread_id);
+    }
     fn chat(user: bool, text: &str) -> Message {
         Message {
             choices: None,
@@ -1334,9 +1646,47 @@ mod tests {
         long.references.push(Reference {
             path: "song.mid".into(),
             text: "n".repeat(digest_policy::CONVERSATION_CHARS),
+            snapshot: None,
         });
         document.messages.push(long);
         assert_eq!(document.digest_due(), Some(1));
+    }
+
+    #[test]
+    fn an_update_succeeds_while_another_thread_reads_the_preferences() {
+        // On Windows the update's rename fails for as long as a reader has the file open, which
+        // a reader going around the shared lock did on most attempts. Elsewhere this is a plain
+        // check that concurrent reads and writes neither fail nor tear the file.
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_path_buf();
+        try_update_preferences_at(&root, |_| Ok(())).unwrap();
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let reader = {
+            let (root, stop) = (root.clone(), stop.clone());
+            std::thread::spawn(move || {
+                let mut reads = 0;
+                while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                    read_or_default::<Preferences>(&root.join("song-preferences.json")).unwrap();
+                    reads += 1;
+                }
+                reads
+            })
+        };
+        let written = (0..200).map(|id| {
+            try_update_preferences_at(&root, |p| {
+                p.record(selection(id, id));
+                Ok(())
+            })
+        });
+        let failures: Vec<_> = written.filter_map(Result::err).collect();
+        stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        assert!(reader.join().unwrap() > 0, "the reader ran");
+        assert!(
+            failures.is_empty(),
+            "{} updates failed: {:?}",
+            failures.len(),
+            failures.first()
+        );
     }
 
     #[test]
@@ -1361,9 +1711,9 @@ mod tests {
         .unwrap();
         let folded = preferences.digest_due().unwrap().to_vec();
         assert_eq!(folded.len(), PREFERENCE_CHOICES - PREFERENCE_KEEP);
-        assert!(digest_preferences_at(root, &folded, "").is_err());
-        assert!(digest_preferences_at(root, &folded[1..], "Prefers warm keys").is_err());
-        let preferences = digest_preferences_at(root, &folded, "Prefers warm keys").unwrap();
+        assert!(digest_preferences_at(root, &folded, "", "").is_err());
+        assert!(digest_preferences_at(root, &folded[1..], "", "Prefers warm keys").is_err());
+        let preferences = digest_preferences_at(root, &folded, "", "Prefers warm keys").unwrap();
         assert_eq!(preferences.selections.len(), PREFERENCE_KEEP);
         assert_eq!(preferences.selections.last().unwrap().candidate, 99);
         assert_eq!(preferences.digested, folded.len() as u64);
@@ -1387,11 +1737,67 @@ mod tests {
             folded.len() as u64
         );
         // The folded choices are archived, so the same summary cannot be applied twice.
-        assert!(digest_preferences_at(root, &folded, "Stale").is_err());
+        assert!(digest_preferences_at(root, &folded, "Prefers warm keys", "Stale").is_err());
         let preferences = forget_preferences_at(root).unwrap();
         assert!(preferences.selections.is_empty() && preferences.digest.is_empty());
         assert_eq!(preferences.digested, 0);
         assert!(!root.join(PREFERENCE_ARCHIVE).exists());
+    }
+
+    #[test]
+    fn the_person_can_rewrite_or_remove_the_summary() {
+        use digest_policy::*;
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        for id in 0..PREFERENCE_CHOICES as u64 {
+            try_update_preferences_at(root, |p| {
+                p.record(selection(id, id));
+                Ok(())
+            })
+            .unwrap();
+        }
+        let preferences: Preferences =
+            read_or_default(&root.join("song-preferences.json")).unwrap();
+        let folded = preferences.digest_due().unwrap().to_vec();
+        digest_preferences_at(root, &folded, "", "Prefers warm keys").unwrap();
+        // A stale original or an oversized summary changes nothing.
+        assert!(revise_preference_digest_at(root, "Something else", "Bright").is_err());
+        let long = "x".repeat(PREFERENCE_SUMMARY_CHARS + 1);
+        assert!(revise_preference_digest_at(root, "Prefers warm keys", &long).is_err());
+        let preferences =
+            revise_preference_digest_at(root, "Prefers warm keys", "  Loves minor keys.\n")
+                .unwrap();
+        assert_eq!(preferences.digest, "Loves minor keys.");
+        assert!(preferences.digest_edited);
+        assert_eq!(preferences.digested, folded.len() as u64);
+        let evidence: serde_json::Value = serde_json::from_str(&preferences.context()).unwrap();
+        assert_eq!(
+            evidence["older_choices_summary"]["source"],
+            "summary of recorded choices, corrected by the user"
+        );
+        // A summary started before the edit cannot overwrite it.
+        try_update_preferences_at(root, |p| {
+            for id in 100..(100 + PREFERENCE_CHOICES as u64) {
+                p.record(selection(id, id));
+            }
+            Ok(())
+        })
+        .unwrap();
+        let preferences: Preferences =
+            read_or_default(&root.join("song-preferences.json")).unwrap();
+        let folded = preferences.digest_due().unwrap().to_vec();
+        assert!(digest_preferences_at(root, &folded, "Prefers warm keys", "Stale").is_err());
+        let preferences =
+            digest_preferences_at(root, &folded, "Loves minor keys.", "Minor keys, slow").unwrap();
+        assert!(!preferences.digest_edited);
+        // Emptying it removes the summary but leaves the archive for a reset to clear.
+        let preferences = revise_preference_digest_at(root, "Minor keys, slow", "  ").unwrap();
+        assert!(preferences.digest.is_empty() && !preferences.digest_edited);
+        assert_eq!(preferences.digested, 0);
+        assert!(root.join(PREFERENCE_ARCHIVE).exists());
+        assert!(serde_json::from_str::<serde_json::Value>(&preferences.context()).unwrap()
+            ["older_choices_summary"]
+            .is_null());
     }
 
     #[test]

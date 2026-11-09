@@ -10,6 +10,63 @@ const SAMPLE_RATE: f64 = 48_000.0;
 const BLOCK_FRAMES: usize = 512;
 
 #[test]
+#[ignore = "requires AURIS_VST3_MONO_EFFECT_SMOKE_PLUGIN to name an installed mono-output effect"]
+fn a_mono_external_effect_replaces_both_sides_of_a_stereo_track() {
+    let path = PathBuf::from(
+        std::env::var_os("AURIS_VST3_MONO_EFFECT_SMOKE_PLUGIN")
+            .expect("a mono-output VST3 effect is required"),
+    );
+    let info = plugins_in(&path)
+        .unwrap()
+        .into_iter()
+        .find(|info| info.kind == PluginKind::Effect)
+        .expect("the bundle must contain an effect");
+    let mut host = vst3_host::Vst3Host::builder()
+        .sample_rate(SAMPLE_RATE)
+        .block_size(BLOCK_FRAMES)
+        .build()
+        .unwrap();
+    let probe = host.load_plugin_class(&path, &info.class_id).unwrap();
+    let layout = probe.audio_bus_layout().unwrap();
+    eprintln!("{} audio layout: {layout:?}", info.name);
+    assert_eq!(layout.outputs[0].channel_count, 1, "a mono main output");
+    drop(probe);
+
+    let prepare = PrepareContext::new(SAMPLE_RATE, BLOCK_FRAMES, 2);
+    let plugin = Vst3Plugin::load(&path, &info.class_id, &prepare).unwrap();
+    let mut effect = plugin.effect().unwrap();
+    effect.prepare(&prepare);
+    let mut buffer = AudioBuffer::stereo(BLOCK_FRAMES, SAMPLE_RATE);
+    for block in 0..16 {
+        for channel in buffer.iter_channels_mut() {
+            for (frame, sample) in channel.iter_mut().enumerate() {
+                let index = block * BLOCK_FRAMES + frame;
+                *sample =
+                    (std::f32::consts::TAU * 440.0 * index as f32 / SAMPLE_RATE as f32).sin() * 0.1;
+            }
+        }
+        effect.process(
+            &mut buffer,
+            &ProcessContext::realtime(
+                SAMPLE_RATE,
+                BLOCK_FRAMES,
+                (block * BLOCK_FRAMES) as u64,
+                120.0,
+                true,
+            ),
+        );
+        assert!(!effect.processing_failed());
+        assert_finite(&buffer);
+        assert_eq!(
+            buffer.channel(0),
+            buffer.channel(1),
+            "both sides must contain the mono result, including during plugin latency"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(11));
+    }
+}
+
+#[test]
 #[ignore = "requires AURIS_VST3_SMOKE_PLUGIN to point to an external VST3 bundle"]
 fn an_external_vst3_can_be_discovered_loaded_and_processed() {
     let path = PathBuf::from(

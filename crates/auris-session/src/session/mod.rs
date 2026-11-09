@@ -61,11 +61,16 @@ mod choir_tests;
 mod chord_preview;
 mod clipboard;
 mod clips;
+mod comments;
+pub use comments::CommentHost;
 mod compose;
 mod convert;
 mod drum_analysis;
 mod envelope;
+mod event_list;
 pub use envelope::{ENVELOPE_PITCHES, SoundEnvelope};
+pub use event_list::{ClipEvent, ClipEventKind, EventEdit, EventRef, clip_events};
+pub mod arrangement_shape;
 mod drum_assignments;
 mod files;
 mod generated;
@@ -75,7 +80,10 @@ mod hosted;
 mod layers;
 mod levels;
 pub mod lyric_harness;
+mod lyric_lines;
+pub(crate) mod lyric_slots;
 mod lyrics;
+pub mod melody_shape;
 mod mixer;
 mod monitor;
 mod multitrack_transcription;
@@ -85,6 +93,7 @@ mod note_take;
 pub(crate) mod notes;
 mod output_preview;
 mod perform;
+mod performance_presets;
 mod physical_sounds;
 pub(crate) mod plugin_discovery;
 mod plugin_trust;
@@ -93,10 +102,18 @@ mod readiness;
 mod recognition;
 mod record;
 mod rhythm;
+mod samples;
+pub use samples::{
+    AgentSample, DEFAULT_SAMPLE_ROOT, DetectedPitch, SampleZoneEdit, SampleZoneView, detect_pitch,
+    parse_root_note,
+};
+mod workspace;
+pub use workspace::workspace_relative;
 #[cfg(test)]
 mod shared_font_tests;
 mod singer;
 mod singer_names;
+pub mod source_material;
 mod spectrogram;
 mod timbre;
 mod tracks;
@@ -105,7 +122,7 @@ mod typing;
 mod typing_calibration;
 mod visualizer;
 mod vst3;
-pub use visualizer::{VisualizerFrame, VisualizerSpectrum};
+pub use visualizer::{VisualizerFrame, VisualizerLoudness, VisualizerSpectrum, VisualizerTap};
 
 #[cfg(test)]
 mod fixtures;
@@ -139,12 +156,13 @@ pub use levels::{
     ComposeBalanceResult, ComposeBalanceStep, LIMITER_ALLOWANCE_DB, NORMALIZE_LIMITER_ALLOWANCE_DB,
     NormalizeMixReport, TARGET_LUFS, TrackLevel, fader_for, faders_lift_db, master_gain_db,
 };
+pub use lyric_lines::SungLine;
 pub use lyrics::LyricsMeasure;
 pub use monitor::MonitorStatus;
 pub use musical_analysis::MusicalClipAnalysis;
 pub use note_preview::NoteSelectionPreview;
 pub use notes::{Quantize, quantized};
-pub use output_preview::prepare_output_preview;
+pub use output_preview::{prepare_looping_output_preview, prepare_output_preview};
 pub use plugin_discovery::InstalledPluginFiles;
 pub(crate) use plugin_discovery::scan_installed_plugin_files;
 pub use readiness::{PlaybackReadiness, PlaybackState};
@@ -186,11 +204,11 @@ use auris_engine::{
 };
 use auris_gpu::{GpuContext, WaveformPeaks};
 use auris_io::SoundFont;
-use auris_sampler::{SharedSoundFonts, SoundFontBank};
+use auris_sampler::{SampleBank, SharedSamples, SharedSoundFonts, SoundFontBank};
 
 use crate::error::SessionError;
 use crate::history::{Edit, History};
-use crate::registry::default_registry;
+use crate::registry::registry_with_samples;
 use crate::render::{RenderJob, bank_at_rate, fill_stretches};
 use crate::settings::AudioPreferences;
 
@@ -253,6 +271,12 @@ pub struct SessionOptions {
     /// A document's CLAP or VST3 plugin is loaded only from a plugin folder; anything else stays
     /// silent until its folder is listed here. See [`Session::set_plugin_paths`].
     pub plugin_paths: Vec<PathBuf>,
+    /// The performance presets this installation keeps. `None` keeps saved presets in memory
+    /// for the session's lifetime only.
+    ///
+    /// Defaults to `performance-presets.json` in the application configuration directory.
+    /// Headless tests opt out so they neither read nor change the user's presets.
+    pub performance_presets: Option<PathBuf>,
 }
 
 impl Default for SessionOptions {
@@ -270,6 +294,7 @@ impl Default for SessionOptions {
             autosave: true,
             shipped_dictionary: true,
             plugin_paths: Vec::new(),
+            performance_presets: Some(crate::performance_presets::PerformancePresetBook::path()),
         }
     }
 }
@@ -285,6 +310,7 @@ impl SessionOptions {
             gpu: false,
             shipped_fonts: false,
             soundfont_library: None,
+            performance_presets: None,
             autosave: false,
             shipped_dictionary: false,
             master_limiter: false,
@@ -301,6 +327,13 @@ impl SessionOptions {
     /// Uses the persistent application SoundFont catalog, including in a headless frontend.
     pub fn with_soundfont_library(mut self, path: impl Into<PathBuf>) -> Self {
         self.soundfont_library = Some(path.into());
+        self
+    }
+
+    /// Keeps performance presets in the file at `path`, shared with the window and every other
+    /// door, including in a headless frontend.
+    pub fn with_performance_presets(mut self, path: impl Into<PathBuf>) -> Self {
+        self.performance_presets = Some(path.into());
         self
     }
 
@@ -385,8 +418,17 @@ pub struct Session {
     /// Shared with the registry, whose sampler factory captured it — which is the only way sample
     /// data reaches an instrument the registry builds.
     fonts: SharedSoundFonts,
+    /// [`Self::bank`] again, as the audio sampler reads it.
+    ///
+    /// Shared with the registry for the reason [`Self::fonts`] is. Not kept in step at every
+    /// place the bank changes: [`Self::rebuild_graph`] restates it, because building a graph is
+    /// the only moment a sampler looks.
+    samples: SharedSamples,
     /// Separates discovery handles belonging to different unsaved sessions.
     sound_scope: String,
+    /// The scopes this same document had before a save moved it, oldest first, so a sound
+    /// found before the save can still be chosen after it. Emptied when the document is replaced.
+    earlier_sound_scopes: Vec<sound_search::DocumentScope>,
     pub(crate) listening: crate::audio_audition::ListeningContext,
     /// Decoded fonts, kept by the path they were read from as well as their document ids.
     ///
@@ -396,11 +438,19 @@ pub struct Session {
     /// while this document's history may need them. Paths also distinguish two history branches that
     /// reused one id for different fonts.
     font_cache: HashMap<PathBuf, CachedFont>,
+    /// Why a SoundFont file could not be read, by the path that was tried.
+    ///
+    /// A font that fails to load stays in the document as a reference and simply has no sounds,
+    /// which on its own reads as "not found". Keeping the reason lets the sound search say
+    /// *why* — a missing file, a size refused, a parser error — to whoever asked for it.
+    font_errors: HashMap<PathBuf, String>,
     /// Whether this session reads the shipped library at all — see
     /// [`SessionOptions::shipped_fonts`].
     shipped_library: bool,
     /// Persistent catalog shared across documents and application launches.
     soundfont_library: Option<PathBuf>,
+    /// Performance presets kept by this installation.
+    performance_presets: crate::performance_presets::PresetLibrary,
     /// Whether composing ends by measuring the piece — see [`SessionOptions::balance_composed`].
     balance_composed: bool,
     /// Whether a new document starts with a master limiter — see [`SessionOptions::master_limiter`].
@@ -444,6 +494,9 @@ pub struct Session {
     /// an expensive question thirty times a second would otherwise have no cheap way to know the
     /// old answer still stands. Monotonic within a session, meaningless across two.
     revision: u64,
+    /// The last audio lint an agent asked for, kept so its fixes can be applied by id while
+    /// the revision it measured is still the document's.
+    pub(crate) lint_audio: Option<crate::lint::AudioLintResult>,
     pub(crate) execution_trace: std::cell::RefCell<crate::execution_trace::Recorder>,
     needs_rebuild: bool,
     /// Whether the meter has moved since the render graph was built.
@@ -486,6 +539,8 @@ pub struct Session {
     /// scope that nothing writes to any more.
     scope: Arc<auris_engine::Scope>,
     visualizer_scope: Arc<auris_engine::Scope>,
+    /// The live loudness of whatever the visualizer follows, fed every sample its scope publishes.
+    visualizer_loudness: visualizer::LoudnessTap,
     motion_monitors: HashMap<TrackId, Arc<auris_core::motion::MotionMonitor>>,
     overview_scopes: HashMap<TrackId, Arc<auris_engine::Scope>>,
     overview_watched: bool,
@@ -497,6 +552,9 @@ pub struct Session {
     /// Here rather than in a frontend because a frontend may not name `auris-dsp` — and because
     /// two of them wanting a spectrum should not each grow their own FFT.
     analyzer: auris_dsp::SpectrumAnalyzer,
+    /// The utility visualizer's own transform, longer than the plugin editor's so its lowest
+    /// bands have bins to show.
+    visualizer_analyzer: auris_dsp::SpectrumAnalyzer,
 
     param_cache: HashMap<String, Arc<Vec<ParamDescriptor>>>,
     /// Which built-in effects listen to a key, by plugin id.
@@ -569,6 +627,9 @@ pub struct Session {
     /// Whether the shipped dictionary stands in while no folder is named — the option, kept
     /// so that clearing the setting returns to the shipped one instead of to nothing.
     shipped_dictionary: bool,
+    /// Earlier saved versions of this song the agent may restore clips from; see
+    /// [`source_material`].
+    sources: Vec<source_material::SourceProject>,
     /// The voice models behind singer tracks, by the file each was read from.
     ///
     /// Keyed by path rather than by track or document id, like `font_cache` and for the
@@ -700,7 +761,8 @@ impl Session {
     pub fn new(options: SessionOptions) -> Result<Self, SessionError> {
         let work_dir = autosave::create_session_workspace(options.autosave)?;
         let fonts = SoundFontBank::shared();
-        let registry = default_registry(Arc::clone(&fonts));
+        let samples = SampleBank::shared();
+        let registry = registry_with_samples(Arc::clone(&fonts), Arc::clone(&samples));
         let mut project = Project::new(Project::UNTITLED, options.sample_rate);
         if options.master_limiter {
             levels::install_master_limiter(
@@ -747,9 +809,14 @@ impl Session {
             render_bank: AudioSourceBank::new(),
             render_bank_rate,
             fonts,
+            samples,
             font_cache: HashMap::new(),
+            font_errors: HashMap::new(),
             shipped_library: options.shipped_fonts,
             soundfont_library: options.soundfont_library,
+            performance_presets: crate::performance_presets::PresetLibrary::new(
+                options.performance_presets,
+            ),
             balance_composed: options.balance_composed,
             master_limiter: options.master_limiter,
             registry,
@@ -771,6 +838,7 @@ impl Session {
             agent_request_serial: 0,
             transaction: None,
             revision: 0,
+            lint_audio: None,
             execution_trace: Default::default(),
             listening: Default::default(),
             needs_rebuild: false,
@@ -784,7 +852,10 @@ impl Session {
             disk_stamp: None,
             disk_fingerprint: None,
             scope: Arc::new(auris_engine::Scope::new()),
-            visualizer_scope: Arc::new(auris_engine::Scope::new()),
+            visualizer_scope: Arc::new(auris_engine::Scope::with_history(
+                visualizer::VISUALIZER_HISTORY,
+            )),
+            visualizer_loudness: visualizer::LoudnessTap::default(),
             motion_monitors: HashMap::new(),
             overview_scopes: HashMap::new(),
             overview_watched: false,
@@ -792,6 +863,7 @@ impl Session {
             mixer_signals_watched: false,
             motion_track: None,
             analyzer: auris_dsp::SpectrumAnalyzer::new(auris_engine::SCOPE_WINDOW),
+            visualizer_analyzer: auris_dsp::SpectrumAnalyzer::new(visualizer::VISUALIZER_FFT),
             param_cache: HashMap::new(),
             keyed_cache: HashMap::new(),
             waveforms: HashMap::new(),
@@ -811,10 +883,12 @@ impl Session {
             take: None,
             japanese: None,
             shipped_dictionary: options.shipped_dictionary,
+            sources: Vec::new(),
             voices: HashMap::new(),
             voice_load_generations: HashMap::new(),
             acceleration: auris_singer::Acceleration::default(),
             sound_scope: crate::transient_id::transient_id("session"),
+            earlier_sound_scopes: Vec::new(),
             hosted: hosted::HostedPlugins::default(),
             vst3: vst3::Vst3Plugins::default(),
             plugin_trust: plugin_trust::PluginTrust::new(&options.plugin_paths),
@@ -1239,6 +1313,7 @@ impl Session {
                 low_hz,
                 high_hz,
                 mode: VisualizerSpectrum::Average,
+                fill_narrow_bands: false,
             },
             bands,
         );
@@ -1418,6 +1493,7 @@ impl Session {
         // that is already rendering keeps doing so: `place` hands out a second instance and takes
         // the first back when the export drops it.
         let rate = rate.unwrap_or(self.project.sample_rate);
+        self.take_back_graphs();
         let prepare = auris_core::plugin::PrepareContext::new(
             rate,
             self.engine.max_block(),
@@ -1605,7 +1681,7 @@ impl Session {
         layout_only
     }
 
-    fn restore_history_project(&mut self, edit: Edit, project: Project) {
+    pub(super) fn restore_history_project(&mut self, edit: Edit, project: Project) {
         if matches!(edit, Edit::MoveMixerNodes | Edit::ArrangeMixerNodes) {
             // Save may since have stamped the build or collected assets. A layout edit must
             // retain those changes as well as live plugin state, rather than adopting its file.
@@ -1649,6 +1725,19 @@ impl Session {
     /// Validate *before* calling this. Pushing a step clears the redo stack and marks the
     /// document dirty, so a command that records first and refuses after has already cost the
     /// user both — a phantom step that undoes nothing, and a redo branch that is simply gone.
+    /// The document's lint suppressions, recorded as one undoable edit. They change nothing that
+    /// plays, so the graph is left alone.
+    /// The chord timeline, for an edit made directly on it, recorded as one chord edit.
+    pub(crate) fn edit_chords(&mut self) -> &mut auris_core::harmony::ChordMap {
+        self.record(Edit::SetChord);
+        &mut self.project.harmony.chords
+    }
+
+    pub(crate) fn edit_suppressions(&mut self) -> &mut Vec<auris_core::project::LintSuppression> {
+        self.record(Edit::LintSuppression);
+        &mut self.project.lint_suppressions
+    }
+
     fn record(&mut self, edit: Edit) {
         self.trace_edit_boundary(&format!("{edit:?}"));
         if self.transaction.is_none() {
@@ -1716,11 +1805,14 @@ impl Session {
         // Every rebuild, not only after a rate change: what a clip's stretch is depends on the
         // tempo and on the clip, and both of those are edits that land here.
         fill_stretches(&self.project, &mut self.render_bank);
+        // The audio sampler reads the project-rate copy and resamples as it plays, so a change of
+        // device rate costs it nothing.
+        self.samples.replace_all(self.bank.iter());
         // Whatever the audio thread has handed back is dropped before the hosted plugins are
         // asked for their effects, so an instance whose graph has already been retired is reused
         // rather than replaced. Without this every rebuild would find its plugin still busy and
         // build a second one. See [`hosted`].
-        self.engine.collect_garbage();
+        self.take_back_graphs();
         let prepare = auris_core::plugin::PrepareContext::new(
             rate,
             self.engine.max_block(),
@@ -1785,6 +1877,25 @@ impl Session {
         self.graph_latency = graph.latency_frames();
         if let Err(error) = self.engine.set_graph(graph) {
             log::warn!("could not update the render graph: {error}");
+        }
+    }
+
+    /// Drops every graph the engine is finished with, so their hosted plugins come home.
+    ///
+    /// With an audio thread that means the graphs it has handed back. Without one — a headless
+    /// session, a suspended one, or a device that has died — nothing ever takes a graph off the
+    /// queue, so the graphs sent there are the finished ones and are dropped here instead. That
+    /// cannot wait for [`Self::poll`]: a headless frontend may never call it, and every graph left
+    /// queued keeps each hosted plugin's rendering half out, so the next rebuild would have to
+    /// instantiate the plugin again. An agent adding clips to a song with four Surge XT tracks
+    /// paid more than a second per edit for that and piled up instances until the process
+    /// crashed (#147).
+    fn take_back_graphs(&mut self) {
+        self.engine.collect_garbage();
+        if let Some(device) = &mut self.device
+            && !device.is_running()
+        {
+            device.discard_pending();
         }
     }
 
@@ -2016,6 +2127,31 @@ mod tests {
     }
 
     #[test]
+    fn every_physical_model_has_a_body_to_watch() {
+        let mut session = session();
+        for id in [
+            "auris.physical.clarinet",
+            "auris.physical.tin_whistle",
+            "auris.physical.choir",
+            "auris.physical.hammered_dulcimer",
+            // Not physical, but observed the same way: their oscillators' waveforms.
+            "auris.synth.chiptune",
+            "auris.synth.fm2",
+            "auris.synth.supersaw",
+            "auris.synth.pluck",
+        ] {
+            let track = session.add_instrument_track("Model", id).unwrap();
+            assert!(session.has_instrument_motion(track), "{id}");
+            // A touch outside the timeline edits nothing.
+            let before = session.project().clone();
+            session.touch_instrument(track, 60, 0.3, 0.8);
+            session.touch_instrument(track, 60, f32::NAN, 0.8);
+            session.note_off(track, 60);
+            assert_eq!(session.project(), &before);
+        }
+    }
+
+    #[test]
     fn mechanical_readers_follow_tracks_and_disable_retired_graphs() {
         let mut session = session();
         let violin = session
@@ -2042,10 +2178,10 @@ mod tests {
                 .values()
                 .all(|monitor| !monitor.is_watched())
         );
-        let chip = session
-            .add_instrument_track("Chip", "auris.synth.chiptune")
+        let noise = session
+            .add_instrument_track("Noise", "auris.synth.noisedrum")
             .unwrap();
-        assert!(!session.has_instrument_motion(chip));
+        assert!(!session.has_instrument_motion(noise));
         let drums = session.add_default_drum_track("Kit").unwrap();
         assert!(session.has_instrument_motion(drums));
         session.watch_instrument_motion(Some(drums));

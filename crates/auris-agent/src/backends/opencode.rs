@@ -101,9 +101,11 @@ fn opencode_preamble(prefs: &auris_session::AgentPreferences) -> String {
 }
 
 fn configuration(prefs: &auris_session::AgentPreferences, native: bool, major: u32) -> Value {
+    // A live conversation whose policy refuses the shell keeps only the live tools.
+    let shell = native && super::native_tools(prefs);
     if major == 2 {
         let mut permissions = vec![json!({"action":"*","resource":"*","effect":"deny"})];
-        if native {
+        if shell {
             for action in [
                 "shell",
                 "read",
@@ -114,6 +116,8 @@ fn configuration(prefs: &auris_session::AgentPreferences, native: bool, major: u
             ] {
                 permissions.push(json!({"action":action,"resource":"*","effect":"ask"}));
             }
+        }
+        if native {
             permissions.push(json!({"action":"auris_live_*","resource":"*","effect":"allow"}));
         }
         return json!({"$schema":"https://opencode.ai/config.json", "update":"disable",
@@ -124,15 +128,17 @@ fn configuration(prefs: &auris_session::AgentPreferences, native: bool, major: u
     }
     let mut tools = json!({"*":false});
     let mut permission = json!({"*":"deny"});
-    if native {
+    if shell {
         for tool in NATIVE_TOOLS {
             tools[tool] = json!(true);
             permission[tool] = json!("ask");
         }
+        permission["external_directory"] = json!("ask");
+    }
+    if native {
         tools["auris_live_*"] = json!(true);
         // ToolHost still authorizes each exact live call through the desktop.
         permission["auris_live_*"] = json!("allow");
-        permission["external_directory"] = json!("ask");
     }
     json!({"$schema":"https://opencode.ai/config.json", "autoupdate":false,
         "share":"disabled", "snapshot":false, "lsp":false, "formatter":false,

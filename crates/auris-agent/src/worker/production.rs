@@ -10,16 +10,35 @@ pub(super) struct State {
     document: Value,
 }
 
-fn record_view(record: &Record, document: &Value) -> Result<Value, String> {
-    let mut view = record.view(document);
-    if toolbox::composition_workflows::enabled()
-        && let Some((workflow, order)) = record.workflow
-    {
-        view["workflow_instructions"] =
-            toolbox::composition_workflows::instructions(workflow, order).into();
+/// The record as a tool answers with it, with the current phase's instructions when asked for.
+///
+/// The instructions go on after the record is paged, not inside it: a long record is cut into
+/// `read_report` pages, and the one text a model must not miss would otherwise be behind them.
+/// Only entering a phase and reading the record carry them; every `put` repeating several
+/// kilobytes the model already has would cost more than it tells.
+fn record_view(record: &Record, document: &Value, instructions: bool) -> Result<Value, String> {
+    let text = toolbox::present_domain_report(&record.view(document).to_string())?;
+    let mut view: Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+    if instructions && let Some(state) = &record.phase {
+        view["phase_instructions"] =
+            toolbox::composition_workflows::instructions(state.phase, state.writing_order).into();
     }
-    let text = toolbox::present_domain_report(&view.to_string())?;
-    serde_json::from_str(&text).map_err(|e| e.to_string())
+    Ok(view)
+}
+
+/// The record saved beside a conversation's history, or an empty one when there is none.
+///
+/// Under the lock the record's own save renames under, since on Windows that rename fails for
+/// as long as another thread has the file open.
+fn read_record(path: &Path) -> Result<Record, String> {
+    match auris_session::settings::read_published_file(path, 1024 * 1024) {
+        Ok(bytes) => serde_json::from_slice(&bytes).map_err(|e| e.to_string()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Record::default()),
+        Err(e) if e.kind() == std::io::ErrorKind::FileTooLarge => {
+            Err("Production record exceeds 1 MiB".into())
+        }
+        Err(e) => Err(e.to_string()),
+    }
 }
 
 impl Bridge {
@@ -55,23 +74,7 @@ impl Bridge {
                 if read_history_generation(&history.path)? != history.generation {
                     return Err("Conversation was reset; production record is stale".into());
                 }
-                let path = history.path.with_extension("production.json");
-                match std::fs::File::open(path) {
-                    Ok(file) => {
-                        let mut bytes = Vec::new();
-                        file.take(1024 * 1024 + 1)
-                            .read_to_end(&mut bytes)
-                            .map_err(|e| e.to_string())?;
-                        if bytes.len() > 1024 * 1024 {
-                            return Err("Production record exceeds 1 MiB".into());
-                        }
-                        state.record = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
-                    }
-                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                        state.record = Record::default()
-                    }
-                    Err(e) => return Err(e.to_string()),
-                }
+                state.record = read_record(&history.path.with_extension("production.json"))?;
             }
             let result = operation(&mut state)?;
             if write && let Some(history) = binding {
@@ -88,6 +91,7 @@ impl Bridge {
 
     pub(crate) fn production_record(&self, operation: Operation) -> Result<Value, String> {
         let write = !matches!(operation, Operation::Read);
+        let instructions = matches!(operation, Operation::Read | Operation::EnterPhase { .. });
         self.with_production(
             |state| {
                 if !state.document["revision"].is_string() {
@@ -95,8 +99,10 @@ impl Bridge {
                         "Call inspect_project before reading or updating production_record".into(),
                     );
                 }
-                state.record.update(operation)?;
-                let mut view = record_view(&state.record, &state.document)?;
+                state
+                    .record
+                    .update_with_document(operation, &state.document)?;
+                let mut view = record_view(&state.record, &state.document, instructions)?;
                 view["persistence"] = json!(if state.history.is_some() {
                     "conversation"
                 } else {
@@ -108,14 +114,40 @@ impl Bridge {
         )
     }
 
+    /// The record as it stands, for a host that keeps it beside the document it describes.
+    pub(crate) fn production_snapshot(&self) -> Result<Record, String> {
+        self.with_production(|state| Ok(state.record.clone()), false)
+    }
+
+    /// Start from a record a host kept, before the model's first turn.
+    pub(crate) fn seed_production(&self, record: Record) -> Result<(), String> {
+        self.with_production(
+            |state| {
+                state.record = record;
+                Ok(())
+            },
+            false,
+        )
+    }
+
+    /// What the phase in force keeps fixed, for the owner to hold an edit to.
+    pub(crate) fn phase_lock(&self) -> Result<Option<auris_session::phase::Lock>, String> {
+        self.with_production(|state| Ok(state.record.lock()), false)
+    }
+
     pub(crate) fn inspected_production_document(&self, document: &mut Value) -> Result<(), String> {
         let view = self.with_production(
             |state| {
                 state.document = document.clone();
-                record_view(&state.record, &state.document)
+                record_view(&state.record, &state.document, false)
             },
             false,
         )?;
+        // Per-bar digests are for the record to compare, not for the model to read: several
+        // kilobytes of hex in every inspection would crowd out what the model needs.
+        if let Some(facts) = document["phase_facts"].as_object_mut() {
+            facts.remove("score_bars");
+        }
         document["production_record"] = view;
         Ok(())
     }
@@ -143,6 +175,21 @@ impl Bridge {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_save_succeeds_while_another_thread_reads_the_record() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("memory.production.json");
+        let read = path.clone();
+        let bytes = serde_json::to_vec(&Record::default()).unwrap();
+        crate::tests::assert_writes_survive_a_reader(
+            move || read_record(&read).map(drop),
+            |_| {
+                auris_session::settings::write_config_bytes(&path, &bytes)
+                    .map_err(|e| e.to_string())
+            },
+        );
+    }
     #[test]
     fn large_records_use_bounded_report_pages_without_dropping_stored_context() {
         let mut record = Record::default();
@@ -156,10 +203,30 @@ mod tests {
                 )
                 .unwrap();
         }
-        let view = record_view(&record, &json!({"revision":"today"})).unwrap();
+        let view = record_view(&record, &json!({"revision":"today"}), false).unwrap();
         assert!(view["report_id"].is_string());
         assert!(view.to_string().len() <= 8192);
         assert_eq!(record.entries.len(), 12);
+
+        // The phase's instructions arrive whole beside a paged record, never inside its pages.
+        record
+            .update(serde_json::from_value(json!({"kind":"set_roles","foreground":[1]})).unwrap())
+            .unwrap();
+        record
+            .update(
+                serde_json::from_value(
+                    json!({"kind":"enter_phase","phase":"arrangement","reason":"dress it"}),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let view = record_view(&record, &json!({"revision":"today"}), true).unwrap();
+        assert!(view["report_id"].is_string());
+        let instructions = view["phase_instructions"].as_str().unwrap();
+        assert!(instructions.starts_with("Arrangement phase"));
+        assert!(instructions.contains("Techniques"));
+        let quiet = record_view(&record, &json!({"revision":"today"}), false).unwrap();
+        assert!(quiet.get("phase_instructions").is_none());
     }
     #[test]
     fn records_resume_and_reset_rejects_a_late_writer() {
@@ -174,9 +241,10 @@ mod tests {
         bridge.production_record(serde_json::from_value(json!({"kind":"put","entry":{
             "key":"motif","category":"motif","source":"agent_assumption","basis":"opening phrase","text":"keep the rising third"}})).unwrap()).unwrap();
         bridge
-            .production_record(Operation::SelectWorkflow {
-                workflow: auris_session::production_record::Workflow::LocalEdit,
-                writing_order: auris_session::production_record::WritingOrder::MelodyFirst,
+            .production_record(Operation::EnterPhase {
+                phase: auris_session::production_record::Phase::Score,
+                reason: "new song".into(),
+                writing_order: Some(auris_session::production_record::WritingOrder::MelodyFirst),
             })
             .unwrap();
         let (resumed, _, _) = test_bridge();
@@ -189,8 +257,12 @@ mod tests {
             "keep the rising third"
         );
         assert_eq!(
-            resumed.production_record(Operation::Read).unwrap()["workflow"],
-            json!({"task":"local_edit","writing_order":"melody_first"})
+            resumed.production_record(Operation::Read).unwrap()["phase"]["current"],
+            "score"
+        );
+        assert_eq!(
+            resumed.production_record(Operation::Read).unwrap()["phase"]["writing_order"],
+            "melody_first"
         );
         clear_history(&path).unwrap();
         assert!(

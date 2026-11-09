@@ -11,7 +11,7 @@
 //! small enough to clone for undo.
 
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use crate::asset::AssetPath;
@@ -327,6 +327,12 @@ pub struct MidiClip {
     /// identity, and is what every clip carried before this field existed.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub transforms: Vec<super::NoteTransform>,
+    /// Notes for the reader pinned inside the clip, in clip time; nothing plays them.
+    ///
+    /// On the clip for the reason the bend is: a comment about these notes moves, copies and
+    /// splits with them. See [`Comment`](super::Comment).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub comments: Vec<super::Comment>,
 }
 
 // JSON object keys are strings. TrackKind's internally tagged deserializer buffers them,
@@ -366,6 +372,7 @@ impl MidiClip {
             length_is_explicit: false,
             loop_end: Ticks::ZERO,
             transforms: Vec::new(),
+            comments: Vec::new(),
         }
     }
 
@@ -1266,6 +1273,11 @@ impl Project {
             }
             right.forget_empty_curves();
             right.loop_end = Ticks::ZERO;
+            // Each comment goes with the notes it sits among.
+            right.comments.retain(|comment| comment.at >= offset);
+            for comment in &mut right.comments {
+                comment.at -= offset;
+            }
 
             let new_id = right.id;
             let left = self.midi_clip_mut(id)?;
@@ -1282,6 +1294,7 @@ impl Project {
             left.forget_empty_curves();
             left.length = offset;
             left.loop_end = Ticks::ZERO;
+            left.comments.retain(|comment| comment.at < offset);
             self.track_mut(track_id)?.kind.note_clips_mut()?.push(right);
             return Some(new_id);
         }
@@ -1338,6 +1351,161 @@ impl Project {
             .clips
             .push(right);
         Some(new_id)
+    }
+
+    /// Joins MIDI clips on one track into a single clip, returning its id.
+    ///
+    /// The earliest clip survives — its id, its name and its performance stack — and spans from
+    /// the first clip's start to the furthest sounding end. Every note that was *heard* lands
+    /// where it was heard: each clip contributes the notes inside its own window, a looped clip
+    /// contributes every pass it played, and a gap between clips becomes rest inside the joined
+    /// one. Notes a window was hiding stay hidden by being left out, because the joined window
+    /// would otherwise uncover them.
+    ///
+    /// The curves are joined the same way, with a point at the start of each piece holding what
+    /// that piece began on. Without it a bend left up at the end of one piece would slide into
+    /// the next instead of being let go of, which is what the clip boundary used to do.
+    ///
+    /// The joined clip carries no recipe, being text nobody composed in one piece, and loops no
+    /// further than its own end. `None` when fewer than two distinct MIDI clips are named or they
+    /// are not all on one track; whether the pieces *should* be joined — matching performance,
+    /// matching mute — is the caller's question, and [`Self::midi_join_refusal`] is its answer.
+    pub fn join_midi_clips(&mut self, ids: &[ClipId]) -> Option<ClipId> {
+        let mut pieces = self.midi_join_pieces(ids)?;
+        pieces.sort_by_key(|clip| (clip.start, clip.id.0));
+        let first = pieces.first()?.clone();
+        let start = first.start;
+        let end = pieces.iter().map(MidiClip::sounding_end).max()?;
+        let mut joined = MidiClip {
+            notes: Vec::new(),
+            bend: Vec::new(),
+            controllers: BTreeMap::new(),
+            comments: Vec::new(),
+            recipe: None,
+            length: end - start,
+            length_is_explicit: true,
+            loop_end: Ticks::ZERO,
+            ..first.clone()
+        };
+        let curves: BTreeSet<ClipCurve> = pieces.iter().flat_map(MidiClip::curves).collect();
+        for piece in &pieces {
+            let shift = piece.start - start;
+            for (pass, (offset, span)) in loop_passes(piece.length, piece.loop_end).enumerate() {
+                let at = shift + offset;
+                joined
+                    .notes
+                    .extend(
+                        piece
+                            .playable_notes()
+                            .filter(|note| note.start < span)
+                            .map(|note| Note {
+                                start: note.start + at,
+                                length: note.length.min(span - note.start),
+                                ..note
+                            }),
+                    );
+                for which in &curves {
+                    let points = piece.curve(*which);
+                    let opening = match points.is_empty() {
+                        true => released_value(*which),
+                        false => curve_at(points, Ticks::ZERO),
+                    };
+                    let lane = joined.curve_mut(*which);
+                    // A later piece's opening wins a tie with the earlier piece's last point:
+                    // that instant belongs to the clip that starts there.
+                    lane.retain(|point| point.at < at);
+                    lane.push(CurvePoint { at, value: opening });
+                    lane.extend(
+                        points
+                            .iter()
+                            .filter(|point| point.at > Ticks::ZERO && point.at < span)
+                            .map(|point| CurvePoint {
+                                at: point.at + at,
+                                ..*point
+                            }),
+                    );
+                }
+                // A comment is about the text, so it is pinned once rather than once per repeat.
+                // Ids are unique only within a clip, so one the joined clip already holds is
+                // renumbered rather than left to collide.
+                if pass == 0 {
+                    for comment in &piece.comments {
+                        let mut comment = comment.clone();
+                        comment.at += shift;
+                        if joined.comments.iter().any(|held| held.id == comment.id) {
+                            let top = joined.comments.iter().map(|held| held.id.0).max();
+                            comment.id.0 = top.unwrap_or(0) + 1;
+                        }
+                        joined.comments.push(comment);
+                    }
+                }
+            }
+        }
+        joined.notes.sort_by_key(|note| (note.start, note.pitch));
+        for which in &curves {
+            joined.curve_mut(*which).sort_by_key(|point| point.at);
+        }
+        joined.forget_empty_curves();
+
+        let track = self.track_of_clip(first.id)?;
+        let clips = self.track_mut(track)?.kind.note_clips_mut()?;
+        clips.retain(|clip| clip.id == first.id || !pieces.iter().any(|p| p.id == clip.id));
+        let slot = clips.iter_mut().find(|clip| clip.id == first.id)?;
+        *slot = joined;
+        Some(first.id)
+    }
+
+    /// Why the named clips should not be joined, or `None` when they can be.
+    ///
+    /// Asked before [`Self::join_midi_clips`], so that a menu can leave the row out and a command
+    /// can say what is wrong rather than doing something the user did not mean. A joined clip has
+    /// one performance stack and one mute switch, and joining pieces that disagree on either
+    /// would change what plays — which a command about *where clip boundaries are* has no
+    /// business doing.
+    pub fn midi_join_refusal(&self, ids: &[ClipId]) -> Option<JoinRefusal> {
+        if ids.iter().any(|id| self.audio_clip(*id).is_some()) {
+            return Some(JoinRefusal::Audio);
+        }
+        let Some(pieces) = self.midi_join_pieces(ids) else {
+            let tracks: BTreeSet<_> = ids
+                .iter()
+                .filter_map(|id| self.track_of_clip(*id))
+                .collect();
+            return Some(match tracks.len() > 1 {
+                true => JoinRefusal::DifferentTracks,
+                false => JoinRefusal::TooFew,
+            });
+        };
+        let first = &pieces[0];
+        if pieces.iter().any(|clip| clip.muted != first.muted) {
+            return Some(JoinRefusal::MixedMute);
+        }
+        if pieces
+            .iter()
+            .any(|clip| clip.transforms != first.transforms)
+        {
+            return Some(JoinRefusal::DifferentTransforms);
+        }
+        None
+    }
+
+    /// The distinct MIDI clips named, cloned, when there are two or more and they share a track.
+    fn midi_join_pieces(&self, ids: &[ClipId]) -> Option<Vec<MidiClip>> {
+        let unique: BTreeSet<ClipId> = ids.iter().copied().collect();
+        if unique.len() < 2 {
+            return None;
+        }
+        let mut track = None;
+        let mut pieces = Vec::with_capacity(unique.len());
+        for id in unique {
+            let (owner, clip) = self.midi_clip(id)?;
+            if track.is_some_and(|track| track != owner) {
+                return None;
+            }
+            track = Some(owner);
+            pieces.push(clip.clone());
+        }
+        Some(pieces)
     }
 
     /// Length of an audio clip on the musical timeline, repeats not counted.
@@ -1628,6 +1796,30 @@ pub(super) fn audio_length_ticks(
     let start_seconds = tempo_map.ticks_to_seconds(start).0;
     let end_seconds = start_seconds + length_frames as f64 / rate;
     tempo_map.seconds_to_ticks(crate::time::Seconds(end_seconds)) - start
+}
+/// Why a set of clips cannot become one, as [`Project::midi_join_refusal`] answers it.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum JoinRefusal {
+    /// Fewer than two clips were named, or some of them do not exist.
+    TooFew,
+    /// An audio clip was among them. Joining audio means writing a new file, which a document
+    /// edit does not do.
+    Audio,
+    /// They are not all on one track.
+    DifferentTracks,
+    /// Some are muted and some are not, so the joined clip could not play what they played.
+    MixedMute,
+    /// Their performance stacks differ, and a clip has only one.
+    DifferentTransforms,
+}
+
+/// What a curve reads where nothing has been written: what [`MidiClip::sounding_curve_events`]
+/// lets go to at a clip's end. The channel volume rests at full rather than at silence.
+fn released_value(which: ClipCurve) -> f32 {
+    match which {
+        ClipCurve::Controller(7) => 1.0,
+        _ => 0.0,
+    }
 }
 
 /// The notes left of a split at `offset`, clip-relative.
@@ -2682,5 +2874,228 @@ mod tests {
             2.0,
             "a clip recorded at 120 and moved into a 60 bpm bar has to last twice as long"
         );
+    }
+
+    /// Two clips on one lane with a gap between them, the second with a note its window hides.
+    fn side_by_side() -> (Project, TrackId, ClipId, ClipId) {
+        let mut project = Project::new("Demo", 48_000.0);
+        let track = project.add_instrument_track("Lead", "x");
+        let bar = Ticks::from_beats(4.0);
+        let left = project.add_midi_clip(track, "A", bar, bar).unwrap();
+        let right = project.add_midi_clip(track, "B", bar * 3, bar).unwrap();
+        let notes = &mut project.midi_clip_mut(left).unwrap().notes;
+        notes.push(Note::new(60, Ticks::ZERO, Ticks::QUARTER));
+        // Held past the window: heard only up to the clip's end.
+        notes.push(Note::new(
+            62,
+            Ticks::from_beats(3.0),
+            Ticks::from_beats(2.0),
+        ));
+        let notes = &mut project.midi_clip_mut(right).unwrap().notes;
+        notes.push(Note::new(64, Ticks::QUARTER, Ticks::QUARTER));
+        // Past the window, never heard.
+        notes.push(Note::new(65, Ticks::from_beats(5.0), Ticks::QUARTER));
+        (project, track, left, right)
+    }
+
+    fn timeline_notes(project: &Project, clip: ClipId) -> Vec<(u8, Ticks, Ticks)> {
+        let (_, clip) = project.midi_clip(clip).unwrap();
+        let mut notes: Vec<_> = clip
+            .sounding_notes(120.0)
+            .map(|note| (note.pitch, clip.start + note.start, note.length))
+            .collect();
+        notes.sort_by_key(|(pitch, start, _)| (*start, *pitch));
+        notes
+    }
+
+    #[test]
+    fn joining_keeps_every_heard_note_where_it_was_heard_and_the_gap_as_rest() {
+        let (mut project, track, left, right) = side_by_side();
+        let mut heard = timeline_notes(&project, left);
+        heard.extend(timeline_notes(&project, right));
+
+        let joined = project.join_midi_clips(&[right, left]).unwrap();
+
+        assert_eq!(joined, left, "the earliest clip survives");
+        assert!(project.midi_clip(right).is_none(), "the other is gone");
+        assert_eq!(
+            project
+                .track(track)
+                .unwrap()
+                .kind
+                .note_clips()
+                .unwrap()
+                .len(),
+            1
+        );
+        let (_, clip) = project.midi_clip(joined).unwrap();
+        let bar = Ticks::from_beats(4.0);
+        assert_eq!((clip.start, clip.length), (bar, bar * 3));
+        assert!(clip.length_is_explicit);
+        assert_eq!(clip.name, "A");
+        assert_eq!(timeline_notes(&project, joined), heard);
+        assert_eq!(
+            clip.notes
+                .iter()
+                .find(|note| note.pitch == 62)
+                .unwrap()
+                .length,
+            Ticks::QUARTER,
+            "a note the window cut is stored as it was heard, not uncovered by the wider window"
+        );
+        assert!(
+            clip.notes.iter().all(|note| note.pitch != 65),
+            "a note nobody could hear stays unheard"
+        );
+    }
+
+    #[test]
+    fn a_split_joined_back_plays_what_it_played_before() {
+        let mut project = demo_project();
+        let clip = project.tracks[0].kind.as_instrument().unwrap().clips[0].id;
+        let before = timeline_notes(&project, clip);
+        let (_, whole) = project.midi_clip(clip).unwrap();
+        let at = whole.start + Ticks(whole.length.raw() / 2);
+        let right = project.split_clip(clip, at).unwrap();
+
+        let joined = project.join_midi_clips(&[clip, right]).unwrap();
+
+        let after = timeline_notes(&project, joined);
+        let starts = |notes: &[(u8, Ticks, Ticks)]| {
+            notes
+                .iter()
+                .map(|(pitch, start, _)| (*pitch, *start))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(starts(&after), starts(&before));
+    }
+
+    #[test]
+    fn a_looped_piece_is_written_out_pass_by_pass() {
+        let (mut project, _, left, right) = side_by_side();
+        let bar = Ticks::from_beats(4.0);
+        // The first clip repeats out to the second, filling the gap.
+        project.midi_clip_mut(left).unwrap().loop_end = bar * 2;
+        let mut heard = timeline_notes(&project, left);
+        heard.extend(timeline_notes(&project, right));
+
+        let joined = project.join_midi_clips(&[left, right]).unwrap();
+
+        let (_, clip) = project.midi_clip(joined).unwrap();
+        assert!(!clip.is_looped());
+        assert_eq!(timeline_notes(&project, joined), heard);
+        assert_eq!(clip.notes.iter().filter(|note| note.pitch == 60).count(), 2);
+    }
+
+    #[test]
+    fn a_bend_left_up_in_one_piece_is_let_go_where_the_next_begins() {
+        let (mut project, _, left, right) = side_by_side();
+        project.midi_clip_mut(left).unwrap().bend = vec![
+            CurvePoint {
+                at: Ticks::ZERO,
+                value: 0.0,
+            },
+            CurvePoint {
+                at: Ticks::from_beats(2.0),
+                value: 2.0,
+            },
+        ];
+        project.midi_clip_mut(right).unwrap().controllers.insert(
+            7,
+            vec![CurvePoint {
+                at: Ticks::QUARTER,
+                value: 0.5,
+            }],
+        );
+
+        let joined = project.join_midi_clips(&[left, right]).unwrap();
+
+        let (_, clip) = project.midi_clip(joined).unwrap();
+        let second = Ticks::from_beats(8.0);
+        assert_eq!(clip.curve_at(ClipCurve::Bend, Ticks::from_beats(2.0)), 2.0);
+        assert_eq!(clip.curve_at(ClipCurve::Bend, second), 0.0);
+        assert_eq!(clip.curve_at(ClipCurve::Bend, second + Ticks::QUARTER), 0.0);
+        // The volume opens on what the second piece began on, and rests at full in the first.
+        assert_eq!(clip.curve_at(ClipCurve::Controller(7), Ticks::ZERO), 1.0);
+        assert_eq!(clip.curve_at(ClipCurve::Controller(7), second), 0.5);
+        assert_eq!(
+            clip.curve_at(ClipCurve::Controller(7), second + Ticks::QUARTER),
+            0.5
+        );
+    }
+
+    #[test]
+    fn comments_come_along_and_never_share_an_id() {
+        let (mut project, _, left, right) = side_by_side();
+        for (clip, text) in [(left, "first"), (right, "second")] {
+            project
+                .midi_clip_mut(clip)
+                .unwrap()
+                .comments
+                .push(super::super::Comment {
+                    id: super::super::CommentId(1),
+                    at: Ticks::QUARTER,
+                    pitch: None,
+                    text: text.into(),
+                });
+        }
+
+        let joined = project.join_midi_clips(&[left, right]).unwrap();
+
+        let (_, clip) = project.midi_clip(joined).unwrap();
+        let mut comments: Vec<_> = clip
+            .comments
+            .iter()
+            .map(|comment| (comment.id.0, comment.at, comment.text.as_str()))
+            .collect();
+        comments.sort();
+        assert_eq!(
+            comments,
+            [
+                (1, Ticks::QUARTER, "first"),
+                (2, Ticks::from_beats(9.0), "second")
+            ]
+        );
+    }
+
+    #[test]
+    fn pieces_that_would_play_differently_as_one_are_refused() {
+        let (mut project, _, left, right) = side_by_side();
+        assert_eq!(project.midi_join_refusal(&[left, right]), None);
+        assert_eq!(
+            project.midi_join_refusal(&[left]),
+            Some(JoinRefusal::TooFew)
+        );
+        assert_eq!(
+            project.midi_join_refusal(&[left, left]),
+            Some(JoinRefusal::TooFew)
+        );
+
+        project.midi_clip_mut(right).unwrap().muted = true;
+        assert_eq!(
+            project.midi_join_refusal(&[left, right]),
+            Some(JoinRefusal::MixedMute)
+        );
+        project.midi_clip_mut(right).unwrap().muted = false;
+
+        project.midi_clip_mut(right).unwrap().transforms =
+            vec![super::super::NoteTransform::Octaves {
+                above: 0.5,
+                below: 0.0,
+            }];
+        assert_eq!(
+            project.midi_join_refusal(&[left, right]),
+            Some(JoinRefusal::DifferentTransforms)
+        );
+
+        let other = project.add_instrument_track("Bass", "x");
+        let elsewhere = project
+            .add_midi_clip(other, "C", Ticks::ZERO, Ticks::QUARTER)
+            .unwrap();
+        assert_eq!(
+            project.midi_join_refusal(&[left, elsewhere]),
+            Some(JoinRefusal::DifferentTracks)
+        );
+        assert!(project.join_midi_clips(&[left, elsewhere]).is_none());
     }
 }

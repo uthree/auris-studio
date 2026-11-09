@@ -17,8 +17,11 @@ impl AurisApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
-        let transport = super::transport_bar::transport_in_title_bar(window.viewport_size().width)
-            .then(|| self.transport_parts(window, true, cx));
+        let transport = super::transport_bar::transport_in_title_bar(
+            window.viewport_size().width,
+            self.appearance.top_bar_layout,
+        )
+        .then(|| self.transport_parts(window, true, cx));
         let theme = &self.theme;
         let controls = titlebar::controls(
             window,
@@ -102,7 +105,10 @@ impl AurisApp {
             + self.theme.atelier.density.control_sm * 4.0
             + spacing.sm * 2.0
             + spacing.xxl * 4.0
-            + if super::transport_bar::transport_in_title_bar(window.viewport_size().width) {
+            + if super::transport_bar::transport_in_title_bar(
+                window.viewport_size().width,
+                self.appearance.top_bar_layout,
+            ) {
                 super::transport_bar::TITLE_BAR_TRANSPORT_WIDTH
             } else {
                 px(0.0)
@@ -296,11 +302,43 @@ mod tests {
     }
 
     #[gpui::test]
-    fn the_transport_joins_the_titlebar_only_where_it_fits(cx: &mut TestAppContext) {
+    fn the_compact_transport_joins_the_titlebar_only_where_it_fits(cx: &mut TestAppContext) {
+        use crate::appearance::TopBarLayout;
         use crate::ui::transport_bar::ONE_BAR_FROM;
         let (app, cx) = open(cx);
+        // The spacious layout, the default: however wide the window, the transport keeps a row
+        // of its own under the title bar. Set rather than read, since other window tests save
+        // their appearance to the configuration directory this one shares.
+        assert_eq!(
+            crate::appearance::Appearance::default().top_bar_layout,
+            TopBarLayout::Spacious
+        );
+        app.update(cx, |this, _| {
+            this.appearance.top_bar_layout = TopBarLayout::Spacious
+        });
+        for width in [2560.0, 1440.0] {
+            resize(&app, cx, size(px(width), px(700.0)));
+            let transport = cx.debug_bounds("transport-buttons").unwrap();
+            assert!(
+                transport.top() >= crate::titlebar::HEIGHT,
+                "{width} {transport:?}"
+            );
+            let workspace = app.read_with(cx, |this, _| this.chrome_height());
+            assert_eq!(
+                workspace,
+                crate::titlebar::HEIGHT
+                    + crate::theme::Metrics::TRANSPORT_HEIGHT
+                    + crate::theme::Metrics::STATUS_HEIGHT
+            );
+        }
+        app.update(cx, |this, _| {
+            this.appearance.top_bar_layout = TopBarLayout::Compact
+        });
         app.read_with(cx, |this, _| {
-            assert_eq!(this.document_title(), "Untitled");
+            assert_eq!(
+                this.document_title(),
+                auris_i18n::Key::DocumentUntitled.get(this.language())
+            );
             assert!(this.window_title().contains("Auris Studio"));
         });
         // Every menu category pinned, so the menu titles want as much of the bar as they can
@@ -458,10 +496,12 @@ mod tests {
 
     #[gpui::test]
     fn closing_from_the_titlebar_keeps_unsaved_work_until_answered(cx: &mut TestAppContext) {
-        if cfg!(target_os = "macos") {
-            return; // macOS draws its own traffic lights outside the headless view tree.
-        }
         let (app, cx, _, clip) = with_a_clip(cx);
+        // macOS draws its traffic lights outside the view tree, and Linux leaves the buttons to
+        // the compositor whenever the window has server decorations, as every headless one does.
+        if !cx.update(|window, _| crate::titlebar::draws_caption_buttons(window)) {
+            return;
+        }
         click("window-close", cx);
         app.read_with(cx, |this, _| {
             assert!(this.prompt.is_some());

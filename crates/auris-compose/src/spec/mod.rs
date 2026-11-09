@@ -150,6 +150,15 @@ pub struct PartSpec {
     pub gain_db: f32,
     /// Stereo position from -1 to 1.
     pub pan: f32,
+    /// Whether a chord part adds the root an octave or more below its voicing.
+    ///
+    /// Read by the chords and the pad; see [`ClipRecipe::low_root`](auris_core::ClipRecipe::low_root).
+    pub low_root: bool,
+    /// The note value between successive notes of a chord, bottom first: 32 is a thirty-second
+    /// apart, and 0 strikes them together.
+    ///
+    /// Read by the chords and the pad; see [`ClipRecipe::strum`](auris_core::ClipRecipe::strum).
+    pub strum: u16,
 }
 
 impl PartSpec {
@@ -171,6 +180,8 @@ impl PartSpec {
             note: None,
             gain_db: role.default_gain_db(),
             pan: role.default_pan(),
+            low_root: false,
+            strum: 0,
         }
     }
 

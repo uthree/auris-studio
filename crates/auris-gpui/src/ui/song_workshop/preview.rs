@@ -27,6 +27,10 @@ impl AurisApp {
             return;
         };
         let timeline = state.latest_timeline(index);
+        // A loop song's audition is one seamless cycle, and plays round it until stopped.
+        let loop_start = timeline
+            .as_ref()
+            .and_then(|timeline| timeline.loop_start_seconds);
         for player in &mut state.players {
             player.stop();
         }
@@ -39,7 +43,9 @@ impl AurisApp {
             let source = Arc::clone(&audio);
             let prepared = cx
                 .background_executor()
-                .spawn(async move { auris_session::prepare_output_preview(&audio, rate) })
+                .spawn(async move {
+                    auris_session::prepare_looping_output_preview(&audio, rate, loop_start)
+                })
                 .await;
             let _ = this.update(cx, |this, cx| {
                 let Some(state) = &mut this.song_workshop else {
@@ -53,7 +59,10 @@ impl AurisApp {
                     return;
                 }
                 match prepared.and_then(|audio| {
-                    let options = state.players[index].options(audio.duration_seconds());
+                    let options = auris_session::OutputPreviewOptions {
+                        loop_start_seconds: loop_start,
+                        ..state.players[index].options(audio.duration_seconds())
+                    };
                     this.session.play_output_preview_with(audio, options)
                 }) {
                     Ok(status) => {

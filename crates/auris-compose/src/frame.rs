@@ -99,6 +99,54 @@ impl SectionPlan {
             .filter(|event| tick < event.end())
     }
 
+    /// The same section with every chord cut at the bar lines it crosses.
+    ///
+    /// What the accompaniment writers play over. A chord chart says where the harmony
+    /// *changes*, and a chord held for two bars is one chord — but a keyboard player, a bass
+    /// player and an arpeggio still play their figure in every bar of it. Writing a part against
+    /// the chord's own span instead made the rhythm a function of how the chart was spelled:
+    /// `| C | C |` restruck at the bar line and the same harmony written once did not. Cut here,
+    /// each part keeps its own bar-by-bar rhythm whatever the chart's spelling, and
+    /// [`Self::continues_chord`] tells a writer which cuts are not changes.
+    pub fn bar_by_bar(&self, bar: Ticks) -> SectionPlan {
+        let mut plan = self.clone();
+        if bar <= Ticks::ZERO {
+            return plan;
+        }
+        plan.events.clear();
+        for event in &self.events {
+            let mut start = event.start;
+            let end = event.end();
+            while start < end {
+                let line = Ticks((start.raw().div_euclid(bar.raw()) + 1) * bar.raw());
+                let until = line.min(end);
+                plan.events.push(HarmonicEvent {
+                    start,
+                    length: until - start,
+                    bar: start.raw().div_euclid(bar.raw()).max(0) as usize,
+                    ..*event
+                });
+                start = until;
+            }
+        }
+        plan
+    }
+
+    /// Whether the chord at `index` only carries on the one before it, with no change of
+    /// harmony between them — the second half of a chord [`Self::bar_by_bar`] cut at a bar line,
+    /// or a chart that wrote the same chord twice.
+    pub fn continues_chord(&self, index: usize) -> bool {
+        index
+            .checked_sub(1)
+            .and_then(|previous| self.events.get(previous))
+            .zip(self.events.get(index))
+            .is_some_and(|(previous, event)| {
+                previous.end() == event.start
+                    && previous.chord == event.chord
+                    && previous.key == event.key
+            })
+    }
+
     /// The index of the chord sounding at a tick from the section's start.
     pub fn event_index_at(&self, tick: Ticks) -> usize {
         self.events
@@ -1249,5 +1297,33 @@ mod tests {
         );
         assert_eq!(verse.chord_at(bar).unwrap().chord.to_string(), "G");
         assert_eq!(verse.event_index_at(bar * 2), 2);
+    }
+
+    #[test]
+    fn a_section_cut_bar_by_bar_keeps_its_harmony_and_marks_what_carries_on() {
+        let frame = plan(
+            &SongSpec::parse(
+                r#"
+                form = "verse"
+                chords = "| I | V |"
+                [section.verse]
+                bars = 2
+            "#,
+            )
+            .unwrap(),
+        );
+        let bar = frame.grid.bar_ticks();
+        let mut section = frame.sections[0].clone();
+        // One I across both bars, then a V starting half way through the second.
+        section.events.truncate(1);
+        section.events[0].length = bar * 2;
+        let barred = section.bar_by_bar(bar);
+        assert_eq!(barred.events.len(), 2);
+        assert_eq!(barred.events[1].start, bar);
+        assert_eq!(barred.events[1].bar, 1);
+        assert_eq!(barred.events[1].chord, section.events[0].chord);
+        assert!(barred.continues_chord(1));
+        assert!(!barred.continues_chord(0));
+        assert!(!frame.sections[0].continues_chord(1), "I to V is a change");
     }
 }

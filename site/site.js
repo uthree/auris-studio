@@ -23,6 +23,10 @@ function setLanguage(lang) {
   for (const button of document.querySelectorAll("#lang > button")) {
     button.setAttribute("aria-pressed", String(button.value === lang));
   }
+  // Each of these already points at the English page in the markup, for the same reason the
+  // download buttons already point at the releases page: a link that only exists once a script
+  // has run is a link a crawler and a reader without JavaScript never see. This upgrades the
+  // five that have a translation.
   for (const link of document.querySelectorAll("[data-doc]")) {
     const name = link.dataset.doc;
     const file = lang === "ja" && TRANSLATED.has(name) ? `${name}.ja.md` : `${name}.md`;
@@ -38,7 +42,7 @@ setLanguage(root.dataset.lang);
 // its installer instead. Until that answers, or if it never does (offline, rate-limited), the
 // links lead to the latest release's page, which still has the files on it.
 const INSTALLERS = {
-  macos: { suffix: "-macos-universal.dmg", en: "Download for macOS", ja: "macOS 版をダウンロード" },
+  macos: { suffix: "-macos-aarch64.dmg", en: "Download for macOS", ja: "macOS 版をダウンロード" },
   windows: { suffix: "-windows-x86_64-setup.exe", en: "Download for Windows", ja: "Windows 版をダウンロード" },
 };
 

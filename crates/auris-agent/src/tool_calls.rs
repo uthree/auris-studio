@@ -44,6 +44,30 @@ impl Budget {
     pub(super) fn error(&self) -> Option<String> {
         self.exhausted.then(|| limit_error(self.limit))
     }
+
+    /// Calls left, once few enough that a model should plan around them: a tenth of the
+    /// allowance, and never fewer than twenty.
+    pub(super) fn low(&self) -> Option<usize> {
+        let left = self.limit.saturating_sub(self.calls);
+        (left <= (self.limit / 10).max(20)).then_some(left)
+    }
+}
+
+/// `text` with the remaining allowance attached, for a model that cannot see it being spent.
+///
+/// An object result gains a `tool_budget` field, so a model that parses it still can; anything
+/// else, an error included, gets a trailing line.
+pub(super) fn with_remaining(text: &str, left: usize) -> String {
+    let note = serde_json::json!({"calls_left":left,
+        "advice":"Running low: finish with what is left, combine the remaining edits into \
+            whole-section calls and skip optional polishing."});
+    match serde_json::from_str::<serde_json::Value>(text) {
+        Ok(serde_json::Value::Object(mut fields)) => {
+            fields.insert("tool_budget".into(), note);
+            serde_json::Value::Object(fields).to_string()
+        }
+        _ => format!("{text}\n\ntool_budget: {note}"),
+    }
 }
 
 impl Default for Budget {
@@ -65,5 +89,32 @@ mod tests {
         assert!(budget.reserve().is_err());
         budget.reset();
         budget.reserve().unwrap();
+    }
+
+    #[test]
+    fn the_remaining_allowance_is_reported_only_once_it_runs_low() {
+        let mut budget = Budget::new(1000);
+        for _ in 0..899 {
+            budget.reserve().unwrap();
+        }
+        assert_eq!(budget.low(), None);
+        budget.reserve().unwrap();
+        assert_eq!(budget.low(), Some(100));
+        // A small allowance still warns twenty calls ahead.
+        let mut small = Budget::new(100);
+        for _ in 0..79 {
+            small.reserve().unwrap();
+        }
+        assert_eq!(small.low(), None);
+        small.reserve().unwrap();
+        assert_eq!(small.low(), Some(20));
+
+        let object: serde_json::Value =
+            serde_json::from_str(&with_remaining(r#"{"track":1}"#, 5)).unwrap();
+        assert_eq!(object["track"], 1);
+        assert_eq!(object["tool_budget"]["calls_left"], 5);
+        let error = with_remaining("query must contain search words", 3);
+        assert!(error.starts_with("query must contain search words\n\ntool_budget: "));
+        assert!(error.contains(r#""calls_left":3"#));
     }
 }

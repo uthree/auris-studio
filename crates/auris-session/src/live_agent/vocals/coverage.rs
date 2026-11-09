@@ -91,7 +91,8 @@ fn sections_with_budget(
             "start_bar":project.signatures.bar_beat_at(span.start).0,
             "note_attacks":notes,"lyric_notes":lyric_notes,"phoneme_notes":phoneme_notes,
             "continuation_notes":continuation_notes,"unassigned_notes":unassigned_notes,
-            "looped_note_attacks":looped_notes,"analysis_complete":complete
+            "looped_note_attacks":looped_notes,"analysis_complete":complete,
+            "lyric_annotation_lines":project.lyrics.spans_in(span.start, span.end).len()
         }));
     }
     let next = offset + page.len();
@@ -99,7 +100,7 @@ fn sections_with_budget(
         "sections":page,"total_sections":spans.len(),
         "next_section_offset":(next < spans.len()).then_some(next),
         "unbounded_last_section":unbounded_last_section,
-        "interpretation":"Authored onsets in unmuted clips, including counted loop repeats; sustained notes are counted only where they begin. Counts do not prove a complete verse, valid pronunciation, audibility or musical quality. Compare every planned sung section with read_notes; instrumental sections may have no vocals. Looped words are reused lyrics, not a newly written verse. analysis_complete=false means partial counts, not verified absence. A current take verifies synthesis freshness only."
+        "interpretation":"Authored onsets in unmuted clips, including counted loop repeats; sustained notes are counted only where they begin. Counts do not prove a complete verse, valid pronunciation, audibility or musical quality. Compare every planned sung section with read_notes; instrumental sections may have no vocals. Looped words are reused lyrics, not a newly written verse. analysis_complete=false means partial counts, not verified absence. A current take verifies synthesis freshness only. lyric_annotation_lines counts song-wide lyrics annotation lines in the section; a section with lyric_notes needs at least one (edit_lyrics)."
     }))
 }
 

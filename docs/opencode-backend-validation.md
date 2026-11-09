@@ -125,17 +125,6 @@ Run the exact tests in
 melody breathing. Arrangement and breathing also need
 `AURIS_ARRANGEMENT_HARNESS=1`.
 
-For full composition and A/B listening, configure `AURIS_CODEX_TRANSCRIPTION_EVAL`
-with absolute `workspace`, fresh `output` and UTF-8 `prompt` paths, `backend:
-"opencode"`, an available `model`, `effort: "default"`, `timeout_seconds: 600` and
-`listening_required: true`. `allow_operations` defaults to empty; list explicit
-fixture grants only when needed. Point `AURIS_AUDIO_URL` and `AURIS_AUDIO_MODEL`
-at a real audio-capable critic, then run:
-
-```sh
-cargo test -p auris-gpui --bins -- --ignored --exact ui::agent_chat::transcription_eval::installed_cli_composes_and_relistens_in_the_window --nocapture
-```
-
 The independent worker test
 `backends::opencode::evaluation::installed_opencode_checks_native_permissions_references_memory_and_stop`
 uses `AURIS_OPENCODE_EVAL_MODEL` and a fresh absolute
@@ -147,5 +136,5 @@ The separate ignored `installed_opencode_reads_image_and_audio_references` test
 also takes `AURIS_OPENCODE_EVAL_AUDIO`, pointing at the 48 kHz, two-second WAV
 from the canonical export fixture. Select a vision-capable controller. It checks
 the generated image's colour, the audio duration and `audio_sent: false`: this
-attachment route supplies local measurements, while `listen` sends actual WAV
-bytes to a separate critic.
+attachment route supplies local measurements; OpenCode is not offered `listen`,
+which only a model that takes audio input can use.

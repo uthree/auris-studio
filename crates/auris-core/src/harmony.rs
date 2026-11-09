@@ -54,6 +54,12 @@ pub struct KeyPoint {
 /// so an empty map would panic rather than merely misbehave — which is why deserialization goes
 /// through a private repr instead of a plain derive.
 ///
+/// One more, the one [`ChordMap`] keeps for chords: **no point restates the key already in
+/// force.** A composer that writes the key at the head of every section, an agent that rewrites
+/// one range, a key change removed from between two stretches in the same key — each would
+/// otherwise leave `E minor | E minor | E minor` along the lane, three badges for what is one key.
+/// Every mutation drops such a point, which never changes what [`Self::key_at`] answers anywhere.
+///
 /// The conversion cannot fail, which is where this parts company with the tempo map: a tempo of
 /// zero divides by zero in the render path and has to be refused, whereas a key that will not
 /// parse costs one key change and nothing else.
@@ -135,7 +141,21 @@ impl KeyMap {
         points.sort_by_key(|point| point.tick);
         points[0].tick = Ticks::ZERO;
         points.dedup_by_key(|point| point.tick);
-        Self { points }
+        let mut map = Self { points };
+        map.coalesce();
+        map
+    }
+
+    /// Drops every point that restates the key already in force before it.
+    ///
+    /// The anchor at tick 0 is never one of them: nothing is in force before it.
+    fn coalesce(&mut self) {
+        let mut sounding = None;
+        self.points.retain(|point| {
+            let changes = Some(point.key) != sounding;
+            sounding = Some(point.key);
+            changes
+        });
     }
 
     /// The key changes, ordered by position.
@@ -151,6 +171,7 @@ impl KeyMap {
     /// Replaces the key of the first segment.
     pub fn set_initial(&mut self, key: Key) {
         self.points[0].key = key;
+        self.coalesce();
     }
 
     /// `true` when one key holds for the whole song.
@@ -159,21 +180,28 @@ impl KeyMap {
     }
 
     /// Inserts or replaces a key change.
+    ///
+    /// A change to the key already in force is not stored, and one that makes the change after
+    /// it redundant takes that one away: either way the map says the same thing in fewer points.
     pub fn set_point(&mut self, tick: Ticks, key: Key) {
         let tick = tick.max_zero();
         match self.points.binary_search_by_key(&tick, |point| point.tick) {
             Ok(index) => self.points[index].key = key,
             Err(index) => self.points.insert(index, KeyPoint { tick, key }),
         }
+        self.coalesce();
     }
 
     /// Removes the key change at `tick`. The anchor at tick 0 cannot be removed.
+    ///
+    /// When the key before it is the key the next change names, the two stretches join into one.
     pub fn remove_point(&mut self, tick: Ticks) {
         if tick == Ticks::ZERO {
             return;
         }
         if let Ok(index) = self.points.binary_search_by_key(&tick, |point| point.tick) {
             self.points.remove(index);
+            self.coalesce();
         }
     }
 
@@ -232,6 +260,20 @@ pub struct ChordPoint {
 /// nobody has written chords into has no chords, and inventing a `I` at tick 0 to make the lookup
 /// total would be a lie the composer would then go and obey. The other invariants match: sorted,
 /// no two points at the same position, none before tick 0.
+///
+/// One more is its own: **no point restates the chord already in force.** `I` followed by `I` is
+/// one `I` lasting twice as long, and the map stores it that way — a leading `None` is dropped for
+/// the same reason, since nothing before it sounded either. A chord chart is read as a list of
+/// *changes*; a change to the same chord is not one, and an annotation lane showing `C | C` reads
+/// as a mistake. Every mutation keeps this, so a stamp of `| I | I | V |`, an analysis reading
+/// the same chord beat after beat, and a drag that lands a chord next to its twin all come out
+/// as the single span a person would have written. It never changes what
+/// [`Self::numeral_at`] answers anywhere, only how many points it takes to say it.
+///
+/// Identity is the stored [`Numeral`]. A modulation between two equal numerals still leaves one
+/// point, because the numeral is read against the key and the split happens where the key does;
+/// two *different* numerals that spell the same absolute chord either side of a key change are
+/// different functions and stay two points.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(from = "ChordMapRepr")]
 pub struct ChordMap {
@@ -282,7 +324,19 @@ impl ChordMap {
         }
         points.sort_by_key(|point| point.tick);
         points.dedup_by_key(|point| point.tick);
-        Self { points }
+        let mut map = Self { points };
+        map.coalesce();
+        map
+    }
+
+    /// Drops every point that restates the chord already in force before it.
+    fn coalesce(&mut self) {
+        let mut sounding = None;
+        self.points.retain(|point| {
+            let changes = point.chord != sounding;
+            sounding = point.chord;
+            changes
+        });
     }
 
     /// The chord changes, ordered by position.
@@ -307,12 +361,16 @@ impl ChordMap {
             Ok(index) => self.points[index].chord = chord,
             Err(index) => self.points.insert(index, ChordPoint { tick, chord }),
         }
+        self.coalesce();
     }
 
     /// Removes the change at `tick`, letting whatever preceded it run through.
+    ///
+    /// When that is the chord the next change restates, the two join into one.
     pub fn remove_point(&mut self, tick: Ticks) {
         if let Ok(index) = self.points.binary_search_by_key(&tick, |point| point.tick) {
             self.points.remove(index);
+            self.coalesce();
         }
     }
 
@@ -384,6 +442,7 @@ impl ChordMap {
         if resumes.is_some() && self.numeral_at(to) != resumes {
             self.set_point(to, resumes);
         }
+        self.coalesce();
     }
 }
 
@@ -494,7 +553,8 @@ impl Harmony {
 
     /// Writes `chart`, repeated or truncated to `bars` bars, starting at `from`.
     ///
-    /// Returns how many chords were written. Deliberately does not snap: a chart divides a bar
+    /// Returns how many chord changes were written: a chart that repeats a chord across a bar
+    /// line, `| I | I |`, writes one `I` lasting both bars and answers 1. Deliberately does not snap: a chart divides a bar
     /// musically, and a three-chord bar in 4/4 is three lots of 1280 ticks — not a multiple of any
     /// sensible editing grid, and rounding it would lose the bar line. A stamp is a division of a
     /// bar; a drag is an edit on the grid.
@@ -526,7 +586,12 @@ impl Harmony {
         for slot in &slots {
             self.chords.set_point(from + slot.start, Some(slot.numeral));
         }
-        slots.len()
+        // A slot restating the one before it is the same chord held on, not another chord.
+        slots
+            .iter()
+            .enumerate()
+            .filter(|(index, slot)| *index == 0 || slots[index - 1].numeral != slot.numeral)
+            .count()
     }
 
     /// Empties the chords in `from..to`. The key timeline is untouched.
@@ -660,6 +725,69 @@ mod tests {
         keys.remove_point(bar(4));
         assert!(keys.is_constant());
         assert_eq!(keys.key_at(bar(4)), key("A minor"));
+    }
+
+    #[test]
+    fn a_key_map_never_restates_the_key_in_force() {
+        // The composer writes the key at the head of every section. Three sections in E minor
+        // are one stretch of E minor, and the lane must draw it once.
+        let keys = KeyMap::from_points(vec![
+            KeyPoint {
+                tick: Ticks::ZERO,
+                key: key("E minor"),
+            },
+            KeyPoint {
+                tick: bar(1),
+                key: key("E minor"),
+            },
+            KeyPoint {
+                tick: bar(9),
+                key: key("E minor"),
+            },
+            KeyPoint {
+                tick: bar(17),
+                key: key("G major"),
+            },
+            KeyPoint {
+                tick: bar(25),
+                key: key("G major"),
+            },
+        ]);
+        let ticks: Vec<_> = keys.points().iter().map(|point| point.tick).collect();
+        assert_eq!(ticks, vec![Ticks::ZERO, bar(17)]);
+
+        // Every mutation keeps it: a change to the key in force is not one…
+        let mut keys = KeyMap::constant(key("E minor"));
+        keys.set_point(bar(8), key("E minor"));
+        assert!(keys.is_constant());
+
+        // …a write that makes the next change redundant takes it away…
+        keys.set_point(bar(16), key("G major"));
+        keys.set_point(bar(8), key("G major"));
+        let ticks: Vec<_> = keys.points().iter().map(|point| point.tick).collect();
+        assert_eq!(ticks, vec![Ticks::ZERO, bar(8)]);
+
+        // …removing a change between two stretches in the same key joins them…
+        let mut keys = KeyMap::constant(key("C major"));
+        keys.set_point(bar(4), key("A minor"));
+        keys.set_point(bar(8), key("C major"));
+        keys.remove_point(bar(4));
+        assert!(keys.is_constant(), "{keys:?}");
+
+        // …and so does retyping the song's own key to the one that follows it.
+        let mut keys = KeyMap::constant(key("C major"));
+        keys.set_point(bar(4), key("D major"));
+        keys.set_initial(key("D major"));
+        assert!(keys.is_constant(), "{keys:?}");
+
+        // The same holds for a file written before the rule existed.
+        let json = r#"{"points":[
+            {"tick":0,"key":"E minor"},
+            {"tick":3840,"key":"E minor"},
+            {"tick":34560,"key":"E minor"}
+        ]}"#;
+        let loaded: KeyMap = serde_json::from_str(json).unwrap();
+        assert!(loaded.is_constant(), "{loaded:?}");
     }
 
     #[test]
@@ -946,5 +1074,163 @@ mod tests {
             "and the chord before it simply runs on"
         );
         assert_eq!(harmony.numeral_at(bar(2)), Some(numeral("V")));
+    }
+
+    #[test]
+    fn a_chord_restated_by_its_successor_is_one_chord() {
+        let mut chords = ChordMap::default();
+        chords.set_point(Ticks::ZERO, Some(numeral("I")));
+        chords.set_point(Ticks(3840), Some(numeral("I")));
+        chords.set_point(Ticks(7680), Some(numeral("V")));
+        assert_eq!(
+            chords.points(),
+            &[
+                ChordPoint {
+                    tick: Ticks::ZERO,
+                    chord: Some(numeral("I"))
+                },
+                ChordPoint {
+                    tick: Ticks(7680),
+                    chord: Some(numeral("V"))
+                },
+            ]
+        );
+        assert_eq!(chords.numeral_at(Ticks(5000)), Some(numeral("I")));
+    }
+
+    #[test]
+    fn removing_the_chord_between_two_twins_joins_them() {
+        let mut chords = ChordMap::new(vec![
+            ChordPoint {
+                tick: Ticks::ZERO,
+                chord: Some(numeral("vi")),
+            },
+            ChordPoint {
+                tick: Ticks(3840),
+                chord: Some(numeral("IV")),
+            },
+            ChordPoint {
+                tick: Ticks(7680),
+                chord: Some(numeral("vi")),
+            },
+        ]);
+        chords.remove_point(Ticks(3840));
+        assert_eq!(chords.points().len(), 1);
+        assert_eq!(chords.numeral_at(Ticks(9000)), Some(numeral("vi")));
+    }
+
+    #[test]
+    fn a_built_or_loaded_map_holds_no_restatements_and_no_leading_silence() {
+        let chords = ChordMap::new(vec![
+            ChordPoint {
+                tick: Ticks::ZERO,
+                chord: None,
+            },
+            ChordPoint {
+                tick: Ticks(960),
+                chord: Some(numeral("ii")),
+            },
+            ChordPoint {
+                tick: Ticks(1920),
+                chord: Some(numeral("ii")),
+            },
+            ChordPoint {
+                tick: Ticks(2880),
+                chord: None,
+            },
+            ChordPoint {
+                tick: Ticks(3840),
+                chord: None,
+            },
+        ]);
+        assert_eq!(
+            chords.points(),
+            &[
+                ChordPoint {
+                    tick: Ticks(960),
+                    chord: Some(numeral("ii"))
+                },
+                ChordPoint {
+                    tick: Ticks(2880),
+                    chord: None
+                },
+            ]
+        );
+        assert!(
+            ChordMap::new(vec![ChordPoint {
+                tick: Ticks::ZERO,
+                chord: None
+            }])
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_moved_chord_landing_beside_its_twin_merges() {
+        let mut chords = ChordMap::new(vec![
+            ChordPoint {
+                tick: Ticks::ZERO,
+                chord: Some(numeral("I")),
+            },
+            ChordPoint {
+                tick: Ticks(3840),
+                chord: Some(numeral("V")),
+            },
+            ChordPoint {
+                tick: Ticks(7680),
+                chord: Some(numeral("V")),
+            },
+        ]);
+        assert_eq!(chords.points().len(), 2);
+        // Dragging the V back onto the I replaces it; nothing is left to tell them apart.
+        assert!(chords.move_point(Ticks(3840), Ticks::ZERO));
+        assert_eq!(
+            chords.points(),
+            &[ChordPoint {
+                tick: Ticks::ZERO,
+                chord: Some(numeral("V"))
+            }]
+        );
+    }
+
+    #[test]
+    fn a_stamped_chart_holding_a_chord_over_the_bar_line_writes_it_once() {
+        let mut harmony = Harmony::default();
+        let chart = Chart::parse("| I | I | V | V |").unwrap();
+        assert_eq!(harmony.stamp(&chart, Ticks::ZERO, 4, four_four()), 2);
+        let events = harmony.events_in(Ticks::ZERO, Ticks(3840 * 4), &SignatureMap::default());
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].length, Ticks(3840 * 2));
+        assert_eq!(events[1].numeral, numeral("V"));
+    }
+
+    #[test]
+    fn a_stamp_restating_the_chord_before_it_extends_that_chord() {
+        let mut harmony = Harmony::default();
+        harmony.stamp(
+            &Chart::parse("| IV |").unwrap(),
+            Ticks::ZERO,
+            1,
+            four_four(),
+        );
+        harmony.stamp(
+            &Chart::parse("| IV | I |").unwrap(),
+            Ticks(3840),
+            2,
+            four_four(),
+        );
+        assert_eq!(
+            harmony.chords.points(),
+            &[
+                ChordPoint {
+                    tick: Ticks::ZERO,
+                    chord: Some(numeral("IV"))
+                },
+                ChordPoint {
+                    tick: Ticks(7680),
+                    chord: Some(numeral("I"))
+                },
+            ]
+        );
     }
 }

@@ -5,7 +5,6 @@
 //! agent runtime and lives beside, rather than inside, the readable transcript.
 
 use std::fs::{File, OpenOptions};
-use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -502,28 +501,31 @@ impl ConversationStore {
         if self == destination {
             return Ok(());
         }
-        // A common ordering also permits two windows to copy in opposite directions.
-        let (first, second) = if self.root < destination.root {
-            (self, destination)
+        // Resolve both stores before locking. Save As can name the current folder through a
+        // relative path, different case or a symlink; locking both spellings would wait on our
+        // own first lock. Canonical roots also give opposite-direction copies the same order,
+        // even when either caller reached one of the stores through an alias.
+        let source = self.canonical_copy_store()?;
+        let destination = destination.canonical_copy_store()?;
+        if same_file::is_same_file(&source.root, &destination.root).map_err(|e| e.to_string())? {
+            return Ok(());
+        }
+        let (first, second) = if source.copy_order_key() < destination.copy_order_key() {
+            (&source, &destination)
         } else {
-            (destination, self)
+            (&destination, &source)
         };
         let _first_lock = first.lock()?;
         let _second_lock = second.lock()?;
-        for info in self.list_unlocked()? {
-            let source = self.folder(&info.id)?;
+        for info in source.list_unlocked()? {
+            let source = source.folder(&info.id)?;
             let target = destination.folder(&info.id)?;
             if target.join("meta.json").exists() {
                 let existing: ConversationInfo = read_json(&target.join("meta.json"))?;
-                let same_transcript = std::fs::read(source.join("transcript.json"))
-                    .map_err(|e| e.to_string())?
-                    == std::fs::read(target.join("transcript.json")).map_err(|e| e.to_string())?;
+                let same_transcript = read_bytes(&source.join("transcript.json"))?
+                    == read_bytes(&target.join("transcript.json"))?;
                 let same_production = ["memory.production.json"].into_iter().all(|name| {
-                    let read = |folder: &Path| match std::fs::read(folder.join(name)) {
-                        Ok(bytes) => Ok(Some(bytes)),
-                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-                        Err(error) => Err(error),
-                    };
+                    let read = |folder: &Path| read_bytes_if_present(&folder.join(name));
                     matches!((read(&source), read(&target)), (Ok(a), Ok(b)) if a == b)
                 });
                 if existing == info && same_transcript && same_production {
@@ -536,15 +538,33 @@ impl ConversationStore {
             }
             std::fs::create_dir_all(&target).map_err(|e| e.to_string())?;
             for name in ["transcript.json", "memory.json", "memory.production.json"] {
-                let path = source.join(name);
-                if path.exists() {
-                    std::fs::copy(path, target.join(name)).map_err(|e| e.to_string())?;
+                // Read and republished rather than `std::fs::copy`, which holds the source open
+                // outside the lock a concurrent agent's save renames under.
+                if let Some(bytes) = read_bytes_if_present(&source.join(name))? {
+                    crate::settings::write_file_atomic(&target.join(name), &bytes)
+                        .map_err(|e| e.to_string())?;
                 }
             }
             write_json(&target.join("meta.json"), &info)?;
             crate::conversation_attachments::copy_to(&source, &target)?;
         }
         Ok(())
+    }
+
+    fn canonical_copy_store(&self) -> Result<Self, String> {
+        std::fs::create_dir_all(&self.root).map_err(|e| e.to_string())?;
+        let root = self.root.canonicalize().map_err(|e| e.to_string())?;
+        Ok(Self::at(root))
+    }
+
+    fn copy_order_key(&self) -> (PathBuf, PathBuf) {
+        let folded = if cfg!(windows) {
+            self.root.as_os_str().to_ascii_lowercase().into()
+        } else {
+            self.root.clone()
+        };
+        // The full path breaks ties for distinct case-sensitive Windows directories.
+        (folded, self.root.clone())
     }
 }
 
@@ -589,19 +609,34 @@ fn preview(text: &str, limit: usize) -> String {
         .collect()
 }
 
+/// The bytes of a file [`write_json`] publishes, read under the lock its rename takes.
+///
+/// A plain read here made the rename fail with `PermissionDenied` on Windows for as long as the
+/// file was open, so this goes through [`crate::settings::read_published_file`]. A file that is
+/// not one of this store's own, such as an attachment, needs no such care.
+fn read_bytes(path: &Path) -> Result<Vec<u8>, String> {
+    crate::settings::read_published_file(path, READ_LIMIT).map_err(read_error)
+}
+
+/// [`read_bytes`], or `None` when there is no such file.
+fn read_bytes_if_present(path: &Path) -> Result<Option<Vec<u8>>, String> {
+    match crate::settings::read_published_file(path, READ_LIMIT) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(read_error(e)),
+    }
+}
+
+fn read_error(error: std::io::Error) -> String {
+    if error.kind() == std::io::ErrorKind::FileTooLarge {
+        "Conversation file is too large".into()
+    } else {
+        error.to_string()
+    }
+}
+
 fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T, String> {
-    let file = File::open(path).map_err(|e| e.to_string())?;
-    if file.metadata().map_err(|e| e.to_string())?.len() > READ_LIMIT {
-        return Err("Conversation file is too large".into());
-    }
-    let mut bytes = Vec::new();
-    file.take(READ_LIMIT + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|e| e.to_string())?;
-    if bytes.len() as u64 > READ_LIMIT {
-        return Err("Conversation file is too large".into());
-    }
-    serde_json::from_slice(&bytes).map_err(|e| format!("Cannot read conversation: {e}"))
+    serde_json::from_slice(&read_bytes(path)?).map_err(|e| format!("Cannot read conversation: {e}"))
 }
 
 fn write_json(path: &Path, value: &impl Serialize) -> Result<(), String> {
@@ -609,12 +644,154 @@ fn write_json(path: &Path, value: &impl Serialize) -> Result<(), String> {
     if bytes.len() as u64 > READ_LIMIT {
         return Err("Conversation file is too large".into());
     }
-    crate::settings::write_config_bytes(path, &bytes).map_err(|e| e.to_string())
+    crate::settings::write_file_atomic(path, &bytes).map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_write_succeeds_while_another_thread_reads_the_file() {
+        // On Windows the write's rename fails for as long as a reader has the file open, which a
+        // reader going around the shared lock did on most attempts. Elsewhere this is a plain
+        // check that concurrent reads and writes neither fail nor tear the file.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("transcript.json");
+        write_json(&path, &0_u32).unwrap();
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let reader = {
+            let (path, stop) = (path.clone(), stop.clone());
+            std::thread::spawn(move || {
+                let mut reads = 0;
+                while !stop.load(Ordering::Relaxed) {
+                    read_json::<u32>(&path).unwrap();
+                    reads += 1;
+                }
+                reads
+            })
+        };
+        let failures: Vec<_> = (1..=200_u32)
+            .filter_map(|n| write_json(&path, &n).err())
+            .collect();
+        stop.store(true, Ordering::Relaxed);
+        assert!(reader.join().unwrap() > 0, "the reader ran");
+        assert!(
+            failures.is_empty(),
+            "{} writes failed: {:?}",
+            failures.len(),
+            failures.first()
+        );
+    }
+
+    #[test]
+    fn copying_store_aliases_and_opposite_directions_does_not_block() {
+        const PROBE: &str = "AURIS_CONVERSATION_COPY_TEST";
+        if let Ok(mode) = std::env::var(PROBE) {
+            let root = std::env::current_dir().unwrap();
+            let source = ConversationStore::at(PathBuf::from("source"));
+            let conversation = source.create().unwrap();
+            let attachment = root.join("reference.txt");
+            std::fs::write(&attachment, "Retain the complete attachment").unwrap();
+            let archived = source
+                .capture_attachments(&conversation.info.id, &[attachment])
+                .unwrap();
+            let bytes = std::fs::read(&archived[0]).unwrap();
+            let destination = ConversationStore::at(root.join(match mode.as_str() {
+                "relative" => "source",
+                "case" => "SOURCE",
+                "symlink" => "alias",
+                "opposite" => "target",
+                _ => panic!("unknown copy probe"),
+            }));
+            if mode == "opposite" {
+                destination.create().unwrap();
+                let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+                let handles: Vec<_> = [
+                    (source.clone(), destination.clone()),
+                    (
+                        ConversationStore::at(PathBuf::from("target")),
+                        ConversationStore::at(root.join("source")),
+                    ),
+                ]
+                .into_iter()
+                .map(|(from, to)| {
+                    let barrier = barrier.clone();
+                    std::thread::spawn(move || {
+                        barrier.wait();
+                        for _ in 0..16 {
+                            from.copy_to(&to).unwrap();
+                        }
+                    })
+                })
+                .collect();
+                for handle in handles {
+                    handle.join().unwrap();
+                }
+                assert_eq!(source.list().unwrap(), destination.list().unwrap());
+                assert_eq!(source.list().unwrap().len(), 2);
+            } else {
+                source.copy_to(&destination).unwrap();
+                assert_eq!(
+                    destination.load(&conversation.info.id).unwrap(),
+                    conversation
+                );
+            }
+            assert_eq!(std::fs::read(&archived[0]).unwrap(), bytes);
+            return;
+        }
+
+        for mode in ["relative", "case", "symlink", "opposite"] {
+            let directory = tempfile::tempdir().unwrap();
+            std::fs::create_dir(directory.path().join("source")).unwrap();
+            if mode == "case"
+                && !same_file::is_same_file(
+                    directory.path().join("source"),
+                    directory.path().join("SOURCE"),
+                )
+                .unwrap_or(false)
+            {
+                continue;
+            }
+            if mode == "symlink" {
+                #[cfg(unix)]
+                std::os::unix::fs::symlink("source", directory.path().join("alias")).unwrap();
+                #[cfg(not(unix))]
+                continue;
+            }
+            // A broken alias check must fail this test instead of hanging the suite forever.
+            let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "conversations::tests::copying_store_aliases_and_opposite_directions_does_not_block",
+                ])
+                .env(PROBE, mode)
+                .current_dir(directory.path())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .unwrap();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+            loop {
+                if child.try_wait().unwrap().is_some() {
+                    let output = child.wait_with_output().unwrap();
+                    assert!(
+                        output.status.success(),
+                        "{mode}: {}\n{}",
+                        String::from_utf8_lossy(&output.stdout),
+                        String::from_utf8_lossy(&output.stderr)
+                    );
+                    break;
+                }
+                if std::time::Instant::now() >= deadline {
+                    child.kill().unwrap();
+                    child.wait().unwrap();
+                    panic!("{mode} conversation copy blocked");
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+        }
+    }
 
     #[test]
     fn sent_attachments_survive_original_deletion_and_save_as() {
@@ -658,6 +835,26 @@ mod tests {
         )
         .unwrap();
         assert!(!stored.contains(&dir.path().to_string_lossy().replace('\\', "\\\\")));
+    }
+
+    #[test]
+    fn transcripts_between_the_preference_ceiling_and_the_read_limit_still_save() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = ConversationStore::for_project(dir.path());
+        let conversation = store.create().unwrap();
+        let mut transcript = conversation.transcript;
+        transcript.messages.push(ConversationMessage {
+            id: 0,
+            model: String::new(),
+            content: ConversationContent::Assistant {
+                text: "音".repeat(3 * 1024 * 1024),
+            },
+        });
+        let saved = store.save(&conversation.info.id, &transcript).unwrap();
+        assert_eq!(
+            store.load(&conversation.info.id).unwrap().transcript,
+            saved.transcript
+        );
     }
 
     #[test]

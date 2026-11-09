@@ -516,13 +516,11 @@ fn transport_event(ctx: &ProcessContext, offset: usize) -> TransportEvent {
 
 /// Copies the plugin's main output into the track's buffer, finishing what the port misses.
 ///
-/// A port narrower than the buffer has no samples for the channels past it, and an instrument's
-/// contract is to overwrite them *all* — the renderer skips its clear on the strength of that
-/// contract, so a channel left alone here is the previous block leaking through. Those channels
-/// repeat the port instead, so a mono synth on a stereo track is heard in both speakers rather
-/// than hard left over a ghost. An effect (`overwrite == false`) leaves them holding the input,
-/// which is a mono insert passing the channels it cannot reach straight through. The input-side
-/// mirror of all this is [`fill_port`].
+/// A port narrower than the buffer repeats across the remaining channels. This applies to both
+/// instruments and effects: retaining an effect's dry input in those channels would mix it back
+/// into the processed result when a singer strip folds to mono. `overwrite` only controls the
+/// fallback for an empty port: instruments owe silence, while effects pass the input through.
+/// The input-side mirror is [`fill_port`].
 fn deliver_port(
     port: &[Vec<f32>],
     buffer: &mut AudioBuffer,
@@ -530,21 +528,15 @@ fn deliver_port(
     frames: usize,
     overwrite: bool,
 ) {
-    for (index, channel) in port.iter().enumerate().take(buffer.channel_count()) {
-        buffer.channel_mut(index)[offset..offset + frames].copy_from_slice(&channel[..frames]);
-    }
-    if !overwrite {
+    if port.is_empty() {
+        if overwrite {
+            silence(buffer, offset, frames);
+        }
         return;
     }
-    match port.is_empty() {
-        true => silence(buffer, offset, frames),
-        false => {
-            for index in port.len()..buffer.channel_count() {
-                let source = &port[index % port.len()];
-                buffer.channel_mut(index)[offset..offset + frames]
-                    .copy_from_slice(&source[..frames]);
-            }
-        }
+    for index in 0..buffer.channel_count() {
+        let source = &port[index % port.len()];
+        buffer.channel_mut(index)[offset..offset + frames].copy_from_slice(&source[..frames]);
     }
 }
 
@@ -721,14 +713,17 @@ mod tests {
     }
 
     #[test]
-    fn a_mono_effect_passes_the_channels_it_cannot_reach_through() {
-        // The effect side of the same seam: no overwrite promise, so a mono insert leaves the
-        // other channel holding the input it was given.
+    fn a_mono_effect_replaces_both_channels_without_leaking_dry_audio() {
+        // Singer strips fold the two channels together after the chain. Leaving dry audio in
+        // the second channel would mix the original voice back into a mono voice converter.
         let port = vec![vec![0.25f32; 8]];
-        let mut buffer = stale(0.9, 8);
-        deliver_port(&port, &mut buffer, 0, 8, false);
-        assert_eq!(buffer.channel(0), &[0.25; 8]);
-        assert_eq!(buffer.channel(1), &[0.9; 8], "the input passes through");
+        let mut buffer = stale(0.9, 16);
+        deliver_port(&port, &mut buffer, 4, 8, false);
+        for channel in buffer.channels() {
+            assert_eq!(&channel[..4], &[0.9; 4]);
+            assert_eq!(&channel[4..12], &[0.25; 8], "only the wet signal remains");
+            assert_eq!(&channel[12..], &[0.9; 4]);
+        }
     }
 
     #[test]
@@ -738,5 +733,22 @@ mod tests {
         deliver_port(&port, &mut buffer, 0, 8, true);
         assert_eq!(buffer.channel(0), &[0.0; 8]);
         assert_eq!(buffer.channel(1), &[0.0; 8]);
+    }
+
+    #[test]
+    fn an_empty_effect_port_keeps_the_passthrough_fallback() {
+        let mut buffer = stale(0.9, 8);
+        deliver_port(&[], &mut buffer, 0, 8, false);
+        for channel in buffer.channels() {
+            assert_eq!(channel, &[0.9; 8]);
+        }
+    }
+
+    #[test]
+    fn a_stereo_effect_preserves_both_processed_channels() {
+        let port = vec![vec![0.25; 8], vec![-0.5; 8]];
+        let mut buffer = stale(0.9, 8);
+        deliver_port(&port, &mut buffer, 0, 8, false);
+        assert_eq!(buffer.channels(), port.as_slice());
     }
 }

@@ -236,6 +236,16 @@ impl AurisApp {
             Panel::Log if !open => crate::logbook::book().problems() > 0,
             _ => false,
         };
+        // The linter's findings share the log's panel, so they share its switch: a problem in
+        // the song is as easy to miss as a warning in the log, and more likely to be heard.
+        let (errors, warnings, _) = self.lint.report.counts();
+        let lint_mark =
+            (panel == Panel::Log && !open && errors + warnings > 0).then_some(if errors > 0 {
+                theme.danger
+            } else {
+                theme.warning
+            });
+        let open_problems = lint_mark.is_some() && !unread;
         let tooltip_label = match agent_status {
             Some(status) => format!(
                 "{} · {}",
@@ -260,6 +270,9 @@ impl AurisApp {
                     .radius(theme.atelier.shape.radius_sm)
                     .selected(open)
                     .on_click(cx.listener(move |this, _, _, cx| {
+                        if open_problems {
+                            this.lint.tab = crate::ui::lint::LogTab::Problems;
+                        }
                         this.toggle_panel(panel);
                         cx.notify();
                     })),
@@ -288,6 +301,18 @@ impl AurisApp {
                         .text_size(px(7.0))
                         .text_color(theme.text_on(colour))
                         .child(status.mark()),
+                )
+            })
+            .when_some(lint_mark.filter(|_| !unread), |switch, colour| {
+                switch.child(
+                    div()
+                        .debug_selector(|| "lint-panel-mark".to_owned())
+                        .absolute()
+                        .top(px(-1.0))
+                        .right(px(-1.0))
+                        .size(px(7.0))
+                        .rounded_full()
+                        .bg(colour),
                 )
             })
             .when(unread, |switch| {
