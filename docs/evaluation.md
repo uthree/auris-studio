@@ -273,6 +273,13 @@ Use them on a Japanese vocal song this way:
   more. Overall wandered by up to two points, and in both directions on the same change. Singing
   the take again with the same seed moved Singing by 0.1 at most and AudioQ by 0.4. Read SAE as telling songs
   apart. It cannot steer a mix.
+* **What it does not see.** SAE scores windows of the song and averages them, so it cannot tell
+  whether the song is finished. A composer given only the user's request and the tools
+  (`AURIS_TRIAL_GUIDANCE=bare`) delivered four 21–43 second pieces of four tracks, with no
+  effects. Gain-matched to -14 LUFS, they averaged 73.4 Overall and 81.1 Arrange. Two finished
+  three-minute songs on the same request averaged 70.4 and 81.0. Audiobox did put the finished
+  songs higher: PQ 7.2 against 6.8, CE 6.7 against 5.9. Check length, form and the mix before
+  reading any learned score.
 
 `songeval.py` and `song_aesthetics.py` take `--device cuda:0`, which a ROCm build of PyTorch also
 answers. Audiobox takes the GPU whenever one is visible. On a GPU, scores match the CPU's to

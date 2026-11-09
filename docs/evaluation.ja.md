@@ -142,6 +142,7 @@ uv run tools/eval/music.py --preset all --seeds 3 --workdir target/after --basel
   * 0.5秒以上の音符すべてにビブラートを付ける
 
   Overall は最大2点動きましたが、同じ変更でも曲によって上がったり下がったりしました。同じシードで歌わせ直すと、Singing は最大0.1点、AudioQ は0.4点動きました。SAE は曲どうしを見分けるためのもので、ミックスの調整の指針にはなりません。
+* **見えないもの。** SAE は曲を区間に分けて採点し、その平均を出すので、曲が完成しているかどうかは分かりません。ユーザーの依頼とツールの使い方だけを渡した作曲エージェント（`AURIS_TRIAL_GUIDANCE=bare`）は、4トラックでエフェクトのない、21〜43秒の短い曲を4曲作りました。-14 LUFS にそろえると、Overall の平均は73.4、Arrange は81.1でした。同じ依頼で作った3分の完成曲2曲は、70.4と81.0です。Audiobox は完成曲のほうを高く採点しました（PQ 7.2 と 6.8、CE 6.7 と 5.9）。学習済みの評価器の点を読む前に、曲の長さ、構成、ミックスを確かめます。
 
 `songeval.py` と `song_aesthetics.py` は `--device cuda:0` で GPU を使います（ROCm 版の PyTorch もこの名前で答えます）。Audiobox は GPU が見えれば自動で使います。GPU の点は、CPU の点と 0.001 以内で一致します。gfx1201 の ROCm 7.14 では memory-efficient と flash の attention カーネルが落ちるので、アダプタはこの二つを切ります。`song_aesthetics.py --precision bf16` は約1.6倍速くなりますが、点が最大 0.8 動きます。fp16 では MuQ の出力が NaN になります。
 
