@@ -1867,8 +1867,13 @@ mod tests {
                 .iter()
                 .map(|(i, _)| map.envelopes()[*i].as_ref().unwrap().summary.attack_ms)
                 .collect();
-            let slowest = attacks.iter().copied().fold(0., f64::max);
-            assert_eq!(attacks[0], slowest, "{attacks:?}");
+            // Every sound inside the range ties at the top, slow pads and strings alike, and the
+            // rest follow the nearer they come to it.
+            let inside = attacks.iter().take_while(|ms| **ms >= 150.).count();
+            assert!(inside > 0, "{attacks:?}");
+            let outside = &attacks[inside..];
+            assert!(outside.iter().all(|ms| *ms < 150.), "{attacks:?}");
+            assert!(outside.windows(2).all(|w| w[0] >= w[1]), "{attacks:?}");
         });
         assert!(
             utility

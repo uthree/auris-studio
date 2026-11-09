@@ -1,4 +1,4 @@
-//! The oscillator instruments' view: the two built-in synthesisers drawn the way the physical
+//! The oscillator instruments' view: the built-in synthesisers drawn the way the physical
 //! models are.
 //!
 //! A synthesiser has no body, so what [`super::physical_model`] draws as a string is here what
@@ -6,7 +6,9 @@
 //! [`MotionGeometry::Oscillator`](auris_session::MotionGeometry::Oscillator) frame — and what it
 //! draws as resonant modes is here the patch itself: for the FM operator pair, the two operators
 //! and the sidebands their depth throws out; for the chiptune voice, the one cycle its waveform,
-//! duty cycle and bit depth make, and that cycle's harmonics.
+//! duty cycle and bit depth make, and that cycle's harmonics; for the subtractive patches, the
+//! unison stack spread across its detune and the filter's response with the note's harmonics
+//! under it.
 //!
 //! The pictures of the patch are computed here from its parameters rather than read from the
 //! instrument, because they have to be there before a note is played — they are what a person
@@ -26,15 +28,140 @@ pub(crate) const FM2: &str = "auris.synth.fm2";
 /// The chiptune voice.
 pub(crate) const CHIPTUNE: &str = "auris.synth.chiptune";
 
+/// The subtractive synthesiser's patches, every one the same engine with its own defaults.
+pub(crate) const ANALOG: [&str; 7] = [
+    "auris.synth.supersaw",
+    "auris.synth.pad",
+    "auris.synth.lead",
+    "auris.synth.bass",
+    "auris.synth.pwm_strings",
+    "auris.synth.brass",
+    "auris.synth.pluck",
+];
+
+/// Whether `id` is one of the subtractive patches.
+pub(crate) fn is_analog(id: &str) -> bool {
+    ANALOG.contains(&id)
+}
+
 /// Highest multiple of the note the sideband and harmonic plots reach.
 const HIGHEST_HARMONIC: usize = 16;
+
+/// Top of the filter plot: unity gain sits halfway, so a resonant peak has room above it.
+const FILTER_CEILING: f32 = 2.0;
 
 /// Samples in a drawn cycle, the same as the instrument publishes.
 const CYCLE_POINTS: usize = auris_session::MOTION_POINTS;
 
 /// Whether `id` is drawn as oscillators rather than as a body.
 pub(crate) fn is_oscillator_model(id: &str) -> bool {
-    matches!(id, FM2 | CHIPTUNE)
+    matches!(id, FM2 | CHIPTUNE) || is_analog(id)
+}
+
+/// The equal-tempered frequency of a MIDI pitch, A4 at 440 Hz.
+fn note_hz(pitch: f32) -> f32 {
+    440.0 * ((pitch - 69.0) / 12.0).exp2()
+}
+
+/// The note key tracking is measured from, as the instrument measures it.
+const KEY_TRACK_CENTRE: f32 = 60.0;
+
+/// How far each side copy of the subtractive stack is moved off its even spacing — the
+/// instrument's own table, so the picture puts every copy where it sounds.
+const DETUNE_SKEW: [f32; 7] = [0.0, 0.05, -0.07, 0.0, 0.06, -0.04, 0.03];
+
+/// The subtractive stack as `(cents from the note, level relative to the centre copy)`.
+pub(crate) fn unison_stack(count: f32, detune: f32, mix: f32) -> Vec<(f32, f32)> {
+    let count = (count.round() as usize).clamp(1, DETUNE_SKEW.len());
+    (0..count)
+        .map(|slot| {
+            let position = if count > 1 {
+                2.0 * slot as f32 / (count - 1) as f32 - 1.0
+            } else {
+                0.0
+            };
+            let offset = detune * (position + DETUNE_SKEW[slot] * position.abs());
+            let level = if count == 1 || position.abs() < 1e-6 {
+                1.0
+            } else {
+                mix.clamp(0.0, 1.0)
+            };
+            (offset * 100.0, level)
+        })
+        .collect()
+}
+
+/// The resonant section's damping for a 0–1 resonance, as the instrument sets it.
+fn damping(resonance: f32) -> f32 {
+    2.0 - 1.8 * resonance.clamp(0.0, 1.0)
+}
+
+/// The subtractive filter's complex response at `ratio` times its cutoff: a resonant
+/// second-order low-pass followed by a Butterworth one.
+fn filter_response(ratio: f32, resonance: f32) -> (f32, f32) {
+    let section = |k: f32| {
+        let (re, im) = (1.0 - ratio * ratio, k * ratio);
+        let norm = (re * re + im * im).max(f32::MIN_POSITIVE);
+        (re / norm, -im / norm)
+    };
+    let (a, b) = section(damping(resonance));
+    let (c, d) = section(std::f32::consts::SQRT_2);
+    (a * c - b * d, a * d + b * c)
+}
+
+/// The filter's gain at `ratio` times its cutoff.
+pub(crate) fn filter_gain(ratio: f32, resonance: f32) -> f32 {
+    let (re, im) = filter_response(ratio.max(0.0), resonance);
+    re.hypot(im)
+}
+
+/// One cycle of the subtractive stack's waveform (saw, square, triangle) as the filter leaves
+/// it with its cutoff at `ratio` times the note, scaled so its peak is one.
+pub(crate) fn analog_cycle(
+    waveform: f32,
+    pulse_width: f32,
+    ratio: f32,
+    resonance: f32,
+) -> Vec<f32> {
+    let width = pulse_width.clamp(0.01, 0.99);
+    let naive: Vec<f32> = (0..CYCLE_POINTS)
+        .map(|i| {
+            let x = i as f32 / CYCLE_POINTS as f32;
+            match waveform.round() as i32 {
+                1 => {
+                    if x < width {
+                        1.0
+                    } else {
+                        -1.0
+                    }
+                }
+                2 => 1.0 - 4.0 * (x - 0.5).abs(),
+                _ => 2.0 * x - 1.0,
+            }
+        })
+        .collect();
+    let length = CYCLE_POINTS as f32;
+    let ratio = ratio.max(1e-3);
+    let mut out = vec![0.0; CYCLE_POINTS];
+    for harmonic in 1..CYCLE_POINTS / 2 {
+        let (mut re, mut im) = (0.0f32, 0.0f32);
+        for (at, sample) in naive.iter().enumerate() {
+            let angle = std::f32::consts::TAU * harmonic as f32 * at as f32 / length;
+            re += sample * angle.cos();
+            im -= sample * angle.sin();
+        }
+        let (hr, hi) = filter_response(harmonic as f32 / ratio, resonance);
+        let (yr, yi) = (re * hr - im * hi, re * hi + im * hr);
+        for (at, sample) in out.iter_mut().enumerate() {
+            let angle = std::f32::consts::TAU * harmonic as f32 * at as f32 / length;
+            *sample += 2.0 / length * (yr * angle.cos() - yi * angle.sin());
+        }
+    }
+    let loudest = out.iter().fold(0.0f32, |a, b| a.max(b.abs()));
+    if loudest > 1e-6 {
+        out.iter_mut().for_each(|sample| *sample /= loudest);
+    }
+    out
 }
 
 /// The Bessel function of the first kind, `J_n(x)`, from Bessel's own integral.
@@ -199,12 +326,23 @@ impl AurisApp {
     /// The patch's own cycle, drawn faintly on the first lane while nothing sounds: what a
     /// note would look like before one is played.
     pub(crate) fn oscillator_resting_cycle(&mut self, track: TrackId, id: &str) -> Vec<f32> {
+        let pitch = f32::from(self.physical_view.pitch);
         let mut param =
             |key: &str, default: f32| self.instrument_param(track, key).unwrap_or(default);
         match id {
             FM2 => {
                 let ratio = param("ratio", 2.0);
                 fm_cycle(ratio, param("index", 5.0))
+            }
+            id if is_analog(id) => {
+                let cutoff = param("cutoff", 8_000.0)
+                    * (param("key_track", 0.0) * (pitch - KEY_TRACK_CENTRE) / 12.0).exp2();
+                analog_cycle(
+                    param("waveform", 0.0),
+                    param("pulse_width", 0.5),
+                    cutoff / note_hz(pitch),
+                    param("resonance", 0.0),
+                )
             }
             _ => {
                 let waveform = param("waveform", 1.0);
@@ -225,6 +363,8 @@ impl AurisApp {
         let spacing = theme.atelier.spacing;
         let content = if id == FM2 {
             self.fm_operators(track, frame, theme)
+        } else if is_analog(id) {
+            self.analog_patch(track, frame, theme)
         } else {
             self.chip_shape(track, theme)
         };
@@ -368,6 +508,148 @@ impl AurisApp {
             .into_any_element()
     }
 
+    /// The subtractive stack across its detune beside the filter that shapes it.
+    fn analog_patch(&mut self, track: TrackId, frame: &MotionFrame, theme: &Theme) -> AnyElement {
+        let tokens = &theme.atelier;
+        let spacing = tokens.spacing;
+        let resting_pitch = f32::from(self.physical_view.pitch);
+        let mut param =
+            |key: &str, default: f32| self.instrument_param(track, key).unwrap_or(default);
+        let unison = param("unison", 1.0);
+        let detune = param("detune", 0.0);
+        let mix = param("mix", 0.8);
+        let width = param("width", 0.5);
+        let waveform = param("waveform", 0.0);
+        let pulse_width = param("pulse_width", 0.5);
+        let cutoff = param("cutoff", 8_000.0);
+        let resonance = param("resonance", 0.0);
+        let key_track = param("key_track", 0.0);
+        let live = loudest_voice(frame);
+        let pitch = live.map_or(resting_pitch, |voice| voice.pitch);
+        let note = note_hz(pitch).max(1.0);
+        let resting = cutoff * (key_track * (pitch - KEY_TRACK_CENTRE) / 12.0).exp2() / note;
+        let now = live
+            .map(|voice| voice.excitation / note)
+            .filter(|ratio| ratio.is_finite() && *ratio > 0.0);
+
+        let stack = unison_stack(unison, detune, mix);
+        let reach = (detune * 110.0).max(25.0);
+        let color = tokens.colors.series[0];
+        let highest = HIGHEST_HARMONIC as f32;
+        let response = |ratio: f32| -> Vec<(f32, f32)> {
+            (0..=160)
+                .map(|step| {
+                    let at = step as f32 / 10.0;
+                    (at, filter_gain(at / ratio, resonance).min(FILTER_CEILING))
+                })
+                .collect()
+        };
+        let harmonics = |ratio: f32| -> Vec<(f32, f32)> {
+            let shape = analog_cycle(waveform, pulse_width, 1.0e3, 0.0);
+            cycle_harmonics(&shape, HIGHEST_HARMONIC)
+                .into_iter()
+                .enumerate()
+                .map(|(n, value)| {
+                    let harmonic = n as f32 + 1.0;
+                    (
+                        harmonic,
+                        (value * filter_gain(harmonic / ratio, resonance)).min(FILTER_CEILING),
+                    )
+                })
+                .collect()
+        };
+        let mut filter = LinePlot::new()
+            .x_range(0., highest)
+            .y_range(0., FILTER_CEILING)
+            .legend(true)
+            .series(
+                Series::line(response(resting))
+                    .name(self.t(Key::SynthCutoffSet))
+                    .color(tokens.colors.text_faint)
+                    .faint(),
+            );
+        let (lit, lit_color) = match (live, now) {
+            (Some(voice), Some(now)) => (now, voice_color(theme, voice.pitch)),
+            _ => (resting, color),
+        };
+        if let (Some(voice), Some(now)) = (live, now) {
+            filter = filter.series(
+                Series::line(response(now))
+                    .name(self.t(Key::SynthNow))
+                    .color(voice_color(theme, voice.pitch)),
+            );
+        }
+        filter = filter.series(
+            Series::stems(harmonics(lit))
+                .style(SeriesStyle::Stems)
+                .color(lit_color),
+        );
+        let well = |id: &'static str, plot: LinePlot| {
+            div()
+                .id(id)
+                .debug_selector(move || id.into())
+                .h(gpui::rems(8.))
+                .rounded(tokens.shape.radius_sm)
+                .bg(tokens.colors.sunken)
+                .overflow_hidden()
+                .p(spacing.xs)
+                .child(plot)
+        };
+        let column = |header: SectionHeader, body: gpui::Stateful<gpui::Div>| {
+            div()
+                .flex_1()
+                .min_w(gpui::rems(14.))
+                .flex()
+                .flex_col()
+                .gap(spacing.sm)
+                .child(header)
+                .child(body)
+        };
+        let cutoff_now = live.map_or(cutoff, |voice| voice.excitation);
+        div()
+            .flex()
+            .flex_col()
+            .gap(spacing.md)
+            .child(
+                div()
+                    .w_full()
+                    .flex()
+                    .flex_wrap()
+                    .gap(spacing.lg)
+                    .child(column(
+                        SectionHeader::new(self.t(Key::SynthStack))
+                            .description(self.t(Key::SynthStackHint)),
+                        well(
+                            "synth-stack",
+                            LinePlot::new()
+                                .x_range(-reach, reach)
+                                .y_range(0., 1.)
+                                .series(Series::stems(stack).color(color)),
+                        ),
+                    ))
+                    .child(column(
+                        SectionHeader::new(self.t(Key::SynthFilter))
+                            .description(self.t(Key::SynthFilterHint)),
+                        well("synth-filter", filter),
+                    )),
+            )
+            .child(
+                Label::new(format!(
+                    "{} {:.0} · ±{:.0} cents · {} {:.0}% · {} {:.0} Hz",
+                    self.t(Key::SynthUnison),
+                    unison.round(),
+                    detune * 100.0,
+                    self.t(Key::SynthWidth),
+                    width * 100.0,
+                    self.t(Key::SynthCutoff),
+                    cutoff_now,
+                ))
+                .size(TextSize::XSmall)
+                .color(TextColor::Faint),
+            )
+            .into_any_element()
+    }
+
     /// The chiptune voice's cycle beside the harmonics it has.
     fn chip_shape(&mut self, track: TrackId, theme: &Theme) -> AnyElement {
         let tokens = &theme.atelier;
@@ -464,6 +746,38 @@ impl AurisApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_supersaw_stack_is_centred_and_reaches_its_detune() {
+        let stack = unison_stack(7.0, 0.3, 0.8);
+        assert_eq!(stack.len(), 7);
+        assert_eq!(stack[3], (0.0, 1.0));
+        assert!((stack[0].0 + 30.0).abs() < 3.0 && (stack[6].0 - 30.0).abs() < 3.0);
+        assert!(stack.iter().filter(|(_, level)| *level == 0.8).count() == 6);
+        assert_eq!(unison_stack(1.0, 0.5, 0.2), vec![(0.0, 1.0)]);
+    }
+
+    #[test]
+    fn the_filter_passes_below_its_cutoff_and_falls_24_db_an_octave_above() {
+        assert!((filter_gain(0.01, 0.0) - 1.0).abs() < 1e-3);
+        let octave = filter_gain(2.0, 0.0);
+        let two = filter_gain(4.0, 0.0);
+        // Far above the corner each octave costs four powers of two.
+        assert!((octave / two - 16.0).abs() < 3.0, "{octave} → {two}");
+        // Resonance lifts the corner itself.
+        assert!(filter_gain(1.0, 1.0) > filter_gain(1.0, 0.0) * 4.0);
+    }
+
+    #[test]
+    fn a_closed_filter_rounds_the_saw_into_a_sine() {
+        let open = cycle_harmonics(&analog_cycle(0.0, 0.5, 40.0, 0.0), 8);
+        assert!((open[1] - 0.5).abs() < 0.05, "{open:?}");
+        let closed = cycle_harmonics(&analog_cycle(0.0, 0.5, 1.0, 0.0), 8);
+        assert!(closed[3] < 0.02, "{closed:?}");
+        let cycle = analog_cycle(1.0, 0.5, 3.0, 0.3);
+        assert_eq!(cycle.len(), CYCLE_POINTS);
+        assert!((cycle.iter().fold(0.0f32, |a, b| a.max(b.abs())) - 1.0).abs() < 1e-5);
+    }
 
     #[test]
     fn bessel_functions_match_their_tables() {

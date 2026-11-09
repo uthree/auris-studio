@@ -50,7 +50,8 @@ pub enum MotionGeometry {
     /// from the start of its period to the end, scaled by its envelope; `modes` are the
     /// magnitudes of that cycle's first eight harmonics, relative to the strongest, before the
     /// envelope; and `excitation` is the voice's own timbre control as it stands right now — for
-    /// phase modulation, the modulation index in radians.
+    /// phase modulation, the modulation index in radians; for the subtractive patches, the
+    /// filter's cutoff in hertz.
     Oscillator,
 }
 

@@ -2127,6 +2127,8 @@ mod tests {
             // Not physical, but observed the same way: their oscillators' waveforms.
             "auris.synth.chiptune",
             "auris.synth.fm2",
+            "auris.synth.supersaw",
+            "auris.synth.pluck",
         ] {
             let track = session.add_instrument_track("Model", id).unwrap();
             assert!(session.has_instrument_motion(track), "{id}");

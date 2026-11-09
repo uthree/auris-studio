@@ -1465,7 +1465,7 @@ fn sound_artwork(
             | "auris.physical.bell" => SoundIcon::Bell,
             "auris.synth.drumkit" | "auris.synth.noisedrum" => SoundIcon::Drum,
             "auris.synth.vocal" | "auris.physical.choir" => SoundIcon::Voice,
-            "auris.synth.chiptune" | "auris.synth.fm2" => SoundIcon::Synth,
+            id if super::synth_view::is_oscillator_model(id) => SoundIcon::Synth,
             _ => SoundIcon::Sound,
         }
     };

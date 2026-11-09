@@ -24,6 +24,7 @@ pub(super) fn envelope_controls(registry: &PluginRegistry, project: &Project, tr
     // so its four controls mean what theirs do. A SoundFont plays the envelope its font wrote.
     if !(id.starts_with("auris.physical.")
         || id == "auris.synth.chiptune"
+        || auris_synth::AnalogPatch::from_id(id).is_some()
         || id == auris_sampler::AUDIO_SAMPLER_ID)
     {
         return Value::Null;

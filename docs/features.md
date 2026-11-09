@@ -716,7 +716,38 @@ Deliberately simple chiptune voices, enough to hear the engine working:
 
 Square and saw are PolyBLEP band-limited, so high notes stay clean instead of aliasing.
 
-Both pitched voices open in the same view the physical instruments do. Where a physical model
+### Subtractive synthesiser
+
+Seven ready-made synthesiser sounds, every one the same subtractive engine with its own settings,
+listed as separate instruments so a pad is found by looking for a pad:
+
+| Id | Name | What it is |
+| --- | --- | --- |
+| `auris.synth.supersaw` | SuperSaw | Seven detuned saws spread across the stereo field: trance leads and wide chords |
+| `auris.synth.pad` | Synth Pad | Slow detuned saws behind a gently opening filter |
+| `auris.synth.lead` | Synth Lead | A bright resonant saw lead with glide |
+| `auris.synth.bass` | Synth Bass | A saw over a sub-octave square with a punchy filter envelope |
+| `auris.synth.pwm_strings` | PWM Strings | A pulse stack whose width an LFO keeps moving |
+| `auris.synth.brass` | Synth Brass | Saws behind a slowly opening filter that swells with velocity |
+| `auris.synth.pluck` | Synth Pluck | A short filter envelope over a percussive amp |
+
+The controls are shared, so any patch can be turned into any other. A **unison stack** of up to
+seven saws, squares or triangles is spread over ±**Detune** semitones — unevenly, so the copies
+never beat in a regular pulse — with the side copies at **Mix** and alternating left and right
+across **Stereo Width**; every copy starts at its own phase. A **Sub Oscillator** an octave down
+and **Noise Level** join the stack; **PWM Depth** and **PWM Rate** move a square's width per copy,
+in opposite directions on neighbouring copies. All of it goes through a gentle saturator into a
+resonant **24 dB low-pass** (two state-variable sections), whose **Cutoff** moves with its own
+envelope by **Filter Envelope** semitones, with **Key Tracking** from C4 and **Velocity to
+Filter**. Amp ADSR, glide and the same vibrato controls as the other synths follow.
+
+In the instrument view the patch is drawn as the **unison stack** — every copy at its detune in
+cents and its level — beside the **filter**: its response over multiples of the note, faint at the
+cutoff that is set and coloured where the loudest voice's envelope has it now, with the note's
+harmonics standing under it. The waveform lanes show each voice's cycle as it leaves the filter,
+so a pluck is seen closing from a saw to a sine.
+
+The pitched voices open in the same view the physical instruments do. Where a physical model
 draws its strings, **Oscillator waveforms** draws one cycle of each sounding voice — two periods,
 so the join shows — at the height its envelope has reached: an FM note's bright attack visibly
 settling into a sine, a pulse narrowing as its duty cycle is turned, a triangle breaking into the
