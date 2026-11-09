@@ -186,6 +186,8 @@ actions!(
         ZoomIn,
         /// Zoom the timeline out.
         ZoomOut,
+        /// Scroll the timeline back to the playhead and follow it again.
+        RevealPlayhead,
         /// Make every track lane taller.
         IncreaseTrackHeight,
         /// Make every track lane shorter.
@@ -587,6 +589,7 @@ bindable! {
         "view.event_list",      GroupView,      CmdShowEventList,      "" => ToggleEventList;
         "view.zoom_in",         GroupView,      CmdZoomIn,             "secondary-=" => ZoomIn;
         "view.zoom_out",        GroupView,      CmdZoomOut,            "secondary--" => ZoomOut;
+        "view.reveal_playhead", GroupView,      CmdRevealPlayhead,     "" => RevealPlayhead;
         "view.track_height_increase", GroupView, CmdIncreaseTrackHeight, "" => IncreaseTrackHeight;
         "view.track_height_decrease", GroupView, CmdDecreaseTrackHeight, "" => DecreaseTrackHeight;
         "view.settings",        GroupView,      CmdSettings,           "secondary-," => OpenSettings;
