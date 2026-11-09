@@ -30,6 +30,11 @@ pub const DYNAMIC_SECTIONS: usize = 3;
 /// about what a performance stage's random jitter alone moves a section's mean.
 pub const FLAT_DYNAMICS: f64 = 0.04;
 
+/// Bars in a phrase whose last bar a drummer marks.
+pub const PHRASE_BARS: i64 = 8;
+/// Phrase ends inside sections the song must hold before none of them being marked is reported.
+pub const MARKED_PHRASES: usize = 4;
+
 /// One part's notes, each as its position within its bar, pitch and length, grouped by bar.
 type Bars = BTreeMap<i64, Vec<(i64, u8, i64)>>;
 
@@ -174,6 +179,10 @@ pub fn arrangement_shape(project: &Project) -> Value {
     warnings.extend(shared_grooves(project, &spans, &parts));
     warnings.extend(borrowed_progressions(project, &spans));
     warnings.extend(flat_drums(project, &spans));
+    let fills = phrase_fills(project, &spans, &parts);
+    if let Some(warning) = fills.1 {
+        warnings.push(warning);
+    }
 
     // The intro and outro around the voice. The song ends with the bar its last sound is in: a
     // final hit on the downbeat of the last bar still owns that bar.
@@ -201,6 +210,7 @@ pub fn arrangement_shape(project: &Project) -> Value {
         "sections": sections, "parts": report_parts,
         "intro_bars": frame.map(|f| (f.0 * 10.0).round() / 10.0),
         "outro_bars": frame.map(|f| (f.1 * 10.0).round() / 10.0),
+        "fills": fills.0,
         "warnings": warnings,
         "note": "Measured on written notes. distinct_bars counts different one-bar patterns; a groove may repeat, but a part that never changes does not follow the song.",
     })
@@ -264,6 +274,91 @@ fn shared_grooves(
 }
 
 /// A section label without its number or a final/last marker: サビ2 and 最終サビ are both サビ.
+/// How the drums mark the eight-bar phrases inside sections, apart from the bar into a chorus
+/// that the fill check already reads: how many phrase ends there are, how many play something
+/// other than the section's main bar, and the notes in an average marked phrase end against the
+/// average bar into a chorus. A fill hierarchy grows from small inside a section to largest into
+/// a chorus. The warning comes only when no phrase end is marked at all.
+fn phrase_fills(
+    project: &Project,
+    spans: &[auris_core::SectionSpan],
+    parts: &[(String, bool, Bars)],
+) -> (Value, Option<String>) {
+    let drums: Vec<&Bars> = parts
+        .iter()
+        .filter(|(_, drum, _)| *drum)
+        .map(|(_, _, bars)| bars)
+        .collect();
+    if drums.is_empty() {
+        return (Value::Null, None);
+    }
+    let bar_hits = |bar: i64| -> Vec<(i64, u8)> {
+        let mut hits: Vec<(i64, u8)> = drums
+            .iter()
+            .filter_map(|bars| bars.get(&bar))
+            .flatten()
+            .map(|(at, pitch, _)| (*at, *pitch))
+            .collect();
+        hits.sort_unstable();
+        hits.dedup();
+        hits
+    };
+    let (mut ends, mut marked, mut marked_notes) = (0_usize, 0_usize, 0_usize);
+    let mut chorus_notes = Vec::new();
+    for (index, span) in spans.iter().enumerate() {
+        let mut starts = Vec::new();
+        let mut bar = span.start;
+        while bar < span.end {
+            starts.push(bar.raw());
+            bar += project.signatures.signature_at(bar).ticks_per_bar();
+        }
+        if index + 1 < spans.len() && is_chorus(&spans[index + 1].label) {
+            if let Some(&last) = starts.last() {
+                chorus_notes.push(bar_hits(last).len());
+            }
+        }
+        let mut counts: BTreeMap<Vec<(i64, u8)>, usize> = BTreeMap::new();
+        for &start in &starts {
+            let hits = bar_hits(start);
+            if !hits.is_empty() {
+                *counts.entry(hits).or_insert(0) += 1;
+            }
+        }
+        let Some((main, _)) = counts.into_iter().max_by_key(|(_, count)| *count) else {
+            continue;
+        };
+        // Every eighth bar, but not the section's last: that one leads into the next section.
+        for position in
+            (PHRASE_BARS as usize - 1..starts.len().saturating_sub(1)).step_by(PHRASE_BARS as usize)
+        {
+            let hits = bar_hits(starts[position]);
+            if hits.is_empty() {
+                continue;
+            }
+            ends += 1;
+            if hits != main {
+                marked += 1;
+                marked_notes += hits.len();
+            }
+        }
+    }
+    let average = |total: usize, count: usize| {
+        (count > 0).then(|| (total as f64 / count as f64 * 10.0).round() / 10.0)
+    };
+    let report = json!({
+        "phrase_ends": ends,
+        "marked": marked,
+        "notes_in_a_marked_end": average(marked_notes, marked),
+        "notes_into_a_chorus": average(chorus_notes.iter().sum(), chorus_notes.len()),
+    });
+    let warning = (ends >= MARKED_PHRASES && marked == 0).then(|| {
+        format!(
+            "The drums play their main bar through all {ends} eight-bar phrase ends inside sections; mark them with a small fill, smaller than the one into a chorus"
+        )
+    });
+    (report, warning)
+}
+
 /// How a section's harmony ends, from its last two chords: `authentic` (V to I), `plagal`
 /// (IV to I), `subtonic` (VII to I), `tonic` (another way onto I), `deceptive` (V to vi),
 /// `half` (onto V) or `open` (anywhere else), with the two chords; `null` when the section has
@@ -611,5 +706,33 @@ mod tests {
             .filter_map(|section| section["cadence"]["kind"].as_str())
             .collect();
         assert_eq!(kinds, ["half", "deceptive", "authentic"], "{report}");
+    }
+
+    #[test]
+    fn unmarked_phrase_ends_are_reported_and_a_fill_every_eight_bars_is_not() {
+        // A 40-bar song of one 32-bar Aメロ from bar 4: its phrase ends are bars 11, 19 and 27.
+        let long_verse = |mut project: Project| {
+            let bar = Ticks::QUARTER * 4;
+            project.sections = Default::default();
+            project.sections.set_point(bar * 4, Some("Aメロ".into()));
+            project.sections.set_point(bar * 36, None);
+            project
+        };
+        let plain = long_verse(song((4, 36), 40, &groove));
+        let report = arrangement_shape(&plain);
+        assert_eq!(report["fills"]["phrase_ends"], 3, "{report}");
+        assert_eq!(report["fills"]["marked"], 0, "{report}");
+        let marked = long_verse(song((4, 36), 40, &|index| {
+            if (index - 4) % 8 == 7 {
+                (0..4)
+                    .map(|beat| Note::new(38, Ticks::QUARTER * beat, Ticks::QUARTER))
+                    .collect()
+            } else {
+                groove(index)
+            }
+        }));
+        let report = arrangement_shape(&marked);
+        assert!(report["fills"]["marked"].as_u64().unwrap() >= 3, "{report}");
+        assert_eq!(report["fills"]["notes_in_a_marked_end"], 4.0);
     }
 }
