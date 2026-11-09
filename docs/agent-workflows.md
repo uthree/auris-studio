@@ -5,7 +5,7 @@
 Ordinary composition uses an existing Codex or Claude Code environment and installed Auris tools:
 write, inspect notes, render, measure, make justified repairs, and deliver. Built-in instruments
 need no evaluator installation. Synthesized singing additionally needs a suitable installed voice.
-External music evaluation is a separate [development experiment](development-audio-evaluation.md).
+An agent whose model takes audio input can [hear the song itself](agent-listening.md).
 
 Saved-project MCP, the built-in Claude/Codex backends and native API agents share
 canonical session commands, schemas and validation. Saved calls add `project`
@@ -500,12 +500,11 @@ denials. Note replacement is allowed inside the new disposable candidate; operat
 interactive approval remain unavailable. No external evaluator or shell setup is required.
 Lyric generation applies it to words and phrase structure without claiming known pitches.
 
-The production sequence lives in `crates/auris-agent/src/prompts/composition.md`;
-`prompts/live-tools.md` retains essential operation contracts such as IDs, revisions,
-note units, lyrics, singer takes and final-render verification. Exact schemas and
-detailed task guidance are obtained through discovery and `tool_help` when needed.
-The experimental modular profile additionally enters production phases
-([composition-workflows.md](composition-workflows.md)).
+The system prompt is the common core in `crates/auris-agent/src/prompts/core.md`:
+IDs, revisions, note units, failure recovery, scope and honesty. The production
+sequence is three phases, each of which returns its own instructions when entered
+([composition-workflows.md](composition-workflows.md)). Exact schemas and detailed
+task guidance are obtained through discovery and `tool_help` when needed.
 The editor panel and workshop composers resolve the same shared prompt; the workshop
 adds its private-session and host-owned export constraints. Codex and Claude Code
 receive the same resolved composition prompt. A composer's policy denies the shell and
@@ -551,9 +550,35 @@ A failed save retains the draft and leaves the active preferences unchanged.
 
 This edits the live agent's shared instructions. Native CLI tool guidance,
 operation schemas/help, optional workflow responses and permission checks remain
-separate. Approval-review and audio-critic instructions are independent. Saved-file
+separate. Approval-review instructions are independent. Saved-file
 MCP uses its own instructions. Custom prompts count toward the local model's
 context budget just like the standard prompt.
+
+## Composition commands
+
+Four slash commands in the Agent panel start a production at a chosen phase. The transcript
+shows what was typed; the model receives an assignment built by
+`auris_toolbox::phase_commands`, followed by the user's text. The assignment names where
+the work starts and stops and sends the model through `enter_phase`, which returns that
+phase's instructions, so the phase text lives in one place.
+
+| Command | What it asks for |
+| --- | --- |
+| `/compose <brief>` | The whole song in one go: score, then arrangement, then mix, without stopping at the demo. |
+| `/draft <brief>` | A demo: the score phase only, with the foreground melody over one plain chord part and roles registered. It stops there and asks whether to arrange or revise. |
+| `/mix [direction]` | The mix phase on the open song. Roles are registered from the song as it stands when there are none, and the phase lock keeps every note, sound and performance. A fix that needs an earlier phase is reported instead of made. |
+| `/review [direction]` | A read-only review: `lint_project` (score, then audio), the notes, `melody_shape` and `arrangement_shape`, and `inspect_audio` measurements. When the model can hear, it also listens to excerpts with `listen`. It then lists the problems, the findings it judges to be false positives, and a plan to fix the rest in phase order. |
+
+`/compose` and `/draft` need a brief; sent without one, the panel asks for it and sends
+nothing. Completion and `/help` list all four.
+
+`/review` runs its whole turn in Plan mode, whatever mode is chosen and whatever allow rules
+exist. The worker receives that policy for the tools it runs itself, and the window refuses
+live edits, including `production_record` writes, until the next turn. A false positive is
+only proposed as an ignore rule. Once the user agrees, a later turn calls `ignore_lint`, which
+needs confirmation as a removal does: Edit mode asks, Auto review has the reviewer weigh it against what the user typed, and only Bypass or an allow rule skips it. It records
+the rule with its reason as one Undo step, and the rule shows in the Problems panel like one
+added by hand.
 
 ## Ollama configuration and failure recovery
 

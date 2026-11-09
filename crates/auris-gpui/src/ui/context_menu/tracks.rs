@@ -174,6 +174,26 @@ impl AurisApp {
                     )
                 });
 
+        // A sound the timbre map measured can take its cluster's colour. Before any map exists
+        // the row is offered on every melodic track it might apply to, and choosing it scans.
+        let measurable =
+            matches!(&entry.kind, TrackKind::Instrument(inner) if inner.file.is_none());
+        let by_timbre = self.t(Key::MenuTrackColorByTimbre);
+        let menu = match (self.timbre_map_ready(), self.timbre_track_color(track)) {
+            (_, Some(color)) => menu.colour(
+                by_timbre,
+                MenuCommand::ColorTrackByTimbre(track),
+                self.theme.track_color(color.0),
+                color == current_color,
+            ),
+            (false, None) => menu.item_if(
+                measurable,
+                by_timbre,
+                MenuCommand::ColorTrackByTimbre(track),
+            ),
+            (true, None) => menu,
+        };
+
         menu.separator()
             .item(
                 self.t(Key::MenuNewInstrumentTrack),
@@ -282,7 +302,7 @@ impl AurisApp {
 
     /// The menu for the arrangement below the last track.
     pub(crate) fn arrangement_menu(&self, anchor: Point<Pixels>) -> ContextMenu {
-        ContextMenu::new(anchor, self.t(Key::MenuArrangement))
+        let menu = ContextMenu::new(anchor, self.t(Key::MenuArrangement))
             .toggle(
                 self.t(Key::MenuProjectSpectrogram),
                 MenuCommand::SetProjectSpectrogram(!self.spectrograms.project_enabled),
@@ -296,7 +316,8 @@ impl AurisApp {
             .item(self.t(Key::MenuNewDrumTrack), MenuCommand::NewDrumTrack)
             .item(self.t(Key::MenuNewSingerTrack), MenuCommand::NewSingerTrack)
             .item(self.t(Key::MenuNewAudioTrack), MenuCommand::NewAudioTrack)
-            .item(self.t(Key::MenuNewBusTrack), MenuCommand::NewBusTrack)
+            .item(self.t(Key::MenuNewBusTrack), MenuCommand::NewBusTrack);
+        self.with_lane_toggles(menu)
     }
 
     /// The projects opened lately, as a menu.

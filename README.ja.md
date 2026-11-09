@@ -7,6 +7,8 @@ Auris Studio は Rust で開発されたデジタル・オーディオ・ワー�
 
 **[Auris Studio の紹介ページはこちら →](https://uthree.github.io/auris-studio/)** 機能の紹介とインストーラーのダウンロードがあります。
 
+**[Auris Studio の Discord サーバーに参加する](https://discord.gg/vDFjbUWBas)** 作った曲の共有や質問、新しいリリースのお知らせはこちらで。
+
 ![エディタ：アレンジ、ピアノロール、エージェントパネル](docs/screenshots/readme/editor-ja.png)
 
 | プロジェクトを始める | AIワークショップで作曲する |

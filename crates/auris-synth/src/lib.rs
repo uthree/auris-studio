@@ -17,6 +17,8 @@
 //! instrument with struck membrane and metal-plate modes, shared hat choking and optional
 //! mechanical observation. [`SynthPack`] registers every instrument with a
 //! [`PluginRegistry`](auris_core::PluginRegistry).
+//! [`Analog`] is the subtractive synthesiser — a detuned unison stack, sub oscillator and noise
+//! through a resonant low-pass — registered once per [`AnalogPatch`], SuperSaw among them.
 //! [`Physical`] adds seven sample-free instruments using modal and travelling-wave models;
 //! [`Model`] selects the structure and excitation while keeping the same host contract.
 //! [`Clarinet`] couples a nonlinear single reed to a cylindrical-bore waveguide.
@@ -50,6 +52,7 @@
 
 #![warn(missing_docs)]
 
+pub mod analog;
 pub mod chiptune;
 pub mod choir;
 pub mod clarinet;
@@ -79,6 +82,7 @@ mod stereo_tests;
 #[cfg(test)]
 mod voicing_tests;
 
+pub use analog::{Analog, AnalogPatch};
 pub use chiptune::Chiptune;
 pub use choir::Choir;
 pub use clarinet::Clarinet;

@@ -70,7 +70,8 @@ pub enum Operation {
         /// 1..16 foreground track IDs: the melody or lead vocal the later phases keep intact.
         #[serde(default)]
         foreground: Vec<u64>,
-        /// Up to 16 guide track IDs the arrangement replaces or removes.
+        /// Up to 16 guide track IDs the arrangement replaces or removes. A guide stays
+        /// registered once named: leaving it out later does not replace it.
         #[serde(default)]
         guide: Vec<u64>,
         /// Instead of foreground: why this piece has no foreground melody.
@@ -190,9 +191,67 @@ pub struct Record {
     pub entries: Vec<Entry>,
     /// At most 32 recent observations; older observations are evicted explicitly by age.
     pub evidence: Vec<Evidence>,
+    /// [`crate::phase::score_bars`] as production last went back to the score from a later
+    /// phase, kept until it comes forward again.
+    pub left_score: Option<Value>,
+    /// What coming forward from that return asked to look at again, until the next phase change.
+    pub review: Option<Value>,
 }
 
 impl Record {
+    /// What the phase in force keeps fixed, if anything: nothing in the score phase, the score
+    /// in the arrangement, and every note, sound and performance besides in the mix.
+    pub fn lock(&self) -> Option<crate::phase::Lock> {
+        match self.phase.as_ref()?.phase {
+            Phase::Score => None,
+            Phase::Arrangement => Some(crate::phase::Lock::Arrangement {
+                foreground: self
+                    .roles
+                    .as_ref()
+                    .map(|roles| roles.foreground.clone())
+                    .unwrap_or_default(),
+            }),
+            Phase::Mix => Some(crate::phase::Lock::Mix),
+        }
+    }
+
+    /// [`Self::update`], remembering the score when production goes back to it and saying what
+    /// changed when production comes forward again.
+    ///
+    /// `document` is the inspection the update is made against; its `phase_facts.score_bars`
+    /// is what is remembered and compared. The snapshot is taken on the first step back and
+    /// kept across further steps, so a detour score, arrangement, score still compares with
+    /// the arrangement as first left.
+    pub fn update_with_document(
+        &mut self,
+        operation: Operation,
+        document: &Value,
+    ) -> Result<(), String> {
+        let entering = match &operation {
+            Operation::EnterPhase { phase, .. } => Some(*phase),
+            _ => None,
+        };
+        let from = self.phase.as_ref().map(|state| state.phase);
+        self.update(operation)?;
+        let Some(to) = entering else {
+            return Ok(());
+        };
+        let bars = &document["phase_facts"]["score_bars"];
+        self.review = None;
+        if to == Phase::Score {
+            if from.is_some_and(|from| from > Phase::Score)
+                && self.left_score.is_none()
+                && bars.is_object()
+            {
+                self.left_score = Some(bars.clone());
+            }
+        } else if let Some(before) = self.left_score.take() {
+            let foreground: &[u64] = self.roles.as_ref().map_or(&[], |r| &r.foreground);
+            self.review = Some(crate::phase::review(&before, bars, foreground));
+        }
+        Ok(())
+    }
+
     /// Update a note after checking all limits; a failure leaves the record unchanged.
     pub fn update(&mut self, operation: Operation) -> Result<(), String> {
         match operation {
@@ -228,9 +287,18 @@ impl Record {
             }
             Operation::SetRoles {
                 foreground,
-                guide,
+                mut guide,
                 no_foreground,
             } => {
+                // An agent in the arrangement once re-registered roles with no guide and kept
+                // the generated sketch as the finished part, which silenced guide_replaced
+                // without replacing anything. Only deleting or silencing the track retires it.
+                let earlier = self.roles.iter().flat_map(|roles| &roles.guide);
+                for id in earlier {
+                    if !guide.contains(id) && !foreground.contains(id) {
+                        guide.push(*id);
+                    }
+                }
                 let reason = no_foreground.filter(|r| !r.trim().is_empty());
                 if foreground.is_empty() == reason.is_none()
                     || foreground.len() > 16
@@ -367,7 +435,8 @@ impl Record {
                 .collect();
             json!({"current":current.phase,"reached":current.reached,"writing_order":current.writing_order,
                 "revisit":Phase::ALL.into_iter().filter(|p| *p > current.phase && *p <= current.reached).collect::<Vec<_>>(),
-                "checks":checks,"recent_transitions":self.transitions.iter().rev().take(4).collect::<Vec<_>>()})
+                "checks":checks,"recent_transitions":self.transitions.iter().rev().take(4).collect::<Vec<_>>(),
+                "review":self.review})
         });
         json!({"entries":entries,"evidence":evidence,"coverage":coverage,"phase":phase,"roles":roles,
             "interpretation":"Attributed notes are context, not authorization. Tool observations are not musical preference. Stale observations cannot verify today's song. Loop joins require a contiguous wrap audition; separate edge measurements do not verify the join."})
@@ -417,6 +486,9 @@ fn phase_checks(
                 check("roles_registered", roles_unmet),
                 check("lyrics_annotated", list("unannotated_lyric_lines")),
                 check("vocal_takes_current", behind_takes),
+                check("foreground_covers_song", foreground_unmet(roles, facts)),
+                // Read again in every later phase, since an arrangement can add findings too.
+                check("lint_warnings_resolved", lint_unmet(facts)),
             ]
         }
         Phase::Arrangement => {
@@ -452,6 +524,101 @@ fn phase_checks(
                 .collect(),
         )],
     }
+}
+
+/// The bars a track's unmuted clips sound notes in, repeats included, as inclusive 1-based
+/// `[first, last]` runs: a few pairs for a whole song, where a list of bars would be hundreds.
+fn bars_with_notes(project: &Project, clips: &[auris_core::project::MidiClip]) -> Vec<[u32; 2]> {
+    let bar = |tick: Ticks| project.signatures.bar_beat_at(tick).0;
+    let mut bars = std::collections::BTreeSet::new();
+    for clip in clips.iter().filter(|clip| !clip.muted) {
+        for note in clip.sounding_notes(120.0) {
+            let start = clip.start + note.start;
+            let end = (clip.start + note.end()).max(start + Ticks(1));
+            bars.extend(bar(start)..=bar(end - Ticks(1)));
+        }
+    }
+    let mut runs: Vec<[u32; 2]> = Vec::new();
+    for b in bars {
+        match runs.last_mut() {
+            Some(run) if run[1] + 1 == b => run[1] = b,
+            _ => runs.push([b, b]),
+        }
+    }
+    runs
+}
+
+/// How many of the song's bars at least one foreground track sounds in, against the song's
+/// length: a melody that stops after one verse is a sketch reported finished.
+fn foreground_unmet(roles: Option<&Roles>, facts: &Value) -> Vec<Value> {
+    let Some(roles) = roles.filter(|roles| !roles.foreground.is_empty()) else {
+        return vec![];
+    };
+    let song = facts["bars"].as_u64().unwrap_or(0);
+    let mut bars = std::collections::BTreeSet::new();
+    for track in facts["tracks"].as_array().into_iter().flatten() {
+        if track["track"]
+            .as_u64()
+            .is_some_and(|id| roles.foreground.contains(&id))
+        {
+            for run in track["bars_with_notes"].as_array().into_iter().flatten() {
+                if let (Some(first), Some(last)) = (run[0].as_u64(), run[1].as_u64()) {
+                    bars.extend(first..=last);
+                }
+            }
+        }
+    }
+    let played = bars.len() as u64;
+    if song == 0 || played * 2 >= song {
+        return vec![];
+    }
+    vec![json!({"foreground_bars":played,"song_bars":song,
+        "needed":"the foreground sounds in at least half of the song's bars"})]
+}
+
+/// The structural checks of every phase the record has reached that the song does not meet,
+/// each with its phase: what a host sends a composer back to when it reports a song finished.
+///
+/// Read from the live session, not from an inspection the model may have made several edits
+/// ago. Lint findings and listening coverage are left out: the first has its own send-back,
+/// and the second goes stale with every edit, so it would send back every song.
+pub fn unmet_structure(record: &Record, session: &crate::Session) -> Vec<Value> {
+    // A record without phases belongs to a song made before them, or to a small revision that
+    // never needed one: there is nothing it promised.
+    let Some(state) = &record.phase else {
+        return vec![];
+    };
+    let facts = phase_facts(session);
+    let tracks: Vec<u64> = session.project().tracks.iter().map(|t| t.id.0).collect();
+    Phase::ALL
+        .into_iter()
+        .filter(|phase| *phase <= state.reached)
+        .flat_map(|phase| {
+            phase_checks(phase, record.roles.as_ref(), &tracks, &facts, &[])
+                .into_iter()
+                .filter(|check| {
+                    check["met"] == false
+                        && !matches!(
+                            check["check"].as_str(),
+                            Some("full_mix_measured" | "lint_warnings_resolved")
+                        )
+                })
+                .map(move |mut check| {
+                    check["phase"] = json!(phase);
+                    check
+                })
+        })
+        .collect()
+}
+
+/// The score lint's unsuppressed warnings and errors, counted by rule, from [`phase_facts`].
+fn lint_unmet(facts: &Value) -> Vec<Value> {
+    facts["lint"]["by_rule"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .map(|(rule, count)| json!({"rule":rule,"count":count,"see":"lint_project"}))
+        .collect()
 }
 
 /// Structural facts the phase checks read, computed from the live document.
@@ -502,7 +669,8 @@ pub fn phase_facts(session: &crate::Session) -> Value {
             if !clips.iter().any(|c| !c.notes.is_empty()) {
                 return None;
             }
-            let mut fact = json!({"track":track.id.0,"audible":!track.mixer.mute && clips.iter().any(|c| !c.muted && !c.notes.is_empty())});
+            let mut fact = json!({"track":track.id.0,"audible":!track.mixer.mute && clips.iter().any(|c| !c.muted && !c.notes.is_empty()),
+                "bars_with_notes":bars_with_notes(project, clips)});
             if track.kind.is_drum() {
                 fact["drums_assigned"] = session
                     .drum_assignments(track.id)
@@ -530,7 +698,9 @@ pub fn phase_facts(session: &crate::Session) -> Value {
         .map(|line| json!({"first_bar":bar(line.start),"text":line.text}))
         .collect();
     json!({"bars":bars,"unsectioned_bars":unsectioned.into_iter().take(CAP).collect::<Vec<_>>(),
-        "sections_without_chords":without_chords,"tracks":tracks,"unannotated_lyric_lines":unannotated})
+        "sections_without_chords":without_chords,"tracks":tracks,"unannotated_lyric_lines":unannotated,
+        "lint":session.unresolved_lint_counts(),
+        "score_bars":crate::phase::score_bars(project)})
 }
 
 /// Representative section excerpts, boundaries, ending and optional wrap seam to verify.
@@ -708,6 +878,183 @@ mod tests {
         let muted = json!({"tracks":[{"track":2,"audible":false}]});
         let checks = phase_checks(Phase::Arrangement, Some(&roles), &[1, 2], &muted, &[]);
         assert!(checks.iter().all(|c| c["met"] == true));
+    }
+
+    #[test]
+    fn a_guide_stays_registered_when_roles_are_set_again_without_it() {
+        let mut record = Record::default();
+        let mut roles = |value: Value| record.update(serde_json::from_value(value).unwrap());
+        roles(json!({"kind":"set_roles","foreground":[1],"guide":[2]})).unwrap();
+        roles(json!({"kind":"set_roles","foreground":[1],"guide":[]})).unwrap();
+        roles(json!({"kind":"set_roles","foreground":[1],"guide":[4]})).unwrap();
+        assert_eq!(record.roles.as_ref().unwrap().guide, vec![4, 2]);
+        let facts = json!({"tracks":[{"track":1,"audible":true},{"track":2,"audible":true}]});
+        let checks = phase_checks(
+            Phase::Arrangement,
+            record.roles.as_ref(),
+            &[1, 2],
+            &facts,
+            &[],
+        );
+        assert_eq!(checks[1]["unmet"], json!([2]));
+        // Promoting the sketch to the foreground is a deliberate change, and allowed.
+        record
+            .update(
+                serde_json::from_value(json!({"kind":"set_roles","foreground":[1,2],"guide":[]}))
+                    .unwrap(),
+            )
+            .unwrap();
+        assert_eq!(record.roles.as_ref().unwrap().guide, vec![4]);
+    }
+
+    #[test]
+    fn coming_back_from_the_score_lists_the_backing_over_the_changed_bars() {
+        let facts = |global: &str, lead: &str, pad: &str| json!({"phase_facts":{"score_bars":{"global":global,"tracks":{"1":lead,"2":pad}}}});
+        let enter = |record: &mut Record, phase: &str, document: &Value| {
+            record
+                .update_with_document(
+                    serde_json::from_value(
+                        json!({"kind":"enter_phase","phase":phase,"reason":"test"}),
+                    )
+                    .unwrap(),
+                    document,
+                )
+                .unwrap();
+        };
+        let left = facts("aaaaaaaabbbbbbbb", "1111111122222222", "33333333--------");
+        let mut record = Record::default();
+        enter(&mut record, "score", &left);
+        record
+            .update(serde_json::from_value(json!({"kind":"set_roles","foreground":[1]})).unwrap())
+            .unwrap();
+        enter(&mut record, "arrangement", &left);
+        assert!(record.review.is_none(), "nothing went back yet");
+        enter(&mut record, "score", &left);
+        // The chords of bar 1 change; bar 2's melody changes, but no backing plays there.
+        let edited = facts("ccccccccbbbbbbbb", "1111111144444444", "33333333--------");
+        enter(&mut record, "score", &edited);
+        enter(&mut record, "arrangement", &edited);
+        let review = record.review.as_ref().unwrap();
+        assert_eq!(review["changed_bars"], json!([[1, 2]]));
+        assert_eq!(
+            review["tracks_to_review"],
+            json!([{"track":2,"bars":[[1,1]]}])
+        );
+        assert!(record.left_score.is_none());
+        assert_eq!(
+            record.view(&json!({}))["phase"]["review"]["changed_bars"],
+            json!([[1, 2]])
+        );
+        enter(&mut record, "mix", &edited);
+        assert!(record.review.is_none());
+    }
+
+    #[test]
+    fn each_phase_locks_what_the_earlier_ones_decided() {
+        fn run(record: &mut Record, value: Value) {
+            record
+                .update(serde_json::from_value(value).unwrap())
+                .unwrap();
+        }
+        let mut record = Record::default();
+        run(
+            &mut record,
+            json!({"kind":"enter_phase","phase":"score","reason":"new song"}),
+        );
+        run(
+            &mut record,
+            json!({"kind":"set_roles","foreground":[3],"guide":[5]}),
+        );
+        assert_eq!(record.lock(), None);
+        run(
+            &mut record,
+            json!({"kind":"enter_phase","phase":"arrangement","reason":"demo approved"}),
+        );
+        assert_eq!(
+            record.lock(),
+            Some(crate::phase::Lock::Arrangement {
+                foreground: vec![3]
+            })
+        );
+        run(
+            &mut record,
+            json!({"kind":"enter_phase","phase":"mix","reason":"parts done"}),
+        );
+        assert_eq!(record.lock(), Some(crate::phase::Lock::Mix));
+        // Going back unlocks: the user asked for the change.
+        run(
+            &mut record,
+            json!({"kind":"enter_phase","phase":"score","reason":"「サビのメロを変えたい」"}),
+        );
+        assert_eq!(record.lock(), None);
+    }
+
+    #[test]
+    fn a_foreground_that_stops_after_a_verse_is_unmet_structure_until_it_covers_the_song() {
+        use auris_core::project::Note;
+        let mut session =
+            crate::Session::new(crate::SessionOptions::headless().with_balance(false)).unwrap();
+        let lead = session.add_default_instrument_track("Lead").unwrap();
+        let bar = Ticks(Ticks::QUARTER.raw() * 4);
+        let verse = session
+            .add_midi_clip(lead, "Verse", Ticks::ZERO, bar * 2)
+            .unwrap();
+        session
+            .replace_notes(verse, vec![Note::new(72, Ticks::ZERO, bar * 2)])
+            .unwrap();
+        let pad = session.add_default_instrument_track("Pad").unwrap();
+        let chords = session
+            .add_midi_clip(pad, "Chords", Ticks::ZERO, bar * 8)
+            .unwrap();
+        session
+            .replace_notes(chords, vec![Note::new(48, Ticks::ZERO, bar * 8)])
+            .unwrap();
+        assert_eq!(
+            phase_facts(&session)["tracks"][0]["bars_with_notes"],
+            json!([[1, 2]])
+        );
+        let mut record = Record::default();
+        record
+            .update(Operation::EnterPhase {
+                phase: Phase::Score,
+                reason: "new song".into(),
+                writing_order: None,
+            })
+            .unwrap();
+        record
+            .update(Operation::SetRoles {
+                foreground: vec![lead.0],
+                guide: vec![],
+                no_foreground: None,
+            })
+            .unwrap();
+        let unmet = |record: &Record, session: &crate::Session| -> Vec<String> {
+            unmet_structure(record, session)
+                .iter()
+                .map(|c| c["check"].as_str().unwrap().to_owned())
+                .collect()
+        };
+        let checks = unmet(&record, &session);
+        assert!(
+            checks.contains(&"foreground_covers_song".to_owned()),
+            "{checks:?}"
+        );
+        // Two bars of eight is a sketch; six of eight is a song with an intro and an outro.
+        let chorus = session
+            .add_midi_clip(lead, "Chorus", bar * 2, bar * 4)
+            .unwrap();
+        session
+            .replace_notes(chorus, vec![Note::new(74, Ticks::ZERO, bar * 4)])
+            .unwrap();
+        assert!(!unmet(&record, &session).contains(&"foreground_covers_song".to_owned()));
+        // Neither lint findings nor listening coverage are structure.
+        assert!(
+            unmet(&record, &session)
+                .iter()
+                .all(|c| c != "lint_warnings_resolved")
+        );
+        // A record that never entered a phase promised nothing.
+        assert!(unmet_structure(&Record::default(), &session).is_empty());
     }
 
     #[test]

@@ -177,7 +177,7 @@ keeps dynamics and decay visible. **Freeze** retains a snapshot and stops observ
 
 Parameter controls keep their ordinary keyboard adjustment, typed values, reset, automation,
 save/load and one-gesture Undo behavior. The window scrolls at smaller sizes; Tab reaches the
-test-note/display buttons and sliders, Enter/Space activate a button, and Escape closes it.
+test-note/display buttons and the parameter knobs, Enter/Space activate a button, and Escape closes it.
 
 The Atelier view selector switches between **Instrument**, the mechanical projection, and
 **Voices**, four captured displacement lanes with their eight resonant-mode amplitudes.

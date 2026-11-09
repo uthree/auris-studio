@@ -1860,7 +1860,7 @@ impl SettingsWindow {
                     div()
                         .text_xs()
                         .text_color(theme.mute)
-                        .child(messages::also_bound_to(self.language, &clashes.join(", ")))
+                        .child(messages::also_bound_to(self.language, clashes.join(", ")))
                 }),
             )
             .children(chips)

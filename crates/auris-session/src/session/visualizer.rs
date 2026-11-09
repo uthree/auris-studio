@@ -3,7 +3,54 @@ use std::sync::Arc;
 
 use super::Session;
 use auris_core::TrackId;
-use auris_dsp::{SILENCE_DB, SpectrumAnalyzer, bands_from_bins};
+use auris_dsp::{
+    LoudnessMeter, SILENCE_DB, SpectrumAnalyzer, bands_from_bins, bands_from_bins_nearest,
+};
+
+/// Where on a strip the visualizer listens: before its fader and pan, or after them.
+pub use auris_engine::ScopeTap as VisualizerTap;
+
+/// How many frames the visualizer's scope retains: about two thirds of a second at 48 kHz.
+///
+/// The display needs two windows of it. The rest is slack for the loudness meter, which measures
+/// every sample and so loses some whenever the window goes this long without a repaint.
+pub(super) const VISUALIZER_HISTORY: usize = 1 << 15;
+
+/// How many samples one visualizer spectrum is taken over: 85 ms at 48 kHz, 12 Hz between bins.
+///
+/// Four times the plugin editor's window, because the visualizer draws sixth-octave bars down to
+/// 20 Hz and a sixth of an octave there is a few hertz wide. It costs time resolution, which is
+/// what the spectrogram beside it is for.
+pub(super) const VISUALIZER_FFT: usize = 4096;
+
+/// The loudness of what the visualizer follows, to EBU R128.
+///
+/// Every reading is `None` until enough has been heard to make it, and while what has been heard
+/// is silence.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct VisualizerLoudness {
+    /// The last 400 ms, in LUFS.
+    pub momentary: Option<f32>,
+    /// The last 3 s, in LUFS.
+    pub short_term: Option<f32>,
+    /// Everything since the meter was last reset, gated, in LUFS.
+    pub integrated: Option<f32>,
+    /// The loudness range since the meter was last reset, in LU.
+    pub range: Option<f32>,
+    /// The highest true peak since the meter was last reset, in dBTP.
+    pub true_peak: Option<f32>,
+}
+
+/// The visualizer's loudness meter and where it has read up to in the scope.
+#[derive(Default)]
+pub(super) struct LoudnessTap {
+    meter: Option<LoudnessMeter>,
+    cursor: u64,
+    left: Vec<f32>,
+    right: Vec<f32>,
+    /// The strip and tap the meter has been hearing, so a change of either starts it again.
+    following: Option<(auris_engine::ScopeSource, VisualizerTap)>,
+}
 
 /// Which stereo interpretation the live spectrum displays.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -30,6 +77,9 @@ pub(super) struct SpectrumRequest {
     pub(super) high_hz: f64,
     /// Stereo interpretation to transform.
     pub(super) mode: VisualizerSpectrum,
+    /// Whether a band too narrow for a bin of its own repeats the nearest bin rather than
+    /// reading silence; see [`auris_dsp::bands_from_bins_nearest`].
+    pub(super) fill_narrow_bands: bool,
 }
 
 /// One coherent window of audio and its measured stereo spectrum.
@@ -98,8 +148,10 @@ impl Session {
         })
     }
 
-    /// Selects the independent visualizer's post-fader signal. `None` means master.
-    pub fn watch_visualizer(&self, track: Option<TrackId>) {
+    /// Selects the independent visualizer's signal: `None` means master, and `tap` whether it is
+    /// heard before or after the strip's fader. Changing either starts the loudness meter again,
+    /// since what it had measured was a different signal.
+    pub fn watch_visualizer(&mut self, track: Option<TrackId>, tap: VisualizerTap) {
         let source = match track {
             None => auris_engine::ScopeSource::Master,
             Some(id) => self.project.track_index(id).map_or(
@@ -107,12 +159,70 @@ impl Session {
                 auris_engine::ScopeSource::Track,
             ),
         };
+        self.visualizer_scope.set_tap(tap);
         self.visualizer_scope.watch(source);
+        if self.visualizer_loudness.following != Some((source, tap)) {
+            self.reset_visualizer_loudness();
+            self.visualizer_loudness.following = Some((source, tap));
+        }
     }
 
     /// Stops collecting samples for the visualizer.
-    pub fn stop_visualizer(&self) {
+    pub fn stop_visualizer(&mut self) {
         self.visualizer_scope.watch(auris_engine::ScopeSource::Off);
+        self.visualizer_loudness.following = None;
+    }
+
+    /// Forgets the loudness measured so far: the integrated loudness, the range and the true
+    /// peak start again from the next sample. No document edit.
+    pub fn reset_visualizer_loudness(&mut self) {
+        let tap = &mut self.visualizer_loudness;
+        if let Some(meter) = &mut tap.meter {
+            meter.reset();
+        }
+        // Whatever is already in the ring was heard before the reset.
+        let mut scratch = [0.0; 0];
+        let _ = self
+            .visualizer_scope
+            .read_new(&mut tap.cursor, &mut scratch, &mut []);
+    }
+
+    /// Measures everything the visualizer's scope has published since the last call and returns
+    /// the readings. Call it on every repaint, frozen or not: the meter has to hear every sample
+    /// to be the measure it claims to be, and a display that is held still is not a signal that
+    /// has stopped.
+    pub fn measure_visualizer_loudness(&mut self) -> VisualizerLoudness {
+        let tap = &mut self.visualizer_loudness;
+        let history = self.visualizer_scope.history();
+        tap.left.resize(history, 0.0);
+        tap.right.resize(history, 0.0);
+        if let Some(fresh) =
+            self.visualizer_scope
+                .read_new(&mut tap.cursor, &mut tap.left, &mut tap.right)
+            && fresh.frames > 0
+        {
+            let rate = self.visualizer_scope.sample_rate();
+            if rate > 0.0
+                && tap
+                    .meter
+                    .as_ref()
+                    .is_none_or(|meter| meter.sample_rate() != rate)
+            {
+                tap.meter = Some(LoudnessMeter::new(rate));
+            }
+            if let Some(meter) = &mut tap.meter {
+                meter.push(&tap.left[..fresh.frames], &tap.right[..fresh.frames]);
+            }
+        }
+        tap.meter
+            .as_ref()
+            .map_or_else(VisualizerLoudness::default, |meter| VisualizerLoudness {
+                momentary: meter.momentary(),
+                short_term: meter.short_term(),
+                integrated: meter.integrated(),
+                range: meter.range(),
+                true_peak: meter.true_peak_db(),
+            })
     }
 
     /// Reads a stereo window without waiting for the audio thread.
@@ -127,7 +237,7 @@ impl Session {
         bands: usize,
         spectrum_mode: Option<VisualizerSpectrum>,
     ) -> Option<VisualizerFrame> {
-        let mut left = vec![0.0; auris_engine::SCOPE_HISTORY];
+        let mut left = vec![0.0; auris_engine::SCOPE_HISTORY.max(VISUALIZER_FFT)];
         let mut right = vec![0.0; left.len()];
         if !self.visualizer_scope.read_stereo(&mut left, &mut right) {
             return None;
@@ -144,7 +254,7 @@ impl Session {
             .unwrap_or_default();
         if let Some(mode) = spectrum_mode {
             stereo_spectrum(
-                &mut self.analyzer,
+                &mut self.visualizer_analyzer,
                 &left,
                 &right,
                 rate,
@@ -152,6 +262,7 @@ impl Session {
                     low_hz,
                     high_hz,
                     mode,
+                    fill_narrow_bands: true,
                 },
                 &mut spectrum,
             );
@@ -218,7 +329,11 @@ pub(super) fn stereo_spectrum(
             }
         }
     }
-    bands_from_bins(&bins, rate, request.low_hz, request.high_hz, bands);
+    if request.fill_narrow_bands {
+        bands_from_bins_nearest(&bins, rate, request.low_hz, request.high_hz, bands);
+    } else {
+        bands_from_bins(&bins, rate, request.low_hz, request.high_hz, bands);
+    }
 }
 
 fn analyze_channel(analyzer: &mut SpectrumAnalyzer, samples: &[f32], bins: &mut [f32]) {
@@ -310,7 +425,7 @@ mod tests {
     fn visualizer_and_plugin_scopes_are_independent() {
         let mut session = super::super::fixtures::session();
         session.watch_strip(None);
-        session.watch_visualizer(None);
+        session.watch_visualizer(None, VisualizerTap::PostFader);
         session
             .scope
             .publish_stereo(&[1.; 1024], &[1.; 1024], 48000.);
@@ -322,10 +437,11 @@ mod tests {
             .visualizer_frame(30., 18000., 64, Some(VisualizerSpectrum::Average))
             .unwrap();
         assert_eq!(frame.correlation, Some(-1.));
-        assert_eq!(&frame.left[..1024], &[0.; 1024]);
-        assert_eq!(&frame.left[1024..], &[1.; 1024]);
-        assert_eq!(&frame.right[..1024], &[0.; 1024]);
-        assert_eq!(&frame.right[1024..], &[-1.; 1024]);
+        let older = frame.left.len() - 1024;
+        assert_eq!(&frame.left[..older], &vec![0.; older][..]);
+        assert_eq!(&frame.left[older..], &[1.; 1024]);
+        assert_eq!(&frame.right[..older], &vec![0.; older][..]);
+        assert_eq!(&frame.right[older..], &[-1.; 1024]);
         assert_eq!(frame.sample_rate, 48000.);
         assert_eq!(frame.window_samples, 1024);
         session.stop_visualizer();
@@ -361,6 +477,7 @@ mod tests {
                 low_hz: 30.,
                 high_hz: 18000.,
                 mode: VisualizerSpectrum::Average,
+                fill_narrow_bands: false,
             },
             &mut mono,
         );
@@ -373,6 +490,7 @@ mod tests {
                 low_hz: 30.,
                 high_hz: 18000.,
                 mode: VisualizerSpectrum::Average,
+                fill_narrow_bands: false,
             },
             &mut anti,
         );
@@ -385,6 +503,7 @@ mod tests {
                 low_hz: 30.,
                 high_hz: 18000.,
                 mode: VisualizerSpectrum::Average,
+                fill_narrow_bands: false,
             },
             &mut right,
         );
@@ -412,6 +531,7 @@ mod tests {
                     low_hz: 30.,
                     high_hz: 18000.,
                     mode,
+                    fill_narrow_bands: false,
                 },
                 &mut bands,
             );
@@ -427,5 +547,52 @@ mod tests {
         assert!((maximum - left).abs() < 0.001);
         assert!((left - average - 3.0103).abs() < 0.01);
         assert!((left - mono - 6.0206).abs() < 0.01);
+    }
+
+    #[test]
+    fn the_loudness_meter_hears_every_sample_and_starts_again_on_a_new_source() {
+        let mut session = super::super::fixtures::session();
+        let track = session.add_audio_track("Tone");
+        session.watch_visualizer(None, VisualizerTap::PostFader);
+        assert_eq!(
+            session.measure_visualizer_loudness(),
+            VisualizerLoudness::default()
+        );
+        // Five seconds of the standard's calibration tone, delivered a callback at a time, with
+        // the meter read only every eight callbacks the way a repaint would.
+        let tone: Vec<f32> = (0..48_000 * 5)
+            .map(|n| 0.1 * (std::f32::consts::TAU * 1000. * n as f32 / 48_000.).sin())
+            .collect();
+        for (index, block) in tone.chunks(512).enumerate() {
+            session
+                .visualizer_scope
+                .publish_stereo(block, block, 48_000.);
+            if index % 8 == 7 {
+                session.measure_visualizer_loudness();
+            }
+        }
+        let reading = session.measure_visualizer_loudness();
+        for value in [reading.momentary, reading.short_term, reading.integrated] {
+            let value = value.expect("a tone is loud");
+            assert!((value - -20.).abs() < 0.1, "read {value:.2} LUFS");
+        }
+        assert!((reading.true_peak.unwrap() - -20.).abs() < 0.1);
+
+        // The same strip from before its fader is another signal, and so another measurement.
+        session.watch_visualizer(None, VisualizerTap::PreFader);
+        assert_eq!(session.measure_visualizer_loudness().integrated, None);
+        session.watch_visualizer(Some(track), VisualizerTap::PreFader);
+        assert_eq!(session.measure_visualizer_loudness().integrated, None);
+
+        // And a reset forgets what was heard, including what is still in the ring.
+        session
+            .visualizer_scope
+            .publish_stereo(&tone, &tone, 48_000.);
+        assert!(session.measure_visualizer_loudness().true_peak.is_some());
+        session
+            .visualizer_scope
+            .publish_stereo(&tone[..4800], &tone[..4800], 48_000.);
+        session.reset_visualizer_loudness();
+        assert_eq!(session.measure_visualizer_loudness().true_peak, None);
     }
 }

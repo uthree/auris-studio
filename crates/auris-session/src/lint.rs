@@ -691,6 +691,76 @@ mod tests {
     }
 
     #[test]
+    fn the_agent_ignores_one_finding_by_id_with_its_reason_as_one_undo_step() {
+        let (mut session, _, clips) = session();
+        let command = |id: &str, scope: &str, reason: &str| {
+            serde_json::from_value::<crate::live_agent::Command>(serde_json::json!({
+                "action": "ignore_lint", "id": id, "scope": scope, "reason": reason,
+            }))
+            .unwrap()
+        };
+        let finding = session
+            .lint_score()
+            .diagnostics
+            .into_iter()
+            .find(|d| d.notes.iter().any(|note| note.clip == clips[1]))
+            .unwrap();
+        assert!(
+            session
+                .agent_command(command(&finding.id(), "clip", " "))
+                .is_err()
+        );
+        assert!(
+            session
+                .agent_command(command("no-such-id", "clip", "doubled on purpose"))
+                .is_err()
+        );
+        let answer: serde_json::Value = serde_json::from_str(
+            &session
+                .agent_command(command(&finding.id(), "clip", "doubled on purpose"))
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(answer["ignored"]["reason"], "doubled on purpose");
+        assert_eq!(duplicates(&session), 1);
+        assert_eq!(
+            session.project().lint_suppressions,
+            vec![LintSuppression {
+                rule: Some(Rule::DuplicateNote.name().into()),
+                scope: LintScope::Clip { clip: clips[1] },
+                reason: "doubled on purpose".into(),
+            }]
+        );
+        session.undo().unwrap();
+        assert_eq!(duplicates(&session), 2);
+        assert!(session.project().lint_suppressions.is_empty());
+    }
+
+    #[test]
+    fn unresolved_warnings_are_counted_for_hosts_and_inspections_until_suppressed() {
+        let (mut session, _, _) = session();
+        let unresolved = session.unresolved_lint(1).unwrap();
+        assert_eq!(unresolved["warnings_and_errors"], 2);
+        assert_eq!(unresolved["by_rule"]["duplicate_note"], 2);
+        assert_eq!(unresolved["diagnostics"].as_array().unwrap().len(), 1);
+        assert_eq!(unresolved["diagnostics"][0]["track_name"], "Keys");
+        assert_eq!(
+            crate::production_record::phase_facts(&session)["lint"]["by_rule"]["duplicate_note"],
+            2
+        );
+        session.suppress_lint(LintSuppression {
+            rule: None,
+            scope: LintScope::Song,
+            reason: "kept on purpose".into(),
+        });
+        assert!(session.unresolved_lint(1).is_none());
+        assert_eq!(
+            crate::production_record::phase_facts(&session)["lint"]["warnings_and_errors"],
+            0
+        );
+    }
+
+    #[test]
     fn suppressions_travel_with_the_saved_document() {
         let (mut session, tracks, _) = session();
         let suppression = LintSuppression {

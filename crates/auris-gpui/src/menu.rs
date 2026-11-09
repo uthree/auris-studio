@@ -426,6 +426,7 @@ pub fn model(language: Language, panels: &PanelLayout, state: MenuState) -> Vec<
             ),
             MenuRow::Separator,
             command(t(Key::CmdSplitClip), actions::SplitClip, "clip.split"),
+            command(t(Key::CmdJoinClips), actions::JoinClips, "clip.join"),
             command(
                 t(Key::CmdToggleClipMute),
                 actions::ToggleClipMute,
@@ -599,10 +600,16 @@ pub fn model(language: Language, panels: &PanelLayout, state: MenuState) -> Vec<
                 panels.lanes.structure,
             ),
             toggle(
-                t(Key::CmdShowHarmonyLane),
-                actions::ToggleHarmonyLane,
-                "view.harmony_lane",
-                panels.lanes.harmony,
+                t(Key::CmdShowKeyLane),
+                actions::ToggleKeyLane,
+                "view.key_lane",
+                panels.lanes.keys,
+            ),
+            toggle(
+                t(Key::CmdShowChordLane),
+                actions::ToggleChordLane,
+                "view.chord_lane",
+                panels.lanes.chords,
             ),
             toggle(
                 t(Key::CmdShowLyricsLane),
@@ -628,9 +635,20 @@ pub fn model(language: Language, panels: &PanelLayout, state: MenuState) -> Vec<
                 "view.modulation_lane",
                 panels.curve_lane(ClipCurve::Controller(CC_MODULATION)),
             ),
+            toggle(
+                t(Key::CmdShowEventList),
+                actions::ToggleEventList,
+                "view.event_list",
+                panels.event_list,
+            ),
             MenuRow::Separator,
             command(t(Key::CmdZoomIn), actions::ZoomIn, "view.zoom_in"),
             command(t(Key::CmdZoomOut), actions::ZoomOut, "view.zoom_out"),
+            command(
+                t(Key::CmdRevealPlayhead),
+                actions::RevealPlayhead,
+                "view.reveal_playhead",
+            ),
             command(
                 t(Key::CmdIncreaseTrackHeight),
                 actions::IncreaseTrackHeight,

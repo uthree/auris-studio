@@ -117,8 +117,18 @@ impl Icon {
     /// therefore resolve to established symbols; Auris's domain SVGs share that grid and reach
     /// the renderer as an [`IconSource`].
     pub fn source(self) -> IconSource {
-        let name = match self {
-            Self::Sound(family) => return IconSource::svg(sound_icon_path(family)),
+        match self {
+            Self::Sound(family) => IconSource::svg(sound_icon_path(family)),
+            other => other.atelier_name().into(),
+        }
+    }
+
+    /// The Atelier symbol this icon is drawn with, for components that take an `IconName`
+    /// rather than a source. A sound family's own drawing has no name; it answers with the
+    /// waveform every sound shares.
+    pub fn atelier_name(self) -> AtelierIconName {
+        match self {
+            Self::Sound(_) => AtelierIconName::Waveform,
             Self::Menu => AtelierIconName::Menu,
             Self::Punch => AtelierIconName::Punch,
             Self::Notes => AtelierIconName::Notes,
@@ -148,8 +158,7 @@ impl Icon {
             Self::Undo => AtelierIconName::Undo,
             Self::Redo => AtelierIconName::Redo,
             Self::Bolt => AtelierIconName::Bolt,
-        };
-        name.into()
+        }
     }
 }
 

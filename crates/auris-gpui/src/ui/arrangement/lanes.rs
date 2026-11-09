@@ -11,6 +11,7 @@
 //! list the painter walks, so an arrow promising a grab the button does not deliver would have
 //! to be a mistake made twice.
 
+use auris_i18n::Key;
 use auris_session::prelude::*;
 
 use gpui::{
@@ -76,6 +77,7 @@ impl AurisApp {
         // gives them a tooltip and a click without the arrangement tracking a hovered problem.
         let lint_marks = self.lint_marks();
         let painted_marks = lint_marks.clone();
+        let return_to_playhead = self.return_to_playhead_chip(playhead, cx);
 
         div()
             .flex()
@@ -160,7 +162,7 @@ impl AurisApp {
                     .when(self.panels.lanes.structure, |this| {
                         this.child(self.render_structure_lane(cx))
                     })
-                    .when(self.panels.lanes.harmony, |this| {
+                    .when(self.panels.lanes.harmony_height().is_some(), |this| {
                         this.child(self.render_harmony_lane(cx))
                     })
                     .when(self.panels.lanes.lyrics, |this| {
@@ -379,6 +381,7 @@ impl AurisApp {
                         )
                         // Over the canvas, so a press on a comment reaches the comment first.
                         .children(comment_tags)
+                        .children(return_to_playhead)
                         .on_mouse_down(
                             MouseButton::Right,
                             cx.listener(|this, event: &MouseDownEvent, _, cx| {
@@ -398,6 +401,54 @@ impl AurisApp {
                     .pr(self.scrollbar_width(ScrollPanel::Lanes))
                     .child(self.time_scrollbar(ScrollPanel::ArrangementTime, cx)),
             )
+    }
+
+    /// While a scroll has taken the view away from a rolling playhead, a button in the corner
+    /// the playhead went out of that takes the view back to it.
+    fn return_to_playhead_chip(
+        &self,
+        playhead: Ticks,
+        cx: &mut gpui::Context<Self>,
+    ) -> Option<gpui::AnyElement> {
+        if !self.is_playing() || !self.playhead_follow.is_released() {
+            return None;
+        }
+        let behind = playhead < self.timeline.scroll_ticks;
+        let label = self.t(Key::CmdRevealPlayhead);
+        let label = match behind {
+            true => format!("← {label}"),
+            false => format!("{label} →"),
+        };
+        let chip = crate::ui::widgets::button(
+            "return-to-playhead",
+            label,
+            crate::ui::widgets::ButtonStyle::Primary,
+            false,
+            self.theme.accent,
+            &self.theme,
+            cx.listener(|this, _, _, cx| {
+                this.reveal_playhead();
+                cx.notify();
+            }),
+        )
+        .debug_selector(|| "return-to-playhead".into())
+        // The lanes under it would take the press for a rubber band otherwise.
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(|this, _: &MouseDownEvent, _, cx| {
+                cx.stop_propagation();
+                this.reveal_playhead();
+                cx.notify();
+            }),
+        );
+        let placed = div().absolute().bottom(px(12.0)).child(chip);
+        Some(
+            match behind {
+                true => placed.left(px(12.0)),
+                false => placed.right(px(12.0)),
+            }
+            .into_any_element(),
+        )
     }
 
     /// Removes open rows whose parameter disappeared with a plugin or track edit.

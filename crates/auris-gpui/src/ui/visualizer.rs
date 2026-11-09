@@ -1,86 +1,138 @@
-//! Live stereo monitoring in a native utility window.
-use super::{
-    analyser::{FLOOR_DB, HIGH_HZ, LOW_HZ, x_of},
-    paint,
-    widgets::{ButtonState, ButtonStyle, button, button_enabled},
-};
+//! The analyser: what a strip sounds like, on five plots at once.
+//!
+//! Laid out as the Atelier analyser is — a spectrum beside a loudness meter, a spectrogram beside
+//! a goniometer, an oscilloscope under them all, each a card with its plot on a sunken well — and
+//! drawn with Atelier's own plots, so a bar, a heat ramp or a trace means the same thing here as
+//! in every other window that uses them.
+//!
+//! Everything a view decides is a free function with tests underneath it; the view only lays
+//! out what they return.
+use super::widgets::{ButtonStyle, button};
+use super::{analyser::FLOOR_DB, paint};
 use crate::{app::AurisApp, theme::Theme};
+use atelier::viz::{Heatmap, Spectrum, Vectorscope, Waveform};
+use atelier::{
+    Badge, Button, Card, ControlSize, IconName, Label, LevelMeter, SectionHeader, Segment,
+    SegmentedControl, TextColor, TextSize, Tone,
+};
 use auris_i18n::Key;
-use auris_session::{VisualizerFrame, VisualizerSpectrum, prelude::*};
-use gpui::{Bounds, Pixels, Window, canvas, div, point, prelude::*, px, size};
+use auris_session::{
+    VisualizerFrame, VisualizerLoudness, VisualizerSpectrum, VisualizerTap, prelude::*,
+};
+use gpui::{
+    AnyElement, Bounds, Hsla, Pixels, Window, canvas, div, point, prelude::*, px, relative, size,
+};
 use std::{
-    cell::Cell,
     collections::VecDeque,
-    rc::Rc,
     time::{Duration, Instant},
 };
 
+/// Lowest frequency the spectrum shows: the bottom of hearing.
+const SPECTRUM_LOW_HZ: f64 = 20.0;
+
+/// Highest frequency the spectrum shows: exactly ten octaves above the lowest, so each of
+/// [`Spectrum`]'s ten vertical divisions is one octave.
+const SPECTRUM_HIGH_HZ: f64 = SPECTRUM_LOW_HZ * 1024.0;
+
+/// Octaves across the spectrum, one grid division each.
+const SPECTRUM_OCTAVES: usize = 10;
+
+/// Bands across the spectrum: six to the octave.
+const SPECTRUM_BANDS: usize = SPECTRUM_OCTAVES * 6;
+
+/// Decibels per horizontal division of the spectrum. [`Spectrum`] draws six, so the floor is
+/// [`FLOOR_DB`].
+const SPECTRUM_DB_STEP: f32 = 12.0;
+
+/// How long the spectrogram remembers.
+const SPECTROGRAM_SPAN: Duration = Duration::from_secs(3);
+
+/// Columns across the spectrogram, one per 25 ms.
+const SPECTROGRAM_COLUMNS: usize = 120;
+
 const CORRELATION_HISTORY: Duration = Duration::from_secs(3);
 const SPECTRUM_AVERAGE_SECONDS: f32 = 0.2;
-const STEREO_TRAIL_FRAMES: usize = 5;
+
+/// How long a channel meter's peak mark stays put before it lets a lower one replace it.
+const METER_HOLD: Duration = Duration::from_secs(2);
+
+/// The bottom of the channel meters, in dBFS. With Atelier's meter zones at 0.7 and 0.9 of the
+/// travel, the meter turns yellow at -18 dBFS and red at -6.
+const METER_FLOOR_DB: f32 = -60.0;
+
+/// The integrated loudness the common streaming services normalise to, and how far either side
+/// of it counts as on target.
+const STREAMING_TARGET_LUFS: f32 = -14.0;
+const STREAMING_TOLERANCE_LU: f32 = 1.0;
+
+/// The true peak the same services ask a master to stay under.
+const STREAMING_CEILING_DBTP: f32 = -1.0;
+
+/// The width at which the cards stop pairing up and stack in one column.
+const TWO_COLUMNS_FROM: Pixels = px(900.);
+
+/// The width of the narrow card in each pair.
+const SIDE_CARD_WIDTH: Pixels = px(300.);
 
 /// A compact stereo scope using the same trigger and amplitude scale as the utility window.
-pub(crate) fn waveform_thumbnail(frame: Option<VisualizerFrame>, theme: Theme) -> gpui::AnyElement {
-    canvas(
-        |_, _, _| (),
-        move |bounds, _, window, cx| {
-            paint_oscilloscope(
-                window,
-                cx,
-                bounds,
-                frame.as_ref(),
-                OscilloscopeSpan::Full,
-                OscilloscopeGain::Unity,
-                &theme,
-                false,
-            );
-        },
-    )
-    .size_full()
-    .into_any_element()
+pub(crate) fn waveform_thumbnail(frame: Option<VisualizerFrame>, theme: Theme) -> AnyElement {
+    let (left, right) = frame
+        .as_ref()
+        .and_then(|frame| {
+            oscilloscope_window(frame, OscilloscopeSpan::Full).map(|window| {
+                let end = window.start + window.len;
+                (
+                    frame.left[window.start..end].to_vec(),
+                    frame.right[window.start..end].to_vec(),
+                )
+            })
+        })
+        .unwrap_or_default();
+    let series = theme.atelier.colors.series;
+    div()
+        .relative()
+        .size_full()
+        .bg(theme.atelier.colors.sunken)
+        .child(
+            div()
+                .absolute()
+                .inset_0()
+                .child(Waveform::new(left).no_grid()),
+        )
+        .child(
+            div()
+                .absolute()
+                .inset_0()
+                .child(Waveform::new(right).no_grid().color(series[1])),
+        )
+        .into_any_element()
 }
 
 #[derive(Clone, Copy)]
 pub(crate) enum VisualizerCommand {
     Toggle,
     Source,
+    SetSource(bool),
+    Tap,
+    SetTap(VisualizerTap),
     Freeze,
     Average,
     Peaks,
     Save,
     Reset,
     Timebase,
-    ViewNext,
+    SetTimebase(OscilloscopeSpan),
     SpectrumChannel,
+    SetSpectrumChannel(VisualizerSpectrum),
     CorrelationReset,
     OscilloscopeGain,
+    SetOscilloscopeGain(OscilloscopeGain),
     StereoAutoGain,
-    Effects,
-    View(VisualizerView),
+    LoudnessReset,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) enum VisualizerView {
-    Oscilloscope,
-    #[default]
-    Spectrum,
-    Stereo,
-    All,
-}
-
-impl VisualizerView {
-    fn next(self) -> Self {
-        match self {
-            Self::Oscilloscope => Self::Spectrum,
-            Self::Spectrum => Self::Stereo,
-            Self::Stereo => Self::All,
-            Self::All => Self::Oscilloscope,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-enum OscilloscopeGain {
+pub(crate) enum OscilloscopeGain {
     #[default]
     Unity,
     Double,
@@ -89,13 +141,11 @@ enum OscilloscopeGain {
 }
 
 impl OscilloscopeGain {
+    const ALL: [Self; 4] = [Self::Unity, Self::Double, Self::Quadruple, Self::Auto];
+
     fn next(self) -> Self {
-        match self {
-            Self::Unity => Self::Double,
-            Self::Double => Self::Quadruple,
-            Self::Quadruple => Self::Auto,
-            Self::Auto => Self::Unity,
-        }
+        let index = Self::ALL.iter().position(|&gain| gain == self).unwrap_or(0);
+        Self::ALL[(index + 1) % Self::ALL.len()]
     }
 
     fn multiplier(self, left: &[f32], right: &[f32]) -> f32 {
@@ -115,7 +165,7 @@ struct CorrelationPoint {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-enum OscilloscopeSpan {
+pub(crate) enum OscilloscopeSpan {
     Short,
     Medium,
     #[default]
@@ -123,6 +173,8 @@ enum OscilloscopeSpan {
 }
 
 impl OscilloscopeSpan {
+    const ALL: [Self; 3] = [Self::Short, Self::Medium, Self::Full];
+
     fn sample_count(self, available: usize, window_samples: usize) -> usize {
         let full = available.min(window_samples);
         match self {
@@ -134,24 +186,28 @@ impl OscilloscopeSpan {
     }
 
     fn next(self) -> Self {
-        match self {
-            Self::Short => Self::Medium,
-            Self::Medium => Self::Full,
-            Self::Full => Self::Short,
-        }
+        let index = Self::ALL.iter().position(|&span| span == self).unwrap_or(0);
+        Self::ALL[(index + 1) % Self::ALL.len()]
     }
 }
 
-#[derive(Default)]
+/// The spectrum's channel readings, in the order the control offers them.
+const SPECTRUM_CHANNELS: [VisualizerSpectrum; 5] = [
+    VisualizerSpectrum::Average,
+    VisualizerSpectrum::Left,
+    VisualizerSpectrum::Right,
+    VisualizerSpectrum::Maximum,
+    VisualizerSpectrum::Mono,
+];
+
 pub(crate) struct VisualizerState {
     pub open: bool,
     selected: bool,
     source: Option<Option<TrackId>>,
+    tap: VisualizerTap,
     frozen: bool,
     average: bool,
     peaks: bool,
-    effects_disabled: bool,
-    view: VisualizerView,
     spectrum_mode: VisualizerSpectrum,
     oscilloscope_span: OscilloscopeSpan,
     oscilloscope_gain: OscilloscopeGain,
@@ -163,11 +219,44 @@ pub(crate) struct VisualizerState {
     last_spectrum_at: Option<Instant>,
     correlation_history: VecDeque<CorrelationPoint>,
     correlation_negative_peak: Option<f32>,
-    stereo_trail: VecDeque<VisualizerFrame>,
-    spectrum_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
-    oscilloscope_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
-    stereo_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
-    correlation_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
+    /// Past spectra, oldest first, one per [`SPECTROGRAM_SPAN`] / [`SPECTROGRAM_COLUMNS`].
+    spectrogram: VecDeque<Vec<f32>>,
+    last_column_at: Option<Instant>,
+    /// The loudness as last shown; held while the display is frozen.
+    loudness: VisualizerLoudness,
+    /// Each channel's held sample peak in dBFS and when it was set.
+    meter_hold: [Option<(f32, Instant)>; 2],
+}
+
+impl Default for VisualizerState {
+    fn default() -> Self {
+        Self {
+            open: false,
+            selected: false,
+            source: None,
+            tap: VisualizerTap::PostFader,
+            frozen: false,
+            average: false,
+            // The Atelier analyser holds its peaks, and a spectrum without them forgets a
+            // transient before anybody has seen it.
+            peaks: true,
+            spectrum_mode: VisualizerSpectrum::default(),
+            oscilloscope_span: OscilloscopeSpan::default(),
+            oscilloscope_gain: OscilloscopeGain::default(),
+            stereo_auto_gain: false,
+            frame: None,
+            mean: Vec::new(),
+            peak: Vec::new(),
+            reference: Vec::new(),
+            last_spectrum_at: None,
+            correlation_history: VecDeque::new(),
+            correlation_negative_peak: None,
+            spectrogram: VecDeque::new(),
+            last_column_at: None,
+            loudness: VisualizerLoudness::default(),
+            meter_hold: [None; 2],
+        }
+    }
 }
 
 impl VisualizerState {
@@ -192,6 +281,18 @@ impl VisualizerState {
         !self.reference.is_empty() || !self.mean.is_empty() || !self.peak.is_empty()
     }
 
+    /// The spectrum as drawn: the running average or the newest frame, in dBFS.
+    fn displayed_spectrum(&self) -> Vec<f32> {
+        if self.average && !self.mean.is_empty() {
+            self.mean.clone()
+        } else {
+            self.frame
+                .as_ref()
+                .map(|frame| frame.spectrum.to_vec())
+                .unwrap_or_default()
+        }
+    }
+
     pub(crate) fn clear_live(&mut self) {
         self.frame = None;
         self.mean.clear();
@@ -199,7 +300,10 @@ impl VisualizerState {
         self.last_spectrum_at = None;
         self.correlation_history.clear();
         self.correlation_negative_peak = None;
-        self.stereo_trail.clear();
+        self.spectrogram.clear();
+        self.last_column_at = None;
+        self.loudness = VisualizerLoudness::default();
+        self.meter_hold = [None; 2];
     }
 
     fn accept(&mut self, frame: VisualizerFrame) {
@@ -235,6 +339,17 @@ impl VisualizerState {
         }
         if !frame.spectrum.is_empty() {
             self.last_spectrum_at = Some(now);
+            let column_every = SPECTROGRAM_SPAN / SPECTROGRAM_COLUMNS as u32;
+            if self
+                .last_column_at
+                .is_none_or(|last| now.saturating_duration_since(last) >= column_every)
+            {
+                self.spectrogram.push_back(frame.spectrum.to_vec());
+                while self.spectrogram.len() > SPECTROGRAM_COLUMNS {
+                    self.spectrogram.pop_front();
+                }
+                self.last_column_at = Some(now);
+            }
         }
 
         while self
@@ -254,9 +369,12 @@ impl VisualizerState {
                 );
             }
         }
-        self.stereo_trail.push_back(frame.clone());
-        while self.stereo_trail.len() > STEREO_TRAIL_FRAMES {
-            self.stereo_trail.pop_front();
+        for (hold, peak) in self.meter_hold.iter_mut().zip(channel_peaks_db(&frame)) {
+            if hold.is_none_or(|(held, at)| {
+                peak >= held || now.saturating_duration_since(at) > METER_HOLD
+            }) {
+                *hold = Some((peak, now));
+            }
         }
         self.frame = Some(frame);
     }
@@ -266,6 +384,23 @@ impl VisualizerState {
         self.peak.clear();
         self.reference.clear();
         self.last_spectrum_at = None;
+        self.spectrogram.clear();
+        self.last_column_at = None;
+    }
+
+    /// The spectrogram as [`Heatmap`] wants it: row-major, highest band on top, newest column on
+    /// the right, and blank columns on the left until three seconds have been heard.
+    fn spectrogram_cells(&self) -> (usize, Vec<f32>) {
+        let rows = self.spectrogram.back().map_or(SPECTRUM_BANDS, Vec::len);
+        let mut cells = vec![0.0; rows * SPECTROGRAM_COLUMNS];
+        let offset = SPECTROGRAM_COLUMNS - self.spectrogram.len().min(SPECTROGRAM_COLUMNS);
+        for (index, column) in self.spectrogram.iter().enumerate() {
+            for (band, &db) in column.iter().enumerate().take(rows) {
+                cells[(rows - 1 - band) * SPECTROGRAM_COLUMNS + offset + index] =
+                    spectrum_level(db);
+            }
+        }
+        (rows, cells)
     }
 }
 
@@ -282,85 +417,95 @@ impl AurisApp {
     }
 
     pub(crate) fn visualizer_command(&mut self, command: VisualizerCommand) {
+        let state = &mut self.visualizer;
         match command {
             VisualizerCommand::Toggle => {
-                self.visualizer.open = !self.visualizer.open;
-                if !self.visualizer.open {
+                state.open = !state.open;
+                if !state.open {
                     self.close_visualizer();
                 }
             }
             VisualizerCommand::Source => {
-                self.visualizer.selected = !self.visualizer.selected;
-                self.visualizer.source = None;
-                self.visualizer.frozen = false;
-                self.visualizer.clear_live();
+                state.selected = !state.selected;
+                state.source = None;
+                state.frozen = false;
+                state.clear_live();
             }
-            VisualizerCommand::Freeze if self.visualizer.can_freeze() => {
-                self.visualizer.frozen = !self.visualizer.frozen;
+            VisualizerCommand::SetSource(selected) => {
+                if state.selected != selected {
+                    self.visualizer_command(VisualizerCommand::Source);
+                }
             }
+            VisualizerCommand::Tap => {
+                let tap = match state.tap {
+                    VisualizerTap::PreFader => VisualizerTap::PostFader,
+                    VisualizerTap::PostFader => VisualizerTap::PreFader,
+                };
+                self.visualizer_command(VisualizerCommand::SetTap(tap));
+            }
+            VisualizerCommand::SetTap(tap) => {
+                if state.tap != tap {
+                    // What was drawn was the other signal; nothing of it carries over.
+                    state.tap = tap;
+                    state.frozen = false;
+                    state.clear_live();
+                }
+            }
+            VisualizerCommand::Freeze if state.can_freeze() => state.frozen = !state.frozen,
             // A hold with no frame used to suppress polling forever while the window kept saying
             // "Waiting". A keyboard shortcut can still arrive when the toolbar button is
             // disabled, so the command itself owns the same availability rule.
-            VisualizerCommand::Freeze => self.visualizer.frozen = false,
-            VisualizerCommand::Average => self.visualizer.average = !self.visualizer.average,
-            VisualizerCommand::Peaks => self.visualizer.peaks = !self.visualizer.peaks,
-            VisualizerCommand::Effects => {
-                self.visualizer.effects_disabled = !self.visualizer.effects_disabled;
-            }
-            VisualizerCommand::Save if self.visualizer.can_save() => {
-                let displayed = if self.visualizer.average {
-                    (!self.visualizer.mean.is_empty()).then(|| self.visualizer.mean.clone())
-                } else {
-                    self.visualizer
-                        .frame
-                        .as_ref()
-                        .filter(|frame| !frame.spectrum.is_empty())
-                        .map(|frame| frame.spectrum.to_vec())
-                };
-                if let Some(displayed) = displayed {
-                    self.visualizer.reference = displayed;
+            VisualizerCommand::Freeze => state.frozen = false,
+            VisualizerCommand::Average => state.average = !state.average,
+            VisualizerCommand::Peaks => state.peaks = !state.peaks,
+            VisualizerCommand::Save => {
+                if state.can_save() {
+                    state.reference = state.displayed_spectrum();
                 }
             }
-            VisualizerCommand::Save => {}
-            VisualizerCommand::Reset if self.visualizer.can_reset() => {
-                self.visualizer.reference.clear();
-                let spectrum = self
-                    .visualizer
-                    .frame
-                    .as_ref()
-                    .map(|frame| frame.spectrum.to_vec())
-                    .unwrap_or_default();
-                self.visualizer.peak = spectrum.clone();
-                self.visualizer.mean = spectrum;
+            VisualizerCommand::Reset => {
+                if state.can_reset() {
+                    state.reference.clear();
+                    let spectrum = state
+                        .frame
+                        .as_ref()
+                        .map(|frame| frame.spectrum.to_vec())
+                        .unwrap_or_default();
+                    state.peak = spectrum.clone();
+                    state.mean = spectrum;
+                }
             }
-            VisualizerCommand::Reset => {}
             VisualizerCommand::Timebase => {
-                self.visualizer.oscilloscope_span = self.visualizer.oscilloscope_span.next();
+                state.oscilloscope_span = state.oscilloscope_span.next();
             }
-            VisualizerCommand::ViewNext => {
-                self.visualizer.view = self.visualizer.view.next();
-            }
+            VisualizerCommand::SetTimebase(span) => state.oscilloscope_span = span,
             VisualizerCommand::SpectrumChannel => {
-                self.visualizer.spectrum_mode = match self.visualizer.spectrum_mode {
-                    VisualizerSpectrum::Average => VisualizerSpectrum::Left,
-                    VisualizerSpectrum::Left => VisualizerSpectrum::Right,
-                    VisualizerSpectrum::Right => VisualizerSpectrum::Maximum,
-                    VisualizerSpectrum::Maximum => VisualizerSpectrum::Mono,
-                    VisualizerSpectrum::Mono => VisualizerSpectrum::Average,
-                };
-                self.visualizer.clear_spectrum_mode();
+                let index = SPECTRUM_CHANNELS
+                    .iter()
+                    .position(|&mode| mode == state.spectrum_mode)
+                    .unwrap_or(0);
+                let next = SPECTRUM_CHANNELS[(index + 1) % SPECTRUM_CHANNELS.len()];
+                self.visualizer_command(VisualizerCommand::SetSpectrumChannel(next));
+            }
+            VisualizerCommand::SetSpectrumChannel(mode) => {
+                if state.spectrum_mode != mode {
+                    state.spectrum_mode = mode;
+                    state.clear_spectrum_mode();
+                }
             }
             VisualizerCommand::CorrelationReset => {
-                self.visualizer.correlation_history.clear();
-                self.visualizer.correlation_negative_peak = None;
+                state.correlation_history.clear();
+                state.correlation_negative_peak = None;
             }
             VisualizerCommand::OscilloscopeGain => {
-                self.visualizer.oscilloscope_gain = self.visualizer.oscilloscope_gain.next();
+                state.oscilloscope_gain = state.oscilloscope_gain.next();
             }
-            VisualizerCommand::StereoAutoGain => {
-                self.visualizer.stereo_auto_gain = !self.visualizer.stereo_auto_gain;
+            VisualizerCommand::SetOscilloscopeGain(gain) => state.oscilloscope_gain = gain,
+            VisualizerCommand::StereoAutoGain => state.stereo_auto_gain = !state.stereo_auto_gain,
+            VisualizerCommand::LoudnessReset => {
+                state.loudness = VisualizerLoudness::default();
+                self.session.reset_visualizer_loudness();
             }
-            VisualizerCommand::View(view) => self.visualizer.view = view,
         }
     }
 
@@ -390,18 +535,20 @@ impl AurisApp {
             self.visualizer.source = Some(source);
             self.visualizer.frozen = false;
         }
-        self.session.watch_visualizer(source);
-        let spectrum_mode = (in_toolbar
-            || matches!(
-                self.visualizer.view,
-                VisualizerView::Spectrum | VisualizerView::All
-            ))
-        .then_some(self.visualizer.spectrum_mode);
-        if !self.visualizer.frozen
-            && let Some(frame) = self
-                .session
-                .visualizer_frame(LOW_HZ, HIGH_HZ, 96, spectrum_mode)
-        {
+        self.session.watch_visualizer(source, self.visualizer.tap);
+        // Measured on every repaint, frozen or not: integrated loudness is only that if it has
+        // heard every sample, and holding the display still does not stop the music.
+        let loudness = self.session.measure_visualizer_loudness();
+        if self.visualizer.frozen {
+            return;
+        }
+        self.visualizer.loudness = loudness;
+        if let Some(frame) = self.session.visualizer_frame(
+            SPECTRUM_LOW_HZ,
+            SPECTRUM_HIGH_HZ,
+            SPECTRUM_BANDS,
+            Some(self.visualizer.spectrum_mode),
+        ) {
             self.visualizer.accept(frame);
         }
     }
@@ -414,15 +561,7 @@ impl AurisApp {
         cx: &mut gpui::Context<Self>,
     ) -> impl IntoElement + use<> {
         let theme = self.theme.clone();
-        let spectrum = if self.visualizer.average && !self.visualizer.mean.is_empty() {
-            self.visualizer.mean.clone()
-        } else {
-            self.visualizer
-                .frame
-                .as_ref()
-                .map(|frame| frame.spectrum.to_vec())
-                .unwrap_or_default()
-        };
+        let spectrum = self.visualizer.displayed_spectrum();
         button(
             "toolbar-visualizer",
             self.t(Key::ToolbarSpectrum),
@@ -451,8 +590,7 @@ impl AurisApp {
                     }
                     let width = bounds.size.width / spectrum.len() as f32;
                     for (index, db) in spectrum.iter().enumerate() {
-                        let level = (1. - db / FLOOR_DB).clamp(0., 1.);
-                        let height = bounds.size.height * level;
+                        let height = bounds.size.height * spectrum_level(*db);
                         paint::rect(
                             window,
                             Bounds {
@@ -476,258 +614,63 @@ impl AurisApp {
         &mut self,
         window: &Window,
         cx: &mut gpui::Context<Self>,
-    ) -> gpui::AnyElement {
-        let theme = self.theme.clone();
-        let can_freeze = self.visualizer.can_freeze();
-        let can_save = self.visualizer.can_save();
-        let can_reset = self.visualizer.can_reset();
-        let mut controls = div().flex().flex_wrap().gap_2();
-        for (id, command, key, active) in [
-            (
-                "visualizer-source",
-                VisualizerCommand::Source,
-                Key::VisualizerSelected,
-                self.visualizer.selected,
-            ),
-            (
-                "visualizer-freeze",
-                VisualizerCommand::Freeze,
-                Key::VisualizerFreeze,
-                self.visualizer.frozen,
-            ),
-        ] {
-            let enabled = !matches!(command, VisualizerCommand::Freeze) || can_freeze;
-            controls = controls.child(
-                button_enabled(
-                    id,
-                    self.t(key),
-                    ButtonStyle::Normal,
-                    ButtonState::available(active, enabled),
-                    theme.accent,
-                    &theme,
-                    cx.listener(move |this, _, _, cx| {
-                        this.visualizer_command(command);
-                        cx.notify();
-                    }),
-                )
-                .cursor_default(),
-            );
-        }
-        controls = controls.child(
-            button_enabled(
-                "visualizer-effects",
-                self.t(Key::VisualizerEffects),
-                ButtonStyle::Normal,
-                ButtonState::available(!self.visualizer.effects_disabled, true),
-                theme.accent,
-                &theme,
-                cx.listener(|this, _, _, cx| {
-                    this.visualizer_command(VisualizerCommand::Effects);
-                    cx.notify();
-                }),
-            )
-            .cursor_default(),
-        );
-        let mut view_controls = div().flex().flex_wrap().gap_1();
-        for (id, view, key) in [
-            (
-                "visualizer-view-oscilloscope",
-                VisualizerView::Oscilloscope,
-                Key::VisualizerViewOscilloscope,
-            ),
-            (
-                "visualizer-view-spectrum",
-                VisualizerView::Spectrum,
-                Key::VisualizerViewSpectrum,
-            ),
-            (
-                "visualizer-view-stereo",
-                VisualizerView::Stereo,
-                Key::VisualizerViewStereo,
-            ),
-            (
-                "visualizer-view-all",
-                VisualizerView::All,
-                Key::VisualizerViewAll,
-            ),
-        ] {
-            view_controls = view_controls.child(
-                button(
-                    id,
-                    self.t(key),
-                    ButtonStyle::Normal,
-                    self.visualizer.view == view,
-                    theme.accent,
-                    &theme,
-                    cx.listener(move |this, _, _, cx| {
-                        this.visualizer_command(VisualizerCommand::View(view));
-                        cx.notify();
-                    }),
-                )
-                .cursor_default(),
-            );
-        }
-        let oscilloscope_span = self.visualizer.oscilloscope_span;
-        let oscilloscope_span_label = self
-            .visualizer
-            .frame
-            .as_ref()
-            .and_then(|frame| {
-                oscilloscope_window(frame, oscilloscope_span).map(|window| (frame, window))
-            })
-            .map_or_else(
-                || self.t(Key::VisualizerFullWindow).to_owned(),
-                |(frame, window)| {
-                    format!("{:.1} ms", window.len as f64 * 1000.0 / frame.sample_rate)
-                },
-            );
-        let gain_label = match self.visualizer.oscilloscope_gain {
-            OscilloscopeGain::Unity => "1×".to_owned(),
-            OscilloscopeGain::Double => "2×".to_owned(),
-            OscilloscopeGain::Quadruple => "4×".to_owned(),
-            OscilloscopeGain::Auto => self.t(Key::VisualizerAuto).to_owned(),
+    ) -> AnyElement {
+        let spacing = self.theme.atelier.spacing;
+        let background = self.theme.atelier.colors.background;
+        let toolbar = self.visualizer_toolbar(cx);
+        let spectrum = self.spectrum_card(cx);
+        let loudness = self.loudness_card(cx);
+        let spectrogram = self.spectrogram_card();
+        let stereo = self.stereo_card(cx);
+        let oscilloscope = self.oscilloscope_card(cx);
+        let two_columns = window.viewport_size().width >= TWO_COLUMNS_FROM;
+        let pair = |main: AnyElement, side: AnyElement| {
+            if two_columns {
+                div()
+                    .flex()
+                    .gap(spacing.lg)
+                    .child(div().flex().flex_1().min_w_0().child(main))
+                    .child(div().flex().flex_none().w(SIDE_CARD_WIDTH).child(side))
+            } else {
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(spacing.lg)
+                    .child(main)
+                    .child(side)
+            }
         };
-        let oscilloscope_controls = div()
+        div()
+            .id("visualizer")
+            .size_full()
+            .min_h_0()
             .flex()
-            .flex_wrap()
-            .gap_2()
+            .flex_col()
+            .bg(background)
+            .child(toolbar)
             .child(
-                button(
-                    "visualizer-timebase",
-                    format!(
-                        "{}: {}",
-                        self.t(Key::VisualizerTimebase),
-                        oscilloscope_span_label
-                    ),
-                    ButtonStyle::Normal,
-                    false,
-                    theme.accent,
-                    &theme,
-                    cx.listener(|this, _, _, cx| {
-                        this.visualizer_command(VisualizerCommand::Timebase);
-                        cx.notify();
-                    }),
-                )
-                .cursor_default(),
+                div()
+                    .id("visualizer-cards")
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .gap(spacing.lg)
+                    .p(spacing.lg)
+                    .child(pair(spectrum, loudness))
+                    .child(pair(spectrogram, stereo))
+                    .child(oscilloscope),
             )
-            .child(
-                button(
-                    "visualizer-oscilloscope-gain",
-                    format!("{}: {gain_label}", self.t(Key::VisualizerDisplayGain)),
-                    ButtonStyle::Normal,
-                    self.visualizer.oscilloscope_gain != OscilloscopeGain::Unity,
-                    theme.accent,
-                    &theme,
-                    cx.listener(|this, _, _, cx| {
-                        this.visualizer_command(VisualizerCommand::OscilloscopeGain);
-                        cx.notify();
-                    }),
-                )
-                .cursor_default(),
-            )
-            .into_any_element();
-        let mut spectrum_controls = div().flex().flex_wrap().gap_2();
-        for (id, command, key, active) in [
-            (
-                "visualizer-average",
-                VisualizerCommand::Average,
-                Key::VisualizerAverage,
-                self.visualizer.average,
-            ),
-            (
-                "visualizer-peaks",
-                VisualizerCommand::Peaks,
-                Key::VisualizerPeaks,
-                self.visualizer.peaks,
-            ),
-            (
-                "visualizer-save",
-                VisualizerCommand::Save,
-                Key::VisualizerSave,
-                false,
-            ),
-            (
-                "visualizer-reset",
-                VisualizerCommand::Reset,
-                Key::VisualizerReset,
-                false,
-            ),
-        ] {
-            let enabled = match command {
-                VisualizerCommand::Save => can_save,
-                VisualizerCommand::Reset => can_reset,
-                _ => true,
-            };
-            spectrum_controls = spectrum_controls.child(
-                button_enabled(
-                    id,
-                    self.t(key),
-                    ButtonStyle::Normal,
-                    ButtonState::available(active, enabled),
-                    theme.accent,
-                    &theme,
-                    cx.listener(move |this, _, _, cx| {
-                        this.visualizer_command(command);
-                        cx.notify();
-                    }),
-                )
-                .cursor_default(),
-            );
-        }
-        let spectrum_mode_label = match self.visualizer.spectrum_mode {
-            VisualizerSpectrum::Average => Key::VisualizerSpectrumAverage,
-            VisualizerSpectrum::Left => Key::VisualizerSpectrumLeft,
-            VisualizerSpectrum::Right => Key::VisualizerSpectrumRight,
-            VisualizerSpectrum::Maximum => Key::VisualizerSpectrumMaximum,
-            VisualizerSpectrum::Mono => Key::VisualizerSpectrumMono,
-        };
-        spectrum_controls = spectrum_controls.child(
-            button(
-                "visualizer-spectrum-channel",
-                format!(
-                    "{}: {}",
-                    self.t(Key::VisualizerSpectrumChannel),
-                    self.t(spectrum_mode_label)
-                ),
-                ButtonStyle::Normal,
-                false,
-                theme.accent,
-                &theme,
-                cx.listener(|this, _, _, cx| {
-                    this.visualizer_command(VisualizerCommand::SpectrumChannel);
-                    cx.notify();
-                }),
-            )
-            .cursor_default(),
-        );
-        let spectrum_controls = spectrum_controls.into_any_element();
-        let stereo_controls = div()
-            .flex()
-            .child(
-                button(
-                    "visualizer-stereo-auto-gain",
-                    format!(
-                        "{}: {}",
-                        self.t(Key::VisualizerStereoAutoGain),
-                        if self.visualizer.stereo_auto_gain {
-                            self.t(Key::VisualizerAuto)
-                        } else {
-                            "1×"
-                        }
-                    ),
-                    ButtonStyle::Normal,
-                    self.visualizer.stereo_auto_gain,
-                    theme.accent,
-                    &theme,
-                    cx.listener(|this, _, _, cx| {
-                        this.visualizer_command(VisualizerCommand::StereoAutoGain);
-                        cx.notify();
-                    }),
-                )
-                .cursor_default(),
-            )
-            .into_any_element();
-        let source = if self.visualizer.selected {
+            .into_any_element()
+    }
+
+    /// What is being listened to and whether the display is live: master or the selected track,
+    /// before or after its fader, and Freeze.
+    fn visualizer_toolbar(&self, cx: &mut gpui::Context<Self>) -> AnyElement {
+        let tokens = &self.theme.atelier;
+        let state = &self.visualizer;
+        let source_name = if state.selected {
             self.selected_track
                 .and_then(|id| self.session.project().track(id))
                 .map(|track| track.name.clone())
@@ -735,344 +678,926 @@ impl AurisApp {
         } else {
             self.t(Key::Master).to_owned()
         };
-        let correlation = self
-            .visualizer
-            .frame
-            .as_ref()
-            .and_then(|frame| frame.correlation);
-        let correlation_text =
-            correlation.map_or_else(|| "—".to_owned(), |value| format!("{value:+.2}"));
-        let negative_peak_text = self
-            .visualizer
-            .correlation_negative_peak
-            .map_or_else(|| "—".to_owned(), |value| format!("{value:+.2}"));
-        let frame = self.visualizer.frame.clone();
-        let spectrum = if self.visualizer.average {
-            std::sync::Arc::<[f32]>::from(self.visualizer.mean.clone())
+        let (status, tone) = if state.frozen {
+            (Key::PhysicalFrozen, Tone::Warning)
+        } else if state.frame.is_some() {
+            (Key::PhysicalLive, Tone::Success)
         } else {
-            frame
-                .as_ref()
-                .map(|f| f.spectrum.clone())
-                .unwrap_or_default()
+            (Key::VisualizerWaiting, Tone::Neutral)
         };
-        let peaks = if self.visualizer.peaks {
-            self.visualizer.peak.clone()
-        } else {
-            Vec::new()
-        };
-        let reference = self.visualizer.reference.clone();
-        let correlation_values: Vec<_> = self
-            .visualizer
-            .correlation_history
-            .iter()
-            .map(|point| point.value)
-            .collect();
-        let trail: Vec<_> = self.visualizer.stereo_trail.iter().cloned().collect();
-        let view = self.visualizer.view;
-        let content = match view {
-            VisualizerView::Oscilloscope => oscilloscope_section(
-                frame.clone(),
-                oscilloscope_span,
-                self.visualizer.oscilloscope_gain,
-                oscilloscope_controls,
-                self.t(Key::VisualizerOscilloscope).to_owned(),
-                self.t(Key::VisualizerOscilloscopeHint).to_owned(),
-                theme.clone(),
-                Rc::clone(&self.visualizer.oscilloscope_bounds),
-                true,
-                !self.visualizer.effects_disabled,
-            ),
-            VisualizerView::Spectrum => spectrum_section(
-                spectrum,
-                peaks,
-                reference,
-                spectrum_controls,
-                self.t(Key::VisualizerSpectrum).to_owned(),
-                self.t(Key::VisualizerLegend).to_owned(),
-                theme.clone(),
-                Rc::clone(&self.visualizer.spectrum_bounds),
-                true,
-                !self.visualizer.effects_disabled,
-            ),
-            VisualizerView::Stereo => stereo_section(
-                trail,
-                self.visualizer.stereo_auto_gain,
-                stereo_controls,
-                self.t(Key::VisualizerStereo).to_owned(),
-                self.t(Key::VisualizerHint).to_owned(),
-                theme.clone(),
-                Rc::clone(&self.visualizer.stereo_bounds),
-                true,
-                !self.visualizer.effects_disabled,
-            ),
-            VisualizerView::All => div()
-                .id("visualizer-all")
-                .flex()
-                .flex_col()
-                .flex_1()
-                .min_h_0()
-                .overflow_y_scroll()
-                .gap_3()
-                .child(oscilloscope_section(
-                    frame.clone(),
-                    oscilloscope_span,
-                    self.visualizer.oscilloscope_gain,
-                    oscilloscope_controls,
-                    self.t(Key::VisualizerOscilloscope).to_owned(),
-                    self.t(Key::VisualizerOscilloscopeHint).to_owned(),
-                    theme.clone(),
-                    Rc::clone(&self.visualizer.oscilloscope_bounds),
-                    false,
-                    !self.visualizer.effects_disabled,
-                ))
-                .child(spectrum_section(
-                    spectrum,
-                    peaks,
-                    reference,
-                    spectrum_controls,
-                    self.t(Key::VisualizerSpectrum).to_owned(),
-                    self.t(Key::VisualizerLegend).to_owned(),
-                    theme.clone(),
-                    Rc::clone(&self.visualizer.spectrum_bounds),
-                    false,
-                    !self.visualizer.effects_disabled,
-                ))
-                .child(stereo_section(
-                    trail,
-                    self.visualizer.stereo_auto_gain,
-                    stereo_controls,
-                    self.t(Key::VisualizerStereo).to_owned(),
-                    self.t(Key::VisualizerHint).to_owned(),
-                    theme.clone(),
-                    Rc::clone(&self.visualizer.stereo_bounds),
-                    false,
-                    !self.visualizer.effects_disabled,
-                ))
-                .into_any_element(),
-        };
-        let correlation_theme = theme.clone();
-        let correlation_bounds = Rc::clone(&self.visualizer.correlation_bounds);
-        let correlation_negative_peak = self.visualizer.correlation_negative_peak;
         div()
-            .id("visualizer")
-            .w(window.viewport_size().width)
+            .flex()
+            .flex_wrap()
+            .items_center()
+            .gap(tokens.spacing.sm)
+            .px(tokens.spacing.lg)
+            .py(tokens.spacing.sm)
+            .border_b_1()
+            .border_color(tokens.colors.border)
+            .child(
+                SegmentedControl::new(
+                    "visualizer-source",
+                    [
+                        Segment::label(self.t(Key::Master)),
+                        Segment::label(self.t(Key::VisualizerSelectedTrack)),
+                    ],
+                    usize::from(state.selected),
+                )
+                .size(ControlSize::Small)
+                .on_select(cx.listener(|this, index: &usize, _, cx| {
+                    this.visualizer_command(VisualizerCommand::SetSource(*index == 1));
+                    cx.notify();
+                })),
+            )
+            .child(
+                SegmentedControl::new(
+                    "visualizer-tap",
+                    [
+                        Segment::label(self.t(Key::VisualizerPreFader)),
+                        Segment::label(self.t(Key::VisualizerPostFader)),
+                    ],
+                    usize::from(state.tap == VisualizerTap::PostFader),
+                )
+                .size(ControlSize::Small)
+                .on_select(cx.listener(|this, index: &usize, _, cx| {
+                    let tap = if *index == 0 {
+                        VisualizerTap::PreFader
+                    } else {
+                        VisualizerTap::PostFader
+                    };
+                    this.visualizer_command(VisualizerCommand::SetTap(tap));
+                    cx.notify();
+                })),
+            )
+            .child(
+                Button::new(
+                    "visualizer-freeze",
+                    self.t(if state.frozen {
+                        Key::PhysicalResume
+                    } else {
+                        Key::VisualizerFreeze
+                    }),
+                )
+                .icon(if state.frozen {
+                    IconName::Play
+                } else {
+                    IconName::Pause
+                })
+                .size(ControlSize::Small)
+                .selected(state.frozen)
+                .disabled(!state.can_freeze())
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.visualizer_command(VisualizerCommand::Freeze);
+                    cx.notify();
+                })),
+            )
+            .child(div().flex_1())
+            .child(
+                Label::new(source_name)
+                    .size(TextSize::Small)
+                    .color(TextColor::Muted),
+            )
+            .child(Badge::new(self.t(status)).tone(tone).dot())
+            .into_any_element()
+    }
+
+    fn spectrum_card(&self, cx: &mut gpui::Context<Self>) -> AnyElement {
+        let tokens = &self.theme.atelier;
+        let spacing = tokens.spacing;
+        let state = &self.visualizer;
+        let levels: Vec<f32> = state
+            .displayed_spectrum()
+            .into_iter()
+            .map(spectrum_level)
+            .collect();
+        let peaks: Vec<f32> = state.peak.iter().copied().map(spectrum_level).collect();
+        let reference: Vec<f32> = state
+            .reference
+            .iter()
+            .copied()
+            .map(spectrum_level)
+            .collect();
+        let mut plot = Spectrum::new(levels).octaves(SPECTRUM_OCTAVES);
+        if state.peaks && !peaks.is_empty() {
+            plot = plot.peaks(peaks);
+        }
+        let channel = SPECTRUM_CHANNELS
+            .iter()
+            .position(|&mode| mode == state.spectrum_mode)
+            .unwrap_or(0);
+        let controls = div()
+            .flex()
+            .flex_wrap()
+            .items_center()
+            .gap(spacing.sm)
+            .child(
+                SegmentedControl::new(
+                    "visualizer-spectrum-channel",
+                    SPECTRUM_CHANNELS
+                        .map(|mode| Segment::label(self.t(spectrum_channel_key(mode)))),
+                    channel,
+                )
+                .size(ControlSize::Small)
+                .on_select(cx.listener(|this, index: &usize, _, cx| {
+                    if let Some(&mode) = SPECTRUM_CHANNELS.get(*index) {
+                        this.visualizer_command(VisualizerCommand::SetSpectrumChannel(mode));
+                    }
+                    cx.notify();
+                })),
+            )
+            .child(self.visualizer_toggle(
+                "visualizer-average",
+                Key::VisualizerAverage,
+                state.average,
+                true,
+                VisualizerCommand::Average,
+                cx,
+            ))
+            .child(self.visualizer_toggle(
+                "visualizer-peaks",
+                Key::VisualizerPeaks,
+                state.peaks,
+                true,
+                VisualizerCommand::Peaks,
+                cx,
+            ))
+            .child(self.visualizer_toggle(
+                "visualizer-save",
+                Key::VisualizerSave,
+                false,
+                state.can_save(),
+                VisualizerCommand::Save,
+                cx,
+            ))
+            .child(self.visualizer_toggle(
+                "visualizer-reset",
+                Key::VisualizerReset,
+                false,
+                state.can_reset(),
+                VisualizerCommand::Reset,
+                cx,
+            ));
+        let scale_width = px(28.);
+        let reference_color = tokens.colors.series[2];
+        let well = plot_well(&self.theme)
+            .relative()
+            .flex_1()
             .h_full()
-            .min_h_0()
+            .child(div().absolute().inset_0().p(spacing.xs).child(plot))
+            .when(!reference.is_empty(), |well| {
+                well.child(
+                    div()
+                        .absolute()
+                        .inset_0()
+                        .p(spacing.xs)
+                        .child(reference_curve(reference, reference_color)),
+                )
+            });
+        let scale = div()
+            .relative()
+            .flex_none()
+            .w(scale_width)
+            .h_full()
+            .children((0..6).map(|row| {
+                let db = -(row as f32 * SPECTRUM_DB_STEP);
+                let text = if row == 0 {
+                    "0".to_owned()
+                } else {
+                    minus(format!("{db:.0}"))
+                };
+                axis_mark(
+                    Label::new(text)
+                        .size(TextSize::XSmall)
+                        .mono()
+                        .color(TextColor::Faint),
+                    1.0 - spectrum_level(db),
+                    true,
+                    spacing.xs,
+                )
+            }));
+        let axis = div()
+            .flex()
+            .gap(spacing.sm)
+            .child(div().flex_none().w(scale_width))
+            .child(
+                div()
+                    .relative()
+                    .flex_1()
+                    .h(px(14.))
+                    .mx(spacing.xs)
+                    .children(
+                        [20., 50., 100., 200., 500., 1e3, 2e3, 5e3, 1e4, 2e4]
+                            .into_iter()
+                            .map(|hz| {
+                                axis_mark(
+                                    Label::new(frequency_label(hz))
+                                        .size(TextSize::XSmall)
+                                        .mono()
+                                        .color(TextColor::Faint),
+                                    spectrum_x(hz),
+                                    false,
+                                    px(0.),
+                                )
+                            }),
+                    ),
+            );
+        visualizer_card(
+            "visualizer-spectrum",
+            self.t(Key::VisualizerSpectrum),
+            self.t(Key::VisualizerSpectrumDescription),
+        )
+        .flex_1()
+        .child(controls)
+        .child(
+            div()
+                .flex()
+                .flex_1()
+                .gap(spacing.sm)
+                .h(px(240.))
+                .child(scale)
+                .child(well),
+        )
+        .child(axis)
+        .child(
+            Label::new(self.t(Key::VisualizerLegend))
+                .size(TextSize::XSmall)
+                .color(TextColor::Faint),
+        )
+        .into_any_element()
+    }
+
+    fn loudness_card(&self, cx: &mut gpui::Context<Self>) -> AnyElement {
+        let tokens = &self.theme.atelier;
+        let spacing = tokens.spacing;
+        let loudness = self.visualizer.loudness;
+        let lufs = "LUFS";
+        let readings = div()
             .flex()
             .flex_col()
-            .gap_3()
-            .p_3()
-            .bg(theme.surface)
-            .text_color(theme.text)
-            .text_sm()
-            .child(controls)
-            .child(view_controls)
-            .when(self.visualizer.frame.is_none(), |this| {
-                this.child(self.t(Key::VisualizerWaiting))
-            })
-            .child(div().child(source))
-            .child(content)
+            .flex_1()
+            .min_w_0()
+            .gap(spacing.md)
+            .child(labelled_figure(
+                self.t(Key::VisualizerMomentary),
+                loudness.momentary,
+                lufs,
+                TextSize::Display,
+                tokens,
+            ))
+            .child(labelled_figure(
+                self.t(Key::VisualizerShortTerm),
+                loudness.short_term,
+                lufs,
+                TextSize::XLarge,
+                tokens,
+            ))
+            .child(labelled_figure(
+                self.t(Key::VisualizerIntegrated),
+                loudness.integrated,
+                lufs,
+                TextSize::XLarge,
+                tokens,
+            ))
             .child(
                 div()
                     .flex()
-                    .flex_col()
-                    .gap_1()
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .child(format!(
-                                "{}: {} · {}: {}",
-                                self.t(Key::VisualizerCorrelation),
-                                correlation_text,
-                                self.t(Key::VisualizerNegativePeak),
-                                negative_peak_text
-                            ))
-                            .child(
-                                button_enabled(
-                                    "visualizer-correlation-reset",
-                                    self.t(Key::VisualizerCorrelationReset),
-                                    ButtonStyle::Normal,
-                                    ButtonState::available(
-                                        false,
-                                        !self.visualizer.correlation_history.is_empty()
-                                            || self.visualizer.correlation_negative_peak.is_some(),
-                                    ),
-                                    theme.accent,
-                                    &theme,
-                                    cx.listener(|this, _, _, cx| {
-                                        this.visualizer_command(
-                                            VisualizerCommand::CorrelationReset,
-                                        );
-                                        cx.notify();
-                                    }),
-                                )
-                                .cursor_default(),
-                            ),
-                    )
-                    .child(
-                        div().w_full().h(px(42.)).flex_shrink_0().child(
-                            canvas(
-                                move |bounds, _, _| correlation_bounds.set(Some(bounds)),
-                                move |bounds, _, window, cx| {
-                                    paint_correlation(
-                                        window,
-                                        cx,
-                                        bounds,
-                                        correlation,
-                                        &correlation_values,
-                                        correlation_negative_peak,
-                                        &correlation_theme,
-                                    );
-                                },
-                            )
-                            .size_full(),
-                        ),
-                    ),
+                    .gap(spacing.lg)
+                    .child(labelled_figure(
+                        self.t(Key::VisualizerTruePeak),
+                        loudness.true_peak,
+                        "dBTP",
+                        TextSize::XLarge,
+                        tokens,
+                    ))
+                    .child(labelled_figure(
+                        self.t(Key::VisualizerRange),
+                        loudness.range,
+                        "LU",
+                        TextSize::XLarge,
+                        tokens,
+                    )),
             )
-            .into_any_element()
+            .children(
+                streaming_verdict(&loudness)
+                    .map(|(key, tone)| Badge::new(self.t(key)).tone(tone).dot()),
+            );
+        let now = Instant::now();
+        let peaks = self
+            .visualizer
+            .frame
+            .as_ref()
+            .map_or([METER_FLOOR_DB; 2], channel_peaks_db);
+        let meters = div()
+            .id("visualizer-meters")
+            .debug_selector(|| "visualizer-meters".into())
+            .relative()
+            .flex_none()
+            .w(px(8. * 2.) + spacing.xs)
+            .min_h(px(230.))
+            .children(
+                peaks
+                    .into_iter()
+                    .zip(self.visualizer.meter_hold)
+                    .enumerate()
+                    .map(|(channel, (peak, hold))| {
+                        let mut meter = LevelMeter::new(meter_level(peak)).thickness(px(8.));
+                        if let Some((held, at)) = hold
+                            && now.saturating_duration_since(at) <= METER_HOLD
+                        {
+                            meter = meter.peak(meter_level(held));
+                        }
+                        // Pinned top and bottom rather than sized by percentage, so the meter
+                        // has a definite height to fill however the row was stretched.
+                        div()
+                            .absolute()
+                            .top_0()
+                            .bottom_0()
+                            .left((px(8.) + spacing.xs) * channel as f32)
+                            .child(meter)
+                    }),
+            );
+        visualizer_card_with(
+            "visualizer-loudness",
+            self.t(Key::VisualizerLoudness),
+            "EBU R128",
+            Some(
+                Button::icon_only("visualizer-loudness-reset", IconName::Refresh)
+                    .ghost()
+                    .size(ControlSize::Small)
+                    .tooltip(self.t(Key::VisualizerLoudnessReset))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.visualizer_command(VisualizerCommand::LoudnessReset);
+                        cx.notify();
+                    }))
+                    .into_any_element(),
+            ),
+        )
+        .w_full()
+        .child(
+            div()
+                .flex()
+                .flex_1()
+                .gap(spacing.lg)
+                .child(readings)
+                .child(meters),
+        )
+        .into_any_element()
+    }
+
+    fn spectrogram_card(&self) -> AnyElement {
+        let tokens = &self.theme.atelier;
+        let spacing = tokens.spacing;
+        let (rows, cells) = self.visualizer.spectrogram_cells();
+        visualizer_card(
+            "visualizer-spectrogram",
+            self.t(Key::VisualizerSpectrogram),
+            self.t(Key::VisualizerSpectrogramDescription),
+        )
+        .flex_1()
+        .child(
+            plot_well(&self.theme)
+                .id("visualizer-spectrogram-plot")
+                .flex_1()
+                .min_h(px(180.))
+                .child(Heatmap::new(SPECTROGRAM_COLUMNS, rows, cells)),
+        )
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(spacing.sm)
+                .child(
+                    Label::new(self.t(Key::VisualizerQuiet))
+                        .size(TextSize::XSmall)
+                        .color(TextColor::Faint),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_1()
+                        .h(px(6.))
+                        .rounded(px(3.))
+                        .overflow_hidden()
+                        .children(
+                            tokens
+                                .colors
+                                .heat
+                                .iter()
+                                .map(|color| div().flex_1().h_full().bg(*color)),
+                        ),
+                )
+                .child(
+                    Label::new(self.t(Key::VisualizerLoud))
+                        .size(TextSize::XSmall)
+                        .color(TextColor::Faint),
+                ),
+        )
+        .into_any_element()
+    }
+
+    fn stereo_card(&self, cx: &mut gpui::Context<Self>) -> AnyElement {
+        let tokens = &self.theme.atelier;
+        let spacing = tokens.spacing;
+        let state = &self.visualizer;
+        let points: Vec<(f32, f32)> = state.frame.as_ref().map_or_else(Vec::new, |frame| {
+            let (left, right) = frame_window(frame);
+            let gain = if state.stereo_auto_gain {
+                display_auto_gain(left, right)
+            } else {
+                1.0
+            };
+            left.iter()
+                .zip(right)
+                .map(|(&left, &right)| (left * gain, right * gain))
+                .collect()
+        });
+        let correlation = state.frame.as_ref().and_then(|frame| frame.correlation);
+        let bar_color = if correlation.is_some_and(|value| value < 0.0) {
+            tokens.colors.danger
+        } else {
+            tokens.colors.success
+        };
+        let value = correlation.unwrap_or(0.0).clamp(-1.0, 1.0);
+        // Where the correlation has been in the last three seconds, behind where it is now.
+        let seen = state
+            .correlation_history
+            .iter()
+            .map(|point| point.value)
+            .fold(None, |range: Option<(f32, f32)>, value| {
+                Some(range.map_or((value, value), |(low, high)| {
+                    (low.min(value), high.max(value))
+                }))
+            });
+        let bar = div()
+            .relative()
+            .flex_1()
+            .h(px(6.))
+            .rounded(px(3.))
+            .bg(tokens.colors.sunken)
+            .child(
+                div()
+                    .absolute()
+                    .left(relative(0.5))
+                    .top_0()
+                    .bottom_0()
+                    .w(px(1.))
+                    .bg(tokens.colors.grid),
+            )
+            .when_some(seen, |bar, (low, high)| {
+                bar.child(
+                    div()
+                        .absolute()
+                        .left(relative((low.clamp(-1.0, 1.0) + 1.0) / 2.0))
+                        .w(relative((high - low).clamp(0.0, 2.0) / 2.0))
+                        .top_0()
+                        .bottom_0()
+                        .rounded(px(3.))
+                        .bg(bar_color.opacity(0.25)),
+                )
+            })
+            .when(correlation.is_some(), |bar| {
+                bar.child(
+                    div()
+                        .absolute()
+                        .left(relative(0.5 + value.min(0.0) / 2.0))
+                        .w(relative(value.abs() / 2.0))
+                        .top_0()
+                        .bottom_0()
+                        .rounded(px(3.))
+                        .bg(bar_color),
+                )
+            });
+        let faint = |text: &str| {
+            Label::new(text.to_owned())
+                .size(TextSize::XSmall)
+                .mono()
+                .color(TextColor::Faint)
+        };
+        visualizer_card_with(
+            "visualizer-stereo",
+            self.t(Key::VisualizerStereo),
+            self.t(Key::VisualizerStereoDescription),
+            Some(
+                self.visualizer_toggle(
+                    "visualizer-stereo-auto-gain",
+                    Key::VisualizerStereoAutoGain,
+                    state.stereo_auto_gain,
+                    true,
+                    VisualizerCommand::StereoAutoGain,
+                    cx,
+                )
+                .into_any_element(),
+            ),
+        )
+        .w_full()
+        .child(
+            plot_well(&self.theme)
+                .id("visualizer-stereo-plot")
+                .flex_1()
+                .min_h(px(180.))
+                .child(Vectorscope::new(points)),
+        )
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(spacing.sm)
+                .child(faint("−1"))
+                .child(bar)
+                .child(faint("+1"))
+                .child(
+                    Label::new(
+                        correlation.map_or_else(|| "—".to_owned(), |value| signed(value, 2)),
+                    )
+                    .size(TextSize::Small)
+                    .mono(),
+                ),
+        )
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .gap(spacing.sm)
+                .child(
+                    Label::new(format!(
+                        "{} {}",
+                        self.t(Key::VisualizerNegativePeak),
+                        state
+                            .correlation_negative_peak
+                            .map_or_else(|| "—".to_owned(), |value| signed(value, 2)),
+                    ))
+                    .size(TextSize::XSmall)
+                    .color(TextColor::Muted),
+                )
+                .child(
+                    Button::icon_only("visualizer-correlation-reset", IconName::Refresh)
+                        .ghost()
+                        .size(ControlSize::Small)
+                        .tooltip(self.t(Key::VisualizerCorrelationReset))
+                        .disabled(
+                            state.correlation_history.is_empty()
+                                && state.correlation_negative_peak.is_none(),
+                        )
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.visualizer_command(VisualizerCommand::CorrelationReset);
+                            cx.notify();
+                        })),
+                ),
+        )
+        .into_any_element()
+    }
+
+    fn oscilloscope_card(&self, cx: &mut gpui::Context<Self>) -> AnyElement {
+        let tokens = &self.theme.atelier;
+        let spacing = tokens.spacing;
+        let state = &self.visualizer;
+        let series = tokens.colors.series;
+        let shown = state.frame.as_ref().and_then(|frame| {
+            oscilloscope_window(frame, state.oscilloscope_span).map(|window| (frame, window))
+        });
+        let (left, right) = shown.map_or_else(Default::default, |(frame, window)| {
+            let end = window.start + window.len;
+            let (left, right) = (
+                &frame.left[window.start..end],
+                &frame.right[window.start..end],
+            );
+            let gain = state.oscilloscope_gain.multiplier(left, right);
+            (
+                left.iter().map(|sample| sample * gain).collect::<Vec<_>>(),
+                right.iter().map(|sample| sample * gain).collect::<Vec<_>>(),
+            )
+        });
+        // The spans as the times they show, at the rate of what is being shown.
+        let (rate, window_samples, available) = state.frame.as_ref().map_or(
+            // Before the first frame: what the engine delivers, at the commonest rate.
+            (48_000.0, 1024, 1024),
+            |frame| {
+                (
+                    frame.sample_rate,
+                    frame.window_samples,
+                    frame.left.len().min(frame.right.len()),
+                )
+            },
+        );
+        let span_labels = OscilloscopeSpan::ALL.map(|span| {
+            let samples = span.sample_count(available.max(2), window_samples);
+            Segment::label(format!("{:.1} ms", samples as f64 * 1000.0 / rate))
+        });
+        let span_index = OscilloscopeSpan::ALL
+            .iter()
+            .position(|&span| span == state.oscilloscope_span)
+            .unwrap_or(0);
+        let gain_index = OscilloscopeGain::ALL
+            .iter()
+            .position(|&gain| gain == state.oscilloscope_gain)
+            .unwrap_or(0);
+        let legend = |label: &'static str, color: Hsla| {
+            div()
+                .flex()
+                .items_center()
+                .gap(spacing.xs)
+                .child(div().w(px(12.)).h(px(2.)).bg(color))
+                .child(
+                    Label::new(label)
+                        .size(TextSize::XSmall)
+                        .color(TextColor::Muted),
+                )
+        };
+        visualizer_card(
+            "visualizer-oscilloscope",
+            self.t(Key::VisualizerOscilloscope),
+            self.t(Key::VisualizerOscilloscopeHint),
+        )
+        .w_full()
+        .child(
+            div()
+                .flex()
+                .flex_wrap()
+                .items_center()
+                .gap(spacing.sm)
+                .child(
+                    Label::new(self.t(Key::VisualizerTimebase))
+                        .size(TextSize::Small)
+                        .color(TextColor::Muted),
+                )
+                .child(
+                    SegmentedControl::new("visualizer-timebase", span_labels, span_index)
+                        .size(ControlSize::Small)
+                        .on_select(cx.listener(|this, index: &usize, _, cx| {
+                            if let Some(&span) = OscilloscopeSpan::ALL.get(*index) {
+                                this.visualizer_command(VisualizerCommand::SetTimebase(span));
+                            }
+                            cx.notify();
+                        })),
+                )
+                .child(
+                    Label::new(self.t(Key::VisualizerDisplayGain))
+                        .size(TextSize::Small)
+                        .color(TextColor::Muted),
+                )
+                .child(
+                    SegmentedControl::new(
+                        "visualizer-oscilloscope-gain",
+                        [
+                            Segment::label("1×"),
+                            Segment::label("2×"),
+                            Segment::label("4×"),
+                            Segment::label(self.t(Key::VisualizerAuto)),
+                        ],
+                        gain_index,
+                    )
+                    .size(ControlSize::Small)
+                    .on_select(cx.listener(|this, index: &usize, _, cx| {
+                        if let Some(&gain) = OscilloscopeGain::ALL.get(*index) {
+                            this.visualizer_command(VisualizerCommand::SetOscilloscopeGain(gain));
+                        }
+                        cx.notify();
+                    })),
+                ),
+        )
+        .child(
+            plot_well(&self.theme)
+                .id("visualizer-oscilloscope-plot")
+                .relative()
+                .h(px(160.))
+                .child(div().absolute().inset_0().child(Waveform::new(left)))
+                .child(
+                    div()
+                        .absolute()
+                        .inset_0()
+                        .child(Waveform::new(right).no_grid().color(series[1])),
+                ),
+        )
+        .child(
+            div()
+                .flex()
+                .gap(spacing.lg)
+                .child(legend(self.t(Key::VisualizerLeftChannel), series[0]))
+                .child(legend(self.t(Key::VisualizerRightChannel), series[1])),
+        )
+        .into_any_element()
+    }
+
+    /// A small Atelier button that runs `command`, lit while `active`.
+    fn visualizer_toggle(
+        &self,
+        id: &'static str,
+        key: Key,
+        active: bool,
+        enabled: bool,
+        command: VisualizerCommand,
+        cx: &mut gpui::Context<Self>,
+    ) -> Button {
+        Button::new(id, self.t(key))
+            .size(ControlSize::Small)
+            .selected(active)
+            .disabled(!enabled)
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.visualizer_command(command);
+                cx.notify();
+            }))
     }
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "a section owns its data, controls, copy, and paint state"
-)]
-fn oscilloscope_section(
-    frame: Option<VisualizerFrame>,
-    span: OscilloscopeSpan,
-    gain: OscilloscopeGain,
-    controls: gpui::AnyElement,
-    title: String,
-    hint: String,
-    theme: Theme,
-    bounds_cell: Rc<Cell<Option<Bounds<Pixels>>>>,
-    fill: bool,
-    effects: bool,
-) -> gpui::AnyElement {
-    let paint_theme = theme.clone();
-    let graph = div()
-        .w_full()
-        .when(fill, |this| this.flex_1().min_h(px(160.)))
-        .when(!fill, |this| this.h(px(220.)).flex_shrink_0())
-        .child(
-            canvas(
-                move |bounds, _, _| bounds_cell.set(Some(bounds)),
-                move |bounds, _, window, cx| {
-                    paint_oscilloscope(
-                        window,
-                        cx,
-                        bounds,
-                        frame.as_ref(),
-                        span,
-                        gain,
-                        &paint_theme,
-                        effects,
-                    );
-                },
-            )
-            .size_full(),
-        );
-    div()
-        .flex()
-        .flex_col()
-        .gap_2()
-        .when(fill, |this| this.flex_1().min_h_0())
-        .child(div().flex().flex_col().gap_2().child(title).child(controls))
-        .child(graph)
-        .child(div().text_xs().text_color(theme.text_muted).child(hint))
-        .into_any_element()
+/// One analyser card: a title, what it shows, and room for its controls and plot.
+fn visualizer_card(id: &'static str, title: &str, description: &str) -> Card {
+    visualizer_card_with(id, title, description, None)
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "a section owns its data, controls, copy, and paint state"
-)]
-fn spectrum_section(
-    spectrum: std::sync::Arc<[f32]>,
-    peak: Vec<f32>,
-    reference: Vec<f32>,
-    controls: gpui::AnyElement,
-    title: String,
-    hint: String,
-    theme: Theme,
-    bounds_cell: Rc<Cell<Option<Bounds<Pixels>>>>,
-    fill: bool,
-    effects: bool,
-) -> gpui::AnyElement {
-    let paint_theme = theme.clone();
-    let graph = div()
-        .w_full()
-        .when(fill, |this| this.flex_1().min_h(px(160.)))
-        .when(!fill, |this| this.h(px(220.)).flex_shrink_0())
-        .child(
-            canvas(
-                move |bounds, _, _| bounds_cell.set(Some(bounds)),
-                move |bounds, _, window, cx| {
-                    paint_spectrum(
-                        window,
-                        cx,
-                        bounds,
-                        &spectrum,
-                        &peak,
-                        &reference,
-                        &paint_theme,
-                        effects,
-                    );
-                },
-            )
-            .size_full(),
-        );
-    div()
+/// [`visualizer_card`] with an action at the trailing end of its header.
+fn visualizer_card_with(
+    id: &'static str,
+    title: &str,
+    description: &str,
+    action: Option<AnyElement>,
+) -> Card {
+    let mut header = SectionHeader::new(title.to_owned()).description(description.to_owned());
+    if let Some(action) = action {
+        header = header.action(action);
+    }
+    Card::new()
+        .id(id)
         .flex()
         .flex_col()
-        .gap_2()
-        .when(fill, |this| this.flex_1().min_h_0())
-        .child(div().flex().flex_col().gap_2().child(title).child(controls))
-        .child(graph)
-        .child(div().text_xs().text_color(theme.text_muted).child(hint))
-        .into_any_element()
+        .gap(px(12.))
+        .p(px(20.))
+        .child(header)
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "a section owns its data, controls, copy, and paint state"
-)]
-fn stereo_section(
-    trail: Vec<VisualizerFrame>,
-    auto_gain: bool,
-    controls: gpui::AnyElement,
-    title: String,
-    hint: String,
-    theme: Theme,
-    bounds_cell: Rc<Cell<Option<Bounds<Pixels>>>>,
-    fill: bool,
-    effects: bool,
-) -> gpui::AnyElement {
-    let paint_theme = theme.clone();
-    let graph = div()
+/// The sunken well a plot sits in: content, never chrome.
+fn plot_well(theme: &Theme) -> gpui::Div {
+    div()
         .w_full()
-        .when(fill, |this| this.flex_1().min_h(px(160.)))
-        .when(!fill, |this| this.h(px(220.)).flex_shrink_0())
-        .child(
-            canvas(
-                move |bounds, _, _| bounds_cell.set(Some(bounds)),
-                move |bounds, _, window, cx| {
-                    paint_stereo(window, cx, bounds, &trail, auto_gain, &paint_theme, effects);
-                },
-            )
-            .size_full(),
-        );
+        .rounded(theme.atelier.shape.radius_sm)
+        .bg(theme.atelier.colors.sunken)
+        .overflow_hidden()
+}
+
+/// `label` pinned at `at` (0 to 1) along a box, centred on that point: down the box when
+/// `vertical`, across it otherwise. `inset` is the plot's own padding inside its well.
+fn axis_mark(label: Label, at: f32, vertical: bool, inset: Pixels) -> gpui::Div {
+    let anchor = div().absolute();
+    let anchor = if vertical {
+        anchor
+            .left_0()
+            .right_0()
+            .top(relative(at))
+            .mt(inset * (1.0 - 2.0 * at))
+    } else {
+        anchor.top_0().left(relative(at))
+    };
+    let mark = div().absolute().flex().whitespace_nowrap().child(label);
+    anchor.child(if vertical {
+        mark.top(px(-7.)).right_0()
+    } else {
+        mark.left(px(-14.)).top_0()
+    })
+}
+
+/// A line through the saved comparison, drawn over the bars it is compared with.
+fn reference_curve(levels: Vec<f32>, color: Hsla) -> impl IntoElement {
+    canvas(
+        |_, _, _| (),
+        move |bounds: Bounds<Pixels>, _, window, _| {
+            if levels.is_empty() {
+                return;
+            }
+            let band = bounds.size.width / levels.len() as f32;
+            let points: Vec<_> = levels
+                .iter()
+                .enumerate()
+                .map(|(index, level)| {
+                    point(
+                        bounds.left() + band * (index as f32 + 0.5),
+                        bounds.bottom() - bounds.size.height * level.clamp(0.0, 1.0),
+                    )
+                })
+                .collect();
+            paint::polyline(window, &points, px(1.5), color);
+        },
+    )
+    .size_full()
+}
+
+/// A labelled number with its unit, or a dash when there is nothing to read yet.
+fn labelled_figure(
+    label: &str,
+    value: Option<f32>,
+    unit: &str,
+    size: TextSize,
+    tokens: &atelier::Theme,
+) -> gpui::Div {
     div()
         .flex()
         .flex_col()
-        .gap_2()
-        .when(fill, |this| this.flex_1().min_h_0())
-        .child(div().flex().flex_col().gap_2().child(title).child(controls))
-        .child(graph)
-        .child(div().text_xs().text_color(theme.text_muted).child(hint))
-        .into_any_element()
+        .gap(tokens.spacing.xxs)
+        .child(Label::caption(label.to_owned()))
+        .child(
+            div()
+                .flex()
+                .items_baseline()
+                .gap(tokens.spacing.xs)
+                .child(
+                    Label::new(
+                        value.map_or_else(|| "—".to_owned(), |value| signed_plain(value, 1)),
+                    )
+                    .size(size)
+                    .mono()
+                    .weight(tokens.typography.label_weight),
+                )
+                .child(
+                    Label::new(unit.to_owned())
+                        .size(TextSize::Small)
+                        .color(TextColor::Muted),
+                ),
+        )
+}
+
+fn spectrum_channel_key(mode: VisualizerSpectrum) -> Key {
+    match mode {
+        VisualizerSpectrum::Average => Key::VisualizerSpectrumAverage,
+        VisualizerSpectrum::Left => Key::VisualizerSpectrumLeft,
+        VisualizerSpectrum::Right => Key::VisualizerSpectrumRight,
+        VisualizerSpectrum::Maximum => Key::VisualizerSpectrumMaximum,
+        VisualizerSpectrum::Mono => Key::VisualizerSpectrumMono,
+    }
+}
+
+/// Where a level in dBFS sits up the spectrum, from 0 at [`FLOOR_DB`] to 1 at full scale.
+fn spectrum_level(db: f32) -> f32 {
+    (1.0 - db / FLOOR_DB).clamp(0.0, 1.0)
+}
+
+/// Where a frequency sits across the spectrum, from 0 at the left edge to 1 at the right.
+fn spectrum_x(hz: f64) -> f32 {
+    ((hz / SPECTRUM_LOW_HZ).log2() / SPECTRUM_OCTAVES as f64).clamp(0.0, 1.0) as f32
+}
+
+/// A frequency as the axis writes it: 500, 1k, 20k.
+fn frequency_label(hz: f64) -> String {
+    if hz >= 1000.0 {
+        format!("{}k", hz / 1000.0)
+    } else {
+        format!("{hz}")
+    }
+}
+
+/// Where a sample peak in dBFS sits on a channel meter.
+fn meter_level(db: f32) -> f32 {
+    (1.0 - db / METER_FLOOR_DB).clamp(0.0, 1.0)
+}
+
+/// The sample peak of each channel's newest window, in dBFS, no lower than the meter's floor.
+fn channel_peaks_db(frame: &VisualizerFrame) -> [f32; 2] {
+    let (left, right) = frame_window(frame);
+    [left, right].map(|samples| {
+        let peak = samples
+            .iter()
+            .copied()
+            .filter(|sample| sample.is_finite())
+            .map(f32::abs)
+            .fold(0.0, f32::max);
+        if peak > 0.0 {
+            (20.0 * peak.log10()).max(METER_FLOOR_DB)
+        } else {
+            METER_FLOOR_DB
+        }
+    })
+}
+
+/// What the loudness says about a master meant for the streaming services, once there is an
+/// integrated loudness to say it about. The true peak is checked first: a master that is the
+/// right loudness but clips a converter is not on target.
+fn streaming_verdict(loudness: &VisualizerLoudness) -> Option<(Key, Tone)> {
+    let integrated = loudness.integrated?;
+    if loudness
+        .true_peak
+        .is_some_and(|peak| peak > STREAMING_CEILING_DBTP)
+    {
+        Some((Key::VisualizerPeakOver, Tone::Warning))
+    } else if integrated > STREAMING_TARGET_LUFS + STREAMING_TOLERANCE_LU {
+        Some((Key::VisualizerTooLoud, Tone::Warning))
+    } else if integrated < STREAMING_TARGET_LUFS - STREAMING_TOLERANCE_LU {
+        Some((Key::VisualizerTooQuiet, Tone::Neutral))
+    } else {
+        Some((Key::VisualizerOnTarget, Tone::Success))
+    }
+}
+
+/// `text` with its hyphen-minus written as a minus sign, as a number is printed.
+fn minus(text: String) -> String {
+    text.replace('-', "\u{2212}")
+}
+
+/// `value` to `decimals` places with a minus sign when negative and nothing when not.
+fn signed_plain(value: f32, decimals: usize) -> String {
+    minus(format!("{value:.decimals$}"))
+}
+
+/// `value` to `decimals` places with its sign always shown: `+0.72`, `−0.31`.
+fn signed(value: f32, decimals: usize) -> String {
+    minus(format!("{value:+.decimals$}"))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1117,375 +1642,6 @@ fn oscilloscope_window(
     })
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "painting receives the measured frame, display controls, and theme explicitly"
-)]
-fn paint_oscilloscope(
-    window: &mut Window,
-    cx: &mut gpui::App,
-    bounds: Bounds<Pixels>,
-    frame: Option<&VisualizerFrame>,
-    span: OscilloscopeSpan,
-    gain: OscilloscopeGain,
-    theme: &Theme,
-    effects: bool,
-) {
-    paint::rect(window, bounds, theme.surface_sunken);
-    let left = bounds.origin.x + px(38.);
-    let top = bounds.origin.y + px(8.);
-    let width = (bounds.size.width - px(46.)).max(px(1.));
-    let height = (bounds.size.height - px(28.)).max(px(1.));
-    let plot = Bounds {
-        origin: point(left, top),
-        size: size(width, height),
-    };
-    let lane_height = height / 2.;
-    for unit in [0.0, 0.25, 0.5, 0.75, 1.0] {
-        let x = left + width * unit;
-        paint::polyline(
-            window,
-            &[point(x, top), point(x, top + height)],
-            px(1.),
-            theme.border_subtle,
-        );
-    }
-    for (lane, label) in [(0, "L"), (1, "R")] {
-        let lane_top = top + lane_height * lane as f32;
-        let center = lane_top + lane_height / 2.;
-        for (value, color) in [
-            (lane_top, theme.border_subtle),
-            (center, theme.border),
-            (lane_top + lane_height, theme.border_subtle),
-        ] {
-            paint::hline(window, plot, value, color);
-        }
-        paint::label(
-            window,
-            cx,
-            point(bounds.origin.x + px(4.), center - px(6.)),
-            label,
-            px(11.),
-            theme.text,
-        );
-        for (value, text) in [
-            (lane_top, "+1"),
-            (center, "0"),
-            (lane_top + lane_height, "−1"),
-        ] {
-            paint::label(
-                window,
-                cx,
-                point(bounds.origin.x + px(18.), value - px(5.)),
-                text,
-                px(9.),
-                theme.text_muted,
-            );
-        }
-    }
-    let visible = frame.and_then(|frame| oscilloscope_window(frame, span));
-    let trigger_fraction = visible.map_or(0.2, |visible| {
-        visible.trigger_offset as f32 / (visible.len - 1) as f32
-    });
-    let trigger_x = left + width * trigger_fraction;
-    paint::polyline(
-        window,
-        &[point(trigger_x, top), point(trigger_x, top + height)],
-        px(1.),
-        theme.accent_soft,
-    );
-    let Some((frame, visible)) = frame.zip(visible) else {
-        return;
-    };
-    let before_ms = visible.trigger_offset as f64 * 1000.0 / frame.sample_rate;
-    let after_ms = (visible.len - 1 - visible.trigger_offset) as f64 * 1000.0 / frame.sample_rate;
-    for (x, label) in [
-        (left, format!("−{before_ms:.1}")),
-        (trigger_x, "0".to_owned()),
-        (left + width, format!("+{after_ms:.1} ms")),
-    ] {
-        paint::label(
-            window,
-            cx,
-            point(x.min(left + width - px(38.)), top + height + px(2.)),
-            label,
-            px(10.),
-            theme.text_muted,
-        );
-    }
-    let end = visible.start + visible.len;
-    let left_samples = &frame.left[visible.start..end];
-    let right_samples = &frame.right[visible.start..end];
-    let multiplier = gain.multiplier(left_samples, right_samples);
-    for (samples, center, color) in [
-        (
-            left_samples,
-            top + lane_height / 2.,
-            theme.visualizer_color(0),
-        ),
-        (
-            right_samples,
-            top + lane_height * 1.5,
-            theme.visualizer_color(1),
-        ),
-    ] {
-        let points: Vec<_> = samples
-            .iter()
-            .enumerate()
-            .map(|(index, &sample)| {
-                point(
-                    left + width * index as f32 / (visible.len - 1) as f32,
-                    center - lane_height * 0.45 * (sample * multiplier).clamp(-1.0, 1.0),
-                )
-            })
-            .collect();
-        paint::clipped(window, plot, |window| {
-            // A restrained halo makes quiet signals legible without changing their measured
-            // position or amplitude. The solid centre remains the measurement itself.
-            if effects {
-                paint::polyline(window, &points, px(6.), Theme::translucent(color, 0.10));
-                paint::polyline(window, &points, px(3.), Theme::translucent(color, 0.22));
-            }
-            paint::polyline(window, &points, px(1.25), color)
-        });
-    }
-}
-
-fn spectrum_color(theme: &Theme, index: usize, count: usize) -> gpui::Hsla {
-    let position = if count > 1 {
-        index as f32 / (count - 1) as f32
-    } else {
-        0.0
-    };
-    theme.visualizer_gradient(position)
-}
-
-#[expect(
-    clippy::too_many_arguments,
-    reason = "painting receives the measured series, comparison overlays, and theme explicitly"
-)]
-fn paint_spectrum(
-    window: &mut Window,
-    cx: &mut gpui::App,
-    bounds: Bounds<Pixels>,
-    spectrum: &[f32],
-    peak: &[f32],
-    reference: &[f32],
-    theme: &Theme,
-    effects: bool,
-) {
-    let left = bounds.origin.x + px(32.);
-    let top = bounds.origin.y;
-    let width = (bounds.size.width - px(40.)).max(px(1.));
-    let height = (bounds.size.height - px(20.)).max(px(1.));
-    let plot = Bounds {
-        origin: point(left, top),
-        size: size(width, height),
-    };
-    paint::rect(window, bounds, theme.surface_sunken);
-    for db in [0., -18., -36., -54., -72.] {
-        let y = top + height * (db / FLOOR_DB);
-        paint::hline(window, plot, y, theme.border);
-        paint::label(
-            window,
-            cx,
-            point(bounds.origin.x, y),
-            format!("{db:.0}"),
-            px(10.),
-            theme.text_muted,
-        );
-    }
-    for hz in [100., 1000., 10000.] {
-        let x = left + width * x_of(hz);
-        paint::polyline(
-            window,
-            &[point(x, top), point(x, top + height)],
-            px(1.),
-            theme.border,
-        );
-        paint::label(
-            window,
-            cx,
-            point(x, top + height),
-            format!("{hz:.0} Hz"),
-            px(10.),
-            theme.text_muted,
-        );
-    }
-    for (values, color, stroke) in [
-        (reference, theme.text_faint, 2.),
-        (peak, theme.text_muted, 1.),
-    ] {
-        if values.is_empty() {
-            continue;
-        }
-        let points: Vec<_> = values
-            .iter()
-            .enumerate()
-            .map(|(i, db)| {
-                point(
-                    left + width * ((i as f32 + 0.5) / values.len() as f32),
-                    top + height * (db / FLOOR_DB).clamp(0., 1.),
-                )
-            })
-            .collect();
-        paint::polyline(window, &points, px(stroke), color);
-    }
-    if !spectrum.is_empty() {
-        let points: Vec<_> = spectrum
-            .iter()
-            .enumerate()
-            .map(|(i, db)| {
-                point(
-                    left + width * ((i as f32 + 0.5) / spectrum.len() as f32),
-                    top + height * (db / FLOOR_DB).clamp(0., 1.),
-                )
-            })
-            .collect();
-        // The fill follows the same bins as the actual spectrum. It adds depth while preserving
-        // the trace and grid as the authoritative readout.
-        paint::clipped(window, plot, |window| {
-            if effects {
-                paint::area_under(
-                    window,
-                    &points,
-                    top + height,
-                    Theme::translucent(
-                        spectrum_color(theme, spectrum.len() / 3, spectrum.len()),
-                        0.16,
-                    ),
-                );
-                paint::polyline(
-                    window,
-                    &points,
-                    px(5.),
-                    Theme::translucent(theme.accent, 0.10),
-                );
-                paint::polyline(
-                    window,
-                    &points,
-                    px(2.5),
-                    Theme::translucent(theme.accent, 0.24),
-                );
-            }
-            paint::polyline(window, &points, px(1.5), theme.accent);
-            for (index, pair) in points.windows(2).enumerate() {
-                paint::polyline(
-                    window,
-                    pair,
-                    px(1.5),
-                    spectrum_color(theme, index, spectrum.len()),
-                );
-            }
-        });
-    }
-}
-
-fn paint_stereo(
-    window: &mut Window,
-    cx: &mut gpui::App,
-    bounds: Bounds<Pixels>,
-    history: &[VisualizerFrame],
-    auto_gain: bool,
-    theme: &Theme,
-    effects: bool,
-) {
-    paint::rect(window, bounds, theme.surface_sunken);
-    let center = point(
-        bounds.origin.x + bounds.size.width / 2.,
-        bounds.origin.y + bounds.size.height / 2.,
-    );
-    let radius = (bounds.size.width.min(bounds.size.height) / 2. - px(30.)).max(px(1.));
-    for (a, b) in [
-        (
-            point(center.x - radius, center.y),
-            point(center.x + radius, center.y),
-        ),
-        (
-            point(center.x, center.y - radius),
-            point(center.x, center.y + radius),
-        ),
-    ] {
-        paint::polyline(window, &[a, b], px(1.), theme.border);
-    }
-    paint::label(
-        window,
-        cx,
-        point(center.x + px(4.), center.y - radius),
-        "M",
-        px(10.),
-        theme.text_muted,
-    );
-    paint::label(
-        window,
-        cx,
-        point(center.x + radius, center.y),
-        "S",
-        px(10.),
-        theme.text_muted,
-    );
-    let multiplier = history
-        .last()
-        .map(|frame| {
-            let (left, right) = frame_window(frame);
-            if auto_gain {
-                display_auto_gain(left, right)
-            } else {
-                1.0
-            }
-        })
-        .unwrap_or(1.0);
-    for (index, frame) in history.iter().enumerate() {
-        if !effects && index + 1 != history.len() {
-            continue;
-        }
-        let (left, right) = frame_window(frame);
-        let points: Vec<_> = left
-            .iter()
-            .zip(right)
-            .map(|(&l, &r)| {
-                let (l, r) = (l * multiplier, r * multiplier);
-                point(
-                    center.x + radius * ((l - r) * 0.5).clamp(-1., 1.),
-                    center.y - radius * ((l + r) * 0.5).clamp(-1., 1.),
-                )
-            })
-            .collect();
-        let alpha = 0.12 + 0.78 * (index + 1) as f32 / history.len() as f32;
-        paint::clipped(window, bounds, |window| {
-            let color = theme.visualizer_color(history.len().saturating_sub(index + 1));
-            if effects {
-                paint::polyline(
-                    window,
-                    &points,
-                    px(4.),
-                    Theme::translucent(color, alpha * 0.12),
-                );
-            }
-            paint::polyline(window, &points, px(1.), Theme::translucent(color, alpha));
-        });
-    }
-    if effects && let Some(frame) = history.last() {
-        let (left, right) = frame_window(frame);
-        if let (Some(&left), Some(&right)) = (left.last(), right.last()) {
-            let (left, right) = (left * multiplier, right * multiplier);
-            let at = point(
-                center.x + radius * ((left - right) * 0.5).clamp(-1., 1.),
-                center.y - radius * ((left + right) * 0.5).clamp(-1., 1.),
-            );
-            paint::rounded_rect(
-                window,
-                Bounds {
-                    origin: point(at.x - px(3.), at.y - px(3.)),
-                    size: size(px(6.), px(6.)),
-                },
-                px(3.),
-                theme.visualizer_color(0),
-            );
-        }
-    }
-}
-
 fn frame_window(frame: &VisualizerFrame) -> (&[f32], &[f32]) {
     let available = frame.left.len().min(frame.right.len());
     let count = frame.window_samples.min(available);
@@ -1508,80 +1664,6 @@ fn display_auto_gain(left: &[f32], right: &[f32]) -> f32 {
         1.0
     } else {
         (0.9 / peak).clamp(1.0, 16.0)
-    }
-}
-
-fn paint_correlation(
-    window: &mut Window,
-    cx: &mut gpui::App,
-    bounds: Bounds<Pixels>,
-    current: Option<f32>,
-    history: &[f32],
-    negative_peak: Option<f32>,
-    theme: &Theme,
-) {
-    paint::rect(window, bounds, theme.surface_sunken);
-    let left = bounds.origin.x + px(24.);
-    let right = bounds.origin.x + bounds.size.width - px(24.);
-    let width = (right - left).max(px(1.));
-    let y = bounds.origin.y + bounds.size.height / 2.;
-    paint::polyline(
-        window,
-        &[point(left, y), point(right, y)],
-        px(2.),
-        theme.border,
-    );
-    for (unit, label) in [(0.0, "−1"), (0.5, "0"), (1.0, "+1")] {
-        let x = left + width * unit;
-        paint::polyline(
-            window,
-            &[point(x, y - px(5.)), point(x, y + px(5.))],
-            px(1.),
-            theme.text_muted,
-        );
-        paint::label(
-            window,
-            cx,
-            point((x - px(8.)).max(bounds.origin.x), bounds.origin.y + px(2.)),
-            label,
-            px(9.),
-            theme.text_muted,
-        );
-    }
-    if let (Some(min), Some(max)) = (
-        history.iter().copied().reduce(f32::min),
-        history.iter().copied().reduce(f32::max),
-    ) {
-        let from = left + width * ((min + 1.0) * 0.5);
-        let to = left + width * ((max + 1.0) * 0.5);
-        paint::rect(
-            window,
-            Bounds {
-                origin: point(from, y - px(3.)),
-                size: size((to - from).max(px(2.)), px(6.)),
-            },
-            theme.accent_soft,
-        );
-    }
-    if let Some(value) = negative_peak {
-        let x = left + width * ((value + 1.0) * 0.5);
-        paint::polyline(
-            window,
-            &[point(x, y - px(8.)), point(x, y + px(8.))],
-            px(2.),
-            theme.danger,
-        );
-    }
-    if let Some(value) = current {
-        let x = left + width * ((value + 1.0) * 0.5);
-        paint::rect(
-            window,
-            Bounds {
-                origin: point(x - px(2.), y - px(6.)),
-                size: size(px(4.), px(12.)),
-            },
-            theme.accent,
-        );
     }
 }
 
@@ -1677,7 +1759,6 @@ mod tests {
     #[test]
     fn history_averages_power_and_retains_peaks() {
         let mut state = VisualizerState::default();
-        assert!(!state.effects_disabled);
         let start = Instant::now();
         state.accept_at(frame(-20.), start);
         state.accept_at(frame(0.), start + Duration::from_millis(200));
@@ -1686,20 +1767,6 @@ mod tests {
         assert!((state.mean[0] - expected).abs() < 0.001);
         state.accept_at(frame(-40.), start + Duration::from_millis(400));
         assert_eq!(state.peak[0], 0.);
-    }
-
-    #[test]
-    fn spectrum_palette_maps_edges_to_the_theme_gradient() {
-        let theme = Theme::dark();
-        assert_eq!(
-            spectrum_color(&theme, 0, 96),
-            theme.visualizer_gradient(0.0)
-        );
-        assert_eq!(
-            spectrum_color(&theme, 95, 96),
-            theme.visualizer_gradient(1.0)
-        );
-        assert_eq!(spectrum_color(&theme, 0, 1), theme.visualizer_gradient(0.0));
     }
 
     #[test]
@@ -1733,85 +1800,44 @@ mod tests {
     #[gpui::test]
     fn visualizer_opens_freezes_saves_and_closes_without_editing(cx: &mut gpui::TestAppContext) {
         let (app, cx) = harness::open(cx);
+        let before = app.read_with(cx, |app, _| app.session.project().clone());
         cx.dispatch_action(actions::ToggleVisualizer);
-        app.update(cx, |app, _| app.visualizer.view = VisualizerView::All);
         harness::paint(&app, cx);
         let handle = app.read_with(cx, |app, _| app.auxiliary_windows[&Surface::Visualizer]);
-        app.read_with(cx, |app, _| {
-            let oscilloscope = app
-                .visualizer
-                .oscilloscope_bounds
-                .get()
-                .expect("oscilloscope painted");
-            let spectrum = app
-                .visualizer
-                .spectrum_bounds
-                .get()
-                .expect("spectrum painted");
-            assert!(spectrum.size.width > px(600.), "{spectrum:?}");
-            assert_eq!(spectrum.size.width, oscilloscope.size.width);
-            assert_eq!(spectrum.origin.x, oscilloscope.origin.x);
-            assert_eq!(oscilloscope.size.height, px(220.));
-            assert_eq!(spectrum.size.height, px(220.));
+        let mut utility = gpui::VisualTestContext::from_window(handle.into(), cx);
+        utility.simulate_resize(size(px(1200.), px(900.)));
+        app.update(&mut utility, |app, cx| {
+            app.visualizer.accept(frame(-12.));
+            cx.notify();
         });
-        app.update(cx, |app, _| app.visualizer.accept(frame(-12.)));
-        harness::paint(&app, cx);
-        let captured = app.read_with(cx, |app, _| {
-            (
-                app.visualizer.frame.as_ref().map(|frame| {
-                    (
-                        frame.left.clone(),
-                        frame.right.clone(),
-                        frame.spectrum.clone(),
-                        frame.sample_rate,
-                        frame.window_samples,
-                    )
-                }),
-                app.visualizer.stereo_trail.len(),
-            )
-        });
-        harness::click(
-            "visualizer-effects",
-            &mut gpui::VisualTestContext::from_window(handle.into(), cx),
+        utility.run_until_parked();
+        // The five cards, paired the way the Atelier analyser pairs them when there is room.
+        let mut card = |name| {
+            utility
+                .debug_bounds(name)
+                .unwrap_or_else(|| panic!("no {name} card was drawn"))
+        };
+        let spectrum = card("visualizer-spectrum");
+        let loudness = card("visualizer-loudness");
+        let spectrogram = card("visualizer-spectrogram");
+        let stereo = card("visualizer-stereo");
+        let oscilloscope = card("visualizer-oscilloscope");
+        assert!(
+            loudness.left() > spectrum.right(),
+            "{spectrum:?} {loudness:?}"
         );
-        app.read_with(cx, |app, _| {
-            assert!(app.visualizer.effects_disabled);
-            let frame = app.visualizer.frame.as_ref().expect("captured frame");
-            let captured_frame = captured.0.as_ref().expect("captured frame");
-            assert_eq!(frame.left, captured_frame.0);
-            assert_eq!(frame.right, captured_frame.1);
-            assert_eq!(frame.spectrum, captured_frame.2);
-            assert_eq!(frame.sample_rate, captured_frame.3);
-            assert_eq!(frame.window_samples, captured_frame.4);
-            assert_eq!(app.visualizer.stereo_trail.len(), captured.1);
-        });
-        app.update(cx, |app, _| {
-            app.visualizer.view = VisualizerView::Oscilloscope
-        });
-        harness::paint(
-            &app,
-            &mut gpui::VisualTestContext::from_window(handle.into(), cx),
-        );
-        app.update(cx, |app, _| app.visualizer.view = VisualizerView::Stereo);
-        harness::paint(
-            &app,
-            &mut gpui::VisualTestContext::from_window(handle.into(), cx),
-        );
-        app.update(cx, |app, _| app.visualizer.view = VisualizerView::All);
-        harness::click(
-            "visualizer-effects",
-            &mut gpui::VisualTestContext::from_window(handle.into(), cx),
-        );
-        cx.dispatch_action(actions::VisualizerFreeze);
-        cx.dispatch_action(actions::VisualizerSave);
-        app.read_with(cx, |app, _| {
+        assert_eq!(loudness.size.width, SIDE_CARD_WIDTH);
+        assert_eq!(stereo.size.width, SIDE_CARD_WIDTH);
+        assert!(spectrogram.top() > spectrum.bottom());
+        assert!(oscilloscope.top() > spectrogram.bottom());
+        assert_eq!(oscilloscope.left(), spectrum.left());
+        assert_eq!(oscilloscope.right(), loudness.right());
+
+        harness::click("visualizer-freeze", &mut utility);
+        harness::click("visualizer-save", &mut utility);
+        app.read_with(&utility, |app, _| {
             assert!(app.visualizer.frozen);
             assert_eq!(app.visualizer.reference, vec![-12.; 96]);
-            assert!(!app.visualizer.effects_disabled);
-            let frame = app.visualizer.frame.as_ref().expect("frozen frame");
-            let captured_frame = captured.0.as_ref().expect("captured frame");
-            assert_eq!(frame.left, captured_frame.0);
-            assert_eq!(app.visualizer.stereo_trail.len(), captured.1);
         });
         cx.dispatch_action(actions::VisualizerSource);
         app.read_with(cx, |app, _| {
@@ -1822,20 +1848,67 @@ mod tests {
         cx.dispatch_action(actions::VisualizerReset);
         app.read_with(cx, |app, _| assert!(app.visualizer.reference.is_empty()));
         cx.dispatch_action(actions::VisualizerTimebase);
-        cx.dispatch_action(actions::VisualizerView);
         cx.dispatch_action(actions::VisualizerSpectrumChannel);
         cx.dispatch_action(actions::VisualizerOscilloscopeGain);
         cx.dispatch_action(actions::VisualizerStereoAutoGain);
+        cx.dispatch_action(actions::VisualizerTap);
+        cx.dispatch_action(actions::VisualizerLoudnessReset);
         app.read_with(cx, |app, _| {
             assert_eq!(app.visualizer.oscilloscope_span, OscilloscopeSpan::Short);
-            assert_eq!(app.visualizer.view, VisualizerView::Oscilloscope);
             assert_eq!(app.visualizer.spectrum_mode, VisualizerSpectrum::Left);
             assert_eq!(app.visualizer.oscilloscope_gain, OscilloscopeGain::Double);
             assert!(app.visualizer.stereo_auto_gain);
+            assert_eq!(app.visualizer.tap, VisualizerTap::PreFader);
+            assert_eq!(app.session.project(), &before, "watching is not editing");
         });
         cx.dispatch_action(actions::ToggleVisualizer);
         harness::paint(&app, cx);
         assert!(handle.read_with(cx, |_, _| ()).is_err());
+    }
+
+    #[gpui::test]
+    fn a_narrow_window_stacks_the_cards_in_one_column(cx: &mut gpui::TestAppContext) {
+        let (app, cx) = harness::open(cx);
+        cx.dispatch_action(actions::ToggleVisualizer);
+        harness::paint(&app, cx);
+        let handle = app.read_with(cx, |app, _| app.auxiliary_windows[&Surface::Visualizer]);
+        let mut utility = gpui::VisualTestContext::from_window(handle.into(), cx);
+        utility.simulate_resize(size(px(640.), px(900.)));
+        utility.run_until_parked();
+        let spectrum = utility.debug_bounds("visualizer-spectrum").unwrap();
+        let loudness = utility.debug_bounds("visualizer-loudness").unwrap();
+        assert!(loudness.top() > spectrum.bottom());
+        assert_eq!(loudness.left(), spectrum.left());
+        assert_eq!(loudness.size.width, spectrum.size.width);
+    }
+
+    #[gpui::test]
+    fn the_segmented_controls_choose_source_tap_channel_span_and_gain(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (app, cx) = harness::open(cx);
+        cx.dispatch_action(actions::ToggleVisualizer);
+        harness::paint(&app, cx);
+        let handle = app.read_with(cx, |app, _| app.auxiliary_windows[&Surface::Visualizer]);
+        let mut utility = gpui::VisualTestContext::from_window(handle.into(), cx);
+        utility.simulate_resize(size(px(1200.), px(1400.)));
+        utility.run_until_parked();
+        for selector in [
+            "visualizer-source-1",
+            "visualizer-tap-0",
+            "visualizer-spectrum-channel-4",
+            "visualizer-timebase-0",
+            "visualizer-oscilloscope-gain-3",
+        ] {
+            harness::click(selector, &mut utility);
+        }
+        app.read_with(&utility, |app, _| {
+            assert!(app.visualizer.selected);
+            assert_eq!(app.visualizer.tap, VisualizerTap::PreFader);
+            assert_eq!(app.visualizer.spectrum_mode, VisualizerSpectrum::Mono);
+            assert_eq!(app.visualizer.oscilloscope_span, OscilloscopeSpan::Short);
+            assert_eq!(app.visualizer.oscilloscope_gain, OscilloscopeGain::Auto);
+        });
     }
 
     #[gpui::test]
@@ -1871,7 +1944,7 @@ mod tests {
         harness::click("visualizer-freeze", cx);
         app.read_with(cx, |app, _| assert!(app.visualizer.frozen));
 
-        harness::click("visualizer-source", cx);
+        harness::click("visualizer-source-1", cx);
         app.read_with(cx, |app, _| {
             assert!(
                 !app.visualizer.frozen,
@@ -1891,6 +1964,121 @@ mod tests {
             app.reset_view();
             assert!(!app.visualizer.open);
             assert!(app.visualizer.frame.is_none());
+        });
+    }
+
+    #[test]
+    fn the_streaming_verdict_checks_the_peak_before_the_loudness() {
+        let reading = |integrated, true_peak| VisualizerLoudness {
+            integrated,
+            true_peak,
+            ..VisualizerLoudness::default()
+        };
+        assert_eq!(streaming_verdict(&reading(None, Some(-3.))), None);
+        assert_eq!(
+            streaming_verdict(&reading(Some(-14.3), Some(-1.5))),
+            Some((Key::VisualizerOnTarget, Tone::Success))
+        );
+        assert_eq!(
+            streaming_verdict(&reading(Some(-14.3), Some(-0.2))),
+            Some((Key::VisualizerPeakOver, Tone::Warning))
+        );
+        assert_eq!(
+            streaming_verdict(&reading(Some(-9.), Some(-1.2))),
+            Some((Key::VisualizerTooLoud, Tone::Warning))
+        );
+        assert_eq!(
+            streaming_verdict(&reading(Some(-23.), Some(-6.))),
+            Some((Key::VisualizerTooQuiet, Tone::Neutral))
+        );
+    }
+
+    #[test]
+    fn the_spectrogram_puts_high_bands_on_top_and_the_newest_column_on_the_right() {
+        let mut state = VisualizerState::default();
+        let start = Instant::now();
+        let mut rising = frame(0.);
+        rising.spectrum = (0..4).map(|band| FLOOR_DB + band as f32 * 24.).collect();
+        state.accept_at(rising, start);
+        // A repaint 10 ms later is inside the same 25 ms column and adds nothing.
+        state.accept_at(frame(0.), start + Duration::from_millis(10));
+        assert_eq!(state.spectrogram.len(), 1);
+        let (rows, cells) = state.spectrogram_cells();
+        assert_eq!(rows, 4);
+        assert_eq!(cells.len(), 4 * SPECTROGRAM_COLUMNS);
+        let last = SPECTROGRAM_COLUMNS - 1;
+        let column: Vec<f32> = (0..rows)
+            .map(|row| cells[row * SPECTROGRAM_COLUMNS + last])
+            .collect();
+        for (cell, wanted) in column.iter().zip([1., 2. / 3., 1. / 3., 0.]) {
+            assert!((cell - wanted).abs() < 1e-6, "{column:?}");
+        }
+        assert!(
+            cells[..last].iter().all(|&cell| cell == 0.),
+            "unheard time is blank"
+        );
+        for step in 1..=SPECTROGRAM_COLUMNS * 2 {
+            state.accept_at(frame(-6.), start + Duration::from_millis(25 * step as u64));
+        }
+        assert_eq!(state.spectrogram.len(), SPECTROGRAM_COLUMNS);
+    }
+
+    #[test]
+    fn a_meter_peak_holds_for_two_seconds_then_follows_the_signal_down() {
+        let mut state = VisualizerState::default();
+        let start = Instant::now();
+        let loud = frame(0.);
+        let mut quiet = frame(0.);
+        quiet.left = quiet.left.iter().map(|sample| sample * 0.1).collect();
+        quiet.right = quiet.left.clone();
+        state.accept_at(loud, start);
+        let held = state.meter_hold[0].unwrap().0;
+        assert!((held - -6.02).abs() < 0.1, "{held}");
+        state.accept_at(quiet.clone(), start + Duration::from_secs(1));
+        assert_eq!(state.meter_hold[0].unwrap().0, held);
+        state.accept_at(quiet, start + Duration::from_secs(3));
+        assert!((state.meter_hold[0].unwrap().0 - -26.02).abs() < 0.1);
+    }
+
+    #[test]
+    fn the_axes_use_the_numbers_people_read() {
+        assert_eq!(spectrum_x(SPECTRUM_LOW_HZ), 0.);
+        assert_eq!(spectrum_x(SPECTRUM_HIGH_HZ), 1.);
+        assert!(
+            (spectrum_x(640.) - 0.5).abs() < 1e-6,
+            "five octaves up is halfway"
+        );
+        assert_eq!(frequency_label(500.), "500");
+        assert_eq!(frequency_label(2_000.), "2k");
+        assert_eq!(spectrum_level(0.), 1.);
+        assert_eq!(spectrum_level(FLOOR_DB), 0.);
+        assert!((spectrum_level(-12.) - 5. / 6.).abs() < 1e-6);
+        assert!(
+            (meter_level(-18.) - 0.7).abs() < 1e-6,
+            "the meter turns yellow at -18 dBFS"
+        );
+        assert_eq!(signed(0.724, 2), "+0.72");
+        assert_eq!(signed(-0.31, 2), "\u{2212}0.31");
+        assert_eq!(signed_plain(-15.44, 1), "\u{2212}15.4");
+    }
+
+    #[gpui::test]
+    fn switching_tap_starts_the_display_again(cx: &mut gpui::TestAppContext) {
+        let (app, cx) = harness::open(cx);
+        app.update(cx, |app, _| {
+            app.visualizer.open = true;
+            app.visualizer.accept(frame(-12.));
+            app.visualizer.frozen = true;
+            app.visualizer_command(VisualizerCommand::SetTap(VisualizerTap::PostFader));
+            assert!(
+                app.visualizer.frozen,
+                "choosing the tap already chosen changes nothing"
+            );
+            app.visualizer_command(VisualizerCommand::Tap);
+            assert_eq!(app.visualizer.tap, VisualizerTap::PreFader);
+            assert!(!app.visualizer.frozen);
+            assert!(app.visualizer.frame.is_none());
+            assert!(app.visualizer.spectrogram.is_empty());
         });
     }
 }

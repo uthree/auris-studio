@@ -27,7 +27,7 @@ def suite(root: Path, *, success=True, model="model"):
         "manifest_sha256": "manifest",
         "model": model,
         "backend": "codex",
-        "prompt_profile": "legacy",
+        "prompt_profile": "phased",
         "candidate_tools_enabled": False,
         "context_tokens": 8192,
         "split": "development",
@@ -164,7 +164,6 @@ def test_runner_isolates_each_repetition_from_the_frozen_seed_project(
         output=tmp_path / "suite",
         model="model",
         backend="codex",
-        prompt_profile="legacy",
         candidate_tools=False,
     )
 
@@ -431,7 +430,6 @@ def test_run_can_start_at_second_repetition_and_records_range(tmp_path, monkeypa
         output=tmp_path / "suite",
         model="model",
         backend="codex",
-        prompt_profile="legacy",
         candidate_tools=False,
     )
     quality.run(args)

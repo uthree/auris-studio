@@ -12,4 +12,5 @@ auris-core.workspace = true
 auris-dsp.workspace = true
 log.workspace = true
 rustysynth.workspace = true
+serde.workspace = true
 serde_json.workspace = true

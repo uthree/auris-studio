@@ -1,5 +1,6 @@
-//! `lint_project` and `apply_lint_fixes`: the music linter, as a model reads it.
+//! `lint_project`, `apply_lint_fixes` and `ignore_lint`: the music linter, as a model reads it.
 
+use auris_core::project::{LintScope, LintSuppression};
 use auris_core::time::Ticks;
 
 use crate::Session;
@@ -34,6 +35,50 @@ impl LintRequest {
             limit,
         })
     }
+}
+
+/// One finding as a model reads it: where it is, what it is, and the fix it has, if any.
+fn agent_diagnostic(project: &auris_core::project::Project, d: &Diagnostic) -> serde_json::Value {
+    let signatures = &project.signatures;
+    let track = d.track.and_then(|id| project.track(id));
+    let (bar, beat, _) = signatures.bar_beat_at(d.start);
+    let end_bar = signatures.bar_of(d.end - Ticks(1));
+    serde_json::json!({
+        "id": d.id(),
+        "rule": d.rule.name(),
+        "severity": d.severity,
+        "track": d.track.map(|t| t.0),
+        "track_name": track.map(|t| t.name.as_str()),
+        "start_tick": d.start.raw(),
+        "end_tick": d.end.raw(),
+        "bar": bar,
+        "beat": beat,
+        "end_bar": end_bar,
+        "notes": d.notes.iter().map(|n| serde_json::json!({"clip": n.clip.0, "index": n.index})).collect::<Vec<_>>(),
+        "message": d.describe(),
+        "fix": d.describe_fix(),
+    })
+}
+
+/// The score lint's warnings and errors, unsuppressed: the findings a finished song may not keep
+/// without saying why. Infos are advice and are left out.
+fn unresolved(report: &LintReport) -> impl Iterator<Item = &Diagnostic> {
+    report
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity >= crate::lint::Severity::Warning)
+}
+
+/// Counts of the unresolved findings by rule, for a report that has no room for the findings.
+fn unresolved_counts(report: &LintReport) -> serde_json::Value {
+    let mut by_rule = serde_json::Map::new();
+    let mut total = 0;
+    for d in unresolved(report) {
+        total += 1;
+        let count = by_rule.entry(d.rule.name()).or_insert(serde_json::json!(0));
+        *count = serde_json::json!(count.as_u64().unwrap_or(0) + 1);
+    }
+    serde_json::json!({"warnings_and_errors": total, "by_rule": by_rule})
 }
 
 impl Session {
@@ -75,26 +120,7 @@ impl Session {
             .iter()
             .skip(request.offset)
             .take(request.limit)
-            .map(|d| {
-                let track = d.track.and_then(|id| project.track(id));
-                let (bar, beat, _) = signatures.bar_beat_at(d.start);
-                let end_bar = signatures.bar_of(d.end - Ticks(1));
-                serde_json::json!({
-                    "id": d.id(),
-                    "rule": d.rule.name(),
-                    "severity": d.severity,
-                    "track": d.track.map(|t| t.0),
-                    "track_name": track.map(|t| t.name.as_str()),
-                    "start_tick": d.start.raw(),
-                    "end_tick": d.end.raw(),
-                    "bar": bar,
-                    "beat": beat,
-                    "end_bar": end_bar,
-                    "notes": d.notes.iter().map(|n| serde_json::json!({"clip": n.clip.0, "index": n.index})).collect::<Vec<_>>(),
-                    "message": d.describe(),
-                    "fix": d.describe_fix(),
-                })
-            })
+            .map(|d| agent_diagnostic(project, d))
             .collect();
         let audio = report.audio.as_ref();
         Ok(serde_json::json!({
@@ -116,6 +142,28 @@ impl Session {
             },
         })
         .to_string())
+    }
+
+    /// The score lint's unsuppressed warnings and errors, for a host checking a finished song:
+    /// their count by rule and the first `limit` of them as `lint_project` describes them.
+    /// `None` when there are none. Audio rules need a render and are not run.
+    pub fn unresolved_lint(&self, limit: usize) -> Option<serde_json::Value> {
+        let report = self.lint_score();
+        let project = self.project();
+        let mut summary = unresolved_counts(&report);
+        if summary["warnings_and_errors"] == 0 {
+            return None;
+        }
+        summary["diagnostics"] = unresolved(&report)
+            .take(limit)
+            .map(|d| agent_diagnostic(project, d))
+            .collect();
+        Some(summary)
+    }
+
+    /// Counts of the score lint's unsuppressed warnings and errors by rule, for an inspection.
+    pub(crate) fn unresolved_lint_counts(&self) -> serde_json::Value {
+        unresolved_counts(&self.lint_score())
     }
 
     pub(crate) fn agent_apply_lint_fixes(&mut self, ids: &[String]) -> Result<String, String> {
@@ -151,6 +199,76 @@ impl Session {
             "revision": self.agent_document_revision()?,
             "score_diagnostics_now": after.diagnostics.len(),
             "note": "not_found ids were already fixed, moved by an edit, or came from an audio pass at an older revision; lint again. no_obvious_fix needs a musical decision.",
+        })
+        .to_string())
+    }
+
+    /// Turns one current finding into an ignore rule with its reason, as one undo step.
+    pub(crate) fn agent_ignore_lint(
+        &mut self,
+        id: &str,
+        scope: super::LintIgnoreScope,
+        reason: &str,
+    ) -> Result<String, String> {
+        let reason = reason.trim();
+        if reason.is_empty() || reason.len() > 512 {
+            return Err("Give a nonempty reason up to 512 bytes".into());
+        }
+        let report = self.current_lint();
+        let diagnostic = report.find(id).ok_or(
+            "No current finding has that id: it was fixed, moved by an edit, or came from an older audio pass. Run lint_project again.",
+        )?;
+        let scope = match scope {
+            super::LintIgnoreScope::Song => LintScope::Song,
+            super::LintIgnoreScope::Track => LintScope::Track {
+                track: diagnostic
+                    .track
+                    .ok_or("This finding belongs to no track; use scope section or song")?,
+            },
+            super::LintIgnoreScope::Clip => {
+                let mut clips: Vec<_> = diagnostic.notes.iter().map(|note| note.clip).collect();
+                clips.dedup();
+                match clips.as_slice() {
+                    [clip] => LintScope::Clip { clip: *clip },
+                    _ => {
+                        return Err(
+                            "This finding is not in exactly one clip; use scope track, section or song"
+                                .into(),
+                        );
+                    }
+                }
+            }
+            super::LintIgnoreScope::Section => LintScope::Section {
+                label: self
+                    .project()
+                    .sections
+                    .section_at(diagnostic.start)
+                    .map(|(label, _)| label.to_string())
+                    .ok_or("This finding starts outside every section; use scope track or song")?,
+            },
+        };
+        let suppression = LintSuppression {
+            rule: Some(diagnostic.rule.name().to_string()),
+            scope,
+            reason: reason.into(),
+        };
+        if self
+            .project()
+            .lint_suppressions
+            .iter()
+            .any(|kept| kept.same_rule(&suppression))
+        {
+            return Err(
+                "That rule is already ignored there; read ignore_rules in lint_project".into(),
+            );
+        }
+        self.suppress_lint(suppression.clone());
+        let after = self.current_lint();
+        Ok(serde_json::json!({
+            "ignored": suppression,
+            "revision": self.agent_document_revision()?,
+            "diagnostics_now": after.diagnostics.len(),
+            "suppressed": after.suppressed,
         })
         .to_string())
     }

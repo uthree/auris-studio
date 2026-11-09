@@ -144,7 +144,9 @@ impl LayerShape {
         voiced
             .into_iter()
             .map(|mut note| {
-                note.pitch = (i32::from(note.pitch) + self.transpose).clamp(0, 127) as u8;
+                note.pitch = i32::from(note.pitch)
+                    .saturating_add(self.transpose)
+                    .clamp(0, 127) as u8;
                 note.velocity = (note.velocity * velocity).clamp(0.0, 1.0);
                 note.length = Ticks(((note.length.raw() as f32 * length).round() as i64).max(1));
                 note.start = (note.start + Ticks(offset)).max_zero();
@@ -298,23 +300,37 @@ impl Project {
 
     /// Turns a layer back into a track with notes of its own.
     ///
-    /// The source's clips are copied under new ids and the shape is written into the copied
-    /// notes, so the track goes on saying what it said; each copied clip keeps the source's
-    /// performance stack, which now plays on top of the shaped text. `false` when `id` is not a
-    /// layer. A layer whose source is gone is detached with no clips.
+    /// An unchanged layer copies its source's clips. A shaped layer freezes the complete
+    /// performed notes, including each loop pass, before applying its shape. Its performance
+    /// stack and recipe are then removed so neither can rewrite the frozen part. If flattening
+    /// changes the clip boundaries, curves retain their original pass boundaries in separate
+    /// clips, independently of moved attacks and releases. `false` when `id` is not a layer.
+    /// A missing source leaves no clips.
     pub fn detach_layer(&mut self, id: TrackId) -> bool {
         let Some(source) = self.track(id).and_then(|track| track.kind.layer()).cloned() else {
             return false;
         };
-        let mut copies: Vec<MidiClip> = self
+        let originals: Vec<MidiClip> = self
             .track(source.track)
             .filter(|track| track.kind.can_be_followed())
             .and_then(|track| track.kind.note_clips())
             .cloned()
             .unwrap_or_default();
+        let mut copies = Vec::new();
+        for clip in originals {
+            if source.shape.is_identity() {
+                copies.push(clip);
+            } else {
+                copies.extend(detached_performance(
+                    clip,
+                    &source.shape,
+                    &self.tempo_map,
+                    &self.signatures,
+                ));
+            }
+        }
         for clip in &mut copies {
             clip.id = ClipId(self.allocate_id());
-            clip.notes = source.shape.apply(std::mem::take(&mut clip.notes));
         }
         let Some(TrackKind::Instrument(inner)) = self.track_mut(id).map(|track| &mut track.kind)
         else {
@@ -324,6 +340,76 @@ impl Project {
         inner.clips = copies;
         true
     }
+}
+
+/// Freeze notes and controls separately: a layer can move notes across a loop boundary, but
+/// its channel curves still reset at the source pass's original boundary.
+fn detached_performance(
+    original: MidiClip,
+    shape: &LayerShape,
+    tempo: &crate::TempoMap,
+    signatures: &crate::SignatureMap,
+) -> Vec<MidiClip> {
+    let mut notes = original.clone();
+    notes.notes = shape.apply(
+        original
+            .sounding_notes_with_meter(tempo.bpm_at(original.start), signatures.clone())
+            .collect(),
+    );
+    notes.length = notes
+        .notes
+        .iter()
+        .map(Note::end)
+        .fold(original.sounding_length(), Ticks::max);
+    notes.loop_end = Ticks::ZERO;
+    notes.length_is_explicit = true;
+    notes.transforms.clear();
+    notes.recipe = None;
+    notes.bend.clear();
+    notes.controllers.clear();
+    let curves: Vec<_> = original.performance_curves().collect();
+    // The usual one-pass phrase needs only one clip. Separate controls are necessary only
+    // when flattening changes a curve's loop boundaries or a shaped note extends its window.
+    if !original.is_looped() && notes.length == original.length {
+        for which in curves {
+            *notes.curve_mut(which) = original.performed_curve_points(
+                which,
+                tempo,
+                signatures,
+                0,
+                Ticks::ZERO,
+                original.length,
+            );
+        }
+        return vec![notes];
+    }
+    let mut copies = vec![notes];
+    if !curves.is_empty() {
+        for (pass, (offset, span)) in
+            super::loop_passes(original.length, original.loop_end).enumerate()
+        {
+            let mut controls = MidiClip::new(
+                original.id,
+                original.name.clone(),
+                original.start + offset,
+                span,
+            );
+            controls.muted = original.muted;
+            controls.length_is_explicit = true;
+            for &which in &curves {
+                *controls.curve_mut(which) = original.performed_curve_points(
+                    which,
+                    tempo,
+                    signatures,
+                    pass as u64,
+                    offset,
+                    span,
+                );
+            }
+            copies.push(controls);
+        }
+    }
+    copies
 }
 
 #[cfg(test)]
@@ -425,6 +511,13 @@ mod tests {
             ..LayerShape::default()
         };
         assert_eq!(pitches(&shape.apply(vec![note(120, 0, 10)])), vec![127]);
+        for (transpose, expected) in [(i32::MAX, 127), (i32::MIN, 0)] {
+            let shape = LayerShape {
+                transpose,
+                ..LayerShape::default()
+            };
+            assert_eq!(pitches(&shape.apply(vec![note(60, 0, 10)])), vec![expected]);
+        }
     }
 
     fn project_with_lead() -> (Project, TrackId) {
@@ -506,6 +599,159 @@ mod tests {
         );
         assert_eq!(pitches(&clips[0].notes), vec![67, 71]);
         assert!(!project.detach_layer(layer), "it is no longer a layer");
+    }
+
+    #[test]
+    fn detaching_an_unchanged_layer_keeps_its_editable_loop_and_performance() {
+        let (mut project, lead) = project_with_lead();
+        let clip = &mut project
+            .track_mut(lead)
+            .unwrap()
+            .kind
+            .note_clips_mut()
+            .unwrap()[0];
+        clip.loop_end = Ticks(5000);
+        clip.transforms.push(super::super::NoteTransform::Humanize {
+            amount: 0.4,
+            seed: 13,
+        });
+        clip.recipe = Some(super::super::ClipRecipe::new(
+            super::super::ClipPreset::Lead,
+            3,
+        ));
+        let mut original = clip.clone();
+        let layer = project.add_layer_track(lead, "Layer", "pad").unwrap();
+        project.detach_layer(layer);
+        let detached = &project.track(layer).unwrap().kind.note_clips().unwrap()[0];
+        assert_ne!(detached.id, original.id);
+        original.id = detached.id;
+        assert_eq!(detached, &original);
+    }
+
+    #[test]
+    fn detaching_freezes_every_performed_pass_before_shaping_it() {
+        use super::super::{ClipPreset, ClipRecipe, NoteTransform, PitchPerformance};
+
+        for looped in [false, true] {
+            let (mut project, lead) = project_with_lead();
+            let clip = &mut project
+                .track_mut(lead)
+                .unwrap()
+                .kind
+                .note_clips_mut()
+                .unwrap()[0];
+            clip.start = Ticks(137);
+            clip.length = Ticks(960);
+            clip.loop_end = if looped { Ticks(2417) } else { Ticks::ZERO };
+            clip.notes[0].lyric = "la".into();
+            clip.notes[0].phonemes = vec!["l".into(), "a".into()];
+            clip.notes[0].phoneme_seconds = vec![0.05, 0.2];
+            clip.recipe = Some(ClipRecipe::new(ClipPreset::Lead, 42));
+            clip.transforms = vec![
+                NoteTransform::Transpose { semitones: 12 },
+                NoteTransform::Humanize {
+                    amount: 0.7,
+                    seed: 19,
+                },
+                NoteTransform::Expression {
+                    settings: super::super::Expression {
+                        timing: 0.2,
+                        velocity: 0.3,
+                        shared: 0.4,
+                        seed: 27,
+                        ..super::super::Expression::default()
+                    },
+                },
+                NoteTransform::Pitch {
+                    settings: PitchPerformance {
+                        vibrato: 0.2,
+                        modulation: 0.3,
+                        volume_swell: 0.4,
+                        ..PitchPerformance::default()
+                    },
+                },
+            ];
+            clip.bend = vec![super::super::CurvePoint {
+                at: Ticks::ZERO,
+                value: 0.5,
+            }];
+            clip.controllers.insert(
+                11,
+                vec![super::super::CurvePoint {
+                    at: Ticks(100),
+                    value: 0.6,
+                }],
+            );
+            let layer = project.add_layer_track(lead, "Layer", "pad").unwrap();
+            let shape = &mut project
+                .track_mut(layer)
+                .unwrap()
+                .kind
+                .layer_mut()
+                .unwrap()
+                .shape;
+            shape.lowest = 72;
+            shape.highest = 84;
+            shape.velocity = 0.7;
+            shape.length = if looped { 2.0 } else { 0.7 };
+            shape.offset = Ticks(-100);
+
+            let played = project.played_clips(project.track(layer).unwrap()).unwrap();
+            let expected =
+                played.sounding_notes(&played.clips[0], 120.0, project.signatures.clone());
+            let original = played.clips[0].clone();
+            let expected_curves: Vec<_> = original
+                .performance_curves()
+                .map(|which| {
+                    (
+                        which,
+                        original.sounding_performance_curve_events(
+                            which,
+                            super::super::CURVE_STEP,
+                            &project.tempo_map,
+                            &project.signatures,
+                        ),
+                    )
+                })
+                .collect();
+            assert!(!expected.is_empty());
+            project.detach_layer(layer);
+            let detached = project.track(layer).unwrap().kind.note_clips().unwrap();
+            if !looped {
+                assert_eq!(detached.len(), 1);
+            }
+            assert_eq!(detached[0].notes, expected);
+            assert_eq!(
+                detached[0].sounding_notes(120.0).collect::<Vec<_>>(),
+                expected
+            );
+            assert!(detached.iter().all(|clip| clip.transforms.is_empty()
+                && clip.recipe.is_none()
+                && clip.loop_end == Ticks::ZERO));
+            for (which, expected) in expected_curves {
+                let actual: Vec<_> = detached
+                    .iter()
+                    .flat_map(|clip| {
+                        clip.sounding_performance_curve_events(
+                            which,
+                            super::super::CURVE_STEP,
+                            &project.tempo_map,
+                            &project.signatures,
+                        )
+                        .into_iter()
+                        .map(|(at, value)| (clip.start - original.start + at, value))
+                    })
+                    .collect();
+                assert_eq!(actual, expected, "curve {which:?} changed during detach");
+            }
+            assert_eq!(
+                project.track(lead).unwrap().kind.note_clips().unwrap()[0],
+                original
+            );
+            let restored: Project =
+                serde_json::from_str(&serde_json::to_string(&project).unwrap()).unwrap();
+            assert_eq!(restored.track(layer), project.track(layer));
+        }
     }
 
     #[test]

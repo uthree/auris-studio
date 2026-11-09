@@ -165,7 +165,9 @@ impl Backend {
                 _ = cancelled => Ok(()),
                 result = async {
                     let vision = runtime::preflight(&mut options).await?;
-                    let agent = build_for_worker(&options, Some(bridge.clone()))?;
+                    let hearing = runtime::hears(&options).await;
+                    bridge.set_hearing(hearing);
+                    let agent = build_for_worker(&options, Some(bridge.clone()), hearing)?;
                     bridge.set_vision(vision);
                     json_conversation(&agent, &options, bridge, history_path, fresh, history).await
                 } => result,

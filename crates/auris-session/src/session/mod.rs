@@ -67,7 +67,9 @@ mod compose;
 mod convert;
 mod drum_analysis;
 mod envelope;
+mod event_list;
 pub use envelope::{ENVELOPE_PITCHES, SoundEnvelope};
+pub use event_list::{ClipEvent, ClipEventKind, EventEdit, EventRef, clip_events};
 pub mod arrangement_shape;
 mod drum_assignments;
 mod files;
@@ -91,6 +93,7 @@ mod note_take;
 pub(crate) mod notes;
 mod output_preview;
 mod perform;
+mod performance_presets;
 mod physical_sounds;
 pub(crate) mod plugin_discovery;
 mod plugin_trust;
@@ -100,7 +103,12 @@ mod recognition;
 mod record;
 mod rhythm;
 mod samples;
-pub use samples::parse_root_note;
+pub use samples::{
+    AgentSample, DEFAULT_SAMPLE_ROOT, DetectedPitch, SampleZoneEdit, SampleZoneView, detect_pitch,
+    parse_root_note,
+};
+mod workspace;
+pub use workspace::workspace_relative;
 #[cfg(test)]
 mod shared_font_tests;
 mod singer;
@@ -114,7 +122,7 @@ mod typing;
 mod typing_calibration;
 mod visualizer;
 mod vst3;
-pub use visualizer::{VisualizerFrame, VisualizerSpectrum};
+pub use visualizer::{VisualizerFrame, VisualizerLoudness, VisualizerSpectrum, VisualizerTap};
 
 #[cfg(test)]
 mod fixtures;
@@ -263,6 +271,12 @@ pub struct SessionOptions {
     /// A document's CLAP or VST3 plugin is loaded only from a plugin folder; anything else stays
     /// silent until its folder is listed here. See [`Session::set_plugin_paths`].
     pub plugin_paths: Vec<PathBuf>,
+    /// The performance presets this installation keeps. `None` keeps saved presets in memory
+    /// for the session's lifetime only.
+    ///
+    /// Defaults to `performance-presets.json` in the application configuration directory.
+    /// Headless tests opt out so they neither read nor change the user's presets.
+    pub performance_presets: Option<PathBuf>,
 }
 
 impl Default for SessionOptions {
@@ -280,6 +294,7 @@ impl Default for SessionOptions {
             autosave: true,
             shipped_dictionary: true,
             plugin_paths: Vec::new(),
+            performance_presets: Some(crate::performance_presets::PerformancePresetBook::path()),
         }
     }
 }
@@ -295,6 +310,7 @@ impl SessionOptions {
             gpu: false,
             shipped_fonts: false,
             soundfont_library: None,
+            performance_presets: None,
             autosave: false,
             shipped_dictionary: false,
             master_limiter: false,
@@ -311,6 +327,13 @@ impl SessionOptions {
     /// Uses the persistent application SoundFont catalog, including in a headless frontend.
     pub fn with_soundfont_library(mut self, path: impl Into<PathBuf>) -> Self {
         self.soundfont_library = Some(path.into());
+        self
+    }
+
+    /// Keeps performance presets in the file at `path`, shared with the window and every other
+    /// door, including in a headless frontend.
+    pub fn with_performance_presets(mut self, path: impl Into<PathBuf>) -> Self {
+        self.performance_presets = Some(path.into());
         self
     }
 
@@ -426,6 +449,8 @@ pub struct Session {
     shipped_library: bool,
     /// Persistent catalog shared across documents and application launches.
     soundfont_library: Option<PathBuf>,
+    /// Performance presets kept by this installation.
+    performance_presets: crate::performance_presets::PresetLibrary,
     /// Whether composing ends by measuring the piece — see [`SessionOptions::balance_composed`].
     balance_composed: bool,
     /// Whether a new document starts with a master limiter — see [`SessionOptions::master_limiter`].
@@ -514,6 +539,8 @@ pub struct Session {
     /// scope that nothing writes to any more.
     scope: Arc<auris_engine::Scope>,
     visualizer_scope: Arc<auris_engine::Scope>,
+    /// The live loudness of whatever the visualizer follows, fed every sample its scope publishes.
+    visualizer_loudness: visualizer::LoudnessTap,
     motion_monitors: HashMap<TrackId, Arc<auris_core::motion::MotionMonitor>>,
     overview_scopes: HashMap<TrackId, Arc<auris_engine::Scope>>,
     overview_watched: bool,
@@ -525,6 +552,9 @@ pub struct Session {
     /// Here rather than in a frontend because a frontend may not name `auris-dsp` — and because
     /// two of them wanting a spectrum should not each grow their own FFT.
     analyzer: auris_dsp::SpectrumAnalyzer,
+    /// The utility visualizer's own transform, longer than the plugin editor's so its lowest
+    /// bands have bins to show.
+    visualizer_analyzer: auris_dsp::SpectrumAnalyzer,
 
     param_cache: HashMap<String, Arc<Vec<ParamDescriptor>>>,
     /// Which built-in effects listen to a key, by plugin id.
@@ -784,6 +814,9 @@ impl Session {
             font_errors: HashMap::new(),
             shipped_library: options.shipped_fonts,
             soundfont_library: options.soundfont_library,
+            performance_presets: crate::performance_presets::PresetLibrary::new(
+                options.performance_presets,
+            ),
             balance_composed: options.balance_composed,
             master_limiter: options.master_limiter,
             registry,
@@ -819,7 +852,10 @@ impl Session {
             disk_stamp: None,
             disk_fingerprint: None,
             scope: Arc::new(auris_engine::Scope::new()),
-            visualizer_scope: Arc::new(auris_engine::Scope::new()),
+            visualizer_scope: Arc::new(auris_engine::Scope::with_history(
+                visualizer::VISUALIZER_HISTORY,
+            )),
+            visualizer_loudness: visualizer::LoudnessTap::default(),
             motion_monitors: HashMap::new(),
             overview_scopes: HashMap::new(),
             overview_watched: false,
@@ -827,6 +863,7 @@ impl Session {
             mixer_signals_watched: false,
             motion_track: None,
             analyzer: auris_dsp::SpectrumAnalyzer::new(auris_engine::SCOPE_WINDOW),
+            visualizer_analyzer: auris_dsp::SpectrumAnalyzer::new(visualizer::VISUALIZER_FFT),
             param_cache: HashMap::new(),
             keyed_cache: HashMap::new(),
             waveforms: HashMap::new(),
@@ -1276,6 +1313,7 @@ impl Session {
                 low_hz,
                 high_hz,
                 mode: VisualizerSpectrum::Average,
+                fill_narrow_bands: false,
             },
             bands,
         );
@@ -1455,6 +1493,7 @@ impl Session {
         // that is already rendering keeps doing so: `place` hands out a second instance and takes
         // the first back when the export drops it.
         let rate = rate.unwrap_or(self.project.sample_rate);
+        self.take_back_graphs();
         let prepare = auris_core::plugin::PrepareContext::new(
             rate,
             self.engine.max_block(),
@@ -1642,7 +1681,7 @@ impl Session {
         layout_only
     }
 
-    fn restore_history_project(&mut self, edit: Edit, project: Project) {
+    pub(super) fn restore_history_project(&mut self, edit: Edit, project: Project) {
         if matches!(edit, Edit::MoveMixerNodes | Edit::ArrangeMixerNodes) {
             // Save may since have stamped the build or collected assets. A layout edit must
             // retain those changes as well as live plugin state, rather than adopting its file.
@@ -1773,7 +1812,7 @@ impl Session {
         // asked for their effects, so an instance whose graph has already been retired is reused
         // rather than replaced. Without this every rebuild would find its plugin still busy and
         // build a second one. See [`hosted`].
-        self.engine.collect_garbage();
+        self.take_back_graphs();
         let prepare = auris_core::plugin::PrepareContext::new(
             rate,
             self.engine.max_block(),
@@ -1838,6 +1877,25 @@ impl Session {
         self.graph_latency = graph.latency_frames();
         if let Err(error) = self.engine.set_graph(graph) {
             log::warn!("could not update the render graph: {error}");
+        }
+    }
+
+    /// Drops every graph the engine is finished with, so their hosted plugins come home.
+    ///
+    /// With an audio thread that means the graphs it has handed back. Without one — a headless
+    /// session, a suspended one, or a device that has died — nothing ever takes a graph off the
+    /// queue, so the graphs sent there are the finished ones and are dropped here instead. That
+    /// cannot wait for [`Self::poll`]: a headless frontend may never call it, and every graph left
+    /// queued keeps each hosted plugin's rendering half out, so the next rebuild would have to
+    /// instantiate the plugin again. An agent adding clips to a song with four Surge XT tracks
+    /// paid more than a second per edit for that and piled up instances until the process
+    /// crashed (#147).
+    fn take_back_graphs(&mut self) {
+        self.engine.collect_garbage();
+        if let Some(device) = &mut self.device
+            && !device.is_running()
+        {
+            device.discard_pending();
         }
     }
 
@@ -2076,6 +2134,11 @@ mod tests {
             "auris.physical.tin_whistle",
             "auris.physical.choir",
             "auris.physical.hammered_dulcimer",
+            // Not physical, but observed the same way: their oscillators' waveforms.
+            "auris.synth.chiptune",
+            "auris.synth.fm2",
+            "auris.synth.supersaw",
+            "auris.synth.pluck",
         ] {
             let track = session.add_instrument_track("Model", id).unwrap();
             assert!(session.has_instrument_motion(track), "{id}");
@@ -2115,10 +2178,10 @@ mod tests {
                 .values()
                 .all(|monitor| !monitor.is_watched())
         );
-        let chip = session
-            .add_instrument_track("Chip", "auris.synth.chiptune")
+        let noise = session
+            .add_instrument_track("Noise", "auris.synth.noisedrum")
             .unwrap();
-        assert!(!session.has_instrument_motion(chip));
+        assert!(!session.has_instrument_motion(noise));
         let drums = session.add_default_drum_track("Kit").unwrap();
         assert!(session.has_instrument_motion(drums));
         session.watch_instrument_motion(Some(drums));

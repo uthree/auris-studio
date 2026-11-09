@@ -256,6 +256,37 @@ impl Session {
         })
     }
 
+    /// The timbre cluster that each track's sound was measured into, in track order.
+    ///
+    /// Only what the map actually measured is answered for: a melodic track playing a
+    /// SoundFont preset, matched by font, bank and patch, or a built-in instrument still on the
+    /// default patch the reference recording used. An edited built-in, a hosted plugin, a drum
+    /// kit, a singer, audio and buses are left out — a colour claims a resemblance, and none of
+    /// those was listened to. The cluster ids are the map's own and mean nothing outside it.
+    pub fn timbre_track_clusters(&self, map: &TimbreMap) -> Vec<(TrackId, usize)> {
+        self.project
+            .tracks
+            .iter()
+            .filter_map(|track| {
+                let auris_core::project::TrackKind::Instrument(inner) = &track.kind else {
+                    return None;
+                };
+                if inner.file.is_some() {
+                    return None;
+                }
+                let cluster = if inner.instrument_id == auris_sampler::SAMPLER_ID {
+                    let preset = auris_sampler::stored_preset(&inner.instrument_state)?;
+                    map.cluster_for(&inner.instrument_id, Some(preset))
+                } else if inner.instrument_state.is_empty() {
+                    map.cluster_for(&inner.instrument_id, None)
+                } else {
+                    None
+                }?;
+                Some((track.id, cluster))
+            })
+            .collect()
+    }
+
     /// Adopts a mapped sound on a track as one undoable instrument or preset edit.
     /// A built-in sound restores its measured default patch and clears instrument automation,
     /// even when the track already uses that instrument. Mixer settings remain in place.
@@ -817,6 +848,7 @@ mod tests {
         assert_eq!(map.cluster_for(auris_sampler::SAMPLER_ID, None), None);
         assert_eq!(map.cluster_for("unmeasured", None), None);
         let corrected = map.cluster_summaries_with_icons(|_| crate::SoundIcon::Guitar);
+        track_clusters_follow_measured_sounds_only(&map);
         for summary in corrected {
             assert_eq!(
                 summary.icon_counts,
@@ -1057,6 +1089,49 @@ mod tests {
         assert!(
             preview.peak() > 0.01,
             "the keyboard uses the retained SoundFont preset"
+        );
+    }
+
+    /// Called from the summaries test, which owns the only hand-built map: `builtin` is cluster
+    /// 2 and the preset on font 3 is cluster 5.
+    fn track_clusters_follow_measured_sounds_only(map: &TimbreMap) {
+        let mut session = Session::new(SessionOptions::headless()).unwrap();
+        let measured = map.sounds[3].preset.unwrap();
+        let project = &mut session.project;
+        let sampler = |project: &mut auris_core::project::Project, name, preset| {
+            let id = project.add_instrument_track(name, auris_sampler::SAMPLER_ID);
+            let inner = project
+                .track_mut(id)
+                .and_then(|t| t.kind.as_instrument_mut())
+                .unwrap();
+            auris_sampler::store_preset(&mut inner.instrument_state, preset);
+            id
+        };
+        let preset = sampler(project, "Preset", measured);
+        let _other = sampler(
+            project,
+            "Other",
+            PresetRef {
+                patch: 9,
+                ..measured
+            },
+        );
+        let _unset = project.add_instrument_track("No preset", auris_sampler::SAMPLER_ID);
+        let plain = project.add_instrument_track("Plain", "builtin");
+        let edited = project.add_instrument_track("Edited", "builtin");
+        project
+            .track_mut(edited)
+            .and_then(|t| t.kind.as_instrument_mut())
+            .unwrap()
+            .instrument_state
+            .params
+            .insert("cutoff".into(), 0.5);
+        let _drums = project.add_drum_track("Drums", "builtin");
+        let _audio = project.add_audio_track("Audio");
+        assert_eq!(
+            session.timbre_track_clusters(map),
+            vec![(preset, 5), (plain, 2)],
+            "unmeasured presets, edited patches and drum kits get no cluster"
         );
     }
 }

@@ -3,6 +3,7 @@
 use std::path::Path;
 
 use auris_core::Color;
+use rayon::prelude::*;
 use tiny_skia::{BlendMode, FillRule, Paint, Path as SkPath, PathBuilder, Pixmap, Rect, Transform};
 
 use crate::chords::ChordOverlay;
@@ -41,6 +42,16 @@ const SINK_OVERSHOOT: f64 = 0.6;
 const SINK_RELEASE: f64 = 0.07;
 /// How much a fully pressed note is squashed, as a fraction of its height.
 const SINK_SQUASH: f64 = 0.15;
+/// How much faster the nearest track scrolls than the music, and the farthest slower, at a
+/// parallax amount of 1: 0.15 is fifteen per cent either way.
+const PARALLAX_SPEED: f64 = 0.15;
+/// How far the farthest track is faded at a parallax amount of 1 or more, as a fraction of its
+/// opacity: distance reads as haze.
+const PARALLAX_FADE: f32 = 0.4;
+/// How much thinner the farthest track's notes are drawn at a parallax amount of 1 or more.
+const PARALLAX_SHRINK: f64 = 0.25;
+/// Keep small previews on the calling thread to avoid worker scheduling overhead.
+const PARALLEL_BACKDROP_PIXELS: u64 = 512 * 512;
 
 /// A background picture, decoded once and scaled to the frame when a renderer is made.
 #[derive(Clone, Debug)]
@@ -77,6 +88,14 @@ pub struct FrameRenderer {
     lyrics: Option<LyricOverlay>,
     /// The tempo and the beat counter, when the style shows either.
     meter: Option<MeterOverlay>,
+    /// How each track sits in depth, by track index.
+    layers: Vec<Layer>,
+    /// The order the notes are drawn in: one pass per track from the farthest to the nearest,
+    /// or a single pass over every track (`None`) when the roll is flat.
+    passes: Vec<Option<usize>>,
+    /// The slowest any track scrolls, as a multiple of the music, which bounds how far back in
+    /// time a frame has to look.
+    slowest: f64,
     /// Top and bottom of the drawn pitch range, with the margins.
     high: f64,
     lane: f64,
@@ -132,10 +151,15 @@ impl FrameRenderer {
             None
         };
         let meter = MeterOverlay::new(&score, &style);
+        let (layers, passes) = layers(&score, style.parallax);
+        let slowest = layers.iter().map(|layer| layer.speed).fold(1.0, f64::min);
         Self {
             chords,
             lyrics,
             meter,
+            layers,
+            passes,
+            slowest,
             longest: score.longest(),
             low_pitch: low + PITCH_MARGIN,
             pitch_span: (high - low - 2.0 * PITCH_MARGIN).max(1.0),
@@ -164,59 +188,43 @@ impl FrameRenderer {
         let height = f64::from(self.style.size.height);
         let per_second = width / f64::from(self.style.seconds_visible);
         let playhead_x = f64::from(self.style.playhead) * width;
-        let left = seconds - playhead_x / per_second;
-        let right = seconds + (width - playhead_x) / per_second;
+        // The slowest track has the widest window of time in view; each pass narrows it to its
+        // own track's.
+        let earliest = seconds - playhead_x / (per_second * self.slowest);
 
         let first = self
             .score
             .notes
-            .partition_point(|note| note.start < left - self.longest);
-        let thickness = (self.lane * f64::from(self.style.note_thickness)).max(1.0);
-        let radius = thickness * f64::from(self.style.note_roundness);
+            .partition_point(|note| note.start < earliest - self.longest);
+        let full_thickness = (self.lane * f64::from(self.style.note_thickness)).max(1.0);
         let mut paint = Paint {
             anti_alias: true,
             ..Paint::default()
         };
-        for note in &self.score.notes[first..] {
-            if note.start > right {
-                break;
-            }
-            if note.end < left {
-                continue;
-            }
-            let x0 = playhead_x + (note.start - seconds) * per_second;
-            let x1 = (playhead_x + (note.end - seconds) * per_second).max(x0 + 2.0);
-            let press = self.press(note, seconds);
-            let centre = self.centre(note, press);
-            let thickness = thickness * (1.0 - SINK_SQUASH * press.min(1.0));
-            let y0 = centre - thickness / 2.0;
-
-            let (mut r, mut g, mut b) = self.color_of(note.track, note.pitch);
-            let alpha = if note.end <= seconds {
-                self.style.played_opacity
-            } else if note.start > seconds {
-                self.style.upcoming_opacity
-            } else {
-                if self.style.flash {
-                    let age = seconds - note.start;
-                    let lift = FLASH_STRENGTH * (-(age / FLASH_SECONDS)).exp() as f32;
-                    r += (1.0 - r) * lift;
-                    g += (1.0 - g) * lift;
-                    b += (1.0 - b) * lift;
+        for pass in &self.passes {
+            let layer = pass.map_or(Layer::FLAT, |track| self.layers[track]);
+            // A track's notes still meet the playhead at the moment they sound: only the speed
+            // at which they approach it and leave it changes.
+            let per_second = per_second * layer.speed;
+            let left = seconds - playhead_x / per_second;
+            let right = seconds + (width - playhead_x) / per_second;
+            let thickness = full_thickness * layer.scale;
+            let radius = thickness * f64::from(self.style.note_roundness);
+            for note in &self.score.notes[first..] {
+                if note.start > right {
+                    break;
                 }
-                1.0
-            };
-            if alpha <= 0.0 {
-                continue;
-            }
-            paint.set_color_rgba8(unit_byte(r), unit_byte(g), unit_byte(b), unit_byte(alpha));
-            if let Some(path) = rounded_rect(x0, y0, x1 - x0, thickness, radius) {
-                frame.fill_path(
-                    &path,
-                    &paint,
-                    FillRule::Winding,
-                    Transform::identity(),
-                    None,
+                if note.end < left || pass.is_some_and(|track| note.track != track) {
+                    continue;
+                }
+                self.draw_note(
+                    note,
+                    seconds,
+                    playhead_x,
+                    per_second,
+                    (thickness, radius, layer.fade),
+                    &mut paint,
+                    frame,
                 );
             }
         }
@@ -238,7 +246,14 @@ impl FrameRenderer {
                 if note.start > seconds {
                     break;
                 }
-                self.sparks(note, seconds - note.start, playhead_x, per_second, frame);
+                let speed = self.layers.get(note.track).map_or(1.0, |layer| layer.speed);
+                self.sparks(
+                    note,
+                    seconds - note.start,
+                    playhead_x,
+                    per_second * speed,
+                    frame,
+                );
             }
         }
 
@@ -250,6 +265,50 @@ impl FrameRenderer {
         }
         if let Some(meter) = &self.meter {
             meter.draw(&self.score, &self.style, seconds, frame);
+        }
+    }
+
+    /// Draws one note's bar at `seconds`, on a track scrolling `per_second` pixels a second.
+    /// The tuple is the bar's height and corner radius at rest, and the opacity its depth leaves.
+    #[allow(clippy::too_many_arguments)]
+    fn draw_note(
+        &self,
+        note: &ScoreNote,
+        seconds: f64,
+        playhead_x: f64,
+        per_second: f64,
+        (thickness, radius, fade): (f64, f64, f32),
+        paint: &mut Paint,
+        frame: &mut Pixmap,
+    ) {
+        let x0 = playhead_x + (note.start - seconds) * per_second;
+        let x1 = (playhead_x + (note.end - seconds) * per_second).max(x0 + 2.0);
+        let press = self.press(note, seconds);
+        let centre = self.centre(note, press);
+        let thickness = thickness * (1.0 - SINK_SQUASH * press.min(1.0));
+        let y0 = centre - thickness / 2.0;
+
+        let (mut r, mut g, mut b) = self.color_of(note.track, note.pitch);
+        let alpha = if note.end <= seconds {
+            self.style.played_opacity
+        } else if note.start > seconds {
+            self.style.upcoming_opacity
+        } else {
+            if self.style.flash {
+                let age = seconds - note.start;
+                let lift = FLASH_STRENGTH * (-(age / FLASH_SECONDS)).exp() as f32;
+                r += (1.0 - r) * lift;
+                g += (1.0 - g) * lift;
+                b += (1.0 - b) * lift;
+            }
+            1.0
+        } * fade;
+        if alpha <= 0.0 {
+            return;
+        }
+        paint.set_color_rgba8(unit_byte(r), unit_byte(g), unit_byte(b), unit_byte(alpha));
+        if let Some(path) = rounded_rect(x0, y0, x1 - x0, thickness, radius) {
+            frame.fill_path(&path, paint, FillRule::Winding, Transform::identity(), None);
         }
     }
 
@@ -375,6 +434,62 @@ impl FrameRenderer {
     }
 }
 
+/// Where one track sits in depth.
+#[derive(Copy, Clone, Debug, PartialEq)]
+struct Layer {
+    /// How fast its notes scroll, as a multiple of the music's own speed: above 1 for the near
+    /// tracks, below for the far ones.
+    speed: f64,
+    /// What its notes' opacity is multiplied by.
+    fade: f32,
+    /// What its notes' height is multiplied by.
+    scale: f64,
+}
+
+impl Layer {
+    /// A track in the plane of the playhead, as every track is when the roll is flat.
+    const FLAT: Self = Self {
+        speed: 1.0,
+        fade: 1.0,
+        scale: 1.0,
+    };
+}
+
+/// The depth of every track of `score` at a parallax `amount`, and the order to draw them in.
+///
+/// The tracks that have notes are spread evenly from near to far in arrangement order — the
+/// first track nearest — and a track in the middle stays in the plane of the playhead. A
+/// score of one track, or an amount of 0, is flat.
+fn layers(score: &NoteScore, amount: f32) -> (Vec<Layer>, Vec<Option<usize>>) {
+    let mut layers = vec![Layer::FLAT; score.tracks.len()];
+    let mut heard = vec![false; score.tracks.len()];
+    for note in &score.notes {
+        if let Some(heard) = heard.get_mut(note.track) {
+            *heard = true;
+        }
+    }
+    let sounding: Vec<usize> = (0..heard.len()).filter(|&track| heard[track]).collect();
+    if amount <= 0.0 || sounding.len() < 2 {
+        return (layers, vec![None]);
+    }
+    let amount = f64::from(amount);
+    let haze = amount.min(1.0);
+    let last = (sounding.len() - 1) as f64;
+    for (rank, &track) in sounding.iter().enumerate() {
+        // +1 nearest, -1 farthest.
+        let near = 1.0 - 2.0 * rank as f64 / last;
+        let far = (1.0 - near) / 2.0;
+        layers[track] = Layer {
+            speed: 1.0 + PARALLAX_SPEED * amount * near,
+            fade: 1.0 - PARALLAX_FADE * (haze * far) as f32,
+            scale: 1.0 - PARALLAX_SHRINK * haze * far,
+        };
+    }
+    // Far to near, so the near tracks pass in front.
+    let passes = sounding.iter().rev().map(|&track| Some(track)).collect();
+    (layers, passes)
+}
+
 /// The next number of a SplitMix64 sequence: cheap, and the same on every platform.
 fn splitmix(state: &mut u64) -> u64 {
     *state = state.wrapping_add(0x9e37_79b9_7f4a_7c15);
@@ -405,21 +520,31 @@ fn backdrop(style: &NoteRollStyle, background: Option<&BackgroundImage>) -> Pixm
     let (ox, oy) = ((sw - width) / 2, (sh - height) / 2);
     let dim = style.background_dim;
     let back = [f32::from(br), f32::from(bg), f32::from(bb)];
+    let pixels = u64::from(width) * u64::from(height);
     let data = pixmap.data_mut();
-    for y in 0..height {
-        for x in 0..width {
-            let source = scaled.get_pixel(x + ox, y + oy).0;
+    let write_row = |(y, row): (usize, &mut [u8])| {
+        for (x, pixel) in row.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+            let source = scaled.get_pixel(x as u32 + ox, y as u32 + oy).0;
+            // Over the background colour, then faded towards it: the frame stays opaque, so
+            // premultiplied and straight alpha are the same bytes.
             let alpha = f32::from(source[3]) / 255.0;
-            let at = ((y * width + x) * 4) as usize;
             for channel in 0..3 {
-                // Over the background colour, then faded towards it: the frame stays opaque, so
-                // premultiplied and straight alpha are the same bytes.
                 let over = f32::from(source[channel]) * alpha + back[channel] * (1.0 - alpha);
                 let faded = over * (1.0 - dim) + back[channel] * dim;
-                data[at + channel] = faded.round().clamp(0.0, 255.0) as u8;
+                pixel[channel] = faded.round().clamp(0.0, 255.0) as u8;
             }
-            data[at + 3] = 255;
+            pixel[3] = 255;
         }
+    };
+    let row_bytes = width as usize * 4;
+    if pixels >= PARALLEL_BACKDROP_PIXELS {
+        data.par_chunks_exact_mut(row_bytes)
+            .enumerate()
+            .for_each(write_row);
+    } else {
+        data.chunks_exact_mut(row_bytes)
+            .enumerate()
+            .for_each(write_row);
     }
     pixmap
 }
@@ -531,6 +656,8 @@ pub fn render_video(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    mod backdrop_tests;
     use crate::{ScoreTrack, VideoSize};
 
     fn score() -> NoteScore {
@@ -613,6 +740,90 @@ mod tests {
         assert!(high < row, "higher pitches are drawn higher up");
         assert_eq!(pixel(&frame, 180, high), [255, 0, 0, 255]);
         assert_eq!(pixel(&frame, 170, high), [0, 0, 0, 255]);
+    }
+
+    /// Two tracks, one note each, both starting at 2 s on different pitches.
+    fn two_tracks() -> NoteScore {
+        let mut score = score();
+        score.tracks.push(ScoreTrack {
+            name: "Bass".into(),
+            color: Color(0x00ff00),
+            drum: false,
+        });
+        score.notes = vec![
+            ScoreNote {
+                start: 2.0,
+                end: 2.5,
+                pitch: 72,
+                velocity: 1.0,
+                track: 0,
+            },
+            ScoreNote {
+                start: 2.0,
+                end: 2.5,
+                pitch: 60,
+                velocity: 1.0,
+                track: 1,
+            },
+        ];
+        score
+    }
+
+    /// The first column from the left in `row` that is not background.
+    fn leading_edge(frame: &Pixmap, row: u32) -> Option<u32> {
+        (0..frame.width()).find(|&x| pixel(frame, x, row)[..3] != [0, 0, 0])
+    }
+
+    #[test]
+    fn parallax_spreads_tracks_in_depth_but_every_note_meets_the_playhead_on_time() {
+        let style = NoteRollStyle {
+            parallax: 1.0,
+            ..style()
+        };
+        let renderer = FrameRenderer::with_background(&two_tracks(), &style, None);
+        assert_eq!(renderer.layers[0].speed, 1.0 + PARALLAX_SPEED);
+        assert_eq!(renderer.layers[1].speed, 1.0 - PARALLAX_SPEED);
+        assert_eq!(renderer.passes, vec![Some(1), Some(0)], "far first");
+        let (near, far) = (row_of(&renderer, 72), row_of(&renderer, 60));
+        let mut frame = renderer.canvas();
+
+        // A second early, 50 px a second: the near track is 15 % further out (57.5 px), the
+        // far one 15 % nearer in (42.5 px). The half-covered column is anti-aliased.
+        renderer.draw(1.0, &mut frame);
+        assert_eq!(leading_edge(&frame, near), Some(157));
+        assert_eq!(leading_edge(&frame, far), Some(142));
+
+        // At the moment they sound, both are at the playhead.
+        renderer.draw(2.0, &mut frame);
+        assert_eq!(leading_edge(&frame, near), Some(100));
+        assert_eq!(leading_edge(&frame, far), Some(100));
+
+        // The near track is drawn at full strength, the far one through haze.
+        let near_colour = pixel(&frame, 105, near);
+        let far_colour = pixel(&frame, 105, far);
+        assert_eq!(near_colour, [255, 0, 0, 255]);
+        assert_eq!(
+            far_colour,
+            [0, unit_byte(1.0 - PARALLAX_FADE), 0, 255],
+            "faded by its distance"
+        );
+    }
+
+    #[test]
+    fn a_flat_roll_and_a_single_track_have_no_depth() {
+        let flat = FrameRenderer::with_background(&two_tracks(), &style(), None);
+        assert_eq!(flat.passes, vec![None]);
+        assert!(flat.layers.iter().all(|layer| *layer == Layer::FLAT));
+        let single = FrameRenderer::with_background(
+            &score(),
+            &NoteRollStyle {
+                parallax: 2.0,
+                ..style()
+            },
+            None,
+        );
+        assert_eq!(single.passes, vec![None]);
+        assert_eq!(single.layers, vec![Layer::FLAT]);
     }
 
     #[test]

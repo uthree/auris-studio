@@ -1,9 +1,17 @@
 //! Strings that interpolate values.
 //!
 //! These cannot be [`Key`](crate::Key)s: a translation is not just different words but a
-//! different word *order*, so the placeholders have to travel with the sentence. Each message is
-//! a function whose body is one `format!` per language, which keeps every format string a
-//! literal — the compiler then checks that each translation uses the arguments it was given.
+//! different word *order*, so the placeholders have to travel with the sentence. Most of them are
+//! one line in each file under `locales/`, and the build script writes each as a function whose
+//! body is one `format!` per language; the generator checks that every translation names the same
+//! placeholders, and the compiler then checks the format strings.
+//!
+//! The functions written here by hand are the ones a file cannot hold: a sentence chosen by a
+//! flag or assembled from optional parts, one without any value, and one whose parameters are
+//! declared in another order than the English sentence reads them (the generator takes the
+//! order from the sentence, and swapping two counts at every call site would not be caught).
+
+pub use crate::generated::messages::*;
 
 use crate::Language;
 
@@ -87,89 +95,25 @@ macro_rules! messages {
             }
         )*
 
-        #[cfg(test)]
-        /// Names of every message, so a test can report on the set as a whole.
-        pub(crate) const NAMES: &[&str] = &[$(stringify!($name),)*];
     };
 }
 
 messages! {
-    /// Summarizes the number of performance transforms applied to a clip.
-    fn inspector_performance(count: usize) {
-        en: "{count} applied",
-        ja: "{count}件を適用中"
-    }
-
     /// Counts enabled inserts without hiding bypassed slots from the inspector summary.
     fn inspector_effects(enabled: usize, total: usize) {
         en: "{enabled}/{total} active",
         ja: "{total}件中{enabled}件が有効"
     }
 
-    /// Names the saved sound whose contents will be replaced.
-    fn overwrite_sound_title(name: &str) {
-        en: "Overwrite “{name}”?",
-        ja: "「{name}」を上書きしますか？"
-    }
 
-    /// Identifies the captured source track and the scope of the library edit.
-    fn overwrite_sound_body(track: &str) {
-        en: "Replace the saved instrument settings and insert effects with those captured from track “{track}”. Settings already applied to projects stay unchanged. This cannot be undone.",
-        ja: "トラック「{track}」から取得した音源設定とインサートエフェクトで上書きします。プロジェクトに適用済みの設定はそのまま残ります。この操作は取り消せません。"
-    }
 
-    /// Names the saved sound being renamed.
-    fn rename_sound_title(name: &str) {
-        en: "Rename “{name}”",
-        ja: "「{name}」の名前を変更"
-    }
 
-    /// Names the saved sound being duplicated.
-    fn duplicate_sound_title(name: &str) {
-        en: "Duplicate “{name}”",
-        ja: "「{name}」を複製"
-    }
 
-    /// Suggests the name of a new independent copy of a saved sound.
-    fn sound_copy_name(name: &str) {
-        en: "{name} copy",
-        ja: "{name}のコピー"
-    }
 
-    /// Names the saved sound being deleted.
-    fn delete_sound_title(name: &str) {
-        en: "Delete “{name}”?",
-        ja: "「{name}」を削除しますか？"
-    }
 
-    /// Names the exact plugin folder a removal confirmation applies to.
-    fn remove_plugin_folder_title(path: &str) {
-        en: "Remove plugin folder “{path}”?",
-        ja: "プラグインフォルダ「{path}」を削除しますか？"
-    }
 
-    /// Confirms which plugin search folder was removed.
-    fn plugin_folder_removed(path: &str) {
-        en: "Removed plugin folder: {path}",
-        ja: "プラグインフォルダを削除しました: {path}"
-    }
 
-    /// An invalid singer lyric, with its editable note number and recovery instruction.
-    fn singer_lyric_error(note: usize, lyric: &str, reason: &str) {
-        en: "Cannot sing note {note}, “{lyric}”. {reason}",
-        ja: "音符{note}の歌詞「{lyric}」を歌えません。{reason}"
-    }
-    /// The engine's line in the status bar.
-    fn audio_status(device: &str, rate: f64, channels: usize) {
-        en: "Audio: {device} · {rate:.0} Hz · {channels} ch",
-        ja: "オーディオ: {device} · {rate:.0} Hz · {channels} ch"
-    }
 
-    /// The GPU's tail on the status line.
-    fn gpu_in_use(adapter: &str) {
-        en: "GPU: {adapter}",
-        ja: "GPU: {adapter}"
-    }
 
     /// When no GPU could be opened at all.
     fn gpu_unavailable() {
@@ -177,11 +121,6 @@ messages! {
         ja: "GPU: 利用不可、CPU を使用"
     }
 
-    /// Heading over the note grid.
-    fn piano_roll_title(clip: &str) {
-        en: "Piano Roll — {clip}",
-        ja: "ピアノロール — {clip}"
-    }
 
     /// The line under the piano roll's heading, naming the gestures that are actually bound.
     /// `alt` is the platform's own name for the key: Option on a Mac, Alt elsewhere.
@@ -190,29 +129,9 @@ messages! {
         ja: "{create}: ノート追加 · ドラッグ: 移動 · {alt}+ドラッグ: 複製 · 右端: 長さ変更 · {delete}: 削除 · 右クリック: メニュー"
     }
 
-    /// Pitch and selection size beside a moved or resized note.
-    fn note_drag_title(pitch: &str, count: usize) {
-        en: "{pitch} · Notes: {count}",
-        ja: "{pitch} · {count}ノート"
-    }
 
-    /// Identifies a copied selection while its landing position is being chosen.
-    fn note_copy_title(pitch: &str, count: usize) {
-        en: "Copy · {pitch} · Notes: {count}",
-        ja: "複製 · {pitch} · {count}ノート"
-    }
 
-    /// One-based song position in bars, beats and MIDI ticks within the beat.
-    fn note_drag_position(bar: u32, beat: u32, tick: i64) {
-        en: "Position  {bar}:{beat}:{tick:03}",
-        ja: "位置  {bar}:{beat}:{tick:03}"
-    }
 
-    /// Zero-based duration in bars, beats and MIDI ticks, using the note's starting meter.
-    fn note_drag_length(bars: i64, beats: i64, ticks: i64) {
-        en: "Length  {bars}:{beats}:{ticks:03}",
-        ja: "長さ  {bars}:{beats}:{ticks:03}"
-    }
 
     /// The same line while the velocity tool is in hand, which binds none of those gestures.
     fn piano_roll_velocity_hint() {
@@ -220,57 +139,14 @@ messages! {
         ja: "ノートを上下にドラッグ: 強さを変更 · 右クリック: メニュー"
     }
 
-    /// Confirmation that a command has been left with no keystroke at all.
-    fn binding_unbound(command: &str) {
-        en: "“{command}” now has no key.",
-        ja: "「{command}」にキーを割り当てないようにしました。"
-    }
 
-    /// Which tool the roll has in hand, for the status line when the roll is not on screen.
-    fn tool_in_hand(tool: &str) {
-        en: "Piano roll tool: {tool}",
-        ja: "ピアノロールのツール: {tool}"
-    }
 
-    /// What the piano roll says when no clip is selected.
-    fn piano_roll_empty(create: &str) {
-        en: "Select a MIDI clip to edit its notes ({create} an empty lane to make one)",
-        ja: "MIDI クリップを選ぶとノートを編集できます（空のレーンを{create}で新規作成）"
-    }
 
-    /// Title of a menu acting on more than one note.
-    fn note_count(count: usize) {
-        en: "{count} notes",
-        ja: "ノート {count} 個"
-    }
 
-    /// How many notes a phrase was laid across.
-    fn lyrics_written(count: usize) {
-        en: "lyrics written on {count} notes",
-        ja: "{count} 個のノートに歌詞を書き込みました"
-    }
 
-    /// How many notes a quantise pass actually moved.
-    ///
-    /// The count rather than "done": a pass that moved four notes out of a selection of twenty is
-    /// telling you the other sixteen were already where they should be, which is the one thing
-    /// worth knowing afterwards.
-    fn notes_quantised(count: usize) {
-        en: "Quantised {count} notes",
-        ja: "ノート {count} 個をクオンタイズしました"
-    }
 
-    /// Title of a menu acting on more than one clip.
-    fn clip_count(count: usize) {
-        en: "{count} clips",
-        ja: "クリップ {count} 個"
-    }
 
-    /// The menu row that sets what tempo an audio clip was recorded at.
-    fn clip_source_tempo(bpm: f64) {
-        en: "Recorded Tempo: {bpm:.1} bpm…",
-        ja: "元のテンポ: {bpm:.1} bpm…"
-    }
+
 
     /// The same row for a clip that has never been told what tempo it was played at.
     fn clip_source_tempo_unknown() {
@@ -278,168 +154,31 @@ messages! {
         ja: "元のテンポ: 未設定…"
     }
 
-    /// Name given to a track the user just created.
-    fn new_track_name(number: usize) {
-        en: "Track {number}",
-        ja: "トラック {number}"
-    }
 
-    /// Name given to a layer added on a track.
-    fn layer_track_name(source: &str) {
-        en: "{source} Layer",
-        ja: "{source} レイヤー"
-    }
 
-    /// The lowest or highest note a layer keeps, with its pitch name.
-    fn layer_note_bound(name: &str, pitch: u8) {
-        en: "{name} ({pitch})",
-        ja: "{name}（{pitch}）"
-    }
 
-    /// Name given to a drum track the user just created.
-    fn new_drum_track_name(number: usize) {
-        en: "Drums {number}",
-        ja: "ドラム {number}"
-    }
 
-    /// Name given to an audio track the user just created.
-    fn new_audio_track_name(number: usize) {
-        en: "Audio {number}",
-        ja: "オーディオ {number}"
-    }
 
-    /// Name given to a singer track the user just created.
-    fn new_singer_track_name(number: usize) {
-        en: "Singer {number}",
-        ja: "シンガー {number}"
-    }
 
-    /// Name given to a bus the user just created.
-    fn new_bus_name(number: usize) {
-        en: "Bus {number}",
-        ja: "バス {number}"
-    }
 
-    /// Name given to a clip the user just created.
-    fn new_clip_name(number: usize) {
-        en: "Clip {number}",
-        ja: "クリップ {number}"
-    }
 
-    /// Confirmation that a project was written.
-    fn saved(path: &str) {
-        en: "Saved {path}",
-        ja: "{path} を保存しました"
-    }
 
-    /// The sheet shown when saving would write over a project that is already there.
-    ///
-    /// Names the document that would be lost rather than the name that was typed: the system
-    /// save dialog already asked about the typed one, and it is not the file that gets written.
-    fn would_replace(existing: &str) {
-        en: "{existing} already exists. Saving here replaces it, and it cannot be recovered.",
-        ja: "{existing} はすでに存在します。ここに保存すると置き換えられ、元に戻すことはできません。"
-    }
 
-    /// Title of the decision to restore one named crash-recovery snapshot.
-    fn recover_title(project: &str) {
-        en: "Recover “{project}”?",
-        ja: "「{project}」を復旧しますか？"
-    }
 
-    /// Explains which saved project a recovery was based on and that it will not be overwritten.
-    fn recovery_from(source: &str) {
-        en: "Auris Studio preserved unsaved changes based on {source} after the previous session ended unexpectedly. Recovering opens a new unsaved project; it does not overwrite that file. Discard recovery permanently deletes this copy.",
-        ja: "前回のセッションが予期せず終了したため、{source} を基にした未保存の変更が保管されています。復旧すると別の未保存プロジェクトとして開き、元のファイルは上書きしません。「復旧データを破棄」を選ぶと、このコピーは完全に削除されます。"
-    }
 
-    /// Status while a crash-recovery snapshot is being read.
-    fn recovering(project: &str) {
-        en: "Recovering “{project}”…",
-        ja: "「{project}」を復旧しています…"
-    }
 
-    /// Status after one crash-recovery snapshot has been restored.
-    fn recovered(project: &str) {
-        en: "Recovered “{project}” as an unsaved project",
-        ja: "「{project}」を未保存のプロジェクトとして復旧しました"
-    }
 
-    /// Recovery succeeded, but one referenced audio file was absent.
-    fn recovered_missing_one(project: &str, missing: &str) {
-        en: "Recovered “{project}” as an unsaved project — missing audio file {missing}",
-        ja: "「{project}」を未保存のプロジェクトとして復旧しました — オーディオファイル {missing} が見つかりません"
-    }
 
-    /// Recovery succeeded, but several referenced audio files were absent.
-    fn recovered_missing_many(project: &str, count: usize) {
-        en: "Recovered “{project}” as an unsaved project — {count} audio files are missing",
-        ja: "「{project}」を未保存のプロジェクトとして復旧しました — {count} 件のオーディオファイルが見つかりません"
-    }
 
-    /// Status after one crash-recovery snapshot has been deliberately deleted.
-    fn recovery_discarded(project: &str) {
-        en: "Discarded recovery for “{project}”",
-        ja: "「{project}」の復旧データを破棄しました"
-    }
 
-    /// A project saved, but some referenced files could not be brought into its folder.
-    fn saved_uncollected(path: &str, count: usize) {
-        en: "Saved {path} — {count} file(s) could not be copied into the folder",
-        ja: "{path} を保存しました — {count} 件のファイルをフォルダにコピーできませんでした"
-    }
 
-    /// Confirmation that a project was read.
-    fn opened(path: &str) {
-        en: "Opened {path}",
-        ja: "{path} を開きました"
-    }
 
-    /// A project opened whose file was saved by a different build, which named itself.
-    ///
-    /// The note the score-and-performer contract asks for at the door: the document sounds as
-    /// saved, and *regenerating* any of it writes in the current composer's style rather than
-    /// the one the file remembers.
-    fn opened_from_build(path: &str, version: &str) {
-        en: "Opened {path} — saved by Auris Studio {version}; regenerating writes in this build's style",
-        ja: "{path} を開きました — Auris Studio {version} で保存されたプロジェクトです。再生成は現在のスタイルで書き直します"
-    }
 
-    /// A project opened whose file predates the record of who saved it.
-    fn opened_from_older_build(path: &str) {
-        en: "Opened {path} — saved by an older build; regenerating writes in this build's style",
-        ja: "{path} を開きました — 以前のバージョンで保存されたプロジェクトです。再生成は現在のスタイルで書き直します"
-    }
 
-    /// A project opened, but one of its audio files was not where it said.
-    fn opened_missing_one(path: &str, missing: &str) {
-        en: "Opened {path} — missing audio file {missing}",
-        ja: "{path} を開きました — オーディオファイル {missing} が見つかりません"
-    }
 
-    /// A project opened, but several of its audio files were missing.
-    fn opened_missing_many(path: &str, count: usize) {
-        en: "Opened {path} — {count} audio files could not be found",
-        ja: "{path} を開きました — オーディオファイル {count} 件が見つかりません"
-    }
 
-    /// While a file is being decoded.
-    fn importing(path: &str) {
-        en: "Importing {path}…",
-        ja: "{path} を読み込み中…"
-    }
 
-    /// While a project is being read.
-    fn opening(path: &str) {
-        en: "Opening {path}…",
-        ja: "{path} を開いています…"
-    }
 
-    /// While a specification is being turned into a piece.
-    fn composing(path: &str) {
-        en: "Composing from {path}…",
-        ja: "{path} から作曲中…"
-    }
 
     /// While a project's files are being gathered into its folder.
     fn collecting() {
@@ -447,53 +186,14 @@ messages! {
         ja: "プロジェクトのファイルを収集中…"
     }
 
-    /// Confirmation that a file was decoded onto a track.
-    fn imported(path: &str) {
-        en: "Imported {path}",
-        ja: "{path} を読み込みました"
-    }
 
-    /// Confirmation that an audio file now plays on a track's sampler.
-    fn sample_loaded(name: &str) {
-        en: "Loaded {name} into the sampler",
-        ja: "{name} をサンプラーに読み込みました"
-    }
 
-    /// Confirmation that a SoundFont was read, and how many sounds it brought with it.
-    ///
-    /// The count rather than the path, because a font goes on a shelf instead of onto a track:
-    /// what a person needs to know next is how much there is to choose from.
-    fn soundfont_imported(name: &str, sounds: usize) {
-        en: "{name} — {sounds} sound(s) to choose from",
-        ja: "{name} — 音色 {sounds} 件から選べます"
-    }
 
-    /// Progress while the first launch fetches its sound library.
-    fn downloading_soundfont(name: &str, percent: u64) {
-        en: "Downloading {name}: {percent}%",
-        ja: "{name} をダウンロード中: {percent}%"
-    }
 
-    /// The download is complete and the samples are being read on a worker.
-    fn loading_soundfont(name: &str) {
-        en: "Loading {name}…",
-        ja: "{name} を読み込み中…"
-    }
 
-    /// A missing library remains optional when its download or decoding fails.
-    fn soundfont_download_failed(name: &str, reason: &str) {
-        en: "Could not prepare {name}: {reason}",
-        ja: "{name} を準備できませんでした: {reason}"
-    }
 
-    /// Confirmation that a MIDI file was read, and what came out of it.
-    ///
-    /// Both numbers, because a MIDI file gives no other sign of having worked: a file whose tracks
-    /// were all empty and one that was read wrong look identical on an empty timeline.
-    fn midi_imported(tracks: usize, notes: usize) {
-        en: "Imported {tracks} track(s), {notes} note(s)",
-        ja: "{tracks} トラック・{notes} ノートを読み込みました"
-    }
+
+
 
     /// Confirmation that a singer track's features left as a file.
     fn frames_exported(path: &str, frames: usize) {
@@ -501,54 +201,13 @@ messages! {
         ja: "{path} に {frames} フレームを書き出しました"
     }
 
-    /// Confirmation that a voice model was put on a singer track.
-    fn voice_chosen(name: &str) {
-        en: "{name} will sing this track",
-        ja: "このトラックは {name} が歌います"
-    }
 
-    /// Names the track a library voice choice will change.
-    fn voice_target(track: &str) {
-        en: "Voice for {track}",
-        ja: "{track} の声を選択"
-    }
 
-    /// Confirmation that a speaker of the track's voice was chosen, and where it stands in
-    /// the voice's list.
-    fn speaker_chosen(name: &str, index: usize, count: usize) {
-        en: "{name} will sing this track (speaker {index} of {count})",
-        ja: "このトラックは {name} が歌います（{count} 人中 {index} 人目）"
-    }
 
-    /// Confirmation that a take was rendered, sung by the named voice.
-    fn take_sung(name: &str, seconds: f64) {
-        en: "{name} sang {seconds:.1} s",
-        ja: "{name} が {seconds:.1} 秒を歌いました"
-    }
 
-    /// Confirmation that a frames file was sung into a WAV, by the named voice.
-    fn frames_sung(name: &str, seconds: f64, path: &str) {
-        en: "{name} sang {seconds:.1} s into {path}",
-        ja: "{name} が {seconds:.1} 秒を {path} に歌いました"
-    }
 
-    /// An acceleration the singer does not offer.
-    fn bad_acceleration(given: &str) {
-        en: "--acceleration wants auto, gpu or cpu, not `{given}`",
-        ja: "--acceleration は auto, gpu, cpu のいずれかです。`{given}` は使えません"
-    }
 
-    /// `--track` named a track that is not a singer, or is not there at all.
-    fn no_singer_named(name: &str) {
-        en: "no singer track is named `{name}`",
-        ja: "`{name}` という名前のシンガートラックはありません"
-    }
 
-    /// A voice model does not contain the requested speaker, followed by what it does offer.
-    fn no_such_speaker(name: &str, offered: &str) {
-        en: "the voice has no speaker called {name}; it offers {offered}",
-        ja: "この音声には {name} という話者はいません。選べる話者: {offered}"
-    }
 
     /// Confirmation that a piece left as a MIDI file.
     fn midi_exported(path: &str, notes: usize) {
@@ -556,41 +215,10 @@ messages! {
         ja: "{notes} 個のノートを {path} に書き出しました"
     }
 
-    /// A file dragged onto the window that no importer here recognises.
-    fn cannot_import(path: &str) {
-        en: "{path} is not a kind of file Auris can import",
-        ja: "{path} は Auris が読み込める種類のファイルではありません"
-    }
 
-    /// Confirmation that a drop of several files was read.
-    ///
-    /// A count rather than a list: the names are already on the tracks the drop just made, and a
-    /// status line is one line.
-    fn imported_files(count: usize) {
-        en: "Imported {count} files",
-        ja: "{count} 個のファイルを読み込みました"
-    }
 
-    /// A drop where some of the files arrived and some did not.
-    fn imported_files_partly(imported: usize, failed: usize) {
-        en: "Imported {imported} file(s) · {failed} could not be read",
-        ja: "{imported} 個のファイルを読み込みました · {failed} 個は読み込めませんでした"
-    }
 
-    /// A drop where nothing at all could be read.
-    fn imported_nothing(count: usize) {
-        en: "None of the {count} files could be imported",
-        ja: "{count} 個のファイルはいずれも読み込めませんでした"
-    }
 
-    /// Confirmation that a track's clips will not be written again, and how many that was.
-    ///
-    /// The count rather than a bare acknowledgement: this acts on clips further down a track than
-    /// the panel is showing, and a number is the difference between believing that and checking.
-    fn track_kept(count: usize) {
-        en: "{count} clip(s) on this track will not be written again",
-        ja: "このトラックの {count} 個のクリップは今後書き換えられません"
-    }
 
     /// A project was dragged in alongside other files, and nothing was done.
     ///
@@ -601,11 +229,6 @@ messages! {
         ja: "プロジェクトは単独でドロップしてください — 開くと今の書類は閉じられます"
     }
 
-    /// Confirmation that everything a project refers to now lives in its folder.
-    fn assets_collected(count: usize) {
-        en: "Collected {count} file(s) into the project folder",
-        ja: "ファイル {count} 件をプロジェクトフォルダに集めました"
-    }
 
     /// Nothing was outside the project folder to begin with.
     fn assets_already_collected() {
@@ -613,95 +236,19 @@ messages! {
         ja: "このプロジェクトが使うファイルはすべてフォルダ内にあります"
     }
 
-    /// Progress line while a render runs.
-    fn rendering(path: &str) {
-        en: "Rendering {path}…",
-        ja: "{path} を書き出し中…"
-    }
 
-    /// Confirmation that a render finished, with what it produced.
-    fn exported(path: &str, duration: &str, peak_db: f32) {
-        en: "Exported {path} · {duration} · peak {peak_db:.1} dBFS",
-        ja: "{path} を書き出しました · {duration} · ピーク {peak_db:.1} dBFS"
-    }
 
-    /// A step was undone.
-    fn undid(edit: &str) {
-        en: "Undid {edit}",
-        ja: "{edit}を取り消しました"
-    }
 
-    /// A step was redone.
-    fn redid(edit: &str) {
-        en: "Redid {edit}",
-        ja: "{edit}をやり直しました"
-    }
 
-    /// Something the user asked for did not work.
-    /// `action` is a command's own label, which is why the Japanese quotes it rather than
-    /// building a sentence out of it. The labels are a mixture of dictionary-form verbs
-    /// (「プロジェクトを開く」), サ変 nouns (「保存」) and noun phrases (「新規プロジェクト」), and no
-    /// single frame conjugates all three: 「プロジェクトを開くできませんでした」 is what the old one
-    /// produced. Naming the command in quotes is grammatical for every label there is and for
-    /// every label anybody adds later, which the alternative was not.
-    fn failed(action: &str, reason: &str) {
-        en: "Could not {action}: {reason}",
-        ja: "「{action}」を実行できませんでした: {reason}"
-    }
 
-    /// A device's capabilities, under its name in the settings window.
-    fn device_detail(channels: u16, rates: &str) {
-        en: "{channels} ch · {rates}",
-        ja: "{channels} ch · {rates}"
-    }
 
-    /// The span of sample rates a device accepts.
-    fn rate_range(low: f64, high: f64) {
-        en: "{low:.1}–{high:.1} kHz",
-        ja: "{low:.1}–{high:.1} kHz"
-    }
 
-    /// A single sample rate.
-    fn rate_single(rate: f64) {
-        en: "{rate:.1} kHz",
-        ja: "{rate:.1} kHz"
-    }
 
-    /// A buffer size, with what it costs in latency.
-    fn buffer_choice(frames: u32, latency_ms: f64) {
-        en: "{frames} · {latency_ms:.1} ms",
-        ja: "{frames} · {latency_ms:.1} ms"
-    }
 
-    /// The backend's reported buffer size, distinct from the requested size.
-    fn actual_buffer(host: &str, frames: u32, duration_ms: f64) {
-        en: "{host} · Applied output buffer: {frames} frames ({duration_ms:.1} ms per buffer)",
-        ja: "{host} · 適用された出力バッファ: {frames}フレーム（1バッファ {duration_ms:.1} ms）"
-    }
 
-    /// The measured input latency correction for the devices open now.
-    fn input_latency_measured(offset_ms: f64, spread_ms: f64) {
-        en: "Measured: {offset_ms:+.1} ms beyond the reported latency (spread {spread_ms:.1} ms)",
-        ja: "計測値: 報告値より {offset_ms:+.1} ms（ばらつき {spread_ms:.1} ms）"
-    }
 
-    /// The measured lateness of the typing keyboard.
-    fn typing_latency_measured(offset_ms: f64, spread_ms: f64) {
-        en: "Measured: keys arrive {offset_ms:+.1} ms after the beat (spread {spread_ms:.1} ms)",
-        ja: "計測値: キーは拍から {offset_ms:+.1} ms で届きます（ばらつき {spread_ms:.1} ms）"
-    }
 
-    /// The input latency measurement refused because its clicks did not arrive steadily.
-    fn calibration_unsteady(spread_ms: f64) {
-        en: "the clicks arrived {spread_ms:.1} ms apart from one another; measure again somewhere quieter",
-        ja: "クリック音の到着が {spread_ms:.1} ms ばらつきました。静かな環境でもう一度計測してください"
-    }
 
-    /// What the audio backend is doing right now.
-    fn running_device(device: &str, rate: f64, channels: usize, suffix: &str) {
-        en: "Running: {device} · {rate:.0} Hz · {channels} ch{suffix}",
-        ja: "動作中: {device} · {rate:.0} Hz · {channels} ch{suffix}"
-    }
 
     /// Appended to the line above when no stream is actually open.
     fn silent_suffix() {
@@ -709,47 +256,12 @@ messages! {
         ja: "（無音）"
     }
 
-    /// Warning that a keystroke is already spoken for.
-    fn also_bound_to(command: &str) {
-        en: "also {command}",
-        ja: "{command}にも割り当て済み"
-    }
 
-    /// Confirmation that a command was rebound.
-    fn binding_set(command: &str, keystroke: &str) {
-        en: "{command} is now {keystroke}",
-        ja: "{command} を {keystroke} に割り当てました"
-    }
 
-    /// Confirmation that a command was rebound onto a keystroke already in use.
-    fn binding_set_with_clash(command: &str, keystroke: &str, other: &str) {
-        en: "{command} is now {keystroke} — also bound to {other}",
-        ja: "{command} を {keystroke} に割り当てました — {other} にも割り当て済みです"
-    }
 
-    /// A keystroke that cannot be bound at all.
-    fn binding_rejected(keystroke: &str) {
-        en: "{keystroke} cannot be used as a binding",
-        ja: "{keystroke} は割り当てに使えません"
-    }
 
-    /// An error with a prefix naming the layer it came from.
-    fn detailed(prefix: &str, detail: &str) {
-        en: "{prefix}: {detail}",
-        ja: "{prefix}: {detail}"
-    }
 
-    /// A plugin id the registry does not know.
-    fn unknown_plugin(id: &str) {
-        en: "no plugin is registered as `{id}`",
-        ja: "`{id}` というプラグインは登録されていません"
-    }
 
-    /// Nothing in the chord-progression catalogue answers to that name.
-    fn unknown_progression(name: &str) {
-        en: "no chord progression is named `{name}`",
-        ja: "`{name}` というコード進行はありません"
-    }
 
     /// A progression was written onto the timeline.
     fn progression_written(name: &str, chords: usize) {
@@ -766,223 +278,39 @@ messages! {
         ja: "{key} と判断しました: コード {chords} 個、パート {parts} 個"
     }
 
-    /// A part was written from the harmony under it.
-    fn clip_written(preset: &str, notes: usize) {
-        en: "{preset}: {notes} note(s) written",
-        ja: "{preset}: {notes} 音を書きました"
-    }
 
-    /// Title of the harmony lane's menu, naming the bar it was opened over.
-    fn harmony_at_bar(bar: u32) {
-        en: "Harmony · bar {bar}",
-        ja: "コード進行 · {bar} 小節目"
-    }
 
-    /// The window is being drawn in a different colour scheme.
-    fn scheme_changed(name: &str) {
-        en: "Colour scheme: {name}",
-        ja: "カラースキーム: {name}"
-    }
 
-    /// Title of the harmony lane's menu, naming the chord it was opened over.
-    ///
-    /// Both halves: the numeral is what is stored and what the menu edits, and the chord is what
-    /// it means in the key it sits in — which is the half a reader recognises.
-    fn harmony_chord(numeral: &str, chord: &str) {
-        en: "Harmony · {numeral} ({chord})",
-        ja: "コード進行 · {numeral}（{chord}）"
-    }
 
-    /// One catalogue progression, as a menu row.
-    fn write_progression(description: &str) {
-        en: "Write {description}",
-        ja: "{description} を書き込む"
-    }
 
-    /// The text typed into the key prompt is not a key.
-    fn not_a_key(text: &str) {
-        en: "`{text}` is not a key — try `Eb` or `F# minor`",
-        ja: "`{text}` は調ではありません — `Eb` や `F# minor` のように"
-    }
 
-    /// The text typed into the chord prompt is not a chord.
-    fn not_a_chord(text: &str) {
-        en: "`{text}` is not a chord — try `IV`, `F#m`, `IIdim` or `Csus2`",
-        ja: "`{text}` はコードではありません — `IV`、`F#m`、`IIdim`、`Csus2` のように"
-    }
 
-    /// The text typed into the motif prompt is not a motif.
-    fn not_a_motif(text: &str) {
-        en: "`{text}` is not a motif — scale steps like `0 2 4 2`",
-        ja: "`{text}` はモチーフではありません — `0 2 4 2` のようにスケール度数で"
-    }
 
-    /// A clip's tune was taken as the motif the composer will restate.
-    fn motif_taken(count: usize) {
-        en: "Motif taken — {count} steps for the whole piece to say",
-        ja: "モチーフを取り込みました — {count} 音の線で曲全体を書きます"
-    }
 
-    /// The text typed into the seed prompt is not a number.
-    fn not_a_seed(text: &str) {
-        en: "`{text}` is not a seed — any whole number will do",
-        ja: "`{text}` はシードではありません — 整数を入力してください"
-    }
 
-    /// The text typed into the tempo prompt is not a number of beats per minute.
-    fn not_a_tempo(text: &str) {
-        en: "`{text}` is not a tempo — try `128` or `174.5`",
-        ja: "`{text}` はテンポではありません — `128` や `174.5` のように"
-    }
 
-    /// The editing grid was stepped to another division.
-    fn grid_set(division: &str) {
-        en: "Grid: {division}",
-        ja: "グリッド: {division}"
-    }
 
-    /// The text typed into the time signature prompt is not a meter.
-    fn not_a_signature(text: &str) {
-        en: "`{text}` is not a time signature — try `4/4` or `6/8`",
-        ja: "`{text}` は拍子ではありません — `4/4` や `6/8` のように"
-    }
 
-    /// The text typed into the clip gain prompt is not a number of decibels.
-    fn not_a_gain(text: &str) {
-        en: "`{text}` is not a gain — try `-3` or `2.5`",
-        ja: "`{text}` はゲインではありません — `-3` や `2.5` のように"
-    }
 
-    /// The text typed into a colour prompt is not a colour code.
-    fn not_a_colour(text: &str) {
-        en: "`{text}` is not a colour code — try `#3D7BFF` or `#38F`",
-        ja: "`{text}` はカラーコードではありません — `#3D7BFF` や `#38F` のように"
-    }
 
-    /// The text typed into a parameter's prompt is not a number at all.
-    ///
-    /// Separate from the gain message because a parameter is not always a gain, and suggesting
-    /// `-3` for a cutoff would be suggesting a value it cannot take.
-    fn not_a_number(text: &str) {
-        en: "`{text}` is not a number",
-        ja: "`{text}` は数値ではありません"
-    }
 
-    /// The text typed into the position prompt is not a bar, beat and hundredth.
-    fn not_a_position(text: &str) {
-        en: "`{text}` is not a position — try `17` for a bar, or `17.3` for its third beat",
-        ja: "`{text}` は位置ではありません — 小節なら `17`、その3拍目なら `17.3` のように"
-    }
 
-    /// A project referenced audio files that are not where it said.
-    fn missing_audio_files(count: usize) {
-        en: "{count} audio file(s) could not be loaded",
-        ja: "オーディオファイル {count} 件を読み込めませんでした"
-    }
 
-    /// Reopening the audio device did not work.
-    fn audio_restart_failed(reason: &str) {
-        en: "could not switch audio device: {reason}",
-        ja: "オーディオデバイスを切り替えられませんでした: {reason}"
-    }
 
-    /// The settings file could not be written.
-    fn settings_write_failed(path: &str, reason: &str) {
-        en: "could not write {path}: {reason}",
-        ja: "{path} を書き込めませんでした: {reason}"
-    }
 
-    /// Confirmation that the interface language changed.
-    fn language_changed(language_name: &str) {
-        en: "Interface language: {language_name}",
-        ja: "表示言語: {language_name}"
-    }
 
-    /// A command line argument that is not one of ours.
-    fn unknown_command(name: &str) {
-        en: "unknown command `{name}`; try `auris help`",
-        ja: "`{name}` というコマンドはありません。`auris help` を試してください"
-    }
 
-    /// A command line option that is not one of ours.
-    fn unknown_option(name: &str) {
-        en: "unknown option `{name}`",
-        ja: "`{name}` というオプションはありません"
-    }
 
-    /// A create command pointed at a folder that already holds another project.
-    ///
-    /// Named after the path that would have been *written*, which is not the one that was typed:
-    /// a project goes into a folder of its own, so the collision is one level down from where the
-    /// user was looking.
-    fn project_folder_taken(path: &str) {
-        en: "`{path}` already holds a project; pass `--force` to replace it",
-        ja: "`{path}` には既にプロジェクトがあります。置き換えるには `--force` を指定してください"
-    }
 
-    /// A `--preset` naming a style the composer does not ship.
-    fn unknown_preset(name: &str) {
-        en: "there is no `{name}` preset; `auris presets` lists them",
-        ja: "`{name}` というプリセットはありません。`auris presets` で一覧を表示できます"
-    }
 
-    /// An option that needs a value it was not given.
-    fn option_needs_value(name: &str, kind: &str) {
-        en: "{name} needs {kind}",
-        ja: "{name} には{kind}が必要です"
-    }
 
-    /// A bit depth the exporter does not offer.
-    fn bad_bit_depth(given: &str) {
-        en: "--bit-depth wants 16, 24 or 32, not `{given}`",
-        ja: "--bit-depth は 16, 24, 32 のいずれかです。`{given}` は使えません"
-    }
 
-    /// The progress line a render prints to the terminal.
-    fn render_progress(percent: i32) {
-        en: "rendering {percent:>3}%",
-        ja: "書き出し中 {percent:>3}%"
-    }
 
-    /// Confirmation that the command line renderer wrote a file.
-    fn wrote_file(path: &str, duration: &str, channels: usize, bits: u16, peak_db: f32) {
-        en: "wrote {path} · {duration} · {channels} ch · {bits}-bit · peak {peak_db:.1} dBFS",
-        ja: "{path} を書き出しました · {duration} · {channels} ch · {bits} bit · ピーク {peak_db:.1} dBFS"
-    }
 
-    /// Confirmation that a note-roll video was written.
-    fn wrote_video(path: &str, duration: &str, frames: u64, encoder: &str) {
-        en: "wrote {path} · {duration} · {frames} frames · {encoder}",
-        ja: "{path} を書き出しました · {duration} · {frames} フレーム · {encoder}"
-    }
 
-    /// No ffmpeg was found, with the command that installs one.
-    fn ffmpeg_missing(command: &str, page: &str) {
-        en: "Video export needs ffmpeg, which is not installed. Install it with `{command}`, or download it from {page}, then try again.",
-        ja: "動画の書き出しには ffmpeg が必要ですが、見つかりませんでした。`{command}` でインストールするか、{page} から入手してから、もう一度お試しください。"
-    }
 
-    /// Confirmation that the command line tool created a project.
-    fn created_project(path: &str, bpm: f64, rate: f64) {
-        en: "created {path} · {bpm:.2} BPM · {rate:.0} Hz",
-        ja: "{path} を作成しました · {bpm:.2} BPM · {rate:.0} Hz"
-    }
 
-    /// Confirmation that a take was recorded and turned into a clip.
-    fn recorded_take(duration: &str) {
-        en: "recorded {duration}",
-        ja: "{duration} を録音しました"
-    }
 
-    /// How long a count-in is, for the menu row that sets it.
-    ///
-    /// Bars, because that is what is being chosen. English pluralises; Japanese counts bars with
-    /// 小節 and needs no plural, which is the whole reason this is a message and not a format
-    /// string written at the call site.
-    fn count_in_bars(bars: u32) {
-        en: "{bars} bars",
-        ja: "{bars} 小節"
-    }
 
     /// A one-bar count-in, where English will not have "1 bars".
     fn count_in_one_bar() {
@@ -990,57 +318,13 @@ messages! {
         ja: "1 小節"
     }
 
-    /// How long the count in front of the next take will be.
-    fn count_in_set(length: &str) {
-        en: "takes are counted in for {length}",
-        ja: "録音の前に {length} カウントします"
-    }
 
-    /// A note-roll video was written.
-    fn exported_video(path: &str, duration: &str) {
-        en: "Exported {path} · {duration}",
-        ja: "{path} を書き出しました · {duration}"
-    }
 
-    /// The ffmpeg a video will be encoded with.
-    fn ffmpeg_found(version: &str, encoder: &str) {
-        en: "Encoding with ffmpeg {version} ({encoder})",
-        ja: "ffmpeg {version}（{encoder}）で書き出します"
-    }
 
-    /// How many stems were written, and where they went.
-    fn exported_stems(count: usize, folder: &str) {
-        en: "wrote {count} stems to {folder}",
-        ja: "{count} 本のステムを {folder} に書き出しました"
-    }
 
-    /// More tracks asked to monitor at once than there are rings to carry them.
-    fn too_many_monitors(limit: usize) {
-        en: "no more than {limit} tracks can be monitored at once",
-        ja: "同時にモニターできるのは {limit} トラックまでです"
-    }
 
-    /// Several tracks listening to the live input at once.
-    fn monitoring_tracks(tracks: usize, device: &str) {
-        en: "monitoring {tracks} tracks through {device} — an interface that monitors in hardware does it with less delay",
-        ja: "{device} から {tracks} トラックをモニターしています（ハードウェアモニタリングのほうが遅延は小さくなります）"
-    }
 
-    /// Joins made by dropping a clip over its neighbour.
-    ///
-    /// Said out loud because nothing was clicked to ask for it: a fade that appeared on its own
-    /// is a fade somebody should be told about, or the first they know of it is a clip that
-    /// sounds quieter at the end than it did a moment ago.
-    fn crossfaded_landings(joins: usize) {
-        en: "crossfaded {joins} joins",
-        ja: "{joins} 箇所をクロスフェードしました"
-    }
 
-    /// How long the join two crossfaded clips came out.
-    fn crossfaded(seconds: f64) {
-        en: "crossfaded over {seconds:.2} seconds",
-        ja: "{seconds:.2} 秒でクロスフェードしました"
-    }
 
     /// A take that produced nothing, which reads as a failure until it is explained.
     fn recorded_nothing() {
@@ -1048,21 +332,7 @@ messages! {
         ja: "音が入っていなかったため、何も保存しませんでした"
     }
 
-    /// A track armed, and the input it will be recording from.
-    ///
-    /// The channel is said out loud because it is otherwise invisible: the arm button is one lamp
-    /// and the session chose the channel. Somebody arming four tracks needs to watch them land on
-    /// four different inputs.
-    fn armed_on_input(track: &str, input: &str) {
-        en: "{track} will record from input {input}",
-        ja: "{track} を入力 {input} から録音します"
-    }
 
-    /// A track that is no longer armed.
-    fn disarmed_track(track: &str) {
-        en: "{track} is no longer armed",
-        ja: "{track} の録音待機を解除しました"
-    }
 
     /// Several tracks recorded at once, which is one press of Record and several takes.
     ///
@@ -1082,11 +352,6 @@ messages! {
         ja: "{tracks} トラックに {duration} を録音しましたが、{frames} フレームが欠落しています"
     }
 
-    /// A take with a hole in it, because the disk could not keep up.
-    fn recorded_with_gaps(duration: &str, frames: u64) {
-        en: "recorded {duration}, but {frames} frames were dropped — there is a gap in it",
-        ja: "{duration} を録音しましたが、{frames} フレームが欠落しています"
-    }
 
     /// A take that was played but fell outside the punch region.
     ///
@@ -1097,42 +362,10 @@ messages! {
         ja: "パンチ範囲内に演奏がありませんでした。録音はファイルとして残してあります"
     }
 
-    /// The count under the recording clock while frames are still being lost.
-    ///
-    /// Present tense, and on screen for as long as it is true: this is a take going wrong now,
-    /// not a report on one that is over.
-    fn take_dropping(frames: u64) {
-        en: "{frames} frames dropped",
-        ja: "{frames} フレーム欠落中"
-    }
 
-    /// Monitoring switched on, naming the device and the cost of listening this way.
-    ///
-    /// The cost is said every time rather than once in a dialog: an interface with direct
-    /// monitoring beats every software path, and somebody who has one and turns this on as well
-    /// hears themselves twice, slightly apart.
-    fn monitoring_on(device: &str) {
-        en: "monitoring {device} — software monitoring adds latency; an interface's own is lower",
-        ja: "{device} をモニターしています — ソフトウェアモニタリングは遅延します。オーディオインターフェース側の機能のほうが低遅延です"
-    }
 
-    /// The monitor has been interrupted, which is a thing somebody heard and should be told why.
-    fn monitor_gaps(count: u64) {
-        en: "the monitor has broken up {count} times — try a larger audio block size",
-        ja: "モニター音が {count} 回途切れました — オーディオのブロックサイズを大きくしてみてください"
-    }
 
-    /// A file a project refers to that is not there.
-    fn warning_missing_audio(path: &str) {
-        en: "warning: missing audio file {path}",
-        ja: "警告: オーディオファイル {path} が見つかりません"
-    }
 
-    /// The command line's version of the door-side note, for a build that named itself.
-    fn warning_saved_by_build(version: &str) {
-        en: "warning: saved by Auris Studio {version}; regenerating writes in this build's style",
-        ja: "警告: Auris Studio {version} で保存されたプロジェクトです。再生成は現在のスタイルで書き直します"
-    }
 
     /// The same note for a file that predates the record of who saved it.
     fn warning_saved_by_older_build() {
@@ -1140,101 +373,6 @@ messages! {
         ja: "警告: 以前のバージョンで保存されたプロジェクトです。再生成は現在のスタイルで書き直します"
     }
 
-    /// Confirmation that a piece was composed and written.
-    fn composed(path: &str, tracks: usize, notes: usize, seed: u64) {
-        en: "composed {path} · {tracks} tracks · {notes} notes · seed {seed}",
-        ja: "{path} を作曲しました · {tracks} トラック · {notes} ノート · シード {seed}"
-    }
-
-    /// Confirmation that a piece was composed into the open document.
-    fn composed_document(tracks: usize, notes: usize, seed: u64) {
-        en: "composed {tracks} tracks · {notes} notes · seed {seed}",
-        ja: "{tracks} トラック · {notes} ノートを作曲しました · シード {seed}"
-    }
-
-    /// The same, with a note that some parts did not get the instrument they asked for.
-    fn composed_document_substituted(tracks: usize, notes: usize, seed: u64, missing: usize) {
-        en: "composed {tracks} tracks · {notes} notes · seed {seed} · {missing} instruments substituted",
-        ja: "{tracks} トラック · {notes} ノートを作曲しました · シード {seed} · {missing} 個の音源を代替しました"
-    }
-
-    /// Confirmation that a mix was set by measuring it.
-    fn mix_balanced(parts: usize, lufs: f32) {
-        en: "balanced {parts} parts · {lufs:.1} LUFS",
-        ja: "{parts} パートのバランスを調整しました · {lufs:.1} LUFS"
-    }
-
-    /// The same, where a fader ran out of travel before its part reached the level it wanted.
-    fn mix_balanced_short(parts: usize, lufs: f32, short: f32) {
-        en: "balanced {parts} parts · {lufs:.1} LUFS · one part is {short:.0} dB short of its level",
-        ja: "{parts} パートのバランスを調整しました · {lufs:.1} LUFS · 1 パートは目標より {short:.0} dB 小さいままです"
-    }
-
-    /// What the balance pass did, as a tail on the line that says a piece was composed.
-    fn mixed_to(lufs: f32) {
-        en: "mixed to {lufs:.1} LUFS",
-        ja: "ミックスを {lufs:.1} LUFS に調整"
-    }
-
-    /// A part asked for an instrument this build does not have.
-    fn instrument_substituted(id: &str) {
-        en: "warning: no instrument `{id}`; using the default instead",
-        ja: "警告: `{id}` という音源がないため既定の音源を使います"
-    }
-
-    /// A requested lyrical section could not be written and stayed instrumental.
-    fn song_section_unsung(section: &str) {
-        en: "warning: lyrics in `{section}` could not be written; this section remains instrumental",
-        ja: "警告: `{section}` の歌詞を作曲できなかったため、このセクションは伴奏のみです"
-    }
-
-    /// A song specification would not parse.
-    fn spec_rejected(path: &str) {
-        en: "{path} could not be read as a song specification",
-        ja: "{path} を曲の仕様として読めませんでした"
-    }
-
-    /// The name a duplicated object takes.
-    fn copy_of(name: &str) {
-        en: "{name} copy",
-        ja: "{name} のコピー"
-    }
-
-    /// Confirmation that a VOICEVOX Engine process was started.
-    fn voicevox_engine_started(pid: u32) {
-        en: "VOICEVOX Engine started (PID {pid})",
-        ja: "VOICEVOX Engineを起動しました (PID {pid})"
-    }
-
-    /// Confirmation that the configured VOICEVOX Engine answered.
-    fn voicevox_engine_connected(version: &str) {
-        en: "Connected to VOICEVOX Engine {version}",
-        ja: "VOICEVOX Engine {version} に接続できました"
-    }
-
-    /// Recovery guidance when a VOICEVOX catalogue cannot be fetched.
-    fn voicevox_connection_failed(detail: &str) {
-        en: "VOICEVOX is unavailable. Check that VOICEVOX Engine is running, then try again. {detail}",
-        ja: "VOICEVOXを利用できません。VOICEVOXが起動していることを確認して、再試行してください。{detail}"
-    }
-
-    /// Confirmation that a singing-backend configuration was written.
-    fn voice_setup_saved(path: &str) {
-        en: "Saved {path}",
-        ja: "{path} に保存しました"
-    }
-
-    /// Confirmation that LeapSinger's acoustic graph and vocoder generated audible audio.
-    fn leapsinger_voice_checked(speakers: usize, sample_rate: u32) {
-        en: "Synthesis verified on CPU · {speakers} speakers · {sample_rate} Hz",
-        ja: "CPUでの音声合成を確認しました・{speakers}話者・{sample_rate}Hz"
-    }
-
-    /// A numeric setup field could not be parsed.
-    fn voice_setup_invalid_field(field: &str) {
-        en: "Invalid {field}",
-        ja: "{field} の値が正しくありません"
-    }
 }
 
 #[cfg(test)]
@@ -1270,10 +408,5 @@ mod tests {
             undid(Language::English, "x"),
             undid(Language::Japanese, "x")
         );
-    }
-
-    #[test]
-    fn the_table_is_not_accidentally_empty() {
-        assert!(NAMES.len() > 20, "{} messages", NAMES.len());
     }
 }

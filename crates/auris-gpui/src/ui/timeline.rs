@@ -153,6 +153,79 @@ impl TimelineView {
     }
 }
 
+/// Whether the timeline keeps the playhead in view while the transport rolls.
+///
+/// Following is the default, and it used to be the only thing there was: every frame of
+/// playback put the playhead back on screen, so the rest of the song could not be looked at
+/// until the music stopped. Now a hand that scrolls the playhead out of view *releases* the
+/// view, and it stays where it was put. Following comes back on its own the moment the playhead
+/// is on screen again — it walks into the bars being looked at, or a loop wraps back into them —
+/// and at once when the playhead is moved on purpose: playback starting, a seek, or the
+/// return-to-playhead button.
+///
+/// Only a scroll releases. A zoom changes `scroll_ticks` too when it is anchored on the
+/// pointer, but somebody zooming during playback is looking closer at the music, not away from
+/// it, so the view keeps the playhead as it always did.
+#[derive(Clone, Debug, Default)]
+pub struct PlayheadFollow {
+    /// Set once a scroll has taken the playhead out of view.
+    released: bool,
+    /// The view as the previous frame of playback left it, to tell a hand's scroll from the
+    /// follow's own.
+    left: Option<TimelineView>,
+    /// Whether the transport was rolling on the previous frame.
+    was_playing: bool,
+}
+
+impl PlayheadFollow {
+    /// Follows the playhead again from the next frame, wherever the view has been taken.
+    pub fn engage(&mut self) {
+        self.released = false;
+    }
+
+    /// `true` while a scroll has the view somewhere the playhead is not.
+    pub fn is_released(&self) -> bool {
+        self.released
+    }
+
+    /// Runs once a frame: notices a hand's scroll and, unless the view has been released,
+    /// brings the playhead into a body `width` pixels wide.
+    pub fn update(
+        &mut self,
+        view: &mut TimelineView,
+        playhead: Ticks,
+        width: Pixels,
+        playing: bool,
+    ) {
+        if playing && !self.was_playing {
+            self.released = false;
+        }
+        self.was_playing = playing;
+        if !playing {
+            // Scrolling while stopped is not a release: there is nothing to follow, and the
+            // next start follows again anyway.
+            self.left = None;
+            return;
+        }
+        let (start, end) = view.visible_range(width);
+        let visible = playhead >= start && playhead <= end;
+        if let Some(left) = &self.left {
+            let scrolled = view.scroll_ticks != left.scroll_ticks
+                && view.pixels_per_beat == left.pixels_per_beat;
+            if scrolled && !visible {
+                self.released = true;
+            }
+        }
+        if visible {
+            self.released = false;
+        }
+        if !self.released {
+            view.scroll_to_reveal(playhead, width);
+        }
+        self.left = Some(view.clone());
+    }
+}
+
 /// Vertical scroll and zoom of the piano roll's pitch axis.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PitchView {
@@ -264,6 +337,112 @@ pub fn pitch_name(pitch: u8) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// One frame of playback after a hand has moved `view` to `scroll`.
+    fn frame(follow: &mut PlayheadFollow, view: &mut TimelineView, playhead: i64) {
+        follow.update(view, Ticks(playhead), px(480.0), true);
+    }
+
+    #[test]
+    fn playback_pages_after_the_playhead_until_a_scroll_takes_it_out_of_view() {
+        // 48 px a beat across 480 px is ten beats on screen.
+        let beat = TICKS_PER_QUARTER;
+        let mut view = TimelineView::default();
+        let mut follow = PlayheadFollow::default();
+        frame(&mut follow, &mut view, 0);
+        frame(&mut follow, &mut view, 11 * beat);
+        assert!(
+            view.scroll_ticks > Ticks::ZERO,
+            "the playhead walked off and was followed"
+        );
+        assert!(!follow.is_released());
+
+        // Back to the start of the song, with the playhead still going at bar four.
+        view.scroll_ticks = Ticks::ZERO;
+        frame(&mut follow, &mut view, 12 * beat);
+        assert!(follow.is_released());
+        assert_eq!(view.scroll_ticks, Ticks::ZERO, "the hand's scroll was kept");
+        frame(&mut follow, &mut view, 13 * beat);
+        assert_eq!(
+            view.scroll_ticks,
+            Ticks::ZERO,
+            "and kept on the next frame too"
+        );
+
+        follow.engage();
+        frame(&mut follow, &mut view, 14 * beat);
+        assert!(!follow.is_released());
+        let (start, end) = view.visible_range(px(480.0));
+        assert!(start <= Ticks(14 * beat) && Ticks(14 * beat) <= end);
+    }
+
+    #[test]
+    fn a_scroll_that_keeps_the_playhead_on_screen_does_not_release_the_view() {
+        let beat = TICKS_PER_QUARTER;
+        let mut view = TimelineView::default();
+        let mut follow = PlayheadFollow::default();
+        frame(&mut follow, &mut view, 2 * beat);
+        view.scroll_ticks = Ticks(beat);
+        frame(&mut follow, &mut view, 2 * beat);
+        assert!(!follow.is_released());
+    }
+
+    #[test]
+    fn the_playhead_walking_into_the_bars_being_looked_at_is_followed_again() {
+        let beat = TICKS_PER_QUARTER;
+        let mut view = TimelineView::default();
+        let mut follow = PlayheadFollow::default();
+        frame(&mut follow, &mut view, 0);
+        view.scroll_ticks = Ticks(20 * beat);
+        frame(&mut follow, &mut view, beat);
+        assert!(follow.is_released());
+        frame(&mut follow, &mut view, 21 * beat);
+        assert!(!follow.is_released(), "the playhead is on screen again");
+        frame(&mut follow, &mut view, 31 * beat);
+        assert!(
+            view.scroll_ticks > Ticks(20 * beat),
+            "and followed off the right edge"
+        );
+    }
+
+    #[test]
+    fn a_zoom_during_playback_keeps_following() {
+        let beat = TICKS_PER_QUARTER;
+        let mut view = TimelineView::default();
+        let mut follow = PlayheadFollow::default();
+        frame(&mut follow, &mut view, 8 * beat);
+        view.zoom_by(4.0, px(0.0));
+        frame(&mut follow, &mut view, 8 * beat);
+        assert!(!follow.is_released());
+        let (start, end) = view.visible_range(px(480.0));
+        assert!(start <= Ticks(8 * beat) && Ticks(8 * beat) <= end);
+    }
+
+    #[test]
+    fn starting_playback_follows_again_and_scrolling_while_stopped_releases_nothing() {
+        let beat = TICKS_PER_QUARTER;
+        let mut view = TimelineView::default();
+        let mut follow = PlayheadFollow::default();
+        frame(&mut follow, &mut view, 0);
+        view.scroll_ticks = Ticks(40 * beat);
+        frame(&mut follow, &mut view, beat);
+        assert!(follow.is_released());
+        follow.update(&mut view, Ticks(beat), px(480.0), false);
+        view.scroll_ticks = Ticks(80 * beat);
+        follow.update(&mut view, Ticks(beat), px(480.0), false);
+        assert_eq!(
+            view.scroll_ticks,
+            Ticks(80 * beat),
+            "nothing moves while stopped"
+        );
+        frame(&mut follow, &mut view, beat);
+        assert!(!follow.is_released());
+        assert_eq!(
+            view.scroll_ticks,
+            Ticks::ZERO,
+            "play brings the playhead back"
+        );
+    }
 
     #[test]
     fn tick_and_x_round_trip() {

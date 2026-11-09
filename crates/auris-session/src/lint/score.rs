@@ -11,6 +11,12 @@ use auris_core::theory::pitch::PitchClass;
 
 use super::{Diagnostic, Fix, NoteRef, Rule, Severity, sort};
 
+mod intervals;
+use intervals::intervals;
+
+#[cfg(test)]
+mod performance_tests;
+
 /// Notes one track may strike on one tick before the voicing is unplayable mush.
 pub const CROWDED_TRACK: usize = 8;
 /// Pitched notes the whole arrangement may strike on one tick.
@@ -231,55 +237,6 @@ fn dense_bars(project: &Project, events: &[Event]) -> Vec<Diagnostic> {
     diagnostics
 }
 
-/// Held seconds: a semitone anywhere, and either second down in the bass.
-fn intervals(events: &[Event]) -> Vec<Diagnostic> {
-    let mut harsh = Vec::new();
-    let mut muddy = Vec::new();
-    let mut seen = HashSet::new();
-    let mut active: Vec<&Event> = Vec::new();
-    for event in events.iter().filter(|event| !event.drum) {
-        active.retain(|other| other.end > event.start);
-        for other in &active {
-            let distance = event.pitch.abs_diff(other.pitch);
-            let overlap = event.end.min(other.end) - event.start;
-            let rule = if distance == 1 && overlap >= HARSH_OVERLAP {
-                Rule::HarshInterval
-            } else if (1..=2).contains(&distance)
-                && event.pitch.max(other.pitch) <= MUDDY_CEILING
-                && overlap >= MUDDY_OVERLAP
-            {
-                Rule::MuddyLowInterval
-            } else {
-                continue;
-            };
-            let pair = if other.note < event.note {
-                (other.note, event.note)
-            } else {
-                (event.note, other.note)
-            };
-            if !seen.insert((rule, pair)) {
-                continue;
-            }
-            let bucket = match rule {
-                Rule::HarshInterval => &mut harsh,
-                _ => &mut muddy,
-            };
-            if bucket.len() >= MAX_PER_RULE {
-                continue;
-            }
-            let mut diagnostic =
-                Diagnostic::new(rule, Severity::Warning, event.start, event.start + overlap);
-            diagnostic.track = (event.track == other.track).then_some(event.track);
-            diagnostic.notes = vec![pair.0, pair.1];
-            diagnostic.pitches = sorted_pitches([event.pitch, other.pitch].into_iter());
-            bucket.push(diagnostic);
-        }
-        active.push(event);
-    }
-    harsh.extend(muddy);
-    harsh
-}
-
 /// Chords the reading of a bar may name: the triads and sevenths whose notes spell exactly one
 /// root. Augmented and diminished-seventh chords are left out because they spell three and four
 /// roots, and sixths because a C6 is an Am7 by its notes.
@@ -342,37 +299,54 @@ fn missing_chords(project: &Project, events: &[Event]) -> Vec<Diagnostic> {
     // Each bar: whether it is chordal and unannotated, and the chord it spells.
     let mut bars: Vec<(u32, Option<Chord>)> = Vec::new();
     let mut first = 0;
+    let mut inside = Vec::new();
+    let mut boundaries = Vec::new();
+    let sorted = pitched
+        .windows(2)
+        .all(|pair| pair[0].start <= pair[1].start);
+    let mut next = 0;
     for bar in 1..=last_bar {
         let start = signatures.bar_start(bar);
         let end = signatures.bar_start(bar + 1);
+        let points = chords.points();
+        let after_start = points.partition_point(|point| point.tick <= start);
         let written = chords.numeral_at(start).is_some()
-            || chords
-                .points()
+            || points[after_start..]
                 .iter()
-                .any(|point| point.tick > start && point.tick < end && point.chord.is_some());
-        // Events are sorted by start, so skip the ones that ended before this bar.
-        while first < pitched.len() && pitched[first].start < start && pitched[first].end <= start {
-            first += 1;
+                .take_while(|point| point.tick < end)
+                .any(|point| point.chord.is_some());
+        if sorted {
+            // Only still-sounding events survive into the next bar. A long pedal note must not
+            // pin the scan to every expired note that happened to start after it.
+            inside.retain(|event: &&Event| event.end > start);
+            while next < pitched.len() && pitched[next].start < end {
+                if pitched[next].end > start {
+                    inside.push(pitched[next]);
+                }
+                next += 1;
+            }
+        } else {
+            // A capped event expansion can be an unsorted prefix. Preserve its legacy window
+            // selection and order; the chordal sweep below is independent of that order.
+            while first < pitched.len()
+                && pitched[first].start < start
+                && pitched[first].end <= start
+            {
+                first += 1;
+            }
+            inside.clear();
+            inside.extend(
+                pitched[first..]
+                    .iter()
+                    .copied()
+                    .take_while(|event| event.start < end)
+                    .filter(|event| event.end > start),
+            );
         }
         if written {
             continue;
         }
-        let inside: Vec<&&Event> = pitched[first..]
-            .iter()
-            .take_while(|event| event.start < end)
-            .filter(|event| event.end > start)
-            .collect();
-        let chordal = inside.iter().any(|onset| {
-            let at = onset.start.max(start);
-            let mut classes = [false; 12];
-            for event in &inside {
-                if event.start <= at && event.end > at {
-                    classes[(event.pitch % 12) as usize] = true;
-                }
-            }
-            classes.iter().filter(|sounding| **sounding).count() >= CHORD_TONES
-        });
-        if !chordal {
+        if !sounds_chord(&inside, start, end, &mut boundaries) {
             continue;
         }
         let mut weights = [0i64; 12];
@@ -415,6 +389,67 @@ fn missing_chords(project: &Project, events: &[Event]) -> Vec<Diagnostic> {
         index = stop;
     }
     diagnostics
+}
+
+/// Tests simultaneous pitch classes at note boundaries instead of rescanning all notes at every
+/// onset. End boundaries precede starts at the same tick, matching half-open note intervals.
+fn sounds_chord(
+    events: &[&Event],
+    start: Ticks,
+    end: Ticks,
+    boundaries: &mut Vec<(Ticks, bool, u8)>,
+) -> bool {
+    let Some(first) = events.first() else {
+        return false;
+    };
+    let at = first.start.max(start);
+    let mut sounding = 0_u16;
+    let mut present = 0_u16;
+    for event in events {
+        let bit = 1 << (event.pitch % 12);
+        present |= bit;
+        if event.start <= at && event.end > at {
+            sounding |= bit;
+        }
+    }
+    // Ordinary block chords and one/two-class passages need no sort or boundary allocation.
+    if sounding.count_ones() as usize >= CHORD_TONES {
+        return true;
+    }
+    if (present.count_ones() as usize) < CHORD_TONES {
+        return false;
+    }
+
+    boundaries.clear();
+    for event in events {
+        let from = event.start.max(start);
+        let to = event.end.min(end);
+        if from < to {
+            boundaries.push((from, true, event.pitch % 12));
+            boundaries.push((to, false, event.pitch % 12));
+        }
+    }
+    boundaries.sort_unstable();
+    let mut counts = [0_usize; 12];
+    let mut classes = 0;
+    for &(_, begins, class) in boundaries.iter() {
+        let count = &mut counts[class as usize];
+        if begins {
+            if *count == 0 {
+                classes += 1;
+            }
+            *count += 1;
+            if classes >= CHORD_TONES {
+                return true;
+            }
+        } else {
+            *count -= 1;
+            if *count == 0 {
+                classes -= 1;
+            }
+        }
+    }
+    false
 }
 
 /// Sustained notes measured against the written key and chord. Only where a chord is written:

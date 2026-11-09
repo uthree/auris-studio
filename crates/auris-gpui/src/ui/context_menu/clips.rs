@@ -108,6 +108,14 @@ impl AurisApp {
                 self.t(Key::MenuSplitAtPlayhead),
                 MenuCommand::SplitClipAtPlayhead(clip),
             )
+            // Only for notes, and only where there is something to join with: a selection of
+            // several, or a neighbour on the lane. Whether those pieces agree enough to become
+            // one is answered when the row is chosen, so a refusal can say why.
+            .item_if(
+                is_midi && !self.clips_to_join(clip).is_empty(),
+                self.t(Key::MenuJoinClips),
+                MenuCommand::JoinClips(clip),
+            )
             .toggle(
                 self.t(Key::MenuMuteClip),
                 MenuCommand::ToggleClipMute(clip),
@@ -257,6 +265,39 @@ impl AurisApp {
             }
             Err(error) => {
                 let text = self.failure(Key::CmdCrossfade, &error);
+                self.set_failed_status(text);
+            }
+        }
+    }
+
+    /// The clips a join aimed at `clip` would glue together.
+    ///
+    /// The selection when `clip` is one of several selected, as every other clip command reads
+    /// it; otherwise `clip` and the next clip along its lane, which is what right-clicking one of
+    /// two clips sitting side by side means. Empty when there is nothing to join it with.
+    pub(crate) fn clips_to_join(&self, clip: ClipId) -> Vec<ClipId> {
+        let chosen = self.clips_for_command(clip);
+        if chosen.len() > 1 {
+            return chosen;
+        }
+        self.session
+            .join_partner(clip)
+            .map(|partner| vec![clip, partner])
+            .unwrap_or_default()
+    }
+
+    /// Joins the clips [`Self::clips_to_join`] names, selects what is left, and says so.
+    pub(crate) fn join_clips_for_command(&mut self, clip: ClipId) {
+        let chosen = self.clips_to_join(clip);
+        let count = chosen.len();
+        match self.session.join_clips(&chosen) {
+            Ok(joined) => {
+                self.select_clips(std::iter::once(joined).collect(), Some(joined));
+                self.selected_notes.clear();
+                self.set_status(messages::joined_clips(self.language, count));
+            }
+            Err(error) => {
+                let text = self.failure(Key::CmdJoinClips, &error);
                 self.set_failed_status(text);
             }
         }
@@ -569,7 +610,7 @@ impl AurisApp {
     }
 
     /// Where a clip of either kind starts and ends on the timeline.
-    pub(super) fn clip_extent(&self, clip: ClipId) -> Option<(Ticks, Ticks)> {
+    pub(crate) fn clip_extent(&self, clip: ClipId) -> Option<(Ticks, Ticks)> {
         if let Some(midi) = self.session.midi_clip(clip) {
             return Some((midi.start, midi.end()));
         }
@@ -787,6 +828,43 @@ mod window_tests {
         app.read_with(cx, |this, _| {
             assert!(this.session.midi_clip(clip).is_none(), "the clip is gone");
             assert!(this.menu.is_none(), "and the menu closed behind it");
+        });
+    }
+
+    /// A lone clip offers no join; with a neighbour beside it, choosing Join glues the two and
+    /// leaves the survivor selected.
+    #[gpui::test]
+    fn choosing_join_glues_a_clip_to_its_neighbour(cx: &mut TestAppContext) {
+        let (app, cx, track, clip) = with_a_clip(cx);
+        let at = lane_point(&app, cx, track, HALF_CLIP);
+        right_press(cx, at);
+        assert!(
+            !offers(&app, cx, &MenuCommand::JoinClips(clip)),
+            "nothing to join a lone clip with"
+        );
+
+        let neighbour = app.update(cx, |this, _| {
+            this.menu = None;
+            this.session
+                .add_midi_clip(track, "Next", CLIP_LENGTH, CLIP_LENGTH)
+                .unwrap()
+        });
+        paint(&app, cx);
+        right_press(cx, at);
+        paint(&app, cx);
+
+        choose(&app, cx, &MenuCommand::JoinClips(clip));
+
+        app.read_with(cx, |this, _| {
+            assert!(
+                this.session.midi_clip(neighbour).is_none(),
+                "the neighbour was taken in"
+            );
+            assert_eq!(
+                this.session.midi_clip(clip).unwrap().length,
+                Ticks(CLIP_LENGTH.0 * 2)
+            );
+            assert_eq!(this.selected_clip, Some(clip));
         });
     }
 

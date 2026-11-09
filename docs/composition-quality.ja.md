@@ -54,9 +54,9 @@ uv run --with ruff ruff check tools/eval/composition_quality.py tools/eval/test_
 
 完全なワークスペースでは doctest を含む4,499件の Rust テストが通過し、Clippy とフォーマットも通過しました。評価スクリプトは10件の pytest ケースと Ruff に合格しました。シンボリックルーラーはバイト単位で同一でした。固定した pop-band レンダーもバイト単位で同一で、TuneJury と MuQ-MuLan の差分はゼロでした。これは回帰チェックであり、新しい作曲がより良いという証拠ではありません。
 
-前景の選択はリクエスト単位です。このパイロットが対象とするのは、明示的な `accompaniment` の生成と再生成であり、これらのクリップの GUI による一般的な再生成ではありません。音楽評価では、`target/quality-evidence/listening/listening.html` に6つの匿名 A/B ペアと評価フォームがあります。別のキーで身元を確認します。元のレベルは保持されています。人による選好評価はまだ収集していないため、音楽的改善は未証明です。[クリティックのキャリブレーション](audio-critic-calibration.ja.md) でも、現在の音声モデルが自動的な音楽選択に適することは検証していません。
+前景の選択はリクエスト単位です。このパイロットが対象とするのは、明示的な `accompaniment` の生成と再生成であり、これらのクリップの GUI による一般的な再生成ではありません。音楽評価では、`target/quality-evidence/listening/listening.html` に6つの匿名 A/B ペアと評価フォームがあります。別のキーで身元を確認します。元のレベルは保持されています。人による選好評価はまだ収集していないため、音楽的改善は未証明です。その後廃止した批評モデルのキャリブレーション実験でも、その音声モデルが自動的な音楽選択に適することは検証できていません。
 
 <a id="follow-up-validation-of-production-records-and-candidates"></a>
 ## 本番記録と候補の追跡検証
 
-[追跡レポート](composition-quality-validation-2026-10-24.ja.md) は、会話記録、不変候補、スコープ付き変化、モジュール式プロンプト、実バックエンド試行を対象にします。回復したツールエラーと runtime-smoke の失敗を含む、24件すべてのホールドアウト配信と6試行の開発プロンプトアブレーションを保持します。人による選好はまだ採点していません。候補カタログとモジュール式プロンプトはオプトインのままです。[候補ツール](composition-candidates.ja.md) と [ワークフロー設定](composition-workflows.ja.md) を参照してください。
+[追跡レポート](composition-quality-validation-2026-10-24.ja.md) は、会話記録、不変候補、スコープ付き変化、モジュール式プロンプト、実バックエンド試行を対象にします。回復したツールエラーと runtime-smoke の失敗を含む、24件すべてのホールドアウト配信と6試行の開発プロンプトアブレーションを保持します。人による選好はまだ採点していません。候補カタログはオプトインのままで、フェーズ方式のプロンプトは既定になりました。[候補ツール](composition-candidates.ja.md) と [制作フェーズ](composition-workflows.ja.md) を参照してください。

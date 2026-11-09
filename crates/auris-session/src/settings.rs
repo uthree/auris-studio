@@ -64,6 +64,39 @@ pub fn read_config_text(path: &Path) -> std::io::Result<String> {
     Ok(text)
 }
 
+/// Reads a file that [`write_file_atomic`] publishes, refusing one larger than `limit` bytes.
+///
+/// Every reader of such a file goes through here or through [`read_config_text`], never
+/// `std::fs::read`: on Windows the publishing rename fails with `PermissionDenied` for as long as
+/// another thread has the destination open, so the read holds the lock the rename takes. A file
+/// over `limit`, including one that grows past it while it is read, is
+/// [`std::io::ErrorKind::FileTooLarge`], for the caller to word in its own terms.
+pub fn read_published_file(path: &Path, limit: u64) -> std::io::Result<Vec<u8>> {
+    let too_large = || {
+        std::io::Error::new(
+            std::io::ErrorKind::FileTooLarge,
+            format!("file is larger than {limit} bytes"),
+        )
+    };
+    let _read = CONFIG_FILE_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let file = File::open(path)?;
+    let size = file.metadata()?.len();
+    if size > limit {
+        return Err(too_large());
+    }
+    let mut bytes = Vec::new();
+    bytes
+        .try_reserve_exact(size as usize)
+        .map_err(|_| std::io::Error::other("not enough memory to read the file"))?;
+    file.take(limit.saturating_add(1)).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > limit {
+        return Err(too_large());
+    }
+    Ok(bytes)
+}
+
 /// Writes configuration bytes through a private sibling and atomically replaces `path`.
 ///
 /// The eight-megabyte ceiling is for hand-editable preferences. Machine-managed files with
