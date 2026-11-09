@@ -165,7 +165,8 @@ report the spread their strum stage gives each chord.
 
 Flags mark extremes only: every line of a section identical, every line entering on one beat,
 no syncopated note at all, every line one note count, one onset spacing for most notes, no line
-ending on the tonic, several lines in a row predictable from the song so far, three sections
+ending on the tonic, a section other than a chorus singing an earlier section's lines again note
+for note, three sections
 sharing one drum bar, a chorus looping the verse's progression from another chord, and a guitar
 strummed over less than 10 ms (below every shipped preset) or not at all. The song whose
 friends' feedback prompted the script raises all of them

@@ -23,8 +23,10 @@ pub const UNIFORM_SPACING_SHARE: f64 = 0.7;
 pub const UNIFORM_SPACING_COUNT: usize = 50;
 /// Bits a note under which a line counts as predictable from the song so far.
 pub const PREDICTABLE_BITS: f64 = 1.0;
-/// Consecutive predictable lines reported as a plateau.
-pub const PLATEAU_LINES: usize = 4;
+/// Lines a section other than a chorus must hold before singing an earlier section's lines
+/// again, note for note, is reported: a second verse copied from the first. A chorus repeats by
+/// design.
+pub const RESTATED_SECTION_LINES: usize = 2;
 /// Longest context the short-term model predicts from, in notes.
 const PPM_ORDER: usize = 4;
 /// Distinct (interval, spacing) symbols the model can name: ±12 semitones by 1..=16 sixteenths.
@@ -231,21 +233,24 @@ pub fn melody_form(project: &Project, track: TrackId) -> (Value, Vec<String>) {
     (report, warnings)
 }
 
-/// The warnings of [`melody_form`] about the melody's rhythm alone: every line entering at one
-/// point of the bar, no syncopation, one note count for every line, one spacing between most
-/// notes. These are the ones a score phase is not finished with, because a melody sung to one
-/// rhythm throughout sounds like a drill whatever its pitches do.
-pub fn rhythm_warnings(project: &Project, track: TrackId) -> Vec<String> {
+/// The warnings of [`melody_form`] a score phase is not finished with. The rhythm ones are
+/// every line entering at one point of the bar, no syncopation, one note count for every line,
+/// and one spacing between most notes: a melody sung to one rhythm throughout sounds like a
+/// drill whatever its pitches do. The last is a section other than a chorus sung again to notes
+/// the song already had, such as a second verse copied from the first: new words want lines of
+/// their own.
+pub fn development_warnings(project: &Project, track: TrackId) -> Vec<String> {
     form(project, track).2
 }
 
-/// [`melody_form`]'s report and warnings, with the rhythm warnings among them also listed apart.
+/// [`melody_form`]'s report and warnings, with the development warnings among them also listed
+/// apart.
 fn form(project: &Project, track: TrackId) -> (Value, Vec<String>, Vec<String>) {
     let lines = lines_of(project, track);
     let mut warnings = Vec::new();
-    let mut rhythm = Vec::new();
+    let mut development = Vec::new();
     if lines.is_empty() {
-        return (json!(null), warnings, rhythm);
+        return (json!(null), warnings, development);
     }
     let letters = letters(&lines);
     let bits = predictability(&lines);
@@ -314,19 +319,19 @@ fn form(project: &Project, track: TrackId) -> (Value, Vec<String>, Vec<String>) 
     }
     if lines.len() >= UNIFORM_LINES {
         if entries.len() == 1 {
-            rhythm.push(format!(
+            development.push(format!(
                 "All {} lines enter at the same point of the bar; let some enter with a pickup (弱起) or late",
                 lines.len()
             ));
         }
         if syncopated == 0 {
-            rhythm.push(format!(
+            development.push(format!(
                 "No note in {} lines starts off the beat and holds across it; anticipate a strong beat (食い) where the drive helps",
                 lines.len()
             ));
         }
         if note_counts.len() == 1 {
-            rhythm.push(format!(
+            development.push(format!(
                 "Every line has {} notes; let line lengths differ where no hook repeats",
                 lines[0].notes.len()
             ));
@@ -337,32 +342,30 @@ fn form(project: &Project, track: TrackId) -> (Value, Vec<String>, Vec<String>) 
         && let Some((value, count)) = spacings.iter().max_by_key(|(_, count)| **count)
         && *count as f64 / total as f64 >= UNIFORM_SPACING_SHARE
     {
-        rhythm.push(format!(
+        development.push(format!(
             "{:.0}% of the melody's notes start {:.2} beats after the one before; mix shorter and longer values",
             *count as f64 * 100.0 / total as f64,
             *value as f64 / Ticks::QUARTER.raw() as f64
         ));
     }
-    warnings.extend(rhythm.iter().cloned());
+    warnings.extend(development.iter().cloned());
     if endings >= 4 && tonic_endings == 0 {
         warnings.push(format!(
             "None of {endings} lines ends on the tonic; land at least the last chorus there unless the song should stay open"
         ));
     }
-    let mut run = 0;
-    let mut longest = 0;
-    for value in &bits {
-        run = if value.is_some_and(|b| b < PREDICTABLE_BITS) {
-            run + 1
-        } else {
-            0
-        };
-        longest = longest.max(run);
-    }
-    if longest >= PLATEAU_LINES {
-        warnings.push(format!(
-            "{longest} consecutive lines are predictable from the song so far (under {PREDICTABLE_BITS} bit a note): the same material is coming back unchanged"
-        ));
+    for (index, (name, form)) in sections.iter().enumerate() {
+        if form.len() < RESTATED_SECTION_LINES || super::melody_shape::is_chorus(name) {
+            continue;
+        }
+        if let Some((earlier, _)) = sections[..index].iter().find(|(_, lines)| lines == form) {
+            let warning = format!(
+                "{name} sings {earlier}'s {} lines again note for note; keep each line's head and let the new words reshape the tails, by a pickup, a split or a merge",
+                form.len()
+            );
+            warnings.push(warning.clone());
+            development.push(warning);
+        }
     }
     let form: Vec<Value> = sections
         .iter()
@@ -380,7 +383,7 @@ fn form(project: &Project, track: TrackId) -> (Value, Vec<String>, Vec<String>) 
             "note": "Lines follow the song-wide lyric annotation, else rests of a beat. Letters: same onsets and pitches share one; same onsets under other pitches add a prime. bits_per_note is a short-term model that learns only from this song: an exact repeat falls towards zero.",
         }),
         warnings,
-        rhythm,
+        development,
     )
 }
 
@@ -431,7 +434,6 @@ mod tests {
             "Every line has 12 notes",
             "100% of the melody's notes start 1.00 beats",
             "ends on the tonic",
-            "predictable from the song so far",
         ] {
             assert!(text.contains(needle), "missing {needle:?} in {text}");
         }
@@ -470,9 +472,9 @@ mod tests {
     }
 
     #[test]
-    fn the_rhythm_warnings_are_the_rhythm_part_of_the_form_warnings() {
+    fn the_development_warnings_are_the_rhythm_part_of_the_form_warnings() {
         let (project, track) = song(8, template);
-        let rhythm = rhythm_warnings(&project, track);
+        let rhythm = development_warnings(&project, track);
         let (_, warnings) = melody_form(&project, track);
         assert_eq!(rhythm.len(), 4, "{rhythm:?}");
         assert!(rhythm.iter().all(|w| warnings.contains(w)));
@@ -482,5 +484,41 @@ mod tests {
                 .iter()
                 .all(|w| !w.contains("tonic") && !w.contains("pitches"))
         );
+    }
+
+    #[test]
+    fn a_second_verse_copied_from_the_first_is_reported_and_a_repeated_chorus_is_not() {
+        // Verse, Chorus, Verse 2, Chorus 2: four lines each, the second pair a copy of the first.
+        let (mut project, track) = song(16, |index| {
+            let pitches: &[u8] = if (index / 4) % 2 == 0 {
+                &[60, 62, 64, 67, 64, 62]
+            } else {
+                &[67, 69, 72, 71, 69, 67]
+            };
+            let shift = (index % 4) as u8;
+            pitches
+                .iter()
+                .enumerate()
+                .map(|(i, &p)| {
+                    Note::new(
+                        p + shift,
+                        Ticks(480 * i as i64 + 240 * (index % 2)),
+                        Ticks(400),
+                    )
+                })
+                .collect()
+        });
+        for (bar, name) in [(4, "Chorus"), (8, "Verse 2"), (12, "Chorus 2")] {
+            project
+                .sections
+                .set_point(Ticks(BAR * 4 * bar), Some(name.into()));
+        }
+        let warnings = development_warnings(&project, track);
+        let restated: Vec<&String> = warnings
+            .iter()
+            .filter(|w| w.contains("note for note"))
+            .collect();
+        assert_eq!(restated.len(), 1, "{warnings:?}");
+        assert!(restated[0].contains("Verse 2"), "{restated:?}");
     }
 }

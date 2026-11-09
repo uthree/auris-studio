@@ -487,7 +487,7 @@ fn phase_checks(
                 check("lyrics_annotated", list("unannotated_lyric_lines")),
                 check("vocal_takes_current", behind_takes),
                 check("foreground_covers_song", foreground_unmet(roles, facts)),
-                check("melody_rhythm_varied", rhythm_unmet(roles, facts)),
+                check("melody_develops", development_unmet(roles, facts)),
                 // Read again in every later phase, since an arrangement can add findings too.
                 check("lint_warnings_resolved", lint_unmet(facts)),
             ]
@@ -549,10 +549,11 @@ fn bars_with_notes(project: &Project, clips: &[auris_core::project::MidiClip]) -
     runs
 }
 
-/// The rhythm warnings `melody_shape` gives a sung foreground track, which the score phase is
-/// not finished with: every line entering at one point of the bar, a melody with no
-/// syncopation, every line one length, or most notes one spacing apart.
-fn rhythm_unmet(roles: Option<&Roles>, facts: &Value) -> Vec<Value> {
+/// The development warnings `melody_shape` gives a sung foreground track, which the score phase
+/// is not finished with: every line entering at one point of the bar, a melody with no
+/// syncopation, every line one length, most notes one spacing apart, or a section other than a
+/// chorus sung again to notes the song already had.
+fn development_unmet(roles: Option<&Roles>, facts: &Value) -> Vec<Value> {
     let Some(roles) = roles else {
         return vec![];
     };
@@ -566,11 +567,11 @@ fn rhythm_unmet(roles: Option<&Roles>, facts: &Value) -> Vec<Value> {
                 .is_some_and(|id| roles.foreground.contains(&id))
         })
         .filter(|track| {
-            track["melody_rhythm"]
+            track["melody_development"]
                 .as_array()
                 .is_some_and(|warnings| !warnings.is_empty())
         })
-        .map(|track| json!({"track":track["track"],"melody_shape":track["melody_rhythm"]}))
+        .map(|track| json!({"track":track["track"],"melody_shape":track["melody_development"]}))
         .collect()
 }
 
@@ -710,8 +711,8 @@ pub fn phase_facts(session: &crate::Session) -> Value {
                     _ => "missing",
                 }
                 .into();
-                fact["melody_rhythm"] =
-                    crate::session::melody_form::rhythm_warnings(project, track.id).into();
+                fact["melody_development"] =
+                    crate::session::melody_form::development_warnings(project, track.id).into();
             }
             Some(fact)
         })
@@ -1057,7 +1058,7 @@ mod tests {
             .unwrap();
         let rhythm: Vec<Value> = unmet_structure(&record, &session)
             .into_iter()
-            .filter(|c| c["check"] == "melody_rhythm_varied")
+            .filter(|c| c["check"] == "melody_develops")
             .collect();
         assert_eq!(rhythm.len(), 1, "{rhythm:?}");
         let text = rhythm[0]["unmet"].to_string();
@@ -1073,7 +1074,7 @@ mod tests {
         assert!(
             unmet_structure(&record, &session)
                 .iter()
-                .all(|c| c["check"] != "melody_rhythm_varied")
+                .all(|c| c["check"] != "melody_develops")
         );
     }
 
