@@ -645,6 +645,11 @@ pub fn model(language: Language, panels: &PanelLayout, state: MenuState) -> Vec<
             command(t(Key::CmdZoomIn), actions::ZoomIn, "view.zoom_in"),
             command(t(Key::CmdZoomOut), actions::ZoomOut, "view.zoom_out"),
             command(
+                t(Key::CmdRevealPlayhead),
+                actions::RevealPlayhead,
+                "view.reveal_playhead",
+            ),
+            command(
                 t(Key::CmdIncreaseTrackHeight),
                 actions::IncreaseTrackHeight,
                 "view.track_height_increase",

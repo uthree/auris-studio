@@ -50,6 +50,25 @@ pub(crate) struct EventListState {
     pub followed: Option<usize>,
 }
 
+/// The rows a list scrolled to `offset` shows in a viewport `height` tall, as a half-open range.
+fn rows_in_view(offset: Pixels, height: Pixels) -> std::ops::Range<usize> {
+    let top = (-f32::from(offset) / f32::from(ROW_HEIGHT)).max(0.0);
+    let bottom = top + f32::from(height) / f32::from(ROW_HEIGHT);
+    top.floor() as usize..bottom.ceil() as usize
+}
+
+/// Whether playback reaching `row` should scroll the list to it.
+///
+/// Always when nothing has been followed yet — playback has just reached the clip. After that
+/// only while the row last followed, or the new one, is in `in_view`: a hand that scrolled the
+/// list away from the music is looking at something else and is left to it.
+fn follows_to(followed: Option<usize>, row: usize, in_view: std::ops::Range<usize>) -> bool {
+    match followed {
+        None => true,
+        Some(previous) => in_view.contains(&previous) || in_view.contains(&row),
+    }
+}
+
 /// One column of the list.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum EventColumn {
@@ -541,6 +560,13 @@ impl AurisApp {
         }
     }
 
+    /// The rows the list showed when it was last laid out, as a half-open range.
+    fn event_list_rows_in_view(&self) -> std::ops::Range<usize> {
+        let handle = self.event_list.scroll.0.borrow();
+        let base = &handle.base_handle;
+        rows_in_view(base.offset().y, base.bounds().size.height)
+    }
+
     /// The list itself: a heading row and the events of `clip` under it.
     pub(crate) fn render_event_list(
         &mut self,
@@ -567,9 +593,16 @@ impl AurisApp {
                 .unwrap_or_else(|| (vec![false; events.len()], None)),
             false => (vec![false; events.len()], None),
         };
-        // Follow the music: once per row reached, and only far enough to bring it into view.
+        // Follow the music: once per row reached, and only far enough to bring it into view —
+        // unless the list has been scrolled away from the row it was following, which leaves
+        // it where the hand put it until the playing row is in sight again.
         if let Some(row) = cursor
             && cursor != self.event_list.followed
+            && follows_to(
+                self.event_list.followed,
+                row,
+                self.event_list_rows_in_view(),
+            )
         {
             self.event_list
                 .scroll
@@ -738,6 +771,29 @@ mod tests {
     use super::*;
     use crate::harness::{double_click, paint, with_a_clip};
     use gpui::TestAppContext;
+
+    #[test]
+    fn the_list_follows_playback_only_while_the_followed_row_is_in_sight() {
+        // Eighteen pixels a row: scrolled down ten rows, a 90 px list shows rows 10 to 14.
+        let view = rows_in_view(px(-180.0), px(90.0));
+        assert_eq!(view, 10..15);
+        assert!(
+            follows_to(None, 40, view.clone()),
+            "playback just reached the clip"
+        );
+        assert!(
+            follows_to(Some(14), 15, view.clone()),
+            "the music walked off the bottom"
+        );
+        assert!(
+            !follows_to(Some(30), 31, view.clone()),
+            "the list was scrolled away from the music"
+        );
+        assert!(
+            follows_to(Some(9), 10, view),
+            "and the music came back into sight"
+        );
+    }
 
     fn cell_at(
         cx: &mut gpui::VisualTestContext,
