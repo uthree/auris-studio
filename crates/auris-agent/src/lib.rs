@@ -6,7 +6,6 @@
 #![warn(missing_docs)]
 
 mod discovery;
-mod generation_log;
 mod lyric_repair;
 mod provider_status;
 pub mod tool_calls;

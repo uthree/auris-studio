@@ -1822,65 +1822,13 @@ static AUDIO_WORK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 )]
 fn compose(
     candidate: &Candidate,
-    prefs: AgentPreferences,
+    mut prefs: AgentPreferences,
     settings: Settings,
     folder: PathBuf,
     parent: Option<PathBuf>,
     cancel: &AtomicBool,
     sender: &mpsc::Sender<JobEvent>,
     references: &[PathBuf],
-) -> Result<SongCandidate, AttemptError> {
-    // Before the log, which would otherwise create the folder a cancelled candidate never had.
-    if cancel.load(Ordering::Acquire) {
-        return Err("Cancelled".into());
-    }
-    let mut log = crate::generation_log::GenerationLog::create(&folder);
-    log.record(
-        "attempt.start",
-        json!({"candidate":candidate.id,"recoveries":candidate.recoveries,
-            "backend":prefs.backend,"provider":prefs.provider,"model":prefs.model,"effort":prefs.effort,
-            "title":candidate.direction.title,"instructions":candidate.direction.instructions,
-            "protected_tracks":candidate.direction.protected_tracks,"references":references,
-            "previous_error":candidate.error,"parent":parent}),
-    );
-    let result = compose_attempt(
-        candidate, prefs, settings, &folder, parent, cancel, sender, references, &mut log,
-    );
-    match &result {
-        Ok(song) => log.record(
-            "attempt.end",
-            json!({"ok":true,"seconds":song.audio.duration_seconds()}),
-        ),
-        Err(error) => log.record(
-            "attempt.end",
-            json!({"ok":false,"error":error.message,"retryable":error.retryable}),
-        ),
-    }
-    if let (Err(error), Some(path)) = (&result, log.path()) {
-        log::warn!(
-            "workshop candidate {} failed: {}; log: {}",
-            candidate.id,
-            error.message,
-            path.display()
-        );
-    }
-    result
-}
-
-#[expect(
-    clippy::too_many_arguments,
-    reason = "isolated candidate inputs, worker channels and the attempt's log"
-)]
-fn compose_attempt(
-    candidate: &Candidate,
-    mut prefs: AgentPreferences,
-    settings: Settings,
-    folder: &std::path::Path,
-    parent: Option<PathBuf>,
-    cancel: &AtomicBool,
-    sender: &mpsc::Sender<JobEvent>,
-    references: &[PathBuf],
-    generation: &mut crate::generation_log::GenerationLog,
 ) -> Result<SongCandidate, AttemptError> {
     if cancel.load(Ordering::Acquire) {
         return Err("Cancelled".into());
@@ -1987,7 +1935,7 @@ fn compose_attempt(
     for &source in &candidate.direction.sources {
         let path = folder
             .parent()
-            .unwrap_or(folder)
+            .unwrap_or(&folder)
             .join(source.to_string())
             .join("song/song.auris");
         session
@@ -1996,7 +1944,7 @@ fn compose_attempt(
                 AttemptError::permanent(format!("Source candidate {source} could not be read: {e}"))
             })?;
     }
-    let mut log = composer_log::Log::open(folder);
+    let mut log = composer_log::Log::open(&folder);
     log.note(
         "assignment",
         json!({"message":assignment,"backend":prefs.backend,"model":prefs.model}),
@@ -2006,9 +1954,6 @@ fn compose_attempt(
             .to_string(),
     )?;
     let mut deadline = Instant::now() + Duration::from_secs(900);
-    // For the generation log: commands the host ran, and how many of them moved the document.
-    let mut edits = 0;
-    let mut changes = 0;
     let mut denials = 0;
     let mut lint_sends = 0;
     let mut last_failure = String::new();
@@ -2038,7 +1983,6 @@ fn compose_attempt(
         };
         observe_tool_event(candidate.id, &event, &mut tool_calls, sender);
         log.observe(&event);
-        generation.worker_event(&event);
         match event["event"].as_str().unwrap_or_default() {
             "permission" => {
                 let allowed = auris_session::agent_policy::Operation::parse(
@@ -2063,16 +2007,12 @@ fn compose_attempt(
                     "reason":"Isolated candidate: only Auris music tools are available. Do not use shell or file tools; continue with the Auris tools."}).to_string())?;
                 if !allowed {
                     denials += 1;
-                }
-                generation.record(
-                    "host.permission",
-                    json!({"tool":event["tool"],"args":event["args"],"allowed":allowed,"denials":denials}),
-                );
-                if denials > 8 {
-                    return Err(AttemptError::permanent(format!(
-                        "Candidate operation was denied: {}",
-                        event["tool"].as_str().unwrap_or_default()
-                    )));
+                    if denials > 8 {
+                        return Err(AttemptError::permanent(format!(
+                            "Candidate operation was denied: {}",
+                            event["tool"].as_str().unwrap_or_default()
+                        )));
+                    }
                 }
             }
             "edit" if event["command"]["action"] == "report_status" => {
@@ -2108,9 +2048,6 @@ fn compose_attempt(
                     ),
                     None => None,
                 };
-                edits += 1;
-                let revision = session.revision();
-                let started = Instant::now();
                 let result = execute(
                     &mut session,
                     event["command"].clone(),
@@ -2118,23 +2055,12 @@ fn compose_attempt(
                     &settings,
                     cancel,
                 );
-                let changed = session.revision() != revision;
-                if changed {
-                    changes += 1;
-                }
                 if action == "sing" {
                     sing_failure = result.as_ref().err().cloned();
                 }
-                generation.record(
-                    "host.edit",
-                    json!({"command":event["command"],"ok":result.is_ok(),
-                        "result":result.as_ref().unwrap_or_else(|e| e),
-                        "ms":started.elapsed().as_millis() as u64,"changed":changed,
-                        "changes":changes,"edits":edits}),
-                );
                 if result.is_ok() && session.is_dirty() {
                     validate_protected(&session)?;
-                    save_checkpoint(&mut session, folder)?;
+                    save_checkpoint(&mut session, &folder)?;
                     keep_record(&worker, &folder.join(CHECKPOINT_RECORD))?;
                 }
                 let reply = match result {
@@ -2205,14 +2131,6 @@ fn compose_attempt(
     // Join before publishing a finished candidate so no late draft can replace its audition.
     drop(previews);
     session.end_agent_request();
-    generation.record(
-        "composer.done",
-        json!({"answer":completion,"changes":changes,"edits":edits,"denials":denials,
-            "last_failure":last_failure,"seconds":session.project().duration_seconds(),
-            "tracks":session.project().tracks.iter().map(|t| json!({"id":t.id.0,"name":t.name,
-                "clips":t.kind.note_clips().map(|clips| clips.iter().map(|c| c.notes.len()).collect::<Vec<_>>())}))
-                .collect::<Vec<_>>()}),
-    );
     // The composer was given the voice's refusal and could not get past it, so another attempt
     // would only spend the same minutes reaching the same answer: say what refused, and stop.
     if let Some(error) = &sing_failure
@@ -2243,22 +2161,11 @@ fn compose_attempt(
     log.note("finished", json!(null));
     drop(log);
     let _ = sender.send(JobEvent::Progress(candidate.id, "render_wait".into()));
-    let waited = Instant::now();
     let _gate = audio_gate(cancel)?;
-    generation.record(
-        "render.start",
-        json!({"waited_ms":waited.elapsed().as_millis() as u64}),
-    );
     let _ = sender.send(JobEvent::Progress(candidate.id, "render".into()));
-    let rendered = Instant::now();
-    let result = session
-        .finish_workshop_candidate(folder, idea(&candidate.direction), cancel)
-        .map_err(Into::into);
-    generation.record(
-        "render.end",
-        json!({"ms":rendered.elapsed().as_millis() as u64,"ok":result.is_ok()}),
-    );
-    result
+    session
+        .finish_workshop_candidate(&folder, idea(&candidate.direction), cancel)
+        .map_err(Into::into)
 }
 
 /// The tool allowance as the composer is told it with its assignment.
@@ -3621,12 +3528,7 @@ mod tests {
     }
 
     #[test]
-    fn an_attempt_log_records_every_command_and_which_ones_changed_the_score() {
-        // A CLI composer inspects between nearly every edit; the log tells the reads apart.
-        let reads: Vec<_> = (0..200)
-            .map(|i| json!({"id":format!("read-{i}"),"type":"function","function":{"name":"inspect_project","arguments":"{}"}}))
-            .collect();
-        let reads = json!({"role":"assistant","tool_calls":reads}).to_string();
+    fn a_composer_is_told_its_tool_call_allowance_with_its_assignment() {
         let call = |id: &str, name: &str, args: serde_json::Value| {
             json!({"role":"assistant","tool_calls":[{"id":id,"type":"function","function":{"name":name,"arguments":args.to_string()}}]}).to_string()
         };
@@ -3638,7 +3540,6 @@ mod tests {
         );
         let answer = json!({"role":"assistant","content":"Finished"}).to_string();
         let (url, seen) = crate::tests::mock_server(vec![
-            crate::tests::completion(&reads, "tool_calls"),
             crate::tests::completion(&setup, "tool_calls"),
             crate::tests::completion(&phrase, "tool_calls"),
             crate::tests::completion(&answer, "stop"),
@@ -3663,32 +3564,6 @@ mod tests {
             &[],
         );
         assert!(result.is_ok(), "{:?}", result.err());
-
-        // The attempt left its account beside the candidate.
-        let logs: Vec<_> = std::fs::read_dir(dir.path().join("1/logs"))
-            .unwrap()
-            .map(|entry| entry.unwrap().path())
-            .collect();
-        assert_eq!(logs.len(), 1);
-        let entries: Vec<serde_json::Value> = std::fs::read_to_string(&logs[0])
-            .unwrap()
-            .lines()
-            .map(|line| serde_json::from_str(line).unwrap())
-            .collect();
-        let kind = |kind: &'static str| entries.iter().filter(move |e| e["kind"] == kind);
-        assert_eq!(entries[0]["kind"], "attempt.start");
-        assert_eq!(entries[0]["model"], "mock");
-        let edits: Vec<_> = kind("host.edit").collect();
-        assert_eq!(edits.len(), 202);
-        assert_eq!(edits.iter().filter(|e| e["changed"] == true).count(), 2);
-        assert_eq!(edits[201]["changes"], 2);
-        assert_eq!(edits[201]["edits"], 202);
-        assert_eq!(edits[201]["command"]["action"], "generate_phrase");
-        assert!(kind("worker.call").any(|e| e["tool"] == "add_track"));
-        assert_eq!(kind("composer.done").next().unwrap()["answer"], "Finished");
-        assert_eq!(kind("render.end").next().unwrap()["ok"], true);
-        assert_eq!(entries.last().unwrap()["kind"], "attempt.end");
-        assert_eq!(entries.last().unwrap()["ok"], true);
 
         // The composer was told its allowance before it planned.
         let first = &seen.lock().unwrap()[0];
