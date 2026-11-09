@@ -47,6 +47,9 @@ pub(crate) fn is_analog(id: &str) -> bool {
 /// Highest multiple of the note the sideband and harmonic plots reach.
 const HIGHEST_HARMONIC: usize = 16;
 
+/// Top of the filter plot: unity gain sits halfway, so a resonant peak has room above it.
+const FILTER_CEILING: f32 = 2.0;
+
 /// Samples in a drawn cycle, the same as the instrument publishes.
 const CYCLE_POINTS: usize = auris_session::MOTION_POINTS;
 
@@ -537,7 +540,7 @@ impl AurisApp {
             (0..=160)
                 .map(|step| {
                     let at = step as f32 / 10.0;
-                    (at, (filter_gain(at / ratio, resonance) / 4.0).min(1.0))
+                    (at, filter_gain(at / ratio, resonance).min(FILTER_CEILING))
                 })
                 .collect()
         };
@@ -550,14 +553,14 @@ impl AurisApp {
                     let harmonic = n as f32 + 1.0;
                     (
                         harmonic,
-                        (value * filter_gain(harmonic / ratio, resonance) / 4.0).min(1.0),
+                        (value * filter_gain(harmonic / ratio, resonance)).min(FILTER_CEILING),
                     )
                 })
                 .collect()
         };
         let mut filter = LinePlot::new()
             .x_range(0., highest)
-            .y_range(0., 1.)
+            .y_range(0., FILTER_CEILING)
             .legend(true)
             .series(
                 Series::line(response(resting))
