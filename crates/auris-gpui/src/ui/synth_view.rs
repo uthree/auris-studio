@@ -16,12 +16,13 @@
 //! and a shape. The numbers are pinned by the tests below.
 
 use super::physical_model::voice_color;
+use super::synth_edit::{PlotScale, SynthPlot, stack_across, stack_reach};
 use crate::{app::AurisApp, theme::Theme};
 use atelier::plot::{LinePlot, Series, SeriesStyle};
 use atelier::{Card, Label, SectionHeader, TextColor, TextSize};
 use auris_i18n::Key;
 use auris_session::{MotionFrame, prelude::*};
-use gpui::{AnyElement, div, prelude::*};
+use gpui::{AnyElement, Context, div, prelude::*};
 
 /// The FM operator pair.
 pub(crate) const FM2: &str = "auris.synth.fm2";
@@ -307,7 +308,7 @@ fn loudest_voice(frame: &MotionFrame) -> Option<&auris_session::MotionVoice> {
 
 impl AurisApp {
     /// One of an instrument's parameters by its stable key, as it stands now.
-    fn instrument_param(&mut self, track: TrackId, key: &str) -> Option<f32> {
+    pub(crate) fn instrument_param(&mut self, track: TrackId, key: &str) -> Option<f32> {
         self.session
             .instrument_descriptors(track)
             .iter()
@@ -359,14 +360,15 @@ impl AurisApp {
         id: &str,
         frame: &MotionFrame,
         theme: &Theme,
+        cx: &mut Context<Self>,
     ) -> AnyElement {
         let spacing = theme.atelier.spacing;
         let content = if id == FM2 {
-            self.fm_operators(track, frame, theme)
+            self.fm_operators(track, frame, theme, cx)
         } else if is_analog(id) {
-            self.analog_patch(track, frame, theme)
+            self.analog_patch(track, frame, theme, cx)
         } else {
-            self.chip_shape(track, theme)
+            self.chip_shape(track, theme, cx)
         };
         Card::new()
             .id("physical-analysis")
@@ -380,7 +382,13 @@ impl AurisApp {
     }
 
     /// The two operators, the depth between them, and the spectrum that depth makes.
-    fn fm_operators(&mut self, track: TrackId, frame: &MotionFrame, theme: &Theme) -> AnyElement {
+    fn fm_operators(
+        &mut self,
+        track: TrackId,
+        frame: &MotionFrame,
+        theme: &Theme,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let tokens = &theme.atelier;
         let spacing = tokens.spacing;
         let ratio = self.instrument_param(track, "ratio").unwrap_or(2.0);
@@ -494,22 +502,29 @@ impl AurisApp {
                 SectionHeader::new(self.t(Key::SynthSidebands))
                     .description(self.t(Key::SynthSidebandsHint)),
             )
-            .child(
-                div()
-                    .id("synth-sidebands")
-                    .debug_selector(|| "synth-sidebands".into())
-                    .h(gpui::rems(9.))
-                    .rounded(tokens.shape.radius_sm)
-                    .bg(tokens.colors.sunken)
-                    .overflow_hidden()
-                    .p(spacing.xs)
-                    .child(plot),
-            )
+            .child(self.synth_plot_well(
+                "synth-sidebands",
+                track,
+                SynthPlot::Sidebands,
+                PlotScale {
+                    across: highest,
+                    reach: highest,
+                },
+                plot,
+                cx,
+            ))
+            .child(edit_hint(self.t(Key::SynthSidebandsEdit)))
             .into_any_element()
     }
 
     /// The subtractive stack across its detune beside the filter that shapes it.
-    fn analog_patch(&mut self, track: TrackId, frame: &MotionFrame, theme: &Theme) -> AnyElement {
+    fn analog_patch(
+        &mut self,
+        track: TrackId,
+        frame: &MotionFrame,
+        theme: &Theme,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let tokens = &theme.atelier;
         let spacing = tokens.spacing;
         let resting_pitch = f32::from(self.physical_view.pitch);
@@ -527,13 +542,16 @@ impl AurisApp {
         let live = loudest_voice(frame);
         let pitch = live.map_or(resting_pitch, |voice| voice.pitch);
         let note = note_hz(pitch).max(1.0);
-        let resting = cutoff * (key_track * (pitch - KEY_TRACK_CENTRE) / 12.0).exp2() / note;
+        let tracked = (key_track * (pitch - KEY_TRACK_CENTRE) / 12.0).exp2();
+        let resting = cutoff * tracked / note;
         let now = live
             .map(|voice| voice.excitation / note)
             .filter(|ratio| ratio.is_finite() && *ratio > 0.0);
 
         let stack = unison_stack(unison, detune, mix);
-        let reach = (detune * 110.0).max(25.0);
+        let reach = self
+            .held_reach(track, SynthPlot::Stack)
+            .unwrap_or_else(|| stack_reach(detune));
         let color = tokens.colors.series[0];
         let highest = HIGHEST_HARMONIC as f32;
         let response = |ratio: f32| -> Vec<(f32, f32)> {
@@ -584,27 +602,42 @@ impl AurisApp {
                 .style(SeriesStyle::Stems)
                 .color(lit_color),
         );
-        let well = |id: &'static str, plot: LinePlot| {
-            div()
-                .id(id)
-                .debug_selector(move || id.into())
-                .h(gpui::rems(8.))
-                .rounded(tokens.shape.radius_sm)
-                .bg(tokens.colors.sunken)
-                .overflow_hidden()
-                .p(spacing.xs)
-                .child(plot)
-        };
-        let column = |header: SectionHeader, body: gpui::Stateful<gpui::Div>| {
-            div()
-                .flex_1()
-                .min_w(gpui::rems(14.))
-                .flex()
-                .flex_col()
-                .gap(spacing.sm)
-                .child(header)
-                .child(body)
-        };
+        // The knee a drag moves, marked where the set cutoff meets its curve.
+        if resting <= highest {
+            filter = filter.series(
+                Series::line(vec![(
+                    resting,
+                    filter_gain(1.0, resonance).min(FILTER_CEILING),
+                )])
+                .style(SeriesStyle::LineMarkers)
+                .color(color),
+            );
+        }
+        let stack_well = self.synth_plot_well(
+            "synth-stack",
+            track,
+            SynthPlot::Stack,
+            PlotScale {
+                across: stack_across(reach),
+                reach,
+            },
+            LinePlot::new()
+                .x_range(-reach, reach)
+                .y_range(0., 1.)
+                .series(Series::stems(stack).color(color)),
+            cx,
+        );
+        let filter_well = self.synth_plot_well(
+            "synth-filter",
+            track,
+            SynthPlot::Filter,
+            PlotScale {
+                across: highest * note / tracked.max(f32::MIN_POSITIVE),
+                reach: highest,
+            },
+            filter,
+            cx,
+        );
         let cutoff_now = live.map_or(cutoff, |voice| voice.excitation);
         div()
             .flex()
@@ -616,21 +649,19 @@ impl AurisApp {
                     .flex()
                     .flex_wrap()
                     .gap(spacing.lg)
-                    .child(column(
+                    .child(plot_column(
+                        theme,
                         SectionHeader::new(self.t(Key::SynthStack))
                             .description(self.t(Key::SynthStackHint)),
-                        well(
-                            "synth-stack",
-                            LinePlot::new()
-                                .x_range(-reach, reach)
-                                .y_range(0., 1.)
-                                .series(Series::stems(stack).color(color)),
-                        ),
+                        stack_well,
+                        Some(self.t(Key::SynthStackEdit)),
                     ))
-                    .child(column(
+                    .child(plot_column(
+                        theme,
                         SectionHeader::new(self.t(Key::SynthFilter))
                             .description(self.t(Key::SynthFilterHint)),
-                        well("synth-filter", filter),
+                        filter_well,
+                        Some(self.t(Key::SynthFilterEdit)),
                     )),
             )
             .child(
@@ -650,8 +681,8 @@ impl AurisApp {
             .into_any_element()
     }
 
-    /// The chiptune voice's cycle beside the harmonics it has.
-    fn chip_shape(&mut self, track: TrackId, theme: &Theme) -> AnyElement {
+    /// The chiptune voice's cycle beside the harmonics it has, and its unison stack.
+    fn chip_shape(&mut self, track: TrackId, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
         let tokens = &theme.atelier;
         let spacing = tokens.spacing;
         let cycle = self.oscillator_resting_cycle(track, CHIPTUNE);
@@ -661,6 +692,9 @@ impl AurisApp {
             .unwrap_or(1.0)
             .round();
         let spread = self.instrument_param(track, "spread").unwrap_or(0.0);
+        let square = self
+            .instrument_param(track, "waveform")
+            .is_some_and(|waveform| waveform.round() as i32 == CHIP_SQUARE);
         let color = tokens.colors.series[0];
         let last = cycle.last().copied().unwrap_or_default();
         let shape: Vec<(f32, f32)> = cycle
@@ -669,27 +703,61 @@ impl AurisApp {
             .map(|(i, sample)| (i as f32 / CYCLE_POINTS as f32, *sample))
             .chain(std::iter::once((1.0, last)))
             .collect();
-        let well = |id: &'static str, plot: LinePlot| {
-            div()
-                .id(id)
-                .debug_selector(move || id.into())
-                .h(gpui::rems(8.))
-                .rounded(tokens.shape.radius_sm)
-                .bg(tokens.colors.sunken)
-                .overflow_hidden()
-                .p(spacing.xs)
-                .child(plot)
-        };
-        let column = |header: SectionHeader, body: gpui::Stateful<gpui::Div>| {
-            div()
-                .flex_1()
-                .min_w(gpui::rems(14.))
-                .flex()
-                .flex_col()
-                .gap(spacing.sm)
-                .child(header)
-                .child(body)
-        };
+        let reach = self
+            .held_reach(track, SynthPlot::ChipStack)
+            .unwrap_or_else(|| stack_reach(spread));
+        let cycle_well = self.synth_plot_well(
+            "synth-cycle",
+            track,
+            SynthPlot::Cycle,
+            PlotScale {
+                // Only a square has a duty cycle to move; the other shapes take the bit depth.
+                across: if square { 1.0 } else { 0.0 },
+                reach: 1.0,
+            },
+            LinePlot::new()
+                .x_range(0., 1.)
+                .y_range(-1., 1.)
+                .series(Series::line(shape).style(SeriesStyle::Steps).color(color)),
+            cx,
+        );
+        let stack_well = self.synth_plot_well(
+            "synth-chip-stack",
+            track,
+            SynthPlot::ChipStack,
+            PlotScale {
+                across: stack_across(reach),
+                reach,
+            },
+            LinePlot::new()
+                .x_range(-reach, reach)
+                .y_range(0., 1.)
+                .series(Series::stems(chip_stack(unison, spread)).color(color)),
+            cx,
+        );
+        let harmonics_well = div()
+            .id("synth-harmonics")
+            .debug_selector(|| "synth-harmonics".into())
+            .h(gpui::rems(8.))
+            .rounded(tokens.shape.radius_sm)
+            .bg(tokens.colors.sunken)
+            .overflow_hidden()
+            .p(spacing.xs)
+            .child(
+                LinePlot::new()
+                    .x_range(0., HIGHEST_HARMONIC as f32)
+                    .y_range(0., 1.)
+                    .series(
+                        Series::stems(
+                            harmonics
+                                .iter()
+                                .enumerate()
+                                .map(|(n, value)| (n as f32 + 1., *value))
+                                .collect(),
+                        )
+                        .color(color),
+                    ),
+            );
         div()
             .flex()
             .flex_col()
@@ -700,47 +768,91 @@ impl AurisApp {
                     .flex()
                     .flex_wrap()
                     .gap(spacing.lg)
-                    .child(column(
+                    .child(plot_column(
+                        theme,
                         SectionHeader::new(self.t(Key::SynthCycle))
                             .description(self.t(Key::SynthCycleHint)),
-                        well(
-                            "synth-cycle",
-                            LinePlot::new()
-                                .x_range(0., 1.)
-                                .y_range(-1., 1.)
-                                .series(Series::line(shape).style(SeriesStyle::Steps).color(color)),
-                        ),
+                        cycle_well,
+                        Some(self.t(if square {
+                            Key::SynthCycleEdit
+                        } else {
+                            Key::SynthCycleEditBits
+                        })),
                     ))
-                    .child(column(
-                        SectionHeader::new(self.t(Key::SynthHarmonics)),
-                        well(
-                            "synth-harmonics",
-                            LinePlot::new()
-                                .x_range(0., HIGHEST_HARMONIC as f32)
-                                .y_range(0., 1.)
-                                .series(
-                                    Series::stems(
-                                        harmonics
-                                            .iter()
-                                            .enumerate()
-                                            .map(|(n, value)| (n as f32 + 1., *value))
-                                            .collect(),
-                                    )
-                                    .color(color),
-                                ),
-                        ),
+                    .child(plot_column(
+                        theme,
+                        SectionHeader::new(self.t(Key::SynthHarmonics))
+                            .description(self.t(Key::SynthHarmonicsHint)),
+                        harmonics_well,
+                        None,
                     )),
             )
-            .children((unison > 1.).then(|| {
+            .child(
+                div().w_full().flex().child(plot_column(
+                    theme,
+                    SectionHeader::new(self.t(Key::SynthStack))
+                        .description(self.t(Key::SynthChipStackHint)),
+                    stack_well,
+                    Some(self.t(Key::SynthChipStackEdit)),
+                )),
+            )
+            .child(
                 Label::new(format!(
-                    "{} {unison:.0} · ±{spread:.2} st",
-                    self.t(Key::SynthUnison)
+                    "{} {unison:.0} · ±{:.0} cents",
+                    self.t(Key::SynthUnison),
+                    spread * 100.0,
                 ))
                 .size(TextSize::XSmall)
-                .color(TextColor::Faint)
-            }))
+                .color(TextColor::Faint),
+            )
             .into_any_element()
     }
+}
+
+/// The chiptune parameter's index for the square, the one shape with a duty cycle.
+const CHIP_SQUARE: i32 = 1;
+
+/// The chiptune stack as `(cents from the note, level)`: the copies spread evenly over
+/// ±`spread` semitones, every one at the same level, as the instrument spreads them.
+pub(crate) fn chip_stack(count: f32, spread: f32) -> Vec<(f32, f32)> {
+    let count = count.round().max(1.0) as usize;
+    (0..count)
+        .map(|slot| {
+            let position = if count > 1 {
+                2.0 * slot as f32 / (count - 1) as f32 - 1.0
+            } else {
+                0.0
+            };
+            (position * spread * 100.0, 1.0)
+        })
+        .collect()
+}
+
+/// One picture beside the others: its header, its well, and a faint line saying what dragging
+/// it does.
+fn plot_column(
+    theme: &Theme,
+    header: SectionHeader,
+    body: gpui::Stateful<gpui::Div>,
+    hint: Option<&'static str>,
+) -> gpui::Div {
+    let spacing = theme.atelier.spacing;
+    div()
+        .flex_1()
+        .min_w(gpui::rems(14.))
+        .flex()
+        .flex_col()
+        .gap(spacing.sm)
+        .child(header)
+        .child(body)
+        .children(hint.map(edit_hint))
+}
+
+/// What dragging a picture does, under it.
+fn edit_hint(text: &'static str) -> Label {
+    Label::new(text)
+        .size(TextSize::XSmall)
+        .color(TextColor::Faint)
 }
 
 #[cfg(test)]

@@ -631,6 +631,28 @@ pub enum Drag {
         /// two it moves.
         target: ParamTarget,
     },
+    /// Dragging one of an oscillator patch's pictures: the unison stack, the filter, the FM
+    /// sidebands or the chiptune cycle.
+    ///
+    /// Measured from where the press landed, as [`Drag::Param`] is, so the press can be anywhere
+    /// on the plot. See [`crate::ui::synth_edit`].
+    SynthPlot {
+        /// Whose instrument.
+        track: TrackId,
+        /// Which picture.
+        plot: crate::ui::synth_edit::SynthPlot,
+        /// The horizontal parameter, which the whole drag is filed under.
+        target: ParamTarget,
+        /// How the horizontal axis turns into its parameter, signed for the side of a stack the
+        /// press landed on.
+        scale: crate::ui::synth_edit::PlotScale,
+        /// Where the drag is measured from.
+        anchor: Point<Pixels>,
+        /// The horizontal and vertical parameters at the anchor.
+        start: (f32, f32),
+        /// Whether Shift was held when the anchor was taken.
+        fine: bool,
+    },
     /// Dragging one band's node around the equalizer's curve.
     ///
     /// Absolute rather than measured from where the drag began, for [`Drag::EnvelopeHandle`]'s
@@ -882,6 +904,8 @@ impl Drag {
             // The same arrangement: a node moves a frequency and a gain, and this names the one
             // it always moves.
             Drag::EqNode { target, .. } => Some(Edit::AdjustParameter(*target)),
+            // Two parameters again, filed under the one the sideways axis moves.
+            Drag::SynthPlot { target, .. } => Some(Edit::AdjustParameter(*target)),
             // One undo step for the whole sweep, and the same label the right-click menu's
             // "Write It Again" uses — moving a dial is writing the part again with one thing
             // changed, and a stack full of "Adjusted parameter" would say nothing about which.
