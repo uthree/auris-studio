@@ -937,21 +937,21 @@ impl AurisApp {
             .flex_1()
             .min_w_0()
             .gap(spacing.md)
-            .child(readout(
+            .child(labelled_figure(
                 self.t(Key::VisualizerMomentary),
                 loudness.momentary,
                 lufs,
                 TextSize::Display,
                 tokens,
             ))
-            .child(readout(
+            .child(labelled_figure(
                 self.t(Key::VisualizerShortTerm),
                 loudness.short_term,
                 lufs,
                 TextSize::XLarge,
                 tokens,
             ))
-            .child(readout(
+            .child(labelled_figure(
                 self.t(Key::VisualizerIntegrated),
                 loudness.integrated,
                 lufs,
@@ -962,14 +962,14 @@ impl AurisApp {
                 div()
                     .flex()
                     .gap(spacing.lg)
-                    .child(readout(
+                    .child(labelled_figure(
                         self.t(Key::VisualizerTruePeak),
                         loudness.true_peak,
                         "dBTP",
                         TextSize::XLarge,
                         tokens,
                     ))
-                    .child(readout(
+                    .child(labelled_figure(
                         self.t(Key::VisualizerRange),
                         loudness.range,
                         "LU",
@@ -1481,7 +1481,7 @@ fn reference_curve(levels: Vec<f32>, color: Hsla) -> impl IntoElement {
 }
 
 /// A labelled number with its unit, or a dash when there is nothing to read yet.
-fn readout(
+fn labelled_figure(
     label: &str,
     value: Option<f32>,
     unit: &str,
