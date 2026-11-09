@@ -1320,9 +1320,34 @@ mod tests {
     use super::*;
     use crate::harness::{click, open, paint};
 
+    /// Blocks until the storage operation in flight, if any, has answered.
+    ///
+    /// The answer is put back on a fresh channel, so `poll_conversations` still takes it and does
+    /// everything it would have done. Waiting on the worker itself rather than spinning against a
+    /// deadline is what keeps a loaded machine from failing a test that is merely slow; the
+    /// timeout only turns a worker that never answers into a failure rather than a hang.
+    fn await_storage(app: &gpui::Entity<AurisApp>, cx: &mut gpui::VisualTestContext) {
+        app.update(cx, |this, _| {
+            let conversations = &mut this.agent_chat.conversations;
+            let Some(pending) = conversations.pending.take() else {
+                return;
+            };
+            let (sender, receiver) = std::sync::mpsc::channel();
+            match pending.recv_timeout(Duration::from_secs(60)) {
+                Ok(answer) => sender.send(answer).unwrap(),
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                    panic!("conversation storage did not answer within a minute")
+                }
+                // Dropping the sender leaves a disconnected channel, which the poll reports.
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => drop(sender),
+            }
+            conversations.pending = Some(receiver);
+        });
+    }
+
     fn settle(app: &gpui::Entity<AurisApp>, cx: &mut gpui::VisualTestContext) {
-        let deadline = Instant::now() + Duration::from_secs(10);
         loop {
+            await_storage(app, cx);
             app.update(cx, |this, cx| this.poll_conversations(cx));
             let pending = app.read_with(cx, |this, _| {
                 assert!(
@@ -1335,8 +1360,6 @@ mod tests {
             if !pending {
                 break;
             }
-            assert!(Instant::now() < deadline, "conversation storage timed out");
-            std::thread::yield_now();
         }
         paint(app, cx);
     }
@@ -1982,13 +2005,11 @@ mod tests {
             this.conversation_operation(Operation::Save);
             id
         });
-        let deadline = Instant::now() + Duration::from_secs(10);
         while app.read_with(cx, |this, _| {
             this.agent_chat.conversations.pending.is_some()
         }) {
+            await_storage(&app, cx);
             app.update(cx, |this, cx| this.poll_conversations(cx));
-            assert!(Instant::now() < deadline);
-            std::thread::yield_now();
         }
         app.update(cx, |this, cx| {
             assert!(
