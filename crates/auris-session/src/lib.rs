@@ -403,4 +403,4 @@ pub mod prelude {
 }
 
 /// A coherent stereo analysis snapshot.
-pub use session::{VisualizerFrame, VisualizerSpectrum};
+pub use session::{VisualizerFrame, VisualizerLoudness, VisualizerSpectrum, VisualizerTap};

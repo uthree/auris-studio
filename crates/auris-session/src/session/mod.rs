@@ -122,7 +122,7 @@ mod typing;
 mod typing_calibration;
 mod visualizer;
 mod vst3;
-pub use visualizer::{VisualizerFrame, VisualizerSpectrum};
+pub use visualizer::{VisualizerFrame, VisualizerLoudness, VisualizerSpectrum, VisualizerTap};
 
 #[cfg(test)]
 mod fixtures;
@@ -539,6 +539,8 @@ pub struct Session {
     /// scope that nothing writes to any more.
     scope: Arc<auris_engine::Scope>,
     visualizer_scope: Arc<auris_engine::Scope>,
+    /// The live loudness of whatever the visualizer follows, fed every sample its scope publishes.
+    visualizer_loudness: visualizer::LoudnessTap,
     motion_monitors: HashMap<TrackId, Arc<auris_core::motion::MotionMonitor>>,
     overview_scopes: HashMap<TrackId, Arc<auris_engine::Scope>>,
     overview_watched: bool,
@@ -550,6 +552,9 @@ pub struct Session {
     /// Here rather than in a frontend because a frontend may not name `auris-dsp` — and because
     /// two of them wanting a spectrum should not each grow their own FFT.
     analyzer: auris_dsp::SpectrumAnalyzer,
+    /// The utility visualizer's own transform, longer than the plugin editor's so its lowest
+    /// bands have bins to show.
+    visualizer_analyzer: auris_dsp::SpectrumAnalyzer,
 
     param_cache: HashMap<String, Arc<Vec<ParamDescriptor>>>,
     /// Which built-in effects listen to a key, by plugin id.
@@ -847,7 +852,10 @@ impl Session {
             disk_stamp: None,
             disk_fingerprint: None,
             scope: Arc::new(auris_engine::Scope::new()),
-            visualizer_scope: Arc::new(auris_engine::Scope::new()),
+            visualizer_scope: Arc::new(auris_engine::Scope::with_history(
+                visualizer::VISUALIZER_HISTORY,
+            )),
+            visualizer_loudness: visualizer::LoudnessTap::default(),
             motion_monitors: HashMap::new(),
             overview_scopes: HashMap::new(),
             overview_watched: false,
@@ -855,6 +863,7 @@ impl Session {
             mixer_signals_watched: false,
             motion_track: None,
             analyzer: auris_dsp::SpectrumAnalyzer::new(auris_engine::SCOPE_WINDOW),
+            visualizer_analyzer: auris_dsp::SpectrumAnalyzer::new(visualizer::VISUALIZER_FFT),
             param_cache: HashMap::new(),
             keyed_cache: HashMap::new(),
             waveforms: HashMap::new(),
@@ -1304,6 +1313,7 @@ impl Session {
                 low_hz,
                 high_hz,
                 mode: VisualizerSpectrum::Average,
+                fill_narrow_bands: false,
             },
             bands,
         );
