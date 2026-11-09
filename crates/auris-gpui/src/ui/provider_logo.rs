@@ -62,6 +62,62 @@ const MARKS: &[(&str, &[u8])] = &[
         include_bytes!("../../assets/icons/sound-pluck.svg"),
     ),
     (
+        "sounds/sound-sound.svg",
+        include_bytes!("../../assets/sounds/sound-sound.svg"),
+    ),
+    (
+        "sounds/sound-piano.svg",
+        include_bytes!("../../assets/sounds/sound-piano.svg"),
+    ),
+    (
+        "sounds/sound-organ.svg",
+        include_bytes!("../../assets/sounds/sound-organ.svg"),
+    ),
+    (
+        "sounds/sound-guitar.svg",
+        include_bytes!("../../assets/sounds/sound-guitar.svg"),
+    ),
+    (
+        "sounds/sound-bass.svg",
+        include_bytes!("../../assets/sounds/sound-bass.svg"),
+    ),
+    (
+        "sounds/sound-strings.svg",
+        include_bytes!("../../assets/sounds/sound-strings.svg"),
+    ),
+    (
+        "sounds/sound-brass.svg",
+        include_bytes!("../../assets/sounds/sound-brass.svg"),
+    ),
+    (
+        "sounds/sound-wind.svg",
+        include_bytes!("../../assets/sounds/sound-wind.svg"),
+    ),
+    (
+        "sounds/sound-drum.svg",
+        include_bytes!("../../assets/sounds/sound-drum.svg"),
+    ),
+    (
+        "sounds/sound-bell.svg",
+        include_bytes!("../../assets/sounds/sound-bell.svg"),
+    ),
+    (
+        "sounds/sound-voice.svg",
+        include_bytes!("../../assets/sounds/sound-voice.svg"),
+    ),
+    (
+        "sounds/sound-synth.svg",
+        include_bytes!("../../assets/sounds/sound-synth.svg"),
+    ),
+    (
+        "sounds/sound-pad.svg",
+        include_bytes!("../../assets/sounds/sound-pad.svg"),
+    ),
+    (
+        "sounds/sound-pluck.svg",
+        include_bytes!("../../assets/sounds/sound-pluck.svg"),
+    ),
+    (
         "icons/caption-minimize.svg",
         include_bytes!("../../assets/icons/caption-minimize.svg"),
     ),
@@ -179,6 +235,24 @@ mod tests {
         );
         for path in paths {
             assert!(ProviderAssets.load(&path).unwrap().is_some(), "{path}");
+        }
+    }
+
+    #[test]
+    fn inspector_artwork_is_the_library_icon_at_a_lighter_weight() {
+        for &family in auris_session::SoundIcon::ALL {
+            let icon = crate::ui::icons::sound_icon_path(family);
+            let artwork = crate::ui::icons::sound_artwork_path(family);
+            let icon = String::from_utf8(ProviderAssets.load(icon).unwrap().unwrap().into_owned())
+                .unwrap();
+            let artwork =
+                String::from_utf8(ProviderAssets.load(artwork).unwrap().unwrap().into_owned())
+                    .unwrap();
+            assert_eq!(
+                icon.replace(r#"stroke-width="2""#, r#"stroke-width="1""#),
+                artwork,
+                "{family:?}: the artwork must be the icon's own drawing"
+            );
         }
     }
 

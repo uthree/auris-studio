@@ -7,10 +7,31 @@ use auris_core::time::{SignatureMap, TICKS_PER_QUARTER, TempoMap};
 use auris_core::{MidiClip, Note};
 use serde::{Deserialize, Serialize};
 
-/// Maximum encoded reference size, including lyrics and timeline metadata.
-pub const MAX_REFERENCE_BYTES: usize = 256 * 1024;
-/// Maximum notes in one conversational score.
-pub const MAX_REFERENCE_NOTES: usize = 2048;
+/// Maximum size of a reference file read from disk, and of the encoded reference sent to the
+/// model, including lyrics and timeline metadata.
+///
+/// The bounds exist only to refuse files no song needs — a "black MIDI" with millions of notes,
+/// or something that is not a score at all — before it is held in memory several times over.
+/// A finished, fully orchestrated song is a few tens of thousands of notes and well inside them;
+/// whether a long score also fits a particular model's context is the provider's to say.
+pub const MAX_REFERENCE_BYTES: usize = 16 * 1024 * 1024;
+/// Maximum notes in one conversational score, summed over its tracks.
+pub const MAX_REFERENCE_NOTES: usize = 100_000;
+/// Maximum parts in one conversational score.
+pub const MAX_REFERENCE_TRACKS: usize = 256;
+
+fn too_many_notes() -> String {
+    format!(
+        "MIDI reference needs 1–{MAX_REFERENCE_TRACKS} tracks and at most {MAX_REFERENCE_NOTES} notes."
+    )
+}
+
+fn too_large() -> String {
+    format!(
+        "MIDI reference exceeds {} MiB. Attach a shorter excerpt.",
+        MAX_REFERENCE_BYTES / (1024 * 1024)
+    )
+}
 
 /// A score snapshot, independent of the source song and of later edits.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -70,7 +91,9 @@ impl MidiReference {
         let mut reference = Self::new(clip.name.clone(), tempo_map, signatures);
         reference.source_origin_ticks = clip.start.0;
         if clip.notes.len() > MAX_REFERENCE_NOTES {
-            return Err("Select a shorter clip (at most 2048 notes).".into());
+            return Err(format!(
+                "Select a shorter clip (at most {MAX_REFERENCE_NOTES} notes)."
+            ));
         }
         reference.tracks[0].notes = clip.notes.clone();
         reference.encode()?;
@@ -80,7 +103,7 @@ impl MidiReference {
     /// Decode an SMF or an Auris conversational score; neither path imports into the song.
     pub fn decode(path: &Path, bytes: &[u8]) -> Result<Self, String> {
         if bytes.len() > MAX_REFERENCE_BYTES {
-            return Err("MIDI reference exceeds 256 KiB. Attach a shorter excerpt.".into());
+            return Err(too_large());
         }
         let reference = if path
             .extension()
@@ -135,10 +158,10 @@ impl MidiReference {
             return Err("Unsupported MIDI reference version or tick resolution.".into());
         }
         if self.tracks.is_empty()
-            || self.tracks.len() > 64
+            || self.tracks.len() > MAX_REFERENCE_TRACKS
             || self.tracks.iter().map(|t| t.notes.len()).sum::<usize>() > MAX_REFERENCE_NOTES
         {
-            return Err("MIDI reference needs 1–64 tracks and at most 2048 notes.".into());
+            return Err(too_many_notes());
         }
         for track in &self.tracks {
             if track.channel > 15
@@ -157,7 +180,7 @@ impl MidiReference {
         }
         let bytes = serde_json::to_vec(self).map_err(|e| e.to_string())?;
         if bytes.len() > MAX_REFERENCE_BYTES {
-            return Err("MIDI reference exceeds 256 KiB. Attach a shorter excerpt.".into());
+            return Err(too_large());
         }
         Ok(bytes)
     }
@@ -221,6 +244,46 @@ mod tests {
         assert_eq!(restored.tracks[0].notes[0].pitch, 60);
         assert_eq!(restored.tracks[0].notes[0].lyric, "きみ");
         assert_eq!(restored.tracks[0].notes[0].start, Ticks(240));
+    }
+
+    /// A type-1 file of `tracks` tracks, each `notes_per_track` sixteenth notes long.
+    fn smf(tracks: usize, notes_per_track: usize) -> Vec<u8> {
+        let mut bytes = b"MThd\0\0\0\x06\0\x01".to_vec();
+        bytes.extend_from_slice(&(tracks as u16).to_be_bytes());
+        bytes.extend_from_slice(&480u16.to_be_bytes());
+        for t in 0..tracks {
+            let channel = (t % 16) as u8;
+            let mut track = Vec::new();
+            for n in 0..notes_per_track {
+                let pitch = 36 + (n % 48) as u8;
+                // Delta 0, note on; delta 120 (one byte), note off.
+                track.extend_from_slice(&[0, 0x90 | channel, pitch, 100]);
+                track.extend_from_slice(&[120, 0x80 | channel, pitch, 0]);
+            }
+            track.extend_from_slice(&[0, 0xff, 0x2f, 0]);
+            bytes.extend_from_slice(b"MTrk");
+            bytes.extend_from_slice(&(track.len() as u32).to_be_bytes());
+            bytes.extend_from_slice(&track);
+        }
+        bytes
+    }
+
+    #[test]
+    fn a_finished_song_is_accepted_whole() {
+        // Issue #88: 24 parts and 30,000 notes, far beyond the old 64-track / 2048-note bound.
+        let bytes = smf(24, 1250);
+        let score = MidiReference::decode(Path::new("song.mid"), &bytes).unwrap();
+        assert_eq!(score.tracks.len(), 24);
+        let notes: usize = score.tracks.iter().map(|t| t.notes.len()).sum();
+        assert_eq!(notes, 30_000);
+        assert!(score.encode().unwrap().len() <= MAX_REFERENCE_BYTES);
+    }
+
+    #[test]
+    fn only_absurd_note_counts_are_refused() {
+        let bytes = smf(1, MAX_REFERENCE_NOTES + 1);
+        let error = MidiReference::decode(Path::new("black.mid"), &bytes).unwrap_err();
+        assert!(error.contains("at most 100000 notes"), "{error}");
     }
 
     #[test]

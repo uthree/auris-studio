@@ -24,9 +24,7 @@ use crate::ui::automation;
 use crate::ui::paint;
 use crate::ui::scrollbars::ScrollPanel;
 
-use super::geometry::{
-    CLIP_INSET, FADE_HANDLE_MIN_WIDTH, TITLE_HEIGHT, edge_zone_rows, resize_grab,
-};
+use super::geometry::{CLIP_INSET, FADE_HANDLE_MIN_WIDTH, edge_zone_rows, loop_band, resize_grab};
 use super::lane_paint::{paint_automation, paint_lane};
 
 impl AurisApp {
@@ -72,6 +70,12 @@ impl AurisApp {
         let edge_zones = self.clip_edge_zones(&lanes);
         let peaks = self.waveform_map();
         let band = self.rubber_band(crate::app::BandSurface::Lanes);
+        let comment_tags = self.lane_comment_tags(cx);
+        // The linter's findings: a wash over each problem and a strip at the foot of its lane
+        // that answers the pointer. Painted on the canvas; the strips are elements, so gpui
+        // gives them a tooltip and a click without the arrangement tracking a hovered problem.
+        let lint_marks = self.lint_marks();
+        let painted_marks = lint_marks.clone();
 
         div()
             .flex()
@@ -92,7 +96,6 @@ impl AurisApp {
                             .id("ruler")
                             .h(Metrics::RULER_HEIGHT)
                             .w_full()
-                            .cursor_pointer()
                             .child({
                                 let theme = theme.clone();
                                 let view = view.clone();
@@ -157,8 +160,11 @@ impl AurisApp {
                     .when(self.panels.lanes.structure, |this| {
                         this.child(self.render_structure_lane(cx))
                     })
-                    .when(self.panels.lanes.harmony, |this| {
+                    .when(self.panels.lanes.harmony_height().is_some(), |this| {
                         this.child(self.render_harmony_lane(cx))
+                    })
+                    .when(self.panels.lanes.lyrics, |this| {
+                        this.child(self.render_lyrics_lane(cx))
                     })
                     .when(self.spectrograms.project_enabled, |this| {
                         this.child(self.render_project_spectrogram(cx))
@@ -169,6 +175,7 @@ impl AurisApp {
                     ScrollPanel::Lanes,
                     div()
                         .id("lanes")
+                        .relative()
                         .overflow_hidden()
                         .child({
                             let theme = theme.clone();
@@ -184,25 +191,34 @@ impl AurisApp {
                                     edge_zones
                                         .iter()
                                         .map(|zone| {
-                                            window.insert_hitbox(
+                                            let hitbox = window.insert_hitbox(
                                                 Bounds {
-                                                    origin: bounds.origin + zone.origin,
-                                                    size: zone.size,
+                                                    origin: bounds.origin + zone.bounds.origin,
+                                                    size: zone.bounds.size,
                                                 },
                                                 gpui::HitboxBehavior::Normal,
-                                            )
+                                            );
+                                            (hitbox, zone.looping)
                                         })
                                         .collect::<Vec<_>>()
                                 },
-                                move |bounds, edges: Vec<gpui::Hitbox>, window, cx| {
+                                move |bounds, edges: Vec<(gpui::Hitbox, bool)>, window, cx| {
                                     // Nothing on screen said the edges could be taken hold of, so the
                                     // only way to find out was to try. The arrow says it now.
-                                    for edge in &edges {
+                                    for (edge, _) in &edges {
                                         window.set_cursor_style(
                                             gpui::CursorStyle::ResizeLeftRight,
                                             edge,
                                         );
                                     }
+                                    // The platform has no loop cursor, and both halves of a clip's
+                                    // end show the same arrow — so the half that repeats says so
+                                    // beside the pointer with the loop mark the transport's cycle
+                                    // button wears.
+                                    let loop_hover = edges
+                                        .iter()
+                                        .find(|(edge, looping)| *looping && edge.is_hovered(window))
+                                        .map(|(edge, _)| edge.bounds);
                                     paint::clipped(window, bounds, |window| {
                                         paint::rect(window, bounds, theme.surface_sunken);
                                         paint::time_grid(
@@ -273,6 +289,43 @@ impl AurisApp {
                                             );
                                         }
 
+                                        for mark in &painted_marks {
+                                            let colour = crate::ui::lint::severity_colour(
+                                                mark.severity,
+                                                &theme,
+                                            );
+                                            let top = top_of(mark.top);
+                                            let x = bounds.origin.x + mark.left;
+                                            let wash = match (mark.focused, mark.mix) {
+                                                (true, _) => 0.22,
+                                                (false, true) => 0.06,
+                                                (false, false) => 0.12,
+                                            };
+                                            paint::rect(
+                                                window,
+                                                Bounds {
+                                                    origin: point(x, top),
+                                                    size: size(mark.width, mark.height),
+                                                },
+                                                colour.opacity(wash),
+                                            );
+                                            let strip_top = if mark.mix {
+                                                top
+                                            } else {
+                                                top + mark.height - crate::ui::lint::MARK_STRIP
+                                            };
+                                            paint::rect(
+                                                window,
+                                                Bounds {
+                                                    origin: point(x, strip_top),
+                                                    size: size(
+                                                        mark.width,
+                                                        crate::ui::lint::MARK_STRIP,
+                                                    ),
+                                                },
+                                                colour.opacity(0.85),
+                                            );
+                                        }
                                         paint::playhead(
                                             window,
                                             bounds,
@@ -282,17 +335,50 @@ impl AurisApp {
                                         if let Some(band) = band {
                                             paint::selection_band(window, band, &theme);
                                         }
+                                        if let Some(zone) = loop_hover {
+                                            paint::loop_handle_mark(window, cx, zone, &theme);
+                                        }
                                     });
                                 },
                             )
                             .size_full()
                         })
+                        .children(lint_marks.into_iter().enumerate().map(|(index, mark)| {
+                            let strip_top = if mark.mix {
+                                mark.top
+                            } else {
+                                mark.top + mark.height - crate::ui::lint::MARK_STRIP
+                            } - lane_scroll;
+                            let id = mark.id.clone();
+                            div()
+                                .id(("lint-mark", index))
+                                .debug_selector(move || format!("lint-mark-{index}"))
+                                .absolute()
+                                .left(mark.left)
+                                .top(strip_top)
+                                .w(mark.width)
+                                .h(crate::ui::lint::MARK_STRIP)
+                                .cursor_pointer()
+                                .tooltip(crate::ui::tooltip::keyed_tip(
+                                    mark.message.clone(),
+                                    "",
+                                    &theme,
+                                ))
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    AurisApp::opens_menu(cx, move |this, at| {
+                                        this.lint_menu(at, &id)
+                                    }),
+                                )
+                        }))
                         .on_mouse_down(
                             MouseButton::Left,
                             cx.listener(|this, event: &MouseDownEvent, _, cx| {
                                 this.begin_lane_drag(event, cx);
                             }),
                         )
+                        // Over the canvas, so a press on a comment reaches the comment first.
+                        .children(comment_tags)
                         .on_mouse_down(
                             MouseButton::Right,
                             cx.listener(|this, event: &MouseDownEvent, _, cx| {
@@ -339,9 +425,9 @@ impl AurisApp {
     /// Only the *inner* half of each grab zone is offered. [`Self::begin_lane_drag`] reaches the
     /// resize check only once [`Self::clip_at`] has found a clip under the pointer's tick, so the
     /// half hanging past the edge is a zone no press can ever land in.
-    fn clip_edge_zones(&self, lanes: &[LanePaint]) -> Vec<Bounds<Pixels>> {
+    fn clip_edge_zones(&self, lanes: &[LanePaint]) -> Vec<EdgeZone> {
         let mut zones = Vec::new();
-        for lane in lanes {
+        for lane in lanes.iter().filter(|lane| !lane.borrowed) {
             let lane_top = lane.top - self.lane_scroll;
             let height = px(lane.height);
             for clip in &lane.clips {
@@ -358,17 +444,34 @@ impl AurisApp {
                 // its name bar, and a press there takes a fade rather than the edge.
                 let fades = matches!(clip.content, ClipContent::Waveform { .. })
                     && f32::from(right - left) > FADE_HANDLE_MIN_WIDTH;
-                for x in [left, right - grab] {
-                    zones.extend(edge_zone_rows(x, grab, top, bottom, fades));
-                }
-                // The loop edge is the name bar's own, at the far end of the repeats. On an
-                // unlooped clip that is the same place the resize edge is, and the name bar is
-                // the strip the loop takes there too — which is what makes a clip that has never
-                // been looped offer the gesture that starts one.
-                zones.push(Bounds {
-                    origin: point(looped - grab, top),
-                    size: size(grab, TITLE_HEIGHT.min(bottom - top)),
-                });
+                let band = top + loop_band(bottom - top);
+                let resize = |bounds| EdgeZone {
+                    bounds,
+                    looping: false,
+                };
+                zones.extend(
+                    edge_zone_rows(left, grab, top, bottom, fades)
+                        .into_iter()
+                        .map(resize),
+                );
+                // The loop edge is the upper half of the far end of the repeats. On an unlooped
+                // clip that is the same place the resize edge is, which then keeps only the lower
+                // half — the split that lets a clip nobody has looped yet offer both gestures.
+                let unlooped = looped == right;
+                let resize_top = if unlooped { band } else { top };
+                zones.extend(
+                    edge_zone_rows(right - grab, grab, resize_top, bottom, fades && !unlooped)
+                        .into_iter()
+                        .map(resize),
+                );
+                zones.extend(
+                    edge_zone_rows(looped - grab, grab, top, band, fades && unlooped)
+                        .into_iter()
+                        .map(|bounds| EdgeZone {
+                            bounds,
+                            looping: true,
+                        }),
+                );
             }
         }
         zones
@@ -420,7 +523,34 @@ impl AurisApp {
             .zip(tops)
             .map(|(track, top)| {
                 let color = self.theme.track_color(track.color.0);
+                // A layer has no clips of its own; its lane shows its source's, shaped the way
+                // the layer plays them, as a ghost nothing can grab.
+                let borrowed = track.kind.layer().is_some();
                 let clips = match &track.kind {
+                    TrackKind::Instrument(_) if borrowed => self
+                        .project()
+                        .played_clips(track)
+                        .map(|played| {
+                            played
+                                .clips
+                                .iter()
+                                .map(|clip| ClipPaint {
+                                    id: clip.id,
+                                    name: clip.name.clone(),
+                                    start: clip.start,
+                                    length: clip.length,
+                                    loop_end: clip.loop_end,
+                                    muted: true,
+                                    generated: false,
+                                    follows: None,
+                                    content: ClipContent::Notes(match played.shape {
+                                        Some(shape) => shape.apply(clip.notes.clone()),
+                                        None => clip.notes.clone(),
+                                    }),
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default(),
                     TrackKind::Instrument(_) | TrackKind::Drum(_) | TrackKind::Singer(_) => track
                         .kind
                         .note_clips()
@@ -488,6 +618,7 @@ impl AurisApp {
                     .then(|| self.rendered_spectrum_paint(Some(track.id))),
                     color,
                     clips,
+                    borrowed,
                     selected: self.selected_clip_ids(),
                 }
             })
@@ -517,6 +648,8 @@ pub(super) struct LanePaint {
     pub(super) spectrogram: bool,
     pub(super) rendered_spectrum: Option<crate::ui::spectrogram::RenderedSpectrumPaint>,
     pub(super) clips: Vec<ClipPaint>,
+    /// The clips are a layer's source's, drawn as a ghost: never selected, never grabbed.
+    pub(super) borrowed: bool,
     /// Every selected clip, so a rubber band can light up more than one at a time.
     pub(super) selected: std::collections::BTreeSet<ClipId>,
 }
@@ -582,6 +715,14 @@ pub(super) enum ClipContent {
         fade_in_curve: FadeCurve,
         fade_out_curve: FadeCurve,
     },
+}
+
+/// One rectangle of a clip's edge that the pointer can take hold of, and which gesture it is.
+pub(super) struct EdgeZone {
+    /// Where, relative to the lanes canvas.
+    pub(super) bounds: Bounds<Pixels>,
+    /// `true` for the upper half of the far end, which repeats the clip rather than resizing it.
+    pub(super) looping: bool,
 }
 
 #[cfg(test)]

@@ -1,4 +1,4 @@
-//! The menu bar the window draws for itself.
+//! The on-demand application menu for platforms without a system menu bar.
 //!
 //! macOS owns the menu bar and gpui hands the menu straight to it. Windows and Linux have no
 //! system menu bar at all — gpui's `set_menus` stores the menu and never shows it — so without
@@ -17,8 +17,9 @@ use crate::app::AurisApp;
 use crate::menu::{MenuRow, MenuSection, model};
 use crate::theme::Metrics;
 
-/// Height of the bar.
-pub const HEIGHT: Pixels = px(26.0);
+/// Last painted title-button bounds, used to anchor its menu without guessing text widths.
+pub(crate) type MenuTitleBounds =
+    std::rc::Rc<std::cell::RefCell<std::collections::HashMap<usize, gpui::Bounds<Pixels>>>>;
 
 /// Height of one row in an open menu.
 const ROW_HEIGHT: Pixels = px(22.0);
@@ -29,11 +30,14 @@ const SEPARATOR_HEIGHT: Pixels = px(7.0);
 /// Padding and border above and below the scrolling rows.
 const MENU_FRAME_HEIGHT: Pixels = px(10.0);
 
-/// Width of an open menu.
+/// The narrowest an open menu is drawn.
 ///
-/// Fixed rather than measured: every label here is short, and a menu that changes width between
-/// languages looks like a bug. Long labels truncate.
+/// A floor rather than a width. It was fixed, on the reasoning that every label is short, and the
+/// Japanese File menu's longer rows were cut off against their keystrokes.
 const MENU_WIDTH: Pixels = px(260.0);
+
+/// The widest a dropdown grows to fit its longest row; past this a label truncates.
+const MENU_MAX_WIDTH: Pixels = px(440.0);
 
 /// The mark beside a switched-on row.
 ///
@@ -47,6 +51,8 @@ const CHECK_WIDTH: Pixels = px(10.0);
 /// Which menu-bar menu is open, and how it came to be.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct OpenMenu {
+    /// Opened from a pinned title button rather than the full application menu.
+    pub from_titlebar: bool,
     /// Index into [`crate::menu::model`].
     pub index: usize,
     /// `true` when a click opened it, `false` when the pointer slid onto it with another
@@ -63,24 +69,11 @@ impl OpenMenu {
     /// The menu at `index`, opened by a click, with nothing highlighted yet.
     pub fn at(index: usize) -> Self {
         Self {
+            from_titlebar: false,
             index,
             clicked: true,
             highlighted: None,
         }
-    }
-}
-
-/// What the bar shows after a click on the title at `index`.
-///
-/// A click closes only the menu a click opened. One the pointer merely slid onto opens
-/// properly instead — otherwise clicking a menu you are already hovering toggles shut the one
-/// the slide had just opened, and the click looks like it was swallowed.
-pub fn after_click(open: Option<OpenMenu>, index: usize) -> Option<OpenMenu> {
-    match open {
-        Some(open) if open.index == index && open.clicked => None,
-        // The highlight is not carried across. It belongs to the row the keyboard was on, and
-        // the pointer has just said it is somewhere else entirely.
-        _ => Some(OpenMenu::at(index)),
     }
 }
 
@@ -91,6 +84,7 @@ pub fn after_click(open: Option<OpenMenu>, index: usize) -> Option<OpenMenu> {
 pub fn after_hover(open: Option<OpenMenu>, index: usize) -> Option<OpenMenu> {
     match open {
         Some(open) if open.index != index => Some(OpenMenu {
+            from_titlebar: open.from_titlebar,
             index,
             clicked: false,
             highlighted: None,
@@ -197,7 +191,7 @@ impl AurisApp {
         )
     }
 
-    /// Draws the bar, on the platforms that need one.
+    /// Draws a menu overlay with categories beside the existing command rows.
     pub(crate) fn render_menu_bar(
         &self,
         window: &mut Window,
@@ -211,76 +205,99 @@ impl AurisApp {
             self.event_window
                 .is_none_or(|id| id == window.window_handle().window_id())
         });
+        let open = open?;
         let sections = self.menu_model();
+        let section = sections.get(open.index)?;
         let viewport_height = window.viewport_size().height;
+        let commands = self.render_menu_bar_dropdown(
+            open.index,
+            section,
+            open.highlighted,
+            viewport_height,
+            cx,
+        );
+
+        if open.from_titlebar
+            && let Some(bounds) = self.menu_title_bounds.borrow().get(&open.index).copied()
+        {
+            return Some(
+                deferred(
+                    gpui::anchored()
+                        .anchor(gpui::Corner::TopLeft)
+                        .position(gpui::point(bounds.left(), crate::titlebar::HEIGHT))
+                        .snap_to_window_with_margin(theme.atelier.spacing.sm)
+                        .child(
+                            div()
+                                .debug_selector(|| "titlebar-menu-panel".into())
+                                .track_focus(&self.menu_focus)
+                                .rounded(Metrics::RADIUS_MD)
+                                .border_1()
+                                .border_color(theme.border)
+                                .bg(theme.surface_raised)
+                                .shadow_lg()
+                                .occlude()
+                                .child(commands),
+                        ),
+                )
+                .into_any_element(),
+            );
+        }
 
         Some(
-            div()
-                .flex()
-                .items_center()
-                .h(HEIGHT)
-                .flex_shrink_0()
-                .px_1()
-                .gap_px()
-                .bg(theme.surface_raised)
-                .border_b_1()
-                .border_color(theme.border)
-                .children(sections.into_iter().enumerate().map(|(index, section)| {
-                    let is_open = open.is_some_and(|open| open.index == index);
-                    div()
-                        // `relative` so the dropdown hangs off this title rather than off the
-                        // window, which is what keeps it under the word that opened it.
-                        .relative()
-                        .id(("menu-title", index))
-                        // A name the harness finds the title by; nothing outside a test build.
-                        .debug_selector(move || format!("menu-title-{index}"))
-                        .flex()
-                        .items_center()
-                        .h(px(20.0))
-                        .px_2()
-                        .rounded(Metrics::RADIUS_SM)
-                        .text_xs()
-                        .cursor_pointer()
-                        .when(is_open, |this| {
-                            this.bg(theme.accent).text_color(theme.text_on_accent)
-                        })
-                        .when(!is_open, |this| {
-                            this.text_color(theme.text)
-                                .hover(|this| this.bg(theme.surface_hover))
-                        })
-                        .child(section.name.clone())
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(move |this, _: &MouseDownEvent, _, cx| {
-                                let next = after_click(this.menu_bar, index);
-                                this.set_menu_bar(next);
-                                cx.stop_propagation();
-                                cx.notify();
-                            }),
-                        )
-                        .on_mouse_move(cx.listener(move |this, _: &MouseMoveEvent, _, cx| {
-                            let next = after_hover(this.menu_bar, index);
-                            if next != this.menu_bar {
-                                this.set_menu_bar(next);
-                                cx.notify();
-                            }
-                        }))
-                        .children(is_open.then(|| {
-                            let highlighted = open.and_then(|open| open.highlighted);
-                            self.render_menu_bar_dropdown(
-                                index,
-                                &section,
-                                highlighted,
-                                viewport_height,
-                                cx,
-                            )
-                        }))
-                }))
-                .into_any_element(),
+            deferred(
+                div()
+                    .debug_selector(|| "application-menu-panel".into())
+                    .track_focus(&self.menu_focus)
+                    .absolute()
+                    .top(crate::titlebar::HEIGHT)
+                    .left(theme.atelier.spacing.md)
+                    .flex()
+                    .bg(theme.surface_raised)
+                    .border_1()
+                    .border_color(theme.border)
+                    .rounded(Metrics::RADIUS_MD)
+                    .shadow_lg()
+                    .occlude()
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .child(div().flex().flex_col().w_32().p_1().gap_1().children(
+                        sections.into_iter().enumerate().map(|(index, section)| {
+                            let is_open = open.index == index;
+                            div()
+                                .on_mouse_move(cx.listener(
+                                    move |this, _: &MouseMoveEvent, _, cx| {
+                                        let next = after_hover(this.menu_bar, index).map(|menu| {
+                                            OpenMenu {
+                                                from_titlebar: false,
+                                                ..menu
+                                            }
+                                        });
+                                        if next != this.menu_bar {
+                                            this.set_menu_bar(next);
+                                            cx.notify();
+                                        }
+                                    },
+                                ))
+                                .child(
+                                    atelier::Button::new(("menu-title", index), section.name)
+                                        .ghost()
+                                        .size(atelier::ControlSize::Small)
+                                        .full_width()
+                                        .selected(is_open)
+                                        .on_click(cx.listener(move |this, _, window, cx| {
+                                            this.set_menu_bar(Some(OpenMenu::at(index)));
+                                            window.focus(&this.menu_focus);
+                                            cx.notify();
+                                        })),
+                                )
+                        }),
+                    ))
+                    .child(commands),
+            )
+            .into_any_element(),
         )
     }
 
-    /// One open menu, hanging below its title.
+    /// The command list beside the selected application-menu category.
     fn render_menu_bar_dropdown(
         &self,
         section_index: usize,
@@ -345,19 +362,16 @@ impl AurisApp {
                                 cx,
                             );
                         }))
-                        // Neither the pointer's fill nor the keyboard's lands on a dead row, and
-                        // neither does the pointer itself: a hand cursor over something that will
-                        // not answer is the row promising twice over.
+                        // Neither the pointer's fill nor the keyboard's lands on a dead row.
                         .when(enabled, |this| {
-                            this.cursor_pointer()
-                                .hover(|this| {
-                                    this.bg(theme.accent).text_color(theme.text_on_accent)
-                                })
-                                // The same fill the pointer gives it, because it means the same
-                                // thing: this is the row Return would run.
-                                .when(highlighted == Some(index), |this| {
-                                    this.bg(theme.accent).text_color(theme.text_on_accent)
-                                })
+                            this.hover(|this| {
+                                this.bg(theme.accent).text_color(theme.text_on_accent)
+                            })
+                            // The same fill the pointer gives it, because it means the same
+                            // thing: this is the row Return would run.
+                            .when(highlighted == Some(index), |this| {
+                                this.bg(theme.accent).text_color(theme.text_on_accent)
+                            })
                         })
                         // A fixed column whether this row ticks or not, so every label in the
                         // menu starts in the same place. A tick that pushed its own row along
@@ -408,59 +422,54 @@ impl AurisApp {
             })
             .fold(MENU_FRAME_HEIGHT, |height, row| height + row);
         let available_height =
-            (viewport_height - crate::titlebar::HEIGHT - self.project_tabs_height() - HEIGHT)
+            (viewport_height - crate::titlebar::HEIGHT - self.theme.atelier.spacing.md)
                 .max(ROW_HEIGHT + MENU_FRAME_HEIGHT);
         let height = natural_height.min(available_height);
         let scroll = self.menu_bar_scroll.clone();
         let needs_scroll = natural_height > available_height;
 
-        // Deferred so it paints above the panels below it. Without this the menu would open
-        // *behind* the transport bar, because gpui paints siblings in the order they are given
-        // and the bar is the first child of the window.
-        deferred(
-            div()
-                .absolute()
-                .top(HEIGHT - px(3.0))
-                .left(px(0.0))
-                .w(MENU_WIDTH)
-                .h(height)
-                .flex()
-                .flex_col()
-                .p_1()
-                .rounded(Metrics::RADIUS_MD)
-                .bg(theme.surface_raised)
-                .border_1()
-                .border_color(theme.border)
-                .shadow_lg()
-                .text_color(theme.text)
-                // A click inside the menu must not reach the title behind it, which would
-                // toggle the menu shut before the row could act.
-                .on_mouse_down(
-                    MouseButton::Left,
-                    |_: &MouseDownEvent, _, cx: &mut gpui::App| cx.stop_propagation(),
-                )
-                .child(
-                    div()
-                        .relative()
-                        .flex_1()
-                        .min_h_0()
-                        .child(
-                            div()
-                                .id("menu-bar-scroll")
-                                .debug_selector(|| "menu-bar-scroll".to_string())
-                                .size_full()
-                                .overflow_y_scroll()
-                                .track_scroll(&scroll)
-                                .when(needs_scroll, |this| this.pr_3())
-                                .children(rows),
+        div()
+            // At least the usual width, and as wide as the longest label beside its keystroke
+            // beyond that: a fixed width cut a translated label short against its shortcut.
+            .min_w(MENU_WIDTH)
+            .max_w(MENU_MAX_WIDTH)
+            .flex_none()
+            .h(height)
+            .flex()
+            .flex_col()
+            .p_1()
+            .rounded(Metrics::RADIUS_MD)
+            .bg(theme.surface_raised)
+            .border_l_1()
+            .border_color(theme.border)
+            .text_color(theme.text)
+            // A click inside the menu must not reach the title behind it, which would
+            // toggle the menu shut before the row could act.
+            .on_mouse_down(
+                MouseButton::Left,
+                |_: &MouseDownEvent, _, cx: &mut gpui::App| cx.stop_propagation(),
+            )
+            .child(
+                div()
+                    .relative()
+                    .flex_1()
+                    .min_h_0()
+                    .child(
+                        div()
+                            .id("menu-bar-scroll")
+                            .debug_selector(|| "menu-bar-scroll".to_string())
+                            .size_full()
+                            .overflow_y_scroll()
+                            .track_scroll(&scroll)
+                            .when(needs_scroll, |this| this.pr_3())
+                            .children(rows),
+                    )
+                    .when(needs_scroll, |this| {
+                        this.child(
+                            Scrollbar::vertical(&scroll).scrollbar_show(ScrollbarShow::Always),
                         )
-                        .when(needs_scroll, |this| {
-                            this.child(
-                                Scrollbar::vertical(&scroll).scrollbar_show(ScrollbarShow::Always),
-                            )
-                        }),
-                ),
-        )
+                    }),
+            )
     }
 }
 
@@ -473,34 +482,13 @@ mod tests {
         assert_eq!(AurisApp::wants_menu_bar(), !cfg!(target_os = "macos"));
     }
 
-    #[test]
-    fn the_bar_is_tall_enough_for_its_rows() {
-        // The dropdown hangs from `HEIGHT`; a bar shorter than the text in it would clip.
-        assert!(HEIGHT >= px(20.0));
-        assert!(ROW_HEIGHT < HEIGHT);
-    }
-
-    #[test]
-    fn the_dock_chrome_counts_this_bar_where_it_is_drawn() {
-        // The dock limits and the drawn dock sizes both subtract `chrome_height`, and the
-        // menu bar was once missing from it: on Windows a bottom dock dragged to its limit
-        // overflowed the window by exactly these 26 pixels. `cfg!` keeps both arms compiled,
-        // so the Windows answer is pinned from a Mac and the Mac's from Windows.
-        let fixed = crate::titlebar::HEIGHT
-            + crate::theme::Metrics::TRANSPORT_HEIGHT
-            + crate::theme::Metrics::STATUS_HEIGHT;
-        match AurisApp::wants_menu_bar() {
-            true => assert_eq!(AurisApp::chrome_height(), fixed + HEIGHT),
-            false => assert_eq!(AurisApp::chrome_height(), fixed),
-        }
-    }
-
     fn clicked(index: usize) -> Option<OpenMenu> {
         Some(OpenMenu::at(index))
     }
 
     fn slid(index: usize) -> Option<OpenMenu> {
         Some(OpenMenu {
+            from_titlebar: false,
             index,
             clicked: false,
             highlighted: None,
@@ -633,35 +621,12 @@ mod tests {
     fn the_pointer_takes_the_highlight_off_the_row_the_keyboard_had() {
         // The two are the same highlight, and the pointer has just said it is somewhere else.
         let walked = Some(OpenMenu {
+            from_titlebar: false,
             index: 1,
             clicked: true,
             highlighted: Some(4),
         });
-        assert_eq!(after_click(walked, 2).unwrap().highlighted, None);
         assert_eq!(after_hover(walked, 2).unwrap().highlighted, None);
-    }
-
-    #[test]
-    fn a_click_opens_a_closed_menu_and_closes_the_one_it_opened() {
-        assert_eq!(after_click(None, 1), clicked(1));
-        assert_eq!(after_click(clicked(1), 1), None);
-    }
-
-    #[test]
-    fn a_click_on_a_menu_the_pointer_slid_onto_opens_it_rather_than_toggling() {
-        // Slide from File onto Transport and Transport opens; the click that follows must keep
-        // it open. Toggling here reads as a click the application ignored, and the user clicks
-        // again to get back exactly where they were.
-        let after_slide = after_hover(clicked(0), 3);
-        assert_eq!(after_slide, slid(3));
-        assert_eq!(after_click(after_slide, 3), clicked(3));
-        // And now that a click put it there, clicking again does close it.
-        assert_eq!(after_click(clicked(3), 3), None);
-    }
-
-    #[test]
-    fn a_click_on_another_title_switches_rather_than_closes() {
-        assert_eq!(after_click(clicked(0), 2), clicked(2));
     }
 
     #[test]
@@ -688,6 +653,18 @@ mod window_tests {
 
     use crate::harness::{click, open, paint, resize};
     use crate::menu::MenuRow;
+
+    fn open_category(
+        app: &gpui::Entity<crate::app::AurisApp>,
+        selector: &'static str,
+        cx: &mut gpui::VisualTestContext,
+    ) {
+        if app.read_with(cx, |app, _| app.menu_bar.is_none()) {
+            click("application-menu", cx);
+            paint(app, cx);
+        }
+        click(selector, cx);
+    }
 
     /// Where the row carrying `action` is, as the section it is in and its place in that section.
     ///
@@ -736,7 +713,7 @@ mod window_tests {
             let (section, index) = row_of(&app, cx, crate::actions::OpenAnalysisResults.name());
             paint(&app, cx);
             let title: &'static str = Box::leak(format!("menu-title-{section}").into_boxed_str());
-            click(title, cx);
+            open_category(&app, title, cx);
             paint(&app, cx);
             let row: &'static str =
                 Box::leak(format!("menu-bar-item-{section}-{index}").into_boxed_str());
@@ -753,7 +730,7 @@ mod window_tests {
     }
 
     #[gpui::test]
-    fn a_click_on_a_title_drops_its_menu_open_and_a_second_shuts_it(cx: &mut TestAppContext) {
+    fn application_menu_opens_on_demand_and_its_trigger_closes_it(cx: &mut TestAppContext) {
         let (app, cx) = open(cx);
         if !crate::app::AurisApp::wants_menu_bar() {
             // macOS puts these in the system bar, where this window has nothing to click.
@@ -762,16 +739,15 @@ mod window_tests {
         }
         paint(&app, cx);
 
-        click("menu-title-0", cx);
+        click("application-menu", cx);
         assert_eq!(open_menu(&app, cx), Some(0));
 
         paint(&app, cx);
-        click("menu-title-0", cx);
+        click("application-menu", cx);
         assert_eq!(open_menu(&app, cx), None, "the same title shuts it again");
     }
 
-    /// A menu bar is a row of menus rather than a row of buttons: with one open, the next title
-    /// takes over instead of opening a second.
+    /// Switching categories replaces the command list inside the same overlay.
     #[gpui::test]
     fn a_second_title_takes_the_menu_over_rather_than_opening_another(cx: &mut TestAppContext) {
         let (app, cx) = open(cx);
@@ -780,11 +756,44 @@ mod window_tests {
         }
         paint(&app, cx);
 
-        click("menu-title-0", cx);
+        open_category(&app, "menu-title-0", cx);
         paint(&app, cx);
-        click("menu-title-1", cx);
+        open_category(&app, "menu-title-1", cx);
 
         assert_eq!(open_menu(&app, cx), Some(1));
+    }
+
+    #[gpui::test]
+    fn keyboard_menu_preserves_workspace_bounds_and_restores_focus(cx: &mut TestAppContext) {
+        let (app, cx) = open(cx);
+        if !crate::app::AurisApp::wants_menu_bar() {
+            return;
+        }
+        for width in [640.0, 1360.0] {
+            resize(&app, cx, size(px(width), px(700.0)));
+            let ruler = app.read_with(cx, |app, _| app.canvas.ruler.get().unwrap());
+            let original = cx.update(|window, cx| window.focused(cx).unwrap());
+            cx.simulate_keystrokes("f10");
+            paint(&app, cx);
+            assert_eq!(open_menu(&app, cx), Some(0));
+            assert_eq!(
+                app.read_with(cx, |app, _| app.canvas.ruler.get().unwrap()),
+                ruler
+            );
+            let menu = cx.debug_bounds("application-menu-panel").unwrap();
+            assert!(menu.left() >= px(0.0) && menu.right() <= px(width));
+            assert!(menu.bottom() <= px(700.0));
+            cx.simulate_keystrokes("right down");
+            app.read_with(cx, |app, _| {
+                let menu = app.menu_bar.unwrap();
+                assert_eq!(menu.index, 1);
+                assert!(menu.highlighted.is_some());
+            });
+            cx.simulate_keystrokes("escape");
+            paint(&app, cx);
+            assert_eq!(open_menu(&app, cx), None);
+            cx.update(|window, _| assert!(original.is_focused(window)));
+        }
     }
 
     #[gpui::test]
@@ -798,7 +807,7 @@ mod window_tests {
         assert_eq!(same_section, section);
         paint(&app, cx);
         let title: &'static str = Box::leak(format!("menu-title-{section}").into_boxed_str());
-        click(title, cx);
+        open_category(&app, title, cx);
         paint(&app, cx);
 
         cx.simulate_keystrokes("down");
@@ -850,7 +859,7 @@ mod window_tests {
             format!("menu-bar-separator-{section}-{separator}"),
         ] {
             paint(&app, cx);
-            click(title, cx);
+            open_category(&app, title, cx);
             cx.simulate_keystrokes("down");
             app.read_with(cx, |this, _| {
                 assert_eq!(
@@ -902,7 +911,7 @@ mod window_tests {
         paint(&app, cx);
 
         let title: &'static str = Box::leak(format!("menu-title-{section}").into_boxed_str());
-        click(title, cx);
+        open_category(&app, title, cx);
         paint(&app, cx);
         let row: &'static str =
             Box::leak(format!("menu-bar-item-{section}-{index}").into_boxed_str());
@@ -927,7 +936,7 @@ mod window_tests {
         let (section, index) = row_of(&app, cx, crate::actions::Undo.name());
         paint(&app, cx);
         let title: &'static str = Box::leak(format!("menu-title-{section}").into_boxed_str());
-        click(title, cx);
+        open_category(&app, title, cx);
         paint(&app, cx);
         let row: &'static str =
             Box::leak(format!("menu-bar-item-{section}-{index}").into_boxed_str());
@@ -965,7 +974,7 @@ mod window_tests {
         resize(&app, cx, size(px(800.0), px(500.0)));
         let (section, _) = row_of(&app, cx, crate::actions::NudgeNotesRight.name());
         let title: &'static str = Box::leak(format!("menu-title-{section}").into_boxed_str());
-        click(title, cx);
+        open_category(&app, title, cx);
         paint(&app, cx);
 
         cx.simulate_keystrokes("end");

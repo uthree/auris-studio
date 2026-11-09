@@ -35,7 +35,7 @@ impl Session {
         id: &str,
         paths: &[PathBuf],
     ) -> Result<SoundPreparation, String> {
-        let sound = resolve_library_sound(&self.sound_library_scope(paths), id)?;
+        let sound = resolve_library_sound(&self.sound_library_scopes(paths), id)?;
         if let Source::Font(preset) = &sound.source
             && (!self.soundfont_is_loaded(preset.font)
                 || !self
@@ -135,6 +135,7 @@ impl SoundPreparation {
             instrument_state: state,
             clips: Vec::new(),
             file,
+            follows: None,
         })
     }
 }

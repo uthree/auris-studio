@@ -52,31 +52,37 @@ pub(crate) struct SongWorkshop {
     models: Vec<super::agent_chat::ModelOption>,
     model_receiver: Option<mpsc::Receiver<Result<String, String>>>,
     model_error: Option<String>,
+    reasoning_picker: Option<super::reasoning_picker::Handle>,
     completions: super::chat_commands::Completions,
     command_feedback: Option<Result<String, String>>,
     input_assist: input_assist::InputAssist,
     input_focused: bool,
     runtime: Option<Workshop>,
     snapshot: Option<Snapshot>,
-    view_round: Option<usize>,
-    candidates: [Option<Arc<SongCandidate>>; 3],
-    played_audio: [Option<Arc<auris_session::prelude::AudioBuffer>>; 3],
-    played_timeline: [Option<Arc<auris_session::AuditionTimeline>>; 3],
-    saved: [Option<std::path::PathBuf>; 3],
-    errors: [Option<String>; 3],
-    pub(crate) players: [PlayerState; 3],
+    candidates: Vec<Option<Arc<SongCandidate>>>,
+    played_audio: Vec<Option<Arc<auris_session::prelude::AudioBuffer>>>,
+    played_timeline: Vec<Option<Arc<auris_session::AuditionTimeline>>>,
+    saved: Vec<Option<std::path::PathBuf>>,
+    errors: Vec<Option<String>>,
+    pub(crate) players: Vec<PlayerState>,
     preview_serial: u64,
     preparing: Option<usize>,
     error: Option<String>,
     submitted: bool,
     /// Messages written while the director or a composer was still at work, oldest first.
     queued: std::collections::VecDeque<queue::QueuedBrief>,
+    /// Options ticked on the director's open multiple-choice card, with the conversation and
+    /// message they belong to so a switch of conversation never carries them over.
+    choice_picks: Option<(String, usize, Vec<usize>)>,
     /// Set by Stop and by a send the workshop refused, so the queue does not empty itself into
     /// a conversation the user has just asked to be quiet.
     queue_paused: bool,
     /// The queued message the workshop has been handed and not yet acknowledged. Unlike a send
     /// from the composer, the composer is not holding its text, so it stays editable meanwhile.
     in_flight: Option<queue::QueuedBrief>,
+    /// The queues of conversations the user has left, by thread id. They go out by themselves
+    /// as each conversation becomes idle, while the user works on another one.
+    parked_queues: std::collections::BTreeMap<String, queue::ParkedQueue>,
     chord_prompt_open: bool,
     show_memory: bool,
     expanded_tools: std::collections::BTreeSet<u64>,
@@ -131,6 +137,28 @@ impl SongWorkshop {
                 feedback,
             ))
     }
+    /// Whether the director's last card can be answered now: nothing running, nothing already
+    /// waiting to go, and a model to send the answer to.
+    fn choice_card_ready(&self) -> bool {
+        !self.busy()
+            && self.queued.is_empty()
+            && self.in_flight.is_none()
+            && self.preferences.is_configured()
+    }
+
+    /// Tick or untick one option of the open multiple-choice card in `thread`.
+    fn toggle_choice(&mut self, thread: &str, message: usize, option: usize) {
+        let picks = match &mut self.choice_picks {
+            Some((picks_thread, at, picked)) if picks_thread == thread && *at == message => picked,
+            picks => &mut picks.insert((thread.to_owned(), message, Vec::new())).2,
+        };
+        if let Some(at) = picks.iter().position(|&ticked| ticked == option) {
+            picks.remove(at);
+        } else {
+            picks.push(option);
+        }
+    }
+
     /// Whether production or a conversation switch is in progress.
     pub(crate) fn busy(&self) -> bool {
         self.switching
@@ -154,32 +182,37 @@ impl SongWorkshop {
         self.preview_serial += 1;
         self.preparing = None;
     }
-    fn view(&mut self, index: usize) {
+    fn load_candidate_audio(&mut self) {
         for player in &mut self.players {
             player.reset_audio();
         }
         self.preview_serial += 1;
         self.preparing = None;
-        self.view_round = Some(index);
-        self.played_audio = std::array::from_fn(|_| None);
-        self.played_timeline = std::array::from_fn(|_| None);
-        self.saved = std::array::from_fn(|_| None);
-        self.errors = std::array::from_fn(|_| None);
         self.refresh_candidates();
-        self.send(Command::View(index));
+        if let Some(snapshot) = &self.snapshot {
+            for round in 0..snapshot.document.rounds.len() {
+                self.send(Command::View(round));
+            }
+        }
     }
     fn refresh_candidates(&mut self) {
-        self.candidates = std::array::from_fn(|slot| {
-            self.snapshot.as_ref().and_then(|s| {
-                let candidate = s
-                    .document
-                    .rounds
-                    .get(self.view_round?)?
-                    .candidates
-                    .get(slot)?;
-                s.candidates.get(&candidate.id).cloned()
-            })
-        });
+        let Some(snapshot) = &self.snapshot else {
+            return;
+        };
+        self.candidates = snapshot
+            .document
+            .rounds
+            .iter()
+            .flat_map(|round| &round.candidates)
+            .map(|candidate| snapshot.candidates.get(&candidate.id).cloned())
+            .collect();
+        let count = self.candidates.len().max(3);
+        self.candidates.resize_with(count, || None);
+        self.players.resize_with(count, PlayerState::default);
+        self.played_audio.resize_with(count, || None);
+        self.played_timeline.resize_with(count, || None);
+        self.saved.resize_with(count, || None);
+        self.errors.resize_with(count, || None);
     }
     fn audition(&self, index: usize) -> Option<Arc<auris_session::prelude::AudioBuffer>> {
         if let Some(candidate) = &self.candidates[index] {
@@ -189,9 +222,9 @@ impl SongWorkshop {
         let id = snapshot
             .document
             .rounds
-            .get(self.view_round?)?
-            .candidates
-            .get(index)?
+            .iter()
+            .flat_map(|round| &round.candidates)
+            .nth(index)?
             .id;
         snapshot.previews.get(&id).map(|p| Arc::clone(&p.audio))
     }
@@ -212,9 +245,9 @@ impl SongWorkshop {
         let id = snapshot
             .document
             .rounds
-            .get(self.view_round?)?
-            .candidates
-            .get(index)?
+            .iter()
+            .flat_map(|round| &round.candidates)
+            .nth(index)?
             .id;
         snapshot.previews.get(&id).map(|p| Arc::clone(&p.timeline))
     }
@@ -233,7 +266,6 @@ impl SongWorkshop {
             return None;
         }
         match self.active_field {
-            Some(1) => self.references.midi_draft.as_ref().map(|d| &d.lyric),
             Some(_) => Some(&self.brief),
             None => None,
         }
@@ -243,7 +275,6 @@ impl SongWorkshop {
             return None;
         }
         match self.active_field {
-            Some(1) => self.references.midi_draft.as_mut().map(|d| &mut d.lyric),
             Some(_) => Some(&mut self.brief),
             None => None,
         }
@@ -268,19 +299,25 @@ impl AurisApp {
         let Some(state) = &self.song_workshop else {
             return;
         };
-        let Some(candidate) = state.snapshot.as_ref().and_then(|snapshot| {
-            snapshot
-                .document
-                .rounds
-                .iter()
-                .flat_map(|r| &r.candidates)
-                .find(|c| c.id == id && c.ready)
-        }) else {
+        let Some(snapshot) = state.snapshot.as_ref() else {
+            return;
+        };
+        let Some(candidate) = snapshot
+            .document
+            .rounds
+            .iter()
+            .flat_map(|r| &r.candidates)
+            .find(|c| c.id == id && c.ready)
+        else {
             return;
         };
         let feedback = candidate.feedback.as_ref();
         let prompt = super::prompt::Prompt::new(
             self.t(Key::WorkshopFeedbackTitle)
+                .replace(
+                    "{label}",
+                    &snapshot.document.candidate_label(id).unwrap_or_default(),
+                )
                 .replace("{song}", &candidate.direction.title),
             super::prompt::PromptTarget::WorkshopFeedback {
                 workshop: state.identity,
@@ -319,17 +356,10 @@ impl AurisApp {
             }
             cx.notify();
         });
-        let runtime = self
-            .session
-            .project_folder()
-            .ok_or_else(|| "No project workspace".to_string())
-            .and_then(|folder| {
-                Workshop::start(
-                    folder.into(),
-                    self.session.path().is_none(),
-                    self.settings.clone(),
-                )
-            });
+        let runtime = Workshop::start(
+            auris_session::workshop::Store::library(),
+            self.settings.clone(),
+        );
         let (runtime, error) = match runtime {
             Ok(runtime) => (Some(runtime), None),
             Err(e) => (None, Some(e)),
@@ -348,26 +378,28 @@ impl AurisApp {
                 self.settings.agent.clone(),
             )),
             model_error: None,
+            reasoning_picker: None,
             completions: Default::default(),
             command_feedback: None,
             input_assist: input_assist::InputAssist::new(identity - 1, std::time::Instant::now()),
             input_focused: true,
             runtime,
             snapshot: None,
-            view_round: None,
-            candidates: std::array::from_fn(|_| None),
-            played_audio: std::array::from_fn(|_| None),
-            played_timeline: std::array::from_fn(|_| None),
-            saved: std::array::from_fn(|_| None),
-            errors: std::array::from_fn(|_| None),
-            players: std::array::from_fn(|_| PlayerState::default()),
+            candidates: vec![None; 3],
+            played_audio: vec![None; 3],
+            played_timeline: vec![None; 3],
+            saved: vec![None; 3],
+            errors: vec![None; 3],
+            players: (0..3).map(|_| PlayerState::default()).collect(),
             preview_serial: 0,
             preparing: None,
             error,
             submitted: false,
             queued: Default::default(),
+            choice_picks: None,
             queue_paused: false,
             in_flight: None,
+            parked_queues: Default::default(),
             chord_prompt_open: false,
             show_memory: false,
             expanded_tools: Default::default(),
@@ -447,6 +479,105 @@ impl AurisApp {
         cx.notify();
     }
 
+    /// The director's question under its reply, open while it is the conversation's last word.
+    fn workshop_choice_card(
+        &self,
+        message: usize,
+        card: &auris_session::choices::ChoiceCard,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let Some(s) = &self.song_workshop else {
+            return div().into_any_element();
+        };
+        let messages = s
+            .snapshot
+            .as_ref()
+            .map_or(&[][..], |snapshot| &snapshot.document.messages[..]);
+        let thread = s
+            .snapshot
+            .as_ref()
+            .map(|snapshot| snapshot.document.thread_id.clone())
+            .unwrap_or_default();
+        let open = message + 1 == messages.len() && s.choice_card_ready();
+        let picked = if open {
+            match &s.choice_picks {
+                Some((picks_thread, at, picked)) if *picks_thread == thread && *at == message => {
+                    picked.clone()
+                }
+                _ => Vec::new(),
+            }
+        } else {
+            messages
+                .get(message + 1)
+                .filter(|reply| reply.user)
+                .map(|reply| card.picked_by(&reply.text))
+                .unwrap_or_default()
+        };
+        let multiple = card.multiple;
+        let option_thread = thread.clone();
+        let option = cx.listener(move |this, option: &usize, _, cx| {
+            if multiple {
+                if let Some(s) = &mut this.song_workshop {
+                    s.toggle_choice(&option_thread, message, *option);
+                }
+                cx.notify();
+            } else {
+                this.answer_workshop_choices(message, vec![*option], cx);
+            }
+        });
+        let send = cx.listener(move |this, _: &(), _, cx| {
+            let picked = this
+                .song_workshop
+                .as_ref()
+                .and_then(|s| s.choice_picks.as_ref())
+                .filter(|(picks_thread, at, _)| *picks_thread == thread && *at == message)
+                .map(|(_, _, picked)| picked.clone())
+                .unwrap_or_default();
+            this.answer_workshop_choices(message, picked, cx);
+        });
+        agent_components::choice_card(
+            format!("song-choices-{message}"),
+            card,
+            &picked,
+            open,
+            move |picked, window, cx| option(&picked, window, cx),
+            move |window, cx| send(&(), window, cx),
+        )
+    }
+
+    /// Send the director's card pick as the person's next message, leaving the draft alone.
+    fn answer_workshop_choices(
+        &mut self,
+        message: usize,
+        picked: Vec<usize>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(s) = &mut self.song_workshop else {
+            return;
+        };
+        let Some(snapshot) = &s.snapshot else {
+            return;
+        };
+        if message + 1 != snapshot.document.messages.len() || !s.choice_card_ready() {
+            return;
+        }
+        let Some(text) = snapshot.document.messages[message]
+            .choices
+            .as_ref()
+            .and_then(|card| card.answer(&picked))
+        else {
+            return;
+        };
+        s.choice_picks = None;
+        s.queue_paused = false;
+        s.queued.push_front(queue::QueuedBrief {
+            text,
+            attachments: Vec::new(),
+        });
+        self.dispatch_queued_workshop_brief();
+        cx.notify();
+    }
+
     fn request_more_song_candidates(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let request = self.t(Key::WorkshopMoreCandidatesRequest).to_owned();
         let Some(s) = &mut self.song_workshop else {
@@ -475,12 +606,27 @@ impl AurisApp {
         id: (&'static str, usize),
         label: Key,
         text: String,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let _ = cx;
-        atelier::CopyButton::new(id, text)
-            .label(self.t(label))
-            .copied_label(self.t(Key::CopiedToClipboard))
+        let focus = window
+            .use_keyed_state(
+                gpui::ElementId::NamedChild(Box::new(id.into()), "copy-focus".into()),
+                cx,
+                |_, cx| cx.focus_handle(),
+            )
+            .read(cx)
+            .clone();
+        div()
+            .track_focus(&focus)
+            .opacity(0.0)
+            .group_hover("workshop-copy", |style| style.opacity(1.0))
+            .in_focus(|style| style.opacity(1.0))
+            .child(
+                atelier::CopyButton::new(id, text)
+                    .tooltip(self.t(label))
+                    .copied_label(self.t(Key::CopiedToClipboard)),
+            )
             .into_any_element()
     }
 
@@ -493,6 +639,7 @@ impl AurisApp {
 
     pub(crate) fn poll_song_workshop(&mut self, cx: &mut Context<Self>) {
         self.poll_workshop_input_assist(cx);
+        let language = self.language();
         let Some(s) = &mut self.song_workshop else {
             return;
         };
@@ -506,36 +653,48 @@ impl AurisApp {
                 self.menu = None;
             }
             match answer.and_then(|text| super::agent_chat::parse_model_list(&text)) {
-                Ok(models) => s.models = models,
+                Ok(models) => {
+                    // In memory only, like the editor's: the remembered choice stays saved.
+                    if !s.busy()
+                        && let Some(index) =
+                            super::agent_chat::fallback_model(&models, &s.preferences)
+                    {
+                        models[index].apply_to(&mut s.preferences);
+                        s.command_feedback =
+                            Some(Ok(Key::AgentModelFallback.get(language).to_owned()));
+                    }
+                    s.models = models;
+                }
                 Err(e) => s.model_error = Some(e),
             }
             cx.notify();
         }
         if let Some(snapshot) = s.runtime.as_ref().and_then(Workshop::poll) {
-            let changed_thread = s
+            let left = s
                 .snapshot
                 .as_ref()
-                .is_some_and(|old| old.document.thread_id != snapshot.document.thread_id);
+                .map(|old| old.document.thread_id.clone())
+                .filter(|old| *old != snapshot.document.thread_id);
+            let changed_thread = left.is_some();
+            if let Some(left) = left {
+                s.swap_queue(left, &snapshot.document.thread_id);
+            }
             if changed_thread {
                 for player in &mut s.players {
                     player.reset_audio();
                 }
-                s.played_audio = std::array::from_fn(|_| None);
-                s.played_timeline = std::array::from_fn(|_| None);
-                s.saved = std::array::from_fn(|_| None);
-                s.errors = std::array::from_fn(|_| None);
+                s.players.clear();
+                s.played_audio.clear();
+                s.played_timeline.clear();
+                s.saved.clear();
+                s.errors.clear();
                 s.identity = NEXT_WORKSHOP.fetch_add(1, Ordering::Relaxed);
                 s.preview_serial = s.preview_serial.wrapping_add(1);
                 s.preparing = None;
                 s.expanded_tools.clear();
                 s.completions.reset();
                 s.input_assist.edited();
-                s.view_round = None;
                 s.submitted = false;
-                // The queue was written to the conversation that has just been left.
-                s.queued.clear();
-                s.queue_paused = false;
-                s.in_flight = None;
                 s.brief = TextField::new(snapshot.document.draft.clone());
                 s.references = Default::default();
                 s.references.attachments = snapshot.document.draft_attachments.clone();
@@ -584,18 +743,13 @@ impl AurisApp {
                 }
                 s.in_flight = None;
             }
+            s.acknowledge_parked_queues(&snapshot);
             s.snapshot = Some(snapshot);
             if follow_tail {
                 s.scroll.scroll_to_bottom();
             }
             if initial || added {
-                if let Some(index) = s
-                    .snapshot
-                    .as_ref()
-                    .and_then(|s| s.document.rounds.len().checked_sub(1))
-                {
-                    s.view(index);
-                }
+                s.load_candidate_audio();
             } else {
                 s.refresh_candidates();
             }
@@ -607,16 +761,33 @@ impl AurisApp {
         if self.dispatch_queued_workshop_brief() {
             cx.notify();
         }
+        if let Some(s) = &mut self.song_workshop
+            && s.dispatch_parked_queues()
+        {
+            cx.notify();
+        }
     }
 
     fn adopt_song_candidate(&mut self, index: usize, _: &mut Window, cx: &mut Context<Self>) {
         let selection_request = self.t(Key::WorkshopSelectionRequest).to_string();
         if let Some(s) = &mut self.song_workshop
             && let Some(snapshot) = &s.snapshot
-            && let Some(round) = s.view_round.and_then(|i| snapshot.document.rounds.get(i))
-            && let Some(candidate) = round.candidates.get(index)
+            && let Some(candidate) = snapshot
+                .document
+                .rounds
+                .iter()
+                .flat_map(|round| &round.candidates)
+                .nth(index)
         {
-            let message = selection_request.replace("{song}", &candidate.direction.title);
+            let message = selection_request
+                .replace(
+                    "{label}",
+                    &snapshot
+                        .document
+                        .candidate_label(candidate.id)
+                        .unwrap_or_default(),
+                )
+                .replace("{song}", &candidate.direction.title);
             if s.send(Command::Select(
                 candidate.id,
                 Box::new(s.preferences.clone()),
@@ -677,7 +848,14 @@ impl AurisApp {
             .spawn(cx, async move |cx| {
                 let result = cx
                     .background_executor()
-                    .spawn(async move { auris_agent::workshop::handoff(folder, unsaved, document) })
+                    .spawn(async move {
+                        auris_agent::workshop::handoff(
+                            folder,
+                            unsaved,
+                            auris_session::workshop::Store::library(),
+                            document,
+                        )
+                    })
                     .await;
                 let _ = view.update_in(cx, |this, window, cx| {
                     let Some(s) = &mut this.song_workshop else {
@@ -817,6 +995,26 @@ impl AurisApp {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let project_tabs = self.render_project_tabs(window, cx);
+        let paths = self
+            .song_workshop
+            .as_ref()
+            .map(|state| {
+                state
+                    .references
+                    .attachments
+                    .iter()
+                    .cloned()
+                    .chain(
+                        state
+                            .snapshot
+                            .iter()
+                            .flat_map(|snapshot| &snapshot.document.messages)
+                            .flat_map(|message| message.attachments.iter().cloned()),
+                    )
+                    .collect()
+            })
+            .unwrap_or_default();
+        self.load_inline_attachments(paths, cx);
         self.sync_auxiliary_windows(cx);
         let chord_prompt = self.workshop_prompt_open();
         if chord_prompt {
@@ -828,18 +1026,6 @@ impl AurisApp {
                 window.focus(&s.foci[0]);
             }
             s.chord_prompt_open = chord_prompt;
-            if s.references
-                .midi_lyric_focus
-                .as_ref()
-                .is_some_and(|f| f.is_focused(window))
-            {
-                if s.references.midi_draft.is_some() {
-                    s.active_field = Some(1);
-                } else {
-                    s.active_field = Some(0);
-                    window.focus(&s.foci[0]);
-                }
-            }
         }
         let input = self.render_workshop_input(window, cx);
         let prompt = chord_prompt
@@ -856,10 +1042,12 @@ impl AurisApp {
             return div().into_any_element();
         };
         let mut transcript = div()
+            .debug_selector(|| "song-workshop-transcript".into())
             .flex()
             .flex_col()
             .gap(spacing.xl)
-            .w_full()
+            .flex_1()
+            .min_w_0()
             .max_w(COLUMN_WIDTH);
         if let Some(snapshot) = &s.snapshot {
             if snapshot.document.messages.is_empty() {
@@ -872,11 +1060,16 @@ impl AurisApp {
                     &theme,
                 ));
             }
+            let copy = agent_components::CopyLabels {
+                tooltip: self.t(Key::AgentCopyMarkdown).into(),
+                copied: self.t(Key::CopiedToClipboard).into(),
+            };
             for (i, message) in snapshot.document.messages.iter().enumerate() {
                 let entry = agent_components::workshop_message(
                     ("song-workshop-message", i),
                     message.user,
                     message.text.clone(),
+                    Some(&copy),
                     &theme,
                     window,
                     cx,
@@ -885,29 +1078,45 @@ impl AurisApp {
                     div()
                         .flex()
                         .flex_col()
+                        .group("workshop-copy")
                         .gap(spacing.xs)
                         .child(entry)
                         .children(message.attachments.iter().enumerate().map(
                             |(file_index, path)| {
+                                let preview = self.inline_attachment(
+                                    path,
+                                    format!("song-inline-attachment-{i}-{file_index}"),
+                                    crate::ui::attachment_preview::InlinePlace::Message,
+                                    cx,
+                                );
                                 let path = path.clone();
                                 let name = path
                                     .file_name()
                                     .unwrap_or_default()
                                     .to_string_lossy()
                                     .into_owned();
-                                Button::new(
-                                    gpui::ElementId::Name(
-                                        format!("song-attachment-{i}-{file_index}").into(),
-                                    ),
-                                    name,
-                                )
-                                .ghost()
-                                .icon(IconName::File)
-                                .on_click(cx.listener(
-                                    move |this, _, _, cx| {
-                                        this.open_agent_attachment(path.clone(), cx)
-                                    },
-                                ))
+                                // The person's attachments sit under their bubble, on its edge.
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .min_w_0()
+                                    .gap(spacing.xs)
+                                    .when(message.user, |column| column.items_end())
+                                    .child(
+                                        atelier::agent::ContextChip::new(
+                                            gpui::ElementId::Name(
+                                                format!("song-attachment-{i}-{file_index}").into(),
+                                            ),
+                                            IconName::File,
+                                            name,
+                                        )
+                                        .on_click(
+                                            cx.listener(move |this, _, _, cx| {
+                                                this.open_agent_attachment(path.clone(), cx)
+                                            }),
+                                        ),
+                                    )
+                                    .child(preview)
                             },
                         ))
                         .child(
@@ -922,6 +1131,7 @@ impl AurisApp {
                                             ("song-copy-message", i),
                                             Key::WorkshopCopyMessage,
                                             message.text.clone(),
+                                            window,
                                             cx,
                                         )),
                                 ),
@@ -933,6 +1143,9 @@ impl AurisApp {
                 } else {
                     text_panel(entry, &theme)
                 });
+                if let Some(card) = message.choices.as_ref().filter(|_| !message.user) {
+                    transcript = transcript.child(self.workshop_choice_card(i, card, cx));
+                }
                 for (round_index, round) in snapshot
                     .document
                     .rounds
@@ -940,31 +1153,6 @@ impl AurisApp {
                     .enumerate()
                     .filter(|(_, r)| r.after_message == i + 1)
                 {
-                    if s.view_round != Some(round_index) {
-                        transcript = transcript.child(text_panel(
-                            Button::new(
-                                ("song-round", round_index),
-                                round
-                                    .candidates
-                                    .iter()
-                                    .map(|c| c.direction.title.as_str())
-                                    .collect::<Vec<_>>()
-                                    .join(" · "),
-                            )
-                            .ghost()
-                            .icon(IconName::History)
-                            .on_click(cx.listener(
-                                move |this, _, _, cx| {
-                                    if let Some(s) = &mut this.song_workshop {
-                                        s.view(round_index);
-                                    }
-                                    cx.notify();
-                                },
-                            )),
-                            &theme,
-                        ));
-                        continue;
-                    }
                     let mut usage = auris_session::workshop::ToolUsage::default();
                     for tool in round.candidates.iter().flat_map(|c| c.tools.values()) {
                         usage.total += tool.total;
@@ -988,9 +1176,18 @@ impl AurisApp {
                         .flex()
                         .items_start()
                         .gap(spacing.lg);
+                    let offset: usize = snapshot.document.rounds[..round_index]
+                        .iter()
+                        .map(|round| round.candidates.len())
+                        .sum();
                     for (index, candidate) in round.candidates.iter().enumerate() {
-                        cards = cards
-                            .child(self.candidate_card(index, candidate, snapshot, window, cx));
+                        cards = cards.child(self.candidate_card(
+                            offset + index,
+                            candidate,
+                            snapshot,
+                            window,
+                            cx,
+                        ));
                     }
                     transcript = transcript.child(cards);
                 }
@@ -1010,6 +1207,7 @@ impl AurisApp {
                     agent_components::thinking_indicator(
                         "song-planning-activity",
                         self.t(Key::WorkshopPlanning),
+                        &theme,
                     ),
                     &theme,
                 ));
@@ -1023,6 +1221,7 @@ impl AurisApp {
                 agent_components::thinking_indicator(
                     "song-loading-activity",
                     self.t(Key::WorkshopLoadingModels),
+                    &theme,
                 ),
                 &theme,
             ));
@@ -1053,8 +1252,14 @@ impl AurisApp {
             .py(spacing.xl)
             .flex()
             .flex_col()
-            .items_center()
-            .child(transcript);
+            // The column is centred across a row rather than in a centred column. The body
+            // scrolls by the height of what it holds, and a flex column works that height out by
+            // laying its child out at the child's percentage width *before* `max_w` narrows it:
+            // every wrapped message then measures a line or so shorter than it is drawn, and the
+            // newest entries end past the end of the scroll range, under the composer, where no
+            // scrolling reaches them. Across a row the width is the main axis, which the layout
+            // clamps first, so the height is measured at the width the column is drawn at.
+            .child(div().w_full().flex().justify_center().child(transcript));
         let memory = s.snapshot.as_ref().is_some_and(|s| s.preferences.enabled);
         // On a surface of its own for the same reason the transcript's text is: see `text_panel`.
         let options = div()
@@ -1155,8 +1360,8 @@ impl AurisApp {
             .key_context(
                 if chord_prompt
                     || s.input_focused
-                    || self.music_lyric_focused()
                     || self.menu.is_some()
+                    || self.reference_score_claims_keys()
                 {
                     crate::actions::context::PROMPT
                 } else {
@@ -1275,6 +1480,38 @@ impl AurisApp {
                 badges = badges.child(Badge::new(self.t(Key::WorkshopDraftPreview)));
             }
         }
+        if running {
+            badges = badges.child(
+                Badge::new(self.t(Key::WorkshopGenerating))
+                    .tone(Tone::Accent)
+                    .dot(),
+            );
+        }
+        let description = div()
+            .flex()
+            .items_start()
+            .gap(spacing.xs)
+            .group("workshop-copy")
+            .text_size(theme.atelier.typography.size_sm)
+            .text_color(theme.text_muted)
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .child(agent_components::selectable_text(
+                        gpui::SharedString::from(format!("song-concept-{id}")),
+                        candidate.direction.description.clone(),
+                        window,
+                        cx,
+                    )),
+            )
+            .child(self.workshop_copy_button(
+                ("song-copy-concept", index),
+                Key::WorkshopCopyConcept,
+                candidate.direction.description.clone(),
+                window,
+                cx,
+            ));
         let mut card = div()
             .id(("song-candidate", index))
             .debug_selector(move || format!("song-candidate-{index}"))
@@ -1286,13 +1523,11 @@ impl AurisApp {
             .p(spacing.lg)
             .rounded(theme.atelier.shape.radius_lg)
             .border_1()
-            // The agent's colour marks only work the agent is doing: a card being written. The
-            // song the person chose is their choice, and carries the accent.
             // Mixed into the card's own fill rather than laid over it, so the card stays opaque
             // over the metal beneath the transcript.
             .when(running, |card| {
-                card.bg(atelier::mix(colors.elevated, colors.agent, 0.12))
-                    .border_color(colors.agent.opacity(0.35))
+                card.bg(atelier::mix(colors.elevated, colors.accent, 0.12))
+                    .border_color(colors.accent.opacity(0.35))
             })
             .when(!running, |card| {
                 card.bg(colors.elevated).border_color(if selected {
@@ -1303,33 +1538,44 @@ impl AurisApp {
             })
             .child(
                 div()
+                    .flex()
+                    .items_start()
+                    .gap(spacing.xs)
+                    .group("workshop-copy")
                     .text_size(theme.atelier.typography.size_lg)
                     .font_weight(theme.atelier.typography.heading_weight)
-                    .child(agent_components::selectable_text(
-                        gpui::SharedString::from(format!("song-title-{id}")),
+                    // The name the user and the director both call this song by, such as 1B.
+                    .when_some(snapshot.document.candidate_label(id), |row, label| {
+                        row.child(
+                            div()
+                                .flex_shrink_0()
+                                .text_color(theme.text_muted)
+                                .child(label),
+                        )
+                    })
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .child(agent_components::selectable_text(
+                                gpui::SharedString::from(format!("song-title-{id}")),
+                                candidate.direction.title.clone(),
+                                window,
+                                cx,
+                            )),
+                    )
+                    .child(self.workshop_copy_button(
+                        ("song-copy-title", index),
+                        Key::WorkshopCopyTitle,
                         candidate.direction.title.clone(),
                         window,
                         cx,
                     )),
-            );
+            )
+            .child(badges)
+            .child(description);
         if let Some(stage) = snapshot.progress.get(&id) {
-            badges = badges.child(
-                Badge::new(self.t(Key::WorkshopGenerating))
-                    .tone(Tone::Agent)
-                    .dot(),
-            );
-            card = card.child(badges).child(
-                div()
-                    .text_size(theme.atelier.typography.size_sm)
-                    .text_color(theme.text_muted)
-                    .child(agent_components::selectable_text(
-                        gpui::SharedString::from(format!("song-concept-{id}")),
-                        candidate.direction.description.clone(),
-                        window,
-                        cx,
-                    )),
-            );
-            let label = self.t(match stage.as_str() {
+            let stage_label = self.t(match stage.as_str() {
                 "harmony" => Key::WorkshopHarmonyProgress,
                 "melody" => Key::WorkshopMelodyProgress,
                 "compose" => Key::WorkshopComposing,
@@ -1341,39 +1587,38 @@ impl AurisApp {
                 "recovering" => Key::WorkshopRecovering,
                 _ => Key::WorkshopArrangeProgress,
             });
+            // The composer's own words when it has said what it is doing.
+            let label = gpui::SharedString::from(
+                snapshot
+                    .status_line(id)
+                    .map_or_else(|| stage_label.to_string(), str::to_owned),
+            );
             card = card.child(
                 div()
                     .debug_selector(move || format!("song-candidate-activity-{index}"))
                     .flex()
-                    .flex_col()
+                    .items_center()
                     .gap(spacing.sm)
                     .p(spacing.md)
                     .rounded(theme.atelier.shape.radius_md)
                     .bg(colors.surface)
                     .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(spacing.sm)
-                            .child(atelier::Spinner::new(("song-candidate-spinner", index)))
-                            .child(Label::new(label).size(TextSize::Small)),
+                        div().flex_shrink_0().child(
+                            atelier::Spinner::new(("song-candidate-spinner", index))
+                                .color(colors.accent),
+                        ),
                     )
+                    // The composer writes this line, so its length is not ours to choose: wrap it
+                    // inside the row, and cut a third line short rather than run past the card.
                     .child(
-                        atelier::ProgressBar::indeterminate(("song-candidate-progress", index))
-                            .tone(Tone::Agent),
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .text_size(theme.atelier.typography.size_sm)
+                            .line_clamp(2)
+                            .text_ellipsis()
+                            .child(label),
                     ),
-            );
-        } else {
-            card = card.child(badges).child(
-                div()
-                    .text_size(theme.atelier.typography.size_sm)
-                    .text_color(theme.text_muted)
-                    .child(agent_components::selectable_text(
-                        gpui::SharedString::from(format!("song-concept-{id}")),
-                        candidate.direction.description.clone(),
-                        window,
-                        cx,
-                    )),
             );
         }
         if !candidate.tools.is_empty() {
@@ -1440,7 +1685,7 @@ impl AurisApp {
                                 super::icons::tool_icon(name),
                                 theme.atelier.typography.size_sm,
                                 if usage.running() > 0 {
-                                    colors.agent
+                                    colors.accent
                                 } else {
                                     theme.text_muted
                                 },
@@ -1462,24 +1707,6 @@ impl AurisApp {
             }
             card = card.child(tools);
         }
-        card = card.child(
-            div()
-                .flex()
-                .flex_wrap()
-                .gap(spacing.xs)
-                .child(self.workshop_copy_button(
-                    ("song-copy-title", index),
-                    Key::WorkshopCopyTitle,
-                    candidate.direction.title.clone(),
-                    cx,
-                ))
-                .child(self.workshop_copy_button(
-                    ("song-copy-concept", index),
-                    Key::WorkshopCopyConcept,
-                    candidate.direction.description.clone(),
-                    cx,
-                )),
-        );
         for error in [
             candidate.error.as_ref(),
             s.errors[index].as_ref(),
@@ -1508,7 +1735,7 @@ impl AurisApp {
             card = card.child(
                 Label::new(messages::saved(
                     self.language(),
-                    &saved.display().to_string(),
+                    saved.display().to_string(),
                 ))
                 .size(TextSize::Small)
                 .color(TextColor::Faint),
@@ -1544,10 +1771,34 @@ impl AurisApp {
                     .map_or(0.0, |audio| audio.duration_seconds()),
                 audition.is_some() && s.preparing.is_none() && !s.switching,
                 s.preparing == Some(index),
+                None,
                 cx,
             ),
         );
         let usable = ready && !running && !s.switching;
+        if let Some(song) = &s.candidates[index] {
+            let lyrics = song.lyrics();
+            if !lyrics.is_empty() {
+                card = card.child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(spacing.sm)
+                        .debug_selector(move || format!("song-lyrics-{index}"))
+                        .child(
+                            Label::new(self.t(Key::WorkshopCandidateLyrics))
+                                .size(TextSize::Small)
+                                .color(TextColor::Muted),
+                        )
+                        .child(agent_components::selectable_text(
+                            gpui::SharedString::from(format!("song-lyrics-text-{id}")),
+                            lyrics,
+                            window,
+                            cx,
+                        )),
+                );
+            }
+        }
         let retry_enabled =
             !s.switching && (running || (!snapshot.planning && snapshot.progress.len() < 3));
         let unfinished = !candidate.ready;
@@ -1666,6 +1917,16 @@ impl AurisApp {
                     })),
             ),
         );
+        if !snapshot.preferences.digest.is_empty() {
+            list = list.child(
+                ListItem::new(
+                    "song-memory-digest",
+                    self.t(Key::PreferenceDigest).to_owned(),
+                )
+                .icon(IconName::Music)
+                .description(snapshot.preferences.digest.clone()),
+            );
+        }
         for (index, selection) in snapshot.preferences.selections.iter().enumerate() {
             let Some(chosen) = selection.alternatives.get(selection.chosen) else {
                 continue;
@@ -1800,7 +2061,6 @@ mod tests {
         app.update(cx, |this, _| {
             let state = this.song_workshop.as_mut().unwrap();
             state.brief = TextField::new("Unsent brief");
-            state.view_round = Some(0);
             state.snapshot.as_mut().unwrap().document = serde_json::from_value(serde_json::json!({
                 "messages":[{"user":false,"text":"Here is your song"}],
                 "rounds":[{"after_message":1,"candidates":[{"id":1,"parent":null,"ready":true,"error":null,
@@ -1876,6 +2136,9 @@ mod tests {
             app.update(cx, |this, cx| {
                 this.show_project_chooser(window, cx);
                 this.open_song_workshop(window, cx);
+                this.pointer = crate::gestures::PointerGestures::default();
+                this.settings.piano_roll_grid = auris_session::PianoRollGrid::Sixteenth;
+                this.settings.relative_note_snap = false;
                 this.agent_chat
                     .references
                     .attachments
@@ -1893,11 +2156,25 @@ mod tests {
             &crate::ui::context_menu::MenuCommand::ComposerMelody(false),
         );
         paint(&app, cx);
-        click("agent-midi-add", cx);
+        let editor = crate::harness::reference_editor(&app, cx);
+        crate::harness::show_pitch(&editor, cx, 60);
+        let at = crate::harness::roll_point(&editor, cx, auris_session::prelude::Ticks(240), 60);
+        crate::harness::click_at(cx, at, crate::harness::creating());
         paint(&app, cx);
-        click("agent-midi-lyric", cx);
+        let at = editor.read_with(cx, |app, _| {
+            let note = &app.selected_midi_clip().unwrap().notes[0];
+            (
+                note.start + auris_session::prelude::Ticks(note.length.0 / 2),
+                note.pitch,
+            )
+        });
+        let at = crate::harness::roll_point(&editor, cx, at.0, at.1);
+        crate::harness::double_click(cx, at);
+        paint(&app, cx);
         cx.simulate_input("きみ");
         cx.simulate_keystrokes("enter");
+        paint(&app, cx);
+        click("agent-midi-apply", cx);
         app.read_with(cx, |this, _| {
             let paths = &this.song_workshop.as_ref().unwrap().references.attachments;
             assert_eq!(paths.len(), 1);
@@ -2077,9 +2354,12 @@ mod tests {
                 previews: Default::default(),
                 preview_errors: Default::default(),
                 progress: Default::default(),
+                status: Default::default(),
                 planning: false,
                 preferences: Default::default(),
                 error: None,
+                working: Default::default(),
+                handled: 0,
             });
         });
     }
@@ -2089,6 +2369,7 @@ mod tests {
             messages: messages
                 .iter()
                 .map(|text| auris_session::workshop::Message {
+                    choices: None,
                     attachments: Vec::new(),
                     user: true,
                     text: (*text).to_owned(),
@@ -2104,9 +2385,12 @@ mod tests {
             previews: Default::default(),
             preview_errors: Default::default(),
             progress: Default::default(),
+            status: Default::default(),
             planning,
             preferences: Default::default(),
             error: None,
+            working: Default::default(),
+            handled: 0,
         }
     }
 
@@ -2115,6 +2399,188 @@ mod tests {
             Ok(Command::Send(text, _, _)) => Some(text),
             _ => None,
         }
+    }
+
+    fn director_asks(multiple: bool) -> Snapshot {
+        let mut snapshot = conversation_snapshot(&["write me a song"], false);
+        snapshot
+            .document
+            .messages
+            .push(auris_session::workshop::Message {
+                choices: Some(auris_session::choices::ChoiceCard {
+                    question: "Which mood?".into(),
+                    options: ["Bright", "Calm", "Dark"]
+                        .into_iter()
+                        .map(|label| auris_session::choices::ChoiceOption {
+                            label: label.into(),
+                            detail: None,
+                        })
+                        .collect(),
+                    multiple,
+                }),
+                attachments: Vec::new(),
+                user: false,
+                text: "A few questions first.".into(),
+                references: Vec::new(),
+            });
+        snapshot
+    }
+
+    #[gpui::test]
+    fn a_director_card_answers_on_one_click_and_leaves_the_draft_alone(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (app, cx) = crate::harness::open(cx);
+        cx.update(|window, cx| {
+            app.update(cx, |this, cx| {
+                this.show_project_chooser(window, cx);
+                this.open_song_workshop(window, cx);
+            })
+        });
+        make_ready(&app, cx);
+        let (commands, _snapshots) = app.update(cx, |this, _| {
+            let s = this.song_workshop.as_mut().unwrap();
+            let (runtime, commands, snapshots) = Workshop::loopback();
+            s.runtime = Some(runtime);
+            s.preferences.model = "test".into();
+            s.brief = TextField::new("half a thought");
+            s.snapshot = Some(director_asks(false));
+            (commands, snapshots)
+        });
+        crate::harness::paint(&app, cx);
+        crate::harness::click("song-choices-1-option-1", cx);
+        assert_eq!(sent_text(&commands).as_deref(), Some("Calm"));
+        app.read_with(cx, |this, _| {
+            let s = this.song_workshop.as_ref().unwrap();
+            assert_eq!(s.brief.content(), "half a thought");
+            assert!(s.queued.is_empty());
+        });
+        // A second click while the answer is on its way sends nothing more.
+        crate::harness::paint(&app, cx);
+        crate::harness::click("song-choices-1-option-2", cx);
+        assert_eq!(sent_text(&commands), None);
+    }
+
+    #[gpui::test]
+    fn the_end_of_a_long_transcript_scrolls_clear_of_the_composer(cx: &mut gpui::TestAppContext) {
+        let (app, cx) = crate::harness::open(cx);
+        cx.update(|window, cx| {
+            app.update(cx, |this, cx| {
+                this.show_project_chooser(window, cx);
+                this.open_song_workshop(window, cx);
+            })
+        });
+        make_ready(&app, cx);
+        app.update(cx, |this, _| {
+            let s = this.song_workshop.as_mut().unwrap();
+            let mut snapshot = director_asks(false);
+            let filler = "a long line about the song, ".repeat(12);
+            let earlier = (0..16).map(|index| auris_session::workshop::Message {
+                choices: None,
+                attachments: Vec::new(),
+                user: index % 2 == 0,
+                text: filler.clone(),
+                references: Vec::new(),
+            });
+            snapshot.document.messages.splice(0..0, earlier);
+            // A round early on, so the transcript ends in the "more candidates" panel too.
+            snapshot
+                .document
+                .rounds
+                .push(auris_session::workshop::Round {
+                    after_message: 2,
+                    candidates: (0..3)
+                        .map(|id| auris_session::workshop::Candidate {
+                            id,
+                            parent: None,
+                            ready: false,
+                            error: None,
+                            recoveries: 0,
+                            tools: Default::default(),
+                            feedback: None,
+                            direction: auris_session::workshop::Direction {
+                                title: format!("Candidate {id}"),
+                                description: "Piano and strings".into(),
+                                instructions: String::new(),
+                                protected_tracks: Vec::new(),
+                                sources: Vec::new(),
+                            },
+                        })
+                        .collect(),
+                });
+            s.snapshot = Some(snapshot);
+        });
+        // Wide enough that the column stops at its own width, and narrow enough that the window
+        // decides it: the two ways the transcript's width can be settled.
+        for width in [1600.0, 820.0] {
+            crate::harness::resize(&app, cx, gpui::size(gpui::px(width), gpui::px(900.0)));
+            app.update(cx, |this, _| {
+                this.song_workshop
+                    .as_mut()
+                    .unwrap()
+                    .scroll
+                    .scroll_to_bottom();
+            });
+            crate::harness::paint(&app, cx);
+            crate::harness::paint(&app, cx);
+            let body = cx.debug_bounds("song-workshop-body").unwrap();
+            let footer = cx.debug_bounds("song-workshop-footer").unwrap();
+            let transcript = cx.debug_bounds("song-workshop-transcript").unwrap();
+            let card = cx.debug_bounds("song-choices-17").unwrap();
+            let more = cx.debug_bounds("song-more-candidates").unwrap();
+            let xxl = app.read_with(cx, |this, _| this.theme.atelier.spacing.xxl);
+            let inner = body.size.width - xxl * 2.0;
+            assert_eq!(transcript.size.width, inner.min(COLUMN_WIDTH), "at {width}");
+            let left = transcript.left() - body.left();
+            let right = body.right() - transcript.right();
+            assert!(
+                (f32::from(left) - f32::from(right)).abs() < 1.0,
+                "at {width}: off centre"
+            );
+            assert!(
+                body.bottom() <= footer.top() + gpui::px(0.5),
+                "at {width}: the transcript runs under the composer: {body:?} against {footer:?}"
+            );
+            assert!(
+                more.bottom() <= transcript.bottom() + gpui::px(0.5),
+                "at {width}: the transcript is shorter than what it holds: {more:?} in {transcript:?}"
+            );
+            assert!(
+                card.bottom() <= more.top() && more.bottom() <= body.bottom() + gpui::px(0.5),
+                "at {width}: the end of the transcript is cut off: {card:?}, {more:?} in {body:?}"
+            );
+        }
+        crate::harness::click("song-choices-17-option-1", cx);
+    }
+
+    #[gpui::test]
+    fn a_director_multiple_choice_card_sends_every_ticked_option_in_order(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (app, cx) = crate::harness::open(cx);
+        cx.update(|window, cx| {
+            app.update(cx, |this, cx| {
+                this.show_project_chooser(window, cx);
+                this.open_song_workshop(window, cx);
+            })
+        });
+        make_ready(&app, cx);
+        let (commands, _snapshots) = app.update(cx, |this, _| {
+            let s = this.song_workshop.as_mut().unwrap();
+            let (runtime, commands, snapshots) = Workshop::loopback();
+            s.runtime = Some(runtime);
+            s.preferences.model = "test".into();
+            s.snapshot = Some(director_asks(true));
+            (commands, snapshots)
+        });
+        crate::harness::paint(&app, cx);
+        crate::harness::click("song-choices-1-option-2", cx);
+        crate::harness::paint(&app, cx);
+        crate::harness::click("song-choices-1-option-0", cx);
+        assert_eq!(sent_text(&commands), None, "ticking is not answering");
+        crate::harness::paint(&app, cx);
+        crate::harness::click("song-choices-1-send", cx);
+        assert_eq!(sent_text(&commands).as_deref(), Some("- Bright\n- Dark"));
     }
 
     #[gpui::test]
@@ -2202,6 +2668,105 @@ mod tests {
     }
 
     #[gpui::test]
+    fn another_song_can_be_opened_and_written_while_one_is_at_work(cx: &mut gpui::TestAppContext) {
+        let (app, cx) = crate::harness::open(cx);
+        cx.update(|window, cx| {
+            app.update(cx, |this, cx| {
+                this.show_project_chooser(window, cx);
+                this.open_song_workshop(window, cx);
+            })
+        });
+        make_ready(&app, cx);
+        let threads = vec![
+            auris_session::workshop::ThreadInfo {
+                id: "default".into(),
+                title: "First song".into(),
+                archived: false,
+                updated: 2,
+            },
+            auris_session::workshop::ThreadInfo {
+                id: "song-second".into(),
+                title: "Second song".into(),
+                archived: false,
+                updated: 1,
+            },
+        ];
+        let at = |thread: &str, planning: bool, working: &[&str], handled: u64| {
+            let mut snapshot = conversation_snapshot(&[], planning);
+            snapshot.document.thread_id = thread.into();
+            snapshot.threads = threads.clone();
+            snapshot.working = working.iter().map(|t| (*t).to_owned()).collect();
+            snapshot.handled = handled;
+            snapshot
+        };
+        let (commands, snapshots) = app.update(cx, |this, _| {
+            let s = this.song_workshop.as_mut().unwrap();
+            let (runtime, commands, snapshots) = Workshop::loopback();
+            s.runtime = Some(runtime);
+            s.preferences.model = "test".into();
+            // The first song's director is still answering.
+            s.snapshot = Some(at("default", true, &["default"], 0));
+            (commands, snapshots)
+        });
+        crate::harness::paint(&app, cx);
+        crate::harness::click("song-brief", cx);
+        cx.simulate_input("then make it faster");
+        cx.simulate_keystrokes("enter");
+        assert!(commands.try_recv().is_err(), "queued behind the round");
+
+        // The sidebar is not held by the round in progress: the second song opens.
+        crate::harness::click("workshop-thread-song-second", cx);
+        assert!(matches!(
+            commands.try_recv(),
+            Ok(Command::ThreadDraft(thread, ..)) if thread == "default"
+        ));
+        assert!(matches!(
+            commands.try_recv(),
+            Ok(Command::OpenThread(thread)) if thread == "song-second"
+        ));
+        snapshots
+            .send(at("song-second", false, &["default"], 2))
+            .unwrap();
+        app.update(cx, |this, cx| this.poll_song_workshop(cx));
+        app.read_with(cx, |this, _| {
+            let s = this.song_workshop.as_ref().unwrap();
+            assert!(s.queued.is_empty(), "the queue stays with its own song");
+            assert!(!s.busy());
+        });
+        assert!(commands.try_recv().is_err(), "the first song is still busy");
+
+        // The second song is written to at once.
+        crate::harness::paint(&app, cx);
+        crate::harness::click("song-brief", cx);
+        cx.simulate_input("a calm waltz");
+        cx.simulate_keystrokes("enter");
+        assert_eq!(sent_text(&commands).as_deref(), Some("a calm waltz"));
+
+        // The first song finishes in the background and its waiting message goes to it.
+        let mut answered = at("song-second", true, &["song-second"], 3);
+        answered.document.messages = conversation_snapshot(&["a calm waltz"], true)
+            .document
+            .messages;
+        snapshots.send(answered).unwrap();
+        app.update(cx, |this, cx| this.poll_song_workshop(cx));
+        match commands.try_recv() {
+            Ok(Command::SendTo(thread, text, _, _)) => {
+                assert_eq!(thread, "default");
+                assert_eq!(text, "then make it faster");
+            }
+            _ => panic!("the waiting message was not delivered to its own song"),
+        }
+        // Not twice, before a snapshot has seen it.
+        app.update(cx, |this, cx| this.poll_song_workshop(cx));
+        assert!(commands.try_recv().is_err());
+
+        // The second song's own send has been seen, so the sidebar is free again.
+        app.read_with(cx, |this, _| {
+            assert!(!this.song_workshop.as_ref().unwrap().threads_locked());
+        });
+    }
+
+    #[gpui::test]
     fn stopping_the_workshop_holds_the_queue_until_resumed(cx: &mut gpui::TestAppContext) {
         let (app, cx) = crate::harness::open(cx);
         cx.update(|window, cx| {
@@ -2231,8 +2796,118 @@ mod tests {
             "Stop is not a cue for the next message"
         );
         crate::harness::paint(&app, cx);
-        crate::harness::click("workshop-queue-toggle", cx);
+        crate::harness::click("workshop-queue-pause", cx);
         assert_eq!(sent_text(&commands).as_deref(), Some("later"));
+    }
+
+    #[gpui::test]
+    fn earlier_rounds_keep_their_cards_players_and_candidate_addresses(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use auris_agent::workshop::Preview;
+        use auris_session::workshop::Round;
+        let (app, cx) = crate::harness::open(cx);
+        cx.update(|window, cx| {
+            app.update(cx, |this, cx| {
+                this.show_project_chooser(window, cx);
+                this.open_song_workshop(window, cx);
+            })
+        });
+        make_ready(&app, cx);
+        let commands = app.update(cx, |this, _| {
+            let s = this.song_workshop.as_mut().unwrap();
+            let (runtime, commands, _) = Workshop::loopback();
+            s.runtime = Some(runtime);
+            let mut snapshot = conversation_snapshot(&["First", "Second"], false);
+            for round in 0..2 {
+                let candidates = (0..2).map(|slot| serde_json::from_value(serde_json::json!({
+                    "id": 10 + round * 2 + slot, "parent": null, "ready": false, "error": null,
+                    "direction": {"title": format!("Song {round}/{slot}"), "description": "Description", "instructions": "Compose"}
+                })).unwrap()).collect();
+                snapshot.document.rounds.push(Round { after_message: round + 1, candidates });
+            }
+            for (index, candidate) in snapshot.document.rounds.iter().flat_map(|r| &r.candidates).enumerate() {
+                snapshot.previews.insert(candidate.id, Preview {
+                    revision: 1,
+                    audio: Arc::new(auris_session::prelude::AudioBuffer::stereo((index + 1) * 100, 100.0)),
+                    timeline: Default::default(),
+                });
+            }
+            s.snapshot = Some(snapshot);
+            s.refresh_candidates();
+            assert_eq!(s.players.len(), 4);
+            for index in 0..4 { assert_eq!(s.audition(index).unwrap().duration_seconds(), (index + 1) as f64); }
+            commands
+        });
+        crate::harness::resize(&app, cx, gpui::size(gpui::px(1400.), gpui::px(1800.)));
+        for selector in [
+            "song-candidate-0",
+            "song-candidate-1",
+            "song-candidate-2",
+            "song-candidate-3",
+        ] {
+            assert!(
+                cx.debug_bounds(selector).is_some(),
+                "{selector} should stay expanded"
+            );
+        }
+        assert!(cx.debug_bounds("song-round-0").is_none());
+        cx.update(|window, cx| app.update(cx, |this, cx| this.adopt_song_candidate(0, window, cx)));
+        assert!(matches!(commands.try_recv(), Ok(Command::Select(10, _, _))));
+        cx.update(|window, cx| app.update(cx, |this, cx| this.adopt_song_candidate(3, window, cx)));
+        assert!(matches!(commands.try_recv(), Ok(Command::Select(13, _, _))));
+    }
+
+    #[gpui::test]
+    fn images_are_embedded_before_and_after_sending_without_opening_a_preview(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let dir = tempfile::tempdir().unwrap();
+        let image = dir.path().join("cover.png");
+        image::DynamicImage::new_rgb8(40, 20).save(&image).unwrap();
+        let screenshot = dir.path().join("screenshot.png");
+        image::DynamicImage::new_rgb8(1920, 1080)
+            .save(&screenshot)
+            .unwrap();
+        let (app, cx) = crate::harness::open(cx);
+        cx.update(|window, cx| {
+            app.update(cx, |this, cx| {
+                this.show_project_chooser(window, cx);
+                this.open_song_workshop(window, cx);
+            })
+        });
+        make_ready(&app, cx);
+        app.update(cx, |this, cx| {
+            this.workshop_attach_files(&[image.clone(), screenshot.clone()], cx)
+        });
+        crate::harness::paint(&app, cx);
+        cx.run_until_parked();
+        crate::harness::paint(&app, cx);
+        // In the composer a picture is a thumbnail, and two of them share a row.
+        let small = cx.debug_bounds("song-inline-draft-0-image").unwrap();
+        let large = cx.debug_bounds("song-inline-draft-1-image").unwrap();
+        assert!(small.size.width <= gpui::px(44.) && small.size.height <= gpui::px(24.));
+        assert!(large.size.width <= gpui::px(124.) && large.size.height <= gpui::px(84.));
+        assert!((large.origin.y - small.origin.y).abs() < gpui::px(80.));
+        app.update(cx, |this, _| {
+            let s = this.song_workshop.as_mut().unwrap();
+            s.references.attachments.clear();
+            let mut snapshot = conversation_snapshot(&["Use this cover"], false);
+            snapshot.document.messages[0].attachments.push(image);
+            snapshot.document.messages[0].attachments.push(screenshot);
+            s.snapshot = Some(snapshot);
+            assert!(this.attachment_preview.is_none());
+        });
+        crate::harness::resize(&app, cx, gpui::size(gpui::px(1400.), gpui::px(1000.)));
+        // Under a message a picture is drawn at its own size, or shrunk to fit — never
+        // stretched across the transcript column.
+        let small = cx.debug_bounds("song-inline-attachment-0-0-image").unwrap();
+        let large = cx.debug_bounds("song-inline-attachment-0-1-image").unwrap();
+        assert!(small.size.width <= gpui::px(44.), "{small:?}");
+        assert!(large.size.width <= gpui::px(324.), "{large:?}");
+        assert!(large.size.height <= gpui::px(244.), "{large:?}");
+        assert!(large.size.width >= gpui::px(300.), "{large:?}");
+        app.read_with(cx, |this, _| assert_eq!(this.inline_attachments.len(), 2));
     }
 
     #[gpui::test]
@@ -2323,10 +2998,10 @@ mod tests {
             make_ready(&app, cx);
             let before = app.update(cx, |this, _| {
                 let s = this.song_workshop.as_mut().unwrap();
-                s.view_round = Some(0);
                 let snapshot = s.snapshot.as_mut().unwrap();
                 snapshot.document.selected = selected;
                 snapshot.document.messages.push(Message {
+                    choices: None,
                     user: false,
                     text: "Two finished alternatives".into(),
                     references: vec![],
@@ -2350,6 +3025,7 @@ mod tests {
                                 description: song.idea.description.clone(),
                                 instructions: String::new(),
                                 protected_tracks: vec![],
+                                sources: vec![],
                             },
                         })
                         .collect(),
@@ -2405,10 +3081,10 @@ mod tests {
         make_ready(&app, cx);
         app.update(cx, |this, _| {
             let s = this.song_workshop.as_mut().unwrap();
-            s.view_round = Some(0);
             s.brief = TextField::new("もっと静かにしてください");
             let snapshot = s.snapshot.as_mut().unwrap();
             snapshot.document.messages.push(Message {
+                choices: None,
                 references: Vec::new(),
                 attachments: Vec::new(),
                 user: false,
@@ -2429,6 +3105,7 @@ mod tests {
                         description: "静かなピアノ\n柔らかな弦楽器".into(),
                         instructions: "Private composer instructions".into(),
                         protected_tracks: vec![],
+                        sources: vec![],
                     },
                 }],
             });
@@ -2500,9 +3177,9 @@ mod tests {
         make_ready(&app, cx);
         app.update(cx, |this, _| {
             let s = this.song_workshop.as_mut().unwrap();
-            s.view_round = Some(0);
             let snapshot = s.snapshot.as_mut().unwrap();
             snapshot.document.messages.push(Message {
+                choices: None,
                 references: vec![],
                 attachments: Vec::new(),
                 user: false,
@@ -2524,6 +3201,7 @@ mod tests {
                             description: "Piano and strings".into(),
                             instructions: String::new(),
                             protected_tracks: Vec::new(),
+                            sources: vec![],
                         },
                     })
                     .collect(),
@@ -2626,6 +3304,7 @@ mod tests {
                 .as_mut()
                 .unwrap();
             snapshot.document.messages.push(Message {
+                choices: None,
                 references: vec![],
                 attachments: Vec::new(),
                 user: false,
@@ -2636,11 +3315,85 @@ mod tests {
         // The same blocks the editor's transcript draws for a list: one per item, not one line of
         // asterisks and dashes.
         for selector in [
-            "workshop-markdown-song-workshop-message-0-1-0-0-block",
-            "workshop-markdown-song-workshop-message-0-1-1-0-block",
+            "song-workshop-message-0-block-2",
+            "song-workshop-message-0-block-3",
         ] {
             assert!(cx.debug_bounds(selector).is_some(), "{selector} is drawn");
         }
+    }
+
+    /// A wrapped Japanese answer is as tall as its blocks, and the candidates follow it.
+    ///
+    /// Measured before its width was known, the answer wrapped at every character and kept that
+    /// height: a four-line reply stood thousands of pixels tall, and the candidate cards under it
+    /// fell past the end of the scroll range.
+    #[gpui::test]
+    fn a_wrapped_japanese_answer_leaves_its_candidates_in_reach(cx: &mut gpui::TestAppContext) {
+        use auris_session::workshop::{Candidate, Direction, Message, Round};
+
+        let (app, cx) = crate::harness::open(cx);
+        cx.update(|window, cx| {
+            app.update(cx, |this, cx| {
+                this.show_project_chooser(window, cx);
+                this.open_song_workshop(window, cx);
+            })
+        });
+        make_ready(&app, cx);
+        app.update(cx, |this, _| {
+            let snapshot = this
+                .song_workshop
+                .as_mut()
+                .unwrap()
+                .snapshot
+                .as_mut()
+                .unwrap();
+            snapshot.document.messages.push(Message {
+                choices: None,
+                references: vec![],
+                attachments: Vec::new(),
+                user: false,
+                text: "パーティー感たっぷりのユーロビートですね！まずはメロディ・コード・歌詞を\
+                       比べられるデモを3つ作ります。\n\n\
+                       1. 王道ハイテンションのパーティーアンセム。夜のダンスフロアで歌います。\n\
+                       2. コミカルなパーティーチューン。掛け声が多めで、跳ねる感じです。\n\
+                       3. クールでちょっと切ないユーロビート。サビで一気に弾けます。"
+                    .into(),
+            });
+            snapshot.document.rounds.push(Round {
+                after_message: 1,
+                candidates: vec![Candidate {
+                    id: 0,
+                    parent: None,
+                    ready: false,
+                    error: None,
+                    recoveries: 0,
+                    tools: Default::default(),
+                    feedback: None,
+                    direction: Direction {
+                        title: "Midnight".into(),
+                        description: "Eurobeat".into(),
+                        instructions: String::new(),
+                        protected_tracks: Vec::new(),
+                        sources: vec![],
+                    },
+                }],
+            });
+        });
+        crate::harness::resize(&app, cx, gpui::size(gpui::px(700.0), gpui::px(800.0)));
+        let first = cx.debug_bounds("song-workshop-message-0-block-1").unwrap();
+        assert!(
+            first.size.height > gpui::px(30.0),
+            "the opening paragraph wraps at this width, which is what the measurement got wrong"
+        );
+        // The paragraph, then one block per item of the numbered list.
+        let root = cx.debug_bounds("song-workshop-message-0-block-4").unwrap();
+        let card = cx.debug_bounds("song-candidate-0").unwrap();
+        assert!(
+            card.top() - root.bottom() < gpui::px(200.0),
+            "the candidate sits under the answer: answer ends at {:?}, card starts at {:?}",
+            root.bottom(),
+            card.top()
+        );
     }
 
     #[gpui::test]
@@ -2698,7 +3451,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn changing_comparison_invalidates_pending_audition(cx: &mut gpui::TestAppContext) {
+    fn loading_candidate_audio_invalidates_pending_audition(cx: &mut gpui::TestAppContext) {
         let (app, cx) = crate::harness::open(cx);
         cx.update(|window, cx| app.update(cx, |this, cx| this.open_song_workshop(window, cx)));
         make_ready(&app, cx);
@@ -2706,7 +3459,7 @@ mod tests {
             let s = this.song_workshop.as_mut().unwrap();
             s.preparing = Some(0);
             let serial = s.preview_serial;
-            s.view(1);
+            s.load_candidate_audio();
             assert!(s.preparing.is_none());
             assert_ne!(serial, s.preview_serial);
         });
@@ -2741,12 +3494,12 @@ mod tests {
         let latest = tone(44_100);
         let before = app.update(cx, |this, _| {
             let s = this.song_workshop.as_mut().unwrap();
-            s.view_round = Some(0);
             let snapshot = s.snapshot.as_mut().unwrap();
             snapshot
                 .document
                 .messages
                 .push(auris_session::workshop::Message {
+                    choices: None,
                     references: vec![],
                     attachments: Vec::new(),
                     user: false,
@@ -2767,6 +3520,7 @@ mod tests {
                         description: "A melody being written".into(),
                         instructions: "Continue".into(),
                         protected_tracks: vec![],
+                        sources: vec![],
                     },
                 }],
             });
@@ -2942,7 +3696,94 @@ mod tests {
     }
 
     #[gpui::test]
-    fn workshop_slash_models_keep_provider_routes_and_global_preferences(
+    fn reasoning_popover_uses_supported_steps_and_keeps_workshop_preferences_local(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (app, cx) = crate::harness::open(cx);
+        cx.update(|window, cx| {
+            app.update(cx, |this, cx| {
+                this.show_project_chooser(window, cx);
+                this.open_song_workshop(window, cx);
+            })
+        });
+        make_ready(&app, cx);
+        app.update(cx, |this, _| {
+            let s = this.song_workshop.as_mut().unwrap();
+            s.preferences.backend = "codex".into();
+            s.preferences.model = "fixture".into();
+            s.preferences.effort = auris_session::ReasoningEffort::Default;
+            s.preferences.fast_mode = false;
+            s.models = vec![super::super::agent_chat::ModelOption {
+                name: "fixture".into(),
+                efforts: Some(vec![
+                    auris_session::ReasoningEffort::Low,
+                    auris_session::ReasoningEffort::High,
+                ]),
+                ..Default::default()
+            }];
+        });
+        crate::harness::paint(&app, cx);
+        crate::harness::click("workshop-effort", cx);
+        crate::harness::paint(&app, cx);
+        let popup = cx.debug_bounds("workshop-effort-popup").unwrap();
+        assert!(popup.bottom() <= cx.debug_bounds("workshop-effort").unwrap().top());
+        cx.simulate_keystrokes("right");
+        crate::harness::paint(&app, cx);
+        app.read_with(cx, |this, _| {
+            assert_eq!(
+                this.song_workshop.as_ref().unwrap().preferences.effort,
+                auris_session::ReasoningEffort::Low
+            )
+        });
+        cx.simulate_keystrokes("end");
+        crate::harness::paint(&app, cx);
+        app.read_with(cx, |this, _| {
+            assert_eq!(
+                this.song_workshop.as_ref().unwrap().preferences.effort,
+                auris_session::ReasoningEffort::High
+            );
+            // Each change is the one both chats open with next time.
+            assert_eq!(
+                this.settings.agent.effort,
+                auris_session::ReasoningEffort::High
+            );
+            assert_eq!(this.settings.agent.model, "fixture");
+            assert_eq!(this.agent_chat.effort, auris_session::ReasoningEffort::High);
+        });
+        let slider = cx.debug_bounds("workshop-effort-picker-steps").unwrap();
+        crate::harness::press(cx, slider.center());
+        crate::harness::release(cx, slider.center());
+        crate::harness::paint(&app, cx);
+        app.read_with(cx, |this, _| {
+            assert_eq!(
+                this.song_workshop.as_ref().unwrap().preferences.effort,
+                auris_session::ReasoningEffort::Low
+            )
+        });
+        crate::harness::click("workshop-effort-picker-fast", cx);
+        crate::harness::paint(&app, cx);
+        app.read_with(cx, |this, _| {
+            assert!(this.song_workshop.as_ref().unwrap().preferences.fast_mode)
+        });
+        crate::harness::click("workshop-effort-picker-reset", cx);
+        crate::harness::paint(&app, cx);
+        app.read_with(cx, |this, _| {
+            let prefs = &this.song_workshop.as_ref().unwrap().preferences;
+            assert_eq!(prefs.effort, auris_session::ReasoningEffort::Default);
+            assert!(!prefs.fast_mode);
+            assert_eq!(
+                this.settings.agent.effort,
+                auris_session::ReasoningEffort::Default
+            );
+            assert!(!this.settings.agent.fast_mode);
+        });
+        cx.simulate_keystrokes("escape");
+        crate::harness::paint(&app, cx);
+        app.read_with(cx, |this, _| assert!(this.song_workshop.is_some()));
+    }
+
+    #[gpui::test]
+    fn workshop_slash_models_keep_provider_routes_and_are_remembered(
         cx: &mut gpui::TestAppContext,
     ) {
         let (app, cx) = crate::harness::open(cx);
@@ -3008,7 +3849,9 @@ mod tests {
             assert_eq!(s.preferences.backend, "rig");
             assert_eq!(s.preferences.model, "same-model");
             assert!(s.brief.content().is_empty());
-            assert_eq!(this.settings.agent, before);
+            assert_eq!(this.settings.agent.backend, "rig");
+            assert_eq!(this.settings.agent.model, "same-model");
+            assert_eq!(this.settings.agent.policy, before.policy);
         });
     }
 
@@ -3215,7 +4058,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn model_selection_does_not_change_global_settings(cx: &mut gpui::TestAppContext) {
+    fn a_workshop_model_choice_is_remembered_for_both_chats(cx: &mut gpui::TestAppContext) {
         let (app, cx) = crate::harness::open(cx);
         let before = app.read_with(cx, |this, _| this.settings.agent.clone());
         cx.update(|window, cx| app.update(cx, |this, cx| this.open_song_workshop(window, cx)));
@@ -3224,6 +4067,11 @@ mod tests {
             this.song_workshop.as_mut().unwrap().models =
                 vec![super::super::agent_chat::ModelOption {
                     name: "test-model".into(),
+                    connection: Some(auris_agent::ModelConnection {
+                        backend: "claude".into(),
+                        provider: "ollama".into(),
+                        ..Default::default()
+                    }),
                     ..Default::default()
                 }];
             this.choose_workshop_model(0);
@@ -3231,7 +4079,44 @@ mod tests {
                 this.song_workshop.as_ref().unwrap().preferences.model,
                 "test-model"
             );
-            assert_eq!(this.settings.agent, before);
+            assert_eq!(this.settings.agent.model, "test-model");
+            assert_eq!(this.settings.agent.backend, "claude");
+            assert_eq!(this.settings.agent.policy, before.policy);
+            assert_eq!(this.agent_chat.chosen_model, "test-model");
+            assert_eq!(this.agent_chat.backend, "claude");
+            // Saved, not merely held: the baseline is what was last written to the file.
+            assert_eq!(this.settings_baseline.borrow().agent.model, "test-model");
+        });
+    }
+
+    #[gpui::test]
+    fn an_unavailable_remembered_model_falls_back_without_forgetting_it(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (app, cx) = crate::harness::open(cx);
+        cx.update(|window, cx| app.update(cx, |this, cx| this.open_song_workshop(window, cx)));
+        make_ready(&app, cx);
+        app.update(cx, |this, _| {
+            let s = this.song_workshop.as_mut().unwrap();
+            s.preferences.backend = "codex".into();
+            s.preferences.model = "gone".into();
+            s.preferences.effort = auris_session::ReasoningEffort::Max;
+            let (sender, receiver) = std::sync::mpsc::channel();
+            sender
+                .send(Ok(r#"{"models":[{"name":"local","efforts":["low","high"],"connection":{"backend":"rig","provider":"ollama","url":"","api_key_env":""}}]}"#.into()))
+                .unwrap();
+            s.model_receiver = Some(receiver);
+        });
+        app.update(cx, |this, cx| this.poll_song_workshop(cx));
+        app.read_with(cx, |this, _| {
+            let s = this.song_workshop.as_ref().unwrap();
+            assert_eq!(s.preferences.model, "local");
+            assert_eq!(s.preferences.backend, "rig");
+            assert_eq!(
+                s.preferences.effort,
+                auris_session::ReasoningEffort::Default
+            );
+            assert!(matches!(s.command_feedback, Some(Ok(_))));
         });
     }
     #[gpui::test]

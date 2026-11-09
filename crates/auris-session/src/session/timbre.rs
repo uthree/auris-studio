@@ -1,11 +1,15 @@
 //! Read-only library audition, acoustic indexing and explicit adoption of a discovered sound.
 
 use super::Session;
+use super::SoundEnvelope;
 use crate::{Edit, SessionError};
+use crate::{EnvelopeTargets, TimbreCharacter, TimbreTargets};
 use auris_core::plugin::{NoteEvent, PluginState, PrepareContext, ProcessContext};
 use auris_core::project::PresetRef;
 use auris_core::{AudioBuffer, ParamTarget, PluginRegistry, TrackId};
-use auris_dsp::timbre::{TimbreProjection, project_timbres_refined, timbre_features};
+use auris_dsp::timbre::{
+    TimbreProjection, project_timbres_refined, timbre_character, timbre_features,
+};
 use std::sync::{
     Arc,
     atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -75,10 +79,16 @@ impl TimbreMapControl {
     }
 }
 
+/// Makes a fresh, prepared instrument for a mapped sound.
+type NewInstrument<'a> =
+    dyn Fn(&TimbreSound) -> Result<Box<dyn auris_core::Instrument>, SessionError> + 'a;
+
 /// Immutable library snapshot. Move to an ordinary background thread before calling `run`.
 pub struct TimbreMapJob {
     registry: Arc<PluginRegistry>,
     sounds: Vec<TimbreSound>,
+    /// Each font's file, for the envelope cache's key; stamped on the worker.
+    font_files: Vec<(auris_core::project::SoundFontId, std::path::PathBuf)>,
     sample_rate: f64,
 }
 
@@ -89,6 +99,8 @@ pub struct TimbreMap {
     /// Sources omitted because at least one reference trigger was silent.
     pub skipped: Vec<String>,
     projection: TimbreProjection,
+    characters: Vec<TimbreCharacter>,
+    envelopes: Vec<Option<SoundEnvelope>>,
     summaries: Vec<TimbreCluster>,
     previews: Vec<Arc<AudioBuffer>>,
     sample_rate: f64,
@@ -192,12 +204,12 @@ impl Session {
     /// hold and 400 ms release. Neither live tracks nor their mixer state enter the analysis.
     pub fn timbre_map_job(&self) -> Result<TimbreMapJob, SessionError> {
         let fonts = auris_sampler::SoundFontBank::shared();
+        let mut font_files = Vec::new();
         let mut sounds: Vec<_> = self
             .registry
             .instruments()
             .filter(|d| {
-                d.id.as_ref() != auris_sampler::SAMPLER_ID
-                    && d.id.as_ref() != "auris.synth.noisedrum"
+                !auris_sampler::needs_asset(&d.id) && d.id.as_ref() != "auris.synth.noisedrum"
             })
             .map(|d| TimbreSound {
                 name: d.name.to_string(),
@@ -208,6 +220,9 @@ impl Session {
         for reference in self.soundfonts() {
             if let Some(font) = self.fonts.get(reference.id) {
                 fonts.insert(reference.id, font);
+                if let Some(path) = reference.path.resolve(self.project_folder()) {
+                    font_files.push((reference.id, path));
+                }
                 for preset in self
                     .soundfont_presets(reference.id)
                     .into_iter()
@@ -236,8 +251,40 @@ impl Session {
         Ok(TimbreMapJob {
             registry: crate::default_registry(fonts),
             sounds,
+            font_files,
             sample_rate: self.sample_rate(),
         })
+    }
+
+    /// The timbre cluster that each track's sound was measured into, in track order.
+    ///
+    /// Only what the map actually measured is answered for: a melodic track playing a
+    /// SoundFont preset, matched by font, bank and patch, or a built-in instrument still on the
+    /// default patch the reference recording used. An edited built-in, a hosted plugin, a drum
+    /// kit, a singer, audio and buses are left out — a colour claims a resemblance, and none of
+    /// those was listened to. The cluster ids are the map's own and mean nothing outside it.
+    pub fn timbre_track_clusters(&self, map: &TimbreMap) -> Vec<(TrackId, usize)> {
+        self.project
+            .tracks
+            .iter()
+            .filter_map(|track| {
+                let auris_core::project::TrackKind::Instrument(inner) = &track.kind else {
+                    return None;
+                };
+                if inner.file.is_some() {
+                    return None;
+                }
+                let cluster = if inner.instrument_id == auris_sampler::SAMPLER_ID {
+                    let preset = auris_sampler::stored_preset(&inner.instrument_state)?;
+                    map.cluster_for(&inner.instrument_id, Some(preset))
+                } else if inner.instrument_state.is_empty() {
+                    map.cluster_for(&inner.instrument_id, None)
+                } else {
+                    None
+                }?;
+                Some((track.id, cluster))
+            })
+            .collect()
     }
 
     /// Adopts a mapped sound on a track as one undoable instrument or preset edit.
@@ -278,27 +325,6 @@ impl Session {
             }
         }
     }
-
-    /// Plays a cached, level-matched reference through the chosen track without changing it.
-    ///
-    /// The track's mute, inserts, fader and routing apply to audition, but never to analysis.
-    pub fn preview_timbre(
-        &mut self,
-        map: &TimbreMap,
-        index: usize,
-        track: TrackId,
-    ) -> Result<(), SessionError> {
-        self.require_track(track)?;
-        if (map.sample_rate - self.sample_rate()).abs() > 0.1 {
-            return Err(failure("the audio rate changed; rescan the library"));
-        }
-        let buffer = map
-            .previews
-            .get(index)
-            .ok_or_else(|| failure("unknown mapped sound"))?;
-        self.play_singer_preview(track, buffer);
-        Ok(())
-    }
 }
 
 impl TimbreMapJob {
@@ -311,22 +337,29 @@ impl TimbreMapJob {
     pub fn run(self, control: &TimbreMapControl) -> Result<TimbreMap, SessionError> {
         let mut sounds = Vec::new();
         let mut rows = Vec::new();
+        let mut characters = Vec::new();
+        let mut envelopes = Vec::new();
         let mut previews = Vec::new();
         let mut skipped = Vec::new();
-        for (index, sound) in self.sounds.into_iter().enumerate() {
+        let new_instrument = |sound: &TimbreSound| -> Result<_, SessionError> {
+            let mut instrument = self.registry.create_instrument(&sound.instrument_id)?;
+            let mut state = PluginState::default();
+            if let Some(preset) = sound.preset {
+                auris_sampler::store_preset(&mut state, preset);
+            }
+            instrument.load_state(&state);
+            instrument.prepare(&PrepareContext::new(self.sample_rate, BLOCK, 2));
+            Ok(instrument)
+        };
+        for (index, sound) in self.sounds.iter().enumerate() {
             control.check()?;
             let mut features = Vec::new();
+            let mut reference_characters = Vec::new();
             let mut preview = None;
             let mut silent = false;
             for pitch in [48, 60, 72] {
                 for velocity in [0.45, 0.85] {
-                    let mut instrument = self.registry.create_instrument(&sound.instrument_id)?;
-                    let mut state = PluginState::default();
-                    if let Some(preset) = sound.preset {
-                        auris_sampler::store_preset(&mut state, preset);
-                    }
-                    instrument.load_state(&state);
-                    instrument.prepare(&PrepareContext::new(self.sample_rate, BLOCK, 2));
+                    let mut instrument = new_instrument(sound)?;
                     let mut audio = render_reference(
                         instrument.as_mut(),
                         self.sample_rate,
@@ -335,7 +368,10 @@ impl TimbreMapJob {
                         control,
                     )?;
                     match timbre_features(&audio, HOLD).map_err(failure)? {
-                        Some(values) => features.extend(values),
+                        Some(values) => {
+                            reference_characters.push(timbre_character(&audio, HOLD, &values));
+                            features.extend(values);
+                        }
                         None => silent = true,
                     }
                     if pitch == 60 && velocity == 0.85 {
@@ -345,15 +381,18 @@ impl TimbreMapJob {
                 }
             }
             if silent {
-                skipped.push(sound.name);
+                skipped.push(sound.name.clone());
             } else {
-                sounds.push(sound);
+                envelopes.push(self.envelope(sound, &new_instrument, control)?);
+                sounds.push(sound.clone());
                 rows.push(features);
+                characters.push(TimbreCharacter::mean(&reference_characters));
                 previews.push(preview.expect("the reference conditions include middle C"));
             }
             control.completed.store(index + 1, Ordering::Relaxed);
         }
         control.check()?;
+        super::envelope::save();
         let groups = (sounds.len() as f64).sqrt().round() as usize;
         let projection = project_timbres_refined(&rows, groups.clamp(1, 12)).map_err(failure)?;
         let summaries = cluster_summaries(&sounds, &projection);
@@ -361,15 +400,117 @@ impl TimbreMapJob {
             sounds,
             skipped,
             projection,
+            characters,
+            envelopes,
             summaries,
             previews,
             sample_rate: self.sample_rate,
             registry: self.registry,
         })
     }
+
+    /// The sound's measured envelope, from the disk cache when its font file is unchanged.
+    fn envelope(
+        &self,
+        sound: &TimbreSound,
+        new_instrument: &NewInstrument<'_>,
+        control: &TimbreMapControl,
+    ) -> Result<Option<SoundEnvelope>, SessionError> {
+        let key = sound.preset.and_then(|preset| {
+            let (_, path) = self.font_files.iter().find(|(id, _)| *id == preset.font)?;
+            Some(super::sound_search::font_envelope_key(
+                path,
+                preset.bank,
+                preset.patch,
+            ))
+        });
+        if let Some(cached) = key.as_deref().and_then(super::envelope::cached) {
+            return Ok(Some(cached));
+        }
+        let measured = super::envelope::measure_sound(|pitch| {
+            let mut instrument = new_instrument(sound).map_err(|e| e.to_string())?;
+            super::envelope::measure_note(instrument.as_mut(), self.sample_rate, pitch, control)
+                .map_err(|e| e.to_string())
+        })
+        .map_err(|e| control.check().err().unwrap_or_else(|| failure(e)))?;
+        if let (Some(key), Some(envelope)) = (key, &measured) {
+            super::envelope::remember(key, envelope.clone());
+        }
+        Ok(measured)
+    }
 }
 
 impl TimbreMap {
+    /// Fixed-scale descriptors shared by map axes and impression search.
+    pub fn characters(&self) -> &[TimbreCharacter] {
+        &self.characters
+    }
+
+    /// Each mapped sound's measured envelope, in the order of [`sounds`](Self::sounds); `None`
+    /// where no measured pitch sounded.
+    pub fn envelopes(&self) -> &[Option<SoundEnvelope>] {
+        &self.envelopes
+    }
+
+    /// Coordinates from the measured envelope: attack time, sustain level and release time,
+    /// times on a log scale from 1 ms to 10 s. A sound with no measurement sits at the centre.
+    pub fn envelope_positions(&self) -> Vec<[f64; 3]> {
+        let time = |ms: f64| (ms.max(1.).log10() / 4.).clamp(0., 1.) * 2. - 1.;
+        self.envelopes
+            .iter()
+            .map(|e| {
+                e.as_ref().map_or([0.; 3], |e| {
+                    let e = e.summary;
+                    [
+                        time(e.attack_ms),
+                        (e.sustain_db / 60. + 1.).clamp(0., 1.) * 2. - 1.,
+                        time(e.release_ms),
+                    ]
+                })
+            })
+            .collect()
+    }
+
+    /// Coordinates with stable meanings: brightness, attack speed and sustain.
+    pub fn character_positions(&self) -> Vec<[f64; 3]> {
+        self.characters
+            .iter()
+            .map(|c| {
+                [
+                    c.brightness * 2. - 1.,
+                    c.attack * 2. - 1.,
+                    c.sustain * 2. - 1.,
+                ]
+            })
+            .collect()
+    }
+
+    /// Rank measured sounds using shared interpreted targets and envelope ranges — the same
+    /// distance the agent's `search_instruments` uses; names can be filtered separately.
+    pub fn search_character(
+        &self,
+        targets: &TimbreTargets,
+        envelope: &EnvelopeTargets,
+    ) -> Vec<(usize, f64)> {
+        let mut matches: Vec<_> = self
+            .characters
+            .iter()
+            .enumerate()
+            .map(|(i, c)| {
+                let shape = if envelope.is_empty() {
+                    0.
+                } else {
+                    self.envelopes[i]
+                        .as_ref()
+                        .map_or(1., |e| envelope.distance(&e.summary))
+                };
+                (i, targets.distance(*c) + shape)
+            })
+            .collect();
+        matches.sort_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)));
+        matches
+    }
+
     /// Populated clusters, with representatives and bounded examples for display or naming.
     pub fn cluster_summaries(&self) -> &[TimbreCluster] {
         &self.summaries
@@ -680,6 +821,8 @@ mod tests {
         assert_eq!(summaries[0].representative, sounds[1]);
         let map = TimbreMap {
             sounds,
+            characters: vec![],
+            envelopes: vec![],
             skipped: vec![],
             projection,
             summaries,
@@ -705,6 +848,7 @@ mod tests {
         assert_eq!(map.cluster_for(auris_sampler::SAMPLER_ID, None), None);
         assert_eq!(map.cluster_for("unmeasured", None), None);
         let corrected = map.cluster_summaries_with_icons(|_| crate::SoundIcon::Guitar);
+        track_clusters_follow_measured_sounds_only(&map);
         for summary in corrected {
             assert_eq!(
                 summary.icon_counts,
@@ -832,6 +976,36 @@ mod tests {
         assert_eq!(control.completed(), count);
         assert!(map.sounds.len() >= 2);
         assert_eq!(map.positions().len(), map.sounds.len());
+        assert_eq!(map.envelopes().len(), map.sounds.len());
+        assert!(
+            map.envelopes()
+                .iter()
+                .all(|e| e.as_ref().is_some_and(|e| e.by_pitch.len() == 3))
+        );
+        assert!(
+            map.envelope_positions()
+                .iter()
+                .flatten()
+                .all(|v| (-1. ..=1.).contains(v))
+        );
+        // An envelope range alone ranks the slowest swell first.
+        let swell = map.search_character(
+            &TimbreTargets::default(),
+            &EnvelopeTargets {
+                attack_ms: Some(crate::Bounds {
+                    min: Some(2000.),
+                    max: None,
+                }),
+                ..Default::default()
+            },
+        );
+        let slowest = (0..map.sounds.len())
+            .max_by(|a, b| {
+                let attack = |i: usize| map.envelopes()[i].as_ref().unwrap().summary.attack_ms;
+                attack(*a).total_cmp(&attack(*b))
+            })
+            .unwrap();
+        assert_eq!(swell[0].0, slowest);
         assert_eq!(
             map.cluster_summaries()
                 .iter()
@@ -915,6 +1089,49 @@ mod tests {
         assert!(
             preview.peak() > 0.01,
             "the keyboard uses the retained SoundFont preset"
+        );
+    }
+
+    /// Called from the summaries test, which owns the only hand-built map: `builtin` is cluster
+    /// 2 and the preset on font 3 is cluster 5.
+    fn track_clusters_follow_measured_sounds_only(map: &TimbreMap) {
+        let mut session = Session::new(SessionOptions::headless()).unwrap();
+        let measured = map.sounds[3].preset.unwrap();
+        let project = &mut session.project;
+        let sampler = |project: &mut auris_core::project::Project, name, preset| {
+            let id = project.add_instrument_track(name, auris_sampler::SAMPLER_ID);
+            let inner = project
+                .track_mut(id)
+                .and_then(|t| t.kind.as_instrument_mut())
+                .unwrap();
+            auris_sampler::store_preset(&mut inner.instrument_state, preset);
+            id
+        };
+        let preset = sampler(project, "Preset", measured);
+        let _other = sampler(
+            project,
+            "Other",
+            PresetRef {
+                patch: 9,
+                ..measured
+            },
+        );
+        let _unset = project.add_instrument_track("No preset", auris_sampler::SAMPLER_ID);
+        let plain = project.add_instrument_track("Plain", "builtin");
+        let edited = project.add_instrument_track("Edited", "builtin");
+        project
+            .track_mut(edited)
+            .and_then(|t| t.kind.as_instrument_mut())
+            .unwrap()
+            .instrument_state
+            .params
+            .insert("cutoff".into(), 0.5);
+        let _drums = project.add_drum_track("Drums", "builtin");
+        let _audio = project.add_audio_track("Audio");
+        assert_eq!(
+            session.timbre_track_clusters(map),
+            vec![(preset, 5), (plain, 2)],
+            "unmeasured presets, edited patches and drum kits get no cluster"
         );
     }
 }

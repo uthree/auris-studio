@@ -8,10 +8,12 @@
 use auris_i18n::Key;
 use auris_session::prelude::*;
 
-use gpui::{Axis, IntoElement, MouseButton, MouseDownEvent, Pixels, div, prelude::*, px};
+use gpui::{
+    Axis, IntoElement, MouseButton, MouseDownEvent, Pixels, SharedString, div, prelude::*, px,
+    relative,
+};
 
 use crate::app::{AurisApp, Drag};
-use crate::i18n::track_kind_key;
 use crate::theme::Metrics;
 use crate::ui::automation;
 use crate::ui::widgets::{
@@ -28,6 +30,11 @@ const RESIZE_BAND: Pixels = px(4.0);
 
 /// Below the ordinary saved height there is not room for the header's three content rows.
 const COMPACT_TRACK_HEADER_BELOW: f32 = 72.0;
+
+/// From this height the pan fader has a row of its own under the volume; below it the two share
+/// one. The ordinary saved height is one row short of three: stacked there, the pan row ran out
+/// of the bottom of the header and its label and fader were cut off.
+const STACKED_TRACK_HEADER_FROM: f32 = 96.0;
 
 /// How a track's arm button is latched.
 ///
@@ -188,6 +195,7 @@ impl AurisApp {
         // document revision, and reading the cache needs the borrow the track would hold.
         let take_state = self.singer_take_badge(track_id);
         let singer_label = self.singer_voice_label(track_id);
+        let sound = self.track_sound_label(track_id);
         let Some(track) = self.project().track(track_id) else {
             return div().into_any_element();
         };
@@ -202,7 +210,30 @@ impl AurisApp {
                 let muted = track.mixer.mute;
                 let soloed = track.mixer.solo;
                 let name = track.name.clone();
-                let kind = self.t(track_kind_key(&track.kind));
+                // What plays the track, by name, where the kind used to be: every melodic track
+                // is an "Instrument", and that word never told anybody which piano it was. The
+                // kind is not lost — it opens the tooltip — and a long name gives way to the
+                // track's own name rather than pushing it out of the header.
+                let sound_text = sound.text(self.language);
+                let sound_tip = sound.tooltip(self.language);
+                let sound_unset = sound.is_unset();
+                let sound_label = |selector: String| {
+                    div()
+                        .id(SharedString::from(selector.clone()))
+                        .debug_selector(move || selector)
+                        .min_w_0()
+                        .max_w(relative(0.5))
+                        .text_xs()
+                        .text_color(if sound_unset {
+                            theme.text_faint
+                        } else {
+                            theme.text_muted
+                        })
+                        .when(sound_unset, |label| label.italic())
+                        .truncate()
+                        .child(sound_text.clone())
+                        .tooltip(crate::ui::tooltip::keyed_tip(sound_tip.clone(), "", &theme))
+                };
                 // The voice that sings this track, where one has been chosen — beside the kind
                 // label, with the one fact about the take worth a glance: whether it is still
                 // what the notes say. Behind is a badge and never a fallback; the take keeps
@@ -245,6 +276,7 @@ impl AurisApp {
 
                 let is_selected = selected == Some(id);
                 let is_dragging = dragging == Some(id);
+                let stacked = height >= STACKED_TRACK_HEADER_FROM;
 
                 if height < COMPACT_TRACK_HEADER_BELOW {
                     let status = [
@@ -336,6 +368,10 @@ impl AurisApp {
                                         .text_color(theme.text)
                                         .truncate()
                                         .child(name)
+                                        .child(crate::ui::inline_edit::spot(
+                                            &self.canvas.spots,
+                                            crate::ui::inline_edit::header_name_spot(id),
+                                        ))
                                         .tooltip(self.tip(Key::MenuRename, ""))
                                         .on_mouse_down(
                                             MouseButton::Left,
@@ -351,13 +387,7 @@ impl AurisApp {
                                             ),
                                         ),
                                 )
-                                .child(
-                                    div()
-                                        .flex_shrink_0()
-                                        .text_xs()
-                                        .text_color(theme.text_faint)
-                                        .child(kind),
-                                )
+                                .child(sound_label(format!("track-sound-compact-{index}")))
                                 .when(!status.is_empty(), |this| {
                                     this.child(
                                         div()
@@ -501,6 +531,10 @@ impl AurisApp {
                                             .text_color(theme.text)
                                             .truncate()
                                             .child(name)
+                                            .child(crate::ui::inline_edit::spot(
+                                                &self.canvas.spots,
+                                                crate::ui::inline_edit::header_name_spot(id),
+                                            ))
                                             .tooltip(self.tip(Key::MenuRename, ""))
                                             .on_mouse_down(
                                                 MouseButton::Left,
@@ -516,7 +550,11 @@ impl AurisApp {
                                                 ),
                                             ),
                                     )
-                                    .child(div().text_xs().text_color(theme.text_faint).child(kind))
+                                    // A singer with a voice names it on the badge below, which
+                                    // also carries the take's state; one name is enough.
+                                    .when(voice.is_none(), |this| {
+                                        this.child(sound_label(format!("track-sound-{index}")))
+                                    })
                                     .when_some(voice, |this, voice| {
                                         let label_tip = crate::ui::tooltip::keyed_tip(
                                             match voice_status {
@@ -664,10 +702,23 @@ impl AurisApp {
                                         div()
                                             .flex_1()
                                             .min_w_0()
-                                            .child(self.gain_control(id, gain_db, cx)),
-                                    ),
+                                            .child(self.gain_control(id, gain_db, stacked, cx)),
+                                    )
+                                    // Sharing the row, the two drop their captions — the value
+                                    // says which is which, and the tooltip names it — so that
+                                    // neither reading is cut down to its unit.
+                                    .when(!stacked, |row| {
+                                        row.child(
+                                            div()
+                                                .w(px(44.0))
+                                                .flex_shrink_0()
+                                                .child(self.pan_control(id, pan, false, cx)),
+                                        )
+                                    }),
                             )
-                            .child(self.pan_control(id, pan, cx)),
+                            .when(stacked, |column| {
+                                column.child(self.pan_control(id, pan, true, cx))
+                            }),
                     )
                     // The input, left of what the track puts out, which is the order the signal
                     // travels in — narrower, and set a little apart, so it reads as a different
@@ -772,11 +823,12 @@ impl AurisApp {
         &self,
         track: TrackId,
         gain_db: f32,
+        labelled: bool,
         cx: &mut gpui::Context<Self>,
     ) -> impl IntoElement + use<> {
         self.fader(
             ("gain", track.0 as usize),
-            self.t(Key::Volume),
+            if labelled { self.t(Key::Volume) } else { "" },
             ParamTarget::TrackGain(track),
             gain_db,
             cx,
@@ -787,11 +839,12 @@ impl AurisApp {
         &self,
         track: TrackId,
         pan: f32,
+        labelled: bool,
         cx: &mut gpui::Context<Self>,
     ) -> impl IntoElement + use<> {
         self.fader(
             ("pan", track.0 as usize),
-            self.t(Key::Pan),
+            if labelled { self.t(Key::Pan) } else { "" },
             ParamTarget::TrackPan(track),
             pan,
             cx,
@@ -857,6 +910,51 @@ mod tests {
         }
         app.update(cx, |this, _| this.auto_sing = None);
         std::fs::remove_file(path).unwrap();
+    }
+
+    #[gpui::test]
+    fn a_track_header_names_what_plays_it_rather_than_its_kind(cx: &mut gpui::TestAppContext) {
+        let (app, cx, track, _clip) = with_a_clip(cx);
+        let (empty_sampler, singer, bus) = app.update(cx, |this, _| {
+            this.language = auris_i18n::Language::Japanese;
+            let sampler = this
+                .session
+                .add_instrument_track("Piano", SAMPLER_ID)
+                .unwrap();
+            let singer = this.session.add_singer_track("Vocal");
+            let bus = this.session.add_bus_track("Bus");
+            (sampler, singer, bus)
+        });
+        paint(&app, cx);
+        app.read_with(cx, |this, _| {
+            let instrument = this
+                .project()
+                .track(track)
+                .and_then(|track| track.kind.as_instrument())
+                .unwrap()
+                .instrument_id
+                .clone();
+            let label = this.track_sound_label(track);
+            assert_eq!(
+                label.text(this.language),
+                this.instrument_label(track, &instrument),
+                "a built-in instrument is named, not called an instrument"
+            );
+            assert_ne!(label.text(this.language), "ソフト音源");
+            assert!(label.tooltip(this.language).starts_with("ソフト音源 · "));
+
+            let empty = this.track_sound_label(empty_sampler);
+            assert!(empty.is_unset());
+            assert_eq!(empty.text(this.language), "音源なし");
+
+            let voiceless = this.track_sound_label(singer);
+            assert!(voiceless.is_unset());
+            assert_eq!(voiceless.text(this.language), "声なし");
+            assert_eq!(voiceless.tooltip(this.language), "シンガー · 声なし");
+
+            assert_eq!(this.track_sound_label(bus).text(this.language), "バス");
+        });
+        assert!(cx.debug_bounds("track-sound-0").is_some());
     }
 
     #[gpui::test]

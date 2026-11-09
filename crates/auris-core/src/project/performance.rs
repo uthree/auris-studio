@@ -108,6 +108,7 @@ pub fn performed_note_slots(
             NoteTransform::Mute { amount } => mute(&mut notes, *amount, context),
             NoteTransform::Brush { amount } => brush(&mut notes, *amount, context),
             NoteTransform::Slide { amount } => slide(&mut notes, *amount, context),
+            NoteTransform::Sustain { ticks } => sustain(&mut notes, *ticks),
             local => {
                 notes = notes
                     .into_iter()
@@ -319,6 +320,37 @@ fn slide(notes: &mut Vec<Note>, amount: f32, context: PerformanceContext<'_>) {
     notes.extend(added);
 }
 
+/// Every release held `ticks` longer, stopping where the same key is struck again.
+///
+/// Only ever lengthens: a written overlap of one pitch with itself is the writer's and is not
+/// shortened here. The stop is read from the attacks as this stage sees them, so a sustain after
+/// a timing stage stops at the moved strike.
+fn sustain(notes: &mut [Note], ticks: i64) {
+    let ticks = Ticks(ticks.clamp(0, super::SUSTAIN_MAX_TICKS));
+    if ticks <= Ticks::ZERO {
+        return;
+    }
+    let mut order: Vec<_> = (0..notes.len()).collect();
+    order.sort_by_key(|&i| (notes[i].pitch, notes[i].start));
+    let mut ends = Vec::with_capacity(notes.len());
+    for (k, &i) in order.iter().enumerate() {
+        let note = &notes[i];
+        let next = order[k + 1..]
+            .iter()
+            .map(|&j| &notes[j])
+            .take_while(|other| other.pitch == note.pitch)
+            .map(|other| other.start)
+            .find(|&start| start > note.start);
+        let end = next.map_or(note.end() + ticks, |next| (note.end() + ticks).min(next));
+        ends.push((i, end));
+    }
+    for (i, end) in ends {
+        if end > notes[i].end() {
+            notes[i].length = end - notes[i].start;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -375,6 +407,71 @@ mod tests {
         assert_eq!(heard[2].start, Ticks(109));
         assert_eq!(heard[3].start, Ticks(10));
         assert!(heard.iter().all(|note| note.length > Ticks::ZERO));
+    }
+
+    #[test]
+    fn sustain_holds_releases_until_the_same_key_is_struck_again() {
+        // A broken chord: each key rings on under the next, and the repeated C stops exactly
+        // where it is struck again rather than overlapping itself.
+        let written = vec![
+            n(60, 0, 240),
+            n(64, 240, 240),
+            n(67, 480, 240),
+            n(60, 960, 240),
+        ];
+        let clip = clip(written.clone(), vec![NoteTransform::Sustain { ticks: 960 }]);
+        let heard: Vec<_> = clip.sounding_notes(120.0).collect();
+        let spans: Vec<_> = heard
+            .iter()
+            .map(|note| (note.pitch, note.start.raw(), note.length.raw()))
+            .collect();
+        assert_eq!(
+            spans,
+            [
+                (60, 0, 960),
+                (64, 240, 1200),
+                (67, 480, 1200),
+                (60, 960, 1200)
+            ]
+        );
+        assert_eq!(clip.notes, written, "the text is untouched");
+    }
+
+    #[test]
+    fn sustain_never_shortens_stops_at_the_clip_end_and_reads_clamped() {
+        // A written self-overlap is the writer's and survives; a hold past the clip is cut at
+        // its end; a wild number in a file is read as a whole note, and zero is the identity.
+        let overlap = vec![n(60, 0, 480), n(60, 240, 240)];
+        let clip_a = clip(overlap.clone(), vec![NoteTransform::Sustain { ticks: 240 }]);
+        let heard: Vec<_> = clip_a.sounding_notes(120.0).collect();
+        assert_eq!(heard[0].length, Ticks(480));
+        assert_eq!(heard[1].length, Ticks(480));
+
+        let tail = clip(
+            vec![n(60, 3600, 120)],
+            vec![NoteTransform::Sustain { ticks: 960 }],
+        );
+        assert_eq!(
+            tail.sounding_notes(120.0).next().unwrap().end(),
+            Ticks(3840)
+        );
+
+        let meter = SignatureMap::default();
+        let wild = performed_notes(
+            vec![n(60, 0, 120)],
+            &[NoteTransform::Sustain { ticks: 1_000_000 }],
+            PerformanceContext {
+                bpm: 120.0,
+                pass: 0,
+                start: Ticks::ZERO,
+                length: Ticks(100_000),
+                signatures: &meter,
+            },
+        );
+        assert_eq!(wild[0].length, Ticks(120 + super::super::SUSTAIN_MAX_TICKS));
+
+        let none = clip(overlap.clone(), vec![NoteTransform::Sustain { ticks: 0 }]);
+        assert_eq!(none.sounding_notes(120.0).collect::<Vec<_>>(), overlap);
     }
 
     #[test]

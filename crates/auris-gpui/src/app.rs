@@ -591,6 +591,21 @@ pub enum Drag {
         /// value exactly where it was and changes only what happens next.
         fine: bool,
     },
+    /// Turning a parameter's knob.
+    ///
+    /// The knob follows the pointer itself — Atelier's `Knob` owns the gesture and reports a
+    /// value — so this holds only what the knob does not: the transaction that makes the turn
+    /// one undo step, and the anchor that lets Shift slow it down as it does every other drag.
+    Knob {
+        /// What is being changed.
+        target: ParamTarget,
+        /// The knob's own reading, from 0 to 1, where the drag was last anchored.
+        anchor_reading: Option<f32>,
+        /// The parameter's normalised value at the anchor.
+        anchor_value: f32,
+        /// Whether the fine modifier was held at the anchor.
+        fine: bool,
+    },
     /// Dragging a point along one of a clip's curves.
     CurvePoint {
         /// Whose curve.
@@ -636,6 +651,22 @@ pub enum Drag {
         at: Ticks,
         /// How far into the section the pointer took hold, kept so the boundary does not jump
         /// to the pointer on the first move.
+        grab_offset: Ticks,
+    },
+    /// Dragging a comment along its track's lane or around the piano roll.
+    Comment {
+        /// What holds it.
+        host: CommentHost,
+        /// Which comment.
+        id: CommentId,
+        /// How far right of the comment's pin the pointer took hold.
+        grab_offset: Ticks,
+    },
+    /// Dragging the start of a lyric line along the lyrics lane.
+    LyricLine {
+        /// The change being moved, by where it currently sits.
+        at: Ticks,
+        /// How far into the line the pointer took hold.
         grab_offset: Ticks,
     },
     /// Sweeping along the harmony lane with the button held, hearing each chord in turn.
@@ -705,6 +736,17 @@ pub enum Drag {
         /// Pointer x when the drag began.
         start_x: Pixels,
     },
+    /// Moving one of a layer's shape sliders.
+    LayerDial {
+        /// The layer whose shape is being edited.
+        track: TrackId,
+        /// Which slider.
+        dial: crate::ui::layer::LayerDial,
+        /// Where the bar was when the drag began, from 0 to 1.
+        start_fraction: f32,
+        /// Pointer x when the drag began.
+        start_x: Pixels,
+    },
     /// Moving one point of a normalized long-note volume contour.
     VolumeContourPoint {
         /// Clip whose performance curve is edited.
@@ -713,6 +755,15 @@ pub enum Drag {
         index: usize,
         /// Drawable graph bounds captured when the drag begins.
         bounds: Bounds<Pixels>,
+    },
+    /// Dragging one of the video window's colour sliders.
+    VideoColour {
+        /// Which slider of the open picker.
+        channel: crate::ui::colour_picker::HsvChannel,
+        /// Slider position when the drag began, from 0 to 1.
+        start_fraction: f32,
+        /// Pointer x when the drag began.
+        start_x: Pixels,
     },
     /// Dragging the time-zoom slider.
     TimeZoom {
@@ -822,7 +873,9 @@ impl Drag {
                 OrnamentHandle::Fall => Edit::SetFall(*clip, *index),
                 OrnamentHandle::Vibrato => Edit::SetVibrato(*clip, *index),
             }),
-            Drag::Param { target, .. } => Some(Edit::AdjustParameter(*target)),
+            Drag::Param { target, .. } | Drag::Knob { target, .. } => {
+                Some(Edit::AdjustParameter(*target))
+            }
             // The decay corner moves two parameters and this names one of them. The undo step is
             // one either way — the whole drag is a transaction — so this only decides the label.
             Drag::EnvelopeHandle { target, .. } => Some(Edit::AdjustParameter(*target)),
@@ -839,6 +892,8 @@ impl Drag {
             Drag::PerformDial { clip, .. } | Drag::VolumeContourPoint { clip, .. } => {
                 Some(Edit::SetClipTransforms(*clip))
             }
+            // One step for the sweep, as every other slider is.
+            Drag::LayerDial { .. } => Some(Edit::SetLayerShape),
             // undo stack until Write is pressed.
             Drag::Tempo { at, .. } => Some(Edit::ChangeTempo(*at)),
             // Selecting is not an edit; it changes what a later edit will act on.
@@ -847,8 +902,12 @@ impl Drag {
             Drag::AuditionHarmony => None,
             Drag::HarmonyChord { .. } => Some(Edit::MoveChord),
             Drag::SectionLabel { .. } => Some(Edit::MoveSection),
+            Drag::LyricLine { .. } => Some(Edit::MoveLyricLine),
+            Drag::Comment { .. } => Some(Edit::MoveComment),
             // How far in the view is zoomed is a property of the window, like a panel's width.
             Drag::TimeZoom { .. } => None,
+            // The video's look is an application setting, not part of the document.
+            Drag::VideoColour { .. } => None,
             // Panel and window geometry is a property of the window, not the document: resizing
             // a panel or moving the plugin editor is not an edit and must never land on the undo
             // stack.
@@ -880,6 +939,23 @@ mod tests {
     #[test]
     fn a_test_build_never_offers_persistent_recovery_entries() {
         assert!(startup_recoveries().is_empty());
+    }
+
+    #[test]
+    fn a_window_waiting_for_play_does_not_claim_there_is_no_output() {
+        let silent = auris_session::AudioStatus {
+            host: None,
+            buffer_frames: None,
+            device: "none".into(),
+            running: false,
+            sample_rate: 48_000.0,
+            channels: 2,
+            gpu: None,
+        };
+        let waiting = audio_line(&silent, true, Language::English);
+        assert!(waiting.starts_with(Key::AudioWaitsForPlay.get(Language::English)));
+        let missing = audio_line(&silent, false, Language::English);
+        assert!(missing.starts_with(Key::NoAudioOutput.get(Language::English)));
     }
 
     #[test]
@@ -1295,6 +1371,8 @@ pub struct CanvasBounds {
     pub structure: Rc<Cell<Option<Bounds<Pixels>>>>,
     /// The chord strip between the structure lane and the clip lanes.
     pub harmony: Rc<Cell<Option<Bounds<Pixels>>>>,
+    /// The lyrics strip under the harmony.
+    pub lyrics: Rc<Cell<Option<Bounds<Pixels>>>>,
     /// The arrangement's clip lanes.
     pub lanes: Rc<Cell<Option<Bounds<Pixels>>>>,
     /// The piano roll's note grid.
@@ -1316,6 +1394,8 @@ pub struct CanvasBounds {
     /// hundred and twenty-nine of them, they are a machine word each, and a lane closed and
     /// reopened wants the rectangle it had.
     curves: CurveBounds,
+    /// Where labels that can be edited in place were painted, for an inline prompt to cover.
+    pub spots: crate::ui::inline_edit::SpotBook,
 }
 
 impl CanvasBounds {
@@ -1370,6 +1450,8 @@ pub(crate) struct DiskWatchTaskState {
 
 /// One project tab, its session and its editing state.
 pub struct AurisApp {
+    /// Whether this owner edits a conversational note reference rather than a song.
+    pub(crate) reference_editor: bool,
     pub(crate) project_tabs: Option<gpui::WeakEntity<crate::project_tabs::ProjectTabs>>,
     pub(crate) tab_bar_height: Pixels,
     pub(crate) pending_audition: Option<crate::project_windows::AuditionRequest>,
@@ -1380,6 +1462,7 @@ pub struct AurisApp {
     pub(crate) welcome_transition: Option<crate::ui::project_chooser::WelcomeTransition>,
     pub(crate) song_workshop: Option<crate::ui::song_workshop::SongWorkshop>,
     pub(crate) attachment_preview: Option<crate::ui::attachment_preview::AttachmentPreview>,
+    pub(crate) inline_attachments: Vec<crate::ui::attachment_preview::AttachmentPreview>,
     pub(crate) project_window: Option<gpui::WindowId>,
     /// The document, the engine and every command that touches them.
     pub(crate) session: Session,
@@ -1393,6 +1476,8 @@ pub struct AurisApp {
     pub(crate) pitch: PitchView,
     /// The drum editor's independent row scrolling and MIDI-address visibility.
     pub(crate) drum_editor: crate::ui::drum_editor::DrumEditorState,
+    /// The piano roll's event list: where it is scrolled, and its selected curve row.
+    pub(crate) event_list: crate::ui::event_list::EventListState,
     pub(crate) selected_track: Option<TrackId>,
     /// Monitor dropouts already reported, so the frame loop says something once per new gap
     /// rather than thirty times a second for as long as the count stands.
@@ -1467,6 +1552,8 @@ pub struct AurisApp {
     pub(crate) voicevox_menu_generation: u64,
     /// Bounded artwork cache and the current background image request.
     pub(crate) singer_portraits: crate::ui::singer_portrait::SingerPortraits,
+    /// The library's speaker faces, keyed by shelf entry.
+    pub(crate) singer_icons: crate::ui::singer_portrait::SingerIcons,
     /// Preview notes the voice has already sung, at the engine's rate.
     ///
     /// What makes dragging a note across pitches instant the second time it passes one.
@@ -1488,9 +1575,13 @@ pub struct AurisApp {
     pub(crate) drum_analysis: crate::ui::drums::DrumAnalysisState,
     /// Whether the dedicated analysis panel is open.
     pub(crate) analysis_panel: bool,
+    /// The music linter's findings and its two schedules.
+    pub(crate) lint: crate::ui::lint::LintState,
     /// CPU music-analysis jobs and their unapplied draft.
     pub(crate) music_analysis: crate::ui::music_analysis::MusicAnalysisState,
     pub(crate) visualizer: crate::ui::visualizer::VisualizerState,
+    /// The note-roll video window: whether it is open, its preview and what ffmpeg was found.
+    pub(crate) video_export: crate::ui::video_export::VideoExportState,
     pub(crate) physical_view: crate::ui::physical_model::PhysicalView,
     pub(crate) track_grid: crate::ui::track_grid::TrackGrid,
     pub(crate) timbre_map: crate::ui::timbre_map::TimbreMapState,
@@ -1526,6 +1617,7 @@ pub struct AurisApp {
     pub(crate) last_pane: Pane,
     /// Window height as of the last frame, used only as a fallback before the first paint.
     pub(crate) viewport_height: Pixels,
+    pub(crate) transport_height: Pixels,
     /// Width of the arrangement body as of the last frame.
     pub(crate) arrangement_width: Pixels,
     /// Rectangles the canvases were painted into last frame.
@@ -1548,7 +1640,7 @@ pub struct AurisApp {
     /// The same, for the inspector's column of settings.
     pub(crate) inspector_scroll: gpui::ScrollHandle,
     /// Collapsed inspector groups, retained when the selected object changes.
-    pub(crate) inspector_collapsed: [bool; 4],
+    pub(crate) inspector_collapsed: [bool; 5],
     /// The same, for the log's lines.
     pub(crate) log_scroll: gpui::ScrollHandle,
     /// The viewport of the open custom menu-bar dropdown.
@@ -1562,6 +1654,8 @@ pub struct AurisApp {
     pub(crate) menu_focus_return: Option<gpui::FocusHandle>,
     /// Which menu-bar menu is open, on the platforms that draw their own bar.
     pub(crate) menu_bar: Option<OpenMenu>,
+    /// Painted bounds of pinned menu categories in the current project title bar.
+    pub(crate) menu_title_bounds: crate::ui::menu_bar::MenuTitleBounds,
     /// The open rename sheet, if any.
     pub(crate) prompt: Option<Prompt>,
     /// Background release check, verified download, or an update awaiting application.
@@ -1612,7 +1706,7 @@ pub struct AurisApp {
     pub(crate) plugin_discovery_error: Option<String>,
     /// The singer voices found on this machine, scanned once and kept — the
     /// [`Self::clap_files`] arrangement, cleared when a voice folder is added or forgotten.
-    pub(crate) voices: Option<Vec<(String, std::path::PathBuf, Option<String>)>>,
+    pub(crate) voices: Option<Vec<(String, std::path::PathBuf)>>,
     /// Bounded metadata returned after an opened `.clap` file is inspected in a child process.
     /// Empty results are cached too, so a broken plugin is not retried on every repaint.
     pub(crate) clap_contents:
@@ -1737,6 +1831,10 @@ fn session_options(settings: &Settings) -> SessionOptions {
         gpu: live,
         shipped_fonts: live,
         soundfont_library: live.then(|| auris_session::config_dir().join("soundfonts.json")),
+        // Off in a test for the library's reason: a suite must not keep presets in the user's
+        // configuration, nor read the ones somebody kept there.
+        performance_presets: live
+            .then(auris_session::performance_presets::PerformancePresetBook::path),
         // Off in a test for the fonts' reason: a checkout with the dictionary fetched would
         // otherwise run a different suite than a CI machine without it.
         shipped_dictionary: live,
@@ -1794,70 +1892,92 @@ impl Drop for AurisApp {
 impl AurisApp {
     /// Builds an empty project window with realtime audio initially suspended.
     pub fn new(cx: &mut Context<Self>) -> Self {
-        cx.on_release(|this, cx| {
-            let windows: Vec<gpui::AnyWindowHandle> = [
-                this.settings_window.map(Into::into),
-                this.voice_setup_window.map(Into::into),
-                this.rhythm_window.map(Into::into),
-            ]
-            .into_iter()
-            .flatten()
-            .collect();
-            cx.defer(move |cx| {
-                for handle in windows {
-                    let _ = handle.update(cx, |_, window, _| window.remove_window());
-                }
-            });
-        })
-        .detach();
-        cx.on_app_quit(|this, cx| {
-            if let crate::ui::updates::UpdatePhase::Ready(update) = &this.update_phase {
-                // Restart and Update marks only the window it was chosen in, and this callback may
-                // be another window's, so the choice is read from every window.
-                let restart = this.restart_after_update
-                    || crate::project_windows::restart_requested_elsewhere(this.project_window, cx);
-                if let Err(error) = crate::update_check::spawn_update_helper(update, restart) {
-                    log::error!("could not start update helper: {error}");
-                    crate::update_check::record_update_launch_failure(&error);
-                }
-            }
-            let complete = this.flush_conversation_storage();
-            cx.background_executor().spawn(async move {
-                if let Some(complete) = complete {
-                    let _ = complete.recv_timeout(std::time::Duration::from_millis(95));
-                }
+        Self::new_editor_state(cx, false)
+    }
+
+    /// Builds an isolated, device-free owner for the shared reference piano roll.
+    pub(crate) fn new_reference_editor(cx: &mut Context<Self>) -> Self {
+        Self::new_editor_state(cx, true)
+    }
+
+    fn new_editor_state(cx: &mut Context<Self>, reference: bool) -> Self {
+        if !reference {
+            cx.on_release(|this, cx| {
+                let windows: Vec<gpui::AnyWindowHandle> = [
+                    this.settings_window.map(Into::into),
+                    this.voice_setup_window.map(Into::into),
+                    this.rhythm_window.map(Into::into),
+                ]
+                .into_iter()
+                .flatten()
+                .collect();
+                cx.defer(move |cx| {
+                    for handle in windows {
+                        let _ = handle.update(cx, |_, window, _| window.remove_window());
+                    }
+                });
             })
-        })
-        .detach();
+            .detach();
+            cx.on_app_quit(|this, cx| {
+                if let crate::ui::updates::UpdatePhase::Ready(update) = &this.update_phase {
+                    // Restart and Update marks only the window it was chosen in, and this callback may
+                    // be another window's, so the choice is read from every window.
+                    let restart = this.restart_after_update
+                        || crate::project_windows::restart_requested_elsewhere(
+                            this.project_window,
+                            cx,
+                        );
+                    if let Err(error) = crate::update_check::spawn_update_helper(update, restart) {
+                        log::error!("could not start update helper: {error}");
+                        crate::update_check::record_update_launch_failure(&error);
+                    }
+                }
+                let complete = this.flush_conversation_storage();
+                cx.background_executor().spawn(async move {
+                    if let Some(complete) = complete {
+                        let _ = complete.recv_timeout(std::time::Duration::from_millis(95));
+                    }
+                })
+            })
+            .detach();
+        }
         let settings = Settings::load();
         let language = settings.language();
         let input = InputSettings::load();
         let keymap = input.keys.clone();
-        keymap.apply(cx);
-        // GPUI resolves shortcuts on key-down but implicitly clicks focused controls on key-up.
-        // Observe the action that actually ran, preserving local controls and unbound Space.
-        cx.observe_keystrokes(|this, event, window, _| {
-            if event.keystroke.key == "space" {
-                this.transport_space_window = event
-                    .action
-                    .as_ref()
-                    .is_some_and(|action| {
-                        action.as_any().is::<actions::TogglePlay>()
-                            || action.as_any().is::<actions::ReturnToZero>()
-                    })
-                    .then(|| window.window_handle().window_id());
-            }
-        })
-        .detach();
+        if !reference {
+            keymap.apply(cx);
+            // GPUI resolves shortcuts on key-down but implicitly clicks focused controls on key-up.
+            // Observe the action that actually ran, preserving local controls and unbound Space.
+            cx.observe_keystrokes(|this, event, window, _| {
+                if event.keystroke.key == "space" {
+                    this.transport_space_window = event
+                        .action
+                        .as_ref()
+                        .is_some_and(|action| {
+                            action.as_any().is::<actions::TogglePlay>()
+                                || action.as_any().is::<actions::ReturnToZero>()
+                        })
+                        .then(|| window.window_handle().window_id());
+                }
+            })
+            .detach();
+        }
         let appearance = Appearance::load();
         let theme = appearance.theme();
-        theme.install(cx);
+        if !reference {
+            theme.install(cx);
+        }
 
         // List before creating this session's private workspace. An empty current workspace has
         // no snapshot and would not be offered, but taking the inventory first keeps "previous
         // session" a structural fact rather than a convention the registry must infer.
-        let recovery_queue = startup_recoveries();
-        if !cfg!(test) {
+        let recovery_queue = if reference {
+            VecDeque::new()
+        } else {
+            startup_recoveries()
+        };
+        if !reference && !cfg!(test) {
             let cleanup = Session::begin_recovery_quarantine_cleanup();
             cx.background_executor()
                 .spawn(async move {
@@ -1867,13 +1987,20 @@ impl AurisApp {
                 })
                 .detach();
         }
-        let mut session =
-            Session::new(session_options(&settings)).expect("a session opens even without audio");
+        let mut session = Session::new(if reference {
+            SessionOptions {
+                shipped_dictionary: !cfg!(test),
+                ..SessionOptions::headless()
+            }
+        } else {
+            session_options(&settings)
+        })
+        .expect("a session opens even without audio");
         // The same empty document File → New gives, rather than a separate idea of what a fresh
         // start looks like. Launching used to leave a two-bar arpeggio and a bass line lying
         // around, which was useful while there was nothing else to hear and is now just
         // somebody else's music to delete before starting.
-        session.new_project();
+        session.new_project_with_track(&auris_i18n::messages::new_track_name(language, 1));
 
         // The dictionary the settings name, loaded once for the session's lifetime. A folder
         // that fails to load is logged and left in the settings — deleting the setting over a
@@ -1887,12 +2014,15 @@ impl AurisApp {
         // the course; the first voice loaded follows it.
         session.set_singer_acceleration(settings.singer_acceleration);
 
-        let status = audio_line(&session.audio_status(), language);
+        let status = audio_line(&session.audio_status(), session.audio_suspended(), language);
         log::info!("{status}");
 
         // Repaint on a timer rather than per audio block: the playhead and meters live in
         // atomics written by the audio thread, and 30 fps is plenty to read them at.
         let repaint = cx.spawn(async move |this, cx| {
+            if reference {
+                return;
+            }
             loop {
                 cx.background_executor().timer(REPAINT_INTERVAL).await;
                 if this
@@ -1903,6 +2033,7 @@ impl AurisApp {
                         if this.session.take_output_changed() {
                             this.set_status(audio_line(
                                 &this.session.audio_status(),
+                                this.session.audio_suspended(),
                                 this.language,
                             ));
                         }
@@ -1923,6 +2054,7 @@ impl AurisApp {
                         this.watch_disk(cx);
                         this.drain_agent(cx);
                         this.poll_auto_sing(cx);
+                        this.poll_lint(cx);
                         this.poll_drum_analysis(cx);
                         this.poll_sung_preview(cx);
                         // Also here rather than in a command, because a monitor breaking up
@@ -1932,7 +2064,10 @@ impl AurisApp {
                         // The punch-out is a position the playhead crosses rather than a thing
                         // anybody does, so this is the only place that could notice it.
                         this.finish_punch();
+                        this.finish_input_calibration();
+                        this.finish_typing_calibration();
                         this.poll_singer_portrait(cx);
+                        this.poll_singer_icons(cx);
                         this.poll_spectrograms(cx);
                         this.report_graph_resource_error();
                         cx.notify();
@@ -1959,12 +2094,14 @@ impl AurisApp {
                 Err(error) => (Default::default(), Some(error.to_string())),
             };
         let mut app = Self {
+            reference_editor: reference,
             pending_audition: None,
             opening_project: None,
             project_chooser: None,
             welcome_transition: None,
             song_workshop: None,
             attachment_preview: None,
+            inline_attachments: Vec::new(),
             project_window: None,
             project_tabs: None,
             tab_bar_height: px(0.0),
@@ -1975,6 +2112,7 @@ impl AurisApp {
             signature_scroll_remainder: 0.0,
             pitch: PitchView::default(),
             drum_editor: crate::ui::drum_editor::DrumEditorState::default(),
+            event_list: crate::ui::event_list::EventListState::default(),
             selected_track,
             monitor_gaps: 0,
             selected_clip,
@@ -2005,14 +2143,17 @@ impl AurisApp {
             sung_retry: BTreeSet::new(),
             voicevox_catalogs: std::collections::HashMap::new(),
             singer_portraits: Default::default(),
+            singer_icons: Default::default(),
             voicevox_menu_generation: 0,
             sung_previews: std::collections::HashMap::new(),
             sung_preview_wish: None,
             sung_preview_rendering: false,
             drum_analysis: Default::default(),
             analysis_panel: false,
+            lint: Default::default(),
             music_analysis: Default::default(),
             visualizer: Default::default(),
+            video_export: Default::default(),
             physical_view: Default::default(),
             track_grid: Default::default(),
             timbre_map: Default::default(),
@@ -2032,6 +2173,7 @@ impl AurisApp {
             panes: PaneFocus::new(cx),
             last_pane: Pane::Arrangement,
             viewport_height: px(900.0),
+            transport_height: Metrics::TRANSPORT_HEIGHT,
             arrangement_width: px(900.0),
             canvas: CanvasBounds::default(),
             mixer_scroll: gpui::ScrollHandle::new(),
@@ -2040,12 +2182,13 @@ impl AurisApp {
             mixer_connect_send: false,
             library_scroll: gpui::ScrollHandle::new(),
             inspector_scroll: gpui::ScrollHandle::new(),
-            inspector_collapsed: [false; 4],
+            inspector_collapsed: [false; 5],
             log_scroll: gpui::ScrollHandle::new(),
             menu_bar_scroll: gpui::ScrollHandle::new(),
             menu: None,
             menu_focus_return: None,
             menu_bar: None,
+            menu_title_bounds: Default::default(),
             prompt: None,
             update_phase: crate::ui::updates::UpdatePhase::Idle,
             update_generation: 0,
@@ -2102,7 +2245,9 @@ impl AurisApp {
             clicked_key: None,
             _repaint: repaint,
         };
-        app.offer_next_recovery();
+        if !reference {
+            app.offer_next_recovery();
+        }
         app
     }
 
@@ -2139,7 +2284,8 @@ impl AurisApp {
     /// it. Each overlay handles Escape itself, since the binding that used to close them is one of
     /// the ones now out of reach.
     pub(crate) fn keys_are_claimed(&self) -> bool {
-        self.export_dialog.is_some()
+        self.reference_score_claims_keys()
+            || self.export_dialog.is_some()
             || self.export.is_some()
             || self.taking_text_input()
             || self.menu.is_some()
@@ -2162,6 +2308,7 @@ impl AurisApp {
         self.prompt.is_some()
             || self.palette.is_some()
             || self.library_search_focused
+            || (self.timbre_map.open && self.timbre_map.search_focused)
             || self.agent_chat.typing()
     }
 
@@ -3009,6 +3156,9 @@ impl AurisApp {
     /// Window chrome owns the product name and save marker separately; keeping this value
     /// document-only lets Atelier centre the title without duplicating application branding.
     pub(crate) fn document_title(&self) -> String {
+        if self.session.is_untitled() {
+            return self.t(Key::DocumentUntitled).to_owned();
+        }
         self.session.document_title()
     }
 
@@ -3038,9 +3188,84 @@ impl AurisApp {
             log::warn!("could not save settings: {error}");
         }
 
-        let line = audio_line(&self.session.audio_status(), self.language);
+        let line = audio_line(
+            &self.session.audio_status(),
+            self.session.audio_suspended(),
+            self.language,
+        );
         self.set_status(line.clone());
         Ok(line)
+    }
+
+    /// Starts measuring the input latency, saying so in the status line.
+    pub(crate) fn start_input_calibration(&mut self) -> Result<(), SessionError> {
+        self.session.start_input_calibration()?;
+        self.set_status(Key::MeasuringInputLatency.get(self.language).to_owned());
+        Ok(())
+    }
+
+    /// Forgets the measured input latency for the devices open now, and saves that.
+    pub(crate) fn clear_input_calibration(&mut self) {
+        self.session.clear_input_calibration();
+        self.settings.audio = self.session.audio_preferences().clone();
+        if let Err(error) = self.save_settings() {
+            log::warn!("could not save settings: {error}");
+        }
+    }
+
+    /// Keeps the result of a latency measurement that has just finished, and reports it.
+    ///
+    /// Polled, because the measurement ends when its clicks have played rather than when anybody
+    /// does anything.
+    fn finish_input_calibration(&mut self) {
+        let Some(result) = self.session.take_input_calibration() else {
+            return;
+        };
+        let line = match result {
+            Ok(found) => {
+                self.settings.audio = self.session.audio_preferences().clone();
+                if let Err(error) = self.save_settings() {
+                    log::warn!("could not save settings: {error}");
+                }
+                messages::input_latency_measured(self.language, found.offset_ms, found.spread_ms)
+            }
+            Err(error) => crate::i18n::error_text(&error, self.language),
+        };
+        self.set_status(line);
+    }
+
+    /// Starts a tap-along measuring the typing keyboard, saying so in the status line.
+    pub(crate) fn start_typing_calibration(&mut self) -> Result<(), SessionError> {
+        self.session.start_typing_calibration()?;
+        self.set_status(Key::TappingAlong.get(self.language).to_owned());
+        Ok(())
+    }
+
+    /// Forgets the measured typing latency, and saves that.
+    pub(crate) fn clear_typing_calibration(&mut self) {
+        self.session.clear_typing_calibration();
+        self.settings.audio = self.session.audio_preferences().clone();
+        if let Err(error) = self.save_settings() {
+            log::warn!("could not save settings: {error}");
+        }
+    }
+
+    /// Keeps the result of a tap-along that has just finished, and reports it.
+    fn finish_typing_calibration(&mut self) {
+        let Some(result) = self.session.take_typing_calibration() else {
+            return;
+        };
+        let line = match result {
+            Ok(found) => {
+                self.settings.audio = self.session.audio_preferences().clone();
+                if let Err(error) = self.save_settings() {
+                    log::warn!("could not save settings: {error}");
+                }
+                messages::typing_latency_measured(self.language, found.offset_ms, found.spread_ms)
+            }
+            Err(error) => crate::i18n::error_text(&error, self.language),
+        };
+        self.set_status(line);
     }
 
     /// Switches the interface language and remembers the choice.
@@ -3114,6 +3339,9 @@ impl AurisApp {
         appearance: Appearance,
         cx: &mut App,
     ) -> std::io::Result<()> {
+        if self.appearance.titlebar_menus != appearance.titlebar_menus {
+            self.close_menu_bar();
+        }
         self.appearance = appearance.normalised();
         self.theme = self.appearance.theme();
         self.theme.install(cx);
@@ -3358,7 +3586,7 @@ impl AurisApp {
             Ok(handle) => self.settings_window = Some(handle),
             Err(error) => {
                 let text =
-                    messages::failed(self.language, self.t(Key::Settings), &error.to_string());
+                    messages::failed(self.language, self.t(Key::Settings), error.to_string());
                 self.set_status(text);
             }
         }
@@ -3400,19 +3628,9 @@ impl AurisApp {
         self.remember_layout();
     }
 
-    /// Fixed rows stacked above and below the central row: the transport, the status bar, and —
-    /// everywhere the application draws its own menu bar — that row too.
-    ///
-    /// One answer for both `resize_dock` and `drawn_dock_sizes`, because they have to subtract
-    /// the same chrome the layout actually stacks: the menu bar was once left out of both, and
-    /// on Windows a bottom dock dragged to its limit overflowed the window by exactly the 26
-    /// pixels the two forgot — a mistake macOS, where development happens, never showed.
-    pub(crate) fn chrome_height() -> Pixels {
-        let menu = match Self::wants_menu_bar() {
-            true => crate::ui::menu_bar::HEIGHT,
-            false => gpui::px(0.0),
-        };
-        crate::titlebar::HEIGHT + Metrics::TRANSPORT_HEIGHT + Metrics::STATUS_HEIGHT + menu
+    /// Chrome reserved around the docks, including responsive transport controls.
+    pub(crate) fn chrome_height(&self) -> Pixels {
+        crate::titlebar::HEIGHT + self.transport_height + Metrics::STATUS_HEIGHT
     }
 
     /// Applies a dock resize drag.
@@ -3423,7 +3641,7 @@ impl AurisApp {
         let available = match dock {
             Dock::Bottom => {
                 self.viewport_height
-                    - Self::chrome_height()
+                    - self.chrome_height()
                     - self.project_tabs_height()
                     - PanelLayout::MIN_ARRANGEMENT
             }
@@ -3483,7 +3701,7 @@ impl AurisApp {
             || {
                 point(
                     self.left_dock_offset() + self.panels.header_width,
-                    Self::chrome_height() + self.project_tabs_height() - Metrics::STATUS_HEIGHT
+                    self.chrome_height() + self.project_tabs_height() - Metrics::STATUS_HEIGHT
                         + self.panels.lanes.header_height(),
                 )
             },
@@ -3497,7 +3715,7 @@ impl AurisApp {
             || {
                 point(
                     self.left_dock_offset() + self.panels.header_width,
-                    Self::chrome_height() + self.project_tabs_height() - Metrics::STATUS_HEIGHT,
+                    self.chrome_height() + self.project_tabs_height() - Metrics::STATUS_HEIGHT,
                 )
             },
             |bounds| bounds.origin,
@@ -3712,7 +3930,16 @@ mod hidden_panel_input_tests {
 }
 
 /// The status line describing what the audio backend ended up doing.
-pub(crate) fn audio_line(status: &auris_session::AudioStatus, language: Language) -> String {
+///
+/// A window opens with its audio `suspended`: the device is claimed by the first explicit audio
+/// command, so a second project window does not take it from the first. Such a window has no
+/// running output yet, and saying "no audio output" there would tell somebody with working
+/// speakers that they have none.
+pub(crate) fn audio_line(
+    status: &auris_session::AudioStatus,
+    suspended: bool,
+    language: Language,
+) -> String {
     let engine = if status.running {
         messages::audio_status(
             language,
@@ -3720,6 +3947,8 @@ pub(crate) fn audio_line(status: &auris_session::AudioStatus, language: Language
             status.sample_rate,
             status.channels,
         )
+    } else if suspended {
+        Key::AudioWaitsForPlay.get(language).to_string()
     } else {
         Key::NoAudioOutput.get(language).to_string()
     };

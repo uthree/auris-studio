@@ -24,7 +24,7 @@ use auris_core::{
 use auris_singer::{BackendKind, VoiceCapabilities, VoiceInfo, VoiceModel};
 use auris_vocal::{
     CurveSources, JapaneseDictionary, SingerFrames, SingerScore, lyric_phonemes, phoneme_moras,
-    render_score, split_kana_lyric,
+    render_score, spoken_kana_lyric,
 };
 
 use crate::error::SessionError;
@@ -33,7 +33,14 @@ use crate::voice_setup::{
     VoicevoxConnection, VoicevoxSpeakerChoice, append_voicevox_speaker, read_voicevox_connection,
 };
 
-use super::Session;
+use super::{Session, lyric_slots};
+
+/// The shortest rest that sings a grouped っ: a thirty-second note.
+///
+/// The closure is silence before the next consonant, and anything shorter is heard as no
+/// closure at all — まって sung まて.
+const SOKUON_REST: auris_core::time::Ticks =
+    auris_core::time::Ticks(auris_core::time::TICKS_PER_QUARTER / 8);
 
 /// The lyric written on every note of a phrase after its first, OpenUTAU's way.
 ///
@@ -272,8 +279,14 @@ impl Session {
                 Err(error) => log::warn!("the shipped dictionary did not load: {error}"),
             }
         } else {
-            log::warn!(
-                "the shipped Japanese dictionary was not found; kanji lyrics need an installed NAIST dictionary or a dictionary selected in Settings. Searched: {:?}",
+            // `debug`, not `warn`: a missing dictionary is not a problem until something asks
+            // for a reading it cannot give, and at that moment `lyric_phonemes` returns
+            // `VocalError::NeedsDictionary` naming the text it could not read — which is the
+            // report a person can act on, where they can act on it. As a warning this fired on
+            // every start-up and on `auris new`, three lines about a feature the user may never
+            // touch, and it was the first thing the command line printed.
+            log::debug!(
+                "no Japanese dictionary is installed; kanji lyrics will ask for one. Searched: {:?}",
                 crate::library::dictionary_roots()
             );
         }
@@ -360,6 +373,21 @@ impl Session {
         indices: &[usize],
         text: &str,
     ) -> Result<usize, SessionError> {
+        self.write_lyrics_with_reading(clip, indices, text, None)
+    }
+
+    /// Write original lyrics with an optional independent kana pronunciation.
+    ///
+    /// An explicit reading works without a dictionary. The original text stays on the
+    /// first note with `+` continuations, while phonemes follow the reading one mora per
+    /// note. Invalid readings and insufficient slots fail before recording an edit.
+    pub fn write_lyrics_with_reading(
+        &mut self,
+        clip: ClipId,
+        indices: &[usize],
+        text: &str,
+        reading: Option<&str>,
+    ) -> Result<usize, SessionError> {
         let Some((_, target)) = self.project.midi_clip(clip) else {
             return Err(SessionError::UnknownClip(clip.0));
         };
@@ -376,20 +404,7 @@ impl Session {
         // Each note's new words, worked out in full before anything is recorded. The moras come
         // with their phonemes attached — asking `kana_phonemes` of each mora on its own would
         // lose ー its vowel, which only the mora before it knows.
-        let mut portions: Vec<(String, Vec<String>)> = match split_kana_lyric(text.trim()) {
-            Some(moras) => moras,
-            None => {
-                let phonemes = lyric_phonemes(text, self.japanese.as_ref())?;
-                phoneme_moras(&phonemes)
-                    .into_iter()
-                    .enumerate()
-                    .map(|(at, mora)| match at {
-                        0 => (text.trim().to_string(), mora),
-                        _ => (LYRIC_CONTINUATION.to_string(), mora),
-                    })
-                    .collect()
-            }
-        };
+        let mut portions = self.lyric_portions(text, reading)?;
 
         if portions.len() > order.len() {
             return Err(SessionError::InvalidNotes(format!(
@@ -405,7 +420,7 @@ impl Session {
             .filter(|(text, _)| text != LYRIC_CONTINUATION)
             .map(|(text, _)| text.as_str())
             .collect();
-        if surface != text.trim() {
+        if reading.is_some() || surface != text.trim() {
             for (index, (lyric, _)) in portions.iter_mut().enumerate() {
                 *lyric = if index == 0 {
                     text.trim().to_owned()
@@ -417,6 +432,39 @@ impl Session {
         let filled = portions.len();
         if filled == 0 {
             return Ok(0);
+        }
+        // A grouped っ is the rest after its note, so that rest has to be there.
+        if let Some(reading) = reading.filter(|r| r.contains(lyric_slots::NOTE_SEPARATOR)) {
+            let groups =
+                lyric_slots::read_note_groups(text, reading.trim(), self.japanese.as_ref())
+                    .map_err(SessionError::InvalidNotes)?;
+            let Some((_, target)) = self.project.midi_clip(clip) else {
+                return Err(SessionError::UnknownClip(clip.0));
+            };
+            for (group, &index) in groups.iter().zip(&order) {
+                if !group.rest_after {
+                    continue;
+                }
+                let note = &target.notes[index];
+                let end = note.start + note.length;
+                let next = target
+                    .notes
+                    .iter()
+                    .map(|other| other.start)
+                    .filter(|start| *start > note.start)
+                    .min();
+                if let Some(next) = next
+                    && next < end + SOKUON_REST
+                {
+                    return Err(SessionError::InvalidNotes(format!(
+                        "\"{}\" ends in っ, which is sung as a rest, but the next note starts at tick {} and note {index} ends at tick {}; shorten note {index} or move the next note so that at least {} ticks of rest follow it",
+                        group.text,
+                        next.raw(),
+                        end.raw(),
+                        SOKUON_REST.raw()
+                    )));
+                }
+            }
         }
         self.record(Edit::WriteLyrics);
         if let Some(target) = self.project.midi_clip_mut(clip) {
@@ -432,6 +480,60 @@ impl Session {
         }
         self.sync_singer_clip_names();
         Ok(filled)
+    }
+
+    /// What each note of a phrase would be given by [`Self::write_lyrics_with_reading`]: its
+    /// lyric and its phonemes, one entry per note slot, before the surface is restored.
+    pub(crate) fn lyric_portions(
+        &self,
+        text: &str,
+        reading: Option<&str>,
+    ) -> Result<Vec<(String, Vec<String>)>, SessionError> {
+        // Read as a phrase, not a mora at a time: the particles は and へ sing *wa* and *e*,
+        // and only the words around them say which は is the particle.
+        let dictionary = self.japanese.as_ref();
+        if let Some(reading) = reading.filter(|r| r.contains(lyric_slots::NOTE_SEPARATOR)) {
+            if text.trim().is_empty() {
+                return Err(SessionError::InvalidNotes(
+                    "Supply nonempty written lyrics and a nonempty kana reading".into(),
+                ));
+            }
+            return lyric_slots::read_note_groups(text, reading.trim(), dictionary)
+                .map(|groups| {
+                    groups
+                        .into_iter()
+                        .map(|group| (group.text, group.phonemes))
+                        .collect()
+                })
+                .map_err(SessionError::InvalidNotes);
+        }
+        let explicit = reading
+            .map(|reading| {
+                lyric_slots::spoken_reading(text, reading.trim(), dictionary)
+                    .filter(|moras| !moras.is_empty() && !text.trim().is_empty())
+                    .ok_or_else(|| {
+                        SessionError::InvalidNotes(
+                            "Supply nonempty written lyrics and a nonempty kana reading".into(),
+                        )
+                    })
+            })
+            .transpose()?;
+        let portions: Vec<(String, Vec<String>)> =
+            match explicit.or_else(|| spoken_kana_lyric(text.trim(), dictionary)) {
+                Some(moras) => moras,
+                None => {
+                    let phonemes = lyric_phonemes(text, self.japanese.as_ref())?;
+                    phoneme_moras(&phonemes)
+                        .into_iter()
+                        .enumerate()
+                        .map(|(at, mora)| match at {
+                            0 => (text.trim().to_string(), mora),
+                            _ => (LYRIC_CONTINUATION.to_string(), mora),
+                        })
+                        .collect()
+                }
+            };
+        Ok(portions)
     }
 
     /// Pins one phoneme of one note to `seconds` of sung time, or hands it back to the rule.
@@ -4309,6 +4411,81 @@ mod tests {
                 .notes
                 .iter()
                 .all(|note| note.lyric.is_empty())
+        );
+    }
+
+    #[test]
+    fn a_written_phrase_sings_its_particles_as_spoken() {
+        let (mut session, _, clip) = sung(9);
+        let filled = session
+            .write_lyrics(clip, &(0..9).collect::<Vec<_>>(), "きみは そらへ はしる")
+            .unwrap();
+        assert_eq!(filled, 9);
+        let notes = &session.midi_clip(clip).unwrap().notes;
+        // The spaces are part of the surface, so the phrase is kept whole on its first note.
+        assert_eq!(notes[0].lyric, "きみは そらへ はしる");
+        assert_eq!(notes[2].phonemes, ["w", "a"]);
+        assert_eq!(notes[5].phonemes, ["e"]);
+        assert_eq!(notes[6].phonemes, ["h", "a"], "はしる starts a word");
+
+        // A kana reading beside written text is read the same way.
+        let (mut session, _, clip) = sung(4);
+        session
+            .write_lyrics_with_reading(clip, &[0, 1, 2, 3], "夢は", Some("ゆめは"))
+            .unwrap();
+        let notes = &session.midi_clip(clip).unwrap().notes;
+        assert_eq!(notes[2].phonemes, ["w", "a"]);
+
+        // An unspaced word keeps one kana to a note, as written.
+        let (mut session, _, clip) = sung(3);
+        session.write_lyrics(clip, &[0, 1, 2], "ゆめは").unwrap();
+        let notes = &session.midi_clip(clip).unwrap().notes;
+        assert_eq!(notes[2].lyric, "は", "the note shows the kana as written");
+        assert_eq!(notes[2].phonemes, ["w", "a"]);
+    }
+
+    #[test]
+    fn a_grouped_reading_holds_long_vowels_and_rests_on_sokuon() {
+        let (mut session, _, clip) = sung(4);
+        let all = [0, 1, 2, 3];
+        // Back-to-back notes leave no rest for っ to be sung as.
+        let refused = session
+            .write_lyrics_with_reading(clip, &all, "さあ一緒に", Some("さあ| いっ|しょ|に"))
+            .unwrap_err()
+            .to_string();
+        assert!(refused.contains("rest"), "{refused}");
+        assert!(
+            session
+                .midi_clip(clip)
+                .unwrap()
+                .notes
+                .iter()
+                .all(|n| n.lyric.is_empty())
+        );
+
+        if let Some(target) = session.project.midi_clip_mut(clip) {
+            target.notes[1].length = Ticks::from_beats(0.75);
+        }
+        let filled = session
+            .write_lyrics_with_reading(clip, &all, "さあ一緒に", Some("さあ| いっ|しょ|に"))
+            .unwrap();
+        assert_eq!(filled, 4);
+        let notes = &session.midi_clip(clip).unwrap().notes;
+        assert_eq!(notes[0].lyric, "さあ一緒に");
+        assert_eq!(notes[0].phonemes, ["s", "a", "a"]);
+        assert_eq!(notes[1].lyric, LYRIC_CONTINUATION);
+        assert_eq!(
+            notes[1].phonemes,
+            ["i"],
+            "the closure is the rest, not a phoneme"
+        );
+        assert_eq!(notes[2].phonemes, ["ɕ", "o"]);
+
+        // Two sung moras never share a note.
+        assert!(
+            session
+                .write_lyrics_with_reading(clip, &all, "桜", Some("さく|ら"))
+                .is_err()
         );
     }
 

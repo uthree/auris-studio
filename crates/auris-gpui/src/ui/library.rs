@@ -1,5 +1,7 @@
 //! The left-hand library: every instrument, sound and effect the session can reach, as a tree.
 //!
+//! Selecting a section focuses its shelf; the library button returns to the full tree.
+//! Navigation never edits the document.
 //! Sections open into groups rather than into a list. Instruments and
 //! effects group by [`PluginCategory`]; a SoundFont groups by the MIDI banks the file itself
 //! declares. The reason is the same in both cases and it is a matter of scale: eleven built-in
@@ -147,6 +149,8 @@ impl Branch {
 pub(crate) struct LibraryTree {
     /// Branches whose state has been chosen, and what was chosen.
     chosen: HashMap<Branch, bool>,
+    /// Top-level shelf currently being explored; None shows the complete library.
+    shelf: Option<Branch>,
     /// First installed-plugin file in the bounded page currently shown by this browser.
     plugin_page_start: usize,
 }
@@ -472,7 +476,7 @@ enum Found {
     /// A `.vst3` bundle, represented without loading its executable code.
     Vst3File(usize),
     /// A singer voice on the shelf: its name, and the file it is.
-    Voice(String, std::path::PathBuf, Option<String>),
+    Voice(String, std::path::PathBuf),
 }
 
 /// How a branch row is drawn.
@@ -512,21 +516,27 @@ impl AurisApp {
             .size_full()
             .bg(theme.surface)
             .child(panel_header(self.t(Key::Library), &theme))
-            .child(crate::ui::widgets::button(
-                "open-timbre-map",
-                self.t(Key::TimbreMap),
-                crate::ui::widgets::ButtonStyle::Normal,
-                false,
-                theme.accent,
-                &theme,
-                cx.listener(|this, _, _, cx| {
-                    this.timbre_map.open = true;
-                    if this.timbre_map.map.is_none() && this.timbre_map.control.is_none() {
-                        this.scan_timbre_map(cx);
-                    }
-                    cx.notify();
-                }),
-            ))
+            // Inset like the search field under it, so the two share one left and right edge
+            // instead of the button running into the panel's sides.
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .mx_1()
+                    .my_1()
+                    .child(crate::ui::widgets::button(
+                        "open-timbre-map",
+                        self.t(Key::TimbreMap),
+                        crate::ui::widgets::ButtonStyle::Normal,
+                        false,
+                        theme.accent,
+                        &theme,
+                        cx.listener(|this, _, _, cx| {
+                            this.open_timbre_map(cx);
+                            cx.notify();
+                        }),
+                    )),
+            )
             .child(self.library_search_field(cx))
             .child(
                 self.scrolling(
@@ -549,6 +559,19 @@ impl AurisApp {
     }
 
     fn set_library_branch(&mut self, branch: Branch, open: bool) {
+        let section = matches!(
+            branch,
+            Branch::Instruments
+                | Branch::SoundFonts
+                | Branch::Effects
+                | Branch::Voices
+                | Branch::Plugins
+                | Branch::UserSounds
+        );
+        let open = open || (section && self.library.shelf.is_none());
+        if section {
+            self.library.shelf = open.then_some(branch);
+        }
         self.library.set_open(branch, open)
     }
 
@@ -666,7 +689,11 @@ impl AurisApp {
                 false => theme.border_subtle,
             })
             .cursor_text()
-            .child(icon(Icon::Library, px(13.0), theme.text_muted))
+            .child(
+                atelier::Icon::new(atelier::IconName::Search)
+                    .size(px(13.0))
+                    .color(theme.text_muted),
+            )
             .child(
                 div()
                     .relative()
@@ -713,7 +740,6 @@ impl AurisApp {
                         .flex()
                         .items_center()
                         .justify_center()
-                        .cursor_pointer()
                         .child(icon(Icon::Cross, px(10.0), theme.text_muted))
                         .on_mouse_down(
                             MouseButton::Left,
@@ -748,22 +774,58 @@ impl AurisApp {
             return self.search_rows(&query, cx);
         }
         let theme = self.theme.clone();
-        let mut rows = self.instrument_rows(cx);
-
-        rows.extend(self.user_sound_rows(cx));
-
-        rows.push(divider(&theme).into_any_element());
+        let shelf = self.library.shelf;
+        let mut rows = Vec::new();
+        if shelf.is_some() {
+            rows.push(
+                button(
+                    "library-root",
+                    format!("‹ {}", self.t(Key::Library)),
+                    ButtonStyle::Normal,
+                    false,
+                    theme.accent,
+                    &theme,
+                    cx.listener(|this, _, _, cx| {
+                        this.library.shelf = None;
+                        cx.notify();
+                    }),
+                )
+                .into_any_element(),
+            );
+        }
+        if shelf.is_none_or(|s| s == Branch::Instruments) {
+            rows.extend(self.instrument_rows(cx));
+        }
+        if shelf.is_none_or(|s| s == Branch::UserSounds) {
+            rows.extend(self.user_sound_rows(cx));
+        }
+        if shelf.is_none() {
+            rows.push(divider(&theme).into_any_element());
+        }
         let font_row_offset = rows.len();
-        rows.extend(self.soundfont_rows(font_row_offset, cx));
-        rows.push(divider(&theme).into_any_element());
-
-        rows.extend(self.voice_rows(cx));
-        rows.push(divider(&theme).into_any_element());
-        rows.extend(self.effect_rows(cx));
-        rows.push(divider(&theme).into_any_element());
-
+        if shelf.is_none_or(|s| s == Branch::SoundFonts) {
+            rows.extend(self.soundfont_rows(font_row_offset, cx));
+        }
+        if shelf.is_none() {
+            rows.push(divider(&theme).into_any_element());
+        }
+        if shelf.is_none_or(|s| s == Branch::Voices) {
+            rows.extend(self.voice_rows(cx));
+        }
+        if shelf.is_none() {
+            rows.push(divider(&theme).into_any_element());
+        }
+        if shelf.is_none_or(|s| s == Branch::Effects) {
+            rows.extend(self.effect_rows(cx));
+        }
+        if shelf.is_none() {
+            rows.push(divider(&theme).into_any_element());
+        }
         let plugin_row_offset = rows.len();
-        rows.extend(self.installed_plugin_rows(plugin_row_offset, cx));
+        if shelf.is_none_or(|s| s == Branch::Plugins) {
+            rows.extend(self.installed_plugin_rows(plugin_row_offset, cx));
+        }
+
         rows
     }
 
@@ -839,16 +901,19 @@ impl AurisApp {
             entries.consider(name, || Found::Vst3File(vst_offset + index));
         }
 
-        for (name, path, speaker) in self.voice_list() {
+        for (name, path) in self.voice_list() {
             let search_name = name.clone();
-            entries.consider(&search_name, || Found::Voice(name, path, speaker));
+            entries.consider(&search_name, || Found::Voice(name, path));
         }
 
         let mut found = entries.finish();
         let limited = found.len() > SEARCH_LIMIT;
         found.truncate(SEARCH_LIMIT);
         if found.is_empty() {
-            return vec![self.note_row(0, self.t(Key::BrowserNothingFound))];
+            return vec![
+                self.note_row(0, self.t(Key::BrowserNothingFound)),
+                self.find_by_sound_row(query, cx),
+            ];
         }
         let mut rows: Vec<AnyElement> = found
             .into_iter()
@@ -944,21 +1009,48 @@ impl AurisApp {
                         }),
                     )
                 }
-                Found::Voice(name, path, speaker) => self.voice_row(&name, path, speaker, cx),
+                Found::Voice(name, path) => self.voice_row(&name, path, cx),
             })
             .collect();
         if limited {
             rows.push(self.note_row(0, self.t(Key::BrowserSearchLimited)));
         }
+        rows.push(self.find_by_sound_row(query, cx));
         rows
     }
 
+    /// The way from a name search to the sound finder, carrying the words across: the tree
+    /// knows names, the finder knows names and how things sound, and somebody typing `soft`
+    /// here meant the second.
+    fn find_by_sound_row(&self, query: &str, cx: &mut gpui::Context<Self>) -> AnyElement {
+        let query = query.to_owned();
+        div()
+            .mx_1()
+            .mt_1()
+            .child(
+                atelier::Button::new("library-find-by-sound", self.t(Key::LibraryFindBySound))
+                    .icon(atelier::IconName::Search)
+                    .ghost()
+                    .size(atelier::ControlSize::Small)
+                    .full_width()
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.timbre_map.search =
+                            crate::ui::text_field::TextField::new(query.clone());
+                        this.leave_library_search();
+                        this.open_timbre_map(cx);
+                        cx.notify();
+                    })),
+            )
+            .into_any_element()
+    }
+
     /// The singer voices this machine can offer, scanned once and kept.
-    pub(crate) fn voice_list(&mut self) -> Vec<(String, std::path::PathBuf, Option<String>)> {
+    ///
+    /// One row per voice: a VOICEVOX connection's styles are the inspector's speaker picker,
+    /// the way a DiffSinger bank's speakers are, not separate shelf entries.
+    pub(crate) fn voice_list(&mut self) -> Vec<(String, std::path::PathBuf)> {
         self.voices
-            .get_or_insert_with(|| {
-                auris_session::library::voice_shelf_entries_with_settings(&self.settings)
-            })
+            .get_or_insert_with(|| auris_session::library::voices_with_settings(&self.settings))
             .clone()
     }
 
@@ -991,8 +1083,8 @@ impl AurisApp {
         if voices.is_empty() {
             rows.push(self.note_row(1, self.t(Key::BrowserNoVoices)));
         }
-        for (name, path, speaker) in voices {
-            rows.push(self.voice_row(&name, path, speaker, cx));
+        for (name, path) in voices {
+            rows.push(self.voice_row(&name, path, cx));
         }
         rows
     }
@@ -1002,7 +1094,6 @@ impl AurisApp {
         &self,
         name: &str,
         path: std::path::PathBuf,
-        speaker: Option<String>,
         cx: &mut gpui::Context<Self>,
     ) -> AnyElement {
         let theme = self.theme.clone();
@@ -1012,12 +1103,7 @@ impl AurisApp {
         let enabled = target.is_some();
         let selected = target
             .and_then(|track| self.session.singer_voice_info(track).ok().flatten())
-            .is_some_and(|info| {
-                info.path == path
-                    && speaker
-                        .as_ref()
-                        .is_none_or(|speaker| info.speaker.as_ref() == Some(speaker))
-            });
+            .is_some_and(|info| info.path == path);
         let target_label = target
             .and_then(|track| self.project().track(track))
             .map(|track| auris_i18n::messages::voice_target(self.language(), &track.name))
@@ -1030,10 +1116,8 @@ impl AurisApp {
             Some(auris_session::VoiceSourceKind::LeapSinger) => Some(Key::VoiceBackendLeapSinger),
             None => None,
         };
-        let row_id = match speaker.as_deref() {
-            Some(speaker) => format!("lib-voice-{shown}-{speaker}"),
-            None => format!("lib-voice-{shown}"),
-        };
+        let row_id = format!("lib-voice-{shown}");
+        let icon_id = format!("{row_id}-icon");
         div()
             .id(gpui::SharedString::from(row_id.clone()))
             .debug_selector(move || row_id.clone())
@@ -1051,8 +1135,7 @@ impl AurisApp {
             .rounded(Metrics::RADIUS_SM)
             .when(selected, |this| this.bg(theme.surface_raised))
             .when(enabled, |this| {
-                this.cursor_pointer()
-                    .hover(|this| this.bg(theme.surface_hover))
+                this.hover(|this| this.bg(theme.surface_hover))
             })
             .tooltip(tooltip)
             .child(
@@ -1062,11 +1145,29 @@ impl AurisApp {
                     .gap_1p5()
                     .w_full()
                     .min_w_0()
-                    .child(
-                        div()
+                    .child(match self.singer_icon(&path) {
+                        // A speaker's face is its identity mark, so it takes the round shape
+                        // the design language gives a person's avatar, with the same ring.
+                        Some(face) => div()
+                            .debug_selector(move || icon_id.clone())
                             .flex_shrink_0()
-                            .child(icon(Icon::Microphone, px(14.0), accent)),
-                    )
+                            .size(px(16.0))
+                            .rounded_full()
+                            .overflow_hidden()
+                            .border_1()
+                            .border_color(theme.border)
+                            .child(
+                                gpui::img(face)
+                                    .size_full()
+                                    .rounded_full()
+                                    .object_fit(gpui::ObjectFit::Cover),
+                            ),
+                        None => {
+                            div()
+                                .flex_shrink_0()
+                                .child(icon(Icon::Microphone, px(14.0), accent))
+                        }
+                    })
                     .child(
                         div()
                             .flex_1()
@@ -1094,7 +1195,7 @@ impl AurisApp {
                 this.on_mouse_down(
                     MouseButton::Left,
                     cx.listener(move |this, _: &MouseDownEvent, _, cx| {
-                        this.set_track_voice(path.clone(), speaker.clone(), cx);
+                        this.set_track_voice(path.clone(), cx);
                         this.leave_library_search();
                         cx.notify();
                     }),
@@ -1142,7 +1243,7 @@ impl AurisApp {
                                 this.open_prompt(crate::ui::prompt::Prompt::ask(
                                     messages::remove_plugin_folder_title(
                                         this.language(),
-                                        &path_for_remove.display().to_string(),
+                                        path_for_remove.display().to_string(),
                                     ),
                                     crate::ui::prompt::Question::RemovePluginPath(
                                         path_for_remove.clone(),
@@ -2333,11 +2434,10 @@ impl AurisApp {
             .when(depth == 0, |this| this.bg(theme.surface_raised).mt_1())
             .tooltip(tooltip)
             // A branch with nothing to open — a font whose file has gone — must not offer the
-            // pointer and the hover fill of a row that would answer a click. It looked exactly
+            // hover fill of a row that would answer a click. It looked exactly
             // like a font that works, and clicking it did nothing for ever.
             .when(enabled, |this| {
-                this.cursor_pointer()
-                    .hover(|this| this.bg(theme.surface_hover))
+                this.hover(|this| this.bg(theme.surface_hover))
             })
             .child(div().flex_shrink_0().child(crate::ui::icons::icon(
                 // A shut branch points at what opening it would reveal, an open one down at what
@@ -2497,8 +2597,7 @@ impl AurisApp {
             .rounded(Metrics::RADIUS_SM)
             .when(selected, |this| this.bg(theme.surface_raised))
             .when(enabled, |this| {
-                this.cursor_pointer()
-                    .hover(|this| this.bg(theme.surface_hover))
+                this.hover(|this| this.bg(theme.surface_hover))
             })
             .tooltip(tooltip)
             .child(div().flex_shrink_0().child(icon(
@@ -2632,8 +2731,7 @@ impl AurisApp {
             .rounded(Metrics::RADIUS_SM)
             .when(selected, |this| this.bg(theme.surface_raised))
             .when(enabled, |this| {
-                this.cursor_pointer()
-                    .hover(|this| this.bg(theme.surface_hover))
+                this.hover(|this| this.bg(theme.surface_hover))
             })
             .tooltip(tooltip)
             .child(div().flex_shrink_0().child(icon(

@@ -1363,7 +1363,7 @@ impl VoiceSetupWindow {
                     app.singer_configuration_changed(&path, cx);
                     cx.notify();
                 });
-                messages::voice_setup_saved(self.language, &path.display().to_string())
+                messages::voice_setup_saved(self.language, path.display().to_string())
             }
             Err(error) => error,
         };
@@ -1720,7 +1720,7 @@ mod tests {
             );
             assert!(
                 this.voice_list()
-                    .contains(&("My LeapSinger".into(), path.clone(), None))
+                    .contains(&("My LeapSinger".into(), path.clone()))
             );
         });
         // The saved source snapshot allows a second edit without reopening the dialog.

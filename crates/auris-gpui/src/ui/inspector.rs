@@ -15,8 +15,8 @@ use crate::theme::Metrics;
 use crate::theme::Theme;
 use crate::ui::icons::Icon;
 use crate::ui::plugin_editor::{
-    ParamControl, button_row, control_for, next_discrete_value, slider_keyboard_step, slider_row,
-    value_after_drag,
+    KNOB_CELL_WIDTH, ParamControl, button_row, control_for, knob_value_after_turn,
+    next_discrete_value, param_knob, slider_keyboard_step, slider_row, value_after_drag,
 };
 use crate::ui::plugin_window::PluginSubject;
 use crate::ui::scrollbars::ScrollPanel;
@@ -37,6 +37,7 @@ enum InspectorSection {
     Performance,
     Sound,
     Effects,
+    Layer,
 }
 
 impl InspectorSection {
@@ -46,6 +47,7 @@ impl InspectorSection {
             Self::Performance => "inspector-performance",
             Self::Sound => "inspector-sound",
             Self::Effects => "inspector-effects",
+            Self::Layer => "inspector-layer",
         }
     }
 
@@ -55,6 +57,7 @@ impl InspectorSection {
             Self::Performance => Key::PerformHeading,
             Self::Sound => Key::InspectorSound,
             Self::Effects => Key::InspectorEffects,
+            Self::Layer => Key::InspectorLayer,
         }
     }
 }
@@ -125,6 +128,20 @@ pub(crate) fn reorder_delta(
 /// third surface draws the same chain. Zero is reserved for the empty slot, which has no id.
 pub(crate) fn insert_element_key(slot: Option<EffectSlotId>) -> usize {
     slot.map_or(0, |id| id.0 as usize + 1)
+}
+
+/// How many times a looped clip's content plays, as the inspector writes it: `×3`, or `×2.5` when
+/// the last pass is cut off part-way.
+///
+/// One decimal, rounded down, so a loop that stops a hair short of its third pass never claims to
+/// reach it.
+pub(crate) fn loop_pass_label(content: Ticks, sounding: Ticks) -> String {
+    let content = content.raw().max(1);
+    let tenths = sounding.raw().max(0).saturating_mul(10) / content;
+    match tenths % 10 {
+        0 => format!("×{}", tenths / 10),
+        rest => format!("×{}.{rest}", tenths / 10),
+    }
 }
 
 /// The title strip at the top of a side panel.
@@ -234,7 +251,23 @@ impl AurisApp {
                     .gap_2()
                     .text_xs()
                     .text_color(theme.text_muted)
-                    .child(div().flex_shrink_0().child(self.t(Key::InspectorClip)))
+                    // A mark rather than the word: the default name already says "Clip 1", and
+                    // the word in front of it read "Clip Clip 1".
+                    .child(
+                        div()
+                            .id("inspector-clip-mark")
+                            .flex_shrink_0()
+                            .tooltip(crate::ui::tooltip::keyed_tip(
+                                self.t(Key::InspectorClip),
+                                "",
+                                theme,
+                            ))
+                            .child(crate::ui::icons::icon(
+                                Icon::Notes,
+                                gpui::px(12.0),
+                                theme.text_muted,
+                            )),
+                    )
                     .child(
                         div()
                             .id("inspector-clip-name")
@@ -257,10 +290,13 @@ impl AurisApp {
         cx: &mut gpui::Context<Self>,
     ) -> AnyElement {
         let expanded = !self.inspector_collapsed[section as usize];
+        // Neither the section nor its rows may shrink: the body scrolls, and a column that
+        // squeezes its children to the viewport flattens buttons and stacks text on text.
         div()
             .debug_selector(move || format!("{}-section", section.id()))
             .flex()
             .flex_col()
+            .flex_shrink_0()
             .gap_1()
             .min_w_0()
             .child(
@@ -295,13 +331,59 @@ impl AurisApp {
                 ),
             )
             .when(expanded, |this| {
-                this.child(div().flex().flex_col().gap_1().min_w_0().children(rows))
+                this.child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .flex_shrink_0()
+                        .gap_1()
+                        .min_w_0()
+                        .children(rows),
+                )
             })
             .into_any_element()
     }
 
+    /// The clip's loop switch: the inspector's half of the loop edge on the name bar.
+    ///
+    /// Pressing it does what the L key and the context menu do — the content repeats out to the
+    /// next clip on the lane, or once more where there is none — so the three ways in agree about
+    /// where a fresh loop ends. The value is the number of times the content plays, a partial last
+    /// pass included, because that is the fact a dragged loop edge leaves hard to read.
+    fn clip_loop_row(&self, clip: ClipId, cx: &mut gpui::Context<Self>) -> AnyElement {
+        let looped = self.session.clip_is_looped(clip);
+        let value = match (
+            looped,
+            self.session.clip_content_length(clip),
+            self.session.clip_sounding_length(clip),
+        ) {
+            (true, Some(content), Some(sounding)) => {
+                format!(
+                    "{} · {}",
+                    self.t(Key::ValueOn),
+                    loop_pass_label(content, sounding)
+                )
+            }
+            _ => self.t(Key::ValueOff).to_string(),
+        };
+        crate::ui::widgets::picker_row(
+            "inspector-clip-loop",
+            self.t(Key::InspectorLoop),
+            value,
+            crate::ui::widgets::RowColumn::Equal,
+            crate::ui::widgets::PickerBehavior::Toggle(looped),
+            &self.theme,
+            cx.listener(move |this, _, _, cx| {
+                this.toggle_clip_loop(clip);
+                cx.notify();
+            }),
+        )
+        .into_any_element()
+    }
+
     fn inspector_scope(&self, title: Key) -> impl IntoElement + use<> {
         div()
+            .flex_shrink_0()
             .pt_3()
             .pb_1()
             .text_xs()
@@ -313,11 +395,19 @@ impl AurisApp {
     fn render_track_inspector(&mut self, cx: &mut gpui::Context<Self>) -> AnyElement {
         let theme = self.theme.clone();
         let mut sections: Vec<AnyElement> = Vec::new();
+        // Every clip, recorded or written, can repeat — so the scope and its loop switch are
+        // offered for both kinds, and what only a score has follows below it.
+        if let Some(clip) = self
+            .selected_clip
+            .filter(|clip| self.session.clip_content_length(*clip).is_some())
+        {
+            sections.push(self.inspector_scope(Key::InspectorClip).into_any_element());
+            sections.push(self.clip_loop_row(clip, cx));
+        }
         if let Some(clip) = self
             .selected_clip
             .filter(|clip| self.project().midi_clip(*clip).is_some())
         {
-            sections.push(self.inspector_scope(Key::InspectorClip).into_any_element());
             if let Some(recipe) = self.session.clip_recipe(clip) {
                 let mut summary = self
                     .t(crate::ui::context_menu::preset_key(recipe.preset))
@@ -384,6 +474,7 @@ impl AurisApp {
         };
         let is_drum = track.kind.is_drum();
         let is_singer = track.kind.is_singer();
+        let is_layer = track.kind.layer().is_some();
         let instrument_id = track
             .kind
             .as_instrument()
@@ -396,6 +487,12 @@ impl AurisApp {
             .collect();
 
         sections.push(self.inspector_scope(Key::Track).into_any_element());
+        // A layer's own settings come first: everything below them is any track's.
+        if is_layer {
+            let summary = self.layer_summary(track_id);
+            let rows = self.layer_rows(track_id, cx);
+            sections.push(self.inspector_section(InspectorSection::Layer, summary, rows, cx));
+        }
         let sound_summary = if is_singer {
             if self
                 .auto_sing
@@ -412,15 +509,77 @@ impl AurisApp {
                     .unwrap_or_else(|| self.t(Key::SingerNoVoice).to_string())
             }
         } else {
-            instrument_id
-                .as_ref()
-                .map(|id| self.instrument_label(track_id, id))
-                .unwrap_or_default()
+            // The sound by name when there is one — the header says the same — and otherwise
+            // the instrument, whose own panel below is where a sound gets chosen.
+            match self.track_sound_label(track_id) {
+                crate::i18n::TrackSoundLabel::Named { name, .. } => name,
+                _ => instrument_id
+                    .as_ref()
+                    .map(|id| self.instrument_label(track_id, id))
+                    .unwrap_or_default(),
+            }
         };
         let mut sound_rows = self.singer_rows(track_id, cx);
+        if is_singer || instrument_id.is_some() {
+            let preset = self.session.track_preset(track_id);
+            let id = instrument_id.as_deref().unwrap_or("");
+            let family = self.library_sound_icon(id, preset, &sound_summary);
+            let artwork = sound_artwork(
+                id,
+                family,
+                is_drum
+                    || self
+                        .session
+                        .track_preset(track_id)
+                        .is_some_and(|preset| preset.bank == 128),
+                is_singer,
+            );
+            sound_rows.insert(
+                0,
+                div()
+                    .debug_selector(|| "inspector-sound-artwork".into())
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .gap_2()
+                    .py_3()
+                    .w_full()
+                    .bg(theme.surface_raised)
+                    .rounded(crate::theme::Metrics::RADIUS_SM)
+                    .child(
+                        match is_singer
+                            .then(|| self.singer_portrait_card(track_id))
+                            .flatten()
+                        {
+                            Some(portrait) => portrait,
+                            None => gpui::svg()
+                                .path(artwork)
+                                .size(gpui::px(120.0))
+                                .text_color(theme.accent)
+                                .into_any_element(),
+                        },
+                    )
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(theme.text)
+                            .text_center()
+                            .child(sound_summary.clone()),
+                    )
+                    .into_any_element(),
+            );
+        }
 
         if let Some(instrument_id) = instrument_id {
             let name = self.instrument_label(track_id, &instrument_id);
+            // The artwork above already names the sound, and for a built-in instrument with no
+            // preset the sound and the instrument are the same word: the row keeps its buttons
+            // and drops the third "Piano".
+            let shown = if name == sound_summary {
+                String::new()
+            } else {
+                name.clone()
+            };
             let subject = PluginSubject::Instrument(track_id);
             sound_rows.push(
                 div()
@@ -436,7 +595,7 @@ impl AurisApp {
                             .min_w_0()
                             .truncate()
                             .text_xs()
-                            .child(name.clone())
+                            .child(shown)
                             .tooltip(crate::ui::tooltip::keyed_tip(name.clone(), "", &theme)),
                     )
                     .child(self.plugin_editor_button("inst-open", subject, cx))
@@ -723,7 +882,7 @@ impl AurisApp {
         .into_any_element()
     }
 
-    /// Builds controls for a slice of a plugin's parameters.
+    /// Builds one row per parameter, for a list that must give every parameter the same height.
     ///
     /// `target_for` turns a parameter index into the routing enum, which is what lets the same
     /// code drive an instrument, a track effect and a master effect.
@@ -734,113 +893,208 @@ impl AurisApp {
         id_prefix: &'static str,
         cx: &mut gpui::Context<Self>,
     ) -> Vec<AnyElement> {
-        let theme = self.theme.clone();
         descriptors
             .iter()
-            .map(|descriptor| {
-                let param_id = descriptor.id.0;
-                let target = target_for(descriptor.id);
-                let value = self.session.param_value(target, descriptor);
-                let element_id = (id_prefix, target_element_key(target, descriptor.id));
+            .map(|descriptor| self.param_control(descriptor, target_for, id_prefix, false, cx))
+            .collect()
+    }
 
-                let label = self.param_label(&descriptor.name);
-                // The label again for the menu, which the control itself consumes.
-                let menu_label = label.clone();
-                let value_text = self.format_param(descriptor, value);
-                let keyboard_descriptor = descriptor.clone();
-                match control_for(descriptor) {
-                    ParamControl::Slider => slider_row(
-                        element_id,
-                        descriptor,
-                        label,
-                        value_text,
-                        value,
-                        theme.accent,
-                        &theme,
-                        cx.listener(move |this, event: &MouseDownEvent, _, cx| {
-                            if event.click_count >= 2 {
-                                this.reset_param(target);
+    /// Builds a plugin's controls as a panel: its continuous parameters as knobs, packed into a
+    /// grid that wraps, and its switches and choices as rows.
+    ///
+    /// Knobs because a plugin's parameters are many continuous values side by side — drive,
+    /// tone, decay — which is what Atelier draws as knobs; a stack of sliders is the workaround
+    /// its rules name. The order is the plugin's: each run of continuous parameters becomes one
+    /// grid, and a switch or a choice between two runs stays between them, so a plugin that
+    /// groups its controls keeps its groups.
+    pub(crate) fn param_panel(
+        &self,
+        descriptors: &[ParamDescriptor],
+        target_for: impl Fn(ParamId) -> ParamTarget + Copy + 'static,
+        id_prefix: &'static str,
+        cx: &mut gpui::Context<Self>,
+    ) -> Vec<AnyElement> {
+        let gap = self.theme.atelier.spacing.sm;
+        let mut panel = Vec::new();
+        let mut run = Vec::new();
+        let flush = |run: &mut Vec<AnyElement>, panel: &mut Vec<AnyElement>| {
+            if !run.is_empty() {
+                panel.push(
+                    div()
+                        .flex()
+                        .flex_wrap()
+                        .items_start()
+                        .gap(gap)
+                        .py_1()
+                        .children(std::mem::take(run))
+                        .into_any_element(),
+                );
+            }
+        };
+        for descriptor in descriptors {
+            let control = self.param_control(descriptor, target_for, id_prefix, true, cx);
+            if control_for(descriptor) == ParamControl::Slider {
+                run.push(control);
+            } else {
+                flush(&mut run, &mut panel);
+                panel.push(control);
+            }
+        }
+        flush(&mut run, &mut panel);
+        panel
+    }
+
+    /// One parameter's control: a knob when `knob` is set and the parameter is continuous,
+    /// otherwise its row.
+    fn param_control(
+        &self,
+        descriptor: &ParamDescriptor,
+        target_for: impl Fn(ParamId) -> ParamTarget + Copy + 'static,
+        id_prefix: &'static str,
+        knob: bool,
+        cx: &mut gpui::Context<Self>,
+    ) -> AnyElement {
+        let theme = self.theme.clone();
+        let param_id = descriptor.id.0;
+        let target = target_for(descriptor.id);
+        let value = self.session.param_value(target, descriptor);
+        let element_id = (id_prefix, target_element_key(target, descriptor.id));
+
+        let label = self.param_label(&descriptor.name);
+        // The label again for the menu, which the control itself consumes.
+        let menu_label = label.clone();
+        let value_text = self.format_param(descriptor, value);
+        let keyboard_descriptor = descriptor.clone();
+        match control_for(descriptor) {
+            ParamControl::Slider if knob => {
+                let reading = descriptor.normalize(value);
+                div()
+                    .id(element_id)
+                    .debug_selector(move || format!("{id_prefix}-param-{param_id}"))
+                    .w(KNOB_CELL_WIDTH)
+                    .flex()
+                    .justify_center()
+                    .child(
+                        param_knob(descriptor, label, value_text, value).on_change(cx.listener(
+                            move |this, reading: &f32, window, cx| {
+                                this.turn_knob(target, *reading, window.modifiers().shift);
                                 cx.notify();
+                            },
+                        )),
+                    )
+                    // The knob turns itself; this only opens the transaction that makes the turn
+                    // one undo step, and holds the anchor Shift slows it from. A double click is
+                    // the knob going back to its default, which is a step of its own.
+                    .on_mouse_down(
+                        gpui::MouseButton::Left,
+                        cx.listener(move |this, event: &MouseDownEvent, _, _| {
+                            if event.click_count >= 2 {
                                 return;
                             }
-                            // `set_param_value` marks the document dirty once the drag actually
-                            // moves something; a click that only grabs the control is not an edit.
-                            this.begin_drag(Drag::Param {
+                            this.begin_drag(Drag::Knob {
                                 target,
-                                start_value: value,
-                                start_x: event.position.x,
+                                anchor_reading: Some(reading),
+                                anchor_value: reading,
                                 fine: event.modifiers.shift,
                             });
                         }),
-                        cx.listener(
-                            move |this, event: &crate::ui::widgets::SliderKeyboardEvent, _, cx| {
-                                this.session.set_param(
-                                    target,
-                                    keyboard_descriptor.denormalize(event.fraction),
-                                );
-                                cx.notify();
-                            },
-                        ),
                     )
-                    .debug_selector(move || format!("{id_prefix}-param-{param_id}"))
                     .on_mouse_down(
                         gpui::MouseButton::Right,
                         Self::opens_menu(cx, move |this, at| {
                             this.param_menu(at, target, menu_label.clone())
                         }),
                     )
-                    .into_any_element(),
-                    // A toggle flips on the press, because two positions are a switch. A choice
-                    // opens the list instead: cycling through eight waveforms to reach the pulse
-                    // means counting them, and overshooting means going round again.
-                    ParamControl::Toggle => {
-                        let owned = descriptor.clone();
-                        button_row(
-                            element_id,
-                            descriptor,
-                            label,
-                            value_text,
-                            value,
-                            &theme,
-                            cx.listener(move |this, _, _, cx| {
-                                let current = this.session.param_value(target, &owned);
-                                let next = next_discrete_value(&owned, current);
-                                this.session.set_param(target, next);
-                                cx.notify();
-                            }),
-                        )
-                        .on_mouse_down(
-                            gpui::MouseButton::Right,
-                            Self::opens_menu(cx, move |this, at| {
-                                this.param_menu(at, target, menu_label.clone())
-                            }),
-                        )
-                        .into_any_element()
+                    .into_any_element()
+            }
+            ParamControl::Slider => slider_row(
+                element_id,
+                descriptor,
+                label,
+                value_text,
+                value,
+                theme.accent,
+                &theme,
+                cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                    if event.click_count >= 2 {
+                        this.reset_param(target);
+                        cx.notify();
+                        return;
                     }
-                    ParamControl::Choice => {
-                        let owned = descriptor.clone();
-                        button_row(
-                            element_id,
-                            descriptor,
-                            label,
-                            value_text,
-                            value,
-                            &theme,
-                            Self::opens_menu(cx, move |this, at| {
-                                this.param_choice_menu(at, target, &owned)
-                            }),
-                        )
-                        .on_mouse_down(
-                            gpui::MouseButton::Right,
-                            Self::opens_menu(cx, move |this, at| {
-                                this.param_menu(at, target, menu_label.clone())
-                            }),
-                        )
-                        .into_any_element()
-                    }
-                }
-            })
-            .collect()
+                    // `set_param_value` marks the document dirty once the drag actually
+                    // moves something; a click that only grabs the control is not an edit.
+                    this.begin_drag(Drag::Param {
+                        target,
+                        start_value: value,
+                        start_x: event.position.x,
+                        fine: event.modifiers.shift,
+                    });
+                }),
+                cx.listener(
+                    move |this, event: &crate::ui::widgets::SliderKeyboardEvent, _, cx| {
+                        this.session
+                            .set_param(target, keyboard_descriptor.denormalize(event.fraction));
+                        cx.notify();
+                    },
+                ),
+            )
+            .debug_selector(move || format!("{id_prefix}-param-{param_id}"))
+            .on_mouse_down(
+                gpui::MouseButton::Right,
+                Self::opens_menu(cx, move |this, at| {
+                    this.param_menu(at, target, menu_label.clone())
+                }),
+            )
+            .into_any_element(),
+            // A toggle flips on the press, because two positions are a switch. A choice
+            // opens the list instead: cycling through eight waveforms to reach the pulse
+            // means counting them, and overshooting means going round again.
+            ParamControl::Toggle => {
+                let owned = descriptor.clone();
+                button_row(
+                    element_id,
+                    descriptor,
+                    label,
+                    value_text,
+                    value,
+                    &theme,
+                    cx.listener(move |this, _, _, cx| {
+                        let current = this.session.param_value(target, &owned);
+                        let next = next_discrete_value(&owned, current);
+                        this.session.set_param(target, next);
+                        cx.notify();
+                    }),
+                )
+                .on_mouse_down(
+                    gpui::MouseButton::Right,
+                    Self::opens_menu(cx, move |this, at| {
+                        this.param_menu(at, target, menu_label.clone())
+                    }),
+                )
+                .into_any_element()
+            }
+            ParamControl::Choice => {
+                let owned = descriptor.clone();
+                button_row(
+                    element_id,
+                    descriptor,
+                    label,
+                    value_text,
+                    value,
+                    &theme,
+                    Self::opens_menu(cx, move |this, at| {
+                        this.param_choice_menu(at, target, &owned)
+                    }),
+                )
+                .on_mouse_down(
+                    gpui::MouseButton::Right,
+                    Self::opens_menu(cx, move |this, at| {
+                        this.param_menu(at, target, menu_label.clone())
+                    }),
+                )
+                .into_any_element()
+            }
+        }
     }
 
     /// A gain or pan fader, sharing the parameter drag machinery.
@@ -964,6 +1218,40 @@ impl AurisApp {
             *start_x = at;
             *held = fine;
         }
+    }
+
+    /// Applies a knob's turn: its reading, from 0 to 1, and whether Shift is held.
+    ///
+    /// During a drag the reading is taken relative to the anchor [`Drag::Knob`] holds, so Shift
+    /// can slow the turn; from the keyboard it is the value itself.
+    pub(crate) fn turn_knob(&mut self, target: ParamTarget, reading: f32, fine: bool) {
+        let Some(descriptor) = self.session.descriptor_for(target) else {
+            return;
+        };
+        let next = match self.drag.as_mut() {
+            Some(Drag::Knob {
+                target: dragged,
+                anchor_reading,
+                anchor_value,
+                fine: held,
+            }) if *dragged == target => {
+                let turned = anchor_reading.and_then(|anchor| {
+                    knob_value_after_turn(reading, anchor, *anchor_value, *held, fine)
+                });
+                match turned {
+                    Some(next) => next,
+                    None => {
+                        *anchor_reading = Some(reading);
+                        *anchor_value =
+                            descriptor.normalize(self.session.param_value(target, &descriptor));
+                        *held = fine;
+                        return;
+                    }
+                }
+            }
+            _ => reading,
+        };
+        self.session.set_param(target, descriptor.denormalize(next));
     }
 
     /// Applies a parameter drag.
@@ -1148,6 +1436,42 @@ impl AurisApp {
     }
 }
 
+/// Presentation artwork follows the shared sound classification and manual corrections.
+///
+/// The inspector draws the same instrument the library row does, so a sound the classifier
+/// could not place falls back on the built-in instrument's own family before the waveform.
+fn sound_artwork(
+    id: &str,
+    family: auris_session::SoundIcon,
+    drum: bool,
+    singer: bool,
+) -> &'static str {
+    use auris_session::SoundIcon;
+    let family = if singer {
+        SoundIcon::Voice
+    } else if drum {
+        SoundIcon::Drum
+    } else if family != SoundIcon::Sound {
+        family
+    } else {
+        match id {
+            "auris.physical.piano" => SoundIcon::Piano,
+            "auris.physical.guitar" | "auris.physical.electric_guitar" => SoundIcon::Guitar,
+            "auris.physical.bass" => SoundIcon::Bass,
+            "auris.physical.violin" => SoundIcon::Strings,
+            "auris.physical.clarinet" | "auris.physical.tin_whistle" => SoundIcon::Wind,
+            "auris.physical.mallet"
+            | "auris.physical.hammered_dulcimer"
+            | "auris.physical.bell" => SoundIcon::Bell,
+            "auris.synth.drumkit" | "auris.synth.noisedrum" => SoundIcon::Drum,
+            "auris.synth.vocal" | "auris.physical.choir" => SoundIcon::Voice,
+            "auris.synth.chiptune" | "auris.synth.fm2" => SoundIcon::Synth,
+            _ => SoundIcon::Sound,
+        }
+    };
+    super::icons::sound_artwork_path(family)
+}
+
 /// A plugin's display name, translated where the term is known.
 pub(crate) fn audio_name(app: &AurisApp, english: &str) -> String {
     auris_i18n::audio::plugin_name(english, app.language()).to_string()
@@ -1174,6 +1498,50 @@ mod tests {
     use super::*;
     use crate::harness::{click, paint, resize, with_a_clip};
     use gpui::{TestAppContext, point, px, size};
+
+    #[test]
+    fn the_loop_value_counts_passes_and_never_rounds_one_up() {
+        let bar = Ticks(3840);
+        assert_eq!(loop_pass_label(bar, bar * 4), "×4");
+        assert_eq!(loop_pass_label(bar, Ticks(3840 * 5 / 2)), "×2.5");
+        // A tick short of the third pass is still two and a bit, not three.
+        assert_eq!(loop_pass_label(bar, bar * 3 - Ticks(1)), "×2.9");
+    }
+
+    #[gpui::test]
+    fn the_inspectors_loop_switch_repeats_the_clip_and_one_undo_takes_it_back(
+        cx: &mut TestAppContext,
+    ) {
+        let (app, cx, track, clip) = with_a_clip(cx);
+        app.update(cx, |this, _| {
+            this.select_track(track);
+            this.select_clip(Some(clip));
+        });
+        paint(&app, cx);
+        click("inspector-clip-loop", cx);
+        paint(&app, cx);
+        app.read_with(cx, |this, _| {
+            assert!(
+                this.session.clip_is_looped(clip),
+                "the switch loops the clip"
+            );
+            assert!(
+                this.session.clip_sounding_length(clip) > this.session.clip_content_length(clip)
+            );
+        });
+        click("inspector-clip-loop", cx);
+        paint(&app, cx);
+        app.read_with(cx, |this, _| {
+            assert!(
+                !this.session.clip_is_looped(clip),
+                "and pressed again, stops it"
+            );
+        });
+        app.update(cx, |this, _| {
+            this.session.undo();
+        });
+        app.read_with(cx, |this, _| assert!(this.session.clip_is_looped(clip)));
+    }
 
     #[gpui::test]
     fn inspector_disclosure_activation_does_not_dispatch_transport_commands(
@@ -1273,13 +1641,13 @@ mod tests {
             );
         }
         app.read_with(cx, |this, _| {
-            assert_eq!(this.inspector_collapsed, [true; 4])
+            assert_eq!(this.inspector_collapsed, [true, true, true, true, false])
         });
 
         app.update(cx, |this, _| this.select_track(other));
         paint(&app, cx);
         app.read_with(cx, |this, _| {
-            assert_eq!(this.inspector_collapsed, [true; 4])
+            assert_eq!(this.inspector_collapsed, [true, true, true, true, false])
         });
         app.update(cx, |this, _| {
             this.select_track(track);
@@ -1361,6 +1729,63 @@ mod tests {
         assert!(cx.debug_bounds("inspector-selected-track").is_some());
         assert!(
             cx.debug_bounds("inspector-selection").unwrap().size.height < selection.size.height
+        );
+    }
+
+    #[test]
+    fn sound_artwork_tracks_classification_and_track_roles() {
+        assert_eq!(
+            sound_artwork(
+                "auris.sampler",
+                auris_session::SoundIcon::Piano,
+                false,
+                false
+            ),
+            "sounds/sound-piano.svg"
+        );
+        assert_eq!(
+            sound_artwork(
+                "auris.sampler",
+                auris_session::SoundIcon::Strings,
+                false,
+                false
+            ),
+            "sounds/sound-strings.svg"
+        );
+        assert_eq!(
+            sound_artwork(
+                "auris.sampler",
+                auris_session::SoundIcon::Wind,
+                false,
+                false
+            ),
+            "sounds/sound-wind.svg"
+        );
+        assert_eq!(
+            sound_artwork(
+                "auris.sampler",
+                auris_session::SoundIcon::Piano,
+                true,
+                false
+            ),
+            "sounds/sound-drum.svg"
+        );
+        assert_eq!(
+            sound_artwork("", auris_session::SoundIcon::Sound, false, true),
+            "sounds/sound-voice.svg"
+        );
+        assert_eq!(
+            sound_artwork(
+                "auris.synth.fm2",
+                auris_session::SoundIcon::Sound,
+                false,
+                false
+            ),
+            "sounds/sound-synth.svg"
+        );
+        assert_eq!(
+            sound_artwork("third.party", auris_session::SoundIcon::Sound, false, false),
+            "sounds/sound-sound.svg"
         );
     }
 

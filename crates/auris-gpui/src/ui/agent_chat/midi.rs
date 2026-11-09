@@ -1,101 +1,102 @@
 //! Inline score drafts; only immutable, explicitly attached snapshots reach a worker.
 
 use super::*;
-use auris_session::midi_reference::{MAX_REFERENCE_NOTES, MidiReference};
-use auris_session::prelude::{Note, TICKS_PER_QUARTER, Ticks, midi_name};
-use gpui_component::scroll::{Scrollbar, ScrollbarShow};
-
-const STEP: i64 = TICKS_PER_QUARTER / 2;
-const PAGE: i64 = 8 * TICKS_PER_QUARTER;
+use crate::ui::reference_piano_roll::ReferencePianoRoll;
+use auris_session::midi_reference::MidiReference;
 
 pub(crate) struct MidiDraft {
     score: MidiReference,
     replacing: Option<PathBuf>,
     track: usize,
-    selected: Option<usize>,
-    page: i64,
-    low_pitch: u8,
-    pub(crate) lyric: TextField,
-    scroll: gpui::ScrollHandle,
+    editing: bool,
+    claims_keys: bool,
+    pub(crate) editor: Option<gpui::Entity<ReferencePianoRoll>>,
+    editor_subscription: Option<gpui::Subscription>,
 }
 
 impl MidiDraft {
     fn new(score: MidiReference, replacing: Option<PathBuf>) -> Self {
-        let mut draft = Self {
+        Self {
             score,
             replacing,
             track: 0,
-            selected: None,
-            page: 0,
-            low_pitch: 54,
-            lyric: TextField::default(),
-            scroll: gpui::ScrollHandle::new(),
-        };
-        draft.select(draft.notes().first().map(|_| 0));
-        draft
-    }
-
-    fn notes(&self) -> &[Note] {
-        &self.score.tracks[self.track].notes
-    }
-
-    fn flush_lyric(&mut self) {
-        if let Some(note) = self
-            .selected
-            .and_then(|i| self.score.tracks[self.track].notes.get_mut(i))
-            && note.lyric != self.lyric.content()
-        {
-            note.lyric = self.lyric.content().to_owned();
-            note.phonemes.clear();
-            note.phoneme_seconds.clear();
+            editing: false,
+            claims_keys: false,
+            editor: None,
+            editor_subscription: None,
         }
     }
 
-    fn select(&mut self, selected: Option<usize>) {
-        self.flush_lyric();
-        self.selected = selected;
-        self.lyric = TextField::new(
-            selected
-                .and_then(|i| self.notes().get(i))
-                .map_or("", |n| n.lyric.as_str()),
-        );
-        self.reveal_selection();
-    }
-
-    fn reveal_selection(&mut self) {
-        if let Some(note) = self.selected.and_then(|i| self.notes().get(i)) {
-            let (pitch, start) = (note.pitch, note.start.0);
-            if start < self.page || start >= self.page + PAGE {
-                self.page = start / PAGE * PAGE;
-            }
-            if pitch < self.low_pitch || pitch > self.low_pitch + 12 {
-                self.low_pitch = pitch.saturating_sub(6).min(115);
-            }
-        }
-    }
-
-    fn add(&mut self, pitch: u8, at: i64) {
-        if self
-            .score
-            .tracks
-            .iter()
-            .map(|t| t.notes.len())
-            .sum::<usize>()
-            >= MAX_REFERENCE_NOTES
-        {
+    fn read_editor(&mut self, cx: &gpui::App) {
+        let Some(editor) = &self.editor else {
             return;
+        };
+        let editor = editor.read(cx);
+        let app = editor.app.read(cx);
+        // Keep the immutable attachment snapshot current even when teardown has no GPUI context.
+        for (clip, track) in editor.clips.iter().zip(&mut self.score.tracks) {
+            if let Some(clip) = app.session.midi_clip(*clip) {
+                track.notes.clone_from(&clip.notes);
+            }
         }
-        self.flush_lyric();
-        self.score.tracks[self.track]
-            .notes
-            .push(Note::new(pitch, Ticks(at), Ticks(STEP)));
-        self.selected = Some(self.notes().len() - 1);
-        self.lyric = TextField::default();
-        self.reveal_selection();
+        self.track = editor
+            .clips
+            .iter()
+            .position(|id| Some(*id) == app.selected_clip)
+            .unwrap_or(self.track);
+        self.editing = app.prompt.is_some() || app.drag.is_some();
+        self.claims_keys = app.keys_are_claimed();
     }
 }
 
 impl AurisApp {
+    /// Prevent ancestor key bindings from intercepting a reference editor's text or menu keys.
+    pub(crate) fn reference_score_claims_keys(&self) -> bool {
+        self.music_references()
+            .midi_draft
+            .as_ref()
+            .is_some_and(|draft| draft.claims_keys)
+    }
+
+    fn ensure_midi_piano_roll(&mut self, cx: &mut gpui::Context<Self>) {
+        let grid = self.settings.piano_roll_grid;
+        let relative_snap = self.settings.relative_note_snap;
+        let division = self.project().grid;
+        let Some(draft) = self.music_references_mut().midi_draft.as_mut() else {
+            return;
+        };
+        if draft.editor.is_some() {
+            return;
+        }
+        match ReferencePianoRoll::new(&draft.score, cx) {
+            Ok(editor) => {
+                let child = editor.read(cx).app.clone();
+                child.update(cx, |app, _| {
+                    app.settings.piano_roll_grid = grid;
+                    app.settings.relative_note_snap = relative_snap;
+                    app.session.set_grid(division);
+                    app.session.forget_history();
+                });
+                draft.editor = Some(editor);
+                draft.editor_subscription = Some(cx.observe(&child, |this, child, cx| {
+                    let Some(draft) = this.music_references_mut().midi_draft.as_mut() else {
+                        return;
+                    };
+                    if !draft
+                        .editor
+                        .as_ref()
+                        .is_some_and(|editor| editor.read(cx).app == child)
+                    {
+                        return;
+                    }
+                    draft.read_editor(cx);
+                    cx.notify();
+                }));
+            }
+            Err(error) => self.music_references_mut().attachment_error = Some(error.to_string()),
+        }
+    }
+
     pub(crate) fn cancel_midi_for_attachment(&mut self, path: &Path) {
         if self
             .music_references()
@@ -106,7 +107,7 @@ impl AurisApp {
             self.music_references_mut().midi_draft = None;
             if let Some(s) = &mut self.song_workshop {
                 s.active_field = Some(0);
-            } else if self.agent_chat.focused == Some(AgentField::MidiLyric) {
+            } else {
                 self.agent_chat.focused = Some(AgentField::Chat);
             }
         }
@@ -221,10 +222,9 @@ impl AurisApp {
         let Some(draft) = refs.midi_draft.as_mut() else {
             return true;
         };
-        if draft.lyric.marked().is_some() {
+        if draft.editing {
             return false;
         }
-        draft.flush_lyric();
         let replacing = draft
             .replacing
             .as_ref()
@@ -246,7 +246,7 @@ impl AurisApp {
                 refs.attachment_error = None;
                 if let Some(s) = &mut self.song_workshop {
                     s.active_field = Some(0);
-                } else if self.agent_chat.focused == Some(AgentField::MidiLyric) {
+                } else {
                     self.agent_chat.focused = Some(AgentField::Chat);
                 }
                 true
@@ -342,149 +342,51 @@ impl AurisApp {
         max_height: gpui::Pixels,
         cx: &mut gpui::Context<Self>,
     ) -> AnyElement {
+        self.ensure_midi_piano_roll(cx);
         let Some(draft) = &self.music_references().midi_draft else {
             return div().into_any_element();
         };
         let theme = self.theme.clone();
-        let score_name = draft.score.name.clone();
-        let track_name = draft.score.tracks[draft.track].name.clone();
+        let editor = draft.editor.clone();
+        if let Some(editor) = &editor {
+            let child = editor.read(cx).app.clone();
+            child.update(cx, |app, _| {
+                app.theme = theme.clone();
+                app.language = self.language();
+                app.pointer = self.pointer;
+            });
+        }
         let track = draft.track;
         let track_count = draft.score.tracks.len();
-        let selected = draft.selected;
-        let notes = draft.notes().to_vec();
-        let page = draft.page;
-        let low = draft.low_pitch;
-        let lyric_empty = draft.lyric.content().is_empty();
-        let scroll = draft.scroll.clone();
-        let focus = self
-            .music_references_mut()
-            .midi_lyric_focus
-            .get_or_insert_with(|| cx.focus_handle().tab_stop(true))
-            .clone();
-        let mut grid = div()
-            .id("agent-midi-grid")
-            .debug_selector(|| "agent-midi-grid".into())
-            .relative()
-            .w_full()
-            .h(gpui::rems(13.0))
-            .flex_shrink_0()
-            .bg(theme.surface_sunken)
-            .overflow_hidden();
-        // Pitch and time are data coordinates; all screen geometry scales with the text size.
-        for row in 0..13u8 {
-            let pitch = low + 12 - row;
-            grid = grid.child(
-                div()
-                    .absolute()
-                    .top(relative(row as f32 / 13.0))
-                    .w_full()
-                    .h(relative(1.0 / 13.0))
-                    .border_b_1()
-                    .border_color(theme.border)
-                    .when(matches!(pitch % 12, 1 | 3 | 6 | 8 | 10), |row| {
-                        row.bg(theme.surface)
-                    })
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(theme.text_muted)
-                            .child(midi_name(i32::from(pitch))),
-                    ),
-            );
-        }
-        // Grid cells provide pointer placement; Add note and the adjustment buttons provide
-        // the equivalent keyboard path without hundreds of tab stops.
-        for column in 0..16usize {
-            for row in 0..13u8 {
-                let pitch = low + 12 - row;
-                let at = page + column as i64 * STEP;
-                grid = grid.child(
-                    div()
-                        .id(("midi-cell", column * 13 + row as usize))
-                        .absolute()
-                        .left(relative(0.1 + column as f32 * 0.9 / 16.0))
-                        .top(relative(row as f32 / 13.0))
-                        .w(relative(0.9 / 16.0))
-                        .h(relative(1.0 / 13.0))
-                        .border_l_1()
-                        .border_color(theme.border)
-                        .hover(|cell| cell.bg(theme.surface_hover))
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(move |this, _, _, cx| {
-                                if let Some(draft) = &mut this.music_references_mut().midi_draft {
-                                    draft.add(pitch, at);
-                                }
-                                cx.stop_propagation();
-                                cx.notify();
-                            }),
-                        ),
-                );
-            }
-        }
-        for (index, note) in notes.iter().enumerate() {
-            if note.pitch < low
-                || note.pitch > low + 12
-                || note.end().0 <= page
-                || note.start.0 >= page + PAGE
-            {
-                continue;
-            }
-            let start = (note.start.0 - page).max(0) as f32 / PAGE as f32;
-            let end = (note.end().0 - page).min(PAGE) as f32 / PAGE as f32;
-            let label = if note.lyric.is_empty() {
-                midi_name(i32::from(note.pitch))
-            } else {
-                note.lyric.clone()
-            };
-            grid = grid.child(
-                bounded_button_enabled(
-                    ("agent-midi-note", index),
-                    label,
-                    ButtonStyle::Normal,
-                    ButtonState::available(selected == Some(index), true),
-                    theme.accent,
-                    &theme,
-                    cx.listener(move |this, _, _, cx| {
-                        if let Some(draft) = &mut this.music_references_mut().midi_draft {
-                            draft.select(Some(index));
-                        }
-                        cx.notify();
-                    }),
-                )
-                .absolute()
-                .left(relative(0.1 + start * 0.9))
-                .top(relative((low + 12 - note.pitch) as f32 / 13.0))
-                .w(relative((end - start) * 0.9))
-                .h(relative(1.0 / 13.0))
-                .min_w_0()
-                .px_0()
-                .py_0()
-                .overflow_hidden(),
-            );
-        }
-        let mut editor = div()
+        let track_name = draft.score.tracks[track].name.clone();
+        div()
             .id("agent-midi-editor")
-            .max_h(max_height)
-            .overflow_y_scroll()
-            .track_scroll(&scroll)
             .debug_selector(|| "agent-midi-editor".into())
             .flex()
             .flex_col()
-            .gap_1()
             .min_w_0()
-            .p_2()
+            .flex_shrink()
+            .h(max_height)
+            .min_h(gpui::rems(6.0))
             .border_1()
             .border_color(theme.border)
             .rounded(Metrics::RADIUS_SM)
-            .child(div().text_sm().child(score_name))
             .child(
                 div()
                     .flex()
-                    .justify_end()
+                    .items_center()
                     .flex_wrap()
                     .min_w_0()
                     .gap_1()
+                    .p_1()
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .text_sm()
+                            .child(draft.score.name.clone()),
+                    )
                     .child(bounded_button_enabled(
                         "agent-midi-cancel",
                         self.t(Key::Cancel),
@@ -501,7 +403,7 @@ impl AurisApp {
                         "agent-midi-apply",
                         self.t(Key::AgentMidiApply),
                         ButtonStyle::Normal,
-                        ButtonState::available(false, true),
+                        ButtonState::available(false, !draft.editing),
                         theme.accent,
                         &theme,
                         cx.listener(|this, _, window, cx| {
@@ -512,206 +414,80 @@ impl AurisApp {
                         }),
                     )),
             )
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(theme.text_muted)
-                    .child(self.t(Key::AgentMidiHint)),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_wrap()
-                    .gap_1()
-                    .items_center()
-                    .child(
-                        self.midi_action("agent-midi-track-prev", "◀", track > 0, cx, |d| {
-                            d.select(None);
-                            d.track -= 1;
-                            d.select(d.notes().first().map(|_| 0));
-                        }),
-                    )
-                    .child(div().text_xs().child(format!(
-                        "{} / {} · {}",
-                        track + 1,
-                        track_count,
-                        track_name
-                    )))
-                    .child(self.midi_action(
-                        "agent-midi-track-next",
-                        "▶",
-                        track + 1 < track_count,
-                        cx,
-                        |d| {
-                            d.select(None);
-                            d.track += 1;
-                            d.select(d.notes().first().map(|_| 0));
-                        },
-                    )),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_wrap()
-                    .gap_1()
-                    .items_center()
-                    .child(
-                        self.midi_action("agent-midi-page-prev", "←", page > 0, cx, |d| {
-                            d.page = (d.page - PAGE).max(0)
-                        }),
-                    )
-                    .child(div().text_xs().child(format!(
-                        "{} {}–{}",
-                        self.t(Key::AgentMidiBeats),
-                        page / TICKS_PER_QUARTER + 1,
-                        page / TICKS_PER_QUARTER + 8
-                    )))
-                    .child(
-                        self.midi_action("agent-midi-page-next", "→", true, cx, |d| {
-                            d.page = (d.page + PAGE).min(TICKS_PER_QUARTER * 999_992)
-                        }),
-                    )
-                    .child(
-                        self.midi_action("agent-midi-octave-down", "−8va", low > 0, cx, |d| {
-                            d.low_pitch = d.low_pitch.saturating_sub(12)
-                        }),
-                    )
-                    .child(
-                        self.midi_action("agent-midi-octave-up", "+8va", low < 115, cx, |d| {
-                            d.low_pitch = (d.low_pitch + 12).min(115)
-                        }),
-                    ),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_wrap()
-                    .gap_1()
-                    .child(self.midi_action(
-                        "agent-midi-add",
-                        self.t(Key::AgentMidiAdd),
-                        notes.len() < MAX_REFERENCE_NOTES,
-                        cx,
-                        |d| {
-                            let at = d
-                                .selected
-                                .and_then(|i| d.notes().get(i))
-                                .map_or(d.page, |n| n.end().0);
-                            d.add(60, at);
-                            d.page = at / PAGE * PAGE;
-                        },
-                    ))
-                    .child(self.midi_action(
-                        "agent-midi-remove",
-                        self.t(Key::AgentMidiDelete),
-                        selected.is_some(),
-                        cx,
-                        |d| {
-                            if let Some(i) = d.selected.take() {
-                                d.score.tracks[d.track].notes.remove(i);
-                                d.lyric = TextField::default();
-                            }
-                        },
-                    )),
-            );
-        if let Some(note) = selected.and_then(|i| notes.get(i)) {
-            editor = editor
-                .child(div().text_xs().child(format!(
-                    "{} · {} {:.2} · {} {:.2}",
-                    midi_name(i32::from(note.pitch)),
-                    self.t(Key::AgentMidiBeats),
-                    note.start.0 as f64 / TICKS_PER_QUARTER as f64 + 1.0,
-                    self.t(Key::AgentMidiLength),
-                    note.length.0 as f64 / TICKS_PER_QUARTER as f64
-                )))
-                .child(
-                    div().flex().flex_wrap().gap_1().children(
-                        [
-                            ("agent-midi-pitch-down", Key::AgentMidiPitchDown, 0),
-                            ("agent-midi-pitch-up", Key::AgentMidiPitchUp, 1),
-                            ("agent-midi-earlier", Key::AgentMidiEarlier, 2),
-                            ("agent-midi-later", Key::AgentMidiLater, 3),
-                            ("agent-midi-shorter", Key::AgentMidiShorter, 4),
-                            ("agent-midi-longer", Key::AgentMidiLonger, 5),
-                        ]
-                        .into_iter()
-                        .map(|(id, key, action)| {
-                            self.midi_action(id, self.t(key), true, cx, move |d| {
-                                if let Some(note) = d
-                                    .selected
-                                    .and_then(|i| d.score.tracks[d.track].notes.get_mut(i))
-                                {
-                                    match action {
-                                        0 => note.pitch = note.pitch.saturating_sub(1),
-                                        1 => note.pitch = (note.pitch + 1).min(127),
-                                        2 => note.start.0 = (note.start.0 - STEP).max(0),
-                                        3 => note.start.0 += STEP,
-                                        4 => note.length.0 = (note.length.0 - STEP).max(1),
-                                        _ => note.length.0 += STEP,
-                                    }
-                                }
-                                d.reveal_selection();
-                            })
-                        }),
-                    ),
+            .when(track_count > 1, |column| {
+                column.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .min_w_0()
+                        .gap_1()
+                        .child(self.midi_track_button(
+                            "agent-midi-track-prev",
+                            "◀",
+                            track.checked_sub(1),
+                            cx,
+                        ))
+                        .child(div().flex_1().min_w_0().truncate().text_xs().child(format!(
+                            "{} / {} · {}",
+                            track + 1,
+                            track_count,
+                            track_name
+                        )))
+                        .child(self.midi_track_button(
+                            "agent-midi-track-next",
+                            "▶",
+                            (track + 1 < track_count).then_some(track + 1),
+                            cx,
+                        )),
                 )
-                .child(div().text_xs().child(self.t(Key::AgentMidiLyric)))
-                .child(self.panel_field(
-                    "agent-midi-lyric",
-                    AgentField::MidiLyric,
-                    self.music_lyric_focused(),
-                    lyric_empty,
-                    self.t(Key::AgentMidiLyricPlaceholder).to_owned(),
-                    focus,
-                    true,
-                    &theme,
-                    cx,
-                ));
-        }
-        let ruler = div()
-            .relative()
-            .w_full()
-            .h_4()
-            .flex_shrink_0()
-            .children((0..8).map(|beat| {
-                div()
-                    .absolute()
-                    .left(relative(0.1 + beat as f32 * 0.9 / 8.0))
-                    .text_xs()
-                    .text_color(theme.text_muted)
-                    .child((page / TICKS_PER_QUARTER + beat + 1).to_string())
-            }));
-        div()
-            .relative()
-            .min_w_0()
-            .child(editor.child(ruler).child(grid))
+            })
             .child(
                 div()
-                    .absolute()
-                    .inset_0()
-                    .child(Scrollbar::vertical(&scroll).scrollbar_show(ScrollbarShow::Always)),
+                    .flex_1()
+                    .min_h_0()
+                    .min_w_0()
+                    .capture_any_mouse_down(cx.listener(|this, _, _, _| {
+                        if let Some(s) = &mut this.song_workshop {
+                            s.active_field = None;
+                        } else {
+                            this.agent_chat.focused = None;
+                        }
+                    }))
+                    .children(editor),
             )
             .into_any_element()
     }
 
-    fn midi_action(
+    fn midi_track_button(
         &self,
         id: &'static str,
         label: &str,
-        enabled: bool,
+        track: Option<usize>,
         cx: &mut gpui::Context<Self>,
-        edit: impl Fn(&mut MidiDraft) + 'static,
     ) -> AnyElement {
         bounded_button_enabled(
             id,
             label.to_owned(),
             ButtonStyle::Ghost,
-            ButtonState::available(false, enabled),
+            ButtonState::available(false, track.is_some()),
             self.theme.accent,
             &self.theme,
-            cx.listener(move |this, _, _, cx| {
-                if let Some(draft) = &mut this.music_references_mut().midi_draft {
-                    edit(draft);
+            cx.listener(move |this, _, window, cx| {
+                if let Some(track) = track
+                    && let Some(draft) = this.music_references_mut().midi_draft.as_mut()
+                    && let Some(editor) = &draft.editor
+                {
+                    let editor = editor.read(cx);
+                    let clip = editor.clips[track];
+                    editor.app.clone().update(cx, |app, cx| {
+                        app.selected_clip = Some(clip);
+                        app.selected_track = app.project().track_of_clip(clip);
+                        app.selected_clips = [clip].into_iter().collect();
+                        app.selected_notes.clear();
+                        app.focus_pane(crate::app::Pane::PianoRoll, window);
+                        cx.notify();
+                    });
+                    draft.track = track;
                 }
                 cx.notify();
             }),
@@ -785,7 +561,14 @@ mod tests {
                     .midi_draft
                     .as_mut()
                     .unwrap()
-                    .add(pitch, 0);
+                    .score
+                    .tracks[0]
+                    .notes
+                    .push(auris_session::prelude::Note::new(
+                        pitch,
+                        auris_session::prelude::Ticks::ZERO,
+                        auris_session::prelude::Ticks(480),
+                    ));
                 this.agent_chat.input = TextField::new("Use this melody");
                 assert!(this.enqueue_agent_message());
             }
@@ -804,83 +587,171 @@ mod tests {
     }
 
     #[gpui::test]
-    fn midi_clip_copy_edits_and_lyrics_leave_the_song_unchanged(cx: &mut gpui::TestAppContext) {
-        let (app, cx, _, clip) = crate::harness::with_a_clip(cx);
+    fn midi_clip_copy_uses_shared_gestures_and_lyrics_without_editing_the_song(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use crate::harness::*;
+        use auris_session::prelude::*;
+        let (app, cx, _, clip) = with_a_clip(cx);
         app.update(cx, |this, _| {
             this.selected_clip = Some(clip);
             this.panels.show(crate::dock::Panel::Agent);
+            this.panels
+                .set_size(crate::dock::Dock::Right, gpui::px(640.0));
             this.agent_chat.models_loaded = true;
+            this.pointer = crate::gestures::PointerGestures::default();
+            this.settings.piano_roll_grid = auris_session::PianoRollGrid::Sixteenth;
+            this.settings.relative_note_snap = false;
             this.start_midi_draft(true);
         });
-        crate::harness::paint(&app, cx);
-        crate::harness::click("agent-midi-add", cx);
-        crate::harness::paint(&app, cx);
-        crate::harness::click("agent-midi-pitch-up", cx);
-        crate::harness::click("agent-midi-lyric", cx);
+        paint(&app, cx);
+        let editor = reference_editor(&app, cx);
+        show_pitch(&editor, cx, 60);
+        let at = roll_point(&editor, cx, Ticks(240), 60);
+        click_at(cx, at, creating());
+        paint(&app, cx);
+        let from = roll_point(&editor, cx, Ticks(240), 60);
+        let to = roll_point(&editor, cx, Ticks(720), 62);
+        drag(cx, from, to);
+        paint(&app, cx);
+        let at = roll_point(&editor, cx, Ticks(720), 62);
+        double_click(cx, at);
+        paint(&app, cx);
+        assert!(editor.read_with(cx, |app, _| app.prompt.is_some()));
+        assert!(
+            cx.debug_bounds("prompt-text-field").is_some(),
+            "shared prompt was not painted"
+        );
+        cx.update(|window, cx| {
+            assert!(
+                editor.read(cx).focus.is_focused(window),
+                "reference focus lost; parent field: {:?}; parent prompt: {:?}",
+                app.read(cx).agent_chat.focused,
+                app.read(cx).prompt.as_ref()
+            );
+        });
         cx.simulate_input("きみ");
-        app.read_with(cx, |this, _| {
+        editor.read_with(cx, |app, _| {
             assert_eq!(
+                app.prompt
+                    .as_ref()
+                    .and_then(|p| p.field())
+                    .map(|f| f.content()),
+                Some("きみ"),
+                "native field did not receive text"
+            )
+        });
+        cx.simulate_keystrokes("enter");
+        paint(&app, cx);
+        editor.read_with(cx, |app, _| {
+            assert!(
+                app.prompt.is_none(),
+                "lyric prompt remains: {:?}; notes: {:?}",
+                app.prompt.as_ref(),
+                app.selected_midi_clip().unwrap().notes
+            );
+            assert!(app.drag.is_none(), "drag remains after release");
+        });
+        click("agent-midi-apply", cx);
+        app.read_with(cx, |this, _| {
+            assert!(
+                this.agent_chat.references.midi_draft.is_none(),
+                "editing: {:?}; error: {:?}",
                 this.agent_chat
                     .references
                     .midi_draft
                     .as_ref()
-                    .unwrap()
-                    .lyric
-                    .content(),
-                "きみ"
+                    .map(|d| d.editing),
+                this.agent_chat.references.attachment_error
             );
-            assert!(this.session.midi_clip(clip).unwrap().notes.is_empty());
-        });
-        crate::harness::click("agent-midi-apply", cx);
-        app.read_with(cx, |this, _| {
-            assert!(this.agent_chat.references.midi_draft.is_none());
             let score = MidiReference::read(&this.agent_chat.references.attachments[0]).unwrap();
-            assert_eq!(score.tracks[0].notes[0].pitch, 61);
+            assert_eq!(score.tracks[0].notes[0].pitch, 62);
             assert_eq!(score.tracks[0].notes[0].lyric, "きみ");
             assert!(this.session.midi_clip(clip).unwrap().notes.is_empty());
         });
     }
 
     #[gpui::test]
-    fn midi_lyrics_escape_cancels_and_restores_the_composer(cx: &mut gpui::TestAppContext) {
-        let (app, cx) = crate::harness::open(cx);
+    fn reference_undo_and_cancel_leave_the_song_and_composer_intact(cx: &mut gpui::TestAppContext) {
+        use crate::harness::*;
+        use auris_session::prelude::*;
+        let (app, cx) = open(cx);
         app.update(cx, |this, _| {
             this.panels.show(crate::dock::Panel::Agent);
             this.agent_chat.models_loaded = true;
+            this.agent_chat.input = TextField::new("Keep this draft");
+            this.pointer = crate::gestures::PointerGestures::default();
+            this.settings.piano_roll_grid = auris_session::PianoRollGrid::Sixteenth;
+            this.settings.relative_note_snap = false;
             this.start_midi_draft(false);
-            this.agent_chat
-                .references
-                .midi_draft
-                .as_mut()
-                .unwrap()
-                .add(60, 0);
         });
-        crate::harness::paint(&app, cx);
-        crate::harness::click("agent-midi-lyric", cx);
-        cx.simulate_input("discard me");
-        cx.simulate_keystrokes("escape");
+        let before = app.read_with(cx, |app, _| app.project().clone());
+        paint(&app, cx);
+        let editor = reference_editor(&app, cx);
+        show_pitch(&editor, cx, 60);
+        let at = roll_point(&editor, cx, Ticks(240), 60);
+        click_at(cx, at, creating());
+        paint(&app, cx);
+        cx.dispatch_action(crate::actions::Undo);
+        paint(&app, cx);
+        editor.read_with(cx, |app, _| {
+            assert!(app.selected_midi_clip().unwrap().notes.is_empty())
+        });
+        cx.dispatch_action(crate::actions::Redo);
+        paint(&app, cx);
+        editor.read_with(cx, |app, _| {
+            assert_eq!(app.selected_midi_clip().unwrap().notes.len(), 1)
+        });
+        click("agent-midi-cancel", cx);
         app.read_with(cx, |this, _| {
             assert!(this.agent_chat.references.midi_draft.is_none());
             assert!(this.agent_chat.references.attachments.is_empty());
             assert_eq!(this.agent_chat.focused, Some(AgentField::Chat));
+            assert_eq!(this.agent_chat.input.content(), "Keep this draft");
+            assert_eq!(this.project(), &before);
         });
     }
-
-    #[test]
-    fn selecting_notes_flushes_only_the_previous_notes_lyric() {
-        use auris_session::prelude::{SignatureMap, TempoMap};
-        let score = MidiReference::new(
-            "Melody".into(),
-            TempoMap::constant(120.0),
-            SignatureMap::default(),
-        );
-        let mut draft = MidiDraft::new(score, None);
-        draft.add(60, 0);
-        draft.lyric = TextField::new("あ");
-        draft.add(64, STEP);
-        draft.lyric = TextField::new("い");
-        draft.select(Some(0));
-        assert_eq!(draft.lyric.content(), "あ");
-        assert_eq!(draft.notes()[1].lyric, "い");
+    #[gpui::test]
+    fn midi_track_switching_preserves_channels_and_unedited_parts(cx: &mut gpui::TestAppContext) {
+        use crate::harness::*;
+        use auris_session::{midi_reference::ReferenceTrack, prelude::*};
+        let (app, cx) = open(cx);
+        app.update(cx, |app, _| {
+            app.panels.show(crate::dock::Panel::Agent);
+            app.agent_chat.models_loaded = true;
+            app.pointer = crate::gestures::PointerGestures::default();
+            app.settings.piano_roll_grid = auris_session::PianoRollGrid::Sixteenth;
+            app.settings.relative_note_snap = false;
+            app.start_midi_draft(false);
+            let draft = app.agent_chat.references.midi_draft.as_mut().unwrap();
+            draft.score.tracks[0].channel = 9;
+            draft.score.tracks[0]
+                .notes
+                .push(Note::new(36, Ticks::ZERO, Ticks(480)));
+            draft.score.tracks.push(ReferenceTrack {
+                name: "Lead".into(),
+                channel: 2,
+                notes: vec![],
+            });
+        });
+        paint(&app, cx);
+        click("agent-midi-track-next", cx);
+        paint(&app, cx);
+        let editor = reference_editor(&app, cx);
+        show_pitch(&editor, cx, 72);
+        let at = roll_point(&editor, cx, Ticks(240), 72);
+        click_at(cx, at, creating());
+        paint(&app, cx);
+        click("agent-midi-apply", cx);
+        app.read_with(cx, |app, _| {
+            let score = MidiReference::read(&app.agent_chat.references.attachments[0]).unwrap();
+            assert_eq!(score.tracks[0].channel, 9);
+            assert_eq!(
+                score.tracks[0].notes[0],
+                Note::new(36, Ticks::ZERO, Ticks(480))
+            );
+            assert_eq!(score.tracks[1].channel, 2);
+            assert_eq!(score.tracks[1].notes[0].pitch, 72);
+        });
     }
 }

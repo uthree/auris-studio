@@ -593,9 +593,11 @@ impl Session {
         }
         for (track, pitch) in played.released {
             self.note_off(track, pitch);
+            self.note_take_released(track, pitch);
         }
         if let Some(struck) = played.struck {
             self.note_on(struck.track, struck.pitch, struck.velocity);
+            self.note_take_struck(struck.track, struck.pitch, struck.velocity);
         }
         played.claimed
     }

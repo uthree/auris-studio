@@ -154,9 +154,21 @@ pub enum SessionError {
     #[error("no chord progression is named `{0}`")]
     UnknownProgression(String),
 
+    /// No performance preset, built in or kept, has this name.
+    #[error("no performance preset is named `{0}`")]
+    UnknownPerformancePreset(String),
+
+    /// A performance preset could not be kept or deleted, and why.
+    #[error("performance preset: {0}")]
+    PerformancePreset(crate::performance_presets::KeepRefusal),
+
     /// The requested clip does not exist.
     #[error("no clip with id {0}")]
     UnknownClip(u64),
+
+    /// A lint fix was found at another revision, or has no fix to apply; lint again.
+    #[error("the document changed since this problem was found; lint again before fixing it")]
+    LintStale,
 
     /// The clip exists but holds no note at that index.
     ///
@@ -170,6 +182,24 @@ pub enum SessionError {
         /// The index that named nothing.
         index: usize,
     },
+
+    /// The mixer graph has no such node: the track or the effect slot is gone.
+    #[error("no mixer node {0}")]
+    UnknownMixerNode(String),
+
+    /// The track or clip holds no comment with that id.
+    #[error("no comment with id {0} there")]
+    UnknownComment(u64),
+
+    /// A comment with no words was asked for; there is nothing to pin.
+    #[error("a comment needs some text")]
+    EmptyComment,
+
+    /// Comments are pinned inside note clips only; an audio clip has no piano roll to hold one.
+    #[error(
+        "clip {0} is not a note clip, so it cannot hold comments; pin the comment on its track"
+    )]
+    NotANoteClip(u64),
 
     /// The requested send does not exist on that track.
     #[error("track {track} has no send with id {send}")]
@@ -201,6 +231,10 @@ pub enum SessionError {
     /// The clip cannot be divided at the requested position.
     #[error("clip {0} cannot be split there")]
     CannotSplit(u64),
+
+    /// The named clips cannot become one clip, and the refusal says why.
+    #[error("{}", join_refusal_text(*.0))]
+    CannotJoin(auris_core::JoinRefusal),
 
     /// The clip holds notes rather than audio, so it has no gain or fades of its own.
     ///
@@ -240,6 +274,10 @@ pub enum SessionError {
     /// A voice model could not be loaded, or refused to sing.
     #[error(transparent)]
     Sing(#[from] auris_singer::SingError),
+
+    /// A note-roll video could not be drawn or encoded, or no ffmpeg was found to encode it.
+    #[error(transparent)]
+    Video(#[from] auris_video::VideoError),
 
     /// A singer-frame JSON file exceeds the bounded source-buffer size.
     #[error(
@@ -313,6 +351,14 @@ pub enum SessionError {
         /// What the operation needed.
         expected: &'static str,
     },
+
+    /// A file chosen for the sampler decoded to no audio at all.
+    #[error("{} holds no audio to sample", .0.display())]
+    EmptySample(PathBuf),
+
+    /// A change to a sampler's map was refused: a zone that is not there, or more than it holds.
+    #[error("sample map: {0}")]
+    SampleMap(String),
 
     /// The document has never been saved, so there is no path to save it back to.
     #[error("the project has no path yet; save it somewhere first")]
@@ -399,6 +445,32 @@ pub enum SessionError {
     /// [`Session::save_as_replacing`](crate::Session::save_as_replacing) to go ahead.
     #[error("{} is already a project", .0.display())]
     WouldReplace(PathBuf),
+
+    /// A latency measurement was asked for while one, a take, or playback was already running.
+    #[error("stop playback and recording before measuring the input latency")]
+    CalibrationBusy,
+
+    /// The measurement's clicks never reached the input.
+    ///
+    /// The input is somewhere the output cannot reach: headphones, a muted speaker, a cable in
+    /// the wrong socket, or the wrong input device chosen.
+    #[error("no clicks reached the input; let it hear the output and measure again")]
+    CalibrationHeardNothing,
+
+    /// The clicks arrived, but not at a steady distance from where they were played.
+    ///
+    /// Noise in the room, or an input that was also hearing something else.
+    #[error(
+        "the clicks arrived {spread_ms:.1} ms apart from one another; measure again somewhere quieter"
+    )]
+    CalibrationUnsteady {
+        /// How far the clicks strayed from their median, in milliseconds.
+        spread_ms: f64,
+    },
+
+    /// The output never played the clicks, so there was nothing to measure.
+    #[error("the audio output did not play the measurement")]
+    CalibrationStalled,
 }
 
 impl SessionError {
@@ -414,6 +486,22 @@ impl SessionError {
             SessionError::Engine(auris_engine::EngineError::RenderCancelled)
                 | SessionError::Sing(auris_singer::SingError::Cancelled)
                 | SessionError::Io(auris_io::IoError::ExportCancelled)
+                | SessionError::Video(auris_video::VideoError::Cancelled)
         )
+    }
+}
+
+fn join_refusal_text(refusal: auris_core::JoinRefusal) -> &'static str {
+    use auris_core::JoinRefusal;
+    match refusal {
+        JoinRefusal::TooFew => "name two or more clips on one track to join",
+        JoinRefusal::Audio => "audio clips cannot be joined; only note clips can",
+        JoinRefusal::DifferentTracks => "only clips on the same track can be joined",
+        JoinRefusal::MixedMute => {
+            "some of those clips are muted and some are not; match their mute first"
+        }
+        JoinRefusal::DifferentTransforms => {
+            "those clips are performed differently; give them the same note transforms or bake them first"
+        }
     }
 }

@@ -4,7 +4,7 @@ use super::{SaveReport, Session, SessionOptions};
 use crate::{Edit, SessionError};
 use auris_compose::{SongSpec, compose, preset};
 use auris_core::{AssetPath, AudioBuffer, Project};
-use auris_engine::{OfflineOptions, RenderProgress};
+use auris_engine::RenderProgress;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -199,6 +199,15 @@ impl SongRequest {
         for (track, source) in hosted {
             session.install_composed_hosted_source(track, source);
         }
+        // The agent writes the notes and the mix here, but a master it can lean on is the
+        // document's, not the agent's to remember: without one, normalising stops at the first
+        // drum hit that reaches the ceiling. After the parts, so their ids are the ones the
+        // sources were placed on.
+        super::levels::install_master_limiter(
+            &session.registry,
+            &mut project,
+            super::levels::NEW_DOCUMENT_CEILING_DB,
+        );
         session.replace_project(project);
         session.install_library_fonts();
         let drums: Vec<_> = session
@@ -387,6 +396,54 @@ pub struct SongCandidate {
 }
 
 impl SongCandidate {
+    /// Authored lyrics in song order, preserving section breaks and repeated sections.
+    /// Manually authored drafts without section lyrics use their singer clips' note text.
+    pub fn lyrics(&self) -> String {
+        if let Some(spec) = self
+            .project
+            .song_spec
+            .as_deref()
+            .and_then(|text| SongSpec::parse(text).ok())
+        {
+            let lyrics = spec
+                .form
+                .iter()
+                .filter_map(|name| spec.sections.get(name))
+                .map(|section| section.lyrics.trim())
+                .filter(|text| !text.is_empty())
+                .collect::<Vec<_>>()
+                .join("\n\n");
+            if !lyrics.is_empty() {
+                return lyrics;
+            }
+        }
+        let mut phrases = std::collections::BTreeSet::new();
+        for singer in self
+            .project
+            .tracks
+            .iter()
+            .filter_map(|track| track.kind.as_singer())
+        {
+            for clip in singer.clips.iter().filter(|clip| !clip.muted) {
+                let mut notes: Vec<_> = clip.notes.iter().enumerate().collect();
+                notes.sort_by_key(|(index, note)| (note.start, *index));
+                let text: String = notes
+                    .iter()
+                    .map(|(_, note)| note.lyric.as_str())
+                    .filter(|text| *text != super::LYRIC_CONTINUATION)
+                    .collect();
+                if !text.trim().is_empty() {
+                    phrases.insert((clip.start, text.trim().to_owned()));
+                }
+            }
+        }
+        phrases
+            .into_iter()
+            .map(|(_, text)| text)
+            .collect::<Vec<_>>()
+            .join("\n\n")
+    }
+
     /// Stable musical addresses for planning a scoped continuation.
     pub fn workshop_outline(&self) -> serde_json::Value {
         serde_json::json!({"tracks": self.project.tracks.iter().map(|t| serde_json::json!({
@@ -614,13 +671,12 @@ impl SongCandidate {
             idea.description
         ));
         progress("render");
-        let audio = session
+        // A loop song's audition is one seamless cycle, which the timeline recognises by length.
+        let (audio, _) = session
             .render_job_at(Some(22_050.0))
-            .render(
-                &OfflineOptions {
-                    sample_rate: Some(22_050.0),
-                    ..Default::default()
-                },
+            .render_audition(
+                22_050.0,
+                true,
                 &mut RenderProgress::default().cancelled_by(cancel),
             )
             .map_err(|e| e.to_string())?;
@@ -691,13 +747,12 @@ impl Session {
         if !report.uncollected.is_empty() {
             return Err("Candidate assets could not be collected".into());
         }
-        let audio = self
+        // A loop song's audition is one seamless cycle, which the timeline recognises by length.
+        let (audio, _) = self
             .render_job_at(Some(22_050.0))
-            .render(
-                &OfflineOptions {
-                    sample_rate: Some(22_050.0),
-                    ..Default::default()
-                },
+            .render_audition(
+                22_050.0,
+                true,
                 &mut RenderProgress::default().cancelled_by(cancel),
             )
             .map_err(|e| e.to_string())?;
@@ -1287,6 +1342,93 @@ mod tests {
                 .is_empty()
         );
         assert!((reopened.bank.get(new_source).unwrap().peak() - 0.25).abs() < 0.001);
+    }
+
+    #[test]
+    fn candidate_displays_written_lyrics_after_saving_explicit_pronunciation() {
+        use auris_core::{Note, time::Ticks};
+        let mut session = Session::new(SessionOptions::headless()).unwrap();
+        let track = session.add_singer_track("Lead");
+        let clip = session
+            .add_midi_clip(track, "Verse", Ticks::ZERO, Ticks(1920))
+            .unwrap();
+        for beat in 0..4 {
+            session
+                .add_note(clip, Note::new(60, Ticks(480 * beat), Ticks(480)))
+                .unwrap();
+        }
+        session
+            .agent_command(
+                serde_json::from_value(serde_json::json!({
+                    "action":"write_lyrics", "clip":clip.0, "text":"月の夜", "reading":"つきのよ"
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+        let folder = tempfile::tempdir().unwrap();
+        let saved = session
+            .save_as(&folder.path().join("Lyrics.auris"))
+            .unwrap();
+        let mut reopened = Session::new(SessionOptions::headless()).unwrap();
+        reopened.open(&saved.document).unwrap();
+        let candidate = SongCandidate {
+            idea: idea(),
+            project: reopened.project().clone(),
+            audio: Arc::new(AudioBuffer::stereo(1, 48_000.0)),
+            timeline: Default::default(),
+            _assets: None,
+        };
+        assert_eq!(candidate.lyrics(), "月の夜");
+        assert_eq!(
+            candidate.project.midi_clip(clip).unwrap().1.notes[0].phonemes,
+            ["ts", "ɯ"]
+        );
+    }
+
+    #[test]
+    fn candidate_lyrics_preserve_sections_repeats_and_manual_vocal_text() {
+        use auris_core::{Note, time::Ticks};
+        let mut candidate = SongCandidate {
+            idea: idea(),
+            project: Project::new("Lyrics", 48_000.0),
+            audio: Arc::new(AudioBuffer::stereo(1, 48_000.0)),
+            timeline: Default::default(),
+            _assets: None,
+        };
+        assert!(candidate.lyrics().is_empty());
+        let spec = SongSpec::parse(
+            r#"
+            form = ['verse', 'chorus', 'verse']
+            [section.verse]
+            lyrics = "夜の雨\n光る街"
+            [section.chorus]
+            lyrics = 'また会おう'
+        "#,
+        )
+        .unwrap();
+        candidate.project.song_spec = Some(spec.to_toml());
+        assert_eq!(
+            candidate.lyrics(),
+            "夜の雨\n光る街\n\nまた会おう\n\n夜の雨\n光る街"
+        );
+
+        let mut session = Session::new(SessionOptions::headless()).unwrap();
+        for name in ["Lead", "Harmony"] {
+            let track = session.add_singer_track(name);
+            let clip = session
+                .add_midi_clip(track, "Verse", Ticks::ZERO, Ticks(960))
+                .unwrap();
+            let clip = session.project.midi_clip_mut(clip).unwrap();
+            let mut first = Note::new(60, Ticks::ZERO, Ticks(240));
+            first.lyric = "夜の雨".into();
+            let mut continuation = Note::new(62, Ticks(240), Ticks(240));
+            continuation.lyric = super::super::LYRIC_CONTINUATION.into();
+            let mut last = Note::new(64, Ticks(480), Ticks(240));
+            last.lyric = "、また会おう".into();
+            clip.notes = vec![last, continuation, first];
+        }
+        candidate.project = session.project().clone();
+        assert_eq!(candidate.lyrics(), "夜の雨、また会おう");
     }
 
     fn idea() -> SongIdea {

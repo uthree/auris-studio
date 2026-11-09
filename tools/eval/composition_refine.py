@@ -100,7 +100,6 @@ def configure(args):
     settings = {
         "model": "gpt-6.1-sol",
         "backend": "codex",
-        "prompt_profile": "legacy",
         "timeout": 900,
         "speaker": None,
         **config,
@@ -342,8 +341,6 @@ def run_stage(
         args.model,
         "--backend",
         args.backend,
-        "--prompt-profile",
-        args.prompt_profile,
         "--no-candidate-tools",
         "--split",
         "development",

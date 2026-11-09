@@ -11,6 +11,7 @@ enum Content {
     Text(String),
     Image(Arc<gpui::RenderImage>),
     Audio(Arc<auris_session::prelude::AudioBuffer>),
+    Midi(auris_session::midi_reference::MidiReference),
 }
 
 pub(crate) struct AttachmentPreview {
@@ -30,9 +31,7 @@ fn load(path: &std::path::Path, rate: f64) -> Result<Content, String> {
     match kind {
         auris_agent::AttachmentKind::Midi => {
             let score = auris_session::midi_reference::MidiReference::read(path)?;
-            Ok(Content::Text(
-                serde_json::to_string_pretty(&score).map_err(|e| e.to_string())?,
-            ))
+            Ok(Content::Midi(score))
         }
         auris_agent::AttachmentKind::Text => {
             let bytes = read_bounded(path, 256 * 1024)?;
@@ -56,7 +55,12 @@ fn load(path: &std::path::Path, rate: f64) -> Result<Content, String> {
             let mut image =
                 image::DynamicImage::from_decoder(decoder).map_err(|e| e.to_string())?;
             image.apply_orientation(orientation);
-            let mut decoded = image.thumbnail(1024, 1024).into_rgba8();
+            // `thumbnail` fits to the box in both directions, so a small picture would come
+            // back enlarged to 1024 px; only a larger one is brought down.
+            if image.width() > 1024 || image.height() > 1024 {
+                image = image.thumbnail(1024, 1024);
+            }
+            let mut decoded = image.into_rgba8();
             for pixel in decoded.pixels_mut() {
                 pixel.0.swap(0, 2);
             }
@@ -88,7 +92,272 @@ fn read_bounded(path: &std::path::Path, limit: u64) -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
+/// Where an embedded reference is drawn, which decides how much room it may take.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum InlinePlace {
+    /// Under a message already sent: big enough to read, small enough to scroll past.
+    Message,
+    /// Above the composer's field, before sending: a thumbnail that leaves the field in view.
+    Composer,
+}
+
+impl InlinePlace {
+    /// The box a picture is fitted into.
+    fn image_bound(self) -> gpui::Size<gpui::Pixels> {
+        match self {
+            Self::Message => gpui::size(gpui::px(320.0), gpui::px(240.0)),
+            Self::Composer => gpui::size(gpui::px(120.0), gpui::px(80.0)),
+        }
+    }
+
+    /// The tallest a text excerpt grows before it scrolls inside itself.
+    fn text_height(self) -> gpui::Pixels {
+        match self {
+            Self::Message => gpui::px(160.0),
+            Self::Composer => gpui::px(72.0),
+        }
+    }
+
+    /// The height of a MIDI reference's note roll.
+    fn roll_height(self) -> gpui::Pixels {
+        match self {
+            Self::Message => gpui::px(96.0),
+            Self::Composer => gpui::px(56.0),
+        }
+    }
+}
+
+/// The size a picture of `natural` pixels is drawn at inside `bound`: its own size when it fits,
+/// otherwise scaled down, keeping its proportions, until it does. Never scaled up — a small icon
+/// stretched to fill a column is the preview being bigger than the thing.
+fn fitted_size(natural: gpui::Size<f32>, bound: gpui::Size<f32>) -> gpui::Size<f32> {
+    if natural.width <= 0.0 || natural.height <= 0.0 {
+        return gpui::size(0.0, 0.0);
+    }
+    let scale = (bound.width / natural.width)
+        .min(bound.height / natural.height)
+        .min(1.0);
+    gpui::size(natural.width * scale, natural.height * scale)
+}
+
+/// [`fitted_size`] for a decoded image, one image pixel to one logical pixel.
+fn image_size(
+    image: &gpui::RenderImage,
+    bound: gpui::Size<gpui::Pixels>,
+) -> gpui::Size<gpui::Pixels> {
+    let natural = image.size(0);
+    let fitted = fitted_size(
+        gpui::size(natural.width.0 as f32, natural.height.0 as f32),
+        gpui::size(f32::from(bound.width), f32::from(bound.height)),
+    );
+    gpui::size(gpui::px(fitted.width), gpui::px(fitted.height))
+}
+
+/// A MIDI reference at a glance: Atelier's `NoteRoll`, a part per track in its categorical
+/// colour, on the sunken surface every visualisation sits on.
+fn midi_preview(
+    score: &auris_session::midi_reference::MidiReference,
+    height: gpui::Pixels,
+    theme: &crate::theme::Theme,
+) -> gpui::AnyElement {
+    let notes = score
+        .tracks
+        .iter()
+        .enumerate()
+        .flat_map(|(part, track)| {
+            track.notes.iter().map(move |note| {
+                atelier::viz::RollNote::new(note.pitch, note.start.0 as f32, note.length.0 as f32)
+                    .part(part)
+            })
+        })
+        .collect();
+    div()
+        .w_full()
+        .h(height)
+        .overflow_hidden()
+        .rounded(theme.atelier.shape.radius_md)
+        .bg(theme.atelier.colors.sunken)
+        .child(atelier::viz::NoteRoll::new(notes))
+        .into_any_element()
+}
+
 impl AurisApp {
+    /// Load inline references once, off the UI thread, without opening a preview pane.
+    pub(crate) fn load_inline_attachments(&mut self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
+        for path in paths {
+            if self
+                .inline_attachments
+                .iter()
+                .any(|preview| preview.path == path)
+            {
+                continue;
+            }
+            let index = self.inline_attachments.len();
+            self.inline_attachments.push(AttachmentPreview {
+                serial: 0,
+                workshop: false,
+                path: path.clone(),
+                content: None,
+                error: None,
+                player: PlayerState::default(),
+            });
+            let rate = self.session.sample_rate();
+            cx.spawn(async move |this, cx| {
+                let result = cx
+                    .background_executor()
+                    .spawn(async move { load(&path, rate) })
+                    .await;
+                let _ = this.update(cx, |this, cx| {
+                    let preview = &mut this.inline_attachments[index];
+                    match result {
+                        Ok(content) => preview.content = Some(content),
+                        Err(error) => preview.error = Some(error),
+                    }
+                    cx.notify();
+                });
+            })
+            .detach();
+        }
+    }
+
+    /// Embed a reference directly beside its message or draft attachment controls.
+    ///
+    /// `place` says where: a sent message shows a reference at a readable size, the composer
+    /// only enough to recognise what is about to be sent. Neither is a viewer — the chip opens
+    /// the full preview — so a picture is drawn at its own size or smaller, never stretched
+    /// across the column.
+    pub(crate) fn inline_attachment(
+        &self,
+        path: &std::path::Path,
+        id: String,
+        place: InlinePlace,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
+        let Some((index, preview)) = self
+            .inline_attachments
+            .iter()
+            .enumerate()
+            .find(|(_, preview)| preview.path == path)
+        else {
+            return div().into_any_element();
+        };
+        let theme = &self.theme;
+        let bound = place.image_bound();
+        let image_kind =
+            auris_agent::attachment_kind(path) == Some(auris_agent::AttachmentKind::Image);
+        let content = match &preview.content {
+            Some(Content::Image(image)) => {
+                let size = image_size(image, bound);
+                div()
+                    .debug_selector({
+                        let id = id.clone();
+                        move || format!("{id}-image")
+                    })
+                    .flex_none()
+                    .max_w_full()
+                    .overflow_hidden()
+                    .rounded(theme.atelier.shape.radius_md)
+                    .border_1()
+                    .border_color(theme.atelier.colors.border)
+                    .bg(theme.atelier.colors.sunken)
+                    .child(
+                        gpui::img(Arc::clone(image))
+                            .w(size.width)
+                            .h(size.height)
+                            .max_w_full()
+                            .object_fit(gpui::ObjectFit::Contain),
+                    )
+                    .into_any_element()
+            }
+            Some(Content::Text(text)) => div()
+                .id(gpui::SharedString::from(format!("{id}-text")))
+                .w_full()
+                .min_w_0()
+                .max_h(place.text_height())
+                .overflow_y_scroll()
+                .overflow_x_hidden()
+                .p(theme.atelier.spacing.sm)
+                .rounded(theme.atelier.shape.radius_md)
+                .bg(theme.atelier.colors.sunken)
+                .child(
+                    atelier::SelectableText::new(
+                        gpui::SharedString::from(format!("{id}-content")),
+                        text.clone(),
+                    )
+                    .mono()
+                    .size(atelier::TextSize::Small),
+                )
+                .into_any_element(),
+            Some(Content::Audio(audio)) => self.render_audio_player(
+                PlayerTarget::InlineAttachment(index),
+                audio.duration_seconds(),
+                true,
+                false,
+                Some(format!("{id}-player")),
+                cx,
+            ),
+            Some(Content::Midi(score)) => midi_preview(score, place.roll_height(), theme),
+            None => preview.error.as_ref().map_or_else(
+                || {
+                    // The shape of a picture is not known until it is decoded; the bound is.
+                    let (width, height) = if image_kind {
+                        (bound.width * 0.5, bound.height * 0.5)
+                    } else {
+                        (gpui::px(160.0), gpui::px(14.0))
+                    };
+                    atelier::Skeleton::new(gpui::SharedString::from(format!("{id}-loading")))
+                        .w(width)
+                        .h(height)
+                        .rounded(theme.atelier.shape.radius_md)
+                        .into_any_element()
+                },
+                |error| agent_components::error_notice(error.clone()),
+            ),
+        };
+        let picture = matches!(preview.content, Some(Content::Image(_)))
+            || (preview.content.is_none() && preview.error.is_none() && image_kind);
+        div()
+            .id(gpui::SharedString::from(id.clone()))
+            .debug_selector(move || id.clone())
+            .min_w_0()
+            .max_w_full()
+            .flex_shrink_0()
+            // A picture keeps its own width so it can sit beside the next one; everything else
+            // reads across the column.
+            .when(!picture, |this| this.w_full())
+            .text_color(self.theme.text)
+            .child(content)
+            .children(
+                preview
+                    .error
+                    .as_ref()
+                    .filter(|_| preview.content.is_some())
+                    .map(|error| agent_components::error_notice(error.clone())),
+            )
+            .into_any_element()
+    }
+
+    /// Play an embedded audio reference through its own transport state.
+    pub(crate) fn play_inline_attachment(&mut self, index: usize, cx: &mut Context<Self>) {
+        if !self.acquire_audio(cx) {
+            return;
+        }
+        let Some(preview) = self.inline_attachments.get_mut(index) else {
+            return;
+        };
+        let Some(Content::Audio(audio)) = &preview.content else {
+            return;
+        };
+        match self.session.play_output_preview_with(
+            Arc::clone(audio),
+            preview.player.options(audio.duration_seconds()),
+        ) {
+            Ok(status) => preview.player.start(status),
+            Err(error) => preview.error = Some(error.to_string()),
+        }
+        cx.notify();
+    }
+
     pub(crate) fn pick_conversation_files(&mut self, workshop: bool, cx: &mut Context<Self>) {
         let document = self
             .session
@@ -194,6 +463,10 @@ impl AurisApp {
             .to_string_lossy()
             .into_owned();
         let theme = &self.theme;
+        // Atelier caps a preview at about half the panel and scrolls inside it; the panel is
+        // the window's height less its chrome, so half the window is the honest measure.
+        let height = (window.viewport_size().height * 0.5).max(gpui::px(240.0));
+        let image_bound = gpui::size(gpui::px(640.0), height - gpui::px(64.0));
         div()
             .id("attachment-preview")
             .debug_selector(|| "attachment-preview".into())
@@ -208,7 +481,7 @@ impl AurisApp {
             .gap(theme.atelier.spacing.sm)
             .p(theme.atelier.spacing.md)
             .min_w_0()
-            .max_h(gpui::px(320.0))
+            .max_h(height)
             .overflow_y_scroll()
             .bg(theme.surface)
             .child(
@@ -231,27 +504,44 @@ impl AurisApp {
             )
             .child(match &preview.content {
                 Some(Content::Text(text)) => {
-                    agent_components::selectable_text("attachment-text", text.clone(), window, cx)
+                    atelier::SelectableText::new("attachment-text", text.clone())
+                        .mono()
                         .into_any_element()
                 }
-                Some(Content::Image(image)) => gpui::img(Arc::clone(image))
-                    .w_full()
-                    .max_h(gpui::px(240.0))
-                    .object_fit(gpui::ObjectFit::Contain)
-                    .into_any_element(),
+                Some(Content::Image(image)) => {
+                    let size = image_size(image, image_bound);
+                    // In a row, so the column's stretch does not widen the picture's box.
+                    div()
+                        .flex()
+                        .min_w_0()
+                        .child(
+                            div()
+                                .debug_selector(|| "attachment-preview-image".into())
+                                .flex_none()
+                                .max_w_full()
+                                .child(
+                                    gpui::img(Arc::clone(image))
+                                        .w(size.width)
+                                        .h(size.height)
+                                        .max_w_full()
+                                        .object_fit(gpui::ObjectFit::Contain),
+                                ),
+                        )
+                        .into_any_element()
+                }
                 Some(Content::Audio(audio)) => self.render_audio_player(
                     PlayerTarget::Attachment,
                     audio.duration_seconds(),
                     true,
                     false,
+                    None,
                     cx,
                 ),
-                None => div()
-                    .child(if preview.error.is_some() {
-                        ""
-                    } else {
-                        self.t(Key::AttachmentLoading)
-                    })
+                Some(Content::Midi(score)) => midi_preview(score, gpui::px(120.0), theme),
+                None if preview.error.is_some() => div().into_any_element(),
+                None => atelier::Skeleton::new("attachment-preview-loading")
+                    .w(gpui::px(200.0))
+                    .h(gpui::px(14.0))
                     .into_any_element(),
             })
             .when_some(preview.error.clone(), |this, error| {
@@ -266,12 +556,51 @@ mod tests {
     use super::*;
 
     #[test]
-    fn previews_text_images_and_audio_without_editing_a_project() {
+    fn pictures_shrink_to_fit_and_never_grow() {
+        let bound = gpui::size(320.0, 240.0);
+        // Smaller than the box: drawn at its own size.
+        assert_eq!(
+            fitted_size(gpui::size(40.0, 20.0), bound),
+            gpui::size(40.0, 20.0)
+        );
+        // A wide screenshot is held by the width, a tall photo by the height.
+        assert_eq!(
+            fitted_size(gpui::size(1920.0, 1080.0), bound),
+            gpui::size(320.0, 180.0)
+        );
+        assert_eq!(
+            fitted_size(gpui::size(1000.0, 2000.0), bound),
+            gpui::size(120.0, 240.0)
+        );
+        // Exactly the box stays the box; nothing degenerate divides by zero.
+        assert_eq!(fitted_size(bound, bound), bound);
+        assert_eq!(
+            fitted_size(gpui::size(0.0, 10.0), bound),
+            gpui::size(0.0, 0.0)
+        );
+        // The composer's thumbnail is a fraction of a message's picture.
+        let composer = InlinePlace::Composer.image_bound();
+        let message = InlinePlace::Message.image_bound();
+        assert!(composer.width < message.width && composer.height < message.height);
+    }
+
+    #[test]
+    fn previews_text_images_midi_and_audio_without_editing_a_project() {
         let folder = tempfile::tempdir().unwrap();
         let text = folder.path().join("lyrics.md");
         std::fs::write(&text, "# Lyrics\n\n  夜の雨").unwrap();
         assert!(
             matches!(load(&text, 48000.0).unwrap(), Content::Text(text) if text == "# Lyrics\n\n  夜の雨")
+        );
+        let midi = folder.path().join("melody.auris-midi");
+        let score = auris_session::midi_reference::MidiReference::new(
+            "Melody".into(),
+            Default::default(),
+            Default::default(),
+        );
+        std::fs::write(&midi, score.encode().unwrap()).unwrap();
+        assert!(
+            matches!(load(&midi, 48000.0).unwrap(), Content::Midi(reference) if reference == score)
         );
         for (extension, format) in [
             ("png", image::ImageFormat::Png),
@@ -283,7 +612,10 @@ mod tests {
             image::DynamicImage::new_rgb8(8, 8)
                 .save_with_format(&path, format)
                 .unwrap();
-            assert!(matches!(load(&path, 48000.0).unwrap(), Content::Image(_)));
+            assert!(
+                matches!(load(&path, 48000.0).unwrap(), Content::Image(image) if image.size(0) == gpui::size(8.into(), 8.into())),
+                "a small picture keeps its own pixels"
+            );
         }
         let path = folder.path().join("reference.wav");
         let mut wav = Vec::new();
@@ -363,5 +695,24 @@ mod tests {
         crate::harness::click("close-attachment-preview", cx);
         crate::harness::paint(&app, cx);
         app.read_with(cx, |this, _| assert!(this.attachment_preview.is_none()));
+    }
+
+    #[gpui::test]
+    fn the_preview_pane_does_not_enlarge_a_small_picture(cx: &mut gpui::TestAppContext) {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("icon.png");
+        image::DynamicImage::new_rgb8(32, 32).save(&path).unwrap();
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, cx| {
+            this.panels.show(crate::dock::Panel::Agent);
+            this.open_attachment_preview(path, false, cx);
+        });
+        cx.run_until_parked();
+        crate::harness::paint(&app, cx);
+        let image = cx.debug_bounds("attachment-preview-image").unwrap();
+        assert!(
+            image.size.width <= gpui::px(36.) && image.size.height <= gpui::px(36.),
+            "{image:?}"
+        );
     }
 }

@@ -752,3 +752,27 @@ fn plugin_folder_removal_names_the_folder_and_requires_confirmation(cx: &mut Tes
         )
     });
 }
+
+#[gpui::test]
+fn library_shelf_navigation_returns_without_editing_the_track(cx: &mut TestAppContext) {
+    let (app, cx, track, _) = with_a_clip(cx);
+    let before = app.update(cx, |this, _| {
+        prepare_library(this);
+        this.select_track(track);
+        this.project().clone()
+    });
+    paint(&app, cx);
+    let at = cx.debug_bounds("lib-branch-音源").unwrap().center();
+    cx.simulate_mouse_down(at, gpui::MouseButton::Left, gpui::Modifiers::none());
+    cx.simulate_mouse_up(at, gpui::MouseButton::Left, gpui::Modifiers::none());
+    paint(&app, cx);
+    app.read_with(cx, |this, _| {
+        assert_eq!(this.library.shelf, Some(Branch::Instruments))
+    });
+    click("library-root", cx);
+    paint(&app, cx);
+    app.read_with(cx, |this, _| {
+        assert_eq!(this.library.shelf, None);
+        assert_eq!(this.project(), &before);
+    });
+}

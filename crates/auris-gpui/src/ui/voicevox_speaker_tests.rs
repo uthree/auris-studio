@@ -68,7 +68,9 @@ impl Drop for Scratch {
 }
 
 #[gpui::test]
-fn saved_voicevox_speakers_are_separate_library_choices(cx: &mut TestAppContext) {
+fn a_voicevox_connection_is_one_library_choice_and_its_styles_are_the_inspectors(
+    cx: &mut TestAppContext,
+) {
     let scratch = Scratch::new();
     let path = scratch.voice("library.voicevox.json", "http://127.0.0.1:50021");
     let mut file: serde_json::Value =
@@ -82,23 +84,19 @@ fn saved_voicevox_speakers_are_separate_library_choices(cx: &mut TestAppContext)
     app.update(cx, |this, cx| {
         this.settings.voice_paths.push(scratch.root.clone());
         this.voices = None;
-        let choices = this.voice_list();
-        assert!(
-            choices
-                .iter()
-                .any(|(_, entry_path, speaker)| entry_path == &path
-                    && speaker.as_deref() == Some("Singer A / Normal"))
-        );
-        assert!(
-            choices
-                .iter()
-                .any(|(_, entry_path, speaker)| entry_path == &path
-                    && speaker.as_deref() == Some("Singer B / Soft"))
-        );
-        this.apply_singer_voice_selection(track, path.clone(), Some("Singer B / Soft".into()), cx);
+        let rows = this
+            .voice_list()
+            .into_iter()
+            .filter(|(_, entry)| entry == &path)
+            .count();
+        assert_eq!(rows, 1, "styles are not separate shelf entries");
+        this.apply_singer_voice_selection(track, path.clone(), None, cx);
     });
     cx.run_until_parked();
-    app.read_with(cx, |this, _| {
+    app.update(cx, |this, cx| {
+        this.set_singer_speaker_for(track, "Singer B / Soft".into());
+        // Choosing the same voice again from the shelf keeps the inspector's style.
+        this.apply_singer_voice_selection(track, path.clone(), None, cx);
         assert_eq!(
             this.session
                 .singer_voice(track)
@@ -107,23 +105,6 @@ fn saved_voicevox_speakers_are_separate_library_choices(cx: &mut TestAppContext)
                 .speaker
                 .as_deref(),
             Some("Singer B / Soft")
-        );
-    });
-    app.update(cx, |this, cx| {
-        this.apply_singer_voice_selection(
-            track,
-            path.clone(),
-            Some("Singer A / Normal".into()),
-            cx,
-        );
-        assert_eq!(
-            this.session
-                .singer_voice(track)
-                .unwrap()
-                .unwrap()
-                .speaker
-                .as_deref(),
-            Some("Singer A / Normal")
         );
     });
 }

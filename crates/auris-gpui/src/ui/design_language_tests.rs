@@ -113,18 +113,19 @@ mod tests {
     }
 
     #[gpui::test]
-    fn undo_and_redo_lead_the_editor_title_bar(cx: &mut gpui::TestAppContext) {
+    fn undo_and_redo_live_in_the_titlebar_and_keep_their_edit_history(
+        cx: &mut gpui::TestAppContext,
+    ) {
         let (app, cx, _, clip) = crate::harness::with_a_clip(cx);
-        let undo = cx.debug_bounds("titlebar-undo").unwrap();
-        let redo = cx.debug_bounds("titlebar-redo").unwrap();
-        let title = cx.debug_bounds("project-title").unwrap();
+        let undo = cx.debug_bounds("editing-undo").unwrap();
+        let redo = cx.debug_bounds("editing-redo").unwrap();
         assert!(undo.right() <= redo.left());
-        assert!(redo.right() <= title.left());
-        crate::harness::click("titlebar-undo", cx);
+        assert!(undo.top() >= px(0.0) && undo.bottom() <= crate::titlebar::HEIGHT);
+        crate::harness::click("editing-undo", cx);
         app.read_with(cx, |this, _| {
             assert!(this.session.midi_clip(clip).is_none())
         });
-        crate::harness::click("titlebar-redo", cx);
+        crate::harness::click("editing-redo", cx);
         app.read_with(cx, |this, _| {
             assert!(this.session.midi_clip(clip).is_some())
         });

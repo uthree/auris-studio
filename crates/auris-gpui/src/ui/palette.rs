@@ -476,7 +476,6 @@ impl AurisApp {
                     .px_2()
                     .rounded(Metrics::RADIUS_SM)
                     .when(lit, |this| this.bg(Theme::translucent(theme.accent, 0.28)))
-                    .cursor_pointer()
                     .hover(|this| this.bg(Theme::translucent(theme.accent, 0.16)))
                     .child(
                         div()

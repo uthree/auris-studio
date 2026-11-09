@@ -9,6 +9,8 @@ const MAX_DIMENSION: u32 = 8192;
 const MAX_PIXELS: u64 = 16 * 1024 * 1024;
 const MAX_DECODE_BYTES: u64 = 64 * 1024 * 1024;
 const DISPLAY_DIMENSION: u32 = 512;
+/// Twice the library row's 16 px disc, so a Retina display still draws it sharp.
+const ICON_DIMENSION: u32 = 32;
 
 /// Decode a single still portrait for GPUI; call this only from a background worker.
 ///
@@ -16,6 +18,18 @@ const DISPLAY_DIMENSION: u32 = 512;
 /// decoder also gets an allocation budget, although its memory limit is best effort. Large
 /// portraits are reduced without cropping or enlarging, leaving at most 1 MiB of cached pixels.
 pub(super) fn decode_portrait(bytes: &[u8]) -> Result<Arc<RenderImage>, String> {
+    decode_within(bytes, DISPLAY_DIMENSION)
+}
+
+/// Decode a speaker's square icon for a library row, under the same limits as a portrait.
+///
+/// The result is reduced to `ICON_DIMENSION` square, 4 KiB of pixels, so a shelf of a hundred
+/// VOICEVOX styles costs less than one inspector portrait.
+pub(super) fn decode_icon(bytes: &[u8]) -> Result<Arc<RenderImage>, String> {
+    decode_within(bytes, ICON_DIMENSION)
+}
+
+fn decode_within(bytes: &[u8], display: u32) -> Result<Arc<RenderImage>, String> {
     if bytes.len() > MAX_ENCODED_BYTES {
         return Err("Portrait exceeds the 8 MiB image limit".into());
     }
@@ -46,7 +60,7 @@ pub(super) fn decode_portrait(bytes: &[u8]) -> Result<Arc<RenderImage>, String> 
     let mut rgba = decoded.into_rgba8();
     let (width, height) = rgba.dimensions();
     let longest = width.max(height);
-    if longest > DISPLAY_DIMENSION {
+    if longest > display {
         // Resize premultiplied colors so transparent pixels cannot add a colored fringe. GPUI
         // expects straight alpha, so undo the multiplication on the much smaller result.
         for pixel in rgba.pixels_mut() {
@@ -56,7 +70,7 @@ pub(super) fn decode_portrait(bytes: &[u8]) -> Result<Arc<RenderImage>, String> 
             }
         }
         let scaled = |dimension: u32| {
-            ((u64::from(dimension) * u64::from(DISPLAY_DIMENSION) + u64::from(longest / 2))
+            ((u64::from(dimension) * u64::from(display) + u64::from(longest / 2))
                 / u64::from(longest))
             .max(1) as u32
         };
@@ -140,6 +154,14 @@ mod tests {
             assert!(image.as_bytes(0).unwrap().len() <= 512 * 512 * 4);
             assert_eq!(&image.as_bytes(0).unwrap()[..4], &[170, 90, 40, 255]);
         }
+    }
+
+    #[test]
+    fn a_voicevox_icon_is_reduced_to_the_row_disc() {
+        let rgba = RgbaImage::from_pixel(256, 256, Rgba([40, 90, 170, 255]));
+        let image = decode_icon(&encode(rgba, ImageFormat::Png)).unwrap();
+        assert_eq!((image.size(0).width.0, image.size(0).height.0), (32, 32));
+        assert_eq!(image.as_bytes(0).unwrap().len(), 32 * 32 * 4);
     }
 
     #[test]

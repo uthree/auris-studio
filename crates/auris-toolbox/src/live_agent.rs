@@ -41,7 +41,7 @@ pub mod production_record {
     /// Stable tool name.
     pub const NAME: &str = "production_record";
     /// Shared guidance for all live backends.
-    pub const DESCRIPTION: &str = "Read/update this conversation's persistent production record. Call inspect_project first, including after edits and on resume. Store intent, roles, motifs, accepted/rejected choices and unresolved issues with short user quotes or explicit agent assumptions. Upsert by key; do not treat attributed requests as new permission. Actual inspect_audio/listen observations are recorded separately by the host when their revision matches the latest inspection. Read coverage: stale evidence and unverified regions cannot support completion or musical quality claims. No song edits.";
+    pub const DESCRIPTION: &str = "Read/update this conversation's persistent production record. Call inspect_project first, including after edits and on resume. Store intent, roles, motifs, accepted/rejected choices and unresolved issues with short user quotes or explicit agent assumptions. Upsert by key; do not treat attributed requests as new permission. Actual inspect_audio/listen observations are recorded separately by the host when their revision matches the latest inspection. Read coverage: stale evidence and unverified regions cannot support completion or musical quality claims. enter_phase moves between score, arrangement and mix with a reason (quote the user when they ask to go back); set_roles registers foreground and guide track IDs before arrangement. phase.checks lists unmet conditions for the current and earlier phases; phase.revisit names later phases to redo after going back. No song edits.";
     /// Typed conversation update.
     #[derive(serde::Deserialize, schemars::JsonSchema)]
     #[serde(deny_unknown_fields)]
@@ -393,6 +393,35 @@ mod tests {
     use super::*;
 
     #[test]
+    fn offer_choices_is_a_flat_read_only_question_for_the_window_only() {
+        let definition = definitions()
+            .into_iter()
+            .find(|d| d.name == "offer_choices")
+            .expect("offer_choices is offered to live agents");
+        for field in ["question", "options", "multiple"] {
+            assert!(
+                definition.parameters["properties"].get(field).is_some(),
+                "{field}"
+            );
+        }
+        let args = serde_json::json!({"question":"Which?","options":[{"label":"A"},{"label":"B"}],"multiple":true});
+        let command = command("offer_choices", &args).unwrap().unwrap();
+        assert!(!command.is_mutating() && !command.needs_worker());
+        let operation = auris_session::agent_policy::Operation::parse(
+            "edit_project",
+            &serde_json::json!({"command":{"action":"offer_choices","question":"Which?","options":[{"label":"A"},{"label":"B"}]}}),
+        )
+        .unwrap();
+        assert_eq!(operation.name, "edit_project.offer_choices");
+        assert!(
+            crate::session_tools::definitions()
+                .iter()
+                .all(|tool| tool.name != "offer_choices"),
+            "a saved-project client has no window to draw the card"
+        );
+    }
+
+    #[test]
     fn arrangement_catalog_is_opt_in_and_keeps_typed_bounded_operations() {
         assert!(
             !definitions_with_arrangement(false)
@@ -505,6 +534,12 @@ mod tests {
                 null
             ])
         );
+        assert_eq!(
+            settings["strum"]["enum"],
+            serde_json::json!([0, 16, 32, 64, 128, null])
+        );
+        assert!(settings["low_root"].is_object());
+        assert!(accompaniment_settings["strum"].is_object());
         assert_eq!(settings["rhythm"]["pattern"], "^[xXo.~ \\t|-]*$");
         assert_eq!(settings["rhythm"]["maxLength"], 4096);
         let description = crate::tool_exposure::concise_description(&tool.description);
@@ -567,7 +602,8 @@ mod tests {
         assert_eq!(settings["gate"]["minimum"], 0.05);
         assert_eq!(settings["swing_percent"]["minimum"], 50);
         assert_eq!(settings["swing_percent"]["maximum"], 75);
-        assert_eq!(settings["reset"]["maxItems"], 12);
+        assert_eq!(settings["reset"]["maxItems"], 13);
+        assert_eq!(settings["sustain_ticks"]["maximum"], 3840);
         let parsed = command(
             "set_performance",
             &serde_json::json!({"clip":2,"settings":{"gate":0.5,"expression":{"delay_ms":-12}}}),
@@ -627,7 +663,7 @@ mod tests {
             ),
             (
                 "write_lyrics",
-                serde_json::json!({"clip":2,"text":"さくら"}),
+                serde_json::json!({"clip":2,"text":"桜","reading":"さくら"}),
             ),
             ("sing", serde_json::json!({"track":1,"seed":42})),
         ] {

@@ -400,6 +400,7 @@ impl AurisApp {
             Ok(()) => {
                 self.set_status(crate::app::audio_line(
                     &self.session.audio_status(),
+                    self.session.audio_suspended(),
                     self.language(),
                 ));
                 true
@@ -424,6 +425,32 @@ pub(crate) fn persist_settings(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[gpui::test]
+    fn start_screen_opens_a_saved_project_in_the_same_window(cx: &mut gpui::TestAppContext) {
+        let (tabs, cx) = crate::harness::open_tabs(cx);
+        let first = tabs.read_with(cx, |tabs, _| tabs.active());
+        let directory = tempfile::tempdir().unwrap();
+        let mut saved =
+            auris_session::Session::new(auris_session::SessionOptions::headless()).unwrap();
+        saved
+            .save_as(&directory.path().join("Reopen.auris"))
+            .unwrap();
+        let path = saved.path().unwrap().to_path_buf();
+        cx.update(|window, cx| first.update(cx, |view, cx| view.show_project_chooser(window, cx)));
+        cx.cx.update(|cx| open(Some(path.clone()), cx));
+        cx.run_until_parked();
+        assert_eq!(tabs.read_with(cx, |tabs, _| tabs.projects.len()), 1);
+        assert_eq!(
+            tabs.read_with(cx, |tabs, _| tabs.active()).entity_id(),
+            first.entity_id()
+        );
+        first.read_with(cx, |view, _| {
+            assert!(view.project_chooser.is_none());
+            assert_eq!(view.session.path(), Some(path.as_path()));
+        });
+        cx.cx.update(|cx| assert_eq!(windows(cx).len(), 1));
+    }
 
     #[gpui::test]
     fn tabs_keep_independent_documents_undo_and_audio(cx: &mut gpui::TestAppContext) {

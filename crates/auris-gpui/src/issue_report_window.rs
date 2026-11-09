@@ -37,8 +37,6 @@ pub(crate) struct IssueReportWindow {
     context_rx: Option<(ContextKind, mpsc::Receiver<Result<String, String>>)>,
     private_paths: Vec<String>,
     prompt_snapshot: String,
-    project: Option<std::path::PathBuf>,
-    unsaved: bool,
     preview: bool,
     ai_confirmation: Option<String>,
     diagnosis: Option<auris_agent::issue_diagnosis::DiagnosisJob>,
@@ -85,16 +83,18 @@ impl AurisApp {
             .session
             .project_folder()
             .map(std::path::Path::to_path_buf);
-        let unsaved = self.session.path().is_none();
-        let private_paths = [
-            std::env::var("USERPROFILE").ok(),
-            std::env::var("HOME").ok(),
-            project.as_ref().map(|p| p.display().to_string()),
-            Some(auris_session::config_dir().display().to_string()),
-        ]
-        .into_iter()
-        .flatten()
-        .collect::<Vec<_>>();
+        let private_paths = with_short_spellings(
+            [
+                std::env::var("USERPROFILE").ok(),
+                std::env::var("HOME").ok(),
+                project.as_ref().map(|p| p.display().to_string()),
+                Some(auris_session::config_dir().display().to_string()),
+                Some(std::env::temp_dir().display().to_string()),
+            ]
+            .into_iter()
+            .flatten()
+            .collect(),
+        );
         let logs = crate::logbook::book()
             .entries()
             .iter()
@@ -147,8 +147,6 @@ impl AurisApp {
                         context_rx: None,
                         private_paths,
                         prompt_snapshot: prompts,
-                        project,
-                        unsaved,
                         preview: false,
                         ai_confirmation: None,
                         diagnosis: None,
@@ -189,32 +187,32 @@ impl IssueReportWindow {
             return;
         }
         let prompts = self.prompt_snapshot.clone();
-        let folder = self.project.clone();
-        let unsaved = self.unsaved;
         let paths = self.private_paths.clone();
         let (sender, receiver) = mpsc::channel();
         self.context_rx = Some((kind, receiver));
-        let spawned = std::thread::Builder::new().name("auris-report-context".into()).spawn(move || {
-            let result = match kind {
-                ContextKind::MusicPreferences => auris_session::issue_report::preference_preview(),
-                ContextKind::CompositionPrompts => (|| {
-                    let mut result = prompts;
-                    if let Some(folder) = folder {
-                        let conversations = if unsaved {
-                            auris_session::conversations::ConversationStore::for_unsaved_document(&folder)?
-                        } else { auris_session::conversations::ConversationStore::for_project(&folder) };
-                        let document = auris_session::workshop::Store::new(conversations.root().into()).active_thread()?.load()?;
+        let spawned = std::thread::Builder::new()
+            .name("auris-report-context".into())
+            .spawn(move || {
+                let result = match kind {
+                    ContextKind::MusicPreferences => {
+                        auris_session::issue_report::preference_preview()
+                    }
+                    ContextKind::CompositionPrompts => (|| {
+                        let mut result = prompts;
+                        let document = auris_session::workshop::Store::library()
+                            .active_thread()?
+                            .load()?;
                         for message in document.messages.iter().filter(|m| m.user).rev().take(12) {
                             result.push_str("\n\nSong request:\n");
                             result.push_str(&bounded(&message.text, 1500));
                         }
-                    }
-                    Ok(result)
-                })(),
-                ContextKind::UsageLogs => Ok(String::new()),
-            }.map(|text| redact(&text, &paths));
-            let _ = sender.send(result);
-        });
+                        Ok(result)
+                    })(),
+                    ContextKind::UsageLogs => Ok(String::new()),
+                }
+                .map(|text| redact(&text, &paths));
+                let _ = sender.send(result);
+            });
         if let Err(error) = spawned {
             self.context_rx = None;
             self.status = error.to_string();
@@ -832,10 +830,73 @@ impl Render for IssueReportWindow {
     }
 }
 
+/// `paths`, followed by every other spelling the system gives the same folders.
+///
+/// A Windows user name longer than eight characters, or one with a space in it, gives the
+/// profile an 8.3 short name as well, and the temporary folder is usually reached through it
+/// (`C:\Users\ALEXAN~1\AppData\Local\Temp`). Text that names it that way would pass redaction
+/// untouched, so the short spelling is redacted too.
+fn with_short_spellings(mut paths: Vec<String>) -> Vec<String> {
+    for index in 0..paths.len() {
+        if let Some(short) = short_spelling(&paths[index])
+            && !paths.contains(&short)
+        {
+            paths.push(short);
+        }
+    }
+    paths
+}
+
+/// The 8.3 short spelling of `path`, when the volume keeps one and it differs.
+#[cfg(target_os = "windows")]
+fn short_spelling(path: &str) -> Option<String> {
+    use windows::Win32::Storage::FileSystem::GetShortPathNameW;
+    use windows::core::HSTRING;
+
+    let long = HSTRING::from(path);
+    // SAFETY: `long` is a NUL-terminated wide string that outlives both calls, and the second
+    // call is given a buffer of the length the first one asked for.
+    let needed = unsafe { GetShortPathNameW(&long, None) } as usize;
+    if needed == 0 {
+        return None;
+    }
+    let mut buffer = vec![0_u16; needed];
+    let written = unsafe { GetShortPathNameW(&long, Some(&mut buffer)) } as usize;
+    if written == 0 || written >= buffer.len() {
+        return None;
+    }
+    let short = String::from_utf16(&buffer[..written]).ok()?;
+    (short != path).then_some(short)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn short_spelling(_path: &str) -> Option<String> {
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use gpui::{TestAppContext, VisualTestContext, WindowHandle, point};
+
+    #[test]
+    fn every_added_spelling_names_the_same_folder() {
+        let root = tempfile::tempdir().unwrap();
+        let folder = root.path().join("A folder name long enough");
+        std::fs::create_dir(&folder).unwrap();
+        let long = folder.display().to_string();
+        let spellings = with_short_spellings(vec![long.clone(), long.clone()]);
+        assert_eq!(&spellings[..2], [long.clone(), long.clone()]);
+        // Whether a short name exists depends on the volume, so only what was added is checked.
+        for added in &spellings[2..] {
+            assert_ne!(added, &long);
+            assert_eq!(
+                std::fs::canonicalize(added).unwrap(),
+                std::fs::canonicalize(&folder).unwrap()
+            );
+        }
+        assert!(with_short_spellings(vec!["no such folder anywhere".into()]).len() == 1);
+    }
 
     #[gpui::test]
     fn report_uses_configured_agent_before_the_chat_panel_is_opened(cx: &mut TestAppContext) {

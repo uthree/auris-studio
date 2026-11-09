@@ -67,6 +67,7 @@ pub mod tin_whistle;
 pub mod vocal;
 pub mod voice;
 
+mod observe;
 mod presence;
 
 #[cfg(test)]
@@ -90,7 +91,7 @@ pub use pack::SynthPack;
 pub use params::ParamBank;
 #[cfg(feature = "piano-calibration")]
 pub use physical::PianoVoicing;
-pub use physical::{Model, Physical};
+pub use physical::{Model, Physical, Quality};
 pub use render::{SegmentRenderer, render_segments, spread_to_all_channels};
 pub use tin_whistle::TinWhistle;
 pub use vocal::Vocal;

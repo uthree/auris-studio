@@ -11,18 +11,65 @@ use auris_session::prelude::*;
 use gpui::{Context, Pixels, Point};
 
 use crate::app::{AurisApp, FadeEdge};
-use crate::dock::{Dock, Panel};
+use crate::dock::{Dock, Panel, TimelineLane};
+use crate::ui::inline_edit::InlinePlace;
 use crate::ui::prompt::{Prompt, PromptTarget};
 
 use super::timeline::progression_target;
 
+impl MenuCommand {
+    /// The rebindable command that does the same thing from the keyboard, so a menu row can show
+    /// its keystroke beside it the way the menu bar does.
+    pub(crate) fn binding(&self) -> Option<&'static str> {
+        Some(match self {
+            Self::DuplicateClip(_) => "clip.duplicate",
+            Self::CutClips(_) => "clip.cut",
+            Self::CopyClips(_) => "clip.copy",
+            Self::PasteClips { .. } => "clip.paste",
+            Self::DeleteClip(_) | Self::DeleteNotes => "edit.delete",
+            Self::ToggleClipMute(_) => "clip.mute",
+            Self::SplitClipAtPlayhead(_) => "clip.split",
+            Self::JoinClips(_) => "clip.join",
+            Self::ToggleClipLoop(_) => "clip.loop",
+            Self::DuplicateNotes => "edit.duplicate",
+            Self::CutNotes => "edit.cut",
+            Self::CopyNotes => "edit.copy",
+            Self::PasteNotes => "edit.paste",
+            Self::SelectAllNotes => "edit.select_all",
+            Self::DuplicateTrack(_) => "track.duplicate",
+            Self::DeleteTrack(_) => "track.delete",
+            Self::ToggleTrackMute(_) => "track.mute",
+            Self::ToggleTrackSolo(_) => "track.solo",
+            Self::ToggleLoop => "transport.loop",
+            Self::TogglePunch => "transport.punch",
+            Self::ToggleTimelineLane(lane) => match lane {
+                TimelineLane::Structure => "view.structure_lane",
+                TimelineLane::Keys => "view.key_lane",
+                TimelineLane::Chords => "view.chord_lane",
+                TimelineLane::Lyrics => "view.lyrics_lane",
+            },
+            _ => return None,
+        })
+    }
+}
+
 /// What choosing a menu item does.
 #[derive(Clone, Debug, PartialEq)]
 pub enum MenuCommand {
+    /// Applies the obvious fix of the linter problem with this id.
+    LintFix(String),
+    /// Hands the linter problem with this id to the agent.
+    LintAskAgent(String),
+    /// Opens the Problems tab on the linter problem with this id.
+    LintShow(String),
+    /// Adds this ignore rule to the project.
+    LintIgnore(auris_session::lint::LintSuppression),
     /// Rename an exact project-local song conversation.
     WorkshopThreadRename(String),
     /// Archive or restore an exact project-local song conversation.
     WorkshopThreadArchive(String, bool),
+    /// Ask before permanently deleting an exact song conversation.
+    WorkshopThreadDelete(String),
     /// Opens a reference score draft, optionally from the selected MIDI clip.
     ComposerMelody(bool),
     /// Attaches a MIDI file to the current conversation.
@@ -48,6 +95,8 @@ pub enum MenuCommand {
     PianoRollGrid(auris_session::PianoRollGrid),
     /// Selects relative or absolute positioning for note drags.
     RelativeNoteSnap(bool),
+    /// Sets the note-roll video's frame size.
+    VideoSize(auris_session::VideoSize),
     /// Enables or disables grid snapping for note ends.
     SnapNoteEnds(bool),
     /// Captures a track before asking to replace a saved user sound.
@@ -143,8 +192,6 @@ pub enum MenuCommand {
         track: TrackId,
         /// The voice entry file.
         path: std::path::PathBuf,
-        /// The saved VOICEVOX style, if this row names one.
-        speaker: Option<String>,
     },
     /// Choose a named speaker or backend style for an explicit singer track.
     SingerSpeaker {
@@ -171,6 +218,19 @@ pub enum MenuCommand {
     },
     /// Copy a track, its clips and its effects.
     DuplicateTrack(TrackId),
+    /// Add a layer playing this track's notes on another instrument.
+    AddLayer(TrackId),
+    /// Give a layer notes of its own, written as it sounds.
+    DetachLayer(TrackId),
+    /// Put a layer's shape back to playing its source as written.
+    ResetLayerShape(TrackId),
+    /// Choose which voice of a chord a layer keeps.
+    SetLayerVoice {
+        /// The layer.
+        track: TrackId,
+        /// The voice it keeps.
+        voice: LayerVoice,
+    },
     /// Render the source and replace this track with audio in one undo step.
     ConvertTrackToAudio(TrackId),
     /// Rename a track.
@@ -183,6 +243,8 @@ pub enum MenuCommand {
     ToggleTrackSolo(TrackId),
     /// Tint a track with a palette entry.
     SetTrackColor(TrackId, Color),
+    /// Tint a track in its sound's timbre-cluster colour, scanning the library first if need be.
+    ColorTrackByTimbre(TrackId),
     /// Open the clip content and spectrogram choices for a track.
     ShowAudioDisplayPicker {
         /// The track whose clips are drawn.
@@ -199,6 +261,8 @@ pub enum MenuCommand {
     },
     /// Show or hide the whole project's rendered spectrogram.
     SetProjectSpectrogram(bool),
+    /// Show or hide one of the annotation strips over the arrangement.
+    ToggleTimelineLane(TimelineLane),
     /// Drop every recipe on a track, so nothing on it is written again.
     FreezeTrack(TrackId),
     /// Show a track's automation lane on a parameter, or hide it when it is already showing that
@@ -305,6 +369,8 @@ pub enum MenuCommand {
         /// Whether it should be showing afterwards.
         shown: bool,
     },
+    /// Show or hide the piano roll's event list.
+    ShowEventList(bool),
     /// Open the list of places a track's output could go.
     ShowOutputPicker {
         /// Track being routed.
@@ -316,6 +382,15 @@ pub enum MenuCommand {
     ToggleTrackOutput(TrackId, Output),
     /// Disconnect selected graph edges in one undoable document edit.
     DeleteMixerConnections(Vec<auris_session::mixer_graph::MixerEdge>),
+    /// Add a track from the mixer graph's canvas, its strip placed where the menu opened.
+    NewMixerTrack {
+        /// Which kind of track.
+        kind: crate::ui::mixer_graph::NewMixerTrack,
+        /// The window position the canvas was right-clicked at.
+        at: Point<Pixels>,
+    },
+    /// Lay the mixer graph out again from its routing.
+    ArrangeMixerGraph,
     /// Open the list of buses a track could send to.
     ShowSendPicker {
         /// Track the send would come from.
@@ -366,6 +441,8 @@ pub enum MenuCommand {
     ToggleClipMute(ClipId),
     /// Divide a clip at the playhead.
     SplitClipAtPlayhead(ClipId),
+    /// Join the selection a clip belongs to into one clip, or a lone clip with its neighbour.
+    JoinClips(ClipId),
     /// Set the cycle region to a clip's extent.
     LoopOverClip(ClipId),
     /// Repeat a clip out to the next one on its lane, or stop it repeating.
@@ -482,6 +559,17 @@ pub enum MenuCommand {
         /// The channels to read, or `None` to disarm it.
         input: Option<InputChannels>,
     },
+    /// Put one recording of a sampler's map in a velocity layer.
+    SetSampleVelocity {
+        /// The sampler's track.
+        track: TrackId,
+        /// Which zone of its map.
+        zone: usize,
+        /// Softest velocity answered, 0..1.
+        low: f32,
+        /// Hardest velocity answered, 0..1.
+        high: f32,
+    },
     /// Point one effect at a track to key from, or stop it listening to one.
     SetEffectSidechain {
         /// Strip the effect sits in, or `None` for the master bus.
@@ -564,6 +652,37 @@ pub enum MenuCommand {
     RemoveSectionAt(Ticks),
     /// Leave the song unnamed from a position onwards — how a structure ends.
     EndSectionsAt(Ticks),
+    /// Type the song-wide lyric line in force at a position, or start one there.
+    SetLyricLineAt(Ticks),
+    /// Remove the lyric line in force at a position.
+    RemoveLyricLineAt(Ticks),
+    /// Type a new comment pinned at a position (and row, inside a clip).
+    AddCommentAt {
+        /// What will hold it.
+        host: CommentHost,
+        /// Song time on a track, clip time inside a clip.
+        at: Ticks,
+        /// The piano-roll row, inside a clip.
+        pitch: Option<u8>,
+    },
+    /// Retype a comment.
+    EditComment {
+        /// What holds it.
+        host: CommentHost,
+        /// Which comment.
+        id: CommentId,
+    },
+    /// Take a comment off.
+    RemoveComment {
+        /// What holds it.
+        host: CommentHost,
+        /// Which comment.
+        id: CommentId,
+    },
+    /// Stop showing words from a position: the silence after a line.
+    EndLyricLineAt(Ticks),
+    /// Rewrite the song-wide lyrics from what the singer tracks sing.
+    LyricsFromVocals,
     /// Empty the chords over a range.
     ClearHarmony {
         /// Where the cleared stretch begins.
@@ -647,6 +766,43 @@ pub enum MenuCommand {
         /// The grid whose offbeats the swing delays.
         subdivision: Subdivision,
     },
+    /// Replace a clip's performance with a preset's stages.
+    ApplyPerformPreset {
+        /// Clip whose performance is being shaped.
+        clip: ClipId,
+        /// The preset's name, built in or kept.
+        name: String,
+    },
+    /// Open one instrument family's presets.
+    ShowPerformPresetFamily {
+        /// Clip whose performance is being shaped.
+        clip: ClipId,
+        /// The family to list.
+        family: PresetFamily,
+        /// Where the menu stays anchored.
+        at: Point<Pixels>,
+    },
+    /// Ask which family to keep the clip's performance under.
+    ShowPerformPresetSave {
+        /// Clip whose performance is kept.
+        clip: ClipId,
+        /// Where the menu stays anchored.
+        at: Point<Pixels>,
+    },
+    /// Name a preset kept from the clip's performance.
+    SavePerformPreset {
+        /// Clip whose performance is kept.
+        clip: ClipId,
+        /// The family it is filed under.
+        family: PresetFamily,
+    },
+    /// List the kept presets for deletion.
+    ShowPerformPresetDelete {
+        /// Where the menu stays anchored.
+        at: Point<Pixels>,
+    },
+    /// Delete a kept preset.
+    DeletePerformPreset(String),
     /// Set the pitch order of a chord stroke.
     SetPerformStrokeDirection {
         /// Clip whose performance is being shaped.
@@ -762,6 +918,15 @@ impl AurisApp {
             return;
         }
         match command {
+            MenuCommand::LintFix(id) => self.apply_lint(&id, cx),
+            MenuCommand::LintAskAgent(id) => self.ask_agent_about_lint(&id, cx),
+            MenuCommand::LintIgnore(suppression) => self.lint_ignore(suppression, cx),
+            MenuCommand::LintShow(id) => {
+                self.lint.tab = crate::ui::lint::LogTab::Problems;
+                self.show_panel(crate::dock::Panel::Log);
+                self.reveal_lint(&id);
+                cx.notify();
+            }
             MenuCommand::CopyAgentMarkdown(text) => {
                 cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
             }
@@ -777,6 +942,7 @@ impl AurisApp {
                 self.remember_note_snap();
             }
             MenuCommand::SnapNoteEnds(enabled) => self.apply_snap_note_lengths(enabled),
+            MenuCommand::VideoSize(size) => self.edit_video_style(|style| style.size = size),
             MenuCommand::SetExpressionSettings { clip, settings } => {
                 if let Ok(stack) = self.session.clip_transforms(clip) {
                     let next = crate::ui::expression::with_expression_settings(stack, settings);
@@ -863,13 +1029,9 @@ impl AurisApp {
                 self.select_track(track);
                 self.choose_singer_voice(cx);
             }
-            MenuCommand::SingerVoice {
-                track,
-                path,
-                speaker,
-            } => {
+            MenuCommand::SingerVoice { track, path } => {
                 self.select_track(track);
-                self.apply_singer_voice_selection(track, path, speaker, cx);
+                self.apply_singer_voice_selection(track, path, None, cx);
             }
             MenuCommand::SingerSpeaker { track, speaker } => {
                 self.set_singer_speaker_for(track, speaker)
@@ -891,6 +1053,17 @@ impl AurisApp {
                 }
                 Err(error) => self.set_failed_status(self.failure(Key::MenuDuplicate, &error)),
             },
+            MenuCommand::AddLayer(track) => self.add_layer_on(track),
+            MenuCommand::DetachLayer(track) => match self.session.detach_layer(track) {
+                Ok(()) => self.set_status(self.t(Key::DetachedLayer)),
+                Err(error) => self.set_failed_status(self.failure(Key::MenuDetachLayer, &error)),
+            },
+            MenuCommand::ResetLayerShape(track) => {
+                if let Err(error) = self.session.set_layer_shape(track, LayerShape::default()) {
+                    self.set_failed_status(self.failure(Key::LayerReset, &error));
+                }
+            }
+            MenuCommand::SetLayerVoice { track, voice } => self.set_layer_voice(track, voice),
             MenuCommand::RenameTrack(track) => self.prompt_to_rename_track(track),
             MenuCommand::OverwriteSound { sound, track } => {
                 if let Some(track) = track {
@@ -951,6 +1124,7 @@ impl AurisApp {
             MenuCommand::SetTrackColor(track, color) => {
                 let _ = self.session.set_track_color(track, color);
             }
+            MenuCommand::ColorTrackByTimbre(track) => self.color_tracks_by_timbre(Some(track), cx),
             MenuCommand::ShowAudioDisplayPicker { track, at } => {
                 let menu = self.audio_display_menu(at, track);
                 self.open_menu(menu);
@@ -961,6 +1135,7 @@ impl AurisApp {
             MenuCommand::SetProjectSpectrogram(enabled) => {
                 self.set_project_spectrogram(enabled, cx);
             }
+            MenuCommand::ToggleTimelineLane(lane) => self.toggle_timeline_lane(lane, cx),
             MenuCommand::FreezeTrack(track) => self.freeze_track(track),
             MenuCommand::ShowAutomation(track, target) => self.show_automation(track, target),
             MenuCommand::ClearAutomation(target) => {
@@ -1004,6 +1179,7 @@ impl AurisApp {
             MenuCommand::WorkshopThreadArchive(id, archived) => {
                 self.archive_workshop_thread(id, archived, cx)
             }
+            MenuCommand::WorkshopThreadDelete(id) => self.ask_delete_workshop_thread(id, cx),
             MenuCommand::WorkshopRefreshModels => self.refresh_workshop_models(),
             MenuCommand::ComposerMelody(selection) => self.start_midi_draft(selection),
             MenuCommand::ComposerMidi => self.choose_midi_attachment(cx),
@@ -1030,11 +1206,17 @@ impl AurisApp {
                 self.panels.set_curve_lane(which, shown);
                 self.remember_layout();
             }
+            MenuCommand::ShowEventList(shown) => {
+                self.panels.event_list = shown;
+                self.remember_layout();
+            }
             MenuCommand::ShowOutputPicker { track, at } => {
                 let menu = self.output_menu(at, track);
                 self.open_menu(menu);
             }
             MenuCommand::DeleteMixerConnections(edges) => self.delete_mixer_connections(&edges),
+            MenuCommand::NewMixerTrack { kind, at } => self.add_mixer_track(kind, at, cx),
+            MenuCommand::ArrangeMixerGraph => self.arrange_mixer_nodes(cx),
             MenuCommand::ToggleTrackOutput(track, output) => {
                 let remove = self
                     .project()
@@ -1133,7 +1315,9 @@ impl AurisApp {
                     .map(|name| name.to_string())
                     .unwrap_or_default();
                 let title = self.t(Key::RenameClipTitle);
-                self.open_prompt(Prompt::new(title, PromptTarget::Clip(clip), name));
+                self.open_prompt(
+                    Prompt::new(title, PromptTarget::Clip(clip), name).inline(InlinePlace::Target),
+                );
             }
             MenuCommand::DeleteClip(clip) => {
                 let doomed = self.clips_for_command(clip);
@@ -1155,6 +1339,7 @@ impl AurisApp {
                 let at = self.playhead_ticks();
                 self.split_clips_for_command(clip, at);
             }
+            MenuCommand::JoinClips(clip) => self.join_clips_for_command(clip),
             MenuCommand::LoopOverClip(clip) => {
                 // The *sounding* extent, repeats included: cycling over a looped clip and
                 // hearing only its first bar would be a cycle region nobody could explain.
@@ -1303,6 +1488,12 @@ impl AurisApp {
                 slot,
                 source,
             } => self.set_effect_sidechain(track, slot, source),
+            MenuCommand::SetSampleVelocity {
+                track,
+                zone,
+                low,
+                high,
+            } => self.set_sample_velocity(track, zone, low, high),
             MenuCommand::AddEffect { track, effect_id } => self.add_effect_to(track, &effect_id),
 
             MenuCommand::ShowProgressionPicker { at, anchor } => {
@@ -1408,6 +1599,31 @@ impl AurisApp {
             MenuCommand::SetPerformStrokeDirection { clip, direction } => {
                 self.set_perform_stroke_direction(clip, direction)
             }
+            MenuCommand::ApplyPerformPreset { clip, name } => {
+                if let Err(error) = self.session.apply_performance_preset(clip, &name) {
+                    self.set_status(crate::i18n::error_text(&error, self.language()));
+                }
+            }
+            MenuCommand::ShowPerformPresetFamily { clip, family, at } => {
+                let menu = self.perform_preset_family_menu(at, clip, family);
+                self.open_menu(menu);
+            }
+            MenuCommand::ShowPerformPresetSave { clip, at } => {
+                let menu = self.perform_preset_save_menu(at, clip);
+                self.open_menu(menu);
+            }
+            MenuCommand::SavePerformPreset { clip, family } => {
+                self.prompt_for_perform_preset(clip, family)
+            }
+            MenuCommand::ShowPerformPresetDelete { at } => {
+                let menu = self.perform_preset_delete_menu(at);
+                self.open_menu(menu);
+            }
+            MenuCommand::DeletePerformPreset(name) => {
+                if let Err(error) = self.session.forget_performance_preset(&name) {
+                    self.set_status(crate::i18n::error_text(&error, self.language()));
+                }
+            }
             MenuCommand::SetParamChoice { target, value } => self.session.set_param(target, value),
             MenuCommand::ResetParam(target) => self.reset_param(target),
             MenuCommand::SetParamValue(target) => self.prompt_for_param(target),
@@ -1425,7 +1641,10 @@ impl AurisApp {
             MenuCommand::SetKeyAt(tick) => {
                 let current = self.project().harmony.key_at(tick).to_text();
                 let title = self.t(Key::SetKeyTitle);
-                self.open_prompt(Prompt::new(title, PromptTarget::Key(tick), current));
+                self.open_prompt(
+                    Prompt::new(title, PromptTarget::Key(tick), current)
+                        .inline(InlinePlace::Target),
+                );
             }
             MenuCommand::RemoveKeyAt(tick) => self.session.remove_key(tick),
             MenuCommand::SetTempoAt(tick) => self.prompt_for_tempo_from(tick),
@@ -1469,13 +1688,30 @@ impl AurisApp {
                     .map(|numeral| numeral.to_string())
                     .unwrap_or_default();
                 let title = self.t(Key::SetChordTitle);
-                self.open_prompt(Prompt::new(title, PromptTarget::Chord(tick), current));
+                self.open_prompt(
+                    Prompt::new(title, PromptTarget::Chord(tick), current)
+                        .inline(InlinePlace::Target),
+                );
             }
             MenuCommand::RemoveChordAt(tick) => self.session.remove_chord(tick),
             MenuCommand::ClearHarmony { from, to } => self.session.clear_harmony(from, to),
             MenuCommand::SetSectionAt(tick) => self.prompt_for_section(tick),
             MenuCommand::RemoveSectionAt(tick) => self.session.remove_section(tick),
             MenuCommand::EndSectionsAt(tick) => self.session.set_section(tick, None),
+            MenuCommand::SetLyricLineAt(tick) => self.prompt_for_lyric_line(tick),
+            MenuCommand::RemoveLyricLineAt(tick) => self.session.remove_lyric_line(tick),
+            MenuCommand::AddCommentAt { host, at, pitch } => {
+                self.prompt_for_new_comment(host, at, pitch);
+            }
+            MenuCommand::EditComment { host, id } => self.prompt_for_comment(host, id),
+            // A stale menu over a comment already gone has nothing left to take off.
+            MenuCommand::RemoveComment { host, id } => {
+                let _ = self.session.remove_comment(host, id);
+            }
+            MenuCommand::EndLyricLineAt(tick) => self.session.set_lyric_line(tick, None),
+            MenuCommand::LyricsFromVocals => {
+                self.session.annotate_lyrics_from_vocals(None);
+            }
 
             MenuCommand::SetLoopStart(tick) => {
                 let end = self

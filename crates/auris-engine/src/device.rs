@@ -751,7 +751,7 @@ fn build_stream(
         SampleFormat::I8 => device.build_output_stream(
             config,
             move |data: &mut [i8], info: &cpal::OutputCallbackInfo| {
-                engine.fill_at(data, info.timestamp().playback)
+                engine.fill_at(data, info.timestamp())
             },
             on_error,
             None,
@@ -759,7 +759,7 @@ fn build_stream(
         SampleFormat::F32 => device.build_output_stream(
             config,
             move |data: &mut [f32], info: &cpal::OutputCallbackInfo| {
-                engine.fill_at(data, info.timestamp().playback)
+                engine.fill_at(data, info.timestamp())
             },
             on_error,
             None,
@@ -767,7 +767,7 @@ fn build_stream(
         SampleFormat::I16 => device.build_output_stream(
             config,
             move |data: &mut [i16], info: &cpal::OutputCallbackInfo| {
-                engine.fill_at(data, info.timestamp().playback)
+                engine.fill_at(data, info.timestamp())
             },
             on_error,
             None,
@@ -775,7 +775,7 @@ fn build_stream(
         SampleFormat::I24 => device.build_output_stream(
             config,
             move |data: &mut [I24], info: &cpal::OutputCallbackInfo| {
-                engine.fill_at(data, info.timestamp().playback)
+                engine.fill_at(data, info.timestamp())
             },
             on_error,
             None,
@@ -783,7 +783,7 @@ fn build_stream(
         SampleFormat::I32 => device.build_output_stream(
             config,
             move |data: &mut [i32], info: &cpal::OutputCallbackInfo| {
-                engine.fill_at(data, info.timestamp().playback)
+                engine.fill_at(data, info.timestamp())
             },
             on_error,
             None,
@@ -791,7 +791,7 @@ fn build_stream(
         SampleFormat::I64 => device.build_output_stream(
             config,
             move |data: &mut [i64], info: &cpal::OutputCallbackInfo| {
-                engine.fill_at(data, info.timestamp().playback)
+                engine.fill_at(data, info.timestamp())
             },
             on_error,
             None,
@@ -799,7 +799,7 @@ fn build_stream(
         SampleFormat::U8 => device.build_output_stream(
             config,
             move |data: &mut [u8], info: &cpal::OutputCallbackInfo| {
-                engine.fill_at(data, info.timestamp().playback)
+                engine.fill_at(data, info.timestamp())
             },
             on_error,
             None,
@@ -807,7 +807,7 @@ fn build_stream(
         SampleFormat::U16 => device.build_output_stream(
             config,
             move |data: &mut [u16], info: &cpal::OutputCallbackInfo| {
-                engine.fill_at(data, info.timestamp().playback)
+                engine.fill_at(data, info.timestamp())
             },
             on_error,
             None,
@@ -815,7 +815,7 @@ fn build_stream(
         SampleFormat::U24 => device.build_output_stream(
             config,
             move |data: &mut [U24], info: &cpal::OutputCallbackInfo| {
-                engine.fill_at(data, info.timestamp().playback)
+                engine.fill_at(data, info.timestamp())
             },
             on_error,
             None,
@@ -823,7 +823,7 @@ fn build_stream(
         SampleFormat::U32 => device.build_output_stream(
             config,
             move |data: &mut [u32], info: &cpal::OutputCallbackInfo| {
-                engine.fill_at(data, info.timestamp().playback)
+                engine.fill_at(data, info.timestamp())
             },
             on_error,
             None,
@@ -831,7 +831,7 @@ fn build_stream(
         SampleFormat::U64 => device.build_output_stream(
             config,
             move |data: &mut [u64], info: &cpal::OutputCallbackInfo| {
-                engine.fill_at(data, info.timestamp().playback)
+                engine.fill_at(data, info.timestamp())
             },
             on_error,
             None,
@@ -839,7 +839,7 @@ fn build_stream(
         SampleFormat::F64 => device.build_output_stream(
             config,
             move |data: &mut [f64], info: &cpal::OutputCallbackInfo| {
-                engine.fill_at(data, info.timestamp().playback)
+                engine.fill_at(data, info.timestamp())
             },
             on_error,
             None,
@@ -934,33 +934,48 @@ impl OutputPreview {
             return;
         }
         let volume = f32::from_bits(controls.volume.load(Ordering::Relaxed));
-        let count = out.frame_count().min(buffer.frame_count() - self.position);
-        for channel in 0..out.channel_count().min(2) {
-            let source = if buffer.channel_count() == 1 {
-                0
-            } else {
-                channel
-            };
-            for frame in 0..count {
-                let value = if out.channel_count() == 1 && buffer.channel_count() == 2 {
-                    (buffer.sample(0, self.position + frame)
-                        + buffer.sample(1, self.position + frame))
-                        * 0.5
-                } else {
-                    buffer.sample(source, self.position + frame)
-                };
-                out.channel_mut(channel)[frame] = if value.is_finite() {
-                    value * volume
-                } else {
-                    0.0
-                };
+        let frames = buffer.frame_count();
+        let loop_start = usize::try_from(controls.loop_start.load(Ordering::Relaxed))
+            .ok()
+            .filter(|start| *start < frames);
+        let total = out.frame_count();
+        let mut written = 0;
+        while written < total {
+            if self.position >= frames {
+                // A loop wraps here, inside the block, so a seamless cycle stays seamless.
+                match loop_start {
+                    Some(start) => self.position = start,
+                    None => break,
+                }
             }
+            let count = (total - written).min(frames - self.position);
+            for channel in 0..out.channel_count().min(2) {
+                let source = if buffer.channel_count() == 1 {
+                    0
+                } else {
+                    channel
+                };
+                for frame in 0..count {
+                    let at = self.position + frame;
+                    let value = if out.channel_count() == 1 && buffer.channel_count() == 2 {
+                        (buffer.sample(0, at) + buffer.sample(1, at)) * 0.5
+                    } else {
+                        buffer.sample(source, at)
+                    };
+                    out.channel_mut(channel)[written + frame] = if value.is_finite() {
+                        value * volume
+                    } else {
+                        0.0
+                    };
+                }
+            }
+            self.position += count;
+            written += count;
         }
-        self.position += count;
         controls
             .position
             .store(self.position as u64, Ordering::Relaxed);
-        if self.position == buffer.frame_count() {
+        if self.position == frames && loop_start.is_none() {
             self.request.status.finish();
         }
     }
@@ -1028,14 +1043,15 @@ impl AudioEngine {
     /// will be heard when. The next block starts where the transport now stands, it plays
     /// right after this one, and everything in it was held back by the graph's delay
     /// compensation. See [`crate::clock`].
-    pub(crate) fn fill_at<T>(&mut self, data: &mut [T], playback: cpal::StreamInstant)
+    pub(crate) fn fill_at<T>(&mut self, data: &mut [T], timestamp: cpal::OutputStreamTimestamp)
     where
         T: Sample + FromSample<f32>,
     {
         self.callbacks.fetch_add(1, Ordering::Relaxed);
         self.fill(data);
         let frames = data.len() / self.channels;
-        let playback = playback.as_nanos();
+        let called = timestamp.callback.as_nanos();
+        let playback = timestamp.playback.as_nanos();
         if !self.transport.playing || playback == 0 {
             self.clock.stop();
             return;
@@ -1051,7 +1067,10 @@ impl AudioEngine {
             .saturating_sub(i64::try_from(compensation).unwrap_or(i64::MAX));
         let after = (frames as f64 / self.sample_rate * 1e9).round() as u128;
         let nanos = u64::try_from(playback.saturating_add(after)).unwrap_or(0);
-        self.clock.publish(frame, nanos, self.sample_rate);
+        let ahead =
+            u64::try_from(playback.saturating_add(after).saturating_sub(called)).unwrap_or(0);
+        self.clock
+            .publish_ahead(frame, nanos, self.sample_rate, ahead);
     }
 
     /// Republishes whether the graph's compensation still matches its chains.
@@ -2064,6 +2083,7 @@ mod tests {
                 crate::OutputPreviewOptions {
                     position_seconds: 32.0 / rate,
                     volume: 0.0,
+                    loop_start_seconds: None,
                 },
             )
             .unwrap();
@@ -2094,6 +2114,61 @@ mod tests {
         preview.fill(&mut out);
         assert_eq!(out.peak(), 0.25);
         assert_eq!(status.position_seconds(), 16.0 / rate);
+    }
+
+    #[test]
+    fn a_looping_output_preview_wraps_inside_the_block_and_never_completes() {
+        let (device, handle) = start_silent(&AudioSettings::default());
+        let rate = handle.sample_rate();
+        // A ramp makes every frame name its own position.
+        let buffer = Arc::new(
+            AudioBuffer::from_planar(vec![(0..10).map(|n| n as f32).collect()], rate).unwrap(),
+        );
+        let status = handle
+            .play_output_preview_with(
+                buffer,
+                crate::OutputPreviewOptions {
+                    position_seconds: 6.0 / rate,
+                    loop_start_seconds: Some(4.0 / rate),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert!(status.is_looping());
+        let EngineCommand::PlayOutputPreview(request) =
+            device.idle_commands.as_ref().unwrap().try_recv().unwrap()
+        else {
+            panic!("expected a prepared preview");
+        };
+        let mut preview = OutputPreview {
+            request,
+            position: 0,
+        };
+        let mut out = AudioBuffer::new(1, 16, rate);
+        preview.fill(&mut out);
+        assert_eq!(
+            out.channel(0),
+            &[
+                6.0, 7.0, 8.0, 9.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0
+            ],
+            "the lead-in plays once, then the cycle repeats without a gap"
+        );
+        assert_eq!(status.position_seconds(), 10.0 / rate);
+        assert!(status.is_pending_or_playing(), "a loop never completes");
+        preview.fill(&mut out);
+        assert_eq!(out.channel(0)[0], 4.0);
+        // A loop point past the end is no loop at all.
+        let once = Arc::new(AudioBuffer::from_planar(vec![vec![1.0; 4]], rate).unwrap());
+        let status = handle
+            .play_output_preview_with(
+                once,
+                crate::OutputPreviewOptions {
+                    loop_start_seconds: Some(4.0 / rate),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert!(!status.is_looping());
     }
 
     #[test]
@@ -2466,6 +2541,15 @@ mod tests {
         assert_eq!(on_opener_thread(|| Ok(42)).unwrap(), 42);
     }
 
+    /// A callback called at `nanos` whose block is played at once.
+    fn at(nanos: u64) -> cpal::OutputStreamTimestamp {
+        let instant = cpal::StreamInstant::from_nanos(nanos);
+        cpal::OutputStreamTimestamp {
+            callback: instant,
+            playback: instant,
+        }
+    }
+
     #[test]
     fn the_output_clock_says_which_frame_is_heard_when() {
         let (engine, commands, _graphs, _meters, _playhead) = engine();
@@ -2474,12 +2558,12 @@ mod tests {
         let mut data = [0.0f32; 1_024];
 
         // Stopped: nothing is moving, so there is nothing to line a take up against.
-        engine.fill_at(&mut data, cpal::StreamInstant::from_nanos(1_000_000_000));
+        engine.fill_at(&mut data, at(1_000_000_000));
         assert_eq!(clock.read(), None);
 
         commands.send(EngineCommand::SetGraph(graph())).unwrap();
         commands.send(EngineCommand::Play).unwrap();
-        engine.fill_at(&mut data, cpal::StreamInstant::from_nanos(2_000_000_000));
+        engine.fill_at(&mut data, at(2_000_000_000));
         let heard = clock.read().unwrap();
         // The next block starts at frame 512 and plays as soon as this one, 512 frames long,
         // has finished playing.
@@ -2491,7 +2575,7 @@ mod tests {
         assert_eq!(heard.rate, SAMPLE_RATE);
 
         // A backend that reports no instant leaves nothing to measure against either.
-        engine.fill_at(&mut data, cpal::StreamInstant::from_nanos(0));
+        engine.fill_at(&mut data, at(0));
         assert_eq!(clock.read(), None);
     }
 

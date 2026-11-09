@@ -698,6 +698,16 @@ fn curve_event_upper_bound(
     events
 }
 
+/// The clips an exported instrument track plays: its own, or a layer's source's.
+fn played_clips(project: &Project, track_index: usize) -> Result<auris_core::PlayedClips<'_>> {
+    project
+        .tracks
+        .get(track_index)
+        .filter(|track| track.kind.as_instrument().is_some())
+        .and_then(|track| project.played_clips(track))
+        .ok_or_else(|| IoError::MidiWrite("instrument export plan changed".to_string()))
+}
+
 /// Proves the complete expansion fits before any performed-note or performance-curve vector is
 /// created. A later track therefore cannot evade the file-wide budget after earlier tracks have
 /// already consumed memory.
@@ -730,19 +740,11 @@ fn preflight_export(project: &Project, limits: ExportLimits) -> Result<ExportPla
     // handshake to every track assigned that channel.
     let mut bend_ranges = [BEND_RANGE; 16];
     for seed in &seeds {
-        let instrument = project.tracks[seed.track_index]
-            .kind
-            .as_instrument()
-            .ok_or_else(|| IoError::MidiWrite("instrument export plan changed".to_string()))?;
-        if instrument
-            .clips
-            .iter()
-            .filter(|clip| !clip.muted)
-            .any(|clip| {
-                clip.has_pitch_performance()
-                    || clip.bend.iter().any(|point| point.value.abs() > BEND_RANGE)
-            })
-        {
+        let played = played_clips(project, seed.track_index)?;
+        if played.clips.iter().filter(|clip| !clip.muted).any(|clip| {
+            clip.has_pitch_performance()
+                || clip.bend.iter().any(|point| point.value.abs() > BEND_RANGE)
+        }) {
             bend_ranges[usize::from(seed.channel.as_int())] = 12.0;
         }
     }
@@ -782,12 +784,9 @@ fn preflight_export(project: &Project, limits: ExportLimits) -> Result<ExportPla
         "the MIDI export track plan",
     )?;
     for seed in seeds {
-        let instrument = project.tracks[seed.track_index]
-            .kind
-            .as_instrument()
-            .ok_or_else(|| IoError::MidiWrite("instrument export plan changed".to_string()))?;
+        let played = played_clips(project, seed.track_index)?;
         let bend_range = bend_ranges[usize::from(seed.channel.as_int())];
-        let end_tick = instrument
+        let end_tick = played
             .clips
             .iter()
             .filter(|clip| !clip.muted)
@@ -812,7 +811,7 @@ fn preflight_export(project: &Project, limits: ExportLimits) -> Result<ExportPla
             MidiExportResource::FileEvents,
         )?;
 
-        for clip in instrument.clips.iter().filter(|clip| !clip.muted) {
+        for clip in played.clips.iter().filter(|clip| !clip.muted) {
             let passes = validated_loop_pass_count(clip.id, clip.length, clip.loop_end)? as u128;
             let notes = clip.looped_note_instances()? as u128;
             add_export_count(
@@ -1018,9 +1017,7 @@ fn build_tracks(project: &Project) -> Result<(Vec<Vec<TrackEvent<'static>>>, usi
         let track = project.tracks.get(track_plan.track_index).ok_or_else(|| {
             IoError::MidiWrite("instrument export plan no longer names a track".to_string())
         })?;
-        let instrument = track.kind.as_instrument().ok_or_else(|| {
-            IoError::MidiWrite("instrument export plan no longer names an instrument".to_string())
-        })?;
+        let played = played_clips(project, track_plan.track_index)?;
         let channel = track_plan.channel;
         let mut events: Vec<(Ticks, TrackEventKind<'static>)> = Vec::new();
         reserve_export(
@@ -1045,7 +1042,7 @@ fn build_tracks(project: &Project) -> Result<(Vec<Vec<TrackEvent<'static>>>, usi
                 ));
             }
         }
-        for clip in &instrument.clips {
+        for clip in played.clips {
             if clip.muted {
                 continue;
             }
@@ -1054,7 +1051,8 @@ fn build_tracks(project: &Project) -> Result<(Vec<Vec<TrackEvent<'static>>>, usi
             // reading that matches what the renderer does with the same clip. The tempo handed
             // over is the one the renderer reads for the same clip, so a humanised wobble lands
             // on the same ticks in the file as in the mix.
-            for note in clip.sounding_notes_with_meter(
+            for note in played.sounding_notes(
+                clip,
                 project.tempo_map.bpm_at(clip.start),
                 project.signatures.clone(),
             ) {
@@ -2458,6 +2456,46 @@ mod tests {
             .collect();
         actual.sort();
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn a_layer_exports_its_source_notes_through_its_shape() {
+        let mut project = project_with(
+            vec![
+                Note::new(48, Ticks::ZERO, Ticks(960)),
+                Note::new(55, Ticks::ZERO, Ticks(960)),
+                Note::new(72, Ticks::ZERO, Ticks(480)),
+            ],
+            Ticks(1920),
+        );
+        let lead = project.tracks[0].id;
+        let layer = project.add_layer_track(lead, "Bass", "synth").unwrap();
+        project
+            .track_mut(layer)
+            .unwrap()
+            .kind
+            .layer_mut()
+            .unwrap()
+            .shape = auris_core::LayerShape {
+            voice: auris_core::LayerVoice::Bottom,
+            transpose: -12,
+            length: 0.5,
+            offset: Ticks(240),
+            ..auris_core::LayerShape::default()
+        };
+        let imported = round_trip(&project);
+        assert_eq!(imported.tracks.len(), 2);
+        let notes: Vec<_> = imported.tracks[1]
+            .notes
+            .iter()
+            .map(|note| (note.start, note.pitch, note.length))
+            .collect();
+        assert_eq!(notes, vec![(Ticks(240), 36, Ticks(480))]);
+        assert_eq!(
+            imported.tracks[0].notes.len(),
+            3,
+            "the source is exported unchanged"
+        );
     }
 
     #[test]

@@ -53,6 +53,7 @@ impl PlayerState {
         auris_session::OutputPreviewOptions {
             position_seconds: if position >= duration { 0.0 } else { position },
             volume: if self.muted { 0.0 } else { self.volume },
+            loop_start_seconds: None,
         }
     }
 
@@ -105,6 +106,7 @@ impl PlayerState {
 pub(crate) enum PlayerTarget {
     Workshop(usize),
     Attachment,
+    InlineAttachment(usize),
 }
 
 fn time_label(seconds: f64) -> String {
@@ -162,6 +164,9 @@ impl AurisApp {
         match target {
             PlayerTarget::Workshop(index) => self.song_workshop.as_ref().map(|s| &s.players[index]),
             PlayerTarget::Attachment => self.attachment_preview.as_ref().map(|s| &s.player),
+            PlayerTarget::InlineAttachment(index) => {
+                self.inline_attachments.get(index).map(|s| &s.player)
+            }
         }
     }
 
@@ -171,6 +176,10 @@ impl AurisApp {
                 self.song_workshop.as_mut().map(|s| &mut s.players[index])
             }
             PlayerTarget::Attachment => self.attachment_preview.as_mut().map(|s| &mut s.player),
+            PlayerTarget::InlineAttachment(index) => self
+                .inline_attachments
+                .get_mut(index)
+                .map(|s| &mut s.player),
         }
     }
 
@@ -190,16 +199,18 @@ impl AurisApp {
         duration: f64,
         enabled: bool,
         loading: bool,
+        instance: Option<String>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let Some(player) = self.player(target) else {
             return div().into_any_element();
         };
         let theme = &self.theme;
-        let prefix = match target {
+        let prefix = instance.unwrap_or_else(|| match target {
             PlayerTarget::Workshop(i) => format!("song-preview-{i}"),
             PlayerTarget::Attachment => "attachment-player".into(),
-        };
+            PlayerTarget::InlineAttachment(index) => format!("inline-attachment-player-{index}"),
+        });
         let playing = player.playing();
         let timeline = match target {
             PlayerTarget::Workshop(index) => self
@@ -227,7 +238,9 @@ impl AurisApp {
         };
         let muted = player.muted || player.volume == 0.0;
         let native_id = match target {
-            PlayerTarget::Workshop(_) | PlayerTarget::Attachment => prefix.clone(),
+            PlayerTarget::Workshop(_)
+            | PlayerTarget::Attachment
+            | PlayerTarget::InlineAttachment(_) => prefix.clone(),
         };
         let mut native_player = atelier::AudioPlayer::new(
             SharedString::from(native_id),
@@ -252,6 +265,9 @@ impl AurisApp {
                     match target {
                         PlayerTarget::Workshop(index) => this.preview_song_candidate(index, cx),
                         PlayerTarget::Attachment => this.play_attachment_preview(cx),
+                        PlayerTarget::InlineAttachment(index) => {
+                            this.play_inline_attachment(index, cx)
+                        }
                     }
                 }
                 if let PlayerTarget::Workshop(_) = target

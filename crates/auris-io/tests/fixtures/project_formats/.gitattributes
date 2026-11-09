@@ -1,0 +1,2 @@
+# Preserve generated fixture bytes across Windows and Unix checkouts.
+*.auris text eol=lf

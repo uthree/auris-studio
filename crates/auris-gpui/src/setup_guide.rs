@@ -188,19 +188,18 @@ impl AurisApp {
                 .flex_wrap()
                 .gap(spacing.xs)
                 .children(STEPS.iter().enumerate().map(|(index, key)| {
-                    Button::new(
-                        ("setup-step", index),
-                        format!("{}. {}", index + 1, self.t(*key)),
-                    )
-                    .variant(ButtonVariant::Ghost)
-                    .size(ControlSize::Small)
-                    .selected(step == index)
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        if let Some(chooser) = &mut this.project_chooser {
-                            chooser.setup_step = index;
-                        }
-                        cx.notify();
-                    }))
+                    // No "1." in front: the row reads left to right already, and the numbers
+                    // were what pushed the fifth step onto a line of its own.
+                    Button::new(("setup-step", index), self.t(*key))
+                        .variant(ButtonVariant::Ghost)
+                        .size(ControlSize::Small)
+                        .selected(step == index)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            if let Some(chooser) = &mut this.project_chooser {
+                                chooser.setup_step = index;
+                            }
+                            cx.notify();
+                        }))
                 }));
         let paragraph = |key: Key| {
             Label::new(self.t(key))

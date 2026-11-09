@@ -53,7 +53,7 @@ of its own; a first run opens the chooser on it, and Settings brings it forward 
 window shows the chooser. Inactive windows hold a still frame of the metal, and Atelier's motion
 policy stills it entirely.
 
-Choosing "Create with AI" hands the panel over to the song workshop: for one `motion.normal` the
+Choosing "AI workshop" hands the panel over to the song workshop: for one `motion.normal` the
 metal stays mounted while Atelier's `Morph` grows a panel-coloured shape from the chooser panel to
 the whole body
 and the workshop fades in over it; Back plays the same hand-over in reverse. The metal stays

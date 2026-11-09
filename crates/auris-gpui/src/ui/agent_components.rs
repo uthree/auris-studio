@@ -4,7 +4,8 @@
 //! the same two voices. Keeping those voices in one adapter makes the Atelier design language
 //! visible in both places and prevents a new entry point from inventing a third chat treatment.
 
-use atelier::agent::{AssistantMessage, ChatNotice, ThinkingIndicator, UserMessage};
+use atelier::CopyButton;
+use atelier::agent::{AssistantMessage, ChatNotice, UserMessage};
 use gpui::prelude::*;
 use gpui::{AnyElement, ElementId, IntoElement, ParentElement, SharedString, div};
 
@@ -21,7 +22,6 @@ pub(crate) fn conversation_intro(
         .flex_col()
         .gap(theme.atelier.spacing.md)
         .py(theme.atelier.spacing.xl)
-        .child(atelier::Avatar::agent())
         .child(
             div()
                 .text_size(theme.atelier.typography.size_xl)
@@ -118,62 +118,112 @@ mod selection_tests {
     }
 }
 
+/// What a message's Copy button says: its tooltip, and what it reads once it has copied.
+///
+/// Selection inside a message stops at each Markdown block, so a reply of several paragraphs,
+/// a list and a code span cannot be dragged over in one go. The footer button copies the
+/// message whole, as it was written, which is what someone reaching for Copy wants.
+#[derive(Clone)]
+pub(crate) struct CopyLabels {
+    /// The button's tooltip, such as "Copy Markdown".
+    pub(crate) tooltip: SharedString,
+    /// What the tooltip reads for a moment after a press.
+    pub(crate) copied: SharedString,
+}
+
+impl CopyLabels {
+    /// The footer button, findable in window tests as the message id followed by `-copy`.
+    fn button(&self, id: &ElementId, text: SharedString) -> CopyButton {
+        CopyButton::new(SharedString::from(format!("{id}-copy")), text)
+            .tooltip(self.tooltip.clone())
+            .copied_label(self.copied.clone())
+    }
+}
+
 /// Draws a person's selectable message with Atelier's trailing bubble geometry and tokens.
 pub(crate) fn user_message(
     // atelier: allow — both conversations delegate their person message to UserMessage.
     id: impl Into<ElementId>,
     text: impl Into<SharedString>,
+    copy: Option<&CopyLabels>,
     _theme: &Theme,
     _window: &mut gpui::Window,
     _cx: &mut gpui::App,
 ) -> AnyElement {
-    UserMessage::new(text).id(id).into_any_element()
+    let id = id.into();
+    let text = text.into();
+    let copy = copy.map(|labels| labels.button(&id, text.clone()));
+    UserMessage::new(text)
+        .id(id)
+        .when_some(copy, |message, copy| message.action(copy))
+        .into_any_element()
+}
+
+/// Draws a person's message that carried files, each a chip that opens it.
+///
+/// `ChatView` draws a message's attachments as labels only; the editor's open the file they
+/// name, so the panel draws this message itself.
+pub(crate) fn user_message_with_attachments(
+    // atelier: allow — the person's message is still Atelier's UserMessage, chips and all.
+    id: impl Into<ElementId>,
+    text: impl Into<SharedString>,
+    chips: impl IntoIterator<Item = atelier::agent::ContextChip>,
+) -> AnyElement {
+    let id = id.into();
+    let text = text.into();
+    let mut message = UserMessage::new(text.clone())
+        .id(id.clone())
+        .action(CopyButton::new(
+            SharedString::from(format!("{id}-copy")),
+            text,
+        ));
+    for chip in chips {
+        message = message.attachment(chip);
+    }
+    message.into_any_element()
 }
 
 /// Draws an agent answer: the prose alone, with no avatar or name above it.
 ///
 /// Both conversations have exactly two voices, and the person's own sits in an accent bubble on
 /// the trailing edge; whatever is not in a bubble is the agent, so the identity line is left out.
+/// The message draws the answer as Atelier's `Markdown` under its own id: each block is
+/// selectable as `{id}-block-N`, code blocks carry a copy button, and links open.
 pub(crate) fn assistant_message(
-    // atelier: allow — the shared adapter supplies the application's selectable Markdown body.
+    // atelier: allow — both conversations delegate their answers to AssistantMessage.
     id: impl Into<ElementId>,
     text: impl Into<SharedString>,
-    body: Option<AnyElement>,
+    copy: Option<&CopyLabels>,
     streaming: bool,
 ) -> AnyElement {
+    let id = id.into();
+    let text = text.into();
+    let copy = copy.map(|labels| labels.button(&id, text.clone()));
     AssistantMessage::new(text)
         .id(id)
         .anonymous()
         .streaming(streaming)
-        .when_some(body, |message, body| message.body(body))
+        .when_some(copy, |message, copy| message.action(copy))
         .into_any_element()
 }
 
 /// Draws a workshop message through the same shared agent transcript primitives.
 ///
-/// The agent's side is Markdown, rendered the way the editor's transcript renders it; the
-/// person's side is shown as typed.
+/// The agent's side is Markdown, as the editor's transcript draws it; the person's side is
+/// shown as typed.
 pub(crate) fn workshop_message(
     id: impl Into<ElementId>,
     user: bool,
     text: impl Into<SharedString>,
+    copy: Option<&CopyLabels>,
     theme: &Theme,
     window: &mut gpui::Window,
     cx: &mut gpui::App,
 ) -> AnyElement {
-    let id = id.into();
-    let text = text.into();
     if user {
-        user_message(id, text, theme, window, cx)
+        user_message(id, text, copy, theme, window, cx)
     } else {
-        let body = super::agent_markdown::render(
-            SharedString::from(format!("workshop-markdown-{id}")),
-            text.clone(),
-            theme,
-            window,
-            cx,
-        );
-        assistant_message(id, text, Some(body), false)
+        assistant_message(id, text, copy, false)
     }
 }
 
@@ -187,13 +237,25 @@ pub(crate) fn status_notice(text: impl Into<SharedString>) -> AnyElement {
     ChatNotice::status(text).into_any_element()
 }
 
-/// Draws an active agent phase with the shared avatar and reduced-motion-aware indicator.
-pub(crate) fn thinking_indicator(id: &'static str, label: impl Into<SharedString>) -> AnyElement {
+/// Draws an active phase with an accent-coloured, reduced-motion-aware indicator.
+pub(crate) fn thinking_indicator(
+    id: &'static str,
+    label: impl Into<SharedString>,
+    theme: &Theme,
+) -> AnyElement {
     div()
         .id(id)
         .debug_selector(move || id.into())
+        .flex()
+        .items_center()
+        .gap(theme.atelier.spacing.sm)
         .min_w_0()
-        .child(ThinkingIndicator::new(label))
+        .child(atelier::Spinner::new(id).color(theme.atelier.colors.accent))
+        .child(
+            atelier::Label::new(label)
+                .size(atelier::TextSize::Small)
+                .color(atelier::TextColor::Muted),
+        )
         .into_any_element()
 }
 
@@ -313,4 +375,50 @@ pub(crate) fn composer_action(
         .flex()
         .flex_none()
         .child(command)
+}
+
+/// Draws a question the agent asked with fixed answers, in either conversation.
+///
+/// Atelier's `ChoiceCard`: the card is the turn's whole point, not a tool row folded into the
+/// log. An exclusive card answers on the first press; a multiple-choice card ticks its answers
+/// and sends them together. The application keeps the ticks (`picked`) because they outlive a
+/// redraw of the transcript, and says whether the card still takes input: once answered, or
+/// once the person typed something else, it stays readable with `picked` and takes no more.
+///
+/// Options are `{id}-option-{index}` and the Send button `{id}-send`, as the card names them.
+pub(crate) fn choice_card(
+    id: impl Into<SharedString>,
+    card: &auris_session::choices::ChoiceCard,
+    picked: &[usize],
+    active: bool,
+    on_option: impl Fn(usize, &mut gpui::Window, &mut gpui::App) + 'static,
+    on_send: impl Fn(&mut gpui::Window, &mut gpui::App) + 'static,
+) -> AnyElement {
+    let id: SharedString = id.into();
+    let options = card.options.iter().map(|option| {
+        let choice = atelier::agent::Choice::new(option.label.clone());
+        match option.detail.clone() {
+            Some(detail) => choice.detail(detail),
+            None => choice,
+        }
+    });
+    let view = atelier::agent::ChoiceCard::new(ElementId::Name(id), card.question.clone())
+        .options(options)
+        .multiple(card.multiple);
+    if !active {
+        return view.answered(picked.to_vec()).into_any_element();
+    }
+    let on_option = std::rc::Rc::new(on_option);
+    let view = view.picked(picked.to_vec());
+    if card.multiple {
+        view.on_toggle(move |index, window, cx| on_option(*index, window, cx))
+            .on_choose(move |_, window, cx| on_send(window, cx))
+    } else {
+        view.on_choose(move |picked, window, cx| {
+            if let Some(&index) = picked.first() {
+                on_option(index, window, cx);
+            }
+        })
+    }
+    .into_any_element()
 }

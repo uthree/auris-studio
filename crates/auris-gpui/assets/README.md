@@ -20,3 +20,14 @@ action. The redistributed canonical files are covered by the upstream Apache-2.0
 The original `icons/sound-*.svg` library presets share Atelier's 24×24 grid, two-pixel stroke,
 rounded caps and monochrome masks. Their semantic identifiers live in `auris_session::SoundIcon`;
 the executable embeds every preset for both automatic classifications and manual corrections.
+
+## Sound artwork
+
+`sounds/sound-*.svg` is the inspector's large drawing of each family: the very same file as
+`icons/sound-*.svg` with `stroke-width="1"` in place of `2`, so a sound looks the same in the
+library row and in the inspector, only lighter where it is drawn big. Edit the icon, then copy it
+across with the stroke changed; a test in `provider_logo.rs` fails while the two differ.
+
+When drawing a family, follow Atelier's icon geometry: the 24×24 grid with nothing outside
+2–22, round caps and joins, `rx="2"` on enclosing shapes, no fills, and
+neighbouring strokes kept far enough apart that the glyph still separates at 16 px.

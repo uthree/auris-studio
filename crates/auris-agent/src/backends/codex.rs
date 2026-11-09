@@ -43,39 +43,100 @@ pub(crate) fn executable(prefs: &auris_session::AgentPreferences) -> Result<Path
                 "Choose the native codex.exe executable, not a .cmd or .ps1 launcher".into(),
             );
         }
-        return Ok(path);
+        return Ok(native_payload(&path).unwrap_or(path));
     }
-    for directory in std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()) {
+    let mut directories: Vec<_> =
+        std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()).collect();
+    // An application opened from Finder inherits launchd's PATH, which has none of the
+    // directories an installer or a package manager puts Codex in.
+    if cfg!(target_os = "macos") {
+        directories.extend([
+            PathBuf::from("/opt/homebrew/bin"),
+            PathBuf::from("/usr/local/bin"),
+        ]);
+    }
+    if !cfg!(windows)
+        && let Some(home) = std::env::var_os("HOME")
+    {
+        let home = PathBuf::from(home);
+        directories.extend([home.join(".bun/bin"), home.join(".local/bin")]);
+    }
+    for directory in directories {
         let path = directory.join(if cfg!(windows) { "codex.exe" } else { "codex" });
         if path.is_file() {
-            return Ok(path);
+            return Ok(native_payload(&path).unwrap_or(path));
         }
-        // npm's Windows entry point is a shell shim. Launch its native payload directly.
-        if cfg!(windows) {
-            let triple = if cfg!(target_arch = "aarch64") {
-                "aarch64-pc-windows-msvc"
-            } else {
-                "x86_64-pc-windows-msvc"
-            };
-            let package = if cfg!(target_arch = "aarch64") {
-                "codex-win32-arm64"
-            } else {
-                "codex-win32-x64"
-            };
-            for vendor in [
-                directory.join(format!(
-                    "node_modules/@openai/codex/node_modules/@openai/{package}/vendor"
-                )),
-                directory.join("node_modules/@openai/codex/vendor"),
-            ] {
-                let path = vendor.join(triple).join("bin/codex.exe");
-                if path.is_file() {
-                    return Ok(path);
-                }
-            }
+        // npm's Windows entry point is a shell shim beside its package directory.
+        if cfg!(windows)
+            && let Some(path) = vendored_binary(&directory.join("node_modules/@openai/codex"))
+        {
+            return Ok(path);
         }
     }
     Err("Codex CLI was not found. Install Codex, run codex login, or set its executable path in Agent settings".into())
+}
+
+/// The native program behind an npm, bun or pnpm installation of `@openai/codex`.
+///
+/// Those package managers install `bin/codex.js`, a Node script whose `#!/usr/bin/env node`
+/// line needs `node` on `PATH`. An application opened from Finder has no such `PATH`, so the
+/// script exits before reading stdin and the handshake fails with a broken pipe. The script
+/// only finds the platform package and `execve`s it, so launching that program directly is
+/// the same Codex without the dependency. `None` means `path` is already native (or the
+/// installation is incomplete, in which case running it reports why).
+fn native_payload(path: &Path) -> Option<PathBuf> {
+    let script = std::fs::canonicalize(path).ok()?;
+    if script.extension().is_none_or(|extension| extension != "js") {
+        return None;
+    }
+    // .../@openai/codex/bin/codex.js
+    vendored_binary(script.parent()?.parent()?)
+}
+
+/// Looks for the platform binary that belongs to the `@openai/codex` package at `package`.
+fn vendored_binary(package: &Path) -> Option<PathBuf> {
+    let (triple, platform) = native_target()?;
+    let program = if cfg!(windows) { "codex.exe" } else { "codex" };
+    [
+        // npm on Windows nests the optional dependency inside the package.
+        package.join(format!("node_modules/@openai/{platform}")),
+        // npm, bun and pnpm hoist it beside the package.
+        package.with_file_name(platform),
+        // Older releases shipped every binary inside the package itself.
+        package.to_path_buf(),
+    ]
+    .into_iter()
+    .map(|root| root.join("vendor").join(triple).join("bin").join(program))
+    .find(|path| path.is_file())
+}
+
+/// Codex's target triple and the npm package that carries its binary, for this build.
+fn native_target() -> Option<(&'static str, &'static str)> {
+    let arm = cfg!(target_arch = "aarch64");
+    if !arm && !cfg!(target_arch = "x86_64") {
+        return None;
+    }
+    Some(if cfg!(target_os = "macos") {
+        if arm {
+            ("aarch64-apple-darwin", "codex-darwin-arm64")
+        } else {
+            ("x86_64-apple-darwin", "codex-darwin-x64")
+        }
+    } else if cfg!(windows) {
+        if arm {
+            ("aarch64-pc-windows-msvc", "codex-win32-arm64")
+        } else {
+            ("x86_64-pc-windows-msvc", "codex-win32-x64")
+        }
+    } else if cfg!(target_os = "linux") {
+        if arm {
+            ("aarch64-unknown-linux-musl", "codex-linux-arm64")
+        } else {
+            ("x86_64-unknown-linux-musl", "codex-linux-x64")
+        }
+    } else {
+        return None;
+    })
 }
 
 fn command(
@@ -117,9 +178,11 @@ fn command(
     ] {
         command.args(["-c", setting]);
     }
-    // Model discovery and independent approval review have no native execution tools.
+    // Model discovery and independent approval review have no native execution tools, and
+    // neither has a live conversation whose policy refuses the shell.
+    let shell = token.is_some() && super::native_tools(prefs);
     for feature in ["shell_tool", "unified_exec", "apply_patch_freeform"] {
-        command.args(["-c", &format!("features.{feature}={}", token.is_some())]);
+        command.args(["-c", &format!("features.{feature}={shell}")]);
     }
     for setting in overrides {
         command.args(["-c", setting]);
@@ -233,10 +296,18 @@ impl Rpc {
     async fn send(&mut self, message: Value) -> Result<(), String> {
         let mut encoded = serde_json::to_vec(&message).map_err(|e| e.to_string())?;
         encoded.push(b'\n');
-        self.input
-            .write_all(&encoded)
-            .await
-            .map_err(|e| format!("Codex connection closed: {e}"))
+        let Err(error) = self.input.write_all(&encoded).await else {
+            return Ok(());
+        };
+        // A broken pipe only says the program is gone; its exit status says more.
+        if let Some(child) = self.child.as_mut()
+            && let Ok(Ok(status)) = tokio::time::timeout(Duration::from_secs(1), child.wait()).await
+        {
+            return Err(format!(
+                "Codex CLI exited before answering ({status}). Run codex app-server in a terminal to see why, or set the executable path in Agent settings"
+            ));
+        }
+        Err(format!("Codex connection closed: {error}"))
     }
 
     async fn read(&mut self) -> Result<Value, String> {
@@ -454,9 +525,9 @@ pub(crate) async fn run(
 ) -> Result<(), String> {
     // Keep CLI configuration private; the model's working directory is the saved project.
     let working = tempfile::tempdir().map_err(|e| e.to_string())?;
-    let cwd = super::native_project_directory(history_path.as_deref())
-        .unwrap_or(working.path())
-        .to_path_buf();
+    let project = super::native_project_directory(history_path.as_deref());
+    let saved_project = project.is_some();
+    let cwd = project.unwrap_or(working.path()).to_path_buf();
     let mcp = LiveMcp::start(ToolHost::new(bridge.clone())).await?;
     let mut cancelled = cancelled;
     let mut rpc = tokio::select! {
@@ -468,7 +539,7 @@ pub(crate) async fn run(
         biased;
         _ = &mut cancelled => Ok(()),
         _ = mcp.cancelled() => Err("Codex cancelled a pending live tool request. Inspect the document before starting another conversation".into()),
-        result = conversation(&mut rpc, prefs, bridge, &mcp, &cwd, HistoryInput { path: history_path, fresh, snapshot: history }) => result,
+        result = conversation(&mut rpc, prefs, bridge, &mcp, &cwd, HistoryInput { path: history_path, fresh, project: saved_project, snapshot: history }) => result,
     };
     mcp.abort_calls();
     rpc.stop().await;
@@ -478,6 +549,8 @@ pub(crate) async fn run(
 struct HistoryInput {
     path: Option<PathBuf>,
     fresh: bool,
+    /// Whether `path` is a saved project's conversation, which may keep a Codex thread.
+    project: bool,
     snapshot: Option<HistorySnapshot>,
 }
 
@@ -505,11 +578,34 @@ async fn conversation(
     if !preloaded {
         bridge.emit(json!({"event":"history","summary":memory.summary,"turns":memory.turns}));
     }
-    let thread = rpc.request("thread/start", json!({"model":prefs.model,"cwd":cwd,"ephemeral":true,"sandbox":"read-only","approvalPolicy":"untrusted","baseInstructions":super::cli_preamble(prefs)})).await?;
-    let thread_id = thread["thread"]["id"]
-        .as_str()
-        .ok_or("Codex did not return a thread ID")?
-        .to_owned();
+    // Only a saved project's own conversation keeps a Codex thread; recovery stores stay private.
+    let resume =
+        super::NativeResume::new("codex", &memory, history.project && generation.is_some());
+    let settings = json!({"model":prefs.model,"cwd":cwd,"sandbox":"read-only","approvalPolicy":"untrusted","baseInstructions":super::cli_preamble(prefs)});
+    let mut resumed = None;
+    if let Some(previous) = resume.previous.as_deref() {
+        let mut params = settings.clone();
+        params["threadId"] = json!(previous);
+        params["excludeTurns"] = json!(true);
+        match rpc.request("thread/resume", params).await {
+            Ok(thread) if thread["thread"]["id"] == previous => resumed = Some(previous.to_owned()),
+            // A thread Codex no longer has is recovered, not reported as a failure.
+            _ => bridge.emit(json!({"event":"notice","message":"Codex could not resume this conversation's earlier thread; continuing in a new one with the conversation so far."})),
+        }
+    }
+    let thread_id = match &resumed {
+        Some(id) => id.clone(),
+        None => {
+            let mut params = settings;
+            params["ephemeral"] = json!(!resume.enabled);
+            let thread = rpc.request("thread/start", params).await?;
+            thread["thread"]["id"]
+                .as_str()
+                .ok_or("Codex did not return a thread ID")?
+                .to_owned()
+        }
+    };
+    let session = resume.enabled.then(|| thread_id.clone());
     rpc.thread = Some(thread_id.clone());
     // Check the effective catalog rather than assuming overrides were honored by this CLI.
     let servers = rpc
@@ -520,7 +616,7 @@ async fn conversation(
         .await?;
     validate_servers(&servers)?;
     bridge.emit(json!({"event":"ready","model":prefs.model}));
-    let mut context = super::memory_context(&memory);
+    let mut context = resume.opening_context(&memory, resumed.as_deref());
     while let Some(line) = bridge.receive().await {
         let wire: Value = serde_json::from_str(&line).map_err(|e| e.to_string())?;
         if wire["compact"] == true {
@@ -557,6 +653,7 @@ async fn conversation(
             Ok(text) => memory.push(display, text),
             Err(error) => memory.push_interrupted(display, error),
         }
+        resume.record(&mut memory, session.as_deref());
         if let Some(generation) = generation.as_mut()
             && let Err(error) = bridge.save_history(generation, &memory)
         {
@@ -746,6 +843,48 @@ mod tests {
     use tokio::io::{AsyncBufReadExt, BufReader};
 
     #[test]
+    fn package_manager_scripts_resolve_to_the_native_program() {
+        let Some((triple, platform)) = native_target() else {
+            return;
+        };
+        let program = if cfg!(windows) { "codex.exe" } else { "codex" };
+        let root = tempfile::tempdir().unwrap();
+        let modules = root.path().join("install/global/node_modules/@openai");
+        let script = modules.join("codex/bin/codex.js");
+        std::fs::create_dir_all(script.parent().unwrap()).unwrap();
+        std::fs::write(&script, "#!/usr/bin/env node\n").unwrap();
+        // Nothing to launch yet: the script is all there is, and running it says why.
+        assert_eq!(native_payload(&script), None);
+        let native = modules
+            .join(platform)
+            .join("vendor")
+            .join(triple)
+            .join("bin");
+        std::fs::create_dir_all(&native).unwrap();
+        std::fs::write(native.join(program), "").unwrap();
+        let expected = std::fs::canonicalize(native.join(program)).unwrap();
+        let found = std::fs::canonicalize(native_payload(&script).unwrap()).unwrap();
+        assert_eq!(found, expected);
+        // bun's `~/.bun/bin/codex` is a symbolic link to the script.
+        #[cfg(unix)]
+        {
+            let link = root.path().join("bin/codex");
+            std::fs::create_dir_all(link.parent().unwrap()).unwrap();
+            std::os::unix::fs::symlink(&script, &link).unwrap();
+            let found = std::fs::canonicalize(native_payload(&link).unwrap()).unwrap();
+            assert_eq!(found, expected);
+            let prefs = auris_session::AgentPreferences {
+                codex_path: link.to_string_lossy().into_owned(),
+                ..Default::default()
+            };
+            let chosen = std::fs::canonicalize(executable(&prefs).unwrap()).unwrap();
+            assert_eq!(chosen, expected);
+        }
+        // A native program is launched as it is.
+        assert_eq!(native_payload(&expected), None);
+    }
+
+    #[test]
     fn fast_mode_overrides_inherited_service_tiers_in_both_directions() {
         let cwd = tempfile::tempdir().unwrap();
         for fast_mode in [false, true] {
@@ -885,7 +1024,7 @@ mod tests {
             crate::attachments::tests::reference_wav(&audio, false);
             commands.send(json!({"say":"Add an instrument track", "display":"Add a track", "attachments":[audio]}).to_string()).unwrap();
             let drive = async {
-                conversation(&mut rpc, &prefs, &bridge, &mcp, cwd.path(), HistoryInput { path: Some(history.clone()), fresh: false, snapshot: None }).await.unwrap();
+                conversation(&mut rpc, &prefs, &bridge, &mcp, cwd.path(), HistoryInput { path: Some(history.clone()), fresh: false, project: false, snapshot: None }).await.unwrap();
             };
             let peer = async {
                 let (reader, mut writer) = tokio::io::split(server);
@@ -965,6 +1104,73 @@ mod tests {
             };
             let ((), (), ()) = tokio::join!(drive, peer, owner);
         }).await.unwrap();
+    }
+
+    /// A saved project's conversation resumes its Codex thread and is told only what another
+    /// backend answered meanwhile; a thread Codex lost falls back to a new, saved one.
+    #[tokio::test]
+    async fn saved_threads_resume_with_the_missed_turns_or_restart_with_the_selection() {
+        for resumable in [true, false] {
+            tokio::time::timeout(Duration::from_secs(10), async {
+                let folder = tempfile::tempdir().unwrap();
+                let history = folder.path().join("memory.json");
+                let mut memory = memory::Memory::default();
+                memory.push("Write the verse on Codex", "Verse written");
+                memory.record_native("codex", "old-thread");
+                memory.push("Add strings on Claude", "Strings added");
+                memory.save(&history).unwrap();
+                let (bridge, commands, _events) = crate::worker::test_bridge();
+                let mcp = LiveMcp::start(ToolHost::new(bridge.clone())).await.unwrap();
+                let (client, server) = tokio::io::duplex(32768);
+                let (reader, writer) = tokio::io::split(client);
+                let mut rpc = Rpc::transport(None, writer, reader);
+                let prefs = auris_session::AgentPreferences { backend:"codex".into(), model:"fixture".into(), ..Default::default() };
+                commands.send(json!({"say":"Now the bridge"}).to_string()).unwrap();
+                drop(commands);
+                let drive = conversation(&mut rpc, &prefs, &bridge, &mcp, folder.path(), HistoryInput { path: Some(history.clone()), fresh: false, project: true, snapshot: None });
+                let peer = async {
+                    let (reader, mut writer) = tokio::io::split(server);
+                    let mut lines = BufReader::new(reader).lines();
+                    let mut next = async || serde_json::from_str::<Value>(&lines.next_line().await.unwrap().unwrap()).unwrap();
+                    let request = next().await;
+                    assert_eq!(request["method"], "thread/resume");
+                    assert_eq!(request["params"]["threadId"], "old-thread");
+                    assert_eq!(request["params"]["sandbox"], "read-only");
+                    let thread = if resumable {
+                        reply(&mut writer, json!({"id":request["id"],"result":{"thread":{"id":"old-thread"}}})).await;
+                        "old-thread"
+                    } else {
+                        reply(&mut writer, json!({"id":request["id"],"error":{"code":-32600,"message":"no rollout found"}})).await;
+                        let request = next().await;
+                        assert_eq!(request["method"], "thread/start");
+                        assert_eq!(request["params"]["ephemeral"], false);
+                        reply(&mut writer, json!({"id":request["id"],"result":{"thread":{"id":"new-thread"}}})).await;
+                        "new-thread"
+                    };
+                    let request = next().await;
+                    assert_eq!(request["method"], "mcpServerStatus/list");
+                    reply(&mut writer, json!({"id":request["id"],"result":{"data":[{"name":"auris_live","tools":{"inspect_project":{}}}]}})).await;
+                    let request = next().await;
+                    assert_eq!(request["method"], "turn/start");
+                    assert_eq!(request["params"]["threadId"], thread);
+                    let input = request["params"]["input"].to_string();
+                    assert!(input.contains("Add strings on Claude"), "{input}");
+                    assert!(input.contains("Now the bridge"), "{input}");
+                    // The resumed thread already holds its own turn; a new one is handed it.
+                    assert_eq!(input.contains("Write the verse on Codex"), !resumable, "{input}");
+                    reply(&mut writer, json!({"id":request["id"],"result":{"turn":{"id":"turn"}}})).await;
+                    reply(&mut writer, json!({"method":"item/agentMessage/delta","params":{"threadId":thread,"turnId":"turn","delta":"Bridge added."}})).await;
+                    reply(&mut writer, json!({"method":"turn/completed","params":{"threadId":thread,"turn":{"id":"turn","status":"completed"}}})).await;
+                    thread
+                };
+                let (result, thread) = tokio::join!(drive, peer);
+                result.unwrap();
+                let saved = memory::Memory::load(&history).unwrap();
+                assert_eq!(saved.turns.len(), 3);
+                let native = saved.native_thread("codex").unwrap();
+                assert_eq!((native.id.as_str(), native.seen), (thread, 3));
+            }).await.unwrap();
+        }
     }
 
     #[tokio::test]

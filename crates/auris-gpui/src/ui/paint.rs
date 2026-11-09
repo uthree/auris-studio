@@ -496,7 +496,7 @@ pub fn format_bpm(bpm: f64) -> String {
 }
 
 /// Height of the strip the key changes get, along the top of the harmony lane.
-pub const KEY_ROW_HEIGHT: Pixels = px(13.0);
+pub const KEY_ROW_HEIGHT: Pixels = crate::theme::Metrics::KEY_ROW_HEIGHT;
 
 /// Width of the grab zone on a chord's leading edge — the bar that moves it.
 ///
@@ -518,8 +518,15 @@ pub const CHORD_BLOCK_INSET: Pixels = px(1.0);
 /// section far more often than not — which is exactly where the badge naming the key was printed
 /// over the name of the chord underneath it. Both the painter and the hit test read this, so a
 /// press lands on the row it looks like it lands on.
-pub fn harmony_rows(bounds: Bounds<Pixels>) -> (Bounds<Pixels>, Bounds<Pixels>) {
-    let key_height = KEY_ROW_HEIGHT.min(bounds.size.height);
+///
+/// With `keys` hidden the key row is empty and the chords take the whole lane; with the chords
+/// hidden the lane is only as tall as the key row, so the chord row comes out empty by itself.
+pub fn harmony_rows(bounds: Bounds<Pixels>, keys: bool) -> (Bounds<Pixels>, Bounds<Pixels>) {
+    let key_height = if keys {
+        KEY_ROW_HEIGHT.min(bounds.size.height)
+    } else {
+        px(0.0)
+    };
     (
         Bounds {
             origin: bounds.origin,
@@ -540,6 +547,9 @@ pub struct StructurePaint {
     pub spans: Vec<(SectionSpan, String)>,
     /// The section being dragged, by the change that starts it, drawn lit.
     pub held: Option<Ticks>,
+    /// Draw the blocks in the accent rather than the selection colour — the lyrics lane, which
+    /// is the same shape as the structure lane and must not be mistaken for it.
+    pub accent: bool,
 }
 
 /// Draws the section names across `bounds`.
@@ -575,11 +585,16 @@ pub fn structure_lane(
         };
         // The selection colour rather than the accent, so the structure reads as a different
         // kind of thing from the chords two rows down.
+        let tint = if structure.accent {
+            theme.accent
+        } else {
+            theme.selection
+        };
         rounded_rect(
             window,
             block,
             px(3.0),
-            Theme::translucent(theme.selection, if lit { 0.42 } else { 0.18 }),
+            Theme::translucent(tint, if lit { 0.42 } else { 0.18 }),
         );
         // A handle only where the change actually sits: a span clipped by the window's left
         // edge starts somewhere off to the left, and dragging its visible edge would move a
@@ -593,7 +608,7 @@ pub fn structure_lane(
                     size: size(CHORD_HANDLE.min(block.size.width), block.size.height),
                 },
                 px(3.0),
-                if lit { theme.accent } else { theme.selection },
+                if lit { theme.accent } else { tint },
             );
         }
         clipped(window, block, |window| {
@@ -623,6 +638,12 @@ pub struct HarmonyPaint {
     pub handles: Vec<Ticks>,
     /// The chord being dragged, drawn lit so it can be followed while it moves.
     pub held: Option<Ticks>,
+    /// The reader's language, which the key names are written in.
+    pub language: auris_i18n::Language,
+    /// Whether the strip of key changes is showing.
+    pub show_keys: bool,
+    /// Whether the chord blocks are showing.
+    pub show_chords: bool,
 }
 
 /// Draws the chords, and the key changes, across `bounds`.
@@ -637,14 +658,19 @@ pub fn harmony_lane(
     harmony: &HarmonyPaint,
     theme: &Theme,
 ) {
-    let (key_row, chord_row) = harmony_rows(bounds);
+    let (key_row, chord_row) = harmony_rows(bounds, harmony.show_keys);
     // A shade below the ruler and above the lanes, so the three read as a descending stack rather
     // than as a hole cut in the middle of them. The key strip is sunk out of the way of the
     // chords, which are the part anybody is looking at.
     rect(window, chord_row, theme.surface);
     rect(window, key_row, theme.surface_sunken);
 
-    for event in &harmony.events {
+    let events: &[HarmonicEvent] = if harmony.show_chords {
+        &harmony.events
+    } else {
+        &[]
+    };
+    for event in events {
         let x = chord_row.origin.x + view.tick_to_x(event.start);
         let width = view.duration_to_width(event.length);
         if width <= px(1.0) {
@@ -698,12 +724,15 @@ pub fn harmony_lane(
         });
     }
 
+    if !harmony.show_keys {
+        return;
+    }
     let (start, end) = view.visible_range(bounds.size.width);
     // What key the view is scrolled into, pinned at the left edge. A song that modulates once in
     // bar 40 would otherwise show no key at all everywhere except bar 40. Anything at or after
     // the left edge is drawn where it belongs by the loop below.
     if let Some(current) = harmony.keys.iter().rev().find(|change| change.tick < start) {
-        let text = current.key.to_text();
+        let text = auris_i18n::audio::key_name(&current.key.to_text(), harmony.language);
         key_badge(
             window,
             cx,
@@ -730,7 +759,7 @@ pub fn harmony_lane(
             cx,
             key_row,
             x,
-            &change.key.to_text(),
+            &auris_i18n::audio::key_name(&change.key.to_text(), harmony.language),
             theme.selection,
         );
     }
@@ -782,6 +811,46 @@ pub fn loop_region(
         view,
         region,
         Theme::translucent(theme.loop_region, 0.18),
+    );
+}
+
+/// The loop mark drawn beside a clip's loop edge while the pointer is on it.
+///
+/// `zone` is the edge's hit rectangle in window coordinates. The mark sits just past it, at the
+/// top, on a raised chip so it reads over a clip, the grid or the empty lane alike; it is the
+/// same Atelier loop glyph the transport's cycle button wears, because both say "this repeats".
+pub fn loop_handle_mark(window: &mut Window, cx: &App, zone: Bounds<Pixels>, theme: &Theme) {
+    let glyph = px(12.0);
+    let pad = px(2.0);
+    let chip = Bounds {
+        origin: point(
+            zone.origin.x + zone.size.width + px(2.0),
+            zone.origin.y + px(1.0),
+        ),
+        size: size(glyph + pad * 2.0, glyph + pad * 2.0),
+    };
+    rounded_rect(
+        window,
+        chip,
+        theme.atelier.shape.radius_sm,
+        theme.surface_raised,
+    );
+    rounded_outline(
+        window,
+        chip,
+        theme.atelier.shape.radius_sm,
+        px(1.0),
+        theme.border,
+    );
+    let _ = window.paint_svg(
+        Bounds {
+            origin: point(chip.origin.x + pad, chip.origin.y + pad),
+            size: size(glyph, glyph),
+        },
+        atelier::IconName::Loop.path().into(),
+        gpui::TransformationMatrix::unit(),
+        theme.accent,
+        cx,
     );
 }
 
@@ -1254,7 +1323,7 @@ mod tests {
             origin: point(px(10.0), px(40.0)),
             size: size(px(800.0), crate::theme::Metrics::HARMONY_LANE_HEIGHT),
         };
-        let (keys, chords) = harmony_rows(bounds);
+        let (keys, chords) = harmony_rows(bounds, true);
         assert_eq!(keys.origin, bounds.origin);
         assert_eq!(keys.size.height, KEY_ROW_HEIGHT);
         assert_eq!(chords.origin.y, keys.origin.y + keys.size.height);
@@ -1273,8 +1342,27 @@ mod tests {
             origin: point(px(0.0), px(0.0)),
             size: size(px(800.0), px(6.0)),
         };
-        let (keys, chords) = harmony_rows(bounds);
+        let (keys, chords) = harmony_rows(bounds, true);
         assert_eq!(keys.size.height, px(6.0));
+        assert_eq!(chords.size.height, px(0.0));
+    }
+
+    #[test]
+    fn a_hidden_row_gives_the_other_the_whole_lane() {
+        let chords_only = Bounds {
+            origin: point(px(0.0), px(20.0)),
+            size: size(px(800.0), crate::theme::Metrics::CHORD_ROW_HEIGHT),
+        };
+        let (keys, chords) = harmony_rows(chords_only, false);
+        assert_eq!(keys.size.height, px(0.0));
+        assert_eq!(chords, chords_only);
+
+        let keys_only = Bounds {
+            size: size(px(800.0), KEY_ROW_HEIGHT),
+            ..chords_only
+        };
+        let (keys, chords) = harmony_rows(keys_only, true);
+        assert_eq!(keys, keys_only);
         assert_eq!(chords.size.height, px(0.0));
     }
 }

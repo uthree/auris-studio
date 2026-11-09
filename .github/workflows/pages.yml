@@ -1,0 +1,46 @@
+name: Pages
+
+# The introduction page at https://uthree.github.io/auris-studio/. It is rebuilt whenever the
+# page or the screenshots it shows change on main; `tools/site/build.sh` is the whole build.
+on:
+  push:
+    branches: [main]
+    paths:
+      - site/**
+      - docs/screenshots/readme/**
+      - crates/auris-gpui/assets/auris-studio.*
+      - tools/site/**
+      - .github/workflows/pages.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build the site
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: tools/site/build.sh _site
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

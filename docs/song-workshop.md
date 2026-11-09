@@ -1,13 +1,13 @@
-# Conversational songwriting
+# AI workshop
 
-Choose **Create with AI…** in the project chooser. Describe the music in the message
+Choose **AI workshop…** in the project chooser. Describe the music in the message
 box, including instruments, mood, duration, voices, lyrics and any material to preserve.
 Enter sends a message; Shift+Enter inserts a line break. Confirming Japanese IME
 composition does not send the message. Provider/model and reasoning effort are local
 to this workshop; changing them does not overwrite the application's agent settings.
 
 The director asks a focused question when a consequential detail is unclear. Once
-the direction is sufficiently clear, it assigns three alternatives to independent
+the direction is sufficiently clear, it assigns one to three alternatives to independent
 composer workers. Each worker owns its own headless session and edits real music
 through the session tools. Progress reports observed work: harmony, melody,
 arrangement, singing and audition rendering. Model requests run in parallel;
@@ -28,6 +28,12 @@ to one candidate or the entire batch. Regenerating a completed candidate creates
 earlier results available. Selecting **Continue with this song** establishes the
 exact score for the next request without closing the conversation. Ask for revisions
 or new alternatives from that score. Earlier comparisons remain in the transcript.
+Without an explicit selection, further requests use the latest successful round's song
+when that round contains a single candidate. Failed revisions keep that baseline available,
+including after reopening the conversation. Multiple alternatives require a selection.
+Implicit continuation does not record a preference choice.
+After a single revision of the selected song completes, subsequent edits continue from
+that revision. Comparing alternatives keeps the current selection until you choose one.
 Selection appears in the chat immediately while the director prepares three to five
 numbered arrangement or improvement suggestions. Choose an option in the message box
 or describe another change. Suggestions alone do not launch another production batch.
@@ -75,13 +81,16 @@ assignment and checkpoint. Before the first checkpoint exists, recovery starts f
 the original parent or a blank score. Fix unavailable resources before requesting
 recovery. Completed candidates keep the separate regeneration action.
 
-The workshop owns a sidecar under the project's conversation store. Unsaved documents
-use the same persistent recovery identity as ordinary agent conversations. The sidecar
-contains the readable transcript, draft, comparison identities, parent links, exact
-candidate projects and audition WAVs. Save As copies these with conversation storage;
-candidate-local assets retain relative references on disk.
+Workshop conversations live in one application-wide library, `workshop/` in the
+application configuration directory, whichever document is open. The workshop starts
+songs rather than editing one, so its history does not belong to a project: every
+launch lists every earlier conversation. The library contains the readable transcript,
+draft, comparison identities, parent links, exact candidate projects and audition WAVs;
+candidate-local assets retain relative references on disk. **Open editor** copies the
+conversation into the project's own agent conversation, which Save As then carries.
 
-Only one window may own a workshop store at a time. Reopening retains finished work
+Only one window may own a conversation at a time; a second window that finds the last
+conversation already open starts a new one beside it. Reopening retains finished work
 and marks incomplete candidates as interrupted; it does not automatically restart
 model requests. Storage errors are reported rather than replacing unreadable history.
-Audition loading is limited to the viewed comparison and selected baseline.
+Audition loading is limited to the viewed comparison and continuation baseline.

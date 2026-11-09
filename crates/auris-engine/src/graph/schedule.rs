@@ -12,7 +12,7 @@ use auris_core::AudioBuffer;
 use auris_core::param::db_to_gain;
 use auris_core::plugin::NoteEvent;
 use auris_core::project::{
-    AudioClip, AudioSourceBank, ClipCurve, ClipId, FadeCurve, MidiClip, NoteTransform,
+    AudioClip, AudioSourceBank, ClipCurve, ClipId, FadeCurve, LayerShape, MidiClip, NoteTransform,
 };
 use auris_core::time::{SignatureMap, TempoMap, Ticks};
 
@@ -176,6 +176,7 @@ impl RenderAudioClip {
 /// thread has to know it happened.
 pub(super) fn schedule_clip(
     clip: &MidiClip,
+    shape: Option<&LayerShape>,
     tempo_map: &TempoMap,
     signatures: &SignatureMap,
     sample_rate: f64,
@@ -201,8 +202,15 @@ pub(super) fn schedule_clip(
         // the renderer would write a file that is not the piece you can hear. The tempo is the one
         // in force at the clip — the transforms' humanisation is milliseconds, and this is where
         // milliseconds meet ticks.
-        for note in clip.sounding_notes_with_meter(tempo_map.bpm_at(clip.start), signatures.clone())
-        {
+        // A layer's shape is applied to what the clip sounds, never to what it stores, and it only
+        // ever keeps or moves notes — so the reservation above still bounds what is pushed here.
+        let sounding =
+            clip.sounding_notes_with_meter(tempo_map.bpm_at(clip.start), signatures.clone());
+        let notes: Vec<_> = match shape {
+            Some(shape) => shape.apply(sounding.collect()),
+            None => sounding.collect(),
+        };
+        for note in notes {
             reserve_events(out, clip.id, 2)?;
             let start_tick = clip.start + note.start;
             let end_tick = clip.start + note.end();
@@ -510,7 +518,7 @@ mod tests {
         let meter = SignatureMap::constant(TimeSignature::new(6, 8));
         let tempo = TempoMap::default();
         let mut events = Vec::new();
-        schedule_clip(&clip, &tempo, &meter, 48_000.0, &mut events).unwrap();
+        schedule_clip(&clip, None, &tempo, &meter, 48_000.0, &mut events).unwrap();
         let notes: Vec<_> = clip.sounding_notes_with_meter(120.0, meter).collect();
         assert_eq!(events.len(), notes.len() * 2);
         assert!(notes.len() > clip.notes.len() * 2);

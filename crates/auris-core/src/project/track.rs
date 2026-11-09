@@ -81,6 +81,12 @@ pub struct InstrumentTrack {
     /// library shared by every project on the machine rather than one song's asset.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub file: Option<AssetPath>,
+    /// The track whose notes this one plays instead of its own, when it is a layer.
+    ///
+    /// Only ever set on a melodic track, and `clips` stays empty while it is: see
+    /// [`NoteSource`](super::NoteSource) for what a layer is and why a layer is never a source.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub follows: Option<super::layer::NoteSource>,
 }
 
 impl InstrumentTrack {
@@ -311,11 +317,15 @@ impl TrackKind {
     /// Shared editing and playback use this accessor. Clip transfers also check [`Self::is_drum`]
     /// so percussion remains on drum tracks; a melody can move between a melodic instrument and
     /// a singer track to be given words.
+    ///
+    /// A layer answers `false`: it plays its source's clips and keeps none of its own, so nothing
+    /// may be written, pasted or moved onto it.
     pub fn holds_notes(&self) -> bool {
-        matches!(
-            self,
-            TrackKind::Instrument(_) | TrackKind::Drum(_) | TrackKind::Singer(_)
-        )
+        match self {
+            TrackKind::Instrument(track) => track.follows.is_none(),
+            TrackKind::Drum(_) | TrackKind::Singer(_) => true,
+            _ => false,
+        }
     }
 
     /// `true` when this track is a singer track.
@@ -425,6 +435,11 @@ pub struct Track {
     /// Copies of this track's signal, fed to buses alongside its own output.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sends: Vec<AuxSend>,
+    /// Notes for the reader pinned along the track's lane, in song time; nothing plays them.
+    ///
+    /// See [`Comment`](super::Comment).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub comments: Vec<super::Comment>,
 }
 
 fn default_outputs() -> Vec<Output> {
@@ -546,6 +561,7 @@ impl Project {
             mixer: MixerStrip::default(),
             outputs: default_outputs(),
             sends: Vec::new(),
+            comments: Vec::new(),
         });
         id
     }
@@ -563,6 +579,7 @@ impl Project {
                 instrument_state: PluginState::empty(),
                 clips: Vec::new(),
                 file: None,
+                follows: None,
             }),
         )
     }
@@ -582,6 +599,7 @@ impl Project {
                 instrument_state: PluginState::empty(),
                 clips: Vec::new(),
                 file: None,
+                follows: None,
             }),
         )
     }

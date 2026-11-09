@@ -372,7 +372,10 @@ impl Session {
         wants
     }
 
-    fn strip_mut(&mut self, track: Option<TrackId>) -> Option<&mut auris_core::MixerStrip> {
+    pub(super) fn strip_mut(
+        &mut self,
+        track: Option<TrackId>,
+    ) -> Option<&mut auris_core::MixerStrip> {
         match track {
             Some(id) => self.project.track_mut(id).map(|t| &mut t.mixer),
             None => Some(&mut self.project.master),
@@ -965,7 +968,7 @@ impl Session {
             .filter(|descriptor| !descriptor.read_only)
     }
 
-    fn strip(&self, track: Option<TrackId>) -> Option<&auris_core::MixerStrip> {
+    pub(super) fn strip(&self, track: Option<TrackId>) -> Option<&auris_core::MixerStrip> {
         match track {
             Some(id) => self.project.track(id).map(|t| &t.mixer),
             None => Some(&self.project.master),

@@ -29,7 +29,7 @@ keep them alive:
 * **The keystroke a user sees is not the keystroke that is stored.** `secondary-s` is stored;
   `actions::normalise_keystroke` turns it into what the keyboard reports, for comparing, and
   `actions::menu_keystroke` into ⌘S or Ctrl+S, for reading.
-* **Windows sets no locale variables.** `Language::from_system_locale` is what makes a Japanese
+* **Windows sets no locale variables.** `Language::from_system` is what makes a Japanese
   Windows install come up in Japanese.
 
 The plugin hosts use Windows 0.62 bindings. Windows runs `auris-gpu` on Vulkan.
@@ -70,7 +70,8 @@ crates/auris-gpu         optional wgpu compute for offline analysis
 crates/auris-compose     score-based automatic composition; depends on auris-core only
 crates/auris-vocal       singing: lyrics to IPA phonemes, notes to voice-model frames;
                          depends on auris-core only
-crates/auris-i18n        interface text in every language; no local dependencies
+crates/auris-i18n        interface text in every language: `locales/<tag>.toml`, compiled in by
+                         atelier-i18n's generator; no local dependencies
 crates/auris-session     headless session: the document, the engine, every command
 crates/auris-toolbox     the session's commands as tools for a language model;
                          shared by auris-mcp and auris-agent

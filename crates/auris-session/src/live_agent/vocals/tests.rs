@@ -57,6 +57,55 @@ fn run(s: &mut Session, command: Command) -> Result<String, String> {
 }
 
 #[test]
+fn written_lyrics_with_explicit_reading_survive_without_a_dictionary() {
+    let mut s = session();
+    let track = s.add_singer_track("Singer");
+    let clip = s
+        .add_midi_clip(track, "Verse", Ticks::ZERO, Ticks::QUARTER * 4)
+        .unwrap();
+    for beat in [2, 0, 1, 3] {
+        s.add_note(clip, Note::new(60, Ticks::QUARTER * beat, Ticks::QUARTER))
+            .unwrap();
+    }
+    let before = s.project().clone();
+    let response = call(
+        &mut s,
+        serde_json::json!({
+            "action":"write_lyrics", "clip":clip.0, "text":"月の夜", "reading":"つきのよ"
+        }),
+    )
+    .unwrap();
+    assert_eq!(response["clip_name"], "月の夜");
+    assert_eq!(
+        s.project().lyrics.text_at(Ticks::ZERO),
+        Some("月の夜"),
+        "the song-wide lyrics follow"
+    );
+    assert_eq!(s.project().lyrics.text_at(Ticks::QUARTER * 4), None);
+    let notes = &s.midi_clip(clip).unwrap().notes;
+    assert_eq!(
+        notes.iter().map(|n| n.lyric.as_str()).collect::<Vec<_>>(),
+        ["+", "月の夜", "+", "+"]
+    );
+    assert!(notes.iter().all(|n| !n.phonemes.is_empty()));
+    let after = s.project().clone();
+    for reading in ["", "漢字", "つきのよるに"] {
+        assert!(
+            call(
+                &mut s,
+                serde_json::json!({
+                    "action":"write_lyrics", "clip":clip.0, "text":"月の夜", "reading":reading
+                })
+            )
+            .is_err()
+        );
+        assert_eq!(s.project(), &after);
+    }
+    s.undo();
+    assert_eq!(s.project(), &before);
+}
+
+#[test]
 fn lyrics_follow_time_order_and_preserve_unfilled_notes_in_one_undo_step() {
     let mut s = session();
     let track = s.add_singer_track("Singer");
@@ -421,4 +470,36 @@ fn live_vocal_workflow_publishes_real_audio_checks_staleness_and_preserves_undo(
     assert_eq!(s.project(), &revised);
     s.undo();
     assert_eq!(s.project(), &before_tempo);
+}
+
+#[test]
+fn written_lines_become_one_annotation_line_each_and_undo_with_the_words() {
+    let mut s = session();
+    let track = s.add_singer_track("Singer");
+    let clip = s
+        .add_midi_clip(track, "Verse", Ticks::ZERO, Ticks::QUARTER * 8)
+        .unwrap();
+    for beat in 0..5 {
+        s.add_note(clip, Note::new(60, Ticks::QUARTER * beat, Ticks::QUARTER))
+            .unwrap();
+    }
+    let response = call(
+        &mut s,
+        serde_json::json!({"action":"write_lyrics","clip":clip.0,"text":"さくら\nはる"}),
+    )
+    .unwrap();
+    assert_eq!(response["lyric_annotation"].as_array().unwrap().len(), 2);
+    let lyrics = &s.project().lyrics;
+    assert_eq!(lyrics.text_at(Ticks::ZERO), Some("さくら"));
+    assert_eq!(lyrics.text_at(Ticks::QUARTER * 3), Some("はる"));
+    assert_eq!(lyrics.text_at(Ticks::QUARTER * 5), None);
+    s.undo().unwrap();
+    assert!(s.project().lyrics.is_empty(), "one step with the words");
+    assert!(
+        s.midi_clip(clip)
+            .unwrap()
+            .notes
+            .iter()
+            .all(|n| n.lyric.is_empty())
+    );
 }

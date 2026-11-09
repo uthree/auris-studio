@@ -9,7 +9,9 @@
 //!
 //! # Shape
 //!
-//! Fixed strings are a [`Key`] enum built by a macro that takes every language at once:
+//! The words are not in Rust at all. `locales/en.toml` and `locales/ja.toml` hold them, one file
+//! per language, and the build script runs them through [`atelier_i18n`]'s generator, which
+//! writes [`Language`], [`Key`] and the functions in [`messages`]:
 //!
 //! ```
 //! # use auris_i18n::{Key, Language};
@@ -17,145 +19,42 @@
 //! assert_eq!(Key::Mixer.get(Language::Japanese), "ミキサー");
 //! ```
 //!
-//! Adding a key means writing both translations on adjacent lines, and the `match` the macro
-//! generates is exhaustive over `(key, language)` — so a language that is missing a string is a
-//! compile error rather than a hole discovered by a user. Strings that interpolate values are
-//! functions in [`messages`] instead, which keeps the format string a literal and its
-//! placeholders checked by the compiler.
+//! A string without a placeholder is a [`Key`] variant, named as the file writes it. A string with
+//! `{named}` placeholders is a function in [`messages`], whose parameters follow the order the
+//! English text uses them. A key that one file has and the other lacks, or a translation that
+//! names different placeholders, fails the build with the file and the key — so a language that is
+//! missing a string is still a compile error rather than a hole discovered by a user. Adding a
+//! language is adding a file, and the build then lists every string it still needs.
+//!
+//! What a file cannot say stays in Rust, in [`messages`]: a sentence chosen by a flag or built
+//! from optional parts, and the few whose parameters are declared in another order than the
+//! English sentence reads them.
 //!
 //! Plugin metadata is different again: it belongs to the plugin, and a third-party one will
 //! never be in any table here. [`audio`] therefore *looks up* the English term and falls back to
 //! it, so an unknown plugin degrades to English instead of showing a placeholder.
+//!
+//! # Which language
+//!
+//! [`Language::resolve`] takes the stored preference, where `None` means "follow the system", and
+//! [`Language::from_system`] answers for the system: the first of `LC_ALL`, `LC_MESSAGES` and
+//! `LANG` that is set, then the operating system itself. Windows sets none of those variables and
+//! neither does the Mac application started from Finder, so asking the system is what makes a
+//! Japanese install come up in Japanese. A language is stored as its tag (`"ja"`); the name an
+//! older build wrote (`"japanese"`) still reads.
 
 #![warn(missing_docs)]
 
 pub mod audio;
 pub mod controller;
 pub mod messages;
-mod strings;
 
-pub use strings::Key;
-
-use serde::{Deserialize, Serialize};
-
-/// A language the interface is available in.
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Language {
-    /// English.
-    #[default]
-    English,
-    /// Japanese.
-    Japanese,
+/// What the build script wrote from `locales/`.
+mod generated {
+    include!(concat!(env!("OUT_DIR"), "/atelier_i18n.rs"));
 }
 
-impl Language {
-    /// Every language, in the order a picker should list them.
-    pub const ALL: [Language; 2] = [Language::English, Language::Japanese];
-
-    /// ISO 639-1 code, as used in settings files and `LANG`.
-    pub fn code(self) -> &'static str {
-        match self {
-            Language::English => "en",
-            Language::Japanese => "ja",
-        }
-    }
-
-    /// The language's name in itself, which is what a language picker must show.
-    ///
-    /// A picker that lists languages in the *current* language is useless to the person who
-    /// cannot read the current one — which is the only person using it.
-    pub fn endonym(self) -> &'static str {
-        match self {
-            Language::English => "English",
-            Language::Japanese => "日本語",
-        }
-    }
-
-    /// The language for a locale string such as `ja_JP.UTF-8` or `en-GB`.
-    ///
-    /// Only the primary subtag is considered: a regional variant of a language we have is still
-    /// that language, and one we do not have is not improved by looking at its region.
-    pub fn from_locale(locale: &str) -> Option<Language> {
-        let primary = locale
-            .split(['_', '-', '.'])
-            .next()
-            .unwrap_or_default()
-            .to_ascii_lowercase();
-        Language::ALL.into_iter().find(|l| l.code() == primary)
-    }
-
-    /// What the environment asks for, falling back to English.
-    ///
-    /// `LC_ALL` outranks `LC_MESSAGES`, which outranks `LANG`, which is the order POSIX gives
-    /// them; macOS sets `LANG` from the system language for terminal programs. The variables
-    /// come first even where the system can be asked directly, because someone who exports
-    /// `LANG` for one program means it for that program.
-    ///
-    /// [`Language::from_system_locale`] is the fallback. On Windows it is the only thing that
-    /// ever answers, and on macOS it is what answers for the application started from Finder.
-    pub fn from_environment() -> Language {
-        ["LC_ALL", "LC_MESSAGES", "LANG"]
-            .into_iter()
-            .find_map(|name| std::env::var(name).ok())
-            .and_then(|value| Language::from_locale(&value))
-            .or_else(Language::from_system_locale)
-            .unwrap_or_default()
-    }
-
-    /// The language the operating system itself is set to, where there is a way to ask.
-    ///
-    /// `None` where there is not, which is every platform that answers through the locale
-    /// variables [`Language::from_environment`] has already read.
-    ///
-    /// Windows is why this exists. It sets none of those variables, so a program that reads
-    /// only them shows English to every Japanese user — who then has to find the language
-    /// setting by reading English. macOS is the same case in a different place: a terminal
-    /// gets `LANG`, but an application started from Finder, the Dock or Launchpad is started
-    /// by launchd, which sets none. There the answer is the ordered list in System Settings,
-    /// and the first language in it that this build speaks.
-    pub fn from_system_locale() -> Option<Language> {
-        #[cfg(target_os = "windows")]
-        {
-            use windows_sys::Win32::Globalization::GetUserDefaultLocaleName;
-
-            // `LOCALE_NAME_MAX_LENGTH`, fixed at 85 since Vista. Named here rather than pulled
-            // from `Win32_System_SystemServices`, which is an enormous module to import a
-            // number from.
-            let mut name = [0u16; 85];
-            // SAFETY: the pointer is to `name`, which is writable for the length passed as the
-            // second argument. The call writes UTF-16 within that bound and nothing else.
-            let written = unsafe { GetUserDefaultLocaleName(name.as_mut_ptr(), name.len() as i32) };
-            // The returned count includes the terminating null; 0 means the call failed.
-            let end = usize::try_from(written).ok()?.checked_sub(1)?;
-            Language::from_locale(&String::from_utf16_lossy(name.get(..end)?))
-        }
-        #[cfg(target_os = "macos")]
-        {
-            objc2_foundation::NSLocale::preferredLanguages()
-                .to_vec()
-                .iter()
-                .find_map(|language| Language::from_locale(&language.to_string()))
-        }
-        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-        {
-            None
-        }
-    }
-
-    /// Resolves a stored preference, where `None` means "follow the system".
-    pub fn resolve(preference: Option<Language>) -> Language {
-        preference.unwrap_or_else(Language::from_environment)
-    }
-}
-
-/// The text for `key` in `language`.
-///
-/// A free function as well as a method because most call sites read better with the language
-/// last: `t(Key::Mixer, self.language)`.
-pub fn t(key: Key, language: Language) -> &'static str {
-    key.get(language)
-}
+pub use generated::{Key, Language, t};
 
 #[cfg(test)]
 mod tests {
@@ -180,23 +79,8 @@ mod tests {
             Language::resolve(Some(Language::Japanese)),
             Language::Japanese
         );
-    }
-
-    #[test]
-    fn asking_the_system_for_its_locale_answers_or_declines_but_never_panics() {
-        // Windows and macOS query the OS; other platforms decline. Unsupported system
-        // languages may also return None on either native backend.
-        let answer = Language::from_system_locale();
-        assert!(
-            cfg!(any(target_os = "windows", target_os = "macos")) || answer.is_none(),
-            "only Windows and macOS query the system locale directly"
-        );
-        // And whatever came back has to be a language we can actually render.
-        if let Some(language) = answer {
-            assert!(Language::ALL.contains(&language));
-        }
-        // Never panics, and the environment still resolves to something.
-        let _ = Language::from_environment();
+        // And following the system always lands on a language this build can render.
+        assert!(Language::ALL.contains(&Language::resolve(None)));
     }
 
     #[test]
@@ -206,15 +90,89 @@ mod tests {
             assert!(!language.endonym().is_empty());
         }
         assert_ne!(Language::English.code(), Language::Japanese.code());
+        assert_eq!(Language::default(), Language::English);
     }
 
     #[test]
-    fn a_language_serialises_as_its_own_name() {
+    fn a_language_is_stored_as_its_tag_and_the_old_name_still_reads() {
         let json = serde_json::to_string(&Language::Japanese).unwrap();
-        assert_eq!(json, "\"japanese\"");
-        assert_eq!(
-            serde_json::from_str::<Language>(&json).unwrap(),
-            Language::Japanese
-        );
+        assert_eq!(json, "\"ja\"");
+        for stored in ["\"ja\"", "\"japanese\""] {
+            assert_eq!(
+                serde_json::from_str::<Language>(stored).unwrap(),
+                Language::Japanese
+            );
+        }
+    }
+
+    #[test]
+    fn every_key_has_text_in_every_language() {
+        assert!(Key::ALL.len() > 2000, "{} keys", Key::ALL.len());
+        for key in Key::ALL {
+            for language in Language::ALL {
+                let text = key.get(language);
+                assert!(!text.trim().is_empty(), "{key:?} is blank in {language:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn no_key_is_left_untranslated_by_accident() {
+        // Identical text in both languages is legitimate for a few strings — "M" is "M" — but
+        // it is nearly always a forgotten translation, so the exceptions are listed rather than
+        // waved through.
+        // A note value written as a fraction is that fraction in either language, the same way an
+        // initial is an initial. The triplet rows are not here, because "triplet" and 「三連」
+        // are words rather than numbers and both languages have their own.
+        const SHARED: &[Key] = &[
+            Key::MuteInitial,
+            Key::SoloInitial,
+            Key::RecordInitial,
+            Key::MonitorInitial,
+            Key::SubdivisionEighth,
+            Key::SubdivisionSixteenth,
+            Key::FormatWav,
+            Key::FormatFlac,
+            Key::FormatMp3,
+            // Dimensional notation is the same in both languages.
+            Key::TimbreMapView3d,
+            Key::TimbreAxisPc1,
+            Key::TimbreAxisPc2,
+            Key::TimbreAxisPc3,
+            // Product names, which the navigation column shows as names rather than as the
+            // sentence 「…設定」 the old tab row needed.
+            Key::VoiceSetupVoicevox,
+            Key::VoiceSetupDiffSinger,
+            Key::VoiceSetupLeapSinger,
+            // The event list's column headings, which Japanese list editors print in English too.
+            Key::EventListTick,
+            Key::EventListStep,
+            Key::EventListGate,
+        ];
+        for key in Key::ALL {
+            if SHARED.contains(key) {
+                continue;
+            }
+            assert_ne!(
+                key.get(Language::English),
+                key.get(Language::Japanese),
+                "{key:?} has the same text in both languages"
+            );
+        }
+    }
+
+    #[test]
+    fn an_ellipsis_survives_translation() {
+        // A menu item that opens a dialog says so with a trailing ellipsis, and a translation
+        // that drops it turns "opens a window" into "does it now".
+        for key in Key::ALL {
+            let english = key.get(Language::English);
+            if english.ends_with('…') {
+                assert!(
+                    key.get(Language::Japanese).ends_with('…'),
+                    "{key:?} loses its ellipsis in Japanese"
+                );
+            }
+        }
     }
 }

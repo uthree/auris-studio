@@ -938,6 +938,11 @@ impl Theme {
         readable_indicator(self.track_palette[4], self)
     }
 
+    /// Color for a layer's note wire, which carries notes rather than audio.
+    pub fn mixer_notes_color(&self) -> Hsla {
+        readable_indicator(self.track_palette[2], self)
+    }
+
     /// The palette a scheme describes.
     ///
     /// The lightness steps below are the whole layout of the interface, written down once. Reading
@@ -1155,6 +1160,7 @@ impl Theme {
     /// Keeps imported and custom Auris palettes consistent with shared Atelier components.
     pub fn sync_atelier(&mut self) {
         self.atelier.typography.ui = self.font.clone();
+        self.atelier.density.title_bar = crate::titlebar::HEIGHT;
         let colors = &mut self.atelier.colors;
         colors.background = self.background;
         colors.surface = self.surface;
@@ -1188,9 +1194,14 @@ impl Theme {
         colors.record = self.record;
         colors.playhead = self.playhead;
         colors.meter = [self.meter_low, self.meter_mid, self.meter_high];
-        colors.agent = atelier::ensure_contrast(colors.agent, self.surface, 4.5);
+        colors.agent = self.accent_text;
         colors.agent_wash = Self::translucent(colors.agent, 0.10);
+        // A secondary `Button` lies flat under Glass (only Studio sets `shape.bezel_controls`),
+        // and under the translucent material its fill is Atelier's see-through `control` tone so
+        // the glass shows through. An opaque window has no glass to show: there it is the raised
+        // surface, as `widgets::button` is.
         if self.atelier.material == atelier::Material::Opaque {
+            colors.control = self.surface_raised;
             colors.chrome = self.surface_raised;
             colors.overlay = self.surface_raised;
         } else if !self.is_glass {
@@ -1367,6 +1378,34 @@ impl Theme {
         self.categorical_color(source.h - anchor.h, source.s / anchor.s)
     }
 
+    /// The document colour that tints a track in a timbre cluster's hue.
+    ///
+    /// The Find Sounds map marks cluster `n` with [`atelier`]'s `n`th categorical colour, a hue
+    /// placed relative to the accent. A track keeps only an RGB value, and
+    /// [`track_color`](Self::track_color) reads any value outside the palette as a hue offset
+    /// from the accent, so the value stored is the one carrying that same offset: in this theme
+    /// the track draws in the cluster's hue, and under another theme both move together.
+    /// Lightness and saturation stay the track palette's, so a recoloured track still reads as a
+    /// track. Palette values mean palette *slots*, so a result that lands on one is nudged off it.
+    pub fn timbre_cluster_track_color(&self, cluster: usize) -> auris_session::prelude::Color {
+        use auris_session::prelude::Color;
+        let offset = self.atelier.categorical(cluster).h - self.accent.h;
+        let anchor: Hsla = rgb(Color::PALETTE[0].0).into();
+        let tint = gpui::Rgba::from(hsla(
+            (anchor.h + offset).rem_euclid(1.0),
+            anchor.s,
+            anchor.l,
+            1.0,
+        ));
+        let channel = |value: f32| (value.clamp(0.0, 1.0) * 255.0).round() as u32;
+        let packed = channel(tint.r) << 16 | channel(tint.g) << 8 | channel(tint.b);
+        if Color::PALETTE.iter().any(|slot| slot.0 == packed) {
+            Color(packed ^ 1)
+        } else {
+            Color(packed)
+        }
+    }
+
     /// Stable categorical colour for a visualized channel, string or resonant mode.
     ///
     /// Uses the active scheme's track palette, including custom overrides, with contrast
@@ -1458,23 +1497,31 @@ impl Theme {
 pub struct Metrics;
 
 impl Metrics {
-    /// Height of the transport readout bar below the title bar.
-    ///
-    /// The playback buttons live in the title bar; this row holds their readouts and meters.
+    /// Height of the shared playback and readout bar below the title bar.
     pub const TRANSPORT_HEIGHT: Pixels = px(54.0);
+
+    /// Extra room for editing controls and meters in narrow editor windows.
+    pub const TRANSPORT_AUX_HEIGHT: Pixels = px(32.0);
     /// Height of the timeline ruler above the arrangement.
     pub const RULER_HEIGHT: Pixels = px(28.0);
     /// Height of the harmony lane, between the structure lane and the clip lanes.
     ///
     /// Two rows: a thin strip of key changes over a taller strip of chords. See
-    /// [`paint::harmony_rows`](crate::ui::paint::harmony_rows) for why they are not one.
+    /// [`paint::harmony_rows`](crate::ui::paint::harmony_rows) for why they are not one. Either
+    /// can be hidden, and the lane then takes only the other's height.
     pub const HARMONY_LANE_HEIGHT: Pixels = px(34.0);
+    /// Height of the strip of key changes along the top of the harmony lane.
+    pub const KEY_ROW_HEIGHT: Pixels = px(13.0);
+    /// Height of the chord blocks under the key strip: the rest of the harmony lane.
+    pub const CHORD_ROW_HEIGHT: Pixels = px(21.0);
     /// Height of the structure lane, between the ruler and the harmony.
     ///
     /// One row of section names — イントロ, Aメロ, サビ — coarser than the harmony below it,
     /// which is why it sits above: the stack reads from the largest division of the song down
     /// to the smallest.
     pub const STRUCTURE_LANE_HEIGHT: Pixels = px(18.0);
+    /// Height of the lyrics lane under the chords.
+    pub const LYRICS_LANE_HEIGHT: Pixels = px(18.0);
     /// Width of the track header column.
     ///
     /// Wide enough for the button row an *audio* track carries — mute, solo, arm and input
@@ -1495,7 +1542,7 @@ impl Metrics {
     /// Height of the header strip at the top of a docked panel.
     pub const PANEL_HEADER_HEIGHT: Pixels = px(28.0);
     /// Height of the status bar along the bottom of the window.
-    pub const STATUS_HEIGHT: Pixels = px(24.0);
+    pub const STATUS_HEIGHT: Pixels = px(28.0);
     /// Height of a control row inside the inspector.
     pub const CONTROL_HEIGHT: Pixels = px(24.0);
     /// Width reserved for a dropdown's trailing disclosure indicator.
@@ -1523,6 +1570,23 @@ impl Metrics {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn no_scheme_bezels_its_buttons() {
+        for scheme in SCHEMES {
+            let theme = Theme::from_scheme(scheme);
+            assert!(!theme.atelier.shape.bezel_controls, "{}", scheme.id);
+            if theme.atelier.material == atelier::Material::Opaque {
+                assert_eq!(
+                    theme.atelier.colors.control, theme.surface_raised,
+                    "{}",
+                    scheme.id
+                );
+            } else {
+                assert!(theme.atelier.colors.control.a < 0.2, "{}", scheme.id);
+            }
+        }
+    }
 
     #[test]
     fn glass_presets_share_upstream_surfaces_and_preserve_document_palettes() {
@@ -2133,6 +2197,34 @@ mod tests {
             for neutral in [0x000000, 0x888888, 0xffffff] {
                 assert_eq!(theme.track_color(neutral).s, 0.0);
             }
+        }
+    }
+
+    #[test]
+    fn timbre_cluster_tracks_draw_in_their_cluster_hue_in_every_scheme() {
+        let hue_gap = |a: f32, b: f32| {
+            let d = (a - b).rem_euclid(1.0);
+            d.min(1.0 - d)
+        };
+        for scheme in SCHEMES {
+            let theme = Theme::from_scheme(scheme);
+            let mut stored = Vec::new();
+            for cluster in 0..auris_session::MAX_TIMBRE_CLUSTERS {
+                let color = theme.timbre_cluster_track_color(cluster);
+                assert!(!auris_session::prelude::Color::PALETTE.contains(&color));
+                let track = theme.track_color(color.0);
+                let marker = theme.atelier.categorical(cluster);
+                assert!(
+                    hue_gap(track.h, marker.h) < 0.01,
+                    "cluster {cluster}: track hue {} vs map hue {}",
+                    track.h,
+                    marker.h
+                );
+                stored.push(color);
+            }
+            stored.sort_by_key(|color| color.0);
+            stored.dedup();
+            assert_eq!(stored.len(), auris_session::MAX_TIMBRE_CLUSTERS);
         }
     }
 

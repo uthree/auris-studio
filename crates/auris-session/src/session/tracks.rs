@@ -307,6 +307,9 @@ impl Session {
     pub fn remove_track(&mut self, id: TrackId) -> Result<(), SessionError> {
         self.require_track(id)?;
         self.record(Edit::DeleteTrack);
+        // A layer on the track keeps the part rather than falling silent: deleting the source is
+        // a command aimed at it, not at the instruments stacked on its notes.
+        self.detach_layers_of(id);
         self.project.remove_track(id);
         // An arm on a track that no longer exists would refuse the next take rather than being
         // ignored by it, and the button that could clear it has gone with the track.
@@ -370,6 +373,35 @@ impl Session {
             track.color = color;
         }
         Ok(())
+    }
+
+    /// Tints several tracks as one undoable step, and reports how many actually changed.
+    ///
+    /// Every track is checked before any is touched, so an unknown id changes nothing. Pairs
+    /// that already have their colour are not counted, and when none changes no step is
+    /// recorded. A track named twice takes the last colour given.
+    pub fn set_track_colors(&mut self, colors: &[(TrackId, Color)]) -> Result<usize, SessionError> {
+        for (id, _) in colors {
+            self.require_track(*id)?;
+        }
+        let mut wanted: Vec<(TrackId, Color)> = Vec::new();
+        for &(id, color) in colors {
+            match wanted.iter_mut().find(|(seen, _)| *seen == id) {
+                Some(entry) => entry.1 = color,
+                None => wanted.push((id, color)),
+            }
+        }
+        wanted.retain(|(id, color)| self.project.track(*id).is_some_and(|t| t.color != *color));
+        if wanted.is_empty() {
+            return Ok(0);
+        }
+        self.record(Edit::SetTrackColors);
+        for (id, color) in &wanted {
+            if let Some(track) = self.project.track_mut(*id) {
+                track.color = *color;
+            }
+        }
+        Ok(wanted.len())
     }
 
     /// Silences or unsilences a track.
@@ -1454,6 +1486,55 @@ mod tests {
         session.set_track_color(track, was).unwrap();
         assert_eq!(session.undo(), Some(Edit::SetTrackColor));
         assert_eq!(session.project().track(track).unwrap().color, wanted);
+    }
+
+    #[test]
+    fn recolouring_several_tracks_is_one_step_that_skips_unchanged_ones() {
+        let mut session = self::tests::session();
+        let lead = session.add_default_instrument_track("Lead").unwrap();
+        let pad = session.add_default_instrument_track("Pad").unwrap();
+        let bass = session.add_default_instrument_track("Bass").unwrap();
+        let before = session.project().track(bass).unwrap().color;
+        session.forget_history();
+
+        // An unknown track refuses the whole batch rather than half of it.
+        assert!(
+            session
+                .set_track_colors(&[(lead, Color(0x123456)), (TrackId(9_999), Color(0))])
+                .is_err()
+        );
+        assert_ne!(
+            session.project().track(lead).unwrap().color,
+            Color(0x123456)
+        );
+
+        let changed = session
+            .set_track_colors(&[
+                (lead, Color(0x123456)),
+                (pad, Color(0x111111)),
+                (pad, Color(0x654321)),
+                (bass, before),
+            ])
+            .unwrap();
+        assert_eq!(changed, 2, "the bass already had its colour");
+        assert_eq!(session.project().track(pad).unwrap().color, Color(0x654321));
+        assert_eq!(undo_depth(&mut session), 1);
+        assert_eq!(
+            session
+                .set_track_colors(&[(lead, Color(0x123456))])
+                .unwrap(),
+            0
+        );
+
+        assert_eq!(session.undo(), Some(Edit::SetTrackColors));
+        assert_eq!(
+            session.project().track(lead).unwrap().color,
+            Color::INSTRUMENT
+        );
+        assert_eq!(
+            session.project().track(pad).unwrap().color,
+            Color::INSTRUMENT
+        );
     }
 
     #[test]

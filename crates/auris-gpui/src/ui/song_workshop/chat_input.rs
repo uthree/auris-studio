@@ -3,6 +3,76 @@ use super::*;
 use crate::ui::chat_commands::{self, CompletionKey, Scope};
 use crate::ui::context_menu::{ContextMenu, MenuCommand};
 impl AurisApp {
+    fn workshop_reasoning_picker(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui::Entity<super::super::reasoning_picker::ReasoningPicker>> {
+        use super::super::reasoning_picker::{Change, Handle, Options, ReasoningPicker};
+        let s = self.song_workshop.as_ref()?;
+        let selected = s.models.iter().find(|m| m.matches(&s.preferences));
+        let choices = if s.preferences.backend == "opencode" {
+            vec![auris_session::ReasoningEffort::Default]
+        } else if let Some(choices) = selected.and_then(|m| m.efforts.clone()) {
+            choices
+        } else if s.preferences.backend == "antigravity" {
+            use auris_session::ReasoningEffort::*;
+            vec![Default, Low, Medium, High]
+        } else {
+            super::super::agent_chat::controls::effort_choices(
+                s.preferences.provider == "openai" || s.preferences.backend == "codex",
+            )
+            .to_vec()
+        };
+        let options = Options {
+            id: "workshop-effort",
+            theme: self.theme.clone(),
+            language: self.language(),
+            choices,
+            effort: s.preferences.effort,
+            fast: s.preferences.fast_mode,
+            supports_fast: s.preferences.supports_fast_mode(),
+            enabled: !s.busy(),
+        };
+        if let Some(handle) = &s.reasoning_picker {
+            handle.view.update(cx, |picker, _| picker.options = options);
+            return Some(handle.view.clone());
+        }
+        let focus = cx.focus_handle().tab_stop(true);
+        let view = cx.new(|cx| ReasoningPicker::new(options, focus, cx));
+        let subscription = cx.subscribe(&view, |this, _, change: &Change, cx| {
+            if let Some(s) = &mut this.song_workshop
+                && !s.busy()
+            {
+                s.active_field = None;
+                match change {
+                    Change::Opened => {}
+                    Change::Effort(effort) => {
+                        s.preferences.effort = *effort;
+                        s.preferences.thinking = None;
+                    }
+                    Change::Fast if s.preferences.supports_fast_mode() => {
+                        s.preferences.fast_mode = !s.preferences.fast_mode
+                    }
+                    Change::Reset => {
+                        s.preferences.effort = auris_session::ReasoningEffort::Default;
+                        s.preferences.thinking = None;
+                        s.preferences.fast_mode = false;
+                    }
+                    Change::Fast => {}
+                }
+                if !matches!(change, Change::Opened) {
+                    this.remember_workshop_choice();
+                }
+                cx.notify();
+            }
+        });
+        self.song_workshop.as_mut()?.reasoning_picker = Some(Handle {
+            view: view.clone(),
+            _subscription: subscription,
+        });
+        Some(view)
+    }
+
     pub(crate) fn workshop_prompt_open(&self) -> bool {
         self.song_workshop.is_some()
             && (self.startup_update_prompt_open()
@@ -12,6 +82,11 @@ impl AurisApp {
                         Some(crate::ui::prompt::PromptTarget::AgentChordReference { .. })
                             | Some(crate::ui::prompt::PromptTarget::WorkshopFeedback { .. })
                             | Some(crate::ui::prompt::PromptTarget::WorkshopThreadName { .. })
+                    ) || matches!(
+                        &p.body,
+                        crate::ui::prompt::PromptBody::Ask(
+                            crate::ui::prompt::Question::DeleteWorkshopThread { .. }
+                        )
                     )
                 }))
     }
@@ -21,6 +96,7 @@ impl AurisApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let reasoning = self.workshop_reasoning_picker(cx);
         let Some(s) = &self.song_workshop else {
             return div().into_any_element();
         };
@@ -37,9 +113,6 @@ impl AurisApp {
                     format!("{} / {}", s.preferences.backend, s.preferences.model)
                 }
             });
-        let effort = self.t(crate::ui::agent_chat::controls::effort_key(
-            s.preferences.effort,
-        ));
         let focused = s.active_field == Some(0);
         let busy = s.busy();
         let queueing = busy || !s.queued.is_empty();
@@ -110,6 +183,18 @@ impl AurisApp {
             )
         });
         let queue = self.workshop_queue_view(cx);
+        let inline_previews: Vec<_> = attachments
+            .iter()
+            .enumerate()
+            .map(|(index, path)| {
+                self.inline_attachment(
+                    path,
+                    format!("song-inline-draft-{index}"),
+                    crate::ui::attachment_preview::InlinePlace::Composer,
+                    cx,
+                )
+            })
+            .collect();
         let mut body = crate::ui::agent_components::composer_frame(
             "song-workshop-composer",
             &theme,
@@ -186,8 +271,21 @@ impl AurisApp {
                     )
             }),
         ))
+        // Thumbnails sit side by side, as in any message composer; an excerpt or a player
+        // takes the row to itself.
+        .when(!inline_previews.is_empty(), |body| {
+            body.child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .items_end()
+                    .min_w_0()
+                    .gap(theme.atelier.spacing.sm)
+                    .children(inline_previews),
+            )
+        })
         .when(self.music_references().midi_draft.is_some(), |body| {
-            body.child(self.midi_editor(window.viewport_size().height * 0.3, cx))
+            body.child(self.midi_editor(window.viewport_size().height * 0.4, cx))
         })
         .when_some(attachment_error, |body, error| {
             body.child(agent_components::error_notice(error))
@@ -261,33 +359,7 @@ impl AurisApp {
                             })),
                     ),
                 )
-                .child(
-                    atelier::Button::new(
-                        "workshop-effort",
-                        format!("{}: {effort}", self.t(Key::AgentEffort)),
-                    )
-                    .ghost()
-                    .size(atelier::ControlSize::Small)
-                    .icon(atelier::IconName::Brain)
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        if let Some(s) = &mut this.song_workshop {
-                            let levels = s
-                                .models
-                                .iter()
-                                .find(|m| m.matches(&s.preferences))
-                                .and_then(|m| m.efforts.clone())
-                                .unwrap_or_else(|| vec![auris_session::ReasoningEffort::Default]);
-                            if !levels.is_empty() {
-                                let index = levels
-                                    .iter()
-                                    .position(|e| *e == s.preferences.effort)
-                                    .map_or(0, |i| (i + 1) % levels.len());
-                                s.preferences.effort = levels[index];
-                            }
-                        }
-                        cx.notify();
-                    })),
-                )
+                .children(reasoning)
                 .child(
                     atelier::Button::icon_only(
                         "workshop-model-settings",
@@ -327,43 +399,6 @@ impl AurisApp {
                 cx.stop_propagation();
                 cx.notify();
             }
-            return;
-        }
-        if self.music_lyric_focused() {
-            let composing = self
-                .music_references()
-                .midi_draft
-                .as_ref()
-                .is_some_and(|d| d.lyric.marked().is_some());
-            if composing {
-                return;
-            }
-            match event.keystroke.key.as_str() {
-                "escape" => self.close_midi_editor(window),
-                "enter" => {
-                    if self.commit_midi_draft() {
-                        self.close_midi_editor(window);
-                    }
-                }
-                _ => {
-                    if let Some(draft) = &mut self.music_references_mut().midi_draft {
-                        if draft.lyric.apply_key_with_clipboard(
-                            &event.keystroke.key,
-                            event.keystroke.modifiers.shift,
-                            event.keystroke.modifiers.secondary(),
-                            false,
-                            cx,
-                        ) == KeyEffect::Ignored
-                        {
-                            return;
-                        }
-                    } else {
-                        return;
-                    }
-                }
-            }
-            cx.stop_propagation();
-            cx.notify();
             return;
         }
         if self.menu_key(event, window, cx) {
@@ -545,6 +580,7 @@ impl AurisApp {
             .get(language)
             .to_owned()),
         };
+        let remember = command == "/effort" && result.is_ok();
         if let Some(s) = &mut self.song_workshop {
             match result {
                 Ok(feedback) => {
@@ -555,7 +591,23 @@ impl AurisApp {
             }
             s.completions.reset();
         }
+        if remember {
+            self.remember_workshop_choice();
+        }
         true
+    }
+
+    /// Saves the workshop's model and reasoning as the ones both chats open with next time.
+    pub(crate) fn remember_workshop_choice(&mut self) {
+        let Some(choice) = self.song_workshop.as_ref().map(|s| s.preferences.clone()) else {
+            return;
+        };
+        if let Err(error) = self.remember_agent_choice(&choice) {
+            let message = crate::i18n::error_text(&error, self.language());
+            if let Some(s) = &mut self.song_workshop {
+                s.command_feedback = Some(Err(message));
+            }
+        }
     }
 
     pub(crate) fn choose_workshop_model(&mut self, index: usize) {
@@ -565,19 +617,22 @@ impl AurisApp {
         if s.busy() {
             return;
         }
-        if let Some(model) = s.models.get(index) {
-            if let Some(route) = &model.connection {
-                route.apply_to(&mut s.preferences);
-            }
-            s.preferences.model.clone_from(&model.name);
-            if model
-                .efforts
-                .as_ref()
-                .is_some_and(|levels| !levels.contains(&s.preferences.effort))
-            {
-                s.preferences.effort = Default::default();
-            }
+        let Some(model) = s.models.get(index) else {
+            return;
+        };
+        if model.connection.is_some() {
+            // As in the editor's menu: a discovered route replaces the API fields, and the
+            // configured endpoint has to survive for the next discovery to find it again.
+            let prefs = &s.preferences;
+            let endpoint = auris_session::AgentEndpoint {
+                provider: prefs.provider.clone(),
+                url: prefs.url.clone(),
+                api_key_env: prefs.api_key_env.clone(),
+            };
+            s.preferences.discovery_endpoint.get_or_insert(endpoint);
         }
+        model.apply_to(&mut s.preferences);
+        self.remember_workshop_choice();
     }
 
     fn workshop_model_menu(&mut self, at: gpui::Point<gpui::Pixels>) {

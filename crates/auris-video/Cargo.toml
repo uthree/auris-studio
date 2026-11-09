@@ -1,0 +1,30 @@
+[package]
+name = "auris-video"
+description = "Note-roll videos of a project for Auris Studio: frames drawn in software, encoded by an installed ffmpeg"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+auris-core.workspace = true
+# Software rasterisation of the frames. Already in the lock file through gpui's SVG renderer, so
+# naming it here adds no second copy. No PNG support: frames go to ffmpeg as raw pixels.
+tiny-skia = { version = "0.11", default-features = false, features = ["std", "simd"] }
+# Decoding the background picture. The same version and formats the desktop already decodes
+# voice artwork with.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
+# Background compositing is independent per pixel for large export frames.
+rayon.workspace = true
+# Chord names are drawn from a font already on the machine, found the way the SVG renderer
+# finds one and outlined straight into tiny-skia paths. Both are already in the lock file through
+# gpui's SVG renderer; nothing is bundled.
+fontdb = "0.23"
+ttf-parser = "0.25"
+serde.workspace = true
+tempfile.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

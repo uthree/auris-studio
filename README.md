@@ -7,6 +7,18 @@ A digital audio workstation written in Rust with a GPU-rendered
 music, compose from text specifications, record audio, host CLAP and VST3 plugins,
 and render singing voices. CLI, MCP and agent frontends share the desktop's editing commands.
 
+**[Visit the Auris Studio website →](https://uthree.github.io/auris-studio/)** for a tour of
+the features and direct downloads.
+
+**[Join the Auris Studio Discord](https://discord.gg/vDFjbUWBas)** to share what you made, ask
+questions and hear about new releases.
+
+![The editor: arrangement, piano roll and the agent panel](docs/screenshots/readme/editor-en.png)
+
+| Start a project | Compose with the AI workshop |
+| --- | --- |
+| ![The project chooser](docs/screenshots/readme/chooser-en.png) | ![The AI workshop](docs/screenshots/readme/workshop-en.png) |
+
 ## Install
 
 Download the Windows installer or macOS disk image from the
@@ -54,5 +66,8 @@ See [Agent skills](docs/agent-skills.md) for updates, paths, and MCP configurati
 - [Singing backends](docs/singing-backends.md)
 - [Development](docs/development.md) and [composition evaluation](docs/evaluation.md)
 - [Changelog and compatibility policy](CHANGELOG.md)
+
+Contributions are welcome, including ones made with generative AI. See
+[Contributing](CONTRIBUTING.md).
 
 Licensed under [Apache-2.0](LICENSE).

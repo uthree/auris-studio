@@ -53,6 +53,50 @@ pub fn theory_name(name: &str, language: Language) -> &str {
         })
 }
 
+/// A key as a reader would name it: `C major` in English, `C メジャー` in Japanese.
+///
+/// Takes the text format's own spelling — `C major`, `F# dorian` — because that is what
+/// `auris-core` writes and this crate may not name it. Anything not in that shape comes back
+/// as it was.
+pub fn key_name(text: &str, language: Language) -> String {
+    let Some((tonic, scale)) = text.split_once(' ') else {
+        return text.to_owned();
+    };
+    let Some((_, english, japanese)) = SCALE_NAMES.iter().find(|(key, _, _)| *key == scale) else {
+        return text.to_owned();
+    };
+    let name = match language {
+        Language::English => english,
+        Language::Japanese => japanese,
+    };
+    format!("{tonic} {name}")
+}
+
+/// The text format's scale names, and what each language calls them.
+const SCALE_NAMES: &[(&str, &str, &str)] = &[
+    ("major", "major", "メジャー"),
+    ("minor", "minor", "マイナー"),
+    ("harmonic-minor", "harmonic minor", "ハーモニック・マイナー"),
+    ("melodic-minor", "melodic minor", "メロディック・マイナー"),
+    ("dorian", "dorian", "ドリアン"),
+    ("phrygian", "phrygian", "フリジアン"),
+    ("lydian", "lydian", "リディアン"),
+    ("mixolydian", "mixolydian", "ミクソリディアン"),
+    ("locrian", "locrian", "ロクリアン"),
+    (
+        "major-pentatonic",
+        "major pentatonic",
+        "メジャー・ペンタトニック",
+    ),
+    (
+        "minor-pentatonic",
+        "minor pentatonic",
+        "マイナー・ペンタトニック",
+    ),
+    ("blues", "blues", "ブルース"),
+    ("whole-tone", "whole tone", "ホールトーン"),
+];
+
 /// Translation of a song preset's one-line description.
 ///
 /// Same shape and the same reason as [`theory_description`]: the catalogue is a set of `.asong`
@@ -185,6 +229,7 @@ const PLUGIN_NAMES: &[(&str, &str)] = &[
     ("Limiter", "リミッター"),
     ("Reverb", "リバーブ"),
     ("SoundFont", "サウンドフォント"),
+    ("Sampler", "サンプラー"),
 ];
 
 /// Japanese versions of the one-line descriptions shown in the plugin browser.
@@ -297,6 +342,10 @@ const PLUGIN_DESCRIPTIONS: &[(&str, &str)] = &[
         "Plays an imported SoundFont",
         "読み込んだサウンドフォントを再生します",
     ),
+    (
+        "Plays audio files across the keyboard",
+        "オーディオファイルを鍵盤に割り当て、近いルート音のサンプルを音程を変えて鳴らします",
+    ),
 ];
 
 /// Japanese names for parameters. Shared across plugins on purpose — see the module note.
@@ -334,6 +383,8 @@ const PARAMETERS: &[(&str, &str)] = &[
     ("Cabinet", "キャビネット"),
     ("Bow speed", "運弓速度"),
     ("Bow response", "運弓の応答時間"),
+    ("Live Quality", "再生時の演算精度"),
+    ("Render Quality", "書き出し時の演算精度"),
     ("Legato", "レガート"),
     ("Attack", "アタック"),
     ("Bit Depth", "ビット深度"),
@@ -345,6 +396,12 @@ const PARAMETERS: &[(&str, &str)] = &[
     ("Detune", "デチューン"),
     ("Drive", "ドライブ"),
     ("Envelope", "エンベロープ"),
+    ("Fine Tune", "微調整"),
+    ("Key Tracking", "キー追従"),
+    ("Loop", "ループ"),
+    ("Loop End", "ループ終点"),
+    ("Loop Start", "ループ始点"),
+    ("Root Note", "ルートノート"),
     ("Feedback", "フィードバック"),
     ("Gain", "ゲイン"),
     ("Glide", "グライド"),
@@ -616,6 +673,9 @@ const CHOICES: &[(&str, &str)] = &[
     ("Fold", "フォールド"),
     ("Bitcrush", "ビットクラッシュ"),
     ("Free", "フリー"),
+    ("Draft", "軽量"),
+    ("Standard", "標準"),
+    ("High", "高精度"),
     // The delay's note values read the same in any language; the entries exist so the
     // completeness test can tell a considered label from a forgotten one.
     ("1/1", "1/1"),
@@ -645,6 +705,21 @@ mod tests {
             parameter("Warp Factor", Language::Japanese),
             "Warp Factor",
             "a plugin we have never heard of must still show its own label"
+        );
+    }
+
+    #[test]
+    fn a_key_is_named_in_the_readers_language() {
+        assert_eq!(key_name("C major", Language::Japanese), "C メジャー");
+        assert_eq!(key_name("F# dorian", Language::Japanese), "F# ドリアン");
+        assert_eq!(
+            key_name("A harmonic-minor", Language::English),
+            "A harmonic minor"
+        );
+        assert_eq!(
+            key_name("C weird", Language::Japanese),
+            "C weird",
+            "a scale nobody told this table about is shown as it came"
         );
     }
 

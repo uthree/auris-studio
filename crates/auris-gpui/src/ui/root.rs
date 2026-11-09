@@ -10,7 +10,7 @@ use gpui::{
 
 use crate::actions;
 use crate::app::{AudioExportTarget, AurisApp, Drag, ExportOutcome, OrnamentHandle, Pane};
-use crate::dock::{Dock, Panel, PanelLayout};
+use crate::dock::{Dock, Panel, PanelLayout, TimelineLane};
 use crate::gestures::past_drag_threshold;
 use crate::menu::MenuRow;
 use crate::theme::Theme;
@@ -121,6 +121,7 @@ impl Render for AurisApp {
         self.event_window
             .get_or_insert(window.window_handle().window_id());
         self.singer_portraits.release_images(window);
+        self.singer_icons.release_images(window);
         self.spectrograms.release_images(window);
         if crate::project_windows::installed(cx)
             && window.is_window_active()
@@ -161,6 +162,10 @@ impl Render for AurisApp {
         // Pointer coordinates arrive in window space, and the resize handlers need to know how
         // tall the window is to bound the bottom panel; record it once per frame.
         self.viewport_height = window.viewport_size().height;
+        self.transport_height = super::transport_bar::transport_height(
+            window.viewport_size().width,
+            self.appearance.top_bar_layout,
+        );
         // Where the window is, kept for next time. Read rather than written: the file is put
         // out once, on the way out.
         self.remember_window(window);
@@ -256,8 +261,7 @@ impl Render for AurisApp {
             .text_size(theme.atelier.typography.size_md)
             .child(title_bar)
             .children(project_tabs)
-            .children(menu_bar)
-            .child(transport)
+            .children(transport)
             .child(
                 div()
                     .flex()
@@ -291,6 +295,7 @@ impl Render for AurisApp {
             .child(status)
             .child(drop_ring)
             .children(overlays)
+            .children(menu_bar)
             .children(crate::titlebar::resize_handles(window))
             .into_any_element()
     }
@@ -298,7 +303,10 @@ impl Render for AurisApp {
 
 impl AurisApp {
     pub(crate) fn modal_blocks_document_actions(&self) -> bool {
-        self.export_dialog.is_some() || self.export.is_some() || self.prompt.is_some()
+        self.reference_score_claims_keys()
+            || self.export_dialog.is_some()
+            || self.export.is_some()
+            || self.prompt.is_some()
     }
 
     /// Transient editors stay in the window that opened them.
@@ -307,6 +315,12 @@ impl AurisApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
+        // Every window that draws the document starts a frame of painted spots here, before
+        // the early return, so a label that stops being painted in it is forgotten.
+        self.canvas
+            .spots
+            .borrow_mut()
+            .next_frame(window.window_handle().window_id());
         if self
             .event_window
             .is_some_and(|id| id != window.window_handle().window_id())
@@ -314,10 +328,11 @@ impl AurisApp {
             return Vec::new();
         }
         // A menu owns Enter/Space while open; they must not activate its focused trigger.
-        if self.menu.is_some() && self.menu_focus_return.is_none() {
+        let menu_open = self.menu.is_some() || self.menu_bar.is_some();
+        if menu_open && self.menu_focus_return.is_none() {
             self.menu_focus_return = Some(window.focused(cx).unwrap_or_else(|| self.focus.clone()));
             window.focus(&self.menu_focus);
-        } else if self.menu.is_none()
+        } else if !menu_open
             && let Some(trigger) = self.menu_focus_return.take()
             && self.menu_focus.contains_focused(window, cx)
         {
@@ -336,7 +351,7 @@ impl AurisApp {
                     .left_0()
                     .right_0()
                     .bottom_0()
-                    .top(crate::titlebar::HEIGHT + self.project_tabs_height() + menu_bar::HEIGHT)
+                    .top(crate::titlebar::HEIGHT)
                     .occlude()
                     .on_mouse_down(
                         gpui::MouseButton::Left,
@@ -367,6 +382,46 @@ impl AurisApp {
         }
 
         overlays
+    }
+
+    /// Note commands shared by docked and independent score editors.
+    pub(crate) fn note_editor_actions(&self, root: gpui::Div, cx: &mut Context<Self>) -> gpui::Div {
+        root.on_action(Self::window_listener(cx, Self::on_nudge_notes_left))
+            .on_action(Self::window_listener(cx, Self::on_nudge_notes_right))
+            .on_action(Self::window_listener(cx, Self::on_delete_selection))
+            .on_action(Self::window_listener(cx, Self::on_select_all_notes))
+            .on_action(Self::window_listener(cx, Self::on_duplicate_notes))
+            .on_action(Self::window_listener(cx, Self::on_cut_notes))
+            .on_action(Self::window_listener(cx, Self::on_copy_notes))
+            .on_action(Self::window_listener(cx, Self::on_paste_notes))
+            .on_action(Self::window_listener(cx, Self::on_transpose_up))
+            .on_action(Self::window_listener(cx, Self::on_transpose_down))
+            .on_action(Self::window_listener(cx, Self::on_octave_up))
+            .on_action(Self::window_listener(cx, Self::on_octave_down))
+            .on_action(Self::window_listener(cx, Self::on_quantize_starts))
+            .on_action(Self::window_listener(cx, Self::on_note_snap))
+            .on_action(Self::window_listener(cx, Self::on_quantize_lengths))
+            .on_action(Self::window_listener(cx, Self::on_quantize_notes))
+            .on_action(Self::window_listener(cx, Self::on_next_tool))
+            .on_action(Self::window_listener(cx, Self::on_undo))
+            .on_action(Self::window_listener(cx, Self::on_redo))
+            .on_action(Self::window_listener(cx, Self::on_zoom_in))
+            .on_action(Self::window_listener(cx, Self::on_zoom_out))
+            .on_action(Self::window_listener(cx, Self::on_panic_stop))
+    }
+
+    /// Gesture and keyboard routing for an independent reference score.
+    pub(crate) fn reference_editor_input(&self, cx: &mut Context<Self>) -> gpui::Div {
+        let root = div();
+        let root = if self.keys_are_claimed() {
+            root
+        } else {
+            self.note_editor_actions(root, cx)
+        };
+        root.on_mouse_move(cx.listener(Self::on_mouse_move))
+            .on_mouse_up(gpui::MouseButton::Left, cx.listener(Self::on_mouse_up))
+            .on_mouse_up_out(gpui::MouseButton::Left, cx.listener(Self::on_mouse_up))
+            .on_key_down(cx.listener(Self::on_key_down))
     }
 
     /// Shared action and gesture routing for every document window.
@@ -406,7 +461,8 @@ impl AurisApp {
             // document actions while a modal owns the window, including prompts and export
             // sheets whose keyboard context already shields them from ordinary shortcuts.
             .when(!modal_blocks_document_actions, |this| {
-                this.on_action(Self::window_listener(cx, Self::on_toggle_play))
+                self.note_editor_actions(this, cx)
+                    .on_action(Self::window_listener(cx, Self::on_toggle_play))
                     .on_action(Self::window_listener(cx, Self::on_return_to_zero))
                     .on_action(Self::window_listener(cx, Self::on_toggle_loop))
                     .on_action(Self::window_listener(cx, Self::on_toggle_metronome))
@@ -426,6 +482,7 @@ impl AurisApp {
                     .on_action(Self::window_listener(cx, Self::on_import_midi))
                     .on_action(Self::window_listener(cx, Self::on_export_midi))
                     .on_action(Self::window_listener(cx, Self::on_export_singer_frames))
+                    .on_action(Self::window_listener(cx, Self::on_export_video))
                     .on_action(Self::window_listener(cx, Self::on_choose_singer_voice))
                     .on_action(Self::window_listener(cx, Self::on_next_singer_speaker))
                     .on_action(Self::window_listener(cx, Self::on_sing))
@@ -448,43 +505,22 @@ impl AurisApp {
                     .on_action(Self::window_listener(cx, Self::on_select_next_track))
                     .on_action(Self::window_listener(cx, Self::on_step_back))
                     .on_action(Self::window_listener(cx, Self::on_step_forward))
-                    .on_action(Self::window_listener(cx, Self::on_nudge_notes_left))
-                    .on_action(Self::window_listener(cx, Self::on_nudge_notes_right))
                     .on_action(Self::window_listener(cx, Self::on_nudge_clips_left))
                     .on_action(Self::window_listener(cx, Self::on_nudge_clips_right))
                     .on_action(Self::window_listener(cx, Self::on_delete_track))
-                    .on_action(Self::window_listener(cx, Self::on_delete_selection))
-                    .on_action(Self::window_listener(cx, Self::on_select_all_notes))
-                    .on_action(Self::window_listener(cx, Self::on_duplicate_notes))
-                    .on_action(Self::window_listener(cx, Self::on_cut_notes))
-                    .on_action(Self::window_listener(cx, Self::on_copy_notes))
-                    .on_action(Self::window_listener(cx, Self::on_paste_notes))
                     .on_action(Self::window_listener(cx, Self::on_cut_clips))
                     .on_action(Self::window_listener(cx, Self::on_copy_clips))
                     .on_action(Self::window_listener(cx, Self::on_paste_clips))
-                    .on_action(Self::window_listener(cx, Self::on_transpose_up))
-                    .on_action(Self::window_listener(cx, Self::on_transpose_down))
-                    .on_action(Self::window_listener(cx, Self::on_octave_up))
-                    .on_action(Self::window_listener(cx, Self::on_octave_down))
                     .on_action(Self::window_listener(cx, Self::on_select_all_clips))
                     .on_action(Self::window_listener(cx, Self::on_duplicate_clip))
                     .on_action(Self::window_listener(cx, Self::on_split_clip))
+                    .on_action(Self::window_listener(cx, Self::on_join_clips))
                     .on_action(Self::window_listener(cx, Self::on_toggle_clip_mute))
                     .on_action(Self::window_listener(cx, Self::on_toggle_clip_loop))
-                    .on_action(Self::window_listener(cx, Self::on_quantize_starts))
-                    .on_action(Self::window_listener(cx, Self::on_note_snap))
-                    .on_action(Self::window_listener(cx, Self::on_quantize_lengths))
-                    .on_action(Self::window_listener(cx, Self::on_quantize_notes))
-                    .on_action(Self::window_listener(cx, Self::on_next_tool))
                     .on_action(Self::window_listener(cx, Self::on_set_tempo))
                     .on_action(Self::window_listener(cx, Self::on_set_time_signature))
                     .on_action(Self::window_listener(cx, Self::on_cycle_grid))
                     .on_action(Self::window_listener(cx, Self::on_go_to_position))
-                    .on_action(Self::window_listener(cx, Self::on_undo))
-                    .on_action(Self::window_listener(cx, Self::on_redo))
-                    .on_action(Self::window_listener(cx, Self::on_panic_stop))
-                    .on_action(Self::window_listener(cx, Self::on_zoom_in))
-                    .on_action(Self::window_listener(cx, Self::on_zoom_out))
                     .on_action(Self::window_listener(cx, Self::on_increase_track_height))
                     .on_action(Self::window_listener(cx, Self::on_decrease_track_height))
                     .on_action(Self::window_listener(cx, Self::on_toggle_library))
@@ -508,9 +544,12 @@ impl AurisApp {
                     ))
                     .on_action(Self::window_listener(cx, Self::on_toggle_agent))
                     .on_action(Self::window_listener(cx, Self::on_toggle_structure_lane))
-                    .on_action(Self::window_listener(cx, Self::on_toggle_harmony_lane))
+                    .on_action(Self::window_listener(cx, Self::on_toggle_key_lane))
+                    .on_action(Self::window_listener(cx, Self::on_toggle_chord_lane))
+                    .on_action(Self::window_listener(cx, Self::on_toggle_lyrics_lane))
                     .on_action(Self::window_listener(cx, Self::on_toggle_tempo_marks))
                     .on_action(Self::window_listener(cx, Self::on_toggle_bend_lane))
+                    .on_action(Self::window_listener(cx, Self::on_toggle_event_list))
                     .on_action(Self::window_listener(cx, Self::on_toggle_modulation_lane))
                     .on_action(Self::window_listener(cx, Self::on_open_settings))
                     .on_action(Self::window_listener(cx, Self::on_open_command_palette))
@@ -803,9 +842,8 @@ impl AurisApp {
             bottom: PanelLayout::bottom_height(
                 asked(Dock::Bottom),
                 viewport.height,
-                // The same chrome `resize_dock` clamps against — menu bar included, where one
-                // is drawn — or the drawn dock and the dragged limit disagree by a row.
-                Self::chrome_height() + self.project_tabs_height(),
+                // Keep the dock's drawn size and drag limit on the same responsive chrome.
+                self.chrome_height() + self.project_tabs_height(),
             ),
         }
     }
@@ -1232,7 +1270,7 @@ impl AurisApp {
             // The press is acknowledged before the render notices it: a block has to finish
             // first, and an overlay that looked untouched for that long reads as a dead button.
             None if export.cancelling() => self.t(Key::ExportCancelling).to_string(),
-            None => messages::rendering(self.language(), &export.path.display().to_string()),
+            None => messages::rendering(self.language(), export.path.display().to_string()),
         };
 
         Some(
@@ -1537,6 +1575,23 @@ impl AurisApp {
                     }
                 }
             }
+            Drag::LyricLine { at, grab_offset } => {
+                let x = event.position.x - self.timeline_origin().x;
+                let wanted = self
+                    .snap_unless_held(self.timeline.x_to_tick(x) - grab_offset, event.modifiers)
+                    .max_zero();
+                if wanted != at
+                    && self.session.move_lyric_line(at, wanted)
+                    && let Some(Drag::LyricLine { at, .. }) = &mut self.drag
+                {
+                    *at = wanted;
+                }
+            }
+            Drag::Comment {
+                host,
+                id,
+                grab_offset,
+            } => self.drag_comment(host, id, grab_offset, event),
             Drag::PanelScroll {
                 panel,
                 start,
@@ -1918,6 +1973,8 @@ impl AurisApp {
                     .collect();
                 let _ = self.session.resize_notes(clip, &ends);
             }
+            // The knob follows the pointer itself and reports through `turn_knob`.
+            Drag::Knob { .. } => {}
             Drag::Param {
                 target,
                 start_value,
@@ -1978,12 +2035,33 @@ impl AurisApp {
                 let delta = f32::from(event.position.x - start_x);
                 self.drag_perform_dial(clip, dial, start_fraction, delta);
             }
+            Drag::LayerDial {
+                track,
+                dial,
+                start_fraction,
+                start_x,
+            } => {
+                let delta = f32::from(event.position.x - start_x);
+                self.drag_layer_dial(track, dial, start_fraction, delta);
+            }
             Drag::VolumeContourPoint {
                 clip,
                 index,
                 bounds,
             } => {
                 self.drag_volume_contour_point(clip, index, bounds, event.position);
+            }
+            Drag::VideoColour {
+                channel,
+                start_fraction,
+                start_x,
+            } => {
+                let delta = crate::ui::widgets::fine_scaled(
+                    f32::from(event.position.x - start_x),
+                    event.modifiers,
+                );
+                let fraction = crate::ui::widgets::dragged(start_fraction, delta);
+                self.set_video_colour_channel(channel, fraction, false);
             }
             Drag::TimeZoom {
                 start_fraction,
@@ -2050,6 +2128,13 @@ impl AurisApp {
             Some(Drag::DrumLaneReorder { track, .. }) => Some(*track),
             _ => None,
         };
+        // A colour drag changed the look without writing it down on every move; this is the
+        // one write for the whole sweep.
+        if matches!(self.drag, Some(Drag::VideoColour { .. }))
+            && let Err(error) = self.save_settings()
+        {
+            log::warn!("could not save settings: {error}");
+        }
         self.stop_audition();
         // A key of the drawn keyboard pressed with the pointer is let go of here rather than on
         // the key itself, because the pointer may well have left it — or the panel — by now.
@@ -2114,6 +2199,8 @@ impl AurisApp {
             self.palette_key(event, window, cx)
         } else if self.prompt.is_some() {
             self.prompt_key(event, window, cx)
+        } else if self.timbre_map.open && self.timbre_map.search_focused {
+            self.timbre_search_key(event, cx)
         } else if self.library_search_focused {
             self.library_search_key(event, cx)
         } else {
@@ -2356,8 +2443,20 @@ impl AurisApp {
             }
             "left" | "right" => {
                 let delta = if event.keystroke.key == "left" { -1 } else { 1 };
-                let index = menu_bar::stepped_section(sections.len(), open.index, delta);
-                self.set_menu_bar(Some(menu_bar::OpenMenu::at(index)));
+                let pinned = self.titlebar_menu_layout(window);
+                let index = if open.from_titlebar && !pinned.is_empty() {
+                    let position = pinned
+                        .iter()
+                        .position(|(index, _, _)| *index == open.index)
+                        .unwrap_or(0);
+                    pinned[menu_bar::stepped_section(pinned.len(), position, delta)].0
+                } else {
+                    menu_bar::stepped_section(sections.len(), open.index, delta)
+                };
+                self.set_menu_bar(Some(menu_bar::OpenMenu {
+                    from_titlebar: open.from_titlebar,
+                    ..menu_bar::OpenMenu::at(index)
+                }));
             }
             "down" | "up" | "home" | "end" => {
                 let key = event.keystroke.key.as_str();
@@ -2427,6 +2526,7 @@ impl AurisApp {
         }
         self.menu = None;
         let next = match self.menu_bar {
+            Some(open) if open.from_titlebar => Some(menu_bar::OpenMenu::at(open.index)),
             Some(_) => None,
             None => Some(menu_bar::OpenMenu::at(0)),
         };
@@ -2737,6 +2837,15 @@ impl AurisApp {
         cx: &mut Context<Self>,
     ) {
         self.export_singer_frames(window, cx);
+    }
+
+    fn on_export_video(
+        &mut self,
+        _: &actions::ExportVideo,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_video_export(cx);
     }
 
     fn on_choose_singer_voice(
@@ -3236,6 +3345,18 @@ impl AurisApp {
         cx.notify();
     }
 
+    fn on_join_clips(
+        &mut self,
+        _: &actions::JoinClips,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(clip) = self.selected_clip {
+            self.run_menu_command(MenuCommand::JoinClips(clip), cx);
+        }
+        cx.notify();
+    }
+
     fn on_toggle_clip_mute(
         &mut self,
         _: &actions::ToggleClipMute,
@@ -3345,6 +3466,20 @@ impl AurisApp {
             .is_some_and(|export| export.result.is_some())
         {
             self.export = None;
+            cx.notify();
+            return;
+        }
+        // A selection is the last thing to give back before the engine. Escape is what every
+        // editor deselects with, and a hand that pressed it to let go of some notes got a panic
+        // and a status line instead. The clip the roll is showing stays: dropping it would empty
+        // the editor rather than the selection inside it.
+        if !self.selected_notes.is_empty() {
+            self.selected_notes.clear();
+            cx.notify();
+            return;
+        }
+        if self.selected_clips.len() > 1 {
+            self.selected_clips = self.selected_clip.into_iter().collect();
             cx.notify();
             return;
         }
@@ -3524,26 +3659,50 @@ impl AurisApp {
         cx.notify();
     }
 
+    /// Shows or hides one of the annotation strips over the arrangement, and keeps the choice.
+    ///
+    /// The one place they are switched, so the View menu, the shortcuts and the strips' own
+    /// right-click menus cannot disagree about what turning one off means.
+    pub(crate) fn toggle_timeline_lane(&mut self, lane: TimelineLane, cx: &mut Context<Self>) {
+        self.panels.lanes.toggle(lane);
+        self.remember_layout();
+        cx.notify();
+    }
+
     fn on_toggle_structure_lane(
         &mut self,
         _: &actions::ToggleStructureLane,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.panels.lanes.structure = !self.panels.lanes.structure;
-        self.remember_layout();
-        cx.notify();
+        self.toggle_timeline_lane(TimelineLane::Structure, cx);
     }
 
-    fn on_toggle_harmony_lane(
+    fn on_toggle_key_lane(
         &mut self,
-        _: &actions::ToggleHarmonyLane,
+        _: &actions::ToggleKeyLane,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.panels.lanes.harmony = !self.panels.lanes.harmony;
-        self.remember_layout();
-        cx.notify();
+        self.toggle_timeline_lane(TimelineLane::Keys, cx);
+    }
+
+    fn on_toggle_chord_lane(
+        &mut self,
+        _: &actions::ToggleChordLane,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_timeline_lane(TimelineLane::Chords, cx);
+    }
+
+    fn on_toggle_lyrics_lane(
+        &mut self,
+        _: &actions::ToggleLyricsLane,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_timeline_lane(TimelineLane::Lyrics, cx);
     }
 
     fn on_toggle_tempo_marks(
@@ -3564,6 +3723,16 @@ impl AurisApp {
         cx: &mut Context<Self>,
     ) {
         self.toggle_curve_lane(ClipCurve::Bend);
+        cx.notify();
+    }
+
+    fn on_toggle_event_list(
+        &mut self,
+        _: &actions::ToggleEventList,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_event_list();
         cx.notify();
     }
 

@@ -150,10 +150,27 @@ impl CustomScheme {
     }
 }
 
+/// How the top of the editor window is arranged.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum TopBarLayout {
+    /// The title bar with the menus, and under it the transport in a row of its own: grid and
+    /// zoom at one end, playback and the captioned readouts in the middle, the meters at the
+    /// other. Roomier and easier to read, at the cost of one more row.
+    #[default]
+    Spacious,
+    /// One bar: in a window wide enough to hold it, the title bar carries the transport too,
+    /// each readout on one line with its caption in a tooltip.
+    Compact,
+}
+
 /// Everything in `appearance.json`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Appearance {
+    /// Menu category identifiers pinned in the editor title bar on Windows and Linux.
+    /// Empty hides every shortcut while retaining the full application menu.
+    pub titlebar_menus: Vec<String>,
     /// Id of the chosen colour scheme.
     pub scheme: String,
     /// An installed font family, or the platform interface font when unset.
@@ -164,16 +181,20 @@ pub struct Appearance {
     pub glass_effect: bool,
     /// Palettes created in the settings window.
     pub custom_schemes: Vec<CustomScheme>,
+    /// Whether the transport keeps a row of its own or joins the title bar.
+    pub top_bar_layout: TopBarLayout,
 }
 
 impl Default for Appearance {
     fn default() -> Self {
         Self {
+            titlebar_menus: ["file", "edit", "view"].map(str::to_owned).to_vec(),
             scheme: DEFAULT_SCHEME.to_string(),
             font_family: None,
             animate_mixer_signals: true,
             glass_effect: true,
             custom_schemes: Vec::new(),
+            top_bar_layout: TopBarLayout::Spacious,
         }
     }
 }
@@ -245,6 +266,13 @@ impl Appearance {
 
     /// Repairs individual invalid preferences while retaining every unrelated valid choice.
     pub fn normalised(mut self) -> Self {
+        let mut pinned = std::collections::HashSet::new();
+        self.titlebar_menus.retain(|id| {
+            crate::menu::MenuCategory::ALL
+                .iter()
+                .any(|category| category.id() == id)
+                && pinned.insert(id.clone())
+        });
         let mut ids = std::collections::BTreeSet::new();
         let mut names: std::collections::BTreeSet<String> = crate::theme::SCHEMES
             .iter()
@@ -284,10 +312,40 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_spacious_top_bar_is_the_default_and_the_compact_one_is_remembered() {
+        let empty: Appearance = serde_json::from_str("{}").unwrap();
+        assert_eq!(empty.top_bar_layout, TopBarLayout::Spacious);
+        let compact: Appearance = serde_json::from_str(r#"{"top_bar_layout":"compact"}"#).unwrap();
+        assert_eq!(compact.top_bar_layout, TopBarLayout::Compact);
+        assert!(
+            serde_json::to_string(&compact)
+                .unwrap()
+                .contains(r#""top_bar_layout":"compact""#)
+        );
+    }
+
+    #[test]
     fn an_empty_or_unreadable_file_is_the_default_scheme() {
         let empty: Appearance = serde_json::from_str("{}").unwrap();
         assert_eq!(empty, Appearance::default());
         assert_eq!(empty.theme().scheme, DEFAULT_SCHEME);
+    }
+
+    #[test]
+    fn titlebar_menu_preferences_keep_empty_choices_and_ignore_unknown_categories() {
+        let old: Appearance = serde_json::from_str(r#"{"scheme":"daylight"}"#).unwrap();
+        assert_eq!(old.titlebar_menus, ["file", "edit", "view"]);
+        let empty: Appearance = serde_json::from_str(r#"{"titlebar_menus":[]}"#).unwrap();
+        assert!(empty.normalised().titlebar_menus.is_empty());
+        let stored: Appearance =
+            serde_json::from_str(r#"{"titlebar_menus":["view","future-category","view","track"]}"#)
+                .unwrap();
+        let normal = stored.normalised();
+        assert_eq!(normal.titlebar_menus, ["view", "track"]);
+        assert_eq!(
+            serde_json::from_str::<Appearance>(&serde_json::to_string(&normal).unwrap()).unwrap(),
+            normal
+        );
     }
 
     #[test]
@@ -356,11 +414,13 @@ mod tests {
         let mut custom = custom();
         custom.accent = 0x66_ddee;
         let appearance = Appearance {
+            titlebar_menus: Appearance::default().titlebar_menus,
             scheme: custom.id.clone(),
             font_family: Some("Example UI".to_owned()),
             custom_schemes: vec![custom],
             animate_mixer_signals: false,
             glass_effect: false,
+            top_bar_layout: TopBarLayout::Compact,
         };
         let text = serde_json::to_string(&appearance).unwrap();
         let loaded = serde_json::from_str::<Appearance>(&text)
@@ -490,11 +550,13 @@ mod tests {
         invalid.name = "Invalid".to_owned();
         invalid.base = 0.5;
         let appearance = Appearance {
+            titlebar_menus: Appearance::default().titlebar_menus,
             scheme: invalid.id.clone(),
             font_family: Some("  Example UI  ".to_owned()),
             custom_schemes: vec![invalid, valid.clone()],
             animate_mixer_signals: false,
             glass_effect: false,
+            top_bar_layout: TopBarLayout::Spacious,
         }
         .normalised();
         assert_eq!(appearance.scheme, DEFAULT_SCHEME);

@@ -83,7 +83,9 @@ pub(crate) fn proposal(project: &Project, request: Request) -> Result<NoteEdit, 
     {
         return Err("Protected indices must be unique existing notes".into());
     }
-    let (prefix, updates): (i64, Vec<NoteUpdate>) = match request.operation {
+    // (index, pitch, new length in ticks): validated in ticks against the requested range, then
+    // handed out as the edit_notes patch the caller can apply, which counts in beats.
+    let (prefix, updates): (i64, Vec<(usize, u8, Option<i64>)>) = match request.operation {
         Operation::Pitches {
             preserve_prefix_until_tick,
             changes,
@@ -95,13 +97,7 @@ pub(crate) fn proposal(project: &Project, request: Request) -> Result<NoteEdit, 
                 preserve_prefix_until_tick,
                 changes
                     .into_iter()
-                    .map(|p| NoteUpdate {
-                        index: p.index,
-                        pitch: Some(p.pitch),
-                        start_tick: None,
-                        length_ticks: None,
-                        velocity: None,
-                    })
+                    .map(|p| (p.index, p.pitch, None))
                     .collect(),
             )
         }
@@ -109,13 +105,7 @@ pub(crate) fn proposal(project: &Project, request: Request) -> Result<NoteEdit, 
             request.start_tick,
             landings
                 .into_iter()
-                .map(|p| NoteUpdate {
-                    index: p.index,
-                    pitch: Some(p.pitch),
-                    length_ticks: Some(p.length_ticks),
-                    start_tick: None,
-                    velocity: None,
-                })
+                .map(|p| (p.index, p.pitch, Some(p.length_ticks)))
                 .collect(),
         ),
     };
@@ -123,10 +113,10 @@ pub(crate) fn proposal(project: &Project, request: Request) -> Result<NoteEdit, 
         return Err("Supply 1..128 changes".into());
     }
     let mut seen = HashSet::new();
-    for update in &updates {
-        let note = clip.notes.get(update.index).ok_or("Unknown note index")?;
-        if !seen.insert(update.index)
-            || protected.contains(&update.index)
+    for &(index, _, length_ticks) in &updates {
+        let note = clip.notes.get(index).ok_or("Unknown note index")?;
+        if !seen.insert(index)
+            || protected.contains(&index)
             || note.start.raw() < prefix.max(request.start_tick)
             || note
                 .start
@@ -136,16 +126,34 @@ pub(crate) fn proposal(project: &Project, request: Request) -> Result<NoteEdit, 
             || note
                 .start
                 .raw()
-                .checked_add(update.length_ticks.unwrap_or(note.length.raw()))
+                .checked_add(length_ticks.unwrap_or(note.length.raw()))
                 .is_none_or(|end| end > request.end_tick)
         {
             return Err("Change touches a protected, duplicate or out-of-range note".into());
         }
     }
+    let update = updates
+        .into_iter()
+        .map(|(index, pitch, length_ticks)| {
+            let per_beat = project
+                .signatures
+                .signature_at(clip.start + clip.notes[index].start)
+                .ticks_per_beat()
+                .raw() as f64;
+            NoteUpdate {
+                index,
+                pitch: Some(pitch),
+                bar: None,
+                beat: None,
+                length_beats: length_ticks.map(|ticks| ticks as f64 / per_beat),
+                velocity: None,
+            }
+        })
+        .collect();
     let edit = NoteEdit::Patch {
         clip: request.clip,
         remove: vec![],
-        update: updates,
+        update,
         add: vec![],
     };
     // Use exactly the normal note validator, including render expansion and clip bounds.
@@ -175,7 +183,7 @@ impl crate::Session {
             .map(|(index, (a, b))| json!({"index":index,"before":a,"after":b}))
             .collect();
         Ok(json!({"revision":expected_revision,"document_unchanged":true,"changes":changes,
-            "edit":edit,"note_units":"start/length in exact clip-relative ticks",
+            "edit":edit,"note_units":"request range is clip-relative ticks; the returned edit counts length_beats in the meter's beat, as edit_notes does",
             "next":"Use this request as a candidates variation for comparison, or apply the returned edit through edit_notes. No musical preference has been established."}).to_string())
     }
 }

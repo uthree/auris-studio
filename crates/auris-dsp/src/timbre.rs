@@ -5,6 +5,10 @@ use rustfft::{FftPlanner, num_complex::Complex};
 
 use crate::drum_analysis::{AcousticCharacter, analyze_drum_audio};
 
+#[path = "timbre_character.rs"]
+mod character;
+pub use character::{TimbreCharacter, timbre_character};
+
 /// Measures gain-independent MFCC statistics, spectra and envelope over attack, body and release.
 ///
 /// `release_seconds` is the known note-off time in this recording. Stereo powers are summed,

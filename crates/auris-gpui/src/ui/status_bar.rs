@@ -1,6 +1,6 @@
-//! The status bar along the bottom of the window, with panel switches in compact windows.
+//! The status bar and stable panel switches along the bottom of every editor window.
 //!
-//! When the title bar is too narrow, this row also carries an icon for every panel,
+//! This row carries an icon for every panel,
 //! grouped by the dock it lives in — the left dock's at the left-hand end, the bottom dock's and
 //! then the right dock's at the other. A press shows that panel, a press on the one already
 //! showing shuts its dock, and a right-click offers to move it somewhere else.
@@ -11,27 +11,22 @@
 
 use auris_i18n::Key;
 
-use gpui::{Context, IntoElement, MouseButton, MouseDownEvent, Pixels, Point, div, prelude::*, px};
+use gpui::{Context, IntoElement, MouseButton, Pixels, Point, div, prelude::*, px};
 
 use crate::app::AurisApp;
 use crate::dock::{Dock, Panel};
 use crate::theme::{Metrics, Theme};
 use crate::ui::context_menu::{ContextMenu, MenuCommand};
-use crate::ui::icons::icon;
 use crate::ui::widgets::{ButtonStyle, activity_indicator, button};
-
-/// Side of one switch, including the padding around its icon.
-const SWITCH_SIZE: Pixels = px(20.0);
 
 impl AurisApp {
     /// Renders the status bar.
     pub(crate) fn render_status_bar(
         &self,
-        width: Pixels,
+        _width: Pixels,
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
         let theme = self.theme.clone();
-        let compact = !crate::ui::title_bar::panels_in_titlebar(width);
         let audio = self.session.audio_status();
         let engine = if audio.running {
             format!("{:.0} Hz · {} ch", audio.sample_rate, audio.channels)
@@ -61,9 +56,7 @@ impl AurisApp {
             .border_color(theme.border_subtle)
             .text_xs()
             .text_color(theme.text_muted)
-            .when(compact, |bar| {
-                bar.child(self.dock_switches(Dock::Left, SWITCH_SIZE, cx))
-            })
+            .child(self.dock_switches(Dock::Left, cx))
             .when(background_running, |bar| {
                 bar.child(activity_indicator(
                     "background-command-activity",
@@ -165,10 +158,8 @@ impl AurisApp {
             .child(engine)
             // The bottom dock's switches before the right dock's, which is the order they sit in
             // going clockwise from the middle of the window.
-            .when(compact, |bar| {
-                bar.child(self.dock_switches(Dock::Bottom, SWITCH_SIZE, cx))
-                    .child(self.dock_switches(Dock::Right, SWITCH_SIZE, cx))
-            })
+            .child(self.dock_switches(Dock::Bottom, cx))
+            .child(self.dock_switches(Dock::Right, cx))
     }
 
     /// Where the typing keyboard's hands are, while it is switched on.
@@ -212,14 +203,13 @@ impl AurisApp {
     pub(crate) fn dock_switches(
         &self,
         dock: Dock,
-        size: Pixels,
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
         let theme = self.theme.clone();
         div().flex().items_center().gap(px(1.0)).children(
             self.panels
                 .panels_in(dock)
-                .map(|panel| self.panel_switch(panel, size, &theme, cx)),
+                .map(|panel| self.panel_switch(panel, &theme, cx)),
         )
     }
 
@@ -227,7 +217,6 @@ impl AurisApp {
     fn panel_switch(
         &self,
         panel: Panel,
-        size: Pixels,
         theme: &Theme,
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
@@ -239,17 +228,6 @@ impl AurisApp {
             }
             _ => None,
         };
-        let icon_size = if size > SWITCH_SIZE {
-            px(16.0)
-        } else {
-            px(14.0)
-        };
-        // Hidden panels remain readable because their switches are still available. An
-        // underline also identifies the open panel when the pointer changes its background.
-        let (background, mark) = match open {
-            true => (Theme::translucent(theme.accent, 0.22), theme.text),
-            false => (gpui::transparent_black(), theme.text_muted),
-        };
         // The log is the one panel that is closed by default, so it is the one panel that has to
         // be able to say *look at me*. Nothing else on screen reports a warning, and a warning
         // nobody sees is the same as one that was never written: a font that could not be found,
@@ -258,15 +236,16 @@ impl AurisApp {
             Panel::Log if !open => crate::logbook::book().problems() > 0,
             _ => false,
         };
-        let mark = match unread {
-            true => theme.warning,
-            false => mark,
-        };
-        let hover = if open {
-            Theme::translucent(theme.accent, 0.32)
-        } else {
-            theme.surface_hover
-        };
+        // The linter's findings share the log's panel, so they share its switch: a problem in
+        // the song is as easy to miss as a warning in the log, and more likely to be heard.
+        let (errors, warnings, _) = self.lint.report.counts();
+        let lint_mark =
+            (panel == Panel::Log && !open && errors + warnings > 0).then_some(if errors > 0 {
+                theme.danger
+            } else {
+                theme.warning
+            });
+        let open_problems = lint_mark.is_some() && !unread;
         let tooltip_label = match agent_status {
             Some(status) => format!(
                 "{} · {}",
@@ -277,21 +256,27 @@ impl AurisApp {
         };
         let shortcut = self.keystroke_for(panel.command());
 
+        let id = ("panel-switch", panel as usize);
+        let command = atelier::Button::icon_only(id, panel.icon().source());
         div()
-            .id(("panel-switch", panel as usize))
-            .debug_selector(move || format!("panel-switch-{}", panel as usize))
+            .id(("panel-switch-frame", panel as usize))
             .relative()
             .flex()
-            .items_center()
-            .justify_center()
-            .size(size)
             .flex_shrink_0()
-            .rounded(Metrics::RADIUS_SM)
-            .bg(background)
-            .cursor_pointer()
-            .hover(|this| this.bg(hover))
-            .active(|this| this.opacity(0.75))
-            .child(icon(panel.icon(), icon_size, mark))
+            .child(
+                command
+                    .ghost()
+                    .size(atelier::ControlSize::Small)
+                    .radius(theme.atelier.shape.radius_sm)
+                    .selected(open)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if open_problems {
+                            this.lint.tab = crate::ui::lint::LogTab::Problems;
+                        }
+                        this.toggle_panel(panel);
+                        cx.notify();
+                    })),
+            )
             .when_some(agent_status, |switch, status| {
                 let colour = match status {
                     crate::ui::agent_chat::AgentPanelStatus::Running
@@ -318,16 +303,27 @@ impl AurisApp {
                         .child(status.mark()),
                 )
             })
-            .when(open, |switch| {
+            .when_some(lint_mark.filter(|_| !unread), |switch, colour| {
+                switch.child(
+                    div()
+                        .debug_selector(|| "lint-panel-mark".to_owned())
+                        .absolute()
+                        .top(px(-1.0))
+                        .right(px(-1.0))
+                        .size(px(7.0))
+                        .rounded_full()
+                        .bg(colour),
+                )
+            })
+            .when(unread, |switch| {
                 switch.child(
                     div()
                         .absolute()
-                        .bottom(px(1.0))
-                        .left((size - px(8.0)) / 2.0)
-                        .w(px(8.0))
-                        .h(px(2.0))
-                        .rounded(Metrics::RADIUS_XS)
-                        .bg(theme.accent),
+                        .top_0()
+                        .right_0()
+                        .text_xs()
+                        .text_color(theme.warning)
+                        .child("!"),
                 )
             })
             .tooltip(crate::ui::tooltip::keyed_tip(
@@ -335,13 +331,6 @@ impl AurisApp {
                 shortcut,
                 theme,
             ))
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |this, _: &MouseDownEvent, _, cx| {
-                    this.toggle_panel(panel);
-                    cx.notify();
-                }),
-            )
             // Where a panel is moved from. The switch is the one part of a hidden panel that is
             // still on screen, so it is the only thing a "put that over there" can be aimed at.
             .on_mouse_down(

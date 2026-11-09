@@ -20,7 +20,8 @@
 //! offset, so running this over an ordinary project is a loudness normalisation and nothing more.
 //! That is the honest limit of it, and it is a limit about knowledge rather than about arithmetic.
 
-use auris_core::{Project, TrackId};
+use auris_core::registry::PluginRegistry;
+use auris_core::{EffectSlotId, Project, TrackId};
 use auris_dsp::integrated_lufs;
 use auris_engine::EngineCommand;
 use auris_engine::OfflineOptions;
@@ -61,6 +62,57 @@ const FADER_RANGE_DB: (f32, f32) = (-60.0, 12.0);
 /// read off whatever effect happens to be in the chain.
 pub const CEILING_DB: f32 = -0.3;
 
+/// The effect a finished mix is held under its ceiling by.
+///
+/// Every new document carries one across its master, and so does every composed piece. A mix
+/// with nothing on its master can only be made as loud as its single loudest moment allows, and a
+/// drum hit is fifteen to twenty decibels over the average of the music around it: a song written
+/// note by note and normalised without one came out at -19.7 LUFS against a -14 target, because
+/// one snare had already reached the ceiling. The limiter is what lets that one moment give a few
+/// decibels so that everything else does not have to.
+pub(crate) const MASTER_LIMITER: &str = "auris.fx.limiter";
+
+/// The limiter parameter that sets the level nothing may pass.
+pub(crate) const LIMITER_CEILING: &str = "ceiling_db";
+
+/// The limiter parameter that drives the signal into it.
+const LIMITER_INPUT: &str = "input_db";
+
+/// Where a new document's master limiter is set, in dBTP.
+///
+/// One decibel under full scale, the true-peak ceiling the streaming services ask for — and the
+/// one `normalize_mix` defaults to, so that a mix made in a new document and normalised with no
+/// arguments is held by the limiter it already has rather than by arithmetic about its peaks.
+pub(crate) const NEW_DOCUMENT_CEILING_DB: f32 = -1.0;
+
+/// Puts a limiter at the end of `project`'s master chain, its ceiling written down.
+///
+/// Written into the document as a slot anyone can see and take off, rather than clamped somewhere
+/// in the renderer. It is a mixing decision, and a mixing decision a person cannot find is one
+/// they cannot disagree with. `false` when the registry has no limiter to offer, which leaves the
+/// project as it was.
+pub(crate) fn install_master_limiter(
+    registry: &PluginRegistry,
+    project: &mut Project,
+    ceiling_db: f32,
+) -> bool {
+    if !registry.has_effect(MASTER_LIMITER) {
+        return false;
+    }
+    let Some(slot) = project.add_effect(None, MASTER_LIMITER) else {
+        return false;
+    };
+    if let Some(added) = project.master.effects.iter_mut().find(|s| s.id == slot) {
+        // Written down rather than left to the plugin's default, so the ceiling the piece is
+        // measured against is the ceiling the file carries.
+        added
+            .state
+            .params
+            .insert(LIMITER_CEILING.to_string(), ceiling_db);
+    }
+    true
+}
+
 /// The fader that puts a track measuring `measured` onto `target`.
 ///
 /// The measurement was taken *through* the fader the track is set to, so what is being solved for
@@ -77,6 +129,18 @@ pub fn fader_for(target_lufs: f32, measured_lufs: f32, current_db: f32) -> f32 {
 /// target at all — the last four decibels of every record made since about 1995 are this — so the
 /// question is not whether to use it but how far.
 pub const LIMITER_ALLOWANCE_DB: f32 = 3.0;
+
+/// The most `normalize_mix` lets the master limiter take off the loudest moment, in decibels.
+///
+/// Twice [`LIMITER_ALLOWANCE_DB`], because the two passes are asked different things. The
+/// composer balances a piece it wrote to a calibrated table and stops a little quiet rather than
+/// lean on the limiter; `normalize_mix` is asked for a number, by an agent or a person who has
+/// already decided the piece is finished. A song written note by note with an ordinary kit has
+/// its snare eighteen decibels over its average, so three decibels left it at -17 LUFS against a
+/// -14 target, still audibly quieter than whatever plays next to it. Six is what that song needed,
+/// and it is still transient work for a two-millisecond look-ahead: what a dense, sustained mix
+/// asks of the limiter is less, because its loudest moment is nearer its average to begin with.
+pub const NORMALIZE_LIMITER_ALLOWANCE_DB: f32 = 6.0;
 
 /// How far every fader goes up together, once the parts are balanced against each other.
 ///
@@ -178,6 +242,18 @@ pub struct NormalizeMixReport {
     pub after: super::MixAnalysis,
     /// Shared change applied to every source fader in dB.
     pub offset_db: f32,
+    /// Whether the master limiter held the ceiling, its own ceiling set to the requested one.
+    ///
+    /// `false` when the master chain does not end in a limiter: the loudest moment then had to
+    /// stay under the ceiling by itself, and a mix with sharp drums stops well short of loud.
+    pub limited: bool,
+}
+
+/// The limiter at the end of the master chain, as `normalize_mix` reads it.
+struct MasterLimiter {
+    slot: EffectSlotId,
+    ceiling: ParamTarget,
+    input_db: f32,
 }
 
 impl BalanceReport {
@@ -238,7 +314,21 @@ impl Session {
         let Some(lufs) = before.lufs else {
             return Err(SessionError::MixNormalization("the mix is silent".into()));
         };
-        let desired = (target_lufs - lufs).min(ceiling_db - before.true_peak_db);
+        // With a limiter last on the master, the ceiling is the limiter's to keep and the peaks
+        // may be pushed into it by up to [`NORMALIZE_LIMITER_ALLOWANCE_DB`]; without one, the loudest moment as it
+        // stands is the whole limit.
+        let limiter = self.leaning_limiter();
+        let peak_room = match &limiter {
+            Some(limiter) => {
+                // The limiter takes off `pre + input + offset - (ceiling - master)` at the loudest
+                // moment, where `pre` is that moment measured with the limiter out at the master's
+                // own fader. Holding that to the allowance, the master gain cancels.
+                let dry = self.true_peak_without(limiter.slot)?;
+                NORMALIZE_LIMITER_ALLOWANCE_DB + ceiling_db - limiter.input_db - dry
+            }
+            None => ceiling_db - before.true_peak_db,
+        };
+        let desired = (target_lufs - lufs).min(peak_room);
         let lower = faders
             .iter()
             .map(|(_, gain)| FADER_RANGE_DB.0 - gain)
@@ -249,6 +339,10 @@ impl Session {
             .fold(f32::INFINITY, f32::min);
         let offset_db = desired.clamp(lower, upper);
         self.begin_transaction(Edit::BalanceLevels);
+        if let Some(limiter) = &limiter {
+            let held = (ceiling_db - self.project.master.gain_db).clamp(-24.0, 0.0);
+            self.set_param(limiter.ceiling, held);
+        }
         for (id, gain) in faders {
             self.set_param(ParamTarget::TrackGain(id), gain + offset_db);
         }
@@ -266,7 +360,62 @@ impl Session {
             before,
             after,
             offset_db,
+            limited: limiter.is_some(),
         })
+    }
+
+    /// The master limiter `normalize_mix` can lean on, if there is one it may set the ceiling of.
+    ///
+    /// Only the last enabled slot of the master chain counts — anything after a limiter could
+    /// lift what it held down — and only one whose ceiling nobody has automated, since the pass
+    /// writes the requested ceiling into it.
+    fn leaning_limiter(&mut self) -> Option<MasterLimiter> {
+        let slot = self
+            .project
+            .master
+            .effects
+            .iter()
+            .rev()
+            .find(|s| s.enabled)?;
+        if slot.effect_id != MASTER_LIMITER {
+            return None;
+        }
+        let (id, stored_input) = (slot.id, slot.state.params.get(LIMITER_INPUT).copied());
+        let descriptors = self.effect_descriptors(id);
+        let param = descriptors
+            .iter()
+            .find(|descriptor| descriptor.key == LIMITER_CEILING)?
+            .id;
+        let ceiling = ParamTarget::Effect {
+            track: None,
+            slot: id,
+            param,
+        };
+        if self.is_automated(ceiling) {
+            return None;
+        }
+        let input_db = descriptors
+            .iter()
+            .find(|descriptor| descriptor.key == LIMITER_INPUT)
+            .map_or(0.0, |descriptor| stored_input.unwrap_or(descriptor.default));
+        Some(MasterLimiter {
+            slot: id,
+            ceiling,
+            input_db,
+        })
+    }
+
+    /// The mix's true peak with one master slot switched off, everything else as it stands.
+    fn true_peak_without(&mut self, slot: EffectSlotId) -> Result<f32, SessionError> {
+        let mut project = self.project.clone();
+        if let Some(effect) = project.master.effects.iter_mut().find(|s| s.id == slot) {
+            effect.enabled = false;
+        }
+        let mix = self.job_for(project).render(
+            &OfflineOptions::whole_project(),
+            &mut auris_engine::RenderProgress::default(),
+        )?;
+        Ok(analyze_loudness(self.gpu.as_deref(), &mix).true_peak_db())
     }
 
     /// Renders every track alone, measures it, and sets the mix from what it heard.
@@ -506,6 +655,120 @@ mod tests {
                 started.elapsed().as_secs_f32()
             );
         }
+    }
+
+    /// Four bars written the way an agent writes them: notes at moderate velocities, every fader
+    /// at unity, on the built-in instruments so it measures the same on every machine.
+    fn written_by_hand(strip_master: bool) -> Session {
+        use super::super::SessionOptions;
+        use auris_core::project::Note;
+        use auris_core::time::Ticks;
+        let q = Ticks::QUARTER.0;
+        let bars = 4;
+        let length = Ticks(q * 4 * bars);
+        let mut session =
+            Session::new(SessionOptions::headless().with_master_limiter(!strip_master))
+                .expect("a headless session");
+        let note = |pitch, at, held, velocity| {
+            let mut note = Note::new(pitch, Ticks(at), Ticks(held));
+            note.velocity = velocity;
+            note
+        };
+        let lead = session.add_default_instrument_track("Lead").unwrap();
+        let clip = session
+            .add_midi_clip(lead, "Lead", Ticks::ZERO, length)
+            .unwrap();
+        let tune = [72u8, 74, 76, 79, 77, 76, 74, 72];
+        let notes = (0..bars * 4)
+            .map(|i| note(tune[(i % 8) as usize], i * q, q * 9 / 10, 0.7))
+            .collect();
+        session.replace_notes(clip, notes).unwrap();
+        let chords = session.add_default_instrument_track("Chords").unwrap();
+        let clip = session
+            .add_midi_clip(chords, "Chords", Ticks::ZERO, length)
+            .unwrap();
+        let notes = (0..bars)
+            .flat_map(|bar| {
+                [60u8, 64, 67].map(|pitch| note(pitch, bar * 4 * q, 4 * q - q / 8, 0.6))
+            })
+            .collect();
+        session.replace_notes(clip, notes).unwrap();
+        let bass = session.add_default_instrument_track("Bass").unwrap();
+        let clip = session
+            .add_midi_clip(bass, "Bass", Ticks::ZERO, length)
+            .unwrap();
+        let notes = (0..bars * 2)
+            .map(|i| note(36, i * 2 * q, 2 * q - q / 8, 0.75))
+            .collect();
+        session.replace_notes(clip, notes).unwrap();
+        let drums = session.add_default_drum_track("Drums").unwrap();
+        let clip = session
+            .add_midi_clip(drums, "Drums", Ticks::ZERO, length)
+            .unwrap();
+        let mut notes = Vec::new();
+        for i in 0..bars * 8 {
+            notes.push(note(42, i * q / 2, q / 4, 0.5));
+            match i % 4 {
+                0 => notes.push(note(36, i * q / 2, q / 4, 0.8)),
+                2 => notes.push(note(38, i * q / 2, q / 4, 0.7)),
+                _ => {}
+            }
+        }
+        session.replace_notes(clip, notes).unwrap();
+        session
+    }
+
+    #[test]
+    fn a_new_document_ends_its_master_in_a_limiter_at_the_delivery_ceiling() {
+        use super::super::SessionOptions;
+        let mut session = Session::new(SessionOptions::headless().with_master_limiter(true))
+            .expect("a headless session");
+        for project in [session.project().clone(), {
+            session.new_project();
+            session.project().clone()
+        }] {
+            let last = project.master.effects.last().expect("a master limiter");
+            assert_eq!(last.effect_id, MASTER_LIMITER);
+            assert_eq!(
+                last.state.params.get(LIMITER_CEILING),
+                Some(&NEW_DOCUMENT_CEILING_DB)
+            );
+        }
+    }
+
+    #[test]
+    fn normalizing_leans_on_the_master_limiter_instead_of_stopping_at_the_first_drum_hit() {
+        let mut bare = written_by_hand(true);
+        let without = bare
+            .normalize_mix(TARGET_LUFS, -1.0)
+            .expect("the mix renders");
+        assert!(!without.limited);
+        let mut limited = written_by_hand(false);
+        let with = limited
+            .normalize_mix(TARGET_LUFS, -1.0)
+            .expect("the mix renders");
+        assert!(
+            with.limited,
+            "the new document's limiter is the one leaned on"
+        );
+
+        let quiet = without.after.lufs.expect("a mix that plays");
+        let loud = with.after.lufs.expect("a mix that plays");
+        // The bare mix stops where its snare meets the ceiling; the limited one is let past it.
+        assert!(
+            loud > quiet + 3.0,
+            "with a limiter {loud:.1} LUFS, without {quiet:.1}"
+        );
+        assert!(
+            loud > TARGET_LUFS - 2.5,
+            "a hand-written mix only reached {loud:.1} LUFS"
+        );
+        // And the ceiling is the limiter's to keep, which it does.
+        assert!(
+            with.after.true_peak_db <= -1.0 + 0.05,
+            "true peak {:.2} dBTP over a -1 ceiling",
+            with.after.true_peak_db
+        );
     }
 
     /// Four bars of two parts on the built-in instruments, composed and balanced.

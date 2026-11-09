@@ -27,6 +27,8 @@ The [whole-keyboard piano voicing](grand-piano-register.md) measures per-partial
 register level and soundboard knock from C1 to C8, and checks itself on that cohort's held-out notes.
 The [low-register correction](physical-low-register.md) measures bow-force continuity,
 bass-note periodicity and piano partial stretch, with paired audition files.
+The [piano stretch tuning](piano-stretch-tuning.md) measures each key's fundamental, heard
+pitch and octave beats against equal temperament.
 The [long-note/trajectory extension](physical-trajectories.md) adds 3/6-second notes, real
 violin glissandi, recorded performance guides and separate late-sustain/transition/release losses.
 The [physical-model experiments](physical-extensions.md) add causal radiation modes,
@@ -190,6 +192,22 @@ rejects changed measurement conditions. Keep per-preset paired deltas and excerp
 positions alongside means. A changed tempo can move the centered excerpt: inspect
 the retained full renders as well. An unchanged-file comparison checks inference
 repeatability. Model weights are CC-BY-NC 4.0; their use here is offline research.
+
+Whole songs have two more scorers beside SongEval. `audiobox.py` runs Meta Audiobox
+Aesthetics (CE, CU, PC and PQ, 1-10). `song_aesthetics.py` runs the multi-stem song aesthetics
+model of Lv et al. (Overall, Singing, Melody, Arrange and AudioQ, 0-100). Each song is separated
+with Demucs `htdemucs`, cut into 10-second windows every 5 seconds, and embedded with MuQ. Windows
+with a silent vocal or a silent accompaniment are skipped. Both write the same report format as
+`songeval.py`. Against a set of commercial songs, only the second model kept rendered songs apart:
+every rendered vocal song scored below the lowest commercial one. Audiobox PQ rates clean renders
+above commercial masters. On an instrumental the separator hears the lead as a voice, so the
+multi-stem model's score there means nothing.
+
+`songeval.py` and `song_aesthetics.py` take `--device cuda:0`, which a ROCm build of PyTorch also
+answers. Audiobox takes the GPU whenever one is visible. On a GPU, scores match the CPU's to
+0.001. Under ROCm 7.14 on gfx1201 the memory-efficient and flash attention kernels fail, so the
+adapters turn both off. `song_aesthetics.py --precision bf16` is about 1.6 times faster but moves
+scores by up to 0.8; fp16 turns MuQ's output into NaN.
 
 ## Controlled melody listening
 

@@ -12,11 +12,13 @@ use auris_core::{
 };
 use auris_dsp::{Adsr, Biquad, BiquadCoefficients};
 
+use crate::observe::{Observer, bore_pressure, recent_voices};
 use crate::params::{ParamBank, finite_or};
 use crate::render::{
     SegmentRenderer, StereoImage, downmix_to_extra_channels, pan_gains, render_segments,
 };
-use crate::voice::VoiceAllocator;
+use crate::voice::{VoiceAllocator, VoiceState};
+use auris_core::motion::{MotionFrame, MotionGeometry};
 
 const VOICES: usize = 16;
 const P_PRESSURE: u32 = 0;
@@ -29,6 +31,9 @@ const P_WIDTH: u32 = 6;
 /// A whistle section, spread gently from its low notes on the left to the high ones on the right.
 pub(crate) const IMAGE: StereoImage = StereoImage::new(86.0, 12.0, 0.25);
 const MAX_BEND: f32 = 24.0;
+/// Bore pressure swings by a few units; this brings it to the scale a string is published at,
+/// so one display gain suits every instrument.
+const BORE_DISPLAY: f32 = 0.01;
 
 #[derive(Clone, Debug)]
 struct Voice {
@@ -318,6 +323,7 @@ pub struct TinWhistle {
     expression_coeff: f32,
     /// One-pole coefficient by which a voice's pan follows the width control.
     pan_step: f32,
+    observer: Observer,
 }
 
 impl Default for TinWhistle {
@@ -353,6 +359,7 @@ impl TinWhistle {
             expression_current: 1.0,
             expression_coeff: 0.0,
             pan_step: 1.0,
+            observer: Observer::default(),
         };
         whistle.refresh();
         whistle
@@ -388,6 +395,43 @@ impl TinWhistle {
         voice.position = IMAGE.position(f32::from(pitch));
         voice.pan = voice.position * self.params.at(P_WIDTH);
         voice.envelope.trigger();
+    }
+
+    /// The air columns of the newest notes: pressure along each bore, from the mouthpiece.
+    fn publish_motion(&mut self) {
+        let mut frame = MotionFrame {
+            geometry: MotionGeometry::Bore,
+            active: self.allocator.active_count(),
+            expression: self.expression_current,
+            pressure: self.params.at(P_PRESSURE),
+            ..MotionFrame::default()
+        };
+        let voices = &self.voices;
+        let selected = recent_voices(&self.allocator, |index| voices[index].envelope.is_active());
+        for (observed, index) in frame.voices.iter_mut().zip(selected) {
+            let Some(index) = index else {
+                break;
+            };
+            let voice = &self.voices[index];
+            observed.pitch = voice.pitch + self.bend;
+            observed.level = voice.envelope.level() * voice.velocity;
+            observed.held = self
+                .allocator
+                .slot(index)
+                .is_some_and(|slot| slot.state == VoiceState::Held);
+            observed.contact = 0.0;
+            observed.excitation = observed.level * frame.pressure;
+            bore_pressure(
+                &voice.delay,
+                voice.write,
+                voice.length,
+                &mut observed.points,
+            );
+            for point in &mut observed.points {
+                *point *= BORE_DISPLAY;
+            }
+        }
+        self.observer.publish(&frame);
     }
 }
 
@@ -576,9 +620,17 @@ impl Instrument for TinWhistle {
         self.channel_volume = 1.0;
         self.expression = 1.0;
         self.expression_current = 1.0;
+        self.observer.reset(MotionGeometry::Bore);
     }
     fn process(&mut self, events: &[NoteEvent], out: &mut AudioBuffer, ctx: &ProcessContext) {
-        render_segments(self, events, out, ctx.block_frames.min(out.frame_count()));
+        let frames = ctx.block_frames.min(out.frame_count());
+        render_segments(self, events, out, frames);
+        if self.observer.due(frames, self.rate) {
+            self.publish_motion();
+        }
+    }
+    fn motion_monitor(&self) -> Option<std::sync::Arc<auris_core::motion::MotionMonitor>> {
+        Some(self.observer.monitor())
     }
     fn active_voices(&self) -> usize {
         self.allocator.active_count()

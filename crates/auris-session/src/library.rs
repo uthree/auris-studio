@@ -201,32 +201,6 @@ pub fn voices_with_settings(settings: &crate::Settings) -> Vec<(String, PathBuf)
     installed_voices_in(&roots)
 }
 
-/// Library rows for installed voices, with one row per saved VOICEVOX speaker.
-///
-/// A damaged connection remains visible by its file name so it can still be located.
-pub fn voice_shelf_entries_with_settings(
-    settings: &crate::Settings,
-) -> Vec<(String, PathBuf, Option<String>)> {
-    voice_shelf_entries(voices_with_settings(settings))
-}
-
-fn voice_shelf_entries(voices: Vec<(String, PathBuf)>) -> Vec<(String, PathBuf, Option<String>)> {
-    let mut entries = Vec::new();
-    for (name, path) in voices {
-        if voice_source_kind(&path) == Some(VoiceSourceKind::Voicevox)
-            && let Ok(speakers) = crate::voice_setup::saved_voicevox_speakers(&path)
-        {
-            for speaker in speakers {
-                entries.push((format!("{name} · {speaker}"), path.clone(), Some(speaker)));
-            }
-        } else {
-            entries.push((name, path, None));
-        }
-    }
-    entries.sort_by(|a, b| a.0.cmp(&b.0));
-    entries
-}
-
 /// Every voice model found under `roots`, as `(name, path)`, sorted by name.
 ///
 /// No fixed catalog, unlike the fonts: this is enumeration rather than verification — every
@@ -414,33 +388,6 @@ pub fn installed_fonts() -> Vec<(&'static ShippedFont, PathBuf)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn voicevox_shelf_has_one_entry_per_saved_speaker() {
-        let folder = tempfile::tempdir().unwrap();
-        let path = folder.path().join("Voicevox.voicevox.json");
-        std::fs::write(
-            &path,
-            r#"{"format_version":1,"styles":[{"name":"Singer A / Normal","query_style_id":6000,"decode_style_id":3001},{"name":"Singer B / Soft","query_style_id":6000,"decode_style_id":3002}]}"#,
-        )
-        .unwrap();
-        let entries = voice_shelf_entries(vec![("Voicevox".into(), path.clone())]);
-        assert_eq!(
-            entries,
-            vec![
-                (
-                    "Voicevox · Singer A / Normal".into(),
-                    path.clone(),
-                    Some("Singer A / Normal".into()),
-                ),
-                (
-                    "Voicevox · Singer B / Soft".into(),
-                    path,
-                    Some("Singer B / Soft".into()),
-                ),
-            ]
-        );
-    }
 
     #[test]
     fn portable_leapsinger_banks_share_an_entry_filename_without_hiding_each_other() {

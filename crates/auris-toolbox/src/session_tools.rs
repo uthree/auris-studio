@@ -42,6 +42,8 @@ pub(crate) fn definitions() -> Vec<ToolDefinition> {
                     | "search_documentation"
                     | "export_audio_attachment"
                     | "read_report"
+                    // A card needs a window to draw it; a saved-project client has none.
+                    | "offer_choices"
             )
         })
         .map(|tool| {
@@ -95,18 +97,14 @@ pub(crate) fn definitions() -> Vec<ToolDefinition> {
                     if let auris_session::live_agent::Command::Listen {
                         start_bar,
                         bars,
-                        focus,
                         compare_to,
-                        aspect,
                     } = command
                     {
                         return crate::saved_listening::run(
                             &mut session,
                             start_bar,
                             bars,
-                            focus.as_deref(),
                             compare_to.as_deref(),
-                            aspect,
                         );
                     }
                     let before = command.is_mutating().then(|| session.project().clone());
@@ -386,7 +384,7 @@ mod tests {
             json!({"project":created["project_id"],"clips":[{"clip":clip["clip"]}]}),
         );
         assert_eq!(read["clips"][0]["total"], 0);
-        assert_eq!(read["ticks_per_quarter"], 960);
+        assert_eq!(read["clips"][0]["bars"], json!([1, 1]));
     }
 
     #[test]
@@ -473,14 +471,14 @@ mod tests {
             .unwrap()
         };
         let initial = read();
-        let edits = json!([{"kind":"replace","clip":clip.0,"notes":[{"pitch":60,"start_tick":13,"length_ticks":97,"velocity":0.73125}]}]);
+        let edits = json!([{"kind":"replace","clip":clip.0,"notes":[{"pitch":60,"bar":1,"beat":2.75,"length_beats":0.125,"velocity":0.73125}]}]);
         call(
             "edit_notes",
             json!({"project":path,"expected_revision":initial["revision"],"input":{"kind":"inline","edits":edits}}),
         );
         let current = read();
-        assert_eq!(current["clips"][0]["notes"][0]["start_tick"], 13);
-        assert_eq!(current["clips"][0]["notes"][0]["length_ticks"], 97);
+        assert_eq!(current["clips"][0]["notes"][0]["beat"], 2.75);
+        assert_eq!(current["clips"][0]["notes"][0]["length_beats"], 0.125);
         let bytes = std::fs::read(&path).unwrap();
         call(
             "edit_notes",

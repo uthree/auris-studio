@@ -33,6 +33,8 @@ const PADDING: Pixels = px(4.0);
 const BORDER: Pixels = px(1.0);
 /// Width of the column holding the tick on a latched item.
 const MARK_WIDTH: f32 = 18.0;
+/// Space between a label and its keystroke.
+const SHORTCUT_GAP: f32 = 16.0;
 /// Narrowest a menu may be.
 const MIN_WIDTH: f32 = 168.0;
 /// Widest a menu may be.
@@ -81,6 +83,10 @@ pub struct MenuItem {
     /// alternative was naming eight palette entries twice over, in a set where two of them are
     /// both fairly called orange.
     pub swatch: Option<gpui::Hsla>,
+    /// The keystroke that runs the same command, shown at the end of the row the way the menu
+    /// bar shows one. Filled in by [`AurisApp::open_menu`], which knows the keymap; a menu is
+    /// built without it.
+    pub shortcut: Option<SharedString>,
 }
 
 /// A row in a menu.
@@ -283,6 +289,7 @@ impl ContextMenu {
             enabled,
             checked,
             swatch: None,
+            shortcut: None,
         }));
         self
     }
@@ -301,6 +308,7 @@ impl ContextMenu {
             enabled: true,
             checked,
             swatch: Some(swatch),
+            shortcut: None,
         }));
         self
     }
@@ -319,7 +327,13 @@ impl ContextMenu {
             .entries
             .iter()
             .filter_map(|entry| match entry {
-                MenuEntry::Item(item) => Some(estimated_label_width(&item.label)),
+                MenuEntry::Item(item) => Some(
+                    estimated_label_width(&item.label)
+                        + item
+                            .shortcut
+                            .as_ref()
+                            .map_or(0.0, |keys| SHORTCUT_GAP + estimated_label_width(keys)),
+                ),
                 MenuEntry::Separator => None,
             })
             .reduce(f32::max)
@@ -400,7 +414,17 @@ impl MenuAt for MouseDownEvent {
 
 impl AurisApp {
     /// Shows a menu, unless it has nothing to offer.
-    pub(crate) fn open_menu(&mut self, menu: ContextMenu) {
+    pub(crate) fn open_menu(&mut self, mut menu: ContextMenu) {
+        for entry in &mut menu.entries {
+            if let MenuEntry::Item(item) = entry {
+                item.shortcut = item
+                    .command
+                    .binding()
+                    .map(|id| self.keystroke_for(id))
+                    .filter(|keys| !keys.is_empty())
+                    .map(SharedString::from);
+            }
+        }
         if !menu.is_empty() {
             self.menu = Some(menu);
         }
@@ -429,6 +453,11 @@ impl AurisApp {
         move |event: &E, window: &mut Window, cx: &mut gpui::App| {
             let at = event.menu_at();
             view.update(cx, |this, cx| {
+                // A menu is drawn only in the window that last claimed input. A trigger in a
+                // utility window clicked straight after work in the main one would otherwise
+                // open its menu in the main window, out of sight — the plugin window's choices
+                // did exactly that until this claimed the window first.
+                this.claim_event_window(window);
                 let menu = build(this, at);
                 let opened = !menu.is_empty();
                 if opened && this.menu_focus_return.is_none() {
@@ -501,7 +530,7 @@ impl AurisApp {
                             theme.text_faint
                         })
                         .when(enabled, |this| {
-                            this.cursor_pointer().hover(|this| {
+                            this.hover(|this| {
                                 this.bg(theme.accent).text_color(theme.text_on_accent)
                             })
                         })
@@ -530,6 +559,15 @@ impl AurisApp {
                                 .truncate()
                                 .child(item.label.clone()),
                         )
+                        .children(item.shortcut.clone().map(|keys| {
+                            div()
+                                .flex_shrink_0()
+                                .ml(px(SHORTCUT_GAP))
+                                // Not the faintest text: a highlighted row is filled with the
+                                // accent, and the dimmest colour would vanish into it.
+                                .text_color(theme.text_muted)
+                                .child(keys)
+                        }))
                         .children(item.swatch.map(|colour| {
                             div()
                                 .flex_shrink_0()
@@ -810,6 +848,7 @@ mod tests {
                     enabled: true,
                     checked: false,
                     swatch: None,
+                    shortcut: None,
                 }),
                 MenuEntry::Separator,
                 MenuEntry::Item(MenuItem {
@@ -818,6 +857,7 @@ mod tests {
                     enabled: true,
                     checked: false,
                     swatch: None,
+                    shortcut: None,
                 }),
             ]
         );
@@ -920,6 +960,7 @@ mod window_tests {
             ("signature", this.signature_menu(at, Ticks::ZERO)),
             ("structure", this.structure_menu(at, Ticks::ZERO)),
             ("harmony", this.harmony_menu(at, Ticks::ZERO)),
+            ("lyrics", this.lyrics_menu(at, Ticks::ZERO)),
             (
                 "progression picker",
                 this.progression_picker_menu(at, Ticks::ZERO),
@@ -927,6 +968,49 @@ mod window_tests {
             ("count-in", this.count_in_menu(at)),
             ("recent", this.recent_menu(at)),
         ]
+    }
+
+    #[gpui::test]
+    fn the_lyrics_lane_menu_fills_retypes_and_ends_lines(cx: &mut TestAppContext) {
+        let (app, cx) = open(cx);
+        app.update(cx, |this, cx| {
+            let track = this.session.add_singer_track("Vocal");
+            let clip = this
+                .session
+                .add_midi_clip(track, "Verse", Ticks::ZERO, Ticks(3840))
+                .unwrap();
+            for beat in 0..3 {
+                this.session
+                    .add_note(clip, Note::new(67, Ticks(beat * 960), Ticks(960)))
+                    .unwrap();
+            }
+            this.session
+                .write_lyrics(clip, &[0, 1, 2], "さくら")
+                .unwrap();
+            assert!(
+                this.project().lyrics.is_empty(),
+                "a clip edit leaves the lane alone"
+            );
+
+            this.run_menu_command(super::MenuCommand::LyricsFromVocals, cx);
+            assert_eq!(this.project().lyrics.text_at(Ticks(100)), Some("さくら"));
+            let menu = this.lyrics_menu(point(px(100.0), px(100.0)), Ticks(100));
+            assert_eq!(
+                menu.title.as_ref(),
+                "さくら",
+                "headed by the line under the pointer"
+            );
+            let removable = menu.entries.iter().any(|entry| {
+                matches!(entry, super::MenuEntry::Item(item)
+                    if matches!(item.command, super::MenuCommand::RemoveLyricLineAt(_)))
+            });
+            assert!(removable);
+
+            this.run_menu_command(super::MenuCommand::EndLyricLineAt(Ticks(960)), cx);
+            assert_eq!(this.project().lyrics.text_at(Ticks(1000)), None);
+            assert!(this.session.undo().is_some());
+            assert_eq!(this.project().lyrics.text_at(Ticks(1000)), Some("さくら"));
+        });
     }
 
     #[gpui::test]

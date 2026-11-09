@@ -39,6 +39,9 @@
 //! What a take may never do is pick a track for itself; a take on a track nobody chose is a take
 //! nobody finds.
 //!
+//! A selected track that holds notes is the other kind of take: what the typing keyboard plays,
+//! written down as a clip. It needs neither a device nor a folder — see [`super::note_take`].
+//!
 //! # More than one track at once
 //!
 //! Every armed track records, each from its own input channels: [`InputChannels`] is a run of
@@ -440,11 +443,14 @@ impl Session {
 
     /// `true` while a take is running.
     pub fn is_recording(&self) -> bool {
-        self.take.is_some()
+        self.take.is_some() || self.note_take.is_some()
     }
 
     /// How the running take is doing, for a clock.
     pub fn recording_status(&self) -> Option<RecordingStatus> {
+        if let Some(status) = self.note_take_status() {
+            return Some(status);
+        }
         self.take.as_ref()?;
         let capture = self.input.as_ref()?;
         let rate = capture.sample_rate().max(1.0);
@@ -552,7 +558,7 @@ impl Session {
         // device any more. Cleared here rather than at every call site, because this is the one
         // funnel a change of input passes through.
         self.input_channels = None;
-        if self.input.is_none() || self.take.is_some() {
+        if self.input.is_none() || self.take.is_some() || self.calibration.is_some() {
             return;
         }
         self.input = None;
@@ -600,7 +606,7 @@ impl Session {
     /// shows an indicator it is a light saying the application is listening. Leaving one open
     /// against the next take would be convenient and would also be that.
     pub(super) fn close_input_if_idle(&mut self) {
-        if self.take.is_none() && self.monitored.is_empty() {
+        if self.take.is_none() && self.monitored.is_empty() && self.calibration.is_none() {
             self.input = None;
         }
     }
@@ -650,11 +656,23 @@ impl Session {
     /// pin the next one there too, so selecting another track and pressing Record again would
     /// quietly record onto the first — which is the sequence this whole fallback exists to fix.
     pub fn start_recording(&mut self, selected: Option<TrackId>) -> Result<(), SessionError> {
-        if self.take.is_some() {
+        if self.take.is_some() || self.note_take.is_some() {
             return Err(SessionError::AlreadyRecording);
+        }
+        if self.calibration.is_some() || self.typing_calibration_run.is_some() {
+            return Err(SessionError::CalibrationBusy);
         }
         let targets = self.record_targets(selected);
         if targets.is_empty() {
+            // A track that holds notes records what the typing keyboard plays onto it, which
+            // needs no device and no folder. See `note_take`.
+            if let Some(track) = selected.filter(|track| {
+                self.project
+                    .track(*track)
+                    .is_some_and(|found| found.kind.holds_notes())
+            }) {
+                return self.start_note_take(track);
+            }
             return Err(SessionError::NothingToRecordOnto);
         }
         // Re-checked rather than trusted: a track may have been deleted, or turned into something
@@ -790,6 +808,9 @@ impl Session {
     /// abandoned should leave the history exactly as it found it, and until the file is closed
     /// there is nothing in the document to undo.
     pub fn stop_recording(&mut self) -> Result<RecordingReport, SessionError> {
+        if self.note_take.is_some() {
+            return self.stop_note_take();
+        }
         let take = self.take.take().ok_or(SessionError::NotRecording)?;
         let Take { writer, files, .. } = take;
 
@@ -866,8 +887,14 @@ impl Session {
         let count_in = in_project_frames(count_in_frames);
         // And how late the stamp is against what the player heard: the round trip through both
         // devices and the graph's delay compensation. See `take_placement`.
-        let (take_start, head) =
-            take_placement(take_start, count_in, in_project_frames(lag_frames));
+        // Plus whatever was measured past what the devices reported, for the devices open now.
+        let measured = self
+            .audio
+            .input_calibration()
+            .map_or(0.0, |calibration| calibration.offset_ms);
+        let lag = in_project_frames(lag_frames) as i64
+            + (measured / 1000.0 * project_rate).round() as i64;
+        let (take_start, head) = take_placement(take_start, count_in, lag);
 
         // A transaction rather than a single `record`, because clearing the punch region goes
         // through `split_clip` and `remove_clip` and each of those records a step of its own when
@@ -1030,7 +1057,7 @@ impl Session {
     }
 
     /// Where an engine frame sits on the musical timeline.
-    fn tick_of_frame(&self, frame: u64) -> Ticks {
+    pub(super) fn tick_of_frame(&self, frame: u64) -> Ticks {
         let rate = self.engine.sample_rate().max(1.0);
         self.project
             .tempo_map
@@ -1280,14 +1307,19 @@ fn finish_all(streams: Vec<TakeStream>) -> Result<u64, IoError> {
 /// was captured. A counted take still starts on the downbeat it was counted into, so the lag only
 /// makes its head longer. An uncounted one moves back by the lag instead, and loses only what
 /// would land before the start of the song.
-pub(crate) fn take_placement(stamp: u64, count_in: u64, lag: u64) -> (u64, u64) {
-    if count_in > 0 {
-        (stamp, count_in.saturating_add(lag))
-    } else if lag <= stamp {
-        (stamp - lag, 0)
-    } else {
-        (0, lag - stamp)
-    }
+///
+/// The lag is signed because a measured correction can be: a device that overstates its own
+/// latency leaves the report too large, and the take then belongs *later* than the stamp less
+/// the report says. Whatever the sign, the first sample belongs at `stamp - count_in - lag`, and
+/// the clip starts there unless that is before the downbeat it was counted into or the song.
+pub(crate) fn take_placement(stamp: u64, count_in: u64, lag: i64) -> (u64, u64) {
+    let stamp = i64::try_from(stamp).unwrap_or(i64::MAX);
+    let first = stamp
+        .saturating_sub(i64::try_from(count_in).unwrap_or(i64::MAX))
+        .saturating_sub(lag);
+    let floor = if count_in > 0 { stamp } else { 0 };
+    let start = first.max(floor);
+    (start as u64, start.saturating_sub(first) as u64)
 }
 
 pub(crate) fn take_file_name(folder: &std::path::Path, track_name: &str) -> String {
@@ -1356,6 +1388,51 @@ mod tests {
         assert_eq!(take_placement(96_000, 24_000, 1_520), (96_000, 25_520));
         // At the very start of the song there is nowhere earlier to put it.
         assert_eq!(take_placement(1_000, 0, 1_520), (0, 520));
+    }
+
+    #[test]
+    fn a_lag_that_was_overstated_moves_the_take_later() {
+        // A measured correction larger than the report: the take belongs after the stamp.
+        assert_eq!(take_placement(50_000, 0, -480), (50_480, 0));
+        // Counted, a head shorter than the count still keeps the downbeat.
+        assert_eq!(take_placement(96_000, 24_000, -480), (96_000, 23_520));
+        // And one past the whole count moves the clip off it rather than inventing audio.
+        assert_eq!(take_placement(96_000, 400, -1_000), (96_600, 0));
+    }
+
+    #[test]
+    fn a_calibration_applies_only_to_the_devices_it_was_measured_on() {
+        let mut audio = crate::AudioPreferences {
+            input_device: Some("Interface".into()),
+            ..Default::default()
+        };
+        audio.set_input_calibration(crate::InputCalibration {
+            host: None,
+            output: None,
+            input: Some("Interface".into()),
+            block_frames: audio.block_frames,
+            offset_ms: 4.5,
+            spread_ms: 0.1,
+        });
+        assert_eq!(audio.input_calibration().map(|c| c.offset_ms), Some(4.5));
+        // Measuring again replaces it rather than keeping two answers to one question.
+        audio.set_input_calibration(crate::InputCalibration {
+            offset_ms: 5.0,
+            ..audio.input_calibration().unwrap().clone()
+        });
+        assert_eq!(audio.input_calibrations.len(), 1);
+        let other = crate::AudioPreferences {
+            input_device: Some("Headset".into()),
+            ..audio.clone()
+        };
+        assert!(other.input_calibration().is_none());
+        let bigger = crate::AudioPreferences {
+            block_frames: 1_024,
+            ..audio.clone()
+        };
+        assert!(bigger.input_calibration().is_none());
+        audio.clear_input_calibration();
+        assert!(audio.input_calibration().is_none());
     }
 
     #[test]
@@ -1646,15 +1723,19 @@ mod tests {
 
     #[test]
     fn a_selection_that_could_not_hold_a_take_is_not_a_target() {
-        // Selecting a synth and pressing Record must say so rather than reaching past it for
-        // whichever audio track happens to be nearest.
+        // Selecting a synth and pressing Record must not reach past it for whichever audio
+        // track happens to be nearest: it records the typing keyboard onto the synth instead.
         let mut session = session();
         let synth = session.add_default_instrument_track("Synth").unwrap();
         session.add_audio_track("Vocals");
         assert!(targets(&mut session, Some(synth)).is_empty());
         assert!(targets(&mut session, None).is_empty());
+        session.start_recording(Some(synth)).unwrap();
+        assert!(session.recording_notes());
+        session.stop_recording().unwrap();
+        // With nothing selected there is still nothing to record onto.
         assert!(matches!(
-            session.start_recording(Some(synth)),
+            session.start_recording(None),
             Err(SessionError::NothingToRecordOnto)
         ));
     }

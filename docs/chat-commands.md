@@ -1,6 +1,6 @@
 # Conversation commands
 
-The **Create a song with AI** conversation and the editor's **Agent** panel
+The **AI workshop** conversation and the editor's **Agent** panel
 share these local slash commands:
 
 | Command | Action |

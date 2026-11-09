@@ -17,6 +17,7 @@ pub(super) enum Section {
     Singer,
     Panels,
     Toolbar,
+    Titlebar,
     Host,
     Output,
     Input,
@@ -26,7 +27,7 @@ pub(super) enum Section {
 }
 
 impl Section {
-    const ALL: [Self; 18] = [
+    const ALL: [Self; 19] = [
         Self::Agent,
         Self::Personalization,
         Self::Appearance,
@@ -39,6 +40,7 @@ impl Section {
         Self::Singer,
         Self::Panels,
         Self::Toolbar,
+        Self::Titlebar,
         Self::Host,
         Self::Output,
         Self::Input,
@@ -65,6 +67,8 @@ impl Section {
                 Key::PreferenceHelp,
                 Key::WorkshopMemory,
                 Key::WorkshopForget,
+                Key::PreferenceDigest,
+                Key::PreferenceDigestEdit,
             ],
             Self::Agent => &[
                 Key::AgentPanel,
@@ -151,6 +155,10 @@ impl Section {
             Self::Host => &[Key::AudioHost, Key::RefreshAudioDevices],
             Self::Toolbar => &[
                 Key::ToolbarHeading,
+                Key::TopBarLayout,
+                Key::TopBarLayoutNote,
+                Key::TopBarSpacious,
+                Key::TopBarCompact,
                 Key::ToolbarNote,
                 Key::ToolbarPlayback,
                 Key::ToolbarVisualizer,
@@ -168,8 +176,30 @@ impl Section {
                 Key::CmdToggleCycle,
                 Key::CmdToggleMetronome,
             ],
+            Self::Titlebar => &[
+                Key::TitlebarMenusHeading,
+                Key::TitlebarMenusNote,
+                Key::TitlebarMenusNative,
+                Key::GroupFile,
+                Key::GroupEdit,
+                Key::GroupTrack,
+                Key::GroupCompose,
+                Key::GroupView,
+                Key::GroupTransport,
+                Key::MenuWindow,
+                Key::GroupAnalysis,
+                Key::GroupHelp,
+            ],
             Self::Output => &[Key::OutputDevice],
-            Self::Input => &[Key::InputDevice, Key::InputDeviceNote, Key::AsioInputNote],
+            Self::Input => &[
+                Key::InputDevice,
+                Key::InputDeviceNote,
+                Key::AsioInputNote,
+                Key::InputLatency,
+                Key::InputLatencyNote,
+                Key::TypingLatency,
+                Key::TypingLatencyNote,
+            ],
             Self::Rate => &[Key::SampleRate, Key::DeviceDefaultRate],
             Self::Buffer => &[Key::BufferSize, Key::RequestedBufferNote],
             Self::Export => &[

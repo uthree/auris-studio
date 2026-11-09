@@ -14,7 +14,7 @@ use crate::theme::Theme;
 use atelier::TitleBar;
 
 /// Height of the application-drawn title bar, including its lower border.
-pub const HEIGHT: Pixels = px(40.0);
+pub const HEIGHT: Pixels = px(32.0);
 
 const CONTROL_WIDTH: Pixels = px(46.0);
 const GLYPH_SIZE: Pixels = px(10.0);
@@ -25,7 +25,7 @@ pub fn options(title: impl Into<SharedString>) -> WindowOptions {
         titlebar: Some(TitlebarOptions {
             title: Some(title.into()),
             appears_transparent: true,
-            traffic_light_position: Some(point(px(12.0), px(13.0))),
+            traffic_light_position: Some(point(px(12.0), (HEIGHT - px(14.0)) / 2.0)),
         }),
         // `appears_transparent` only hides the native title bar on macOS and Windows.
         // Linux otherwise adds a second, server-drawn title bar above our own.
@@ -144,23 +144,44 @@ pub fn resize_handles(window: &Window) -> Vec<Stateful<Div>> {
     .collect()
 }
 
+/// Whether this window draws its own minimize, maximize and close buttons.
+///
+/// macOS has its traffic lights and a fullscreen window has no caption at all. Linux draws
+/// them only while the window draws its own decorations: a compositor that declines client
+/// decorations (and the headless test platform, which always reports server ones) keeps its
+/// own frame, and Atelier's `TitleBar` then drops the controls. Asking here keeps the space
+/// reserved for them and the buttons themselves in agreement.
+pub fn draws_caption_buttons(window: &Window) -> bool {
+    if window.is_fullscreen() {
+        return false;
+    }
+    if cfg!(target_os = "macos") {
+        false
+    } else if cfg!(target_os = "windows") {
+        true
+    } else {
+        matches!(window.window_decorations(), Decorations::Client { .. })
+    }
+}
+
 /// Space occupied by the application-drawn window controls.
 pub fn controls_width(window: &Window) -> Pixels {
-    if cfg!(target_os = "macos") || window.is_fullscreen() {
-        px(0.0)
-    } else {
+    if draws_caption_buttons(window) {
         CONTROL_WIDTH * 3.0
+    } else {
+        px(0.0)
     }
 }
 
 /// What goes in a title bar laid out the way Atelier's `TitleBar` lays it out.
 ///
-/// The title is the only text in the bar. Status, paths and counts belong in the page or status
-/// bar, so a title cannot be squeezed by a second label at narrow widths.
+/// The title identifies the current object; optional navigation and menu controls occupy the
+/// leading region. Status, paths and counts belong in the page or status bar.
 pub struct Parts {
     id: &'static str,
     title: SharedString,
     leading: Vec<AnyElement>,
+    trailing: Vec<AnyElement>,
 }
 
 impl Parts {
@@ -170,12 +191,19 @@ impl Parts {
             id,
             title: title.into(),
             leading: Vec::new(),
+            trailing: Vec::new(),
         }
     }
 
     /// A control at the leading edge, such as Back.
     pub fn leading(mut self, element: impl IntoElement) -> Self {
         self.leading.push(element.into_any_element());
+        self
+    }
+
+    /// A control at the trailing end, before the window's own buttons.
+    pub fn trailing(mut self, element: impl IntoElement) -> Self {
+        self.trailing.push(element.into_any_element());
         self
     }
 }
@@ -191,6 +219,9 @@ pub fn bar(window: &Window, _theme: &Theme, parts: Parts, controls: Div) -> Titl
         .window_controls(controls_width(window), controls);
     for leading in parts.leading {
         bar = bar.leading(leading);
+    }
+    for trailing in parts.trailing {
+        bar = bar.trailing(trailing);
     }
     bar
 }

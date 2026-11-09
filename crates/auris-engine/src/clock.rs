@@ -29,8 +29,18 @@ use std::sync::atomic::{AtomicU64, Ordering};
 const READ_ATTEMPTS: usize = 4;
 
 /// The heard timeline position at one instant of the output stream's clock.
-#[derive(Debug, Default)]
+///
+/// Beside the stream's own instant it keeps the same moment on this process's monotonic clock,
+/// because an event that did not come from an audio callback — a key going down — has no stream
+/// instant to read it against. The callback knows both at once (when it was called and when its
+/// block will be heard), so it can write down where the process's clock will be when that block
+/// plays, and [`Self::heard_now`] reads the timeline from there.
+#[derive(Debug)]
 pub struct OutputClock {
+    /// What [`Self::wall`] counts from.
+    epoch: std::time::Instant,
+    /// When `frame` is heard, in nanoseconds of [`std::time::Instant`] since `epoch`.
+    wall: AtomicU64,
     /// Odd while a publication is being written.
     sequence: AtomicU64,
     /// The virtual frame heard at `nanos`, as `i64` bits: compensation can put it before zero.
@@ -60,13 +70,43 @@ impl HeardAt {
     }
 }
 
+impl Default for OutputClock {
+    fn default() -> Self {
+        Self {
+            epoch: std::time::Instant::now(),
+            wall: AtomicU64::new(0),
+            sequence: AtomicU64::new(0),
+            frame: AtomicU64::new(0),
+            nanos: AtomicU64::new(0),
+            rate: AtomicU64::new(0),
+        }
+    }
+}
+
 impl OutputClock {
     /// Records that `frame` will be heard at `nanos`. Called by the output callback, which is the
     /// only writer.
+    ///
+    /// Taken to be heard now on the process's own clock; [`Self::publish_ahead`] says how far
+    /// ahead it really is.
     pub fn publish(&self, frame: i64, nanos: u64, rate: f64) {
+        self.publish_ahead(frame, nanos, rate, 0);
+    }
+
+    /// Records that `frame` will be heard at `nanos`, which is `ahead` nanoseconds from now.
+    ///
+    /// `ahead` is what the callback's own two instants say: the gap between when it was called
+    /// and when its block will play. Reading [`std::time::Instant`] here is a read of the
+    /// system's monotonic counter, which takes no lock and makes no system call on any platform
+    /// Auris ships for.
+    pub fn publish_ahead(&self, frame: i64, nanos: u64, rate: f64, ahead: u64) {
+        let wall = u64::try_from(self.epoch.elapsed().as_nanos())
+            .unwrap_or(u64::MAX)
+            .saturating_add(ahead);
         let before = self.sequence.fetch_add(1, Ordering::Relaxed);
         // The odd sequence must be visible before any of the fields it guards change.
         std::sync::atomic::fence(Ordering::Release);
+        self.wall.store(wall, Ordering::Relaxed);
         self.frame.store(frame as u64, Ordering::Relaxed);
         self.nanos.store(nanos, Ordering::Relaxed);
         self.rate.store(rate.to_bits(), Ordering::Relaxed);
@@ -77,6 +117,40 @@ impl OutputClock {
     /// Records that the timeline is not moving, so there is nothing to line a take up against.
     pub fn stop(&self) {
         self.publish(0, 0, 0.0);
+    }
+
+    /// The virtual frame being heard at this instant, if the timeline is moving.
+    ///
+    /// For an event that happens off the audio threads, such as a key going down: where in the
+    /// music the person pressing it was when they pressed it, as far as the devices can say.
+    pub fn heard_now(&self) -> Option<f64> {
+        let now = u64::try_from(self.epoch.elapsed().as_nanos()).unwrap_or(u64::MAX);
+        self.heard_at_wall(now)
+    }
+
+    /// [`Self::heard_now`] at a given reading of the process's clock, for testing.
+    fn heard_at_wall(&self, now: u64) -> Option<f64> {
+        for _ in 0..READ_ATTEMPTS {
+            let before = self.sequence.load(Ordering::Acquire);
+            if before % 2 == 1 {
+                std::hint::spin_loop();
+                continue;
+            }
+            let frame = self.frame.load(Ordering::Relaxed) as i64;
+            let nanos = self.nanos.load(Ordering::Relaxed);
+            let wall = self.wall.load(Ordering::Relaxed);
+            let rate = f64::from_bits(self.rate.load(Ordering::Relaxed));
+            std::sync::atomic::fence(Ordering::Acquire);
+            if self.sequence.load(Ordering::Relaxed) != before {
+                continue;
+            }
+            if nanos == 0 || !rate.is_finite() || rate <= 0.0 {
+                return None;
+            }
+            let seconds = (now as f64 - wall as f64) / 1e9;
+            return Some(frame as f64 + seconds * rate);
+        }
+        None
     }
 
     /// The latest consistent publication, if the timeline was moving when it was made.
@@ -135,6 +209,19 @@ mod tests {
         assert_eq!(heard.frame_at(2_000_000_000), 96_000.0);
         assert_eq!(heard.frame_at(2_500_000_000), 120_000.0);
         assert_eq!(heard.frame_at(1_500_000_000), 72_000.0);
+    }
+
+    #[test]
+    fn the_process_clock_reads_the_timeline_from_when_the_block_will_be_heard() {
+        let clock = OutputClock::default();
+        // A block heard 20 ms after the callback that filled it.
+        clock.publish_ahead(96_000, 2_000_000_000, RATE, 20_000_000);
+        let wall = clock.wall.load(Ordering::Relaxed);
+        assert_eq!(clock.heard_at_wall(wall), Some(96_000.0));
+        // Ten milliseconds before it plays, the frame ten milliseconds earlier is being heard.
+        assert_eq!(clock.heard_at_wall(wall - 10_000_000), Some(95_520.0));
+        clock.stop();
+        assert_eq!(clock.heard_now(), None);
     }
 
     #[test]

@@ -1,10 +1,7 @@
 //! Bounded draft auditions; the composer never waits for a render.
 
 use super::{JobEvent, Preview, audio_gate};
-use auris_session::{
-    RenderJob, Session,
-    prelude::{OfflineOptions, RenderProgress},
-};
+use auris_session::{RenderJob, Session, prelude::RenderProgress};
 use std::{
     sync::{
         Arc,
@@ -46,13 +43,12 @@ impl Renderer {
                     if cancel.load(Ordering::Acquire) {
                         break;
                     }
+                    // A loop song's draft is auditioned as a loop too, so what is heard while it
+                    // is being written is what the finished candidate will do.
                     let result = job
-                        .render(
-                            &OfflineOptions {
-                                sample_rate: Some(22_050.0),
-                                include_tail: false,
-                                ..Default::default()
-                            },
+                        .render_audition(
+                            22_050.0,
+                            false,
                             &mut RenderProgress::default().cancelled_by(&cancel),
                         )
                         .map_err(|e| e.to_string());
@@ -61,8 +57,8 @@ impl Renderer {
                     }
                     match result {
                         // No playable content yet is normal while a draft is being assembled.
-                        Ok(audio) if audio.peak() <= 1e-8 => {}
-                        Ok(audio) => {
+                        Ok((audio, _)) if audio.peak() <= 1e-8 => {}
+                        Ok((audio, loop_start)) => {
                             let _ = events.send(JobEvent::Preview(
                                 id,
                                 Ok(Preview {
@@ -71,7 +67,8 @@ impl Renderer {
                                         auris_session::AuditionTimeline::from_audio(
                                             &audio, sections,
                                         )
-                                        .with_tracks(tracks),
+                                        .with_tracks(tracks)
+                                        .with_loop_start(loop_start),
                                     ),
                                     audio: Arc::new(audio),
                                 }),

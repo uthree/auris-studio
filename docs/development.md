@@ -25,12 +25,17 @@ BACKEND — no UI dependency of any kind
   crates/auris-i18n     interface text in every language, and nothing else
   crates/auris-session  the document, the engine and every command a frontend needs
   crates/auris-toolbox  the commands as tools for a language model, shared by both model doors
+  crates/auris-video    note-roll videos: frames in software, encoded by an installed ffmpeg
 
 FRONTEND
   crates/auris-gpui     the desktop application  (binary: auris-studio)
   crates/auris-cli      the command line tool    (binary: auris)
   crates/auris-mcp      the Model Context Protocol server (binary: auris-mcp)
   crates/auris-agent    the model client: Ollama / OpenAI-compatible (library: background model worker)
+
+ALONGSIDE THE APPLICATION
+  crates/auris-update-helper  replaces the installed binary once the app has exited
+                              (binary: auris-update-helper)
 
 NOT THE WORKSPACE
   vendor/rustysynth     somebody else's crate, forked — see its own README
@@ -143,8 +148,8 @@ when no adapter is available.
 ### macOS without a full Xcode install
 
 macOS builds require 13.4 or later, matching the shipped Core ML ONNX Runtime. The workspace's
-Cargo configuration sets that deployment target for both architectures; the app bundle and
-the Intel runtime build use the same minimum version.
+Cargo configuration sets that deployment target and the app bundle uses the same minimum
+version. Releases are built for Apple Silicon only; Intel Macs are not supported.
 
 gpui normally compiles its Metal shaders at build time by shelling out to `xcrun metal`, which
 lives inside Xcode and is unreachable while `xcode-select -p` points at the Command Line
@@ -237,8 +242,14 @@ handlers cannot prevent the native window-move action.
 
 The layout takes its project identity from [Zed's title bar](https://github.com/zed-industries/zed/blob/main/crates/title_bar/src/title_bar.rs)
 and its centered transport readouts from [Logic Pro's control bar](https://support.apple.com/en-euro/guide/logicpro/lgcp5bdd6d9d/mac).
-When changing the title-bar height, include it in `AurisApp::chrome_height` so dock sizing and
-initial timeline coordinates agree with the view tree. Check native dragging, resizing and
+The title bar holds project identity and the application-menu trigger. Playback and its
+readouts share one inset surface in the control bar; editing controls and meters use a second
+row in narrow windows.
+Panel switches stay at the bottom edge, with labels when space permits. On Windows and Linux,
+the application menu opens as an overlay from its trigger or F10. Arrow keys navigate it and
+Escape returns focus to the invoking control. macOS retains the system menu bar.
+Keep both title-bar and responsive transport heights in `AurisApp::chrome_height` so dock sizing
+and initial timeline coordinates agree with the view tree. Check native dragging, resizing and
 window controls on each platform; the headless harness exercises the application controls.
 
 `crates/auris-gpui/src/harness.rs` opens the whole application in a window with no display, no

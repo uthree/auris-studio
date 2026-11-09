@@ -20,8 +20,6 @@ struct Evaluation {
     timeout_seconds: u64,
     #[serde(default)]
     natural_workflow: bool,
-    #[serde(default)]
-    listening_required: bool,
     /// Explicit fixture grants; production defaults and reviewer decisions stay unchanged.
     #[serde(default)]
     allow_operations: Vec<String>,
@@ -41,6 +39,9 @@ fn transcript(entries: &[ChatEntry]) -> Vec<Value> {
             }
             ChatEntry::Error(text) => json!({"kind":"error","text":text}),
             ChatEntry::Note(key) => json!({"kind":"note","key":format!("{key:?}")}),
+            ChatEntry::Choices { card, picked, .. } => {
+                json!({"kind":"choices","card":card,"picked":picked})
+            }
             ChatEntry::Tool {
                 name,
                 args,
@@ -61,12 +62,6 @@ fn installed_codex_transcribes_via_new_apis_in_the_window(cx: &mut gpui::TestApp
 #[gpui::test]
 #[ignore = "real Codex inference; requires AURIS_CODEX_TRANSCRIPTION_EVAL config"]
 fn installed_codex_composes_named_sections_in_the_window(cx: &mut gpui::TestAppContext) {
-    run(cx, false);
-}
-
-#[gpui::test]
-#[ignore = "real installed Codex/Claude inference and audio critic; requires explicit evaluation config"]
-fn installed_cli_composes_and_relistens_in_the_window(cx: &mut gpui::TestAppContext) {
     run(cx, false);
 }
 
@@ -246,56 +241,5 @@ fn run(cx: &mut gpui::TestAppContext, cover: bool) {
             "named form required: {report}"
         );
         assert!(report["tracks"].as_u64().unwrap() > before.tracks.len() as u64);
-        if config.listening_required {
-            let entries = report["entries"].as_array().unwrap();
-            let listens: Vec<_> = entries
-                .iter()
-                .enumerate()
-                .filter_map(|(index, entry)| {
-                    if entry["name"] != "listen" || entry["ok"] != true {
-                        return None;
-                    }
-                    let detail = entry["detail"].as_str()?;
-                    serde_json::from_str::<Value>(detail)
-                        .ok()
-                        .map(|result| (index, result))
-                })
-                .collect();
-            assert!(listens.len() >= 2, "actual successful auditions required");
-            assert!(
-                listens
-                    .iter()
-                    .all(|(_, result)| result["audio_sent"] == true)
-            );
-            let comparison = listens
-                .iter()
-                .find(|(_, result)| result["compare_to"].is_string())
-                .expect("actual A/B audition required");
-            let baseline = listens
-                .iter()
-                .find(|(_, result)| result["audition_id"] == comparison.1["compare_to"])
-                .expect("baseline must come from this trial");
-            assert_eq!(baseline.1["range"], comparison.1["range"]);
-            assert!(
-                comparison.1["revision"].as_u64().unwrap()
-                    > baseline.1["revision"].as_u64().unwrap(),
-                "a real edit must separate auditions"
-            );
-            assert!(entries[baseline.0 + 1..comparison.0].iter().any(|entry| {
-                entry["ok"] == true
-                    && match entry["name"].as_str() {
-                        Some("read_notes" | "read_mixer_graph" | "inspect_project") => true,
-                        Some("mixer_graph") => entry["args"]
-                            .as_str()
-                            .and_then(|args| serde_json::from_str::<Value>(args).ok())
-                            .is_some_and(|args| args["operation"]["action"] == "read"),
-                        _ => false,
-                    }
-            }));
-            assert_eq!(
-                comparison.1["audio"]["attenuation_db"],
-                comparison.1["before"]["audio"]["attenuation_db"]
-            );
-        }
     }
 }

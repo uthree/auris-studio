@@ -254,6 +254,48 @@ impl AurisApp {
         }
     }
 
+    /// Writes a chord clip with or without its root struck below the voicing.
+    pub(crate) fn set_clip_low_root(&mut self, clip: ClipId, low_root: bool) {
+        let Some(recipe) = self.session.clip_recipe(clip) else {
+            return;
+        };
+        if recipe.low_root == low_root {
+            return;
+        }
+        let recipe = ClipRecipe {
+            low_root,
+            ..recipe.clone()
+        };
+        match self.session.set_clip_recipe(clip, recipe) {
+            Ok(_) => {
+                self.forget_rewritten_notes(clip);
+                self.report_clip_preset(clip);
+            }
+            Err(error) => self.set_failed_status(self.failure(Key::MenuGenerateClip, &error)),
+        }
+    }
+
+    /// Writes a chord clip with its notes beginning a note value apart, bottom first.
+    pub(crate) fn set_clip_strum(&mut self, clip: ClipId, strum: u16) {
+        let Some(recipe) = self.session.clip_recipe(clip) else {
+            return;
+        };
+        if recipe.strum == strum {
+            return;
+        }
+        let recipe = ClipRecipe {
+            strum,
+            ..recipe.clone()
+        };
+        match self.session.set_clip_recipe(clip, recipe) {
+            Ok(_) => {
+                self.forget_rewritten_notes(clip);
+                self.report_clip_preset(clip);
+            }
+            Err(error) => self.set_failed_status(self.failure(Key::MenuGenerateClip, &error)),
+        }
+    }
+
     /// The rows a generated clip adds to its own menu.
     pub(super) fn generated_clip_rows(&self, menu: ContextMenu, clip: ClipId) -> ContextMenu {
         let anchor = menu.anchor;

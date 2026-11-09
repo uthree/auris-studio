@@ -5,7 +5,7 @@
 Ordinary composition uses an existing Codex or Claude Code environment and installed Auris tools:
 write, inspect notes, render, measure, make justified repairs, and deliver. Built-in instruments
 need no evaluator installation. Synthesized singing additionally needs a suitable installed voice.
-External music evaluation is a separate [development experiment](development-audio-evaluation.md).
+An agent whose model takes audio input can [hear the song itself](agent-listening.md).
 
 Saved-project MCP, the built-in Claude/Codex backends and native API agents share
 canonical session commands, schemas and validation. Saved calls add `project`
@@ -64,13 +64,22 @@ preserve clip curves, performance, recipes and playback windows.
   "expected_revision":"<revision from read_notes>",
   "input":{"kind":"inline","edits":[{"kind":"patch","clip":2,
     "update":[{"index":0,"velocity":0.7}],
-    "add":[{"pitch":62,"start_tick":13,"length_ticks":997,"velocity":0.8}]}]}
+    "add":[{"pitch":62,"bar":3,"beat":2.5,"length_beats":1.5,"velocity":0.8}]}]}
 }
 ```
 
-Times are integer clip-relative ticks. `ticks_per_quarter` is returned by reads;
-there is no conversion to rounded meter beats. Notes must fit the clip, have a
-positive tick length, MIDI pitch 0..127 and velocity 0..1. All changes validate
+Positions are musical, never ticks. `bar` is the 1-based song bar, the same
+number `add_clip` and `edit_harmony` use, not one counted from the clip. `beat`
+is 1-based inside that bar, in the meter's beat (a quarter in 4/4, an eighth in
+6/8), and fractional for subdivisions: `2.5` is the offbeat, `2.25` a sixteenth,
+`2.333` a triplet. `length_beats` counts the same beat and may cross bar lines.
+An attack must sit on a straight subdivision down to an eighth of a beat or a
+triplet down to a sixth (within a hundredth of a beat, which is then snapped
+exactly); anything between is refused with the nearest choices, because feel
+belongs to swing and humanize performance rather than to offset attacks. Reads
+return the same fields, each clip's `bars` as `[first, last]`, and
+`on_grid: false` on a stored attack (recorded or imported) that an edit would
+refuse. Notes must fit the clip, have a positive length, MIDI pitch 0..127 and velocity 0..1. All changes validate
 before a single atomic edit. Stale revisions are refused without changing notes.
 Inline input allows 4096 note changes. For larger scores, choose
 `input:{"kind":"file","source_path":"/absolute/notes.json"}`: a local UTF-8 JSON
@@ -120,6 +129,16 @@ absolute ticks and note positions stay unchanged. Read reports native BPM bounds
 Meter numerator is 1..32 and denominator a power of two within 1..32. Use `set_loop`
 for a one-based bar playback range.
 
+`layer` doubles or splits a part without copying its notes. `add` places an
+instrument track below a melodic or singer source; drums and other layers cannot be
+followed. `shape` changes only the fields it names: `lowest`/`highest` choose notes
+by source key, `voice` keeps `all`, the `top` or the `bottom` note at each onset,
+then `transpose` (semitones), `velocity` and `length` (multipliers) and
+`offset_quarters` apply; `reset` restores the identity first. `read` returns the
+followed track and shape, which `inspect_project` also lists under `layer`. A layer
+has no clips of its own, so note edits go to the source. `detach` copies the shaped
+notes into the layer, and removing a source detaches its layers in the same Undo.
+
 ## Sound search, controls and mixing
 
 `search_instruments` takes one `request` object: mode `text` with query, `similar`
@@ -146,9 +165,13 @@ uses the returned send ID. `set_sidechain` replaces or clears a detector source.
 Insert actions add/remove/move/enable effects and read/set native parameters.
 All connections must form a DAG. See [Mixer signal flow](mixer-graph.md).
 
-Use numeric audio inspection for measurements, then normalize_mix if a common
-source-fader move is appropriate. It preserves relative balance and can stop short
-at fader or peak limits. Sound replacement preserves faders but can change output
+Use numeric audio inspection for measurements, then finish every song with
+normalize_mix. It defaults to -14 LUFS under a -1 dBTP ceiling, preserves relative
+balance and can stop short at fader or peak limits. New projects end their master in
+`auris.fx.limiter`; while it stays last in the chain, normalize_mix sets its ceiling to
+the requested one and lets the loudest moment go up to 6 dB into it. Without it the
+first drum hit to reach the ceiling stops the whole lift, which leaves a song written
+note by note several decibels quiet. Sound replacement preserves faders but can change output
 level substantially, so remeasure. Audio file delivery never establishes listening.
 
 `automation` selects a typed target (`track_gain`, `track_pan`, `master_gain`,
@@ -232,6 +255,13 @@ other stages retain their order. Stored notes, generation recipes, authored cont
 and automatic volume contour shapes remain intact. The live host groups changed calls by
 user request; repeating current settings adds no history. The result reads back settings.
 
+Swing is one decision for the whole song. A swung clip moves every position on its half-step
+grid in proportion (eighth swing carries the sixteenths between the eighths), and a sung clip
+is sung swung too, both ends of each note moving so a legato line stays legato. When a
+`set_performance` call changes swing and the song's parts then disagree about it, the result
+carries `swing_warning` naming the tracks on each setting: a part swung alone plays its
+offbeats late against the rest, which is heard as the part dragging.
+
 `note_effects` measures the first loop pass through the actual performer, with at most
 2048 notes and 32 stages. It reports changed onsets, durations, velocities and pitches,
 added/removed notes, simultaneous chord groups, warnings and explicit truncation.
@@ -303,6 +333,20 @@ one inline `transcription` or absolute JSON `path`. Optional `at_tick` controls 
 and `name` names the piano track. Notes remain estimates; review timing and timbres.
 See the [external note API](transcription-api.md) for its validation and permission contract.
 
+`melody_shape` measures a melody track section by section — low and high note, average pitch,
+leaps of a fourth or more — and compares every section labelled as a chorus (サビ, chorus,
+hook, refrain) with the section just before it. It warns when a chorus sits less than a minor
+third higher on average, does not reach a higher peak, moves only by step, or when the song's
+highest note is outside every chorus. It reads the written notes, taking the top note where
+several sound together.
+
+`arrangement_shape` measures the backing against the form: the parts playing in each section and
+their notes per bar, how many different one-bar patterns each part plays, and how many bars of
+intro and outro surround the voice. It warns when every section has the same parts, when a
+chorus is no fuller than the section before it (neither another part nor 15% more notes a bar),
+when a drum part plays the same bar into a chorus as the bar before (no fill), and when the
+intro or outro is shorter than eight bars.
+
 For a new song, write its musical decisions into the document with `edit_harmony`, for example
 `{"start_bar":1,"bars":16,"key":"D major","chords":["I","IV V","vi","ii V"]}`.
 Each array entry is one bar, with one or more chords sharing it equally. In 4/4,
@@ -316,6 +360,10 @@ The chart repeats over the requested bars. The previous key resumes after the ra
 supplied keys replace interior key changes. The operation edits the key/chord map, preserves notes
 and mix, and is one Undo step. Audible chord notes alone do not populate this map.
 `clear_chords:true` clears the selected range; omit `chords` when clearing.
+`clear_key:true` removes the key changes in the range so the key before it runs through
+(the song key at bar 1 always stays), and `clear_section:true` deletes the section names in
+the range, leaving it unnamed while the section after it is kept. Omit `key` or `section`
+when clearing it. A key or section change that restates what is already in force is dropped.
 
 `inspect_audio` reports `harmony_events` for the inspected range: the harmony in
 force at the start, then every chord or key change, including changes inside a
@@ -452,14 +500,39 @@ denials. Note replacement is allowed inside the new disposable candidate; operat
 interactive approval remain unavailable. No external evaluator or shell setup is required.
 Lyric generation applies it to words and phrase structure without claiming known pitches.
 
-The production sequence lives in `crates/auris-agent/src/prompts/composition.md`;
-`prompts/live-tools.md` retains essential operation contracts such as IDs, revisions,
-note units, lyrics, singer takes and final-render verification. Exact schemas and
-detailed task guidance are obtained through discovery and `tool_help` when needed.
-The experimental modular profile additionally selects a production-record workflow.
+The system prompt is the common core in `crates/auris-agent/src/prompts/core.md`:
+IDs, revisions, note units, failure recovery, scope and honesty. The production
+sequence is three phases, each of which returns its own instructions when entered
+([composition-workflows.md](composition-workflows.md)). Exact schemas and detailed
+task guidance are obtained through discovery and `tool_help` when needed.
 The editor panel and workshop composers resolve the same shared prompt; the workshop
 adds its private-session and host-owned export constraints. Codex and Claude Code
-receive the same resolved composition prompt.
+receive the same resolved composition prompt. A composer's policy denies the shell and
+file operations, so CLI backends start it without their own shell and file tools.
+
+Each workshop candidate's folder holds `composer-log.jsonl`, one JSON object per line:
+the assignment, every tool call with its arguments, every result with its text, refused
+permissions, the model's prose between calls and how the attempt ended. Long values are
+cut and the file stops at 8 MiB. It is deleted with the conversation.
+
+Each candidate card shows a label: the round counted from 1, then the candidate's place in
+that round as a letter, so `1B` is the second song of the first round. The director receives
+the same label in `candidate_history`, so the user can ask for "1B's chorus" and be understood,
+and the selection and feedback messages name the label too.
+
+While a candidate is composed, its card shows what the composer says it is doing: the
+composer calls `report_status` with one short line in the assignment's language as it starts
+each step. Until the first line, and while the host plans, renders, stops or recovers it, the
+card shows the host's own label for that stage instead.
+
+A composer edits a copy of its parent candidate and sees no other version. When the user
+wants material back from an earlier one ("return the chorus to the previous melody"), the
+director lists those candidates in the direction's `sources`. The host loads their saved
+songs into the composer's session, read-only, and the `source_material` tool lists their
+note clips with whether each matches the current score, then restores named clips' notes,
+lyrics and phonemes exactly, as one Undo edit. Clip IDs carry over from a candidate to its
+children, so a clip restores into the same ID. Sources that are not saved, repeat the
+parent or name nothing are dropped, and at most four are kept.
 
 Settings → Agent includes a multiline **System prompt** editor shared by Codex,
 Claude Code and Rig models. It starts with the current standard prompt in full.
@@ -477,9 +550,35 @@ A failed save retains the draft and leaves the active preferences unchanged.
 
 This edits the live agent's shared instructions. Native CLI tool guidance,
 operation schemas/help, optional workflow responses and permission checks remain
-separate. Approval-review and audio-critic instructions are independent. Saved-file
+separate. Approval-review instructions are independent. Saved-file
 MCP uses its own instructions. Custom prompts count toward the local model's
 context budget just like the standard prompt.
+
+## Composition commands
+
+Four slash commands in the Agent panel start a production at a chosen phase. The transcript
+shows what was typed; the model receives an assignment built by
+`auris_toolbox::phase_commands`, followed by the user's text. The assignment names where
+the work starts and stops and sends the model through `enter_phase`, which returns that
+phase's instructions, so the phase text lives in one place.
+
+| Command | What it asks for |
+| --- | --- |
+| `/compose <brief>` | The whole song in one go: score, then arrangement, then mix, without stopping at the demo. |
+| `/draft <brief>` | A demo: the score phase only, with the foreground melody over one plain chord part and roles registered. It stops there and asks whether to arrange or revise. |
+| `/mix [direction]` | The mix phase on the open song. Roles are registered from the song as it stands when there are none, and the phase lock keeps every note, sound and performance. A fix that needs an earlier phase is reported instead of made. |
+| `/review [direction]` | A read-only review: `lint_project` (score, then audio), the notes, `melody_shape` and `arrangement_shape`, and `inspect_audio` measurements. When the model can hear, it also listens to excerpts with `listen`. It then lists the problems, the findings it judges to be false positives, and a plan to fix the rest in phase order. |
+
+`/compose` and `/draft` need a brief; sent without one, the panel asks for it and sends
+nothing. Completion and `/help` list all four.
+
+`/review` runs its whole turn in Plan mode, whatever mode is chosen and whatever allow rules
+exist. The worker receives that policy for the tools it runs itself, and the window refuses
+live edits, including `production_record` writes, until the next turn. A false positive is
+only proposed as an ignore rule. Once the user agrees, a later turn calls `ignore_lint`, which
+needs confirmation as a removal does: Edit mode asks, Auto review has the reviewer weigh it against what the user typed, and only Bypass or an allow rule skips it. It records
+the rule with its reason as one Undo step, and the rule shows in the Problems panel like one
+added by hand.
 
 ## Ollama configuration and failure recovery
 

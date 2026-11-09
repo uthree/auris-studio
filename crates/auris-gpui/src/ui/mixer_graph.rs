@@ -32,6 +32,10 @@ const MAX_ZOOM: f32 = 2.0;
 #[path = "mixer_graph_tooltip.rs"]
 mod wire_tooltip;
 
+#[path = "mixer_graph_menu.rs"]
+mod menu;
+pub use menu::NewMixerTrack;
+
 #[cfg(test)]
 #[path = "mixer_graph_wires_tests.rs"]
 mod wire_tests;
@@ -94,6 +98,7 @@ fn wire_style(kind: MixerEdgeKind, theme: &Theme) -> (gpui::Hsla, EdgeStroke) {
         MixerEdgeKind::Output => (theme.mixer_output_color(), EdgeStroke::Solid),
         MixerEdgeKind::Send { .. } => (theme.mixer_send_color(), EdgeStroke::Dashed),
         MixerEdgeKind::Sidechain => (theme.mixer_sidechain_color(), EdgeStroke::Dotted),
+        MixerEdgeKind::Notes => (theme.mixer_notes_color(), EdgeStroke::Dashed),
         MixerEdgeKind::Chain => (theme.text_faint, EdgeStroke::Solid),
     }
 }
@@ -141,6 +146,7 @@ fn wire_lanes(graph: &MixerGraph) -> HashMap<SharedString, f32> {
                 MixerEdgeKind::Send { send, .. } => (1, send.0),
                 MixerEdgeKind::Sidechain => (2, 0),
                 MixerEdgeKind::Chain => (3, 0),
+                MixerEdgeKind::Notes => (4, 0),
             });
             let center = (edges.len() - 1) as f32 / 2.0;
             edges.into_iter().enumerate().map(move |(index, edge)| {
@@ -197,7 +203,24 @@ where
     L: Into<SharedString>,
     F: Fn(&gpui::ClickEvent, &mut gpui::Window, &mut gpui::App) + 'static,
 {
-    button(id, label, style, active, color, theme, click).h(Metrics::CONTROL_HEIGHT * zoom)
+    // The card sits in the canvas's rem scope, so rem-sized text shrinks with the zoom. A
+    // button's own caption is sized in pixels by the design language and would stay full size in
+    // a card a third as wide; the caption is given in rems instead, and truncates if the padding,
+    // which does not scale, still leaves too little room.
+    let label: SharedString = label.into();
+    crate::ui::widgets::button_with_content(
+        id,
+        div().min_w_0().truncate().text_sm().child(label),
+        style,
+        ButtonState::Enabled(active.into()),
+        color,
+        theme,
+        click,
+    )
+    .h(Metrics::CONTROL_HEIGHT * zoom)
+    .max_w_full()
+    .min_w_0()
+    .overflow_hidden()
 }
 
 fn node_id(node: MixerNode) -> SharedString {
@@ -218,6 +241,7 @@ fn edge_id(edge: &MixerEdge) -> SharedString {
         MixerEdgeKind::Send { send, .. } => format!("mix-send-{}", send.0),
         MixerEdgeKind::Output => format!("mix-output-{source}-{}", edge.target.key()),
         MixerEdgeKind::Sidechain => format!("mix-key-{source}-{}", edge.target.key()),
+        MixerEdgeKind::Notes => format!("mix-notes-{source}-{}", edge.target.key()),
         MixerEdgeKind::Chain => format!("mix-chain-{}-{}", edge.source.key(), edge.target.key()),
     }
     .into()
@@ -354,11 +378,21 @@ impl AurisApp {
     }
 
     /// The graph is rebuilt from the document, preserving the positions of surviving identities.
-    pub(crate) fn render_mixer_graph(&mut self, cx: &mut gpui::Context<Self>) -> AnyElement {
+    pub(crate) fn render_mixer_graph(
+        &mut self,
+        window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) -> AnyElement {
         self.poll_mixer_signals();
         let document = self.session.mixer_graph();
         if self.mixer_canvas.is_none() {
             let saved = self.project().mixer_graph_view.clone().sanitized();
+            // A project nobody has arranged the graph of opens framed on the whole of it. The
+            // default camera showed the first track and a wire running off the bottom towards a
+            // master that was out of sight.
+            if saved == MixerGraphView::default() {
+                cx.on_next_frame(window, |this, window, cx| this.fit_mixer_view(window, cx));
+            }
             let state = cx.new(|_| {
                 let mut state = FlowState::new(Vec::new(), Vec::new());
                 state.externally_managed = true;
@@ -597,7 +631,18 @@ impl AurisApp {
                         }),
                     )),
             )
-            .child(div().flex_1().min_h_0().min_w_0().children(view))
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .min_w_0()
+                    // A right click that no node and no wire claimed landed on the canvas itself.
+                    .on_mouse_down(
+                        MouseButton::Right,
+                        Self::opens_menu(cx, |this, at| this.mixer_canvas_menu(at)),
+                    )
+                    .children(view),
+            )
             .child(
                 div()
                     .px_2()
@@ -623,9 +668,33 @@ impl AurisApp {
                                 self.t(Key::MenuSidechain),
                                 theme.mixer_sidechain_color(),
                                 EdgeStroke::Dotted,
-                            )),
-                    )
-                    .child(self.t(Key::MixerGraphHelp)),
+                            ))
+                            .child(wire_legend(
+                                self.t(Key::MixerNotesWire),
+                                theme.mixer_notes_color(),
+                                EdgeStroke::Dashed,
+                            ))
+                            // The how-to, behind a mark rather than under the graph: two lines
+                            // of instructions were drawn on every frame, over the wires, and the
+                            // graph is what the panel is for.
+                            .child(
+                                div()
+                                    .id("mixer-graph-help")
+                                    .debug_selector(|| "mixer-graph-help".into())
+                                    .flex()
+                                    .items_center()
+                                    .tooltip(crate::ui::tooltip::keyed_tip(
+                                        self.t(Key::MixerGraphHelp),
+                                        "",
+                                        &theme,
+                                    ))
+                                    .child(
+                                        atelier::Icon::new(atelier::IconName::Info)
+                                            .size(gpui::px(12.))
+                                            .color(theme.text_muted),
+                                    ),
+                            ),
+                    ),
             )
             .into_any_element()
     }
@@ -904,6 +973,7 @@ impl AurisApp {
                                 .target_handle("sidechain");
                         }
                         MixerEdgeKind::Output => flow = flow.label(self.t(Key::OutputShort)),
+                        MixerEdgeKind::Notes => flow = flow.label(self.t(Key::MixerNotesWire)),
                         _ => {}
                     }
                     flow
@@ -944,7 +1014,7 @@ impl AurisApp {
         }
     }
 
-    fn arrange_mixer_nodes(&mut self, cx: &mut gpui::Context<Self>) {
+    pub(crate) fn arrange_mixer_nodes(&mut self, cx: &mut gpui::Context<Self>) {
         let layout = positions(&self.session.mixer_graph());
         if let Some(canvas) = &mut self.mixer_canvas {
             let before = canvas.presentation(cx);
@@ -1098,7 +1168,18 @@ impl AurisApp {
                     cx.notify();
                 }),
             )
-            .child(div().truncate().text_color(theme.text_muted).child(name));
+            .on_mouse_down(
+                MouseButton::Right,
+                Self::opens_menu(cx, move |this, at| this.mixer_node_menu(at, node)),
+            )
+            .child({
+                let selector = format!("graph-name-{id}");
+                div()
+                    .debug_selector(move || selector.clone())
+                    .truncate()
+                    .text_color(theme.text_muted)
+                    .child(name)
+            });
         match node {
             MixerNode::Effect(_, slot) => {
                 let effect = owner
@@ -1295,7 +1376,8 @@ impl AurisApp {
                 }
             }
         }
-        card.into_any_element()
+        card.children(self.mixer_comment_notes(node, zoom, cx))
+            .into_any_element()
     }
 }
 
@@ -1402,6 +1484,105 @@ mod tests {
     }
 
     #[gpui::test]
+    fn a_comment_is_written_on_a_node_and_shown_there_with_its_lines(cx: &mut TestAppContext) {
+        use crate::ui::context_menu::{MenuCommand, MenuEntry};
+        use crate::ui::prompt::PromptTarget;
+
+        let (app, cx) = open(cx);
+        let bus = app.update(cx, |this, _| {
+            show(this);
+            this.session.add_bus_track("Bus")
+        });
+        paint(&app, cx);
+        let node = MixerNode::Strip(Some(bus));
+        expose_pair(&app, cx, node, MixerNode::Strip(None));
+        let host = CommentHost::Mixer(node);
+
+        let name = cx
+            .debug_bounds(selector(format!("graph-name-{}", node_id(node))))
+            .unwrap();
+        crate::harness::right_press(cx, name.center());
+        let offered = app.read_with(cx, |this, _| {
+            this.menu.as_ref().is_some_and(|menu| {
+                menu.entries.iter().any(|entry| {
+                    matches!(entry, MenuEntry::Item(item)
+                        if matches!(item.command, MenuCommand::AddCommentAt { host: h, .. } if h == host))
+                })
+            })
+        });
+        assert!(offered, "the node's own menu offers a comment on it");
+        app.update(cx, |this, cx| {
+            this.menu = None;
+            this.run_menu_command(
+                MenuCommand::AddCommentAt {
+                    host,
+                    at: Ticks::ZERO,
+                    pitch: None,
+                },
+                cx,
+            );
+            assert!(matches!(
+                this.prompt.as_ref().and_then(|prompt| prompt.target()),
+                Some(PromptTarget::NewComment { host: h, .. }) if h == host
+            ));
+        });
+        cx.simulate_input("ボーカルの下に");
+        cx.simulate_keystrokes("enter");
+        paint(&app, cx);
+        let id = app.read_with(cx, |this, _| {
+            let comments = &this.project().track(bus).unwrap().mixer.comments;
+            assert_eq!(comments.len(), 1);
+            assert_eq!(comments[0].text, "ボーカルの下に");
+            assert!(this.project().track(bus).unwrap().comments.is_empty());
+            comments[0].id
+        });
+
+        app.update(cx, |this, _| {
+            this.session
+                .set_comment_text(host, id, "ボーカルの下に\nサビだけ前へ")
+                .unwrap();
+        });
+        paint(&app, cx);
+        let one_line = cx
+            .debug_bounds(selector(crate::ui::comments::tag_selector(host, id)))
+            .expect("the note is drawn on its node");
+        app.update(cx, |this, _| {
+            this.session
+                .set_comment_text(host, id, "ボーカルの下に\nサビだけ前へ\n間奏は控えめ")
+                .unwrap();
+        });
+        paint(&app, cx);
+        let three_lines = cx
+            .debug_bounds(selector(crate::ui::comments::tag_selector(host, id)))
+            .unwrap();
+        assert!(
+            three_lines.size.height > one_line.size.height,
+            "every line of the comment takes a line on the node"
+        );
+
+        crate::harness::click_at(cx, three_lines.center(), gpui::Modifiers::default());
+        app.read_with(cx, |this, cx| {
+            assert!(
+                matches!(
+                    this.prompt.as_ref().and_then(|prompt| prompt.target()),
+                    Some(PromptTarget::Comment { host: h, id: i }) if h == host && i == id
+                ),
+                "a press on the note opens its text"
+            );
+            assert!(
+                this.mixer_canvas
+                    .as_ref()
+                    .unwrap()
+                    .state
+                    .read(cx)
+                    .drag_state
+                    .is_none(),
+                "and does not take hold of the node"
+            );
+        });
+    }
+
+    #[gpui::test]
     fn track_and_fader_controls_share_one_graph_node(cx: &mut TestAppContext) {
         let (app, cx) = open(cx);
         let track = app.update(cx, |this, _| {
@@ -1418,7 +1599,11 @@ mod tests {
         );
         app.read_with(cx, |this, _| {
             let nodes = &this.mixer_canvas.as_ref().unwrap().document.nodes;
-            assert_eq!(nodes.len(), this.project().tracks.len() + 1);
+            let strips = nodes
+                .iter()
+                .filter(|node| matches!(node, MixerNode::Strip(_)))
+                .count();
+            assert_eq!(strips, this.project().tracks.len() + 1);
             assert_eq!(
                 nodes
                     .iter()
@@ -1427,7 +1612,12 @@ mod tests {
                 1,
                 "a track and its fader have one shared node"
             );
-            assert!(nodes.iter().all(|node| matches!(node, MixerNode::Strip(_))));
+            // The only other nodes are the new document's master inserts — its limiter.
+            assert_eq!(
+                nodes.len() - strips,
+                this.project().master.effects.len(),
+                "no node for a fader of its own"
+            );
         });
     }
 

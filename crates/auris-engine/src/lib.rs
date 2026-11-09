@@ -29,7 +29,8 @@
 //!
 //! [`render_block`] is the single implementation of "produce N frames". Realtime playback calls
 //! it from the device callback; [`render_project`] calls it in a loop as fast as the CPU allows.
-//! Because there is only one path, an export matches what was heard, sample for sample.
+//! Both use the same DSP and timeline. Offline rendering can process independent tracks in
+//! parallel; stable generation-order summation may differ from playback by floating-point roundoff.
 //!
 //! # Audio going the other way
 //!

@@ -126,6 +126,7 @@ fn agent_lyrics_name_the_complete_singer_clip_and_undo_with_the_score(cx: &mut T
             .agent_command(auris_session::live_agent::Command::WriteLyrics {
                 clip: clip.0,
                 text: text.clone(),
+                reading: None,
                 from: None,
             })
             .unwrap();

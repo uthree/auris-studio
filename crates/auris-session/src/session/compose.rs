@@ -20,16 +20,13 @@ use auris_sampler::{SAMPLER_ID, store_preset};
 use crate::error::SessionError;
 use crate::history::Edit;
 
+#[cfg(test)]
+use super::levels::LIMITER_CEILING;
+use super::levels::MASTER_LIMITER;
 use super::{ComposeReport, Session};
 
 #[path = "compose_sources.rs"]
 mod sources;
-
-/// The effect a composed piece gets across its master.
-const MASTER_LIMITER: &str = "auris.fx.limiter";
-
-/// The limiter parameter that sets the level nothing may pass.
-const LIMITER_CEILING: &str = "ceiling_db";
 
 /// Where the composed master's ceiling is set, in decibels.
 ///
@@ -183,11 +180,11 @@ impl Session {
         let fallback = self
             .registry
             .default_instrument_id()
-            .filter(|id| *id != SAMPLER_ID)
+            .filter(|id| !auris_sampler::needs_asset(id))
             .or_else(|| {
                 self.registry
                     .instruments()
-                    .find(|d| d.id != SAMPLER_ID)
+                    .find(|d| !auris_sampler::needs_asset(&d.id))
                     .map(|d| d.id.as_ref())
             })
             .ok_or_else(|| SessionError::UnknownPlugin("<any instrument>".into()))?
@@ -316,7 +313,7 @@ impl Session {
             let kept_instrument = native.is_none()
                 && source.is_none()
                 && sound.is_none()
-                && track.instrument != SAMPLER_ID
+                && !auris_sampler::needs_asset(&track.instrument)
                 && self.registry.has_instrument(&track.instrument);
             let instrument = match (&source, &sound, &native) {
                 (Some(source), _, _) => source.instrument_id(),
@@ -550,26 +547,11 @@ impl Session {
         // ceiling held by turning every composed mix down instead would have charged the pieces
         // that never went over for the ones that did.
         //
-        // Written into the document as a slot anyone can see and take off, rather than clamped
-        // somewhere in the renderer. It is a mixing decision, and a mixing decision a person
-        // cannot find is one they cannot disagree with.
-        match self.registry.has_effect(MASTER_LIMITER) {
-            true => {
-                if let Some(slot) = project.add_effect(None, MASTER_LIMITER)
-                    && let Some(added) = project.master.effects.iter_mut().find(|s| s.id == slot)
-                {
-                    // Written down rather than left to the plugin's default, so the ceiling the
-                    // piece was measured against is the ceiling the file carries.
-                    added
-                        .state
-                        .params
-                        .insert(LIMITER_CEILING.to_string(), MASTER_CEILING_DB);
-                }
-            }
-            // Reported the way a missing reverb on a bus is, and for a better reason: without it
-            // the piece is the same piece, only with nothing standing between a rare loud bar and
-            // the end of the scale.
-            false => report.substituted.push(MASTER_LIMITER.to_string()),
+        // Reported the way a missing reverb on a bus is when the registry has none, and for a
+        // better reason: without it the piece is the same piece, only with nothing standing
+        // between a rare loud bar and the end of the scale.
+        if !super::levels::install_master_limiter(&self.registry, &mut project, MASTER_CEILING_DB) {
+            report.substituted.push(MASTER_LIMITER.to_string());
         }
 
         // The composer's automation, which today is one fader: a fade-out ending arrives as
@@ -624,7 +606,10 @@ mod tests {
     #[test]
     fn composed_arrangement_survives_save_regeneration_retake_and_undo() {
         use auris_core::NoteTransform;
-        let mut session = session();
+        // Without the balancing render: this is about the bass clip's transforms, and measuring
+        // a whole city-pop arrangement in a debug build took two and a half minutes — the
+        // longest single test in the workspace.
+        let mut session = Session::new(SessionOptions::headless().with_balance(false)).unwrap();
         let spec = auris_compose::preset("city-pop").unwrap().spec();
         let draft = auris_compose::compose(&spec);
         session.compose(&draft).unwrap();
@@ -1601,7 +1586,8 @@ mod tests {
     fn a_composed_document_arrives_already_routed() {
         // The composer names a bus by its position, because it has no ids to name one by. This is
         // where the two meet, and getting it wrong would point every send at the wrong strip.
-        let mut session = session();
+        // Routing does not depend on the levels, so skip the render that would measure them.
+        let mut session = Session::new(SessionOptions::headless().with_balance(false)).unwrap();
         let spec = auris_compose::SongSpec::default();
         let piece = auris_compose::compose(&spec);
         session.compose(&piece).unwrap();

@@ -19,6 +19,7 @@ pub(crate) enum Surface {
     Analysis,
     TimbreMap,
     Visualizer,
+    VideoExport,
 }
 
 /// Toggles a panel between its dock and a native window.
@@ -37,6 +38,7 @@ impl Surface {
             Self::Analysis => app.analysis_panel,
             Self::TimbreMap => app.timbre_map.open,
             Self::Visualizer => app.visualizer.open,
+            Self::VideoExport => app.video_export.open,
         }
     }
 
@@ -61,6 +63,7 @@ impl Surface {
             Self::Analysis => app.t(Key::AnalysisTitle).to_owned(),
             Self::TimbreMap => app.t(Key::TimbreMap).to_owned(),
             Self::Visualizer => app.t(Key::VisualizerTitle).to_owned(),
+            Self::VideoExport => app.t(Key::VideoExportTitle).to_owned(),
         }
     }
 
@@ -77,6 +80,7 @@ impl Surface {
             Self::Analysis => app.analysis_panel = false,
             Self::TimbreMap => app.close_timbre_map(),
             Self::Visualizer => app.close_visualizer(),
+            Self::VideoExport => app.video_export.open = false,
         }
     }
 }
@@ -118,9 +122,15 @@ fn open_surface(app: WeakEntity<AurisApp>, surface: Surface, cx: &mut App) {
         }
         Surface::Typing => size(px(680.), px(340.)),
         Surface::Analysis => size(px(540.), px(650.)),
-        Surface::TimbreMap => size(px(900.), px(700.)),
+        Surface::TimbreMap => size(px(1120.), px(720.)),
         Surface::Visualizer => {
             let preferred = size(px(780.), px(620.));
+            cx.primary_display().map_or(preferred, |display| {
+                crate::fitted_size(preferred, display.bounds().size)
+            })
+        }
+        Surface::VideoExport => {
+            let preferred = size(px(980.), px(660.));
             cx.primary_display().map_or(preferred, |display| {
                 crate::fitted_size(preferred, display.bounds().size)
             })
@@ -134,6 +144,7 @@ fn open_surface(app: WeakEntity<AurisApp>, surface: Surface, cx: &mut App) {
             window_min_size: Some(match surface {
                 Surface::Typing => size(px(640.), px(340.)),
                 Surface::Visualizer => size(px(480.), px(520.)),
+                Surface::VideoExport => size(px(640.), px(480.)),
                 Surface::TimbreMap => size(px(640.), px(540.)),
                 _ => size(px(320.), px(240.)),
             }),
@@ -250,6 +261,7 @@ impl AurisApp {
             Surface::Analysis,
             Surface::TimbreMap,
             Surface::Visualizer,
+            Surface::VideoExport,
         ]);
         let mut handles = std::mem::take(&mut self.auxiliary_windows);
         let mut kept = BTreeMap::new();
@@ -304,7 +316,8 @@ impl AurisApp {
             | Surface::Typing
             | Surface::Analysis
             | Surface::TimbreMap
-            | Surface::Visualizer),
+            | Surface::Visualizer
+            | Surface::VideoExport),
         ) = current
         {
             surface.close(self);
@@ -341,7 +354,8 @@ impl Render for AuxiliaryWindow {
             let chrome = titlebar::bar(
                 window,
                 &theme,
-                titlebar::Parts::new("utility-title", title),
+                titlebar::Parts::new("utility-title", title)
+                    .leading(app.render_application_menu_button(cx)),
                 titlebar::controls(
                     window,
                     &theme,
@@ -374,6 +388,7 @@ impl Render for AuxiliaryWindow {
                     .render_analysis_panel(cx)
                     .unwrap_or_else(|| div().into_any_element()),
                 Surface::Visualizer => app.render_visualizer(window, cx),
+                Surface::VideoExport => app.render_video_export(window, cx),
                 Surface::TimbreMap => app
                     .render_timbre_map(window, cx)
                     .unwrap_or_else(|| div().into_any_element()),
@@ -396,7 +411,6 @@ impl Render for AuxiliaryWindow {
                 .font(theme.font.clone())
                 .text_sm()
                 .child(chrome)
-                .children(menu_bar)
                 .child(
                     div()
                         .flex_1()
@@ -406,6 +420,7 @@ impl Render for AuxiliaryWindow {
                         .child(content),
                 )
                 .children(overlays)
+                .children(menu_bar)
                 .children(titlebar::resize_handles(window))
                 .into_any_element()
         });
@@ -537,7 +552,7 @@ mod tests {
             assert_eq!(app.session.typing_keyboard().sounding().count(), 0);
         });
     }
-    use gpui::{Modifiers, MouseButton, TestAppContext, VisualTestContext, point};
+    use gpui::{Modifiers, MouseButton, TestAppContext, VisualTestContext, point, px};
 
     #[gpui::test]
     fn all_panels_open_once_and_return_to_their_docks(cx: &mut TestAppContext) {
@@ -642,6 +657,59 @@ mod tests {
         app.read_with(cx, |app, _| {
             assert!(app.plugin_window.is_none());
             assert!(!app.auxiliary_windows.contains_key(&Surface::Plugin));
+        });
+    }
+
+    #[gpui::test]
+    fn a_choice_in_the_plugin_window_opens_its_menu_and_sets_the_value(cx: &mut TestAppContext) {
+        let (app, cx) = harness::open(cx);
+        let (track, target, descriptor) = app.update(cx, |app, cx| {
+            let track = app
+                .session
+                .add_default_instrument_track("Choice test")
+                .unwrap();
+            let subject = PluginSubject::Instrument(track);
+            let descriptor = app
+                .session
+                .instrument_descriptors(track)
+                .iter()
+                .find(|descriptor| descriptor.key == "render_quality")
+                .expect("the physical piano has a render quality")
+                .clone();
+            app.open_plugin_window(subject);
+            cx.notify();
+            (track, subject.param_target(descriptor.id), descriptor)
+        });
+        harness::paint(&app, cx);
+        // The last input went to the main window, as it does when the plugin window has just
+        // been opened from the inspector.
+        let main = cx.update(|window, _| window.window_handle().window_id());
+        app.update(cx, |app, _| app.event_window = Some(main));
+        let handle = app.read_with(cx, |app, _| app.auxiliary_windows[&Surface::Plugin]);
+        let mut utility = VisualTestContext::from_window(handle.into(), cx);
+        // Tall enough that the last of the piano's parameters is on screen without scrolling.
+        utility.simulate_resize(gpui::size(px(1400.), px(1400.)));
+        harness::paint(&app, cx);
+        // A parameter row's id carries its track, so two tracks' rows never collide.
+        let key = track.0 as usize * 4096 + descriptor.id.index();
+        let selector = Box::leak(format!("pw-inst-{key}").into_boxed_str());
+        let bounds = utility
+            .debug_bounds(selector)
+            .expect("the plugin window draws the choice");
+        utility.simulate_click(bounds.center(), Modifiers::none());
+        harness::paint(&app, cx);
+        assert!(
+            utility.debug_bounds("context-menu-panel").is_some(),
+            "a left click on a choice opens its menu in the plugin window"
+        );
+        harness::choose(
+            &app,
+            &mut utility,
+            &crate::ui::context_menu::MenuCommand::SetParamChoice { target, value: 0.0 },
+        );
+        app.read_with(&utility, |app, _| {
+            assert_eq!(app.session.param_value(target, &descriptor), 0.0);
+            assert!(app.menu.is_none());
         });
     }
 

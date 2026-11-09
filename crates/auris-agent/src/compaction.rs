@@ -73,7 +73,7 @@ fn apply(
         );
     }
     memory.summary = summary.into();
-    memory.turns.drain(..count);
+    memory.forget_oldest(count);
     Ok(())
 }
 

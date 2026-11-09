@@ -1,9 +1,10 @@
 //! Bounded text discovery and reusable acoustic search over exact library preset addresses.
 
-use super::{Session, TimbreMapControl, TimbreSound};
+use super::{Session, SoundEnvelope, TimbreMapControl, TimbreSound};
 use crate::prelude::*;
+use crate::{EnvelopeTargets, TimbreCharacter, TimbreTargets};
 use auris_core::plugin::{Instrument, PluginState, PrepareContext};
-use auris_dsp::timbre::{standardize_timbres, timbre_features};
+use auris_dsp::timbre::{standardize_timbres, timbre_character, timbre_features};
 use base64::Engine;
 use sha2::{Digest, Sha256};
 use std::collections::{HashSet, VecDeque};
@@ -19,6 +20,29 @@ pub(super) use arrangement_sound::SoundPreparation;
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, schemars::JsonSchema)]
 #[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
 pub enum SoundSearch {
+    /// Rank measured sounds by Japanese/English impressions, explicit acoustic targets, or ranges on
+    /// the attack/decay/sustain/release measured from real notes (C2, C4, C6 at velocity 100).
+    Character {
+        /// Supported impressions, e.g. `ふんわり`, `ポコポコ`, `soft bright`. Use targets for arbitrary prose/negation.
+        #[serde(default)]
+        query: String,
+        /// Explicit 0..1 targets override dictionary interpretations.
+        #[serde(default)]
+        targets: TimbreTargets,
+        /// Measured envelope ranges in ms and dB, e.g. `{"attack_ms":{"max":10},"release_ms":{"min":800}}`.
+        #[serde(default)]
+        envelope: Box<EnvelopeTargets>,
+        /// Optional previously returned sound ID to retain acoustic resemblance.
+        id: Option<String>,
+        /// Optional name/tag words, all required. Use this for instrument families.
+        name: Option<String>,
+        /// Maximum results, 1..50.
+        #[serde(default = "default_limit")]
+        limit: usize,
+        /// Optional source/library restrictions.
+        #[serde(default, flatten)]
+        filter: SoundFilter,
+    },
     /// All query words must occur in the name, library, vendor, or provider tags.
     Text {
         /// Nonempty case-insensitive search words, for example `saw lead` or `Surge bass`.
@@ -232,6 +256,8 @@ impl Sound {
 struct AcousticIndex {
     sounds: Vec<usize>,
     rows: Vec<Vec<f64>>,
+    characters: Vec<TimbreCharacter>,
+    envelopes: Vec<Option<SoundEnvelope>>,
     skipped: Vec<String>,
     limited: bool,
 }
@@ -265,6 +291,9 @@ struct Catalog {
     generation: String,
     sounds: Vec<Sound>,
     errors: Vec<String>,
+    /// Fonts the document names but could not load, each with its reason; repeated in every
+    /// search page so a model looking for one of their sounds learns why it is not there.
+    unloaded_fonts: Vec<String>,
     inventory: Vec<serde_json::Value>,
     index: Mutex<IndexState>,
     completed: AtomicUsize,
@@ -940,8 +969,18 @@ fn resolve_sound(key: &str, id: &str) -> Result<Sound, String> {
     Ok(sound.as_ref().clone())
 }
 
-fn resolve_library_sound(key: &str, id: &str) -> Result<Sound, String> {
-    resolve_sound(key, id).or_else(|_| resolve_sound(&isolated_sound_library_key(key), id))
+/// Resolves a handle under the first of `keys` that issued it, each with its isolated twin.
+fn resolve_library_sound(keys: &[String], id: &str) -> Result<Sound, String> {
+    let mut error = String::from("No sound library scope to resolve in");
+    for key in keys {
+        match resolve_sound(key, id)
+            .or_else(|_| resolve_sound(&isolated_sound_library_key(key), id))
+        {
+            Ok(sound) => return Ok(sound),
+            Err(failed) => error = failed,
+        }
+    }
+    Err(error)
 }
 
 fn generated_sound_id(generation: &str, source_id: &str) -> String {
@@ -965,7 +1004,9 @@ pub struct SoundLibraryJob {
     sounds: Vec<Sound>,
     sound_bytes: usize,
     base_truncated: bool,
-    font_paths: Vec<PathBuf>,
+    font_paths: Vec<(SoundFontId, PathBuf)>,
+    /// Fonts the document names whose samples are not loaded, each with the reason.
+    font_errors: Vec<String>,
     extra_paths: Vec<PathBuf>,
     scan_plugins: bool,
     isolated_plugin_discovery: bool,
@@ -1005,18 +1046,66 @@ fn isolated_sound_library_key(key: &str) -> String {
     format!("{key}:isolated-native-metadata-v1")
 }
 
+/// What a sound library scope names the document by: its file when it has one, so sessions
+/// opening the same file share a snapshot, and otherwise this session's own token.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum DocumentScope {
+    Saved(String),
+    Live(String),
+}
+
+/// The most earlier identities one document keeps its handles under.
+const EARLIER_SCOPE_LIMIT: usize = 4;
+
 impl Session {
+    fn document_scope(&self) -> DocumentScope {
+        match self.path() {
+            Some(path) => DocumentScope::Saved(path_identity(path)),
+            None => DocumentScope::Live(self.sound_scope.clone()),
+        }
+    }
+
+    /// Keeps handles issued before this document moves to `next` usable afterwards.
+    ///
+    /// The scope names a saved document by its file, so the first Save As would otherwise expire
+    /// every sound found before it. A workshop candidate saves a checkpoint after its first edit,
+    /// which turned "search, add a track, choose the sound" into a refusal.
+    pub(super) fn remember_sound_scope_before_saving_to(&mut self, next: &Path) {
+        let current = self.document_scope();
+        if current == DocumentScope::Saved(path_identity(next)) {
+            return;
+        }
+        self.earlier_sound_scopes.retain(|scope| *scope != current);
+        self.earlier_sound_scopes.push(current);
+        if self.earlier_sound_scopes.len() > EARLIER_SCOPE_LIMIT {
+            self.earlier_sound_scopes.remove(0);
+        }
+    }
+
     fn sound_library_scope(&self, extra_paths: &[PathBuf]) -> String {
+        self.sound_library_scope_of(&self.document_scope(), extra_paths)
+    }
+
+    /// The current scope first, then the ones this same document had before it was saved
+    /// elsewhere — the scopes a selection may resolve a handle under.
+    fn sound_library_scopes(&self, extra_paths: &[PathBuf]) -> Vec<String> {
+        std::iter::once(self.document_scope())
+            .chain(self.earlier_sound_scopes.iter().rev().cloned())
+            .map(|scope| self.sound_library_scope_of(&scope, extra_paths))
+            .collect()
+    }
+
+    fn sound_library_scope_of(&self, document: &DocumentScope, extra_paths: &[PathBuf]) -> String {
         let mut digest = Sha256::new();
         digest.update(b"auris-sound-library-scope-v1");
-        match self.path() {
-            Some(path) => {
+        match document {
+            DocumentScope::Saved(path) => {
                 digest.update(b"saved");
-                hash_scope_part(&mut digest, &path_identity(path));
+                hash_scope_part(&mut digest, path);
             }
-            None => {
+            DocumentScope::Live(token) => {
                 digest.update(b"live");
-                hash_scope_part(&mut digest, &self.sound_scope);
+                hash_scope_part(&mut digest, token);
             }
         }
         digest.update(self.sample_rate().to_bits().to_le_bytes());
@@ -1050,7 +1139,7 @@ impl Session {
         for descriptor in self
             .registry()
             .instruments()
-            .filter(|descriptor| descriptor.id != SAMPLER_ID)
+            .filter(|descriptor| !auris_sampler::needs_asset(&descriptor.id))
         {
             let _ = budget.push_sound(
                 &mut sounds,
@@ -1063,11 +1152,15 @@ impl Session {
             );
         }
         let mut font_paths = Vec::new();
+        let font_errors = self
+            .soundfonts()
+            .filter_map(|reference| self.soundfont_load_error(reference.id))
+            .collect();
         for reference in self.soundfonts() {
             if let Some(font) = self.fonts.get(reference.id) {
                 fonts.insert(reference.id, font);
                 if let Some(path) = reference.path.resolve(self.project_folder()) {
-                    font_paths.push(path);
+                    font_paths.push((reference.id, path));
                 }
                 if budget.sounds_truncated {
                     continue;
@@ -1106,6 +1199,7 @@ impl Session {
             sound_bytes: budget.sound_bytes,
             base_truncated: budget.sounds_truncated,
             font_paths,
+            font_errors,
             extra_paths: extra_paths.to_vec(),
             scan_plugins: true,
             isolated_plugin_discovery: false,
@@ -1129,10 +1223,10 @@ impl Session {
         {
             return Err("Choose an instrument or drum track".into());
         }
-        let key = self.sound_library_scope(paths);
+        let keys = self.sound_library_scopes(paths);
         // Selection can run on the UI thread. Resolve only metadata previously issued by a worker;
         // rebuilding a heavy catalog here would synchronously invoke every native provider.
-        let source = resolve_library_sound(&key, id)?;
+        let source = resolve_library_sound(&keys, id)?;
         let prepare = PrepareContext::new(self.sample_rate(), 512, 2);
         match source.source {
             Source::Builtin(instrument_id) => self
@@ -1314,11 +1408,21 @@ impl SoundLibraryJob {
         }
         let limit = match &request {
             SoundSearch::Text { limit, .. }
+            | SoundSearch::Character { limit, .. }
             | SoundSearch::Similar { limit, .. }
             | SoundSearch::Browse { limit, .. } => *limit,
         };
         if !(1..=50).contains(&limit) {
             return Err("limit must be between 1 and 50".into());
+        }
+        if let SoundSearch::Character {
+            query,
+            targets,
+            envelope,
+            ..
+        } = &request
+        {
+            character_targets(query, targets, envelope)?;
         }
         if refresh && matches!(&request, SoundSearch::Browse { offset, .. } if *offset != 0) {
             return Err("Refresh only with offset 0".into());
@@ -1333,7 +1437,9 @@ impl SoundLibraryJob {
                 return Err("Refresh only with offset 0".into());
             }
         }
-        if let SoundSearch::Similar { id, .. } = &request {
+        if let SoundSearch::Similar { id, .. } | SoundSearch::Character { id: Some(id), .. } =
+            &request
+        {
             issued_sound(&self.key, id)
                 .map_err(|_| "Unknown or expired sound ID; search_instruments first")?;
         }
@@ -1352,6 +1458,24 @@ impl SoundLibraryJob {
             request => request,
         };
         match request {
+            SoundSearch::Character {
+                query,
+                targets,
+                envelope,
+                id,
+                name,
+                filter,
+                ..
+            } => self.search_character(
+                catalog,
+                &query,
+                &targets,
+                &envelope,
+                id.as_deref(),
+                name.as_deref(),
+                &filter,
+                limit,
+            ),
             SoundSearch::Browse { .. } => unreachable!("browse normalized above"),
             SoundSearch::Text {
                 query,
@@ -1446,11 +1570,12 @@ impl SoundLibraryJob {
                         .map(|(i, d)| {
                             let mut v = catalog.sounds[index.sounds[i]].value();
                             v["distance"] = d.into();
+                            v["character"] = serde_json::json!(index.characters.get(i));
                             v
                         })
                         .collect::<Vec<_>>();
                     return Ok(sound_page(with_native_status(
-                        serde_json::json!({"status":"ready","reference":id,"sounds":sounds,"indexed":index.sounds.len(),
+                        serde_json::json!({"status":"ready","reference":id,"reference_character":index.characters.get(row),"sounds":sounds,"indexed":index.sounds.len(),
                         "skipped_count":index.skipped.len(),"limited":index.limited}),
                         &catalog,
                     )));
@@ -1466,7 +1591,7 @@ impl SoundLibraryJob {
                             let _permit = permit;
                             let result =
                                 std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                                    self.measure(&worker_catalog, reference)
+                                    self.measure(&worker_catalog, Some(reference))
                                 }))
                                 .unwrap_or_else(|_| Err("Sound index worker panicked".into()));
                             if let Ok(mut state) = worker_catalog.index.lock() {
@@ -1485,6 +1610,170 @@ impl SoundLibraryJob {
                 .to_string())
             }
         }
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Typed search fields are kept separate from the catalogue worker"
+    )]
+    fn search_character(
+        self,
+        catalog: Arc<Catalog>,
+        query: &str,
+        targets: &TimbreTargets,
+        envelope: &EnvelopeTargets,
+        id: Option<&str>,
+        name: Option<&str>,
+        filter: &SoundFilter,
+        limit: usize,
+    ) -> Result<String, String> {
+        let (targets, recognized) = character_targets(query, targets, envelope)?;
+        let reference = id
+            .map(|id| {
+                catalog
+                    .sounds
+                    .iter()
+                    .position(|s| s.id == id)
+                    .ok_or("Unknown sound ID; search again")
+            })
+            .transpose()?;
+        if reference.is_some_and(|i| !measurable(&catalog.sounds[i])) {
+            return Err("Reference is not measurable in this context; isolated native plugins and drum kits support text search only".into());
+        }
+        let mut state = catalog
+            .index
+            .lock()
+            .map_err(|_| "Acoustic index lock failed")?;
+        if reference.is_none() && state.reference.is_some() && matches!(state.result, Some(Err(_)))
+        {
+            // A failed similarity reference must not prevent impression discovery of other sounds.
+            *state = IndexState::default();
+            catalog.completed.store(0, Ordering::Relaxed);
+        }
+        if reference.is_some_and(|i| state.reset_if_reference_missing(i)) {
+            catalog.completed.store(0, Ordering::Relaxed);
+        }
+        if let Some(result) = &state.result {
+            let index = result.as_ref().map_err(Clone::clone)?;
+            let reference_row = reference
+                .map(|reference| {
+                    index
+                        .sounds
+                        .iter()
+                        .position(|i| *i == reference)
+                        .ok_or("Reference could not be measured")
+                })
+                .transpose()?;
+            let words: Vec<_> = name
+                .unwrap_or_default()
+                .split_whitespace()
+                .map(str::to_lowercase)
+                .collect();
+            let mut ranked: Vec<_> = index
+                .characters
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| {
+                    Some(index.sounds[*i]) != reference
+                        && filter.matches(&catalog.sounds[index.sounds[*i]])
+                        && catalog.sounds[index.sounds[*i]].matches(&words)
+                })
+                .map(|(i, character)| {
+                    let target_distance = targets.distance(*character)
+                        + if envelope.is_empty() {
+                            0.
+                        } else {
+                            // An unmeasured envelope ranks after every measured one.
+                            index.envelopes[i]
+                                .as_ref()
+                                .map_or(1., |e| envelope.distance(&e.summary))
+                        };
+                    let distance = reference_row.map_or(target_distance, |row| {
+                        let d = index.rows[i]
+                            .iter()
+                            .zip(&index.rows[row])
+                            .map(|(a, b)| (a - b).powi(2))
+                            .sum::<f64>()
+                            / index.rows[i].len().max(1) as f64;
+                        0.7 * target_distance + 0.3 * d / (1. + d)
+                    });
+                    (i, distance)
+                })
+                .collect();
+            ranked.sort_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)));
+            let total = ranked.len();
+            ranked.truncate(limit);
+            issue_sounds(
+                &self.key,
+                &catalog.generation,
+                ranked
+                    .iter()
+                    .map(|(i, _)| &catalog.sounds[index.sounds[*i]]),
+            )?;
+            let sounds: Vec<_> = ranked
+                .into_iter()
+                .map(|(i, distance)| {
+                    let mut value = catalog.sounds[index.sounds[i]].value();
+                    value["distance"] = distance.into();
+                    value["character"] = serde_json::json!(index.characters[i]);
+                    if let Some(measured) = &index.envelopes[i] {
+                        value["envelope"] = measured.value();
+                    }
+                    value["target_error"] = ["brightness", "attack", "sustain", "release", "noise"]
+                        .into_iter()
+                        .zip(
+                            targets
+                                .values()
+                                .into_iter()
+                                .zip(index.characters[i].values()),
+                        )
+                        .map(|(key, (target, actual))| {
+                            (
+                                key.to_owned(),
+                                serde_json::json!(target.map(|v| (v - actual).abs())),
+                            )
+                        })
+                        .collect::<serde_json::Map<_, _>>()
+                        .into();
+                    value
+                })
+                .collect();
+            return Ok(sound_page(with_native_status(
+                serde_json::json!({
+                    "status":"ready", "sounds":sounds, "total":total, "targets":targets, "envelope_targets":envelope, "recognized":recognized,
+                    "indexed":index.sounds.len(), "skipped_count":index.skipped.len(), "limited":index.limited,
+                    "reference_character":reference_row.and_then(|row| index.characters.get(row)),
+                    "unmeasurable_count":catalog.sounds.iter().filter(|s| !measurable(s)).count(),
+                    "interpretation":"Local impression dictionary with explicit overrides. Unrecognized prose is not interpreted; targets show exactly what was used.",
+                    "measurement":"Character: six matched notes, fixed-scale acoustic proxies; release capture is 400 ms and release_censored marks a lower bound. Envelope: C2/C4/C6 at velocity 100, held until settled (max 4 s), tail to -60 dB (max 4 s); attack to peak -1 dB, decay to sustain (or to -60 dB when decaying), sustain dB below peak, release RT60; *_estimated values are extrapolated. Distance is relative mismatch, not probability or listening assessment. Render a musical phrase before adopting."
+                }),
+                &catalog,
+            )));
+        }
+        if !state.started {
+            let permit = AcousticWorkerPermit::acquire()
+                .ok_or("Sound acoustic analysis is busy; retry later")?;
+            let worker_catalog = catalog.clone();
+            std::thread::Builder::new()
+                .name("auris-character-index".into())
+                .spawn(move || {
+                    let _permit = permit;
+                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        self.measure(&worker_catalog, reference)
+                    }))
+                    .unwrap_or_else(|_| Err("Sound index worker panicked".into()));
+                    if let Ok(mut state) = worker_catalog.index.lock() {
+                        state.result = Some(result);
+                    }
+                })
+                .map_err(|e| e.to_string())?;
+            state.started = true;
+            state.reference = reference;
+        }
+        Ok(with_native_status(serde_json::json!({"status":"indexing", "targets":targets, "recognized":recognized,
+            "completed":catalog.completed.load(Ordering::Relaxed),
+            "total":catalog.sounds.iter().filter(|s| measurable(s)).count().min(ACOUSTIC_SOUND_LIMIT),
+            "retry_after_seconds":5, "usage":"Continue other work and retry the same character request later; do not refresh while indexing."}), &catalog).to_string())
     }
 
     #[cfg(test)]
@@ -1564,6 +1853,9 @@ impl SoundLibraryJob {
             errors_truncated: false,
         };
         let mut errors = Vec::new();
+        for error in &self.font_errors {
+            budget.push_error(&mut errors, error);
+        }
         let mut inventory = if self.scan_plugins {
             root_inventory(
                 &self.extra_paths,
@@ -1579,7 +1871,7 @@ impl SoundLibraryJob {
         let mut stamps = self
             .font_paths
             .iter()
-            .map(|path| stamp(path))
+            .map(|(_, path)| stamp(path))
             .collect::<Vec<_>>();
         let mut native_status = None;
         if self.scan_plugins && self.isolated_plugin_discovery {
@@ -1695,6 +1987,7 @@ impl SoundLibraryJob {
             generation,
             sounds,
             errors,
+            unloaded_fonts: self.font_errors.clone(),
             inventory,
             index: Mutex::new(IndexState::default()),
             completed: AtomicUsize::new(0),
@@ -1713,9 +2006,15 @@ impl SoundLibraryJob {
         Ok(catalog)
     }
 
-    fn measure(&self, catalog: &Catalog, reference: usize) -> Result<AcousticIndex, String> {
+    fn measure(
+        &self,
+        catalog: &Catalog,
+        reference: Option<usize>,
+    ) -> Result<AcousticIndex, String> {
         let mut sounds = Vec::new();
         let mut rows = Vec::new();
+        let mut characters = Vec::new();
+        let mut envelopes = Vec::new();
         let mut skipped = Vec::new();
         let mut skipped_truncated = false;
         let measurable_count = catalog
@@ -1723,22 +2022,33 @@ impl SoundLibraryJob {
             .iter()
             .filter(|sound| measurable(sound))
             .count();
-        let candidates = std::iter::once(reference)
-            .chain(
-                (0..catalog.sounds.len())
-                    .filter(|index| *index != reference && measurable(&catalog.sounds[*index])),
-            )
-            .take(ACOUSTIC_SOUND_LIMIT)
-            .collect::<Vec<_>>();
+        let candidates =
+            reference
+                .into_iter()
+                .chain((0..catalog.sounds.len()).filter(|index| {
+                    Some(*index) != reference && measurable(&catalog.sounds[*index])
+                }))
+                .take(ACOUSTIC_SOUND_LIMIT)
+                .collect::<Vec<_>>();
         let mut row_bytes = 0usize;
         let mut index_bytes_limited = false;
         for index in candidates {
             let sound = &catalog.sounds[index];
-            match measure_sound(sound, &self.registry, self.sample_rate, &catalog.control) {
-                Ok(row) => {
-                    let bytes = row.len().saturating_mul(std::mem::size_of::<f64>());
+            let key = envelope_key(sound, &self.font_paths);
+            match measure_sound(
+                sound,
+                &self.registry,
+                self.sample_rate,
+                &catalog.control,
+                key.as_deref(),
+            ) {
+                Ok((row, character, envelope)) => {
+                    let bytes = row
+                        .len()
+                        .saturating_mul(std::mem::size_of::<f64>())
+                        .saturating_add(std::mem::size_of::<TimbreCharacter>());
                     if row_bytes.saturating_add(bytes) > ACOUSTIC_INDEX_BYTE_LIMIT {
-                        if index == reference {
+                        if Some(index) == reference {
                             return Err(
                                 "Reference acoustic features exceed the index budget".into()
                             );
@@ -1749,9 +2059,11 @@ impl SoundLibraryJob {
                     row_bytes += bytes;
                     sounds.push(index);
                     rows.push(row);
+                    characters.push(character);
+                    envelopes.push(envelope);
                 }
                 Err(error) => {
-                    if index == reference {
+                    if Some(index) == reference {
                         return Err(format!(
                             "Reference {} could not be measured: {}",
                             short_text(&sound.name, 160),
@@ -1775,14 +2087,32 @@ impl SoundLibraryJob {
             catalog.completed.fetch_add(1, Ordering::Relaxed);
             catalog.control.check().map_err(|e| e.to_string())?;
         }
+        super::envelope::save();
         Ok(AcousticIndex {
             sounds,
             rows: standardize_timbres(&rows).map_err(str::to_string)?,
+            characters,
+            envelopes,
             skipped,
             limited: measurable_count > ACOUSTIC_SOUND_LIMIT
                 || index_bytes_limited
                 || skipped_truncated,
         })
+    }
+}
+
+/// Interprets a character request: impressions and explicit targets, plus envelope ranges.
+/// At least one of them must say something.
+fn character_targets(
+    query: &str,
+    targets: &TimbreTargets,
+    envelope: &EnvelopeTargets,
+) -> Result<(TimbreTargets, Vec<String>), String> {
+    envelope.validate()?;
+    if envelope.is_empty() {
+        TimbreTargets::interpret(query, targets)
+    } else {
+        TimbreTargets::interpret_partial(query, targets)
     }
 }
 
@@ -1809,6 +2139,9 @@ fn sound_page(mut value: serde_json::Value) -> String {
 fn with_native_status(mut value: serde_json::Value, catalog: &Catalog) -> serde_json::Value {
     if let Some(status) = &catalog.native_status {
         value["native_plugins"] = status.value();
+    }
+    if !catalog.unloaded_fonts.is_empty() {
+        value["unloaded_soundfonts"] = catalog.unloaded_fonts.clone().into();
     }
     value
 }
@@ -2081,74 +2414,122 @@ fn discover_isolated_plugin(
     }
 }
 
+/// Makes a fresh, prepared instance of `sound` and hands it to `play`, tearing it down after.
+fn with_instrument<T>(
+    sound: &Sound,
+    registry: &PluginRegistry,
+    prepare: &PrepareContext,
+    play: impl FnOnce(&mut dyn Instrument) -> Result<T, String>,
+) -> Result<T, String> {
+    match &sound.source {
+        Source::Builtin(id) => {
+            let mut i = registry.create_instrument(id).map_err(|e| e.to_string())?;
+            i.prepare(prepare);
+            play(i.as_mut())
+        }
+        Source::Font(preset) => {
+            let mut i = registry
+                .create_instrument(SAMPLER_ID)
+                .map_err(|e| e.to_string())?;
+            let mut state = PluginState::default();
+            auris_sampler::store_preset(&mut state, *preset);
+            i.load_state(&state);
+            i.prepare(prepare);
+            play(i.as_mut())
+        }
+        Source::Clap {
+            file, id, preset, ..
+        } => {
+            // SAFETY: file came from the user's configured plugin library.
+            let library =
+                unsafe { auris_clap::ClapLibrary::load(file) }.map_err(|e| e.to_string())?;
+            let mut plugin = library.instantiate(id).map_err(|e| e.to_string())?;
+            if let Some(preset) = preset {
+                plugin.load_preset(preset)?;
+            }
+            let mut instrument = plugin
+                .activate_instrument(prepare)
+                .map_err(|e| e.to_string())?;
+            let result = play(&mut instrument);
+            plugin.deactivate_instrument(instrument);
+            result
+        }
+        Source::Vst3 {
+            file, id, preset, ..
+        } => {
+            let plugin =
+                auris_vst3::Vst3Plugin::load(file, id, prepare).map_err(|e| e.to_string())?;
+            if let Some(preset) = preset {
+                plugin.load_preset(preset).map_err(|e| e.to_string())?;
+            }
+            let mut instrument = plugin.offline_instrument().map_err(|e| e.to_string())?;
+            play(&mut instrument)
+        }
+    }
+}
+
+/// Six reference notes for the timbre features, then the three envelope notes — the latter
+/// from the disk cache when `envelope_key` names an entry.
 fn measure_sound(
     sound: &Sound,
     registry: &PluginRegistry,
     rate: f64,
     control: &TimbreMapControl,
-) -> Result<Vec<f64>, String> {
+    envelope_key: Option<&str>,
+) -> Result<(Vec<f64>, TimbreCharacter, Option<SoundEnvelope>), String> {
     let prepare = PrepareContext::new(rate, 512, 2);
     let mut features = Vec::new();
+    let mut characters = Vec::new();
     for pitch in [48, 60, 72] {
         for velocity in [0.45, 0.85] {
             control.check().map_err(|e| e.to_string())?;
-            let render = |instrument: &mut dyn Instrument| {
+            let audio = with_instrument(sound, registry, &prepare, |instrument| {
                 super::timbre::render_reference(instrument, rate, pitch, velocity, control)
                     .map_err(|e| e.to_string())
-            };
-            let audio = match &sound.source {
-                Source::Builtin(id) => {
-                    let mut i = registry.create_instrument(id).map_err(|e| e.to_string())?;
-                    i.prepare(&prepare);
-                    render(i.as_mut())?
-                }
-                Source::Font(preset) => {
-                    let mut i = registry
-                        .create_instrument(SAMPLER_ID)
-                        .map_err(|e| e.to_string())?;
-                    let mut state = PluginState::default();
-                    auris_sampler::store_preset(&mut state, *preset);
-                    i.load_state(&state);
-                    i.prepare(&prepare);
-                    render(i.as_mut())?
-                }
-                Source::Clap {
-                    file, id, preset, ..
-                } => {
-                    // SAFETY: file came from the user's configured plugin library.
-                    let library = unsafe { auris_clap::ClapLibrary::load(file) }
-                        .map_err(|e| e.to_string())?;
-                    let mut plugin = library.instantiate(id).map_err(|e| e.to_string())?;
-                    if let Some(preset) = preset {
-                        plugin.load_preset(preset)?;
-                    }
-                    let mut instrument = plugin
-                        .activate_instrument(&prepare)
-                        .map_err(|e| e.to_string())?;
-                    let result = render(&mut instrument);
-                    plugin.deactivate_instrument(instrument);
-                    result?
-                }
-                Source::Vst3 {
-                    file, id, preset, ..
-                } => {
-                    let plugin = auris_vst3::Vst3Plugin::load(file, id, &prepare)
-                        .map_err(|e| e.to_string())?;
-                    if let Some(preset) = preset {
-                        plugin.load_preset(preset).map_err(|e| e.to_string())?;
-                    }
-                    let mut instrument = plugin.offline_instrument().map_err(|e| e.to_string())?;
-                    render(&mut instrument)?
-                }
-            };
-            features.extend(
-                timbre_features(&audio, 0.6)
-                    .map_err(str::to_string)?
-                    .ok_or("Silent reference trigger")?,
-            );
+            })?;
+            let values = timbre_features(&audio, 0.6)
+                .map_err(str::to_string)?
+                .ok_or("Silent reference trigger")?;
+            characters.push(timbre_character(&audio, 0.6, &values));
+            features.extend(values);
         }
     }
-    Ok(features)
+    let envelope = match envelope_key.and_then(super::envelope::cached) {
+        Some(cached) => Some(cached),
+        None => {
+            let measured = super::envelope::measure_sound(|pitch| {
+                with_instrument(sound, registry, &prepare, |instrument| {
+                    super::envelope::measure_note(instrument, rate, pitch, control)
+                        .map_err(|e| e.to_string())
+                })
+            })?;
+            if let (Some(key), Some(envelope)) = (envelope_key, &measured) {
+                super::envelope::remember(key.to_owned(), envelope.clone());
+            }
+            measured
+        }
+    };
+    Ok((features, TimbreCharacter::mean(&characters), envelope))
+}
+
+/// The envelope cache key for a sound that lives in a file; built-ins are code and are never
+/// cached. Reads file metadata, so call it from a worker.
+fn envelope_key(sound: &Sound, fonts: &[(SoundFontId, PathBuf)]) -> Option<String> {
+    let identity = match &sound.source {
+        Source::Builtin(_) => return None,
+        Source::Font(preset) => {
+            let (_, path) = fonts.iter().find(|(id, _)| *id == preset.font)?;
+            return Some(font_envelope_key(path, preset.bank, preset.patch));
+        }
+        // Their discovery stamps already carry the plugin and preset files' metadata.
+        Source::Clap { .. } | Source::Vst3 { .. } => format!("{:?}", sound.source),
+    };
+    Some(super::envelope::cache_key(&identity))
+}
+
+/// A SoundFont preset's envelope cache key, shared by the agent's index and the timbre map.
+pub(super) fn font_envelope_key(path: &Path, bank: i32, patch: i32) -> String {
+    super::envelope::cache_key(&format!("font|{}|{bank}|{patch}", stamp(path)))
 }
 
 fn discover_clap(
@@ -2552,6 +2933,68 @@ mod tests {
     }
 
     #[test]
+    fn a_library_font_that_could_not_load_says_why_in_every_search_page() {
+        let _serial = serial_test();
+        let scratch = Scratch::new("unloaded-library-font");
+        let library = scratch.join("soundfonts.json");
+        let path = scratch.soundfont("Grand.sf2");
+        let with_library = || {
+            Session::new(crate::SessionOptions::headless().with_soundfont_library(&library))
+                .unwrap()
+        };
+        let font = with_library().import_soundfont(&path).unwrap();
+        // The file the library names goes away between launches, as a download folder's does.
+        std::fs::remove_file(&path).unwrap();
+        let session = with_library();
+        assert!(!session.soundfont_is_loaded(font));
+        let error = session.soundfont_load_error(font).unwrap();
+        assert!(
+            error.contains("Grand.sf2") && error.contains("not loaded"),
+            "{error}"
+        );
+
+        let response = isolated_job(&session)
+            .run(
+                SoundSearch::Text {
+                    query: "piano".into(),
+                    limit: 10,
+                    offset: 0,
+                    filter: SoundFilter::default(),
+                },
+                false,
+            )
+            .unwrap();
+        let response: serde_json::Value = serde_json::from_str(&response).unwrap();
+        assert_eq!(response["unloaded_soundfonts"][0], error.as_str());
+        assert!(response["scan_error_count"].as_u64().unwrap() >= 1);
+        let diagnostics = isolated_job(&session).diagnostics(0, 16).unwrap();
+        assert!(diagnostics.contains("not loaded"), "{diagnostics}");
+    }
+
+    #[test]
+    fn a_loaded_font_reports_no_error_and_is_shared_between_sessions() {
+        let _serial = serial_test();
+        let scratch = Scratch::new("shared-library-font");
+        let library = scratch.join("soundfonts.json");
+        let path = scratch.soundfont("Grand.sf2");
+        let with_library = || {
+            Session::new(crate::SessionOptions::headless().with_soundfont_library(&library))
+                .unwrap()
+        };
+        with_library().import_soundfont(&path).unwrap();
+        // Two sessions open beside each other, as the window and a workshop composer do.
+        let first = with_library();
+        let second = with_library();
+        let font = first.soundfonts().next().unwrap().id;
+        let other = second.soundfonts().next().unwrap().id;
+        assert_eq!(second.soundfont_load_error(other), None);
+        assert!(Arc::ptr_eq(
+            &first.fonts.get(font).unwrap(),
+            &second.fonts.get(other).unwrap()
+        ));
+    }
+
+    #[test]
     fn isolated_live_search_issues_selectable_metadata_without_loading_native_code() {
         let _serial = serial_test();
         let session = session();
@@ -2578,7 +3021,7 @@ mod tests {
             response["native_plugins"]["acoustic_similarity"],
             "not_supported"
         );
-        let source = resolve_library_sound(&session.sound_library_scope(&[]), id).unwrap();
+        let source = resolve_library_sound(&session.sound_library_scopes(&[]), id).unwrap();
         assert!(isolated_native(&source));
         assert!(!measurable(&source));
         let diagnostics = session.sound_library_job(&[]).diagnostics(0, 10).unwrap();
@@ -2925,6 +3368,7 @@ mod tests {
             generation: format!("generation-{key}"),
             sounds: Vec::new(),
             errors: Vec::new(),
+            unloaded_fonts: Vec::new(),
             inventory: Vec::new(),
             index: Mutex::new(IndexState::default()),
             completed: AtomicUsize::new(0),
@@ -3056,6 +3500,8 @@ mod tests {
             started: true,
             reference: Some(0),
             result: Some(Ok(AcousticIndex {
+                characters: Vec::new(),
+                envelopes: Vec::new(),
                 sounds: (0..ACOUSTIC_SOUND_LIMIT).collect(),
                 rows: Vec::new(),
                 skipped: Vec::new(),
@@ -3280,6 +3726,40 @@ mod tests {
         );
         assert_ne!(key, first.sound_library_job(&[scratch.join("vendor")]).key);
     }
+
+    #[test]
+    fn a_sound_found_before_the_first_save_can_still_be_chosen_after_it() {
+        // A workshop candidate searches, adds a track — its first edit, after which the host
+        // saves a checkpoint — and only then chooses the sound it found.
+        let _serial = serial_test();
+        let scratch = Scratch::new("sound-scope-save");
+        let mut session = session();
+        let result = query(&session, "auris", 1, 0, false).unwrap();
+        let id = result["sounds"][0]["id"].as_str().unwrap().to_owned();
+        let track = session.add_default_instrument_track("Lead").unwrap();
+        session.save_as(&scratch.join("First.auris")).unwrap();
+        session.use_library_sound(track, &id, &[]).unwrap();
+
+        // And again after the next Save As moves the same document once more.
+        let later = query(&session, "auris", 1, 0, false).unwrap();
+        let later = later["sounds"][0]["id"].as_str().unwrap().to_owned();
+        session.save_as(&scratch.join("Second.auris")).unwrap();
+        session.use_library_sound(track, &id, &[]).unwrap();
+        session.use_library_sound(track, &later, &[]).unwrap();
+
+        // Another document never inherits them, whether opened or started afresh.
+        let other = self::session()
+            .save_as(&scratch.join("Other.auris"))
+            .unwrap()
+            .document;
+        session.open(&other).unwrap();
+        let track = session.add_default_instrument_track("Lead").unwrap();
+        assert!(session.use_library_sound(track, &id, &[]).is_err());
+        assert!(session.use_library_sound(track, &later, &[]).is_err());
+        session.new_project();
+        let track = session.project().tracks[0].id;
+        assert!(session.use_library_sound(track, &later, &[]).is_err());
+    }
     fn query(
         session: &Session,
         query: &str,
@@ -3382,6 +3862,8 @@ mod tests {
                 .contains("expired")
         );
         catalog.index.lock().unwrap().result = Some(Ok(AcousticIndex {
+            characters: vec![],
+            envelopes: vec![],
             sounds: indices.clone(),
             rows: vec![
                 vec![0.0, 0.0, 0.0],
@@ -3424,15 +3906,147 @@ mod tests {
         let job = isolated_job(&session);
         let source = job.sounds.iter().find(|s| measurable(s)).unwrap();
         let control = TimbreMapControl::default();
-        let row = measure_sound(source, &job.registry, job.sample_rate, &control).unwrap();
+        let (row, _, envelope) =
+            measure_sound(source, &job.registry, job.sample_rate, &control, None).unwrap();
         assert!(!row.is_empty() && row.iter().all(|v| v.is_finite()));
+        assert!(envelope.is_some_and(|e| e.summary.attack_ms.is_finite()));
         control.cancel();
         assert!(
-            measure_sound(source, &job.registry, job.sample_rate, &control)
+            measure_sound(source, &job.registry, job.sample_rate, &control, None)
                 .unwrap_err()
                 .contains("cancelled")
         );
         assert_eq!(&before, session.project());
+    }
+
+    #[test]
+    fn character_search_builds_an_index_without_a_reference_and_issues_exact_ids() {
+        let _serial = serial_test();
+        let mut session = session();
+        let before = session.project().clone();
+        let job = isolated_job(&session);
+        let catalog = job.catalog(false).unwrap();
+        let request = SoundSearch::Character {
+            query: "ポコポコ".into(),
+            targets: Default::default(),
+            envelope: Default::default(),
+            id: None,
+            name: Some("auris".into()),
+            limit: 3,
+            filter: Default::default(),
+        };
+        let first: serde_json::Value =
+            serde_json::from_str(&job.run(request.clone(), false).unwrap()).unwrap();
+        assert_eq!(first["status"], "indexing");
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while catalog.index.lock().unwrap().result.is_none() {
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let result: serde_json::Value =
+            serde_json::from_str(&isolated_job(&session).run(request, false).unwrap()).unwrap();
+        assert_eq!(result["status"], "ready");
+        let sounds = result["sounds"].as_array().unwrap();
+        assert!(!sounds.is_empty());
+        assert!(
+            sounds
+                .iter()
+                .all(|s| s["target_error"]["brightness"].as_f64().is_some())
+        );
+        assert!(sounds.iter().all(|s| {
+            s["envelope"]["by_pitch"]
+                .as_array()
+                .is_some_and(|p| !p.is_empty())
+        }));
+        // The same index answers ranges on the measured envelope alone, slowest attack first.
+        let swell: serde_json::Value = serde_json::from_str(
+            &isolated_job(&session)
+                .run(
+                    SoundSearch::Character {
+                        query: String::new(),
+                        targets: Default::default(),
+                        envelope: Box::new(crate::EnvelopeTargets {
+                            attack_ms: Some(crate::Bounds {
+                                min: Some(150.),
+                                max: None,
+                            }),
+                            ..Default::default()
+                        }),
+                        id: None,
+                        name: None,
+                        limit: 50,
+                        filter: SoundFilter {
+                            source: Some(SoundSource::Builtin),
+                            library: None,
+                        },
+                    },
+                    false,
+                )
+                .unwrap(),
+        )
+        .unwrap();
+        let attacks: Vec<f64> = swell["sounds"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s["envelope"]["attack_ms"].as_f64().unwrap())
+            .collect();
+        assert!(attacks.len() > 2, "{swell}");
+        let first_short = attacks
+            .iter()
+            .position(|a| *a < 150.)
+            .unwrap_or(attacks.len());
+        assert!(
+            attacks[..first_short].iter().all(|a| *a >= 150.),
+            "{attacks:?}"
+        );
+        assert!(
+            attacks[first_short..].windows(2).all(|w| w[0] >= w[1]),
+            "{attacks:?}"
+        );
+        assert_eq!(session.project(), &before);
+        let id = sounds[0]["id"].as_str().unwrap().to_owned();
+        let reference_request = SoundSearch::Character {
+            query: String::new(),
+            targets: TimbreTargets {
+                brightness: Some(0.2),
+                ..Default::default()
+            },
+            envelope: Default::default(),
+            id: Some(id.clone()),
+            name: None,
+            limit: 2,
+            filter: Default::default(),
+        };
+        let reference_result: serde_json::Value = serde_json::from_str(
+            &isolated_job(&session)
+                .run(reference_request.clone(), false)
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(reference_result["status"], "ready");
+        assert!(
+            reference_result["reference_character"]["brightness"]
+                .as_f64()
+                .is_some()
+        );
+        assert!(
+            reference_result["sounds"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|s| s["id"] != id)
+        );
+        let track = session.add_default_instrument_track("Impression").unwrap();
+        session.use_library_sound(track, &id, &[]).unwrap();
+        drop(catalog);
+        query(&session, "auris", 1, 0, true).unwrap();
+        assert!(
+            isolated_job(&session)
+                .run(reference_request, false)
+                .unwrap_err()
+                .contains("expired")
+        );
     }
 
     #[test]
@@ -3468,6 +4082,37 @@ mod tests {
         assert_eq!(parsed["status"], "ready");
         assert_eq!(parsed["sounds"].as_array().unwrap().len(), 2);
         assert_eq!(result, isolated_job(&session).run(request, false).unwrap());
+        let before = session.project().clone();
+        let request = SoundSearch::Character {
+            query: "ふんわり、余韻は短め".into(),
+            targets: crate::TimbreTargets {
+                release: Some(0.1),
+                ..Default::default()
+            },
+            envelope: Default::default(),
+            id: None,
+            name: None,
+            limit: 2,
+            filter: SoundFilter {
+                source: Some(SoundSource::Builtin),
+                library: None,
+            },
+        };
+        let result: serde_json::Value =
+            serde_json::from_str(&isolated_job(&session).run(request, false).unwrap()).unwrap();
+        assert_eq!(result["status"], "ready", "must reuse the similarity index");
+        assert_eq!(result["targets"]["release"], 0.1);
+        assert!(!result["recognized"].as_array().unwrap().is_empty());
+        let sounds = result["sounds"].as_array().unwrap();
+        assert_eq!(sounds.len(), 2);
+        assert!(sounds[0]["distance"].as_f64().unwrap() <= sounds[1]["distance"].as_f64().unwrap());
+        assert!(sounds[0]["character"]["attack"].as_f64().is_some());
+        assert_eq!(session.project(), &before);
+        let id = sounds[0]["id"].as_str().unwrap();
+        let track = session
+            .add_default_instrument_track("Character search result")
+            .unwrap();
+        session.use_library_sound(track, id, &[]).unwrap();
     }
 
     #[test]
@@ -3498,7 +4143,15 @@ mod tests {
         let rows = sources
             .iter()
             .map(|sound| {
-                measure_sound(sound, &job.registry, job.sample_rate, &catalog.control).unwrap()
+                measure_sound(
+                    sound,
+                    &job.registry,
+                    job.sample_rate,
+                    &catalog.control,
+                    None,
+                )
+                .unwrap()
+                .0
             })
             .collect::<Vec<_>>();
         assert_eq!(rows[0].len(), rows[1].len());

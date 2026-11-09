@@ -28,7 +28,10 @@ pub(super) struct Controls {
     pub(super) effort_menu: bool,
     pub(super) mode_focus: Option<gpui::FocusHandle>,
     pub(super) effort_focus: Option<gpui::FocusHandle>,
+    pub(super) reasoning_picker: Option<crate::ui::reasoning_picker::Handle>,
     pub(super) slash: chat_commands::Completions,
+    /// The turn in flight came from `/review`: whatever the chosen mode, it runs as plan mode.
+    pub(super) read_only_turn: bool,
 }
 
 pub(super) struct Pending {
@@ -87,10 +90,24 @@ pub(super) fn approval_summary(operation: &Operation) -> Option<Key> {
         "cli_file_change" => Some(Key::AgentApprovalChangeFiles),
         "cli_file_read" => Some(Key::AgentApprovalReadOutside),
         "search_internet" => Some(Key::AgentApprovalInternet),
+        "edit_project.ignore_lint" => Some(Key::AgentApprovalIgnoreLint),
         _ if operation.mutating && operation.confirm => Some(Key::AgentApprovalReplaces),
         _ if operation.mutating => Some(Key::AgentApprovalEdits),
         _ => None,
     }
+}
+
+/// A read-only turn keeps the user's rules but not their mode: plan mode refuses every change,
+/// even under an allow rule or bypass, and leaves reads and network questions as they were.
+pub(super) fn turn_policy(
+    chosen: &auris_session::agent_policy::Policy,
+    read_only: bool,
+) -> auris_session::agent_policy::Policy {
+    let mut policy = chosen.clone();
+    if read_only {
+        policy.mode = Mode::Plan;
+    }
+    policy
 }
 
 fn mode_key(mode: Mode) -> Key {
@@ -116,7 +133,7 @@ pub(crate) fn effort_key(effort: ReasoningEffort) -> Key {
     }
 }
 
-pub(super) fn effort_choices(openai: bool) -> &'static [ReasoningEffort] {
+pub(crate) fn effort_choices(openai: bool) -> &'static [ReasoningEffort] {
     if openai {
         &[
             ReasoningEffort::Default,
@@ -220,14 +237,9 @@ impl AurisApp {
 
     /// Opens or closes the permission rules and reveals their start when they become visible.
     fn set_agent_rules_open(&mut self, open: bool) {
+        // The rules sit above the conversation rather than inside its scroller, so opening them
+        // shows them wherever the conversation has been scrolled to.
         self.agent_chat.controls.rules_open = open;
-        if open {
-            // The rules are the first child of the transcript scroller. A retained tail offset
-            // otherwise opens them above the viewport, making the button appear to do nothing.
-            self.agent_chat
-                .scroll
-                .set_offset(gpui::point(px(0.0), px(0.0)));
-        }
     }
 
     fn save_agent_policy_with<E>(
@@ -289,15 +301,6 @@ impl AurisApp {
             self.agent_chat
                 .push_entry(ChatEntry::Error(error.to_string()));
         }
-        self.focus_agent_field(AgentField::Chat);
-    }
-
-    pub(super) fn agent_fast_mode(&mut self) {
-        if let Err(error) = self.agent_fast_mode_with(|settings| settings.save()) {
-            self.agent_chat
-                .push_entry(ChatEntry::Error(error.to_string()));
-        }
-        self.focus_agent_field(AgentField::Chat);
     }
 
     pub(super) fn agent_fast_mode_with<E>(
@@ -348,7 +351,7 @@ impl AurisApp {
                 return;
             }
         };
-        match self.settings.agent.policy.decide(&operation) {
+        match self.agent_turn_policy().decide(&operation) {
             Decision::Allow => self.permission_result(id, true, "Allowed by current permissions"),
             Decision::Deny(reason) => self.permission_result(id, false, &reason),
             decision @ (Decision::Ask | Decision::Review) => {
@@ -431,7 +434,7 @@ impl AurisApp {
         else {
             return;
         };
-        if self.settings.agent.policy.decide(&pending.operation) != Decision::Review {
+        if self.agent_turn_policy().decide(&pending.operation) != Decision::Review {
             return;
         }
         use auris_agent::approval_review::Verdict;
@@ -475,7 +478,7 @@ impl AurisApp {
         let changed = self.agent_chat.bound_project.as_deref() != self.session.path()
             || (pending.operation.mutating && pending.revision != self.session.revision());
         let forbidden = matches!(
-            self.settings.agent.policy.decide(&pending.operation),
+            self.agent_turn_policy().decide(&pending.operation),
             Decision::Deny(_)
         );
         if denied || changed || forbidden {
@@ -513,6 +516,14 @@ impl AurisApp {
         Ok(())
     }
 
+    /// The policy this turn runs under: the chosen one, held to plan mode for a `/review`.
+    pub(super) fn agent_turn_policy(&self) -> auris_session::agent_policy::Policy {
+        turn_policy(
+            &self.settings.agent.policy,
+            self.agent_chat.controls.read_only_turn,
+        )
+    }
+
     pub(super) fn check_agent_edit(&mut self, command: &serde_json::Value) -> Result<(), String> {
         let operation = Operation::parse("edit_project", &serde_json::json!({"command":command}))?;
         let permit = self
@@ -527,7 +538,7 @@ impl AurisApp {
         if let Some(index) = permit {
             self.agent_chat.controls.permits.remove(index);
         }
-        match self.settings.agent.policy.decide(&operation) {
+        match self.agent_turn_policy().decide(&operation) {
             Decision::Allow => Ok(()),
             Decision::Deny(reason) => Err(reason),
             Decision::Ask | Decision::Review if approved => Ok(()),
@@ -1227,11 +1238,6 @@ mod tests {
                 .collect();
         });
         crate::harness::paint(&app, cx);
-        app.update(cx, |this, _| {
-            this.agent_chat
-                .scroll
-                .set_offset(gpui::point(px(0.0), px(-120.0)));
-        });
 
         crate::harness::click("agent-mode-menu", cx);
         crate::harness::paint(&app, cx);
@@ -1239,9 +1245,11 @@ mod tests {
         crate::harness::paint(&app, cx);
         app.read_with(cx, |this, _| {
             assert!(this.agent_chat.controls.rules_open);
-            assert_eq!(this.agent_chat.scroll.offset().y, px(0.0));
         });
-        assert!(cx.debug_bounds("agent-rule-*").is_some());
+        // Opened over a conversation read at its end, the rules are on screen all the same.
+        let rules = cx.debug_bounds("agent-rule-*").expect("rules are drawn");
+        let panel = cx.debug_bounds("agent-panel").unwrap();
+        assert!(rules.origin.y >= panel.origin.y && rules.origin.y < panel.bottom());
 
         crate::harness::click("agent-mode-menu", cx);
         crate::harness::paint(&app, cx);
@@ -1509,8 +1517,9 @@ mod tests {
     #[test]
     fn slash_completion_covers_commands_arguments_and_plain_text() {
         let commands = chat_commands::slash_matches("/m", &[], Scope::Agent);
-        assert_eq!(commands.len(), 2);
+        assert_eq!(commands.len(), 3);
         assert_eq!(commands[0].fill, "/mode ");
+        assert_eq!(commands[2].fill, "/mix");
 
         let modes = chat_commands::slash_matches("/mode p", &[], Scope::Agent);
         assert_eq!(modes.len(), 1);
