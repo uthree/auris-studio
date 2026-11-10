@@ -716,7 +716,76 @@ Deliberately simple chiptune voices, enough to hear the engine working:
 
 Square and saw are PolyBLEP band-limited, so high notes stay clean instead of aliasing.
 
-Both pitched voices open in the same view the physical instruments do. Where a physical model
+### Subtractive synthesiser
+
+Seven ready-made synthesiser sounds, every one the same subtractive engine with its own settings,
+listed as separate instruments so a pad is found by looking for a pad:
+
+| Id | Name | What it is |
+| --- | --- | --- |
+| `auris.synth.supersaw` | SuperSaw | Seven detuned saws spread across the stereo field: trance leads and wide chords |
+| `auris.synth.pad` | Synth Pad | Slow detuned saws behind a gently opening filter |
+| `auris.synth.lead` | Synth Lead | A bright resonant saw lead with glide |
+| `auris.synth.bass` | Synth Bass | A saw over a sub-octave square with a punchy filter envelope |
+| `auris.synth.pwm_strings` | PWM Strings | A pulse stack whose width an LFO keeps moving |
+| `auris.synth.brass` | Synth Brass | Saws behind a slowly opening filter that swells with velocity |
+| `auris.synth.pluck` | Synth Pluck | A short filter envelope over a percussive amp |
+
+The controls are shared, so any patch can be turned into any other. A **unison stack** of up to
+seven saws, squares or triangles is spread over ±**Detune** semitones — unevenly, so the copies
+never beat in a regular pulse — with the side copies at **Mix** and alternating left and right
+across **Stereo Width**; every copy starts at its own phase. A **Sub Oscillator** an octave down
+and **Noise Level** join the stack; **PWM Depth** and **PWM Rate** move a square's width per copy,
+in opposite directions on neighbouring copies. All of it goes through a gentle saturator into a
+resonant **24 dB low-pass** (two state-variable sections), whose **Cutoff** moves with its own
+envelope by **Filter Envelope** semitones, with **Key Tracking** from C4 and **Velocity to
+Filter**. Amp ADSR, glide and the same vibrato controls as the other synths follow.
+
+In the instrument view the patch is drawn as the **unison stack** — every copy at its detune in
+cents and its level — beside the **filter**: its response over multiples of the note, faint at the
+cutoff that is set and coloured where the loudest voice's envelope has it now, with the note's
+harmonics standing under it. The waveform lanes show each voice's cycle as it leaves the filter,
+so a pluck is seen closing from a saw to a sine.
+
+### Electronic drums and kick basses
+
+Drum machines and heavy low end built the way the analogue machines built theirs — oscillators,
+noise and filters, written down as formulas, with no recording anywhere:
+
+| Id | Name | What it is |
+| --- | --- | --- |
+| `auris.synth.electro_kit` | Electro Kit | The analogue drum machine: booming sine kick, two-tone snare, clap, metallic hats, cowbell |
+| `auris.synth.edm_kit` | EDM Kit | A club kit: a short, hard, clicky and distorted kick, a wide clap and crisp hats |
+| `auris.synth.trap_kit` | Trap Kit | A long, distorted sub-bass boom of a kick, a tight snare and fast hats |
+| `auris.synth.boom_bass` | Boom Bass | The trap "808": the kick's long sine boom played from the keyboard, gliding between held notes |
+| `auris.synth.kick_bass` | Kick Bass | The club kick bass: every note a hard, distorted kick tuned to its key |
+| `auris.synth.sub_bass` | Sub Bass | A clean, sustained sine sub-bass |
+
+The three kits share one set of controls and sit on the General MIDI keys: 35 a lower, longer
+**boom kick**, 36 kick, 37 rim, 38/40 snare, 39 clap, 42/44 closed and 46 open hat (a closed hat
+chokes an open one), 41–50 six toms tuned by key, 49 crash, 51 ride, 56 cowbell. A drum track that
+picks one starts with those pads already named in its lanes.
+
+The kick is a sine whose pitch falls exponentially from **Kick Punch** octaves above its **Kick
+Tune** onto it — the punch, then the boom — with a filtered **Kick Click** on top. **Kick Drive**
+puts it through `tanh`: a little rounds it, a lot squares the boom off into the odd harmonics that
+let a sub-bass be heard on speakers too small to play its fundamental. The snare is two damped
+sines under high-passed noise (**Snare Snap**); the clap four bursts of band-passed noise inside
+30 ms, then a tail; the hats and cymbals six inharmonic square oscillators and noise (**Metal**
+balances the two) through a high-pass and a band-pass.
+
+The three basses are one monophonic voice with the same punch, click and drive, a tone low-pass
+and an ADSR. With **Glide** above zero, a note played while another is held slides to it rather
+than striking again.
+
+All six open in the instrument window the way the synthesisers and physical models do. A bass
+draws its sounding note as one cycle and, beside it, the first quarter second of a note — the
+punch falling onto the pitch under its envelope — and the drive's transfer curve; a kit draws each
+pad it is sounding as the last moments of its own output, the kick as struck, and the hats' six
+square oscillators' harmonics under their filter. The pictures take a drag: punch time and punch,
+drive, kick decay and punch, hat tone and metal.
+
+The pitched voices open in the same view the physical instruments do. Where a physical model
 draws its strings, **Oscillator waveforms** draws one cycle of each sounding voice — two periods,
 so the join shows — at the height its envelope has reached: an FM note's bright attack visibly
 settling into a sine, a pulse narrowing as its duty cycle is turned, a triangle breaking into the
@@ -801,10 +870,11 @@ drawn on — in all four colour schemes, which is checked rather than eyeballed.
 
 ## Physical instruments
 
-The library includes **Physical Piano, Guitar, Electric Guitar, Bass, Bell, Mallet, Violin,
-Clarinet, Hammered Dulcimer and Tin Whistle**, with no sample
-files to install. New melodic tracks start on Physical Piano. These are expressive reduced
-physical models with editable contact hardness, excitation position, damping and body resonance.
+The library includes **Physical Piano, Hammered Strings, Guitar, Electric Guitar, Bass,
+Strings, Mallet, Bell, Reeds and Whistles**, with no sample files to install. New melodic
+tracks start on Physical Piano. Each is a model of the instrument itself — a hammer's felt, a
+bow's pressure, a reed's stiffness — and its editor shows the strings, the soundboard and what
+excites them as it plays.
 See [physical instruments](physical-instruments.md) for the models, controls and composition use.
 ## Importing a SoundFont of your own
 
@@ -1325,7 +1395,7 @@ auris compose --preset city-pop                # …and one written without a fi
 auris soundfonts                               # optional libraries and whether they are installed
 auris new song.auris --bpm 128
 auris info song.auris                          # tracks, clips, duration
-auris render song.auris -o song.wav --bit-depth 24
+auris render song.auris -o song.wav --bit-depth 24   # --force to replace an existing song.wav
 auris collect song.auris                       # gather every file it uses into its folder
 ```
 

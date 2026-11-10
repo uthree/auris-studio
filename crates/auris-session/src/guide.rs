@@ -847,38 +847,44 @@ pub mod architecture {
     //! line has nothing else to be doing. The gpui frontend runs the first half on a worker and
     //! keeps painting.
     //!
-    //! Native melodic instruments include [`auris_synth::Physical`]: piano, acoustic/electric
-    //! guitar, bass, bell, mallet and violin, plus [`auris_synth::Clarinet`],
-    //! [`auris_synth::HammeredDulcimer`] and [`auris_synth::TinWhistle`]. Struck strings and
-    //! rigid bodies use damped modal expansions; plucked
-    //! and bowed strings use fractional-delay travelling waves, with nonlinear friction at the
-    //! bow. Every voice is allocated in `prepare`, and the ordinary plugin parameter/state
-    //! contract carries excitation controls through editing, automation, undo and persistence.
-    //! Guitar and violin add training-derived causal radiation resonances and smooth register
-    //! curves; violin expression maps to both bow motion and output through a fitted exponent.
-    //! Calibration recordings and copy-synthesis measurements remain development tooling,
-    //! while fixed coefficients and prepared filter state live in the instrument.
-    //! Clarinet couples a nonlinear single reed to a cylindrical-bore waveguide, with
-    //! breath pressure and reed controls carried through the same plugin boundary.
-    //! Hammered dulcimer adds finite hammer contact and passively coupled, detuned string
-    //! courses. Tin whistle uses a nonlinear fipple jet and an open-pipe resonator.
+    //! Native melodic instruments are [`auris_synth::Physical`], one type registered once for
+    //! each [`auris_synth::Model`]: piano, hammered dulcimer, acoustic and electric guitar,
+    //! bass, bowed strings, mallet bars, bells, reeds and whistles. Each model is an engine
+    //! behind one polyphonic shell that owns the voices, the controllers and the stereo
+    //! image. Whatever rings on its own — a string's partials, a bar's or a bell's modes, the
+    //! soundboard or box they drive — is a bank of damped phasors advanced eight at a time.
+    //! Whatever only sounds while it is fed — a string under a bow, an air column on a reed
+    //! or a jet — is the wave going round it in a delay line, and the hammer, the bow's
+    //! friction, the reed and the jet are solved against that wave sample by sample. Every
+    //! voice is allocated in `prepare`, and the ordinary plugin parameter/state contract
+    //! carries the excitation controls through editing, automation, undo and persistence.
+    //! How loud each register of the piano is comes from the measured rates at which its
+    //! strings decay, not from a voicing table: a string can only give the bridge the energy
+    //! it loses. A key struck too softly to throw its hammer lifts its damper all the same,
+    //! so a note taken silently answers the ones played around it. The bowed strings keep
+    //! Helmholtz's motion the way a player does, by catching a note firmly, easing off, and
+    //! leaning in when the string slips twice a period; and they move the finger until the
+    //! note is in tune, because a firm bow pulls it flat. Each engine's module note is the
+    //! account of its own physics.
     //! All of them render in stereo by placing each note where the real instrument would put it,
     //! heard from the player's seat: a piano's or marimba's low notes on the left, the strings
     //! in orchestral seating with the violins left and the basses right, the dulcimer's bass
     //! bridge on the right. A note's place is fixed when it starts, so a held note never moves,
     //! and the gains `1 - pan` and `1 + pan` keep the mono downmix identical to the centred
     //! instrument. A `width` parameter scales the spread from mono to twice the natural image.
-    //! The seven [`auris_synth::Physical`] models also carry two [`auris_synth::Quality`]
-    //! choices, `quality` for live playback and `render_quality` for any block the engine marks
+    //! Every model carries two [`auris_synth::Quality`] choices, `quality` for live playback
+    //! and `render_quality` for any block the engine marks
     //! [`is_offline`](auris_core::ProcessContext::is_offline) — export, freeze, bounce,
-    //! analysis. Draft trims the piano's partial budget to a third, which is what lets a dense
-    //! piano part play live on a slow machine; High runs the delay-line strings at twice the
-    //! host rate. Render defaults to High and live to Standard, the calibrated model, so an
-    //! export can sound a little finer than playback but never coarser. The level is taken
-    //! when a note is struck, so neither control allocates or disturbs a sounding note. The
-    //! GPU is deliberately not involved: the heaviest of these models is a few thousand
-    //! phasors a block, which a GPU round trip would cost more to schedule than to compute —
-    //! the reasoning is [`auris_gpu`]'s own, under "When the GPU is used".
+    //! analysis. Draft trims the modal instruments' partial budget to about a third and runs
+    //! the bowed and blown ones at the host's own rate, which is what lets a dense part play
+    //! live on a slow machine; Standard and High run those at twice the rate, and a string
+    //! bowed near the bridge high on the instrument at twice that again. Render defaults to
+    //! High and live to Standard, so an export can sound a little finer than playback but
+    //! never coarser. The level is taken when a note starts, so neither control allocates or
+    //! disturbs a sounding note. The GPU is deliberately not involved in the sound: the
+    //! heaviest of these models is a few thousand phasors a block, which a GPU round trip
+    //! would cost more to schedule than to compute — the reasoning is [`auris_gpu`]'s own,
+    //! under "When the GPU is used". Where the GPU is used is the picture of them.
     //! There is no sample asset behind these instruments. [`crate::DEFAULT_INSTRUMENT`] names
     //! the physical piano. SoundFont import uses the same worker/session boundary as before.
     //! [`auris_synth::Choir`] is a polyphonic instrument for wordless ensemble vowels. Each
@@ -924,13 +930,20 @@ pub mod architecture {
     //! discarded. Elapsed-time images are split at tempo changes to follow the musical ruler.
     //!
     //! The live visualizer has a separate stereo scope from the plugin editor. Each tap copies
-    //! paired post-fader samples under one sequence counter, without allocation or waiting on
-    //! the audio thread. `Session::visualizer_frame` carries those channels and their sample rate
-    //! to the frontend for a triggered time-domain oscilloscope, then transforms the channels
-    //! independently and averages their power, preserving right-only and opposite-polarity
-    //! signals. Undefined correlation is explicit for silent channels. The frontend owns freeze,
-    //! display history and saved comparisons; none of these changes the document or rendered
-    //! audio.
+    //! paired samples under one sequence counter, without allocation or waiting on the audio
+    //! thread, from before a strip's fader or after it as the visualizer asks
+    //! ([`crate::VisualizerTap`]). `Session::visualizer_frame` carries those channels and their
+    //! sample rate to the frontend for a triggered time-domain oscilloscope, then transforms the
+    //! channels independently and averages their power, preserving right-only and
+    //! opposite-polarity signals. Undefined correlation is explicit for silent channels.
+    //!
+    //! Loudness is the one reading that has to hear *every* sample, so it does not come from a
+    //! window. The scope also counts what it has published, `Session::measure_visualizer_loudness`
+    //! takes exactly the frames since its last call into an [`auris_dsp::LoudnessMeter`], and the
+    //! ring is long enough that a missed repaint or two loses nothing. The meter runs on the UI
+    //! thread, where its growing integrated history is allowed to allocate. The frontend owns
+    //! freeze, display history and saved comparisons; none of these changes the document or
+    //! rendered audio.
     //!
     //! # The third thread, and why recording needed one
     //!
@@ -1438,12 +1451,10 @@ pub mod plugins {
     //! [`GuitarAmp`](auris_dsp::GuitarAmp) effect owns oversampled saturation, tone controls
     //! and analytic speaker coloration. Registry discovery makes both available in every
     //! frontend; saved state and automation use the ordinary plugin parameter contract.
-    //! [`Clarinet`](auris_synth::Clarinet) adds the reed/bore excitation family and maps
-    //! GM hint 71 without a SoundFont. Real-recording calibration is offline tooling;
-    //! playing a note needs only prepared DSP state.
-    //! [`HammeredDulcimer`](auris_synth::HammeredDulcimer) and
-    //! [`TinWhistle`](auris_synth::TinWhistle) map GM hints 15 and 78 respectively. Their
-    //! parameters, composition choices and saved projects use the same registry/session path.
+    //! The reeds and the whistles are two more [`Model`](auris_synth::Model)s of the same
+    //! type, and General MIDI hints 71, 74 and 78 reach them without a SoundFont, as 15
+    //! reaches the hammered dulcimer. Their parameters, composition choices and saved
+    //! projects use the same registry/session path as every other built-in instrument.
     //!
     //! # Observing mechanical motion
     //!
@@ -1476,6 +1487,15 @@ pub mod plugins {
     //! glottis to lips, with the eight tube cross-sections in place of modes
     //! ([`MotionGeometry::Tract`](auris_core::motion::MotionGeometry::Tract)); the dulcimer
     //! publishes each course as the sum of its modes' shapes.
+    //!
+    //! A physical model also publishes what a lane cannot show. Each voice carries its first
+    //! twenty-four partials — the phasors themselves for a string, a bar or a bell, and the
+    //! harmonics of one period of the wave for a bowed or blown one — and a trace of what
+    //! excites it: a hammer's or a mallet's force through the blow, a string's speed under
+    //! the bow, a reed's opening and a jet's swing through one period, each read back out of
+    //! the state the note is already keeping. The frame carries the lowest modes of the
+    //! soundboard or box the bodies drive. The desktop draws that body as a surface and the
+    //! partials' decay as another, on the GPU where there is one.
     //!
     //! The two oscillator synthesisers, [`Fm2`](auris_synth::Fm2) and
     //! [`Chiptune`](auris_synth::Chiptune), have no body and publish through the same channel
@@ -2163,6 +2183,10 @@ pub mod composition {
     //! preserve the track kind. Drum clips move and paste only between drum tracks, and drum
     //! recipes can only be generated on that kind. Melodic clips still move between instrument
     //! and singer tracks. MIDI channel 10 imports as drums and drum exports use that channel.
+    //! Every other imported track starts on the built-in voice that answers for the General MIDI
+    //! program it selected before its first note, and export writes the reverse program, so a
+    //! file written here reads back on the voices it was written with. A family no built-in voice
+    //! covers keeps the registry default; the shipped font is adopted only by an explicit choice.
     //!
     //! Version 21 stores the distinct kind. Older documents promote percussion from known
     //! built-in drum IDs, explicit SoundFont bank 128 selections, authored drum assignments,

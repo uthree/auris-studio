@@ -2149,9 +2149,7 @@ fn with_native_status(mut value: serde_json::Value, catalog: &Catalog) -> serde_
 fn measurable(sound: &Sound) -> bool {
     match &sound.source {
         Source::Font(p) => p.bank != 128,
-        Source::Builtin(id) => {
-            !matches!(id.as_str(), "auris.synth.drumkit" | "auris.synth.noisedrum")
-        }
+        Source::Builtin(id) => !auris_synth::is_drum_kit(id),
         Source::Clap {
             isolated_metadata, ..
         }

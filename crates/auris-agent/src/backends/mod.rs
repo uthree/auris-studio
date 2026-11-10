@@ -7,6 +7,63 @@ pub(super) mod claude;
 pub(super) mod codex;
 pub(super) mod opencode;
 
+/// Most pictures one tool result carries into the transcript.
+const RESULT_IMAGE_COUNT: usize = 4;
+/// Largest base64 picture the transcript is handed; an inspection image is a few tens of KiB.
+const RESULT_IMAGE_BYTES: usize = 4 << 20;
+
+/// One picture in the form a `result` event carries it to the window:
+/// `{"media_type": "image/png", "data": "<base64>"}`.
+pub(crate) fn result_image(media_type: &str, data: &str) -> serde_json::Value {
+    serde_json::json!({"media_type": media_type, "data": data})
+}
+
+/// The pictures in a tool result's content, whichever runtime reported it.
+///
+/// Accepts the Anthropic block (`source.data`, `source.media_type`), the MCP block (`data`,
+/// `mimeType`) and ACP's wrapper around either (`{"type":"content","content":{…}}`). Anything
+/// that is not a raster type a window can decode, or is too large to hold, is left out: the
+/// picture is for the person reading the log, and the model already had it.
+pub(crate) fn result_images(content: &serde_json::Value) -> Vec<serde_json::Value> {
+    let mut images = Vec::new();
+    for part in content.as_array().into_iter().flatten() {
+        let part = if part["type"] == "content" {
+            &part["content"]
+        } else {
+            part
+        };
+        if part["type"] != "image" {
+            continue;
+        }
+        let source = if part["source"].is_object() {
+            &part["source"]
+        } else {
+            part
+        };
+        let Some(data) = source["data"].as_str() else {
+            continue;
+        };
+        let media_type = source["media_type"]
+            .as_str()
+            .or_else(|| source["mimeType"].as_str())
+            .unwrap_or_default();
+        if data.is_empty()
+            || data.len() > RESULT_IMAGE_BYTES
+            || !matches!(
+                media_type,
+                "image/png" | "image/jpeg" | "image/gif" | "image/webp"
+            )
+        {
+            continue;
+        }
+        images.push(result_image(media_type, data));
+        if images.len() == RESULT_IMAGE_COUNT {
+            break;
+        }
+    }
+    images
+}
+
 fn native_project_directory(history: Option<&Path>) -> Option<&Path> {
     let history = history?;
     if history.file_name()? == ".auris-conversation.json" {
@@ -179,6 +236,33 @@ impl Backend {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn result_images_read_every_runtime_shape_and_skip_what_a_window_cannot_show() {
+        let content = serde_json::json!([
+            {"type":"text","text":"Mel power"},
+            {"type":"image","source":{"type":"base64","media_type":"image/png","data":"QQ=="}},
+            {"type":"image","data":"Qg==","mimeType":"image/jpeg"},
+            {"type":"content","content":{"type":"image","data":"Qw==","mimeType":"image/webp"}},
+            {"type":"image","data":"RA==","mimeType":"image/svg+xml"},
+            {"type":"image","data":"","mimeType":"image/png"},
+        ]);
+        assert_eq!(
+            result_images(&content),
+            vec![
+                result_image("image/png", "QQ=="),
+                result_image("image/jpeg", "Qg=="),
+                result_image("image/webp", "Qw=="),
+            ]
+        );
+        assert!(result_images(&serde_json::json!("plain text")).is_empty());
+        let many = serde_json::Value::Array(
+            (0..9)
+                .map(|_| serde_json::json!({"type":"image","data":"QQ==","mimeType":"image/png"}))
+                .collect(),
+        );
+        assert_eq!(result_images(&many).len(), RESULT_IMAGE_COUNT);
+    }
 
     #[test]
     fn native_project_directory_uses_the_project_outside_conversation_storage() {

@@ -9,8 +9,6 @@
 //! A provider that keeps its own sessions is resumed instead and handed only the turns other
 //! backends answered in between ([`Memory::native_thread`]).
 
-use std::fs::File;
-use std::io::Read;
 use std::path::Path;
 
 use rig_core::message::Message;
@@ -62,30 +60,19 @@ fn is_zero(value: &usize) -> bool {
 
 impl Memory {
     pub(crate) fn load(path: &Path) -> Result<Self, String> {
-        let file = match File::open(path) {
+        // Under the lock `save`'s rename takes: on Windows that rename fails for as long as
+        // another thread has the file open.
+        let bytes = match auris_session::settings::read_published_file(path, FILE_BUDGET) {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 return Ok(Self::default());
             }
+            Err(error) if error.kind() == std::io::ErrorKind::FileTooLarge => {
+                return Err("conversation file is too large; start a new conversation".into());
+            }
             Err(error) => return Err(error.to_string()),
-            Ok(file) => file,
+            Ok(bytes) => bytes,
         };
-        let size = file.metadata().map_err(|error| error.to_string())?.len();
-        if size > FILE_BUDGET {
-            return Err("conversation file is too large; start a new conversation".into());
-        }
-        let mut text = String::new();
-        text.try_reserve_exact(size as usize)
-            .map_err(|_| "not enough memory to read conversation history".to_string())?;
-        file.take(FILE_BUDGET + 1)
-            .read_to_string(&mut text)
-            .map_err(|error| error.to_string())?;
-        if text.len() as u64 > FILE_BUDGET {
-            return Err(
-                "conversation file grew too large while it was read; start a new conversation"
-                    .into(),
-            );
-        }
-        let mut memory: Self = serde_json::from_str(&text).map_err(|e| {
+        let mut memory: Self = serde_json::from_slice(&bytes).map_err(|e| {
             format!("cannot read conversation history: {e}; start a new conversation")
         })?;
         memory.bound();
@@ -371,6 +358,21 @@ fn shorten(text: &str, limit: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_save_succeeds_while_another_thread_loads_the_history() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("memory.json");
+        let read = path.clone();
+        crate::tests::assert_writes_survive_a_reader(
+            move || Memory::load(&read).map(drop),
+            |n| {
+                let mut memory = Memory::default();
+                memory.push(&format!("request {n}"), "answer");
+                memory.save(&path)
+            },
+        );
+    }
 
     #[test]
     fn completed_turns_round_trip_and_old_context_is_bounded() {

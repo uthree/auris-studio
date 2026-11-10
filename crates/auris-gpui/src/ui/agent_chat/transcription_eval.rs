@@ -48,6 +48,7 @@ fn transcript(entries: &[ChatEntry]) -> Vec<Value> {
                 ok,
                 line,
                 detail,
+                ..
             } => json!({"kind":"tool","name":name,"args":args,"ok":ok,"line":line,"detail":detail}),
         })
         .collect()

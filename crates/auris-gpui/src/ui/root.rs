@@ -177,13 +177,13 @@ impl Render for AurisApp {
             .get()
             .map_or(window.viewport_size().width, |bounds| bounds.size.width);
 
-        // Keep the playhead on screen while the transport rolls, but never fight the user's
-        // own scrolling when it is stopped.
-        if self.is_playing() {
-            let playhead = self.playhead_ticks();
-            let width = self.arrangement_width;
-            self.timeline.scroll_to_reveal(playhead, width);
-        }
+        // Keep the playhead on screen while the transport rolls, until a hand scrolls it out
+        // of view — see `PlayheadFollow` for when following comes back.
+        let playing = self.is_playing();
+        let playhead = self.playhead_ticks();
+        let width = self.arrangement_width;
+        self.playhead_follow
+            .update(&mut self.timeline, playhead, width, playing);
 
         // The taskbar and the Alt-Tab list are where a user looks to tell one project's window
         // from another's, and they were both showing a constant. Only on a change: setting it is
@@ -406,6 +406,7 @@ impl AurisApp {
             .on_action(Self::window_listener(cx, Self::on_undo))
             .on_action(Self::window_listener(cx, Self::on_redo))
             .on_action(Self::window_listener(cx, Self::on_zoom_in))
+            .on_action(Self::window_listener(cx, Self::on_reveal_playhead))
             .on_action(Self::window_listener(cx, Self::on_zoom_out))
             .on_action(Self::window_listener(cx, Self::on_panic_stop))
     }
@@ -613,8 +614,8 @@ impl AurisApp {
                     ))
                     .on_action(Self::window_listener(
                         cx,
-                        |this, _: &actions::VisualizerEffects, _, cx| {
-                            this.visualizer_command(super::visualizer::VisualizerCommand::Effects);
+                        |this, _: &actions::VisualizerTap, _, cx| {
+                            this.visualizer_command(super::visualizer::VisualizerCommand::Tap);
                             cx.notify();
                         },
                     ))
@@ -655,8 +656,10 @@ impl AurisApp {
                     ))
                     .on_action(Self::window_listener(
                         cx,
-                        |this, _: &actions::VisualizerView, _, cx| {
-                            this.visualizer_command(super::visualizer::VisualizerCommand::ViewNext);
+                        |this, _: &actions::VisualizerLoudnessReset, _, cx| {
+                            this.visualizer_command(
+                                super::visualizer::VisualizerCommand::LoudnessReset,
+                            );
                             cx.notify();
                         },
                     ))
@@ -1999,6 +2002,7 @@ impl AurisApp {
                 subject, handle, ..
             } => self.drag_envelope_handle(subject, handle, event.position),
             Drag::EqNode { subject, band, .. } => self.drag_eq_node(subject, band, event.position),
+            Drag::SynthPlot { .. } => self.drag_synth_plot(event.position, event.modifiers),
             Drag::PartDial {
                 clip,
                 dial,
@@ -3494,6 +3498,16 @@ impl AurisApp {
 
     fn on_zoom_in(&mut self, _: &actions::ZoomIn, _window: &mut Window, cx: &mut Context<Self>) {
         self.timeline.zoom_by(1.3, px(0.0));
+        cx.notify();
+    }
+
+    fn on_reveal_playhead(
+        &mut self,
+        _: &actions::RevealPlayhead,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.reveal_playhead();
         cx.notify();
     }
 

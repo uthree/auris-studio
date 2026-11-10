@@ -148,6 +148,10 @@ mod tests {
             Key::EventListTick,
             Key::EventListStep,
             Key::EventListGate,
+            // The analyser's channel names, which a Japanese mixer prints as L and R too.
+            Key::VisualizerSpectrumAverage,
+            Key::VisualizerSpectrumLeft,
+            Key::VisualizerSpectrumRight,
         ];
         for key in Key::ALL {
             if SHARED.contains(key) {

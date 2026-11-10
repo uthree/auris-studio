@@ -14,6 +14,12 @@ pub const MOTION_VOICES: usize = 4;
 pub const MOTION_POINTS: usize = 64;
 /// Low modes exposed alongside the spatial projection.
 pub const MOTION_MODES: usize = 8;
+/// Partials of a string, bar or bell exposed for a spectrum, where an instrument has them.
+pub const MOTION_PARTIALS: usize = 24;
+/// Samples of what excites a body — a hammer's blow, a bow's grip, a reed's opening.
+pub const MOTION_SCOPE: usize = 48;
+/// Modes of the soundboard or box the bodies drive, lowest first.
+pub const MOTION_BODY: usize = 24;
 /// The controller a frontend sends just before a note to excite the body at a chosen place.
 ///
 /// Its value is where along the body the next note is struck, plucked or bowed, from zero at one
@@ -24,8 +30,9 @@ pub const MOTION_MODES: usize = 8;
 /// Instruments with no excitation position (a reed, a jet, a glottis) ignore it.
 pub const TOUCH_CONTROLLER: u8 = 20;
 
-const STRIDE: usize = 6 + MOTION_POINTS + MOTION_MODES;
-const WORDS: usize = 5 + MOTION_VOICES * STRIDE;
+const STRIDE: usize = 6 + MOTION_POINTS + MOTION_MODES + MOTION_PARTIALS + MOTION_SCOPE;
+const HEADER: usize = 5 + MOTION_BODY;
+const WORDS: usize = HEADER + MOTION_VOICES * STRIDE;
 
 /// Mechanical geometry of an observed instrument.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -50,7 +57,8 @@ pub enum MotionGeometry {
     /// from the start of its period to the end, scaled by its envelope; `modes` are the
     /// magnitudes of that cycle's first eight harmonics, relative to the strongest, before the
     /// envelope; and `excitation` is the voice's own timbre control as it stands right now — for
-    /// phase modulation, the modulation index in radians.
+    /// phase modulation, the modulation index in radians; for the subtractive patches, the
+    /// filter's cutoff in hertz.
     Oscillator,
 }
 
@@ -74,6 +82,16 @@ pub struct MotionVoice {
     /// Relative magnitudes of the first eight modes; zero for delay-line models. A
     /// [`MotionGeometry::Tract`] has no modes to show and carries its tube cross-sections here.
     pub modes: [f32; MOTION_MODES],
+    /// How far each of the body's first partials is swinging, the fundamental first, in the
+    /// units of `points`. All zero for an instrument that is not a sum of partials.
+    pub partials: [f32; MOTION_PARTIALS],
+    /// What is exciting the body, over the time that matters to it: a hammer's or a mallet's
+    /// force over the blow, oldest sample first; for a bow, the string's speed under the hair
+    /// through one period, as a multiple of the bow's; for a reed, how far open it stood
+    /// through one period, one being its opening at rest; for an air jet, where it met the
+    /// edge through one period, from -1 wholly outside the pipe to 1 wholly inside. All zero
+    /// where there is nothing of the kind to show.
+    pub scope: [f32; MOTION_SCOPE],
 }
 
 impl Default for MotionVoice {
@@ -87,12 +105,14 @@ impl Default for MotionVoice {
             held: false,
             points: [0.; MOTION_POINTS],
             modes: [0.; MOTION_MODES],
+            partials: [0.; MOTION_PARTIALS],
+            scope: [0.; MOTION_SCOPE],
         }
     }
 }
 
 /// A coherent, fixed-size observation of one instrument instance.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct MotionFrame {
     /// Geometry used for the spatial projection.
     pub geometry: MotionGeometry,
@@ -106,6 +126,24 @@ pub struct MotionFrame {
     pub pedal: bool,
     /// Up to four sounding voices, ordered by excitation recency.
     pub voices: [MotionVoice; MOTION_VOICES],
+    /// Where each of the lowest modes of the soundboard or box is in its swing, lowest
+    /// first and signed, in the units of `points`. All zero for an instrument with no such
+    /// body, or one that is not being driven.
+    pub body: [f32; MOTION_BODY],
+}
+
+impl Default for MotionFrame {
+    fn default() -> Self {
+        Self {
+            geometry: MotionGeometry::default(),
+            active: 0,
+            expression: 0.,
+            pressure: 0.,
+            pedal: false,
+            voices: [MotionVoice::default(); MOTION_VOICES],
+            body: [0.; MOTION_BODY],
+        }
+    }
 }
 
 /// Reader handle for optional live mechanical observation.
@@ -156,8 +194,11 @@ impl MotionMonitor {
                 pedal: words[4] != 0,
                 ..Default::default()
             };
+            for (index, mode) in frame.body.iter_mut().enumerate() {
+                *mode = value(5 + index);
+            }
             for (index, voice) in frame.voices.iter_mut().enumerate() {
-                let start = 5 + index * STRIDE;
+                let start = HEADER + index * STRIDE;
                 voice.pitch = value(start);
                 voice.level = value(start + 1);
                 voice.contact = value(start + 2);
@@ -179,6 +220,13 @@ impl MotionMonitor {
                 }
                 for (i, mode) in voice.modes.iter_mut().enumerate() {
                     *mode = value(start + 6 + MOTION_POINTS + i);
+                }
+                let partials = start + 6 + MOTION_POINTS + MOTION_MODES;
+                for (i, partial) in voice.partials.iter_mut().enumerate() {
+                    *partial = value(partials + i);
+                }
+                for (i, sample) in voice.scope.iter_mut().enumerate() {
+                    *sample = value(partials + MOTION_PARTIALS + i);
                 }
             }
             return Some(frame);
@@ -232,8 +280,11 @@ impl MotionCapture {
         words[2] = frame.expression.to_bits();
         words[3] = frame.pressure.to_bits();
         words[4] = u32::from(frame.pedal);
+        for (index, mode) in frame.body.iter().enumerate() {
+            words[5 + index] = mode.to_bits();
+        }
         for (index, voice) in frame.voices.iter().enumerate() {
-            let start = 5 + index * STRIDE;
+            let start = HEADER + index * STRIDE;
             words[start] = voice.pitch.to_bits();
             words[start + 1] = voice.level.to_bits();
             words[start + 2] = voice.contact.to_bits();
@@ -255,6 +306,13 @@ impl MotionCapture {
             }
             for (i, mode) in voice.modes.iter().enumerate() {
                 words[start + 6 + MOTION_POINTS + i] = mode.to_bits();
+            }
+            let partials = start + 6 + MOTION_POINTS + MOTION_MODES;
+            for (i, partial) in voice.partials.iter().enumerate() {
+                words[partials + i] = partial.to_bits();
+            }
+            for (i, sample) in voice.scope.iter().enumerate() {
+                words[partials + MOTION_PARTIALS + i] = sample.to_bits();
             }
         }
         // SeqCst on payload and version provides one total order for the bounded seqlock.
@@ -291,6 +349,9 @@ mod tests {
             };
             frame.voices[0].geometry = Some(MotionGeometry::Membrane);
             frame.voices[0].points[27] = 0.12;
+            frame.voices[0].partials[MOTION_PARTIALS - 1] = 0.3;
+            frame.voices[3].scope[MOTION_SCOPE - 1] = -0.7;
+            frame.body[MOTION_BODY - 1] = 0.05;
             frame.voices[1].geometry = Some(MotionGeometry::Plate);
             frame.voices[1].modes[7] = 0.03;
             frame.voices[2].geometry = Some(MotionGeometry::Bore);

@@ -342,10 +342,18 @@ pub mod tool_help {
                 .flatten()
                 .find(|variant| variant_name(variant).as_ref() == Some(operation))
                 .ok_or_else(|| {
-                    format!(
-                        "Unknown operation for {name}; choose from {}",
-                        operations.join(", ")
-                    )
+                    // A tool whose arguments are plain fields has no variants to list. Saying
+                    // "choose from" and then nothing sent a real trial back for another guess.
+                    if operations.is_empty() {
+                        format!(
+                            "{name} takes no operation; call tool_help with only name for its arguments"
+                        )
+                    } else {
+                        format!(
+                            "Unknown operation for {name}; choose from {}",
+                            operations.join(", ")
+                        )
+                    }
                 })?;
             schema["properties"]["operation"] = selected.clone();
         } else {
@@ -423,6 +431,45 @@ pub mod tool_help {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn help_for_a_tool_without_operations_says_so_instead_of_an_empty_choice_list() {
+        let catalog = tool_catalog();
+        let (plain, operational): (Vec<_>, Vec<_>) = catalog
+            .iter()
+            .partition(|tool| tool.parameters["properties"]["operation"]["oneOf"].is_null());
+        assert!(!plain.is_empty() && !operational.is_empty());
+        for tool in plain {
+            let error = tool_help::run(&tool_help::Args {
+                name: tool.name.clone(),
+                operation: Some("analysis".into()),
+            })
+            .unwrap_err();
+            assert_eq!(
+                error,
+                format!(
+                    "{} takes no operation; call tool_help with only name for its arguments",
+                    tool.name
+                )
+            );
+        }
+        let tool = operational[0];
+        let error = tool_help::run(&tool_help::Args {
+            name: tool.name.clone(),
+            operation: Some("not-an-operation".into()),
+        })
+        .unwrap_err();
+        assert!(
+            error.starts_with(&format!(
+                "Unknown operation for {}; choose from ",
+                tool.name
+            )) && error
+                .split("choose from ")
+                .nth(1)
+                .is_some_and(|choices| !choices.is_empty()),
+            "{error}"
+        );
+    }
 
     #[test]
     fn catalog_names_are_unique_and_help_preserves_each_exact_schema() {

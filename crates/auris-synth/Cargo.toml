@@ -10,8 +10,8 @@ rust-version.workspace = true
 [features]
 # Offline fitting overrides for the production choir DSP; absent from application builds.
 choir-calibration = []
-# Offline fitting overrides for the production piano voicing; absent from application builds.
-piano-calibration = []
+# Offline voicing dials for the physical instruments; absent from application builds.
+physical-calibration = []
 
 [dependencies]
 auris-core.workspace = true

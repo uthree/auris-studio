@@ -186,6 +186,8 @@ actions!(
         ZoomIn,
         /// Zoom the timeline out.
         ZoomOut,
+        /// Scroll the timeline back to the playhead and follow it again.
+        RevealPlayhead,
         /// Make every track lane taller.
         IncreaseTrackHeight,
         /// Make every track lane shorter.
@@ -241,17 +243,17 @@ actions!(
         ToggleVisualizer,
         VisualizerSource,
         VisualizerFreeze,
-        VisualizerEffects,
+        VisualizerTap,
         VisualizerAverage,
         VisualizerPeaks,
         VisualizerSave,
         VisualizerReset,
         VisualizerTimebase,
-        VisualizerView,
         VisualizerSpectrumChannel,
         VisualizerCorrelationReset,
         VisualizerOscilloscopeGain,
         VisualizerStereoAutoGain,
+        VisualizerLoudnessReset,
         /// Move keyboard focus to the next panel.
         FocusNextPane,
         /// Move keyboard focus to the previous panel.
@@ -587,6 +589,7 @@ bindable! {
         "view.event_list",      GroupView,      CmdShowEventList,      "" => ToggleEventList;
         "view.zoom_in",         GroupView,      CmdZoomIn,             "secondary-=" => ZoomIn;
         "view.zoom_out",        GroupView,      CmdZoomOut,            "secondary--" => ZoomOut;
+        "view.reveal_playhead", GroupView,      CmdRevealPlayhead,     "" => RevealPlayhead;
         "view.track_height_increase", GroupView, CmdIncreaseTrackHeight, "" => IncreaseTrackHeight;
         "view.track_height_decrease", GroupView, CmdDecreaseTrackHeight, "" => DecreaseTrackHeight;
         "view.settings",        GroupView,      CmdSettings,           "secondary-," => OpenSettings;
@@ -606,17 +609,17 @@ bindable! {
         "visualizer.toggle", GroupAnalysis, VisualizerTitle, "" => ToggleVisualizer;
         "visualizer.source", GroupAnalysis, VisualizerSelected, "" => VisualizerSource;
         "visualizer.freeze", GroupAnalysis, VisualizerFreeze, "" => VisualizerFreeze;
-        "visualizer.effects", GroupAnalysis, VisualizerEffects, "" => VisualizerEffects;
+        "visualizer.tap", GroupAnalysis, VisualizerTap, "" => VisualizerTap;
         "visualizer.average", GroupAnalysis, VisualizerAverage, "" => VisualizerAverage;
         "visualizer.peaks", GroupAnalysis, VisualizerPeaks, "" => VisualizerPeaks;
         "visualizer.save", GroupAnalysis, VisualizerSave, "" => VisualizerSave;
         "visualizer.reset", GroupAnalysis, VisualizerReset, "" => VisualizerReset;
         "visualizer.timebase", GroupAnalysis, VisualizerTimebase, "" => VisualizerTimebase;
-        "visualizer.view", GroupAnalysis, VisualizerView, "" => VisualizerView;
         "visualizer.spectrum_channel", GroupAnalysis, VisualizerSpectrumChannel, "" => VisualizerSpectrumChannel;
         "visualizer.correlation_reset", GroupAnalysis, VisualizerCorrelationReset, "" => VisualizerCorrelationReset;
         "visualizer.oscilloscope_gain", GroupAnalysis, VisualizerDisplayGain, "" => VisualizerOscilloscopeGain;
         "visualizer.stereo_auto_gain", GroupAnalysis, VisualizerStereoAutoGain, "" => VisualizerStereoAutoGain;
+        "visualizer.loudness_reset", GroupAnalysis, VisualizerLoudnessReset, "" => VisualizerLoudnessReset;
         "analysis.results", GroupAnalysis, AnalysisResults, "" => OpenAnalysisResults;
     }
 

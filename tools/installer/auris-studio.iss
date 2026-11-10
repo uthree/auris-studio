@@ -25,11 +25,22 @@ Compression=lzma2
 SolidCompression=yes
 ChangesEnvironment=yes
 CloseApplications=yes
+; Tell Explorer to reread file associations after the [Registry] entries change.
+ChangesAssociations=yes
 
 ; Include every staged binary, including the update helper when present. Historical
 ; tags repackaged through workflow_dispatch do not need to provide the helper.
 [Files]
 Source: "{#StageDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+
+; Open .auris projects with the application on double-click. The installer is per-user, so HKA
+; is HKCU; `main` opens its first argument as a project.
+[Registry]
+Root: HKA; Subkey: "Software\Classes\.auris"; ValueType: string; ValueName: ""; ValueData: "AurisStudio.Project"; Flags: uninsdeletevalue
+Root: HKA; Subkey: "Software\Classes\.auris\OpenWithProgids"; ValueType: string; ValueName: "AurisStudio.Project"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKA; Subkey: "Software\Classes\AurisStudio.Project"; ValueType: string; ValueName: ""; ValueData: "Auris Studio Project"; Flags: uninsdeletekey
+Root: HKA; Subkey: "Software\Classes\AurisStudio.Project\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\auris-studio.exe,0"
+Root: HKA; Subkey: "Software\Classes\AurisStudio.Project\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\auris-studio.exe"" ""%1"""
 
 [Icons]
 Name: "{autoprograms}\Auris Studio"; Filename: "{app}\auris-studio.exe"

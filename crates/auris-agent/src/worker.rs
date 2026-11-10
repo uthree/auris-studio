@@ -1,6 +1,5 @@
 //! Per-conversation channels and cancellation; no process-global session or working directory.
 use super::*;
-use std::io::Read;
 use std::path::Path;
 use std::sync::{
     Arc,
@@ -122,21 +121,23 @@ fn history_file_lock(path: &Path) -> Result<std::fs::File, String> {
 
 fn read_history_generation(path: &Path) -> Result<u64, String> {
     let generation_path = path.with_extension("generation");
-    let file = match std::fs::File::open(&generation_path) {
-        Ok(file) => file,
+    // Under the lock `advance_history_generation`'s rename takes: on Windows that rename fails
+    // for as long as another thread has the file open.
+    let bytes = match auris_session::settings::read_published_file(
+        &generation_path,
+        HISTORY_GENERATION_BYTES,
+    ) {
+        Ok(bytes) => bytes,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(error) if error.kind() == std::io::ErrorKind::FileTooLarge => {
+            return Err("Conversation history generation is invalid".into());
+        }
         Err(error) => return Err(error.to_string()),
     };
-    if file.metadata().map_err(|error| error.to_string())?.len() > HISTORY_GENERATION_BYTES {
-        return Err("Conversation history generation is invalid".into());
-    }
-    let mut text = String::new();
-    file.take(HISTORY_GENERATION_BYTES + 1)
-        .read_to_string(&mut text)
-        .map_err(|error| error.to_string())?;
-    text.trim()
-        .parse()
-        .map_err(|_| "Conversation history generation is invalid".into())
+    std::str::from_utf8(&bytes)
+        .ok()
+        .and_then(|text| text.trim().parse().ok())
+        .ok_or_else(|| "Conversation history generation is invalid".into())
 }
 
 /// Advance the tombstone and remove the older generation while the stable file lock is held.
@@ -180,6 +181,11 @@ struct Channels {
     lyric_repairs: std::sync::Mutex<crate::lyric_repair::Budget>,
     vision: AtomicBool,
     visual: std::sync::Mutex<Option<Message>>,
+    /// Pictures and audio a native tool call produced, by call id, until its `result` event
+    /// takes them as extra fields (`images`, `audio`).
+    result_media: std::sync::Mutex<
+        std::collections::HashMap<String, serde_json::Map<String, serde_json::Value>>,
+    >,
     /// Whether the model takes audio input, which is what offers it `listen`.
     hearing: AtomicBool,
     /// The latest audition, waiting for the one request that delivers it.
@@ -262,6 +268,11 @@ impl Bridge {
             self.0.tool_limit_reached.notify_one();
         }
         result
+    }
+
+    /// Tool calls left in this request, once few enough to tell the model.
+    pub(super) fn tool_calls_left_if_low(&self) -> Option<usize> {
+        self.0.tool_calls.lock().ok()?.low()
     }
 
     #[cfg(test)]
@@ -395,10 +406,44 @@ impl Bridge {
     pub(super) fn visual(&self) -> Option<Message> {
         self.0.visual.lock().unwrap().clone()
     }
+    /// Holds `values` as the `field` of the `result` event of `call_id`, which the reporter
+    /// emits after the tool has returned its text: the pictures and audio the transcript shows.
+    pub(super) fn stash_result_media(
+        &self,
+        call_id: &str,
+        field: &str,
+        values: Vec<serde_json::Value>,
+    ) {
+        if !values.is_empty() {
+            self.0
+                .result_media
+                .lock()
+                .unwrap()
+                .entry(call_id.to_owned())
+                .or_default()
+                .insert(field.to_owned(), values.into());
+        }
+    }
+
+    /// The fields stashed for `call_id`, once.
+    pub(super) fn take_result_media(
+        &self,
+        call_id: &str,
+    ) -> serde_json::Map<String, serde_json::Value> {
+        self.0
+            .result_media
+            .lock()
+            .unwrap()
+            .remove(call_id)
+            .unwrap_or_default()
+    }
+
+    /// The inspection's text for the model, and its picture in the `result` event's form for the
+    /// transcript, which shows it whether or not the model could see it.
     pub(super) fn accept_inspection(
         &self,
         report: &auris_session::audio_inspection::Inspection,
-    ) -> Result<String, String> {
+    ) -> Result<(String, serde_json::Value), String> {
         let presentation = toolbox::audio_inspection::present(report)?;
         self.observe_production(
             "inspect_audio",
@@ -410,6 +455,7 @@ impl Bridge {
             report.measurements.clone(),
         )?;
         let mut text = presentation.text;
+        let shown = crate::backends::result_image("image/png", &presentation.png);
         if self.0.vision.load(Ordering::Relaxed) {
             let image = rig_core::message::UserContent::image_base64(
                 presentation.png,
@@ -432,7 +478,7 @@ impl Bridge {
             self.clear_visual();
             text.push_str("\nImage not sent: this model has no confirmed vision capability. Use measurements and score data only.");
         }
-        Ok(text)
+        Ok((text, shown))
     }
     pub(super) fn history<T>(
         &self,
@@ -624,6 +670,7 @@ impl Worker {
             lyric_repairs: std::sync::Mutex::new(crate::lyric_repair::Budget::default()),
             vision: AtomicBool::new(false),
             visual: std::sync::Mutex::new(None),
+            result_media: Default::default(),
             hearing: AtomicBool::new(false),
             audible: std::sync::Mutex::new(None),
             execution_root,
@@ -737,6 +784,7 @@ pub(crate) fn test_bridge() -> (
             lyric_repairs: std::sync::Mutex::new(crate::lyric_repair::Budget::default()),
             vision: AtomicBool::new(false),
             visual: std::sync::Mutex::new(None),
+            result_media: Default::default(),
             hearing: AtomicBool::new(false),
             audible: std::sync::Mutex::new(None),
             execution_root: None,
@@ -861,6 +909,17 @@ pub fn list_models_background(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_reset_succeeds_while_another_thread_reads_the_generation() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("memory.json");
+        let read = path.clone();
+        crate::tests::assert_writes_survive_a_reader(
+            move || read_history_generation(&read).map(drop),
+            |_| advance_history_generation(&path).map(drop),
+        );
+    }
 
     #[test]
     fn worker_uses_configured_tool_call_limit_and_can_exceed_the_old_caps() {
@@ -1460,6 +1519,7 @@ mod tests {
             lyric_repairs: std::sync::Mutex::new(crate::lyric_repair::Budget::default()),
             vision: AtomicBool::new(true),
             visual: std::sync::Mutex::new(None),
+            result_media: Default::default(),
             hearing: AtomicBool::new(false),
             audible: std::sync::Mutex::new(None),
             execution_root: None,
@@ -1469,7 +1529,7 @@ mod tests {
         }));
         let scope = VisualTurn::new(Some(bridge.clone()));
         for revision in 1..=3 {
-            bridge
+            let (_, image) = bridge
                 .accept_inspection(&auris_session::audio_inspection::Inspection {
                     revision,
                     measurements: serde_json::json!({"seconds":2.0}),
@@ -1479,6 +1539,19 @@ mod tests {
                     notes: vec![],
                 })
                 .unwrap();
+            // The transcript's copy of the picture, held for the call's result event once.
+            assert_eq!(image["media_type"], "image/png");
+            assert!(!image["data"].as_str().unwrap().is_empty());
+            bridge.stash_result_media(&format!("call-{revision}"), "images", vec![image.clone()]);
+            assert_eq!(
+                bridge.take_result_media(&format!("call-{revision}"))["images"],
+                serde_json::json!([image])
+            );
+            assert!(
+                bridge
+                    .take_result_media(&format!("call-{revision}"))
+                    .is_empty()
+            );
         }
         let Message::User { content } = bridge.visual().unwrap() else {
             panic!()

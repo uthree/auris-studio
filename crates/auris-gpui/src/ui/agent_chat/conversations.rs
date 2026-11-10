@@ -33,6 +33,8 @@ pub(super) struct Conversations {
     active: Option<Conversation>,
     preview: Option<Conversation>,
     pub(super) preview_expanded: std::collections::BTreeSet<usize>,
+    /// Where the read-only preview is scrolled to, which its selection scrolls on past the edge.
+    preview_scroll: gpui::ScrollHandle,
     list: Vec<ConversationInfo>,
     pub(super) showing_list: bool,
     pub(super) search: TextField,
@@ -61,6 +63,7 @@ impl Default for Conversations {
             active: None,
             preview: None,
             preview_expanded: Default::default(),
+            preview_scroll: gpui::ScrollHandle::new(),
             list: Vec::new(),
             showing_list: false,
             search: TextField::default(),
@@ -154,6 +157,8 @@ impl ChatEntry {
                 ok,
                 line,
                 detail,
+                // Pictures are kept for the open conversation only; a saved one holds the text.
+                ..
             } => Content::Tool {
                 name: name.clone(),
                 args: args.clone(),
@@ -200,6 +205,8 @@ impl ChatEntry {
                     line.clone()
                 },
                 detail: detail.clone(),
+                images: Vec::new(),
+                audio: Vec::new(),
             },
         }
     }
@@ -412,6 +419,14 @@ impl AurisApp {
         let store = ConversationStore::for_project(folder);
         self.agent_chat.conversations.store = Some(store);
         self.conversation_operation(Operation::Initialize);
+    }
+
+    /// Takes any finished conversation-storage answer, then says whether a write is still
+    /// running on its thread.
+    #[cfg(test)]
+    pub(crate) fn conversation_storage_busy(&mut self, cx: &mut gpui::Context<Self>) -> bool {
+        self.poll_conversations(cx);
+        self.agent_chat.conversations.pending.is_some()
     }
 
     pub(super) fn poll_conversations(&mut self, cx: &mut gpui::Context<Self>) {
@@ -1128,19 +1143,17 @@ impl AurisApp {
         } else if let Some(preview) = self.agent_chat.conversations.preview.as_ref() {
             let title = conversation_title(&preview.info, self.language());
             let messages = preview.transcript.messages.clone();
-            let mut list = div()
-                .id("agent-conversation-preview")
-                .debug_selector(|| "agent-conversation-preview".into())
+            let scroll = self.agent_chat.conversations.preview_scroll.clone();
+            // One selection over the whole conversation, as in the live one: a drag runs from a
+            // question through the answer and the tool output into the next message.
+            let mut rows = atelier::SelectionScope::new("agent-conversation-preview-selection")
+                .scroll(&scroll)
                 .flex()
                 .flex_col()
-                .flex_1()
-                .min_h_0()
-                .overflow_y_scroll()
-                .p_2()
                 .gap_2()
                 .child(div().text_sm().text_color(theme.text).child(title));
             for (index, message) in messages.iter().enumerate() {
-                list = list.child(self.chat_row(
+                rows = rows.child(self.chat_row(
                     index,
                     &ChatEntry::from_saved(&message.content, true),
                     &theme,
@@ -1148,6 +1161,17 @@ impl AurisApp {
                     cx,
                 ));
             }
+            let list = div()
+                .id("agent-conversation-preview")
+                .debug_selector(|| "agent-conversation-preview".into())
+                .flex()
+                .flex_col()
+                .flex_1()
+                .min_h_0()
+                .overflow_y_scroll()
+                .track_scroll(&scroll)
+                .p_2()
+                .child(rows);
             body = body.child(list).child(button(
                 "agent-conversation-resume",
                 self.t(Key::AgentStopAndResumeConversation),
@@ -1320,9 +1344,34 @@ mod tests {
     use super::*;
     use crate::harness::{click, open, paint};
 
+    /// Blocks until the storage operation in flight, if any, has answered.
+    ///
+    /// The answer is put back on a fresh channel, so `poll_conversations` still takes it and does
+    /// everything it would have done. Waiting on the worker itself rather than spinning against a
+    /// deadline is what keeps a loaded machine from failing a test that is merely slow; the
+    /// timeout only turns a worker that never answers into a failure rather than a hang.
+    fn await_storage(app: &gpui::Entity<AurisApp>, cx: &mut gpui::VisualTestContext) {
+        app.update(cx, |this, _| {
+            let conversations = &mut this.agent_chat.conversations;
+            let Some(pending) = conversations.pending.take() else {
+                return;
+            };
+            let (sender, receiver) = std::sync::mpsc::channel();
+            match pending.recv_timeout(Duration::from_secs(60)) {
+                Ok(answer) => sender.send(answer).unwrap(),
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                    panic!("conversation storage did not answer within a minute")
+                }
+                // Dropping the sender leaves a disconnected channel, which the poll reports.
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => drop(sender),
+            }
+            conversations.pending = Some(receiver);
+        });
+    }
+
     fn settle(app: &gpui::Entity<AurisApp>, cx: &mut gpui::VisualTestContext) {
-        let deadline = Instant::now() + Duration::from_secs(10);
         loop {
+            await_storage(app, cx);
             app.update(cx, |this, cx| this.poll_conversations(cx));
             let pending = app.read_with(cx, |this, _| {
                 assert!(
@@ -1335,8 +1384,6 @@ mod tests {
             if !pending {
                 break;
             }
-            assert!(Instant::now() < deadline, "conversation storage timed out");
-            std::thread::yield_now();
         }
         paint(app, cx);
     }
@@ -1582,6 +1629,8 @@ mod tests {
                     ok: true,
                     line: "4 notes added".into(),
                     detail: "Complete tool result".into(),
+                    images: Vec::new(),
+                    audio: Vec::new(),
                 },
             ];
             this.agent_chat.input = TextField::new("Try a softer bass");
@@ -1630,10 +1679,14 @@ mod tests {
             assert!(this.agent_chat.references.attachments.is_empty(), "sent references are not draft attachments");
             assert_eq!(this.project(), &score);
         });
-        assert!(cx.debug_bounds("agent-message-attachment-0-0").is_some());
-        assert!(cx.debug_bounds("agent-message-attachment-0-1").is_some());
+        for n in 0..2 {
+            let chip: &'static str = super::chat_view::attachment_chip(&app, cx, 0, n).leak();
+            assert!(cx.debug_bounds(chip).is_some());
+        }
         assert_eq!(cx.opened_url(), None);
-        click("agent-message-attachment-0-0-open", cx);
+        let first: &'static str =
+            format!("{}-open", super::chat_view::attachment_chip(&app, cx, 0, 0)).leak();
+        click(first, cx);
         cx.run_until_parked();
         app.read_with(cx, |this, _| {
             assert_eq!(this.attachment_preview.as_ref().unwrap().path, reference)
@@ -1982,13 +2035,11 @@ mod tests {
             this.conversation_operation(Operation::Save);
             id
         });
-        let deadline = Instant::now() + Duration::from_secs(10);
         while app.read_with(cx, |this, _| {
             this.agent_chat.conversations.pending.is_some()
         }) {
+            await_storage(&app, cx);
             app.update(cx, |this, cx| this.poll_conversations(cx));
-            assert!(Instant::now() < deadline);
-            std::thread::yield_now();
         }
         app.update(cx, |this, cx| {
             assert!(

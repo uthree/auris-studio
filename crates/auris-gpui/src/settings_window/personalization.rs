@@ -653,7 +653,13 @@ mod tests {
         crate::harness::click("preference-remove-0", cx);
         cx.simulate_prompt_answer(Key::MenuDelete.get(language));
         cx.run_until_parked();
-        assert!(workshop::load_preferences().unwrap().selections.is_empty());
+        let error = handle
+            .read_with(cx, |this, _| this.personalization.error.clone())
+            .unwrap();
+        assert!(
+            workshop::load_preferences().unwrap().selections.is_empty(),
+            "{error:?}"
+        );
         handle
             .read_with(cx, |this, _| assert!(this.personalization.error.is_none()))
             .unwrap();

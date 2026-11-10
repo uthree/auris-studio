@@ -241,6 +241,17 @@ impl Oscillator {
         self.phase
     }
 
+    /// Moves the read position to `cycles` (wrapped into `0..1`) without touching anything else.
+    ///
+    /// For stacks of detuned copies that must not start together: seven saws reset to the same
+    /// phase strike as one loud edge and then flange apart, which is the opposite of a wide
+    /// unison. A non-finite value is ignored.
+    pub fn set_phase(&mut self, cycles: f32) {
+        if cycles.is_finite() {
+            self.phase = cycles - cycles.floor();
+        }
+    }
+
     /// Returns the oscillator to its start-of-note state: phase zero, noise register reseeded.
     pub fn reset(&mut self) {
         self.phase = 0.0;

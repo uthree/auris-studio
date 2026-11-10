@@ -161,8 +161,8 @@ fn ending_controls_use_registered_defaults_and_distinguish_instrument_decay() {
     for (id, family, release) in [
         ("auris.synth.chiptune", "synth", 0.15),
         ("auris.physical.piano", "keys", 0.2),
-        ("auris.physical.clarinet", "winds", 0.24),
-        ("auris.physical.violin", "bowed_strings", 1.5),
+        ("auris.physical.clarinet", "winds", 0.12),
+        ("auris.physical.violin", "bowed_strings", 0.35),
     ] {
         let mut session = session();
         let track = session.add_instrument_track("Lead", id).unwrap();

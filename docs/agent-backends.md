@@ -23,7 +23,10 @@ becomes Stop during a turn.
 Settings > Agent includes **Tool calls per request**, shared with AI song creation.
 The default is 1000; choices range from 100 to 10000. Reads, reference/help tools,
 and failed calls reaching the Auris tool host all count. The next call beyond the
-allowance is refused before execution and the worker stops. Completed panel edits
+allowance is refused before execution and the worker stops. A song-creation
+composer is told its allowance with the assignment, and once a tenth of it (at least
+twenty calls) remains, every tool result carries the calls left in a `tool_budget`
+field, so a model that scripts its calls can finish within it. Completed panel edits
 remain in the document; candidate progress remains checkpointed. Increase the limit
 and send a new panel instruction or choose **Resume recovery** on the candidate.
 Reaching this limit does not trigger automatic candidate recovery. Changes apply

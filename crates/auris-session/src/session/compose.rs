@@ -331,10 +331,7 @@ impl Session {
                 || track
                     .sound
                     .is_some_and(|sound| sound.bank == auris_compose::gm::DRUM_BANK)
-                || matches!(
-                    track.instrument.as_str(),
-                    auris_synth::DrumKit::ID | auris_synth::NoiseDrum::ID
-                )
+                || auris_synth::is_drum_kit(&track.instrument)
                 || track.clips.iter().any(|clip| {
                     clip.recipe
                         .as_ref()

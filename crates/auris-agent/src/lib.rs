@@ -538,6 +538,12 @@ fn armed(builder: AgentBuilder, bridge: Option<Bridge>, prompt: &str, hearing: b
                     });
                 let bridge = bridge.clone();
                 let name = tool_name.clone();
+                let call_id = match &origin {
+                    permissions::PermissionOrigin::ToolCall { call_id, .. } => {
+                        Some(call_id.clone())
+                    }
+                    permissions::PermissionOrigin::Independent { .. } => None,
+                };
                 Box::pin(async move {
                     if bridge.is_none()
                         && let Some(result) = toolbox::runtime::call_live_reference_in(
@@ -562,18 +568,33 @@ fn armed(builder: AgentBuilder, bridge: Option<Bridge>, prompt: &str, hearing: b
                     if name == host::LISTEN && reply["ok"] == true {
                         let audition = serde_json::from_value(reply["audition"].clone())
                             .map_err(|e| ToolExecutionError::other(e.to_string()))?;
-                        return bridge
+                        let text = bridge
                             .accept_audition(&audition)
-                            .map(ToolOutput::text)
-                            .map_err(ToolExecutionError::other);
+                            .map_err(ToolExecutionError::other)?;
+                        // What the model heard, for the person to play back from the log.
+                        if let Some(call_id) = &call_id {
+                            bridge.stash_result_media(
+                                call_id,
+                                "audio",
+                                audition
+                                    .clips
+                                    .iter()
+                                    .map(|clip| serde_json::json!(clip))
+                                    .collect(),
+                            );
+                        }
+                        return Ok(ToolOutput::text(text));
                     }
                     if name == "inspect_audio" && reply["ok"] == true {
                         let report = serde_json::from_value(reply["inspection"].clone())
                             .map_err(|e| ToolExecutionError::other(e.to_string()))?;
-                        return bridge
+                        let (text, image) = bridge
                             .accept_inspection(&report)
-                            .map(ToolOutput::text)
-                            .map_err(ToolExecutionError::other);
+                            .map_err(ToolExecutionError::other)?;
+                        if let Some(call_id) = &call_id {
+                            bridge.stash_result_media(call_id, "images", vec![image]);
+                        }
+                        return Ok(ToolOutput::text(text));
                     }
                     edit_reply(reply)
                         .map(ToolOutput::text)
@@ -1083,7 +1104,13 @@ impl AgentHook for Reporter {
         if event.tool_name().is_some()
             && let Some(bridge) = &self.bridge
         {
-            bridge.emit(result_event(&event));
+            let mut result = result_event(&event);
+            if let Some(call_id) = event.call_id {
+                for (field, values) in bridge.take_result_media(&call_id.to_string()) {
+                    result[field] = values;
+                }
+            }
+            bridge.emit(result);
         }
         OutcomeAction::proceed()
     }
@@ -1959,6 +1986,40 @@ mod tests {
         format!(
             r#"{{"id":"chatcmpl-1","object":"chat.completion","created":0,"model":"mock","choices":[{{"index":0,"message":{message},"logprobs":null,"finish_reason":"{finish_reason}"}}],"usage":null}}"#
         )
+    }
+
+    /// Asserts that 200 `write`s all succeed while another thread `read`s in a loop.
+    ///
+    /// On Windows a publishing rename fails for as long as a reader has the file open, which a
+    /// reader going around `auris_session::settings`' shared lock did on most attempts. Elsewhere
+    /// this is a plain check that concurrent reads and writes neither fail nor tear the file.
+    pub(super) fn assert_writes_survive_a_reader(
+        read: impl Fn() -> Result<(), String> + Send + 'static,
+        mut write: impl FnMut(u32) -> Result<(), String>,
+    ) {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        write(0).unwrap();
+        let stop = std::sync::Arc::new(AtomicBool::new(false));
+        let reader = {
+            let stop = stop.clone();
+            std::thread::spawn(move || {
+                let mut reads = 0;
+                while !stop.load(Ordering::Relaxed) {
+                    read().unwrap();
+                    reads += 1;
+                }
+                reads
+            })
+        };
+        let failures: Vec<_> = (1..=200).filter_map(|n| write(n).err()).collect();
+        stop.store(true, Ordering::Relaxed);
+        assert!(reader.join().unwrap() > 0, "the reader ran");
+        assert!(
+            failures.is_empty(),
+            "{} writes failed: {:?}",
+            failures.len(),
+            failures.first()
+        );
     }
 
     #[test]

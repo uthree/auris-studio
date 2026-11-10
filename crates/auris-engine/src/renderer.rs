@@ -151,6 +151,7 @@ fn render_segment(
     let watching = scope.watching();
     let visualizer_scope = &graph.visualizer_scope;
     let visualizer_watching = visualizer_scope.watching();
+    let visualizer_tap = visualizer_scope.tap();
 
     // Never offline, for the same reason the metronome is not: a live input is a thing happening
     // in the room, and an export is not happening in the room. It would also be *wrong* rather
@@ -255,6 +256,19 @@ fn render_segment(
                 strip,
                 ..
             } = track;
+            // Before the fader, if that is where the visualizer listens: what the chain made,
+            // which is the level a fader is set from rather than the one the bus receives.
+            if visualizer_tap == crate::scope::ScopeTap::PreFader
+                && visualizer_watching == crate::scope::ScopeSource::Track(index)
+            {
+                visualizer_scope.publish_tapped(
+                    crate::scope::ScopeSource::Track(index),
+                    crate::scope::ScopeTap::PreFader,
+                    scratch.channel(0),
+                    scratch.channel(1),
+                    ctx.sample_rate,
+                );
+            }
             deliver_sends(sends, scratch, bus_inputs, true, ramp_frames, signal_meters);
             strip.apply_gain_and_pan(scratch, ramp_frames);
             strip.apply_mute(scratch);
@@ -314,7 +328,9 @@ fn render_segment(
                     ctx.sample_rate,
                 );
             }
-            if visualizer_watching == crate::scope::ScopeSource::Track(index) {
+            if visualizer_tap == crate::scope::ScopeTap::PostFader
+                && visualizer_watching == crate::scope::ScopeSource::Track(index)
+            {
                 visualizer_scope.publish_from(
                     crate::scope::ScopeSource::Track(index),
                     track.scratch.channel(0),
@@ -347,6 +363,19 @@ fn render_segment(
     graph
         .master
         .process_chain(master_scratch, sidechain_taps, &ctx, signal_meters);
+    if visualizer_tap == crate::scope::ScopeTap::PreFader
+        && visualizer_watching == crate::scope::ScopeSource::Master
+    {
+        // `publish_tapped` stores a non-finite sample as silence, so the sanitising below the
+        // fader is not needed for this copy.
+        visualizer_scope.publish_tapped(
+            crate::scope::ScopeSource::Master,
+            crate::scope::ScopeTap::PreFader,
+            master_scratch.channel(0),
+            master_scratch.channel(1),
+            ctx.sample_rate,
+        );
+    }
     graph.master.apply_gain_and_pan(master_scratch, ramp_frames);
     // Mute is the last stage of the strip: the effects still run — so a reverb tail does not
     // freeze and un-muting does not pop — but nothing leaves the bus.
@@ -361,7 +390,9 @@ fn render_segment(
             ctx.sample_rate,
         );
     }
-    if visualizer_watching == crate::scope::ScopeSource::Master {
+    if visualizer_tap == crate::scope::ScopeTap::PostFader
+        && visualizer_watching == crate::scope::ScopeSource::Master
+    {
         visualizer_scope.publish_from(
             crate::scope::ScopeSource::Master,
             master_scratch.channel(0),
@@ -874,6 +905,39 @@ mod tests {
         assert_eq!(heap, (0, 0));
         assert!(scopes[0].read(&mut first_wave));
         assert!(first_wave.iter().all(|value| value.abs() < 1e-6));
+    }
+
+    #[test]
+    fn the_visualizer_hears_a_track_before_or_after_its_fader() {
+        let mut project = one_note_project(Ticks::ZERO, Ticks::from_beats(8.));
+        let track = project.tracks[0].id;
+        project.track_mut(track).unwrap().mixer.gain_db = -12.;
+        let mut graph = build(&project, 256);
+        let scope = Arc::new(crate::Scope::new());
+        graph.set_visualizer_scope(Arc::clone(&scope));
+        scope.watch(crate::ScopeSource::Track(0));
+        let mut transport = Transport::playing_from(0);
+        let mut out = AudioBuffer::new(RENDER_CHANNELS, 256, SAMPLE_RATE);
+        let mut listen = |tap| {
+            scope.set_tap(tap);
+            let heap = testkit::count_heap_operations(|| {
+                for _ in 0..8 {
+                    render_block(&mut graph, &mut transport, &mut out, false);
+                }
+            });
+            assert_eq!(heap, (0, 0));
+            let mut wave = [0.; 1024];
+            assert!(scope.read(&mut wave));
+            wave.iter().copied().map(f32::abs).fold(0., f32::max)
+        };
+        let post = listen(crate::ScopeTap::PostFader);
+        let pre = listen(crate::ScopeTap::PreFader);
+        assert!(post > 0.001);
+        let difference = 20. * (pre / post).log10();
+        assert!(
+            (difference - 12.).abs() < 1.5,
+            "pre-fader read {difference:.1} dB above post-fader"
+        );
     }
 
     #[test]

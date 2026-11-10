@@ -113,24 +113,28 @@ before listing a folder the model names. The default search of the Music and Dow
 still runs without asking. The project folder is not exempted: the rule has no project context,
 and the project's own audio is already in the project.
 
-### AN-06 — The installer does not associate `.auris` files with the application (open)
+### AN-06 — The installer does not associate `.auris` files with the application (fixed)
 
 `main` opens a project passed as the first argument (`project_argument`), and the macOS bundle
 declares the document type, but `tools/installer/auris-studio.iss` has no `[Registry]` section.
 On Windows, double-clicking `MySong.auris` asks which program to use.
 
-**Direction.** Register `.auris` under `HKCU\Software\Classes` (the installer is per-user, with
-`PrivilegesRequired=lowest`), with `"{app}\auris-studio.exe" "%1"` as the open command and the
-`uninsdeletekey` flag.
+**Fix.** The installer registers `.auris` under `HKA\Software\Classes` (HKCU, since it installs per
+user) with the `AurisStudio.Project` ProgID, whose open command is
+`"{app}\auris-studio.exe" "%1"`, and sets `ChangesAssociations`. Uninstall removes all of it. The
+script has not been compiled on the review machine, which has no Inno Setup; the release
+workflow compiles it.
 
-### AN-07 — `auris render` replaces an existing WAV without `--force` (open)
+### AN-07 — `auris render` replaces an existing WAV without `--force` (fixed)
 
 Rendering to a mix path that already exists replaces it silently. `compose` and `new` refuse an
 existing destination unless given `--force`, stem export refuses existing stems, and the desktop
 asks before replacing. Re-running the same command line after editing the output name by hand is
 the way a delivered master gets lost.
 
-**Direction.** Refuse an existing output unless `--force`, as `compose` does.
+**Fix.** `render` refuses an existing mix destination before opening the project, with a message naming
+`--force`, which replaces it. The evaluation scripts under `tools/eval`, which render into the
+same working folder on every run, pass `--force` so they behave as before.
 
 ## Covered without findings
 

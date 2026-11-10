@@ -37,7 +37,7 @@ use crate::ui::menu_bar::OpenMenu;
 use crate::ui::piano_roll::RollTool;
 use crate::ui::prompt::Prompt;
 use crate::ui::score_layer::{ScoreLayer, ScorePreview};
-use crate::ui::timeline::{PitchView, TimelineView};
+use crate::ui::timeline::{PitchView, PlayheadFollow, TimelineView};
 use crate::voice_setup_window::VoiceSetupWindow;
 
 /// What a press or a sweep at one position should do to whatever is already sounding.
@@ -631,6 +631,28 @@ pub enum Drag {
         /// two it moves.
         target: ParamTarget,
     },
+    /// Dragging one of an oscillator patch's pictures: the unison stack, the filter, the FM
+    /// sidebands or the chiptune cycle.
+    ///
+    /// Measured from where the press landed, as [`Drag::Param`] is, so the press can be anywhere
+    /// on the plot. See [`crate::ui::synth_edit`].
+    SynthPlot {
+        /// Whose instrument.
+        track: TrackId,
+        /// Which picture.
+        plot: crate::ui::synth_edit::SynthPlot,
+        /// The horizontal parameter, which the whole drag is filed under.
+        target: ParamTarget,
+        /// How the horizontal axis turns into its parameter, signed for the side of a stack the
+        /// press landed on.
+        scale: crate::ui::synth_edit::PlotScale,
+        /// Where the drag is measured from.
+        anchor: Point<Pixels>,
+        /// The horizontal and vertical parameters at the anchor.
+        start: (f32, f32),
+        /// Whether Shift was held when the anchor was taken.
+        fine: bool,
+    },
     /// Dragging one band's node around the equalizer's curve.
     ///
     /// Absolute rather than measured from where the drag began, for [`Drag::EnvelopeHandle`]'s
@@ -882,6 +904,8 @@ impl Drag {
             // The same arrangement: a node moves a frequency and a gain, and this names the one
             // it always moves.
             Drag::EqNode { target, .. } => Some(Edit::AdjustParameter(*target)),
+            // Two parameters again, filed under the one the sideways axis moves.
+            Drag::SynthPlot { target, .. } => Some(Edit::AdjustParameter(*target)),
             // One undo step for the whole sweep, and the same label the right-click menu's
             // "Write It Again" uses — moving a dial is writing the part again with one thing
             // changed, and a stack full of "Adjusted parameter" would say nothing about which.
@@ -1471,6 +1495,9 @@ pub struct AurisApp {
     /// Persistent appearance choices, including palettes created in the settings window.
     pub(crate) appearance: Appearance,
     pub(crate) timeline: TimelineView,
+    /// Whether the timeline keeps the playhead in view during playback, or a scroll has
+    /// released it.
+    pub(crate) playhead_follow: PlayheadFollow,
     /// Fractional time-signature wheel notches carried between precise-scroll events.
     pub(crate) signature_scroll_remainder: f32,
     pub(crate) pitch: PitchView,
@@ -2109,6 +2136,7 @@ impl AurisApp {
             theme,
             appearance,
             timeline: TimelineView::default(),
+            playhead_follow: PlayheadFollow::default(),
             signature_scroll_remainder: 0.0,
             pitch: PitchView::default(),
             drum_editor: crate::ui::drum_editor::DrumEditorState::default(),
@@ -2656,8 +2684,20 @@ impl AurisApp {
     }
 
     /// Moves the playhead.
+    ///
+    /// A playhead moved on purpose is one somebody wants to see, so a view that a scroll had
+    /// released follows it again.
     pub(crate) fn seek(&mut self, tick: Ticks) {
         self.session.seek(tick);
+        self.playhead_follow.engage();
+    }
+
+    /// Brings the playhead back into view and follows it again.
+    pub(crate) fn reveal_playhead(&mut self) {
+        self.playhead_follow.engage();
+        let playhead = self.playhead_ticks();
+        let width = self.arrangement_width;
+        self.timeline.scroll_to_reveal(playhead, width);
     }
 
     // ---------------------------------------------------------------- selection
