@@ -747,6 +747,44 @@ cutoff that is set and coloured where the loudest voice's envelope has it now, w
 harmonics standing under it. The waveform lanes show each voice's cycle as it leaves the filter,
 so a pluck is seen closing from a saw to a sine.
 
+### Electronic drums and kick basses
+
+Drum machines and heavy low end built the way the analogue machines built theirs — oscillators,
+noise and filters, written down as formulas, with no recording anywhere:
+
+| Id | Name | What it is |
+| --- | --- | --- |
+| `auris.synth.electro_kit` | Electro Kit | The analogue drum machine: booming sine kick, two-tone snare, clap, metallic hats, cowbell |
+| `auris.synth.edm_kit` | EDM Kit | A club kit: a short, hard, clicky and distorted kick, a wide clap and crisp hats |
+| `auris.synth.trap_kit` | Trap Kit | A long, distorted sub-bass boom of a kick, a tight snare and fast hats |
+| `auris.synth.boom_bass` | Boom Bass | The trap "808": the kick's long sine boom played from the keyboard, gliding between held notes |
+| `auris.synth.kick_bass` | Kick Bass | The club kick bass: every note a hard, distorted kick tuned to its key |
+| `auris.synth.sub_bass` | Sub Bass | A clean, sustained sine sub-bass |
+
+The three kits share one set of controls and sit on the General MIDI keys: 35 a lower, longer
+**boom kick**, 36 kick, 37 rim, 38/40 snare, 39 clap, 42/44 closed and 46 open hat (a closed hat
+chokes an open one), 41–50 six toms tuned by key, 49 crash, 51 ride, 56 cowbell. A drum track that
+picks one starts with those pads already named in its lanes.
+
+The kick is a sine whose pitch falls exponentially from **Kick Punch** octaves above its **Kick
+Tune** onto it — the punch, then the boom — with a filtered **Kick Click** on top. **Kick Drive**
+puts it through `tanh`: a little rounds it, a lot squares the boom off into the odd harmonics that
+let a sub-bass be heard on speakers too small to play its fundamental. The snare is two damped
+sines under high-passed noise (**Snare Snap**); the clap four bursts of band-passed noise inside
+30 ms, then a tail; the hats and cymbals six inharmonic square oscillators and noise (**Metal**
+balances the two) through a high-pass and a band-pass.
+
+The three basses are one monophonic voice with the same punch, click and drive, a tone low-pass
+and an ADSR. With **Glide** above zero, a note played while another is held slides to it rather
+than striking again.
+
+All six open in the instrument window the way the synthesisers and physical models do. A bass
+draws its sounding note as one cycle and, beside it, the first quarter second of a note — the
+punch falling onto the pitch under its envelope — and the drive's transfer curve; a kit draws each
+pad it is sounding as the last moments of its own output, the kick as struck, and the hats' six
+square oscillators' harmonics under their filter. The pictures take a drag: punch time and punch,
+drive, kick decay and punch, hat tone and metal.
+
 The pitched voices open in the same view the physical instruments do. Where a physical model
 draws its strings, **Oscillator waveforms** draws one cycle of each sounding voice — two periods,
 so the join shows — at the height its envelope has reached: an FM note's bright attack visibly

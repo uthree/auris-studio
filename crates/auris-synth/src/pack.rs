@@ -8,7 +8,10 @@ use crate::drumkit::DrumKit;
 use crate::fm2::Fm2;
 use crate::noisedrum::NoiseDrum;
 use crate::vocal::Vocal;
-use crate::{Analog, AnalogPatch, Choir, HammeredDulcimer, Model, Physical, TinWhistle};
+use crate::{
+    Analog, AnalogPatch, BoomBass, BoomPatch, Choir, ElectroKit, ElectroStyle, HammeredDulcimer,
+    Model, Physical, TinWhistle,
+};
 
 /// Installs the built-in instruments into a registry.
 ///
@@ -36,8 +39,14 @@ impl PluginPack for SynthPack {
         for patch in AnalogPatch::ALL {
             registry.register_instrument(move || Box::new(Analog::new(patch)));
         }
+        for patch in BoomPatch::ALL {
+            registry.register_instrument(move || Box::new(BoomBass::new(patch)));
+        }
         registry.register_instrument(|| Box::new(NoiseDrum::new()));
         registry.register_instrument(|| Box::new(DrumKit::new()));
+        for style in ElectroStyle::ALL {
+            registry.register_instrument(move || Box::new(ElectroKit::new(style)));
+        }
         registry.register_instrument(|| Box::new(Vocal::new()));
     }
 }
@@ -61,6 +70,11 @@ mod tests {
                 (id, instrument)
             })
             .collect()
+    }
+
+    /// A kit whose keys are pads, so that middle C is not one of them.
+    fn kit_with_pads(id: &str) -> bool {
+        crate::authored_drum_map(id).is_some()
     }
 
     fn note_on(frame: u32, pitch: u8) -> NoteEvent {
@@ -125,20 +139,26 @@ mod tests {
                 "auris.physical.tin_whistle",
                 "auris.physical.violin",
                 "auris.synth.bass",
+                "auris.synth.boom_bass",
                 "auris.synth.brass",
                 "auris.synth.chiptune",
                 "auris.synth.drumkit",
+                "auris.synth.edm_kit",
+                "auris.synth.electro_kit",
                 "auris.synth.fm2",
+                "auris.synth.kick_bass",
                 "auris.synth.lead",
                 "auris.synth.noisedrum",
                 "auris.synth.pad",
                 "auris.synth.pluck",
                 "auris.synth.pwm_strings",
+                "auris.synth.sub_bass",
                 "auris.synth.supersaw",
+                "auris.synth.trap_kit",
                 "auris.synth.vocal"
             ]
         );
-        assert_eq!(registry.len(), 23);
+        assert_eq!(registry.len(), 29);
         assert_eq!(registry.effects().count(), 0);
     }
 
@@ -151,7 +171,16 @@ mod tests {
             .filter(|d| d.category == PluginCategory::Drum)
             .map(|d| d.id.as_ref())
             .collect();
-        assert_eq!(drums, vec!["auris.synth.drumkit", "auris.synth.noisedrum"]);
+        assert_eq!(
+            drums,
+            vec![
+                "auris.synth.drumkit",
+                "auris.synth.edm_kit",
+                "auris.synth.electro_kit",
+                "auris.synth.noisedrum",
+                "auris.synth.trap_kit"
+            ]
+        );
     }
 
     #[test]
@@ -166,7 +195,7 @@ mod tests {
             let mut buffer = AudioBuffer::stereo(256, 44_100.0);
             let events = [auris_core::NoteEvent::NoteOn {
                 frame: 8,
-                pitch: if id == DrumKit::ID { 36 } else { 60 },
+                pitch: if kit_with_pads(&id) { 36 } else { 60 },
                 velocity: 0.8,
             }];
             let ctx = ProcessContext::realtime(44_100.0, 256, 0, 120.0, true);
@@ -205,7 +234,7 @@ mod tests {
         // single-channel bus is a real configuration, and indexing channel 1 would panic.
         for (id, mut instrument) in every_instrument() {
             instrument.prepare(&PrepareContext::new(48_000.0, 512, 1));
-            let pitch = if id == DrumKit::ID { 36 } else { 60 };
+            let pitch = if kit_with_pads(&id) { 36 } else { 60 };
             let rendered = render(instrument.as_mut(), 512, 512, 1, &[note_on(0, pitch)]);
             assert_eq!(rendered.len(), 512);
             assert!(peak(&rendered) > 0.0, "{id} was silent on a mono buffer");
@@ -222,7 +251,7 @@ mod tests {
         // produce an empty range, and the event still has to land on its own frame.
         for (id, mut instrument) in every_instrument() {
             instrument.prepare(&PrepareContext::new(48_000.0, 512, 2));
-            let pitch = if id == DrumKit::ID { 36 } else { 60 };
+            let pitch = if kit_with_pads(&id) { 36 } else { 60 };
             let rendered = render(instrument.as_mut(), 64, 1, 2, &[note_on(3, pitch)]);
             assert!(
                 rendered[..3].iter().all(|s| *s == 0.0),

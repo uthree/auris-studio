@@ -11,7 +11,8 @@
 //! address a track from the other end.
 
 use auris_core::plugin::{PluginKind, PluginState};
-use auris_core::project::{DrumMap, DrumRole};
+#[cfg(test)]
+use auris_core::project::DrumMap;
 use auris_core::{AuxSend, Color, Output, PresetRef, SendId, Track, TrackId};
 use auris_engine::EngineCommand;
 use auris_sampler::{SAMPLER_ID, store_preset, stored_preset};
@@ -34,15 +35,9 @@ pub const MIN_TRACK_HEIGHT: f32 = 24.0;
 /// against a document that arrived with a nonsense number in it.
 pub const MAX_TRACK_HEIGHT: f32 = 400.0;
 
+#[cfg(test)]
 fn authored_drum_kit_map() -> DrumMap {
-    DrumMap::from_voices([
-        (DrumRole::Kick, 36),
-        (DrumRole::Snare, 38),
-        (DrumRole::ClosedHat, 42),
-        (DrumRole::OpenHat, 46),
-        (DrumRole::Crash, 49),
-        (DrumRole::Tom, 47),
-    ])
+    auris_synth::authored_drum_map(auris_synth::DrumKit::ID).unwrap_or_default()
 }
 
 impl Session {
@@ -85,8 +80,8 @@ impl Session {
         }
         self.record(Edit::AddDrumTrack);
         let id = self.project.add_drum_track(name, instrument_id);
-        if instrument_id == auris_synth::DrumKit::ID {
-            authored_drum_kit_map().store(
+        if let Some(map) = auris_synth::authored_drum_map(instrument_id) {
+            map.store(
                 &mut self
                     .project
                     .track_mut(id)
@@ -498,11 +493,11 @@ impl Session {
             .project
             .track(id)
             .is_some_and(|track| track.kind.is_drum())
-            && instrument_id == auris_synth::DrumKit::ID
+            && let Some(map) = auris_synth::authored_drum_map(instrument_id)
         {
-            // This map is part of the built-in kit's authored source contract. Other sources
+            // This map is part of the built-in kits' authored source contract. Other sources
             // remain unassigned because their MIDI roles cannot be inferred safely.
-            self.set_drum_source_map(id, authored_drum_kit_map())?;
+            self.set_drum_source_map(id, map)?;
         }
         self.invalidate_graph();
         Ok(())
@@ -1111,6 +1106,36 @@ mod tests {
         assert_eq!(
             session.drum_assignments(track).unwrap(),
             authored_drum_kit_map()
+        );
+    }
+
+    #[test]
+    fn an_electronic_kit_names_every_pad_in_its_lanes() {
+        let mut session = session();
+        let track = session
+            .add_drum_track("Beat", auris_synth::ElectroStyle::Trap.id())
+            .unwrap();
+        let map = session.drum_assignments(track).unwrap();
+        assert_eq!(map, auris_synth::electro_drum_map());
+        assert_eq!(map.voices.get(&auris_core::DrumRole::Kick), Some(&36));
+        let clap = map.lanes.iter().find(|lane| lane.note == 39).unwrap();
+        assert_eq!(clap.name, "Clap");
+        assert!(map.lanes.iter().any(|lane| lane.note == 35));
+
+        // Switching between kits brings the new kit's map along; to the noise drum, none.
+        session
+            .set_track_instrument(track, auris_synth::DrumKit::ID)
+            .unwrap();
+        assert_eq!(
+            session.drum_assignments(track).unwrap(),
+            authored_drum_kit_map()
+        );
+        session
+            .set_track_instrument(track, auris_synth::ElectroStyle::Edm.id())
+            .unwrap();
+        assert_eq!(
+            session.drum_assignments(track).unwrap(),
+            auris_synth::electro_drum_map()
         );
     }
 
