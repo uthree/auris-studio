@@ -9,9 +9,7 @@
 use atelier::{TextInput, TextInputEvent};
 use gpui::{App, AppContext as _, Context, Entity, FocusHandle, Focusable as _, Window};
 
-use crate::app::AurisApp;
-
-/// An input and its focus handle, wired to a handler on the window.
+/// An input and its focus handle, wired to a handler on the view that owns it.
 pub(crate) struct MirroredInput {
     input: Entity<TextInput>,
     focus: FocusHandle,
@@ -20,9 +18,16 @@ pub(crate) struct MirroredInput {
 impl MirroredInput {
     /// A one-line input whose every event — the text changed, Return, Escape — is handed to
     /// `on_event` with the text as it now stands.
-    pub(crate) fn new(
-        cx: &mut Context<AurisApp>,
-        on_event: impl Fn(&mut AurisApp, &TextInputEvent, String, &mut Context<AurisApp>) + 'static,
+    pub(crate) fn new<V: 'static>(
+        cx: &mut Context<V>,
+        on_event: impl Fn(&mut V, &TextInputEvent, String, &mut Context<V>) + 'static,
+    ) -> Self {
+        Self::build(cx, on_event)
+    }
+
+    fn build<V: 'static>(
+        cx: &mut Context<V>,
+        on_event: impl Fn(&mut V, &TextInputEvent, String, &mut Context<V>) + 'static,
     ) -> Self {
         let input = cx.new(TextInput::new);
         cx.subscribe(&input, move |this, input, event: &TextInputEvent, cx| {
@@ -43,9 +48,21 @@ impl MirroredInput {
         self.input.clone()
     }
 
+    /// The input itself, for reading its selection.
+    #[cfg(test)]
+    pub(crate) fn input(&self) -> &Entity<TextInput> {
+        &self.input
+    }
+
     /// The input's focus handle.
     pub(crate) fn focus_handle(&self) -> &FocusHandle {
         &self.focus
+    }
+
+    /// The input's focus handle as a tab stop, for the field's frame to track so that Tab
+    /// reaches the input: Atelier's input does not put itself in the tab order.
+    pub(crate) fn tab_stop(&self) -> FocusHandle {
+        self.focus.clone().tab_stop(true)
     }
 
     /// Whether the input holds the keyboard.

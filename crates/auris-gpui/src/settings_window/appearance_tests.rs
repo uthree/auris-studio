@@ -1,6 +1,6 @@
 //! Appearance changes exercised through the real settings window and its input handler.
 
-use gpui::{Entity, EntityInputHandler, TestAppContext, VisualTestContext, WindowHandle, size};
+use gpui::{Entity, TestAppContext, VisualTestContext, WindowHandle, size};
 
 use super::*;
 
@@ -79,7 +79,7 @@ fn a_japanese_theme_is_committed_then_edited_without_losing_its_font(cx: &mut Te
     handle
         .update(cx, |this, window, cx| {
             // Exercise the platform's UTF-16 input boundary, not only direct field mutation.
-            this.replace_and_mark_text_in_range(None, "宵の青", Some(3..3), window, cx);
+            this.type_into_focused("宵の青", Some(3..3), window, cx);
         })
         .unwrap();
     cx.run_until_parked();
@@ -282,7 +282,7 @@ fn invalid_theme_input_stays_open_for_correction(cx: &mut TestAppContext) {
                 "opening the editor focuses its name field"
             );
             // A paste arrives as one platform text replacement, including its line breaks.
-            this.replace_text_in_range(None, "入力の\n確認", window, cx);
+            this.type_into_focused("入力の\n確認", None, window, cx);
         })
         .unwrap();
     cx.run_until_parked();

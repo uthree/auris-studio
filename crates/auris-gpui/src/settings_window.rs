@@ -125,7 +125,9 @@ pub struct SettingsWindow {
     /// A real text field rather than a string built from key events, because the labels are
     /// translated: a Japanese user filtering on 「トラック」 needs the IME, and a field that reads
     /// key events never sees a composition at all.
-    search: TextField,
+    search: String,
+    /// The input the search box is typed into.
+    search_input: crate::ui::text_input::MirroredInput,
     search_focus: FocusHandle,
     editing_search: bool,
     panels: PanelLayout,
@@ -134,6 +136,11 @@ pub struct SettingsWindow {
     focus: FocusHandle,
     dropdown_menu: Option<dropdown::DropdownMenu>,
     dropdown_focus: std::collections::BTreeMap<&'static str, FocusHandle>,
+    /// The inputs the theme editor's fields are typed into, made as each is first drawn.
+    theme_inputs: std::collections::HashMap<
+        appearance_editor::ThemeField,
+        crate::ui::text_input::MirroredInput,
+    >,
 }
 
 /// A row of the key list, armed and waiting for a key press.
@@ -218,6 +225,24 @@ impl SettingsWindow {
             })
             .detach();
         }
+        let search_input =
+            crate::ui::text_input::MirroredInput::new(cx, |this: &mut Self, event, text, cx| {
+                match event {
+                    atelier::TextInputEvent::Changed => {
+                        this.search = text;
+                        this.text_changed();
+                    }
+                    // Escape clears the filter rather than closing the window: the list under a
+                    // query is a list with most of itself missing, and getting it back should not
+                    // cost a trip through the menu.
+                    atelier::TextInputEvent::Cancel => {
+                        this.search.clear();
+                        this.text_changed();
+                    }
+                    atelier::TextInputEvent::Submit => {}
+                }
+                cx.notify();
+            });
         Self {
             app,
             theme: appearance.theme(),
@@ -244,8 +269,9 @@ impl SettingsWindow {
             export,
             pointer,
             capturing: None,
-            search: TextField::new(String::new()),
-            search_focus: cx.focus_handle().tab_stop(true),
+            search: String::new(),
+            search_focus: search_input.focus_handle().clone(),
+            search_input,
             editing_search: true,
             panels,
             body_scroll: gpui::ScrollHandle::new(),
@@ -253,6 +279,7 @@ impl SettingsWindow {
             focus: cx.focus_handle(),
             dropdown_menu: None,
             dropdown_focus: std::collections::BTreeMap::new(),
+            theme_inputs: Default::default(),
         }
     }
 
@@ -632,7 +659,7 @@ impl SettingsWindow {
         self.tab = tab;
         self.capturing = None;
         self.editing_search = true;
-        self.search = TextField::new(String::new());
+        self.search.clear();
         self.text_changed();
         window.focus(&self.search_focus);
         cx.notify();
@@ -1577,7 +1604,7 @@ impl SettingsWindow {
     /// but *not* reordered: this list is arranged under section headings, and sorting by score
     /// would scatter the sections.
     fn found_commands(&self) -> Vec<&'static Bindable> {
-        let query = self.search.content();
+        let query = self.search.as_str();
         BINDABLE
             .iter()
             .filter(|command| {
@@ -1647,62 +1674,29 @@ impl SettingsWindow {
     fn render_search(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = self.theme.clone();
         let armed = self.capturing.is_some();
-        let empty = self.search.content().is_empty();
-        // Atelier's field frame around Auris's own editable text: the placeholder stays inside
-        // the editable region rather than in the frame's, for the reason given below.
+        let empty = self.search.is_empty();
+        let input = self.search_input.sync(&self.search, cx);
         atelier::TextField::new()
             .id("settings-search")
-            .track_focus(&self.search_focus)
+            .track_focus(&self.search_input.tab_stop())
             .tab_index(0)
             .icon(IconName::Search)
-            .empty(false)
+            .placeholder(self.t(Key::SearchSettings))
+            .empty(empty)
             .size(ControlSize::Small)
-            .child(
+            .child(if armed {
+                // A row is waiting for a key press, and the field must not take it. Drawn rather
+                // than editable for exactly as long as that is true.
                 div()
-                    .relative()
-                    .flex_1()
-                    .h_full()
-                    // Behind the field, never instead of it. Swapping the box for a label while
-                    // it was empty meant the field never painted, so it never registered itself
-                    // as the window's input handler — and a box that cannot be typed into cannot
-                    // stop being empty. Nothing could be searched for at all.
-                    .children(empty.then(|| {
-                        div()
-                            .absolute()
-                            .inset_0()
-                            .flex()
-                            .items_center()
-                            // The same inset and size the field draws its own text at, so the
-                            // first character typed lands where the placeholder was.
-                            .pl(crate::ui::prompt::FIELD_PADDING)
-                            .text_size(crate::ui::prompt::TEXT_SIZE)
-                            .text_color(theme.text_faint)
-                            .child(self.t(Key::SearchSettings))
-                    }))
-                    .child(if armed {
-                        // A row is waiting for a key press, and the field must not take it. Drawn
-                        // rather than editable for exactly as long as that is true.
-                        div()
-                            .size_full()
-                            .flex()
-                            .items_center()
-                            .pl(crate::ui::prompt::FIELD_PADDING)
-                            .text_size(crate::ui::prompt::TEXT_SIZE)
-                            .text_color(theme.text)
-                            .child(self.search.content().to_string())
-                            .into_any_element()
-                    } else {
-                        crate::ui::prompt::editable_text(
-                            self.search.content().to_string().into(),
-                            self.search.selection(),
-                            self.search.marked(),
-                            self.search_focus.clone(),
-                            cx.entity(),
-                            theme.clone(),
-                        )
-                        .into_any_element()
-                    }),
-            )
+                    .size_full()
+                    .flex()
+                    .items_center()
+                    .text_color(theme.text)
+                    .child(self.search.clone())
+                    .into_any_element()
+            } else {
+                input.into_any_element()
+            })
             .on_mouse_down(
                 gpui::MouseButton::Left,
                 cx.listener(|this, _, window, cx| {
@@ -2003,10 +1997,8 @@ impl SettingsWindow {
             cx.notify();
             return true;
         }
-        if !self.search_focus.is_focused(window) {
-            return false;
-        }
-        self.search_key(event, cx)
+        // The search box is Atelier's input, which takes its own keys.
+        false
     }
 
     /// Turns a captured key press into a binding.
@@ -2048,34 +2040,41 @@ impl SettingsWindow {
             cx.notify();
         }
     }
+}
 
-    /// The keys the search box claims: the ones the platform does not deliver as text.
-    fn search_key(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) -> bool {
-        let shift = event.keystroke.modifiers.shift;
-        let secondary = event.keystroke.modifiers.secondary();
-        let key = event.keystroke.key.as_str();
-        let claimed = match key {
-            // Escape clears the filter rather than closing the window: the list under a query is
-            // a list with most of itself missing, and getting it back should not cost a trip
-            // through the menu. This window's own, so it is answered before the shared list.
-            "escape" if !self.search.content().is_empty() && self.search.marked().is_none() => {
-                self.search = TextField::new(String::new());
-                true
+#[cfg(test)]
+impl SettingsWindow {
+    /// The Atelier input holding the keyboard, for driving its input method directly.
+    pub(super) fn focused_input(
+        &self,
+        window: &Window,
+    ) -> Option<gpui::Entity<atelier::TextInput>> {
+        std::iter::once(&self.search_input)
+            .chain(self.agent.inputs())
+            .chain(self.theme_inputs.values())
+            .find(|input| input.is_focused(window))
+            .map(|input| input.input().clone())
+    }
+
+    /// Types `text` through the focused input as the platform would, marking `marked` of it as
+    /// an input method's pre-edit when given.
+    pub(super) fn type_into_focused(
+        &mut self,
+        text: &str,
+        marked: Option<std::ops::Range<usize>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use gpui::EntityInputHandler as _;
+        let input = self
+            .focused_input(window)
+            .expect("an input holds the keyboard");
+        input.update(cx, |input, cx| match marked {
+            Some(marked) => {
+                input.replace_and_mark_text_in_range(None, text, Some(marked), window, cx)
             }
-            // Backspace, the caret, Select All. Shared with every field in the main window
-            // rather than written out again here — this box was the fourth copy of the same
-            // table, and the four had already drifted apart.
-            key => {
-                self.search
-                    .apply_key_with_clipboard(key, shift, secondary, false, cx)
-                    != KeyEffect::Ignored
-            }
-        };
-        if claimed {
-            self.text_changed();
-            cx.notify();
-        }
-        claimed
+            None => input.replace_text_in_range(None, text, window, cx),
+        });
     }
 }
 
@@ -2130,9 +2129,8 @@ impl HasTextField for SettingsWindow {
         if !self.editing_search {
             return self.appearance_editor.as_mut().map(|editor| editor.field());
         }
-        // Only while the list is on screen and no row is waiting for a key press — the same two
-        // conditions under which the box is drawn as an editable one.
-        self.capturing.is_none().then_some(&mut self.search)
+        // The search box is Atelier's input.
+        None
     }
 
     fn readable_field(&self) -> Option<&TextField> {
@@ -2148,7 +2146,7 @@ impl HasTextField for SettingsWindow {
                 .as_ref()
                 .map(|editor| editor.readable_field());
         }
-        self.capturing.is_none().then_some(&self.search)
+        None
     }
 }
 
