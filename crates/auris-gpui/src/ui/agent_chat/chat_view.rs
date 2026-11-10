@@ -12,8 +12,6 @@
 //! conversation, a shorter transcript, the window moving back to earlier messages — replaces the
 //! whole view, which also shows its end.
 
-use std::rc::Rc;
-
 use atelier::agent::{ChatEntry as ViewEntry, ChatEvent, ChatView, Choice, EntryId, ToolState};
 use auris_i18n::Language;
 use gpui::{Entity, Subscription};
@@ -107,7 +105,7 @@ impl AurisApp {
         let mut sync = match self.agent_chat.chat.take() {
             Some(sync) => sync,
             None => {
-                let view = cx.new(|_| ChatView::new(CHAT_VIEW_ID).anonymous());
+                let view = cx.new(|_| ChatView::new(CHAT_VIEW_ID).anonymous().open_attachments());
                 let events = cx.subscribe(&view, |this, _, event: &ChatEvent, cx| {
                     this.agent_chat_event(event, cx);
                 });
@@ -208,6 +206,21 @@ impl AurisApp {
 
     /// What the person did in the view: so far, only answering a question.
     fn agent_chat_event(&mut self, event: &ChatEvent, cx: &mut gpui::Context<Self>) {
+        if let ChatEvent::OpenAttachment { entry, index, .. } = event {
+            let Some(sync) = self.agent_chat.chat.as_ref() else {
+                return;
+            };
+            let path = sync
+                .index_of(*entry, self.agent_chat.trimmed)
+                .and_then(|at| match self.agent_chat.entries.get(at) {
+                    Some(ChatEntry::You { attachments, .. }) => attachments.get(*index).cloned(),
+                    _ => None,
+                });
+            if let Some(path) = path {
+                self.open_agent_attachment(path, cx);
+            }
+            return;
+        }
         let ChatEvent::Chose { entry, picked } = event else {
             return;
         };
@@ -236,47 +249,14 @@ impl AurisApp {
     ) -> ViewEntry {
         let language = self.language();
         match &shown.entry {
-            ChatEntry::You { text, attachments } if attachments.is_empty() => {
-                ViewEntry::user(text.clone())
-            }
             ChatEntry::You { text, attachments } => {
-                let app = cx.entity().downgrade();
-                let text: SharedString = text.clone().into();
-                let files: Rc<Vec<(PathBuf, SharedString)>> = Rc::new(
-                    attachments
-                        .iter()
-                        .map(|path| {
-                            let full = path.to_string_lossy().into_owned();
-                            // A saved conversation may have originated on another platform.
-                            let name = full
-                                .rsplit(['/', '\\'])
-                                .next()
-                                .unwrap_or(&full)
-                                .replace(['\r', '\n'], " ");
-                            (path.clone(), name.into())
-                        })
-                        .collect(),
-                );
-                ViewEntry::custom(move |_, _| {
-                    let chips = files.iter().enumerate().map(|(n, (path, name))| {
-                        let app = app.clone();
-                        let path = path.clone();
-                        atelier::agent::ContextChip::new(
-                            SharedString::from(format!("agent-message-attachment-{key}-{n}")),
-                            atelier::IconName::File,
-                            name.clone(),
-                        )
-                        .on_click(move |_, _, cx| {
-                            app.update(cx, |this, cx| this.open_agent_attachment(path.clone(), cx))
-                                .ok();
-                        })
-                    });
-                    agent_components::user_message_with_attachments(
-                        SharedString::from(format!("agent-message-{key}")),
-                        text.clone(),
-                        chips,
-                    )
-                })
+                // The chips open the file they name: see `ChatEvent::OpenAttachment` in
+                // `agent_chat_event`, which finds the path again by the chip's position.
+                attachments
+                    .iter()
+                    .fold(ViewEntry::user(text.clone()), |entry, path| {
+                        entry.attachment(attachment_name(path))
+                    })
             }
             ChatEntry::Agent(text) => {
                 let mut entry = ViewEntry::assistant(text.clone());
@@ -653,4 +633,31 @@ pub(crate) fn answer_bounds(
         }
     }
     span
+}
+
+/// What an attachment's chip says: the file's name, wherever the path came from. A saved
+/// conversation may have originated on another platform, so both separators end a folder.
+fn attachment_name(path: &std::path::Path) -> SharedString {
+    let full = path.to_string_lossy();
+    full.rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(&full)
+        .replace(['\r', '\n'], " ")
+        .into()
+}
+
+/// The selector of the `n`th attachment chip on the message showing `entries[index]`.
+#[cfg(test)]
+pub(crate) fn attachment_chip(
+    app: &gpui::Entity<AurisApp>,
+    cx: &mut gpui::VisualTestContext,
+    index: usize,
+    n: usize,
+) -> String {
+    let row = app.read_with(cx, |this, _| {
+        this.agent_chat
+            .chat_row_id(index, "attachment")
+            .expect("the message is shown")
+    });
+    format!("{row}-{n}")
 }

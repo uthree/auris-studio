@@ -120,9 +120,10 @@ mod selection_tests {
 
 /// What a message's Copy button says: its tooltip, and what it reads once it has copied.
 ///
-/// Selection inside a message stops at each Markdown block, so a reply of several paragraphs,
-/// a list and a code span cannot be dragged over in one go. The footer button copies the
-/// message whole, as it was written, which is what someone reaching for Copy wants.
+/// A drag copies what the person sees: the conversation is one `SelectionScope`, so it runs
+/// across paragraphs, lists, code and messages, and a copy gives the words without their
+/// markup. The footer button is the other copy: the message whole, as its Markdown source,
+/// which is what someone pasting it into another editor or back to a model wants.
 #[derive(Clone)]
 pub(crate) struct CopyLabels {
     /// The button's tooltip, such as "Copy Markdown".
@@ -159,36 +160,13 @@ pub(crate) fn user_message(
         .into_any_element()
 }
 
-/// Draws a person's message that carried files, each a chip that opens it.
-///
-/// `ChatView` draws a message's attachments as labels only; the editor's open the file they
-/// name, so the panel draws this message itself.
-pub(crate) fn user_message_with_attachments(
-    // atelier: allow — the person's message is still Atelier's UserMessage, chips and all.
-    id: impl Into<ElementId>,
-    text: impl Into<SharedString>,
-    chips: impl IntoIterator<Item = atelier::agent::ContextChip>,
-) -> AnyElement {
-    let id = id.into();
-    let text = text.into();
-    let mut message = UserMessage::new(text.clone())
-        .id(id.clone())
-        .action(CopyButton::new(
-            SharedString::from(format!("{id}-copy")),
-            text,
-        ));
-    for chip in chips {
-        message = message.attachment(chip);
-    }
-    message.into_any_element()
-}
-
 /// Draws an agent answer: the prose alone, with no avatar or name above it.
 ///
 /// Both conversations have exactly two voices, and the person's own sits in an accent bubble on
 /// the trailing edge; whatever is not in a bubble is the agent, so the identity line is left out.
 /// The message draws the answer as Atelier's `Markdown` under its own id: each block is
-/// selectable as `{id}-block-N`, code blocks carry a copy button, and links open.
+/// `{id}-block-N`, one selection across them all and across the conversation around it, code
+/// blocks carry a copy button, and links open.
 pub(crate) fn assistant_message(
     // atelier: allow — both conversations delegate their answers to AssistantMessage.
     id: impl Into<ElementId>,
