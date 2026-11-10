@@ -15,7 +15,8 @@ Every figure is in cents. A fundamental and a heard pitch are measured from equa
 at A4 = 440 Hz for the worker, and on its own A4 for the recorded piano, which was not tuned to
 440. An octave is the lower note's partial minus the partial of the upper note it should meet:
 below zero the two notes lie further apart than that pure octave, above zero closer, so a
-negative 2:1 beside a positive 4:2 is an octave tuned between the two.
+negative 2:1 beside a positive 4:2 is an octave tuned between the two. Each octave is read on
+four such pairs, the 2:1, 4:2, 6:3 and 8:4: the bass is tuned on the last two.
 """
 
 import argparse
@@ -32,9 +33,11 @@ LOCK = Path(__file__).resolve().parent / "references/piano-stretch-captures.json
 RATE = 48000
 VELOCITY = 0.7
 SECONDS = 2.5
-KEYS = (("A0", 21), ("C1", 24), ("A1", 33), ("C2", 36), ("A2", 45), ("C3", 48),
+KEYS = (("A0", 21), ("B0", 23), ("C1", 24), ("A1", 33), ("C2", 36), ("A2", 45), ("C3", 48),
         ("C4", 60), ("A4", 69), ("C5", 72), ("C6", 84), ("C7", 96), ("C8", 108))
 TOP = 108
+# The pairs of partials an octave is read on, by the lower note's partial.
+OCTAVES = (("octave_2_1", 2), ("octave_4_2", 4), ("octave_6_3", 6), ("octave_8_4", 8))
 # The stretches of a note that are read, in seconds from its strike: its partials once the
 # strike is over, and its period while the overtones that pull it are still there.
 STEADY = (0.3, 2.3)
@@ -212,7 +215,7 @@ def measure(notes):
         row = {"key": name, "pitch": pitch, "fundamental": fundamental.cents if fundamental else None,
                "heard": readings[0] if settled else None, "heard_readings": readings}
         if pitch + 12 <= TOP:
-            for label, n in (("octave_2_1", 2), ("octave_4_2", 4)):
+            for label, n in OCTAVES:
                 row[label] = octave(note, above, hz(pitch), n) if note and above else None
         rows.append(row)
     return rows
@@ -263,9 +266,9 @@ def shown(value):
 
 
 def table(title, rows):
-    print(f"{title}\nkey  fundamental   heard     2:1     4:2")
+    print(f"{title}\nkey  fundamental   heard     2:1     4:2     6:3     8:4")
     for row in rows:
-        cells = "".join(f"{shown(row.get(key)):>8}" for key in ("heard", "octave_2_1", "octave_4_2"))
+        cells = "".join(f"{shown(row.get(key)):>8}" for key in ("heard", *(label for label, _ in OCTAVES)))
         print(f"{row['key']:<4}{shown(row['fundamental']):>12}{cells}")
 
 

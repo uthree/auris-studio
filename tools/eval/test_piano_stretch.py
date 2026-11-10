@@ -136,6 +136,14 @@ def test_an_octave_is_the_lower_partial_minus_the_upper():
     assert four_two == pytest.approx(-3.0 + sharp(low, 4) + 2.0 - sharp(high, 2), abs=0.03)
 
 
+def test_a_bass_octave_is_read_on_the_six_to_three_and_the_eight_to_four():
+    low, high = 2.6e-4, 1.4e-4
+    lower = stretch.Note(string(24, cents=-16.0, stiffness=low, levels=(0.2, 0.9, 1.0, 0.2, 0.5, 0.8, 0.3, 0.3)), RATE)
+    upper = stretch.Note(string(36, cents=-7.0, stiffness=high), RATE)
+    assert stretch.octave(lower, upper, stretch.hz(24), 6) == pytest.approx(-9.0 + sharp(low, 6) - sharp(high, 3), abs=0.03)
+    assert stretch.octave(lower, upper, stretch.hz(24), 8) == pytest.approx(-9.0 + sharp(low, 8) - sharp(high, 4), abs=0.03)
+
+
 def test_an_octave_is_not_judged_by_a_partial_too_weak_to_hear():
     lower = stretch.Note(string(84, levels=(1.0, 0.5, 0.25, 1e-4)), RATE)
     upper = stretch.Note(string(96), RATE)
@@ -190,7 +198,7 @@ def test_every_key_is_measured_from_one_render_of_the_factory_piano(keyboard):
     assert [(row["key"], row["pitch"]) for row in rows] == list(stretch.KEYS)
     ((model, played, params, seconds, hold, rate),) = strings.calls
     assert (model, params, seconds, hold, rate) == ("piano", {}, 2.5, 2.5, 48000)
-    assert [note["pitch"] for note in played] == [21, 24, 33, 36, 45, 48, 57, 60, 69, 72, 81, 84, 96, 108]
+    assert [note["pitch"] for note in played] == [21, 23, 24, 33, 35, 36, 45, 48, 57, 60, 69, 72, 81, 84, 96, 108]
     assert all(note["velocity"] == 0.7 for note in played)
     for row in rows:
         assert row["fundamental"] == pytest.approx(Strings.tuned(row["pitch"]), abs=0.02)
@@ -200,7 +208,9 @@ def test_every_key_is_measured_from_one_render_of_the_factory_piano(keyboard):
     for row in rows[:-1]:
         assert row["octave_2_1"] == pytest.approx(sharp(Strings.STIFFNESS, 2) - 3.0, abs=0.03)
         assert row["octave_4_2"] == pytest.approx(sharp(Strings.STIFFNESS, 4) - sharp(Strings.STIFFNESS, 2) - 3.0, abs=0.03)
-    assert "octave_2_1" not in rows[-1] and "octave_4_2" not in rows[-1]
+    # These strings have four partials, so nothing is read on the sixth and the eighth.
+    assert all(row["octave_6_3"] is None and row["octave_8_4"] is None for row in rows[:-1])
+    assert not any(label in rows[-1] for label, _ in stretch.OCTAVES)
 
 
 def test_a_note_that_dies_within_its_stretch_gets_no_heard_pitch(keyboard):
@@ -217,7 +227,7 @@ def test_a_key_that_is_not_there_leaves_its_row_and_its_octaves_empty(keyboard):
     notes = {pitch: note for pitch, note in keyboard[1].items() if pitch not in (21, 72)}
     rows = {row["key"]: row for row in stretch.measure(notes)}
     assert rows["A0"] == {"key": "A0", "pitch": 21, "fundamental": None, "heard": None, "heard_readings": None,
-                          "octave_2_1": None, "octave_4_2": None}
+                          "octave_2_1": None, "octave_4_2": None, "octave_6_3": None, "octave_8_4": None}
     # C4 is there, but the C5 its octave is judged against is not.
     assert rows["C4"]["fundamental"] is not None and rows["C4"]["octave_2_1"] is None
     assert rows["C5"]["fundamental"] is None and rows["C6"]["octave_2_1"] is not None
@@ -234,7 +244,7 @@ def test_a_piano_tuned_to_another_pitch_is_measured_from_its_own_a4(keyboard):
         assert row["heard_readings"][0] == row["heard"]
     assert rows[0]["heard"] == pytest.approx(heard - a4)
     assert [row.get("octave_2_1") for row in rows] == octaves
-    rows[7]["fundamental"] = None
+    next(row for row in rows if row["key"] == "A4")["fundamental"] = None
     with pytest.raises(ValueError, match="no A4"):
         stretch.onto_its_own_a4(rows)
 

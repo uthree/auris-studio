@@ -535,6 +535,30 @@ fn piano_octaves_lie_between_a_pure_two_to_one_and_a_pure_four_to_two() {
 }
 
 #[test]
+fn piano_bass_octaves_lie_between_a_pure_six_to_three_and_a_pure_eight_to_four() {
+    // From C2 down an octave lies between its pure 6:3 and its pure 8:4, by a width of its own:
+    // shared out among its twelve keys, the octave on C2 would be under half as wide, and
+    // narrower than a pure 6:3.
+    let rate = 48_000.0;
+    let steady = |pitch: u8| {
+        let mut piano = rig(Model::Piano, rate);
+        let audio = piano.render(144_000, &[on(pitch, 0.7)]);
+        audio[14_400..].to_vec()
+    };
+    for low in [21_u8, 24, 33, 36] {
+        let (lower, upper) = (steady(low), steady(low + 12));
+        let at = |audio: &[f32], at: f64| peak_cents(audio, rate, at, -400..=400);
+        // How far the lower note's partial is above the upper note's that it should meet.
+        let six_three = at(&lower, hz(low) * 6.0) - at(&upper, hz(low) * 6.0);
+        let eight_four = at(&lower, hz(low) * 8.0) - at(&upper, hz(low) * 8.0);
+        assert!(
+            (-6.0..-0.3).contains(&six_three) && (0.3..6.0).contains(&eight_four),
+            "MIDI {low}: 6:3 {six_three:+.1} cents, 8:4 {eight_four:+.1} cents"
+        );
+    }
+}
+
+#[test]
 fn a_stiff_string_runs_sharp_of_its_harmonics() {
     // Middle C's seventh partial is a sixth of a semitone above seven times its first.
     let mut piano = rig(Model::Piano, 48_000.0);

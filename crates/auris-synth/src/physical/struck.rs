@@ -621,17 +621,25 @@ impl Struck {
     /// on equal temperament therefore beats in its octaves, and its bass sounds sharp, because
     /// the ear hears a low note's pitch in its overtones. Tuned the way a technician tunes one,
     /// outward from A4, each octave is widened to split the difference between two pure
-    /// octaves: from A2 up, the 2:1 and the 4:2; below, where the fundamentals thin out, the
-    /// same pair on proportionally higher partials. Without stiffness every octave is pure and
-    /// the piano is in equal temperament.
+    /// octaves: the 2:1 and the 4:2 from A2 up, the 6:3 and the 8:4 from C2 down, and between
+    /// those keys a pair that moves from the one to the other. Without stiffness every octave
+    /// is pure and the piano is in equal temperament.
+    ///
+    /// From A2 up a key moves by a twelfth of the width its own octave asks for, so an octave
+    /// is as wide as the twelve keys in it ask for together. Below A2 that width changes too
+    /// much from key to key to be shared out, and each key lies an octave under the key above
+    /// it by its own width. `docs/piano-stretch-tuning.md` reads both off the sound, beside a
+    /// recorded Steinway.
     fn tune_keyboard(&mut self) {
         self.tuned_for = self.settings.stiffness;
         if !self.is_piano() {
             self.stretch = [0.0; 128];
             return;
         }
-        /// Fundamental below which an octave is judged on proportionally higher partials.
-        const JUDGED_FROM: f32 = 110.0;
+        /// The lowest key whose octave is judged on the 2:1 and the 4:2: A2.
+        const TENOR: usize = 45;
+        /// The highest key whose octave is judged on the 6:3 and the 8:4: C2.
+        const BASS: usize = 36;
         let stiffness = |key: i32| self.inharmonicity(key.clamp(0, 127) as f32);
         let partial = |key: i32, n: f32| {
             let b = stiffness(key);
@@ -641,20 +649,25 @@ impl Struck {
         // octaves the fourth partial is too high and too short-lived to judge by, and the
         // octave is tuned on the 2:1 alone.
         let octave = |key: i32| {
-            let m = (JUDGED_FROM / hertz(key as f32)).max(1.0);
-            let narrow = partial(key, 2.0 * m) - partial(key + 12, m);
-            let wide = partial(key, 4.0 * m) - partial(key + 12, 2.0 * m);
+            // How far the pair of partials has moved from the tenor's to the bass's.
+            let low = ((TENOR as f32 - key as f32) / (TENOR - BASS) as f32).clamp(0.0, 1.0);
+            let (nearer, further) = (1.0 + 2.0 * low, 1.0 + low);
+            let narrow = partial(key, 2.0 * nearer) - partial(key + 12, nearer);
+            let wide = partial(key, 4.0 * further) - partial(key + 12, 2.0 * further);
             let by_wide = 0.5 * ((84.0 - key as f32) / 24.0).clamp(0.0, 1.0);
             narrow + by_wide * (wide - narrow)
         };
         let mut stretch = [0.0_f32; 128];
-        for (pitch, slot) in stretch.iter_mut().enumerate() {
+        for (pitch, slot) in stretch.iter_mut().enumerate().skip(TENOR) {
             let pitch = pitch as i32;
             *slot = if pitch >= 69 {
                 (69..pitch).map(octave).sum::<f32>() / 12.0
             } else {
                 -(pitch..69).map(octave).sum::<f32>() / 12.0
             };
+        }
+        for pitch in (0..TENOR).rev() {
+            stretch[pitch] = stretch[pitch + 12] - octave(pitch as i32);
         }
         self.stretch = stretch;
     }

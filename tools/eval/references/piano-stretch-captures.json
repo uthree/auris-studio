@@ -2,6 +2,13 @@
   "source": "University of Iowa Musical Instrument Samples, Steinway model B (Evan Mazunik). https://theremin.music.uiowa.edu/MISpiano.html",
   "captures": [
     {
+      "path": "Piano.mf.B0.aiff",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Piano_Other/piano/Piano.mf.B0.aiff",
+      "pitch": 23,
+      "bytes": 5549218,
+      "sha256": "9812b67d929a7a2c84a032629ec2682ef9f683a7f74cba54ca2b189b176caa4e"
+    },
+    {
       "path": "Piano.mf.C1.aiff",
       "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Piano_Other/piano/Piano.mf.C1.aiff",
       "pitch": 24,
@@ -14,6 +21,13 @@
       "pitch": 33,
       "bytes": 9769770,
       "sha256": "d14886420f9d94df12ba213062ed7068753876bde26539c72592a677deb789de"
+    },
+    {
+      "path": "Piano.mf.B1.aiff",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Piano_Other/piano/Piano.mf.B1.aiff",
+      "pitch": 35,
+      "bytes": 9353238,
+      "sha256": "0cf73af35d8a96efe579ecdeba1ab4ef5acc1e0eeb9f5a0733d72b7178051fee"
     },
     {
       "path": "Piano.mf.C2.aiff",

@@ -40,7 +40,7 @@
 <a id="a-steinway-from-c1-to-c8"></a>
 ## C1からC8までのSteinway
 
-University of Iowaの[Steinway model Bの録音](https://theremin.music.uiowa.edu/MISpiano.html)（演奏はEvan Mazunik）には、C1からC8までのすべてのCのmfと、C2、C4、C6、C7のpp/ffがある。ppのC6とC7は録音のノイズフロアから数dBしか離れていないため測定せず、固定した16件のうち14件を測定する。URL、サイズ、ハッシュは [piano-register-captures.json](../tools/eval/references/piano-register-captures.json) にある。同じmfのCに5つのAを加えた録音は、[ストレッチ調律](piano-stretch-tuning.ja.md)の測定でも比較に使い、別のロックで固定している。
+University of Iowaの[Steinway model Bの録音](https://theremin.music.uiowa.edu/MISpiano.html)（演奏はEvan Mazunik）には、C1からC8までのすべてのCのmfと、C2、C4、C6、C7のpp/ffがある。ppのC6とC7は録音のノイズフロアから数dBしか離れていないため測定せず、固定した16件のうち14件を測定する。URL、サイズ、ハッシュは [piano-register-captures.json](../tools/eval/references/piano-register-captures.json) にある。同じmfのCに7音を加えた録音は、[ストレッチ調律](piano-stretch-tuning.ja.md)の測定でも比較に使い、別のロックで固定している。
 
 `piano_register.py` は、オンセットをそろえたノートを24 kHz、25 msごとに、各ファイル自身のノイズフロアを基準に測定する。
 
