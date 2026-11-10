@@ -12,7 +12,7 @@ use crate::frame::{Frame, SectionPlan};
 use crate::rhythm::{Accent, DrumVoice};
 use crate::spec::PartSpec;
 
-use super::writer::{bar_stream, dynamic, part_grid, phrase_shape, velocity, width};
+use super::writer::{bar_stream, dynamic, part_grid, phrase_shape, struck, width};
 use super::{Draft, ScoreSettings};
 
 /// One drum voice.
@@ -99,7 +99,7 @@ pub(super) fn drums(
             notes.push(Draft {
                 section: index,
                 pitch,
-                velocity: (velocity(weight, section.intensity, settings.dynamics)
+                velocity: (struck(weight, section.intensity, settings.dynamics)
                     * dynamic(accent.scale(), settings.dynamics)
                     * phrase_shape(grid, section, at, settings.dynamics))
                 .clamp(0.08, 1.0),

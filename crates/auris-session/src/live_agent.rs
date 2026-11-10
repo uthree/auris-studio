@@ -1843,6 +1843,9 @@ mod tests {
                 verse < chorus && chorus < last,
                 "take {take}: {verse} {chorus} {last}"
             );
+            // Wide enough to hear, not only to pass the check: the first slope left a verse and
+            // a chorus 0.06 apart, about one decibel on a drums-only render.
+            assert!(chorus - verse > 0.15, "take {take}: {verse} {chorus}");
             let project = session.project();
             let spans = project.sections.spans_in(Ticks::ZERO, project.end_tick());
             assert_eq!(

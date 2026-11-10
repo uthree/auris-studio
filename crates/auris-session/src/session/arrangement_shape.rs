@@ -478,8 +478,8 @@ const LAST_CHORUS_INTENSITY: f32 = 1.0;
 /// The verse and chorus levels are the ones the house composer gives sections of those names, so
 /// a phrase generated into a chorus is struck like a chorus the composer wrote. Generated at one
 /// level, a kit came out at a mean velocity of 0.54 in every section, which is what
-/// [`flat_drums`] reports. At these levels, sixty seeds of an eight-bar kit lie between 0.51 and
-/// 0.53 in a verse, between 0.57 and 0.59 in a chorus and between 0.59 and 0.61 in the last one.
+/// [`flat_drums`] reports. At these levels, sixteen takes of an eight-bar kit lie near 0.57 in
+/// a verse, 0.76 in a chorus and 0.81 in the last one, and near 0.65 in every other section.
 pub(crate) fn drum_intensity(project: &Project, start: Ticks, end: Ticks) -> Option<(String, f32)> {
     let song_end = project
         .end_tick()
