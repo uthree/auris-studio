@@ -181,6 +181,11 @@ impl Session {
                 harmony.set_point(*end, after);
                 Ok(())
             }
+            Fix::TrimClip { clip, end } => self.resize_clip_window(*clip, *end),
+            Fix::Crossfade { first, second } => {
+                self.crossfade_in_transaction(*first, *second)?;
+                Ok(())
+            }
             Fix::NormalizeMix => {
                 self.normalize_mix(crate::TARGET_LUFS, -1.0)?;
                 Ok(())

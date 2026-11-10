@@ -682,7 +682,7 @@ pub enum Command {
         ceiling_db: Option<f32>,
     },
 
-    /// Add an empty MIDI clip to an instrument, drum or singer track and return its numeric clip ID. start_bar is 1-based in the project's meter; bars is a duration. A line that enters before its barline (a pickup, 弱起) needs a clip that starts before it: pickup_beats opens the clip that many beats before start_bar, and it may overlap the end of the clip before as long as their notes do not sound together. Audio and bus tracks cannot hold MIDI clips.
+    /// Add an empty MIDI clip to an instrument, drum or singer track and return its numeric clip ID. start_bar is 1-based in the project's meter; bars is a duration. A line that enters before its barline (a pickup, 弱起) needs a clip that starts before it: pickup_beats opens the clip that many beats before start_bar, and it may overlap the end of the clip before as long as their notes do not sound together; lint_project then reports the overlap, and its fix ends the clip before where this one begins. Audio and bus tracks cannot hold MIDI clips.
     AddClip {
         /// Stable track ID.
         track: u64,
@@ -1666,14 +1666,33 @@ mod tests {
         assert_eq!(pitch_at(3.25), 0.0);
         assert!((pitch_at(3.75) - 523.3).abs() < 30.0, "{}", pitch_at(3.75));
         assert!((pitch_at(5.25) - 523.3).abs() < 30.0, "{}", pitch_at(5.25));
-        // Two clips sharing a beat of the timeline ask the voice for nothing it cannot do.
-        let warnings: Vec<_> = session
-            .lint_score()
-            .diagnostics
-            .into_iter()
-            .filter(|diagnostic| diagnostic.severity != crate::lint::Severity::Info)
-            .collect();
-        assert!(warnings.is_empty(), "{warnings:?}");
+        // Two clips sharing a beat of the timeline ask the voice for nothing it cannot do, but
+        // the verse's empty tail lies hidden under the chorus: the linter says so, and its fix
+        // ends the verse where the chorus begins without changing a sung note.
+        let warnings = |session: &Session| {
+            session
+                .lint_score()
+                .diagnostics
+                .into_iter()
+                .filter(|diagnostic| diagnostic.severity != crate::lint::Severity::Info)
+                .collect::<Vec<_>>()
+        };
+        let found = warnings(&session);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].rule, crate::lint::Rule::OverlappingClips);
+        assert_eq!(
+            found[0].fix,
+            Some(crate::lint::Fix::TrimClip {
+                clip: verse,
+                end: Ticks::QUARTER * 7
+            })
+        );
+        session
+            .apply_lint_fix(&found[0], session.revision())
+            .unwrap();
+        assert!(warnings(&session).is_empty());
+        let trimmed = session.singer_frames(track).unwrap();
+        assert_eq!(trimmed.f0_hz, frames.f0_hz);
     }
 
     #[test]
