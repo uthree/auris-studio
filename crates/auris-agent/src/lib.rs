@@ -568,10 +568,22 @@ fn armed(builder: AgentBuilder, bridge: Option<Bridge>, prompt: &str, hearing: b
                     if name == host::LISTEN && reply["ok"] == true {
                         let audition = serde_json::from_value(reply["audition"].clone())
                             .map_err(|e| ToolExecutionError::other(e.to_string()))?;
-                        return bridge
+                        let text = bridge
                             .accept_audition(&audition)
-                            .map(ToolOutput::text)
-                            .map_err(ToolExecutionError::other);
+                            .map_err(ToolExecutionError::other)?;
+                        // What the model heard, for the person to play back from the log.
+                        if let Some(call_id) = &call_id {
+                            bridge.stash_result_media(
+                                call_id,
+                                "audio",
+                                audition
+                                    .clips
+                                    .iter()
+                                    .map(|clip| serde_json::json!(clip))
+                                    .collect(),
+                            );
+                        }
+                        return Ok(ToolOutput::text(text));
                     }
                     if name == "inspect_audio" && reply["ok"] == true {
                         let report = serde_json::from_value(reply["inspection"].clone())
@@ -580,7 +592,7 @@ fn armed(builder: AgentBuilder, bridge: Option<Bridge>, prompt: &str, hearing: b
                             .accept_inspection(&report)
                             .map_err(ToolExecutionError::other)?;
                         if let Some(call_id) = &call_id {
-                            bridge.stash_result_images(call_id, vec![image]);
+                            bridge.stash_result_media(call_id, "images", vec![image]);
                         }
                         return Ok(ToolOutput::text(text));
                     }
@@ -1094,9 +1106,8 @@ impl AgentHook for Reporter {
         {
             let mut result = result_event(&event);
             if let Some(call_id) = event.call_id {
-                let images = bridge.take_result_images(&call_id.to_string());
-                if !images.is_empty() {
-                    result["images"] = images.into();
+                for (field, values) in bridge.take_result_media(&call_id.to_string()) {
+                    result[field] = values;
                 }
             }
             bridge.emit(result);

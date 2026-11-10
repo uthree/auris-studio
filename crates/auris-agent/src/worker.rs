@@ -181,8 +181,11 @@ struct Channels {
     lyric_repairs: std::sync::Mutex<crate::lyric_repair::Budget>,
     vision: AtomicBool,
     visual: std::sync::Mutex<Option<Message>>,
-    /// Pictures a native tool call produced, by call id, until its `result` event takes them.
-    result_images: std::sync::Mutex<std::collections::HashMap<String, Vec<serde_json::Value>>>,
+    /// Pictures and audio a native tool call produced, by call id, until its `result` event
+    /// takes them as extra fields (`images`, `audio`).
+    result_media: std::sync::Mutex<
+        std::collections::HashMap<String, serde_json::Map<String, serde_json::Value>>,
+    >,
     /// Whether the model takes audio input, which is what offers it `listen`.
     hearing: AtomicBool,
     /// The latest audition, waiting for the one request that delivers it.
@@ -403,22 +406,32 @@ impl Bridge {
     pub(super) fn visual(&self) -> Option<Message> {
         self.0.visual.lock().unwrap().clone()
     }
-    /// Holds `images` for the `result` event of `call_id`, which the reporter emits after the
-    /// tool has returned its text.
-    pub(super) fn stash_result_images(&self, call_id: &str, images: Vec<serde_json::Value>) {
-        if !images.is_empty() {
+    /// Holds `values` as the `field` of the `result` event of `call_id`, which the reporter
+    /// emits after the tool has returned its text: the pictures and audio the transcript shows.
+    pub(super) fn stash_result_media(
+        &self,
+        call_id: &str,
+        field: &str,
+        values: Vec<serde_json::Value>,
+    ) {
+        if !values.is_empty() {
             self.0
-                .result_images
+                .result_media
                 .lock()
                 .unwrap()
-                .insert(call_id.to_owned(), images);
+                .entry(call_id.to_owned())
+                .or_default()
+                .insert(field.to_owned(), values.into());
         }
     }
 
-    /// The pictures stashed for `call_id`, once.
-    pub(super) fn take_result_images(&self, call_id: &str) -> Vec<serde_json::Value> {
+    /// The fields stashed for `call_id`, once.
+    pub(super) fn take_result_media(
+        &self,
+        call_id: &str,
+    ) -> serde_json::Map<String, serde_json::Value> {
         self.0
-            .result_images
+            .result_media
             .lock()
             .unwrap()
             .remove(call_id)
@@ -657,7 +670,7 @@ impl Worker {
             lyric_repairs: std::sync::Mutex::new(crate::lyric_repair::Budget::default()),
             vision: AtomicBool::new(false),
             visual: std::sync::Mutex::new(None),
-            result_images: Default::default(),
+            result_media: Default::default(),
             hearing: AtomicBool::new(false),
             audible: std::sync::Mutex::new(None),
             execution_root,
@@ -771,7 +784,7 @@ pub(crate) fn test_bridge() -> (
             lyric_repairs: std::sync::Mutex::new(crate::lyric_repair::Budget::default()),
             vision: AtomicBool::new(false),
             visual: std::sync::Mutex::new(None),
-            result_images: Default::default(),
+            result_media: Default::default(),
             hearing: AtomicBool::new(false),
             audible: std::sync::Mutex::new(None),
             execution_root: None,
@@ -1506,7 +1519,7 @@ mod tests {
             lyric_repairs: std::sync::Mutex::new(crate::lyric_repair::Budget::default()),
             vision: AtomicBool::new(true),
             visual: std::sync::Mutex::new(None),
-            result_images: Default::default(),
+            result_media: Default::default(),
             hearing: AtomicBool::new(false),
             audible: std::sync::Mutex::new(None),
             execution_root: None,
@@ -1529,14 +1542,14 @@ mod tests {
             // The transcript's copy of the picture, held for the call's result event once.
             assert_eq!(image["media_type"], "image/png");
             assert!(!image["data"].as_str().unwrap().is_empty());
-            bridge.stash_result_images(&format!("call-{revision}"), vec![image.clone()]);
+            bridge.stash_result_media(&format!("call-{revision}"), "images", vec![image.clone()]);
             assert_eq!(
-                bridge.take_result_images(&format!("call-{revision}")),
-                vec![image]
+                bridge.take_result_media(&format!("call-{revision}"))["images"],
+                serde_json::json!([image])
             );
             assert!(
                 bridge
-                    .take_result_images(&format!("call-{revision}"))
+                    .take_result_media(&format!("call-{revision}"))
                     .is_empty()
             );
         }

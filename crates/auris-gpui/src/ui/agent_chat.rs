@@ -333,6 +333,52 @@ impl PartialEq for ToolImage {
     }
 }
 
+/// A recording a tool answered with — what `listen` played the model — kept as the exact WAV
+/// it was sent, and decoded for playback only when the person presses play.
+#[derive(Clone)]
+pub(crate) struct ToolAudio {
+    /// The clip, as the session encoded it.
+    pub(crate) clip: Arc<auris_session::audio_audition::AuditionClip>,
+    /// Its length, read from the WAV header.
+    pub(crate) seconds: f64,
+}
+
+impl std::fmt::Debug for ToolAudio {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "ToolAudio({}, {:.2}s)",
+            self.clip.label, self.seconds
+        )
+    }
+}
+
+impl PartialEq for ToolAudio {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.clip, &other.clip)
+    }
+}
+
+/// The recordings of a `result` event, in the session's own clip form. A `listen` comparison
+/// sends two; one that does not read is left out.
+fn tool_audio(audio: Option<&serde_json::Value>) -> Vec<ToolAudio> {
+    audio
+        .and_then(|audio| audio.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|clip| {
+            let clip: auris_session::audio_audition::AuditionClip =
+                serde_json::from_value(clip.clone()).ok()?;
+            let seconds = clip.seconds().ok().filter(|seconds| *seconds > 0.0)?;
+            Some(ToolAudio {
+                clip: Arc::new(clip),
+                seconds,
+            })
+        })
+        .take(TOOL_IMAGE_LIMIT)
+        .collect()
+}
+
 /// Most pictures one tool row keeps, matching what the worker sends.
 const TOOL_IMAGE_LIMIT: usize = 4;
 
@@ -354,6 +400,14 @@ fn tool_images(images: Option<&serde_json::Value>) -> Vec<ToolImage> {
         })
         .take(TOOL_IMAGE_LIMIT)
         .collect()
+}
+
+/// The player of one tool recording, and the recording decoded at the window's rate once it has
+/// been played.
+#[derive(Default)]
+pub(crate) struct ToolPlayer {
+    pub(crate) player: crate::ui::audio_player::PlayerState,
+    audio: Option<Arc<auris_session::prelude::AudioBuffer>>,
 }
 
 /// One line of the conversation, as the panel shows it.
@@ -388,6 +442,8 @@ pub(crate) enum ChatEntry {
         detail: String,
         /// The pictures it answered with, drawn under the row whether or not it is open.
         images: Vec<ToolImage>,
+        /// The recordings it answered with, each with a player under the row.
+        audio: Vec<ToolAudio>,
     },
     /// Something went wrong — the worker, the provider, the channel.
     Error(String),
@@ -503,6 +559,8 @@ pub(crate) enum AgentEvent {
         detail: String,
         /// The pictures it answered with.
         images: Vec<ToolImage>,
+        /// The recordings it answered with.
+        audio: Vec<ToolAudio>,
     },
     /// A project file on disk is no longer what the window last read.
     Changed {
@@ -651,6 +709,7 @@ pub(crate) fn parse_event(line: &str) -> Option<AgentEvent> {
                 line: detail.lines().next().unwrap_or_default().to_string(),
                 detail,
                 images: tool_images(parsed.get("images")),
+                audio: tool_audio(parsed.get("audio")),
             }
         }
         "changed" => AgentEvent::Changed {
@@ -1432,6 +1491,8 @@ pub(crate) struct AgentChat {
     /// Tool rows with pictures that the person has opened, by the view key their row was built
     /// with; `ChatView` keeps this for every other row, but cannot see inside a custom one.
     pub(crate) open_pictured_tools: std::collections::HashSet<usize>,
+    /// A player for each recording a tool answered with, by view key and clip.
+    pub(crate) tool_players: std::collections::HashMap<(usize, usize), ToolPlayer>,
     /// The wire a model listing comes back on.
     pub(crate) models_rx: Option<Receiver<Result<String, String>>>,
     discovery_endpoint: Option<auris_session::AgentEndpoint>,
@@ -1546,6 +1607,7 @@ impl Default for AgentChat {
             context_window: None,
             open_tools: std::collections::BTreeMap::new(),
             open_pictured_tools: Default::default(),
+            tool_players: Default::default(),
             models_rx: None,
             discovery_endpoint: None,
             history_clear: None,
@@ -1990,6 +2052,7 @@ impl AgentChat {
                     line: String::new(),
                     detail: String::new(),
                     images: Vec::new(),
+                    audio: Vec::new(),
                 });
                 self.open_tools.insert(call_id, index);
             }
@@ -2000,6 +2063,7 @@ impl AgentChat {
                 line,
                 detail,
                 images,
+                audio,
             } => {
                 // The call pushed a running row; this fills it in. A result with no matching
                 // call — a build mismatch, a dropped line — becomes its own row rather than
@@ -2019,12 +2083,14 @@ impl AgentChat {
                         line: row_line,
                         detail: row_detail,
                         images: row_images,
+                        audio: row_audio,
                         ..
                     }) => {
                         *row_ok = ok;
                         *row_line = line;
                         *row_detail = detail;
                         *row_images = images;
+                        *row_audio = audio;
                     }
                     _ => {
                         self.push_entry(ChatEntry::Tool {
@@ -2034,6 +2100,7 @@ impl AgentChat {
                             line,
                             detail,
                             images,
+                            audio,
                         });
                     }
                 }
@@ -6431,6 +6498,7 @@ mod tests {
                     line: "done".into(),
                     detail: "measured".into(),
                     images: Vec::new(),
+                    audio: Vec::new(),
                 },
             ];
         });
@@ -6511,6 +6579,7 @@ mod tests {
                 line: "cutoff = 0.8".into(),
                 detail: "a ``` fence\n".into(),
                 images: Vec::new(),
+                audio: Vec::new(),
             },
             ChatEntry::Agent("Done.".into()),
             ChatEntry::Status("Stopped".into()),
@@ -6687,6 +6756,7 @@ mod tests {
                     line: "finished".into(),
                     detail: "Audio preview details".into(),
                     images: Vec::new(),
+                    audio: Vec::new(),
                 },
             ];
         });
@@ -6772,6 +6842,7 @@ mod tests {
                 line: "finished".into(),
                 detail: "Full tool result".into(),
                 images: Vec::new(),
+                audio: Vec::new(),
             }];
         });
         crate::harness::paint(&app, cx);
@@ -7659,6 +7730,7 @@ mod tests {
                 line: "The mix — x".to_string(),
                 detail: "The mix — x\nmore".to_string(),
                 images: Vec::new(),
+                audio: Vec::new(),
             })
         );
         // Token counts ride on the answer; an older agent's answer without them still reads.
@@ -7776,6 +7848,7 @@ mod tests {
                     },
                     detail: "Full tool result\nsecond line".into(),
                     images: Vec::new(),
+                    audio: Vec::new(),
                 })
                 .collect();
             this.agent_chat
@@ -7864,6 +7937,78 @@ mod tests {
         });
     }
 
+    /// `seconds` of 16-bit stereo silence at 48 kHz, as a `listen` clip carries it.
+    fn wav_base64(seconds: f64) -> String {
+        use base64::Engine as _;
+        let frames = (seconds * 48_000.0) as u32;
+        let data = frames * 4;
+        let mut wav = Vec::new();
+        wav.extend_from_slice(b"RIFF");
+        wav.extend_from_slice(&(36 + data).to_le_bytes());
+        wav.extend_from_slice(b"WAVEfmt ");
+        wav.extend_from_slice(&16u32.to_le_bytes());
+        wav.extend_from_slice(&1u16.to_le_bytes());
+        wav.extend_from_slice(&2u16.to_le_bytes());
+        wav.extend_from_slice(&48_000u32.to_le_bytes());
+        wav.extend_from_slice(&(48_000u32 * 4).to_le_bytes());
+        wav.extend_from_slice(&4u16.to_le_bytes());
+        wav.extend_from_slice(&16u16.to_le_bytes());
+        wav.extend_from_slice(b"data");
+        wav.extend_from_slice(&data.to_le_bytes());
+        wav.resize(wav.len() + data as usize, 0);
+        base64::engine::general_purpose::STANDARD.encode(wav)
+    }
+
+    #[gpui::test]
+    fn what_listen_played_the_model_can_be_played_from_its_row(cx: &mut gpui::TestAppContext) {
+        let call =
+            parse_event(r#"{"event":"call","call_id":"l1","tool":"listen","args":"{}"}"#).unwrap();
+        let result = parse_event(
+            &serde_json::json!({"event":"result","call_id":"l1","tool":"listen","ok":true,
+                "text":"{\"range\":{}}",
+                "audio":[{"label":"before","wav_base64":wav_base64(1.0)},
+                         {"label":"after","wav_base64":wav_base64(1.5)},
+                         {"label":"after","wav_base64":"not a recording"}]})
+            .to_string(),
+        )
+        .unwrap();
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, _| {
+            this.panels.show(crate::dock::Panel::Agent);
+            this.agent_chat.models_loaded = true;
+            this.agent_chat.absorb(call, None, false);
+            this.agent_chat.absorb(result, None, false);
+            // Both clips of the comparison are kept, at their own lengths; the broken one is not.
+            let Some(ChatEntry::Tool { audio, .. }) = this.agent_chat.entries.last() else {
+                panic!("no tool row")
+            };
+            let lengths: Vec<_> = audio.iter().map(|clip| clip.seconds).collect();
+            assert_eq!(lengths, vec![1.0, 1.5]);
+        });
+        crate::harness::paint(&app, cx);
+        let row = cx.debug_bounds("agent-chat-pictured-tool-0").unwrap();
+        let players = cx.debug_bounds("agent-tool-audio-0").unwrap();
+        assert!(row.bottom() <= players.origin.y);
+        assert!(cx.debug_bounds("agent-tool-audio-0-0").is_some());
+        assert!(cx.debug_bounds("agent-tool-audio-0-1").is_some());
+
+        // Playing decodes the clip once, at the window's own rate.
+        app.update(cx, |this, cx| {
+            this.play_tool_audio(0, 1, cx);
+            let rate = this.session.sample_rate();
+            let decoded = this.agent_chat.tool_players[&(0, 1)].audio.clone().unwrap();
+            assert_eq!(decoded.sample_rate(), rate);
+            assert!((decoded.duration_seconds() - 1.5).abs() < 0.01);
+            assert!(this.agent_chat.tool_players[&(0, 0)].audio.is_none());
+        });
+        // A new conversation drops the players with the rows.
+        app.update(cx, |this, _| this.agent_chat.entries.clear());
+        crate::harness::paint(&app, cx);
+        app.read_with(cx, |this, _| {
+            assert!(this.agent_chat.tool_players.is_empty())
+        });
+    }
+
     #[test]
     fn speed_uses_a_stable_recent_window() {
         let mut speed = SpeedMeter::default();
@@ -7900,6 +8045,7 @@ mod tests {
                 line: "Wrote X".to_string(),
                 detail: "Wrote X\nand the summary".to_string(),
                 images: Vec::new(),
+                audio: Vec::new(),
             },
             None,
             false,
@@ -7934,6 +8080,7 @@ mod tests {
                 line: "second result".to_string(),
                 detail: "second result".to_string(),
                 images: Vec::new(),
+                audio: Vec::new(),
             },
             None,
             false,
@@ -7946,6 +8093,7 @@ mod tests {
                 line: "first result".to_string(),
                 detail: "first result".to_string(),
                 images: Vec::new(),
+                audio: Vec::new(),
             },
             None,
             false,
@@ -7972,6 +8120,7 @@ mod tests {
                 line: String::new(),
                 detail: String::new(),
                 images: Vec::new(),
+                audio: Vec::new(),
             },
             None,
             false,
@@ -8006,6 +8155,7 @@ mod tests {
                 line: "written".to_string(),
                 detail: "written".to_string(),
                 images: Vec::new(),
+                audio: Vec::new(),
             },
             None,
             false,

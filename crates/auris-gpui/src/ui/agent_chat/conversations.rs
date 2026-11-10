@@ -203,6 +203,7 @@ impl ChatEntry {
                 },
                 detail: detail.clone(),
                 images: Vec::new(),
+                audio: Vec::new(),
             },
         }
     }
@@ -1617,6 +1618,7 @@ mod tests {
                     line: "4 notes added".into(),
                     detail: "Complete tool result".into(),
                     images: Vec::new(),
+                    audio: Vec::new(),
                 },
             ];
             this.agent_chat.input = TextField::new("Try a softer bass");
