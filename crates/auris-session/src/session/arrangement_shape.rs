@@ -30,6 +30,8 @@ pub const DYNAMIC_SECTIONS: usize = 3;
 /// and how much harder than the verses the choruses must be struck: about what a performance
 /// stage's random jitter alone moves a section's mean.
 pub const FLAT_DYNAMICS: f64 = 0.04;
+/// What both drum strength warnings end on: where the strength is read from.
+const REWRITE_VELOCITY: &str = "performance settings do not change the velocity read here";
 
 /// Bars in a phrase whose last bar a drummer marks.
 pub const PHRASE_BARS: i64 = 8;
@@ -395,10 +397,16 @@ fn cadence(project: &Project, span: &auris_core::SectionSpan) -> Value {
 
 /// A warning when the drums do not shade the form by strength: a verse and the last chorus struck
 /// alike is heard as a machine, however the notes differ. Where the song has both, every chorus's
-/// mean velocity must stand [`FLAT_DYNAMICS`] above the verses', since a softer intro or bridge
-/// alone leaves the verse and chorus the same, and one hard chorus leaves the others at the
-/// verse's strength if the choruses are averaged; a song without both is read by the spread
-/// across all its sections. The arrangement phase's `drums_follow_sections` check reads it too.
+/// mean velocity must stand [`FLAT_DYNAMICS`] above every verse's, since a softer intro or bridge
+/// alone leaves the verse and chorus the same. The weakest chorus is held against the hardest
+/// verse because an average hides one of them: one hard chorus leaves the others at the verse's
+/// strength, and one soft verse leaves another at the chorus's. A song without both is read by the
+/// spread across all its sections. The arrangement phase's `drums_follow_sections` check reads it
+/// too.
+///
+/// The warning says where the strength is read from, the notes' written velocity, because
+/// composers answered it with a performance stage's accent, which shades beats against offbeats
+/// and leaves a section's mean where it was.
 pub(crate) fn flat_drums(project: &Project, spans: &[auris_core::SectionSpan]) -> Option<String> {
     let mut sums = vec![(0.0_f64, 0_usize); spans.len()];
     for track in project.tracks.iter().filter(|track| track.kind.is_drum()) {
@@ -423,23 +431,21 @@ pub(crate) fn flat_drums(project: &Project, spans: &[auris_core::SectionSpan]) -
         .filter(|(_, (_, count))| *count > 0)
         .map(|(span, (sum, count))| (span.label.as_str(), sum / *count as f64))
         .collect();
-    let verses: Vec<f64> = by_section
+    let hardest_verse = by_section
         .iter()
         .filter(|(label, _)| is_verse(label))
-        .map(|(_, mean)| *mean)
-        .collect();
+        .max_by(|a, b| a.1.total_cmp(&b.1));
     let weakest_chorus = by_section
         .iter()
         .filter(|(label, _)| is_chorus(label))
         .min_by(|a, b| a.1.total_cmp(&b.1));
     if by_section.len() >= DYNAMIC_SECTIONS
-        && !verses.is_empty()
-        && let Some((label, chorus)) = weakest_chorus
+        && let Some((verse_label, verse)) = hardest_verse
+        && let Some((chorus_label, chorus)) = weakest_chorus
     {
-        let verse = verses.iter().sum::<f64>() / verses.len() as f64;
         return (chorus - verse < FLAT_DYNAMICS).then(|| {
             format!(
-                "The drums strike {label} no harder than the verses (mean velocity {chorus:.2} against {verse:.2}); strike the verses softer and all the choruses harder, the last chorus hardest"
+                "The drums strike {chorus_label} no harder than {verse_label} (mean velocity {chorus:.2} against {verse:.2}); rewrite the drum notes' velocity so that every chorus is struck harder than every verse, the last chorus hardest, keeping the accents within the bar; {REWRITE_VELOCITY}"
             )
         });
     }
@@ -449,7 +455,7 @@ pub(crate) fn flat_drums(project: &Project, spans: &[auris_core::SectionSpan]) -
         .fold((f64::MAX, f64::MIN), |(lo, hi), v| (lo.min(*v), hi.max(*v)));
     (means.len() >= DYNAMIC_SECTIONS && high - low < FLAT_DYNAMICS).then(|| {
         format!(
-            "The drums play all {} sections at one strength (mean velocity {low:.2} to {high:.2}); strike the verses softer and the choruses harder, the last chorus hardest",
+            "The drums play all {} sections at one strength (mean velocity {low:.2} to {high:.2}); rewrite the drum notes' velocity, the verses softer and the choruses harder, the last chorus hardest; {REWRITE_VELOCITY}",
             means.len()
         )
     })
@@ -691,7 +697,7 @@ mod tests {
         let unshaded = |project: &Project| {
             warnings(project)
                 .iter()
-                .any(|w| w.contains("choruses harder"))
+                .any(|w| w.contains("the last chorus hardest"))
         };
         let flat = song((4, 16), 20, &groove);
         assert!(unshaded(&flat), "{:?}", warnings(&flat));
@@ -736,10 +742,41 @@ mod tests {
         assert!(
             covered
                 .iter()
-                .any(|w| w.contains("The drums strike ラストサビ no harder than the verses")),
+                .any(|w| w.contains("The drums strike ラストサビ no harder than Aメロ")),
             "{covered:?}"
         );
         let both = warnings(&two_choruses(0.85));
+        assert!(!both.iter().any(|w| w.contains("no harder")), "{both:?}");
+    }
+
+    #[test]
+    fn one_verse_struck_softly_does_not_cover_a_verse_struck_like_the_chorus() {
+        // Aメロ in bars 4 to 8 and サビ in 12 to 16, as `song` lays them, then a second verse.
+        let two_verses = |second: f32| {
+            let mut project = song((4, 16), 24, &|index| {
+                let mut notes = groove(index);
+                notes[0].velocity = match index {
+                    4..8 => 0.3,
+                    16..20 => second,
+                    _ => 0.55,
+                };
+                notes
+            });
+            let bar = Ticks::QUARTER * 4;
+            project.sections.set_point(bar * 16, Some("Aメロ2".into()));
+            project.sections.set_point(bar * 20, None);
+            project
+        };
+        // The two verses average 0.43 against the chorus's 0.55, and the second is the chorus.
+        let covered = warnings(&two_verses(0.55));
+        assert!(
+            covered.iter().any(|w| w.contains(
+                "The drums strike サビ no harder than Aメロ2 (mean velocity 0.55 against 0.55)"
+            ) && w
+                .contains("performance settings do not change the velocity read here")),
+            "{covered:?}"
+        );
+        let both = warnings(&two_verses(0.35));
         assert!(!both.iter().any(|w| w.contains("no harder")), "{both:?}");
     }
 
