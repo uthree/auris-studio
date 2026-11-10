@@ -38,16 +38,16 @@ combined with effects and saved as a new user sound.
 
 | Basic instrument | Starting patches |
 | --- | --- |
-| Strings | Violin, Viola, Cello, Contrabass |
+| Strings | String section, Violin, Viola, Cello, Contrabass, Sul ponticello, Sul tasto |
 | Piano | Grand piano, Felt piano, Bright piano |
-| Guitar | Acoustic guitar, Nylon guitar, Muted guitar |
+| Guitar | Acoustic guitar, Nylon guitar, Steel guitar, Muted guitar, Piezo guitar |
 | Electric guitar | Clean electric guitar, Warm electric guitar, Bright electric guitar |
-| Bass | Finger bass, Pick bass, Muted bass |
-| Bell | Classic bell, Soft bell, Bright bell |
-| Mallet | Rounded mallet, Hard mallet, Muted mallet |
+| Bass | Finger bass, Pick bass, Muted bass, Upright bass |
+| Bell | Classic bell, Soft bell, Bright bell, Tubular bells, Handbell, Singing bowl |
+| Mallet | Marimba, Vibraphone, Xylophone, Glockenspiel, Kalimba, Music box, Hard mallet, Muted mallet |
 | Reed winds | Clarinet, Soft clarinet, Breathy clarinet |
 | Hammered strings | Hammered dulcimer, Bright dulcimer, Muted dulcimer |
-| Whistles | Tin whistle, Soft whistle, Airy whistle |
+| Whistles | Tin whistle, Soft whistle, Airy whistle, Recorder |
 | Choir | Mixed choir, Soprano choir, Tenor choir, Bass choir |
 | Drums | Natural drum kit, Dry drum kit, Resonant drum kit |
 

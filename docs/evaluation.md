@@ -30,8 +30,8 @@ The [guitar-amplifier experiment](electric-guitar.md) adds an oversampled amplif
 paired clean/pedal recording benchmark with pitch-grouped splits.
 The [choir calibration](choir-copy-synthesis.md) fits the native vocal-tract ensemble to
 real sustained vowels, with 24 training notes and 80 notes from separate held-out singers.
-The [piano stretch tuning](piano-stretch-tuning.md) measures each key's fundamental, heard
-pitch and octave beats against equal temperament.
+The [piano stretch tuning](piano-stretch-tuning.md) is how the piano's fundamentals leave
+equal temperament, and the tests that hold its octaves.
 
 ## Native instrument upper-midrange voicing
 

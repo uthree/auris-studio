@@ -43,9 +43,10 @@ Prepared float WAVs omit timestamped PEAK metadata so repeated extraction preser
 
 Piano pitches 52/60/67 are held out. Guitar/violin pitches whose MIDI number modulo three is one
 are held out. All pp recordings are also held out, including pp on otherwise trained pitches.
-The split is part of the frozen cohort: a search over an instrument's controls may read the
-training notes only, and the validation notes are the ones to quote. They are new pitches and
-weak dynamics from the same recording sessions, not new instruments.
+The split is part of the frozen cohort: a search over an instrument's controls, or over the
+voicing dials a `physical-calibration` build of the worker takes in a request's `dials`, may
+read the training notes only, and the validation notes are the ones to quote. They are new
+pitches and weak dynamics from the same recording sessions, not new instruments.
 
 Pitch-conditioned harmonic tracking locates stable scale notes and requires ascending order.
 Onset detection backtracks up to 200 ms and uses a local 2% RMS threshold with a 5 ms guard.
@@ -190,7 +191,7 @@ for a small corpus, not evidence of a perceptual difference.
 C3–C6 (MIDI 48–84). It discards 350 ms and checks the strongest peak across 20 Hz to
 min(10 kHz, 0.49 × sample rate), alongside the interpolated fundamental peak.
 
-## Running them
+## Running the measures
 
 Run Python tools with `uv`. On Windows, use the installed `uv.exe` path if it is missing from
 PATH, and `.exe` worker paths. The tools use script environments; no trainer environment or GPU
@@ -239,7 +240,7 @@ expecting an archived worker's hash.
 uv run --with numpy --with scipy --with soundfile --with pytest pytest \
   tools/eval/test_physical_mel.py tools/eval/test_piano_register.py \
   tools/eval/test_clarinet_copy.py tools/eval/test_fetch_clarinet_reference.py \
-  tools/eval/test_fetch_folk_reference.py
+  tools/eval/test_fetch_folk_reference.py tools/eval/test_physical_ab.py
 uv run --with ruff ruff check tools/eval
 cargo test -p auris-synth --example physical_fit_render
 ```
@@ -247,3 +248,21 @@ cargo test -p auris-synth --example physical_fit_render
 The numeric tests reject silent/non-finite candidates, verify gain and polarity invariance,
 detect changed pitch/harmonics/attack/decay, check extraction/tuning, read known decays and
 onsets back from synthetic notes, and protect the fixed training/validation separation.
+
+## Listening to two builds
+
+`physical_phrases` saves three fixed, editable projects: piano chords and a line, guitar
+picking and strumming, and an overlapping violin phrase with Legato on. Render each with the
+`auris` CLI frozen before a change and with the one built after it, as `piano.wav`,
+`guitar.wav` and `violin.wav` in a directory per build. `physical_ab.py` then lays the pairs
+end to end, before then after, at one RMS with both peaks below 0.9, and writes the gains
+beside the WAV, so that a change of level cannot pass for a change of tone.
+
+```sh
+cargo run --release -p auris-session --example physical_phrases -- target/phrases
+mkdir -p target/phrases/before target/phrases/after
+<before-auris> render target/phrases/piano/piano.auris -o target/phrases/before/piano.wav
+<after-auris> render target/phrases/piano/piano.auris -o target/phrases/after/piano.wav
+# The same for guitar and violin, then:
+uv run tools/eval/physical_ab.py target/phrases/before target/phrases/after target/phrases/ab.wav
+```

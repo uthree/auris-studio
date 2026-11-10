@@ -13,26 +13,10 @@ import numpy as np
 import soundfile as sf
 from fit_worker import Renderer
 from physical_mel import RATE, configuration, distances, features, normalize
-from prepare_physical_reference import manifest_digest
+from prepare_physical_reference import load_notes, manifest_digest
 from scipy.signal import resample_poly
 
 MODELS = ("piano", "guitar", "violin")
-
-
-def load_notes(root, manifest, model, split):
-    notes = [note for note in manifest["notes"] if note["model"] == model and note["split"] == split]
-    if not notes:
-        raise ValueError(f"empty {model} {split} cohort")
-    audio = []
-    for note in notes:
-        path = root / note["path"]
-        if hashlib.sha256(path.read_bytes()).hexdigest() != note["sha256"]:
-            raise ValueError(f"note hash mismatch: {path}")
-        samples, rate = sf.read(path)
-        if rate != RATE or samples.ndim != 1 or len(samples) != round(manifest["seconds"] * RATE):
-            raise ValueError(f"invalid prepared reference: {path}")
-        audio.append(samples)
-    return notes, np.array(audio)
 
 
 def summary(values):

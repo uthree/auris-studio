@@ -22,7 +22,7 @@
 | ギター | 40–47, 50–59, 64–71 | 34 | 44 |
 | バイオリン | 55–59, 62–71, 76–83 | 30 | 39 |
 
-ピアノの音高52/60/67はホールドアウトする。ギターとバイオリンでは、MIDI番号を3で割った余りが1になる音高をホールドアウトする。学習対象の音高であっても、pp録音はすべてホールドアウトする。この分割は固定したコホートの一部である。楽器の制御値を探索する場合に読んでよいのは学習ノートだけで、引用する値には検証ノートを使う。検証ノートは別の楽器ではなく、同じ録音セッションに含まれる新しい音高と弱いダイナミクスである。
+ピアノの音高52/60/67はホールドアウトする。ギターとバイオリンでは、MIDI番号を3で割った余りが1になる音高をホールドアウトする。学習対象の音高であっても、pp録音はすべてホールドアウトする。この分割は固定したコホートの一部である。楽器の制御値を探索する場合や、`physical-calibration` を有効にしてビルドしたワーカーがリクエストの `dials` で受け取る整音ダイヤルを探索する場合に、読んでよいのは学習ノートだけで、引用する値には検証ノートを使う。検証ノートは別の楽器ではなく、同じ録音セッションに含まれる新しい音高と弱いダイナミクスである。
 
 音高を条件にした倍音追跡で安定した音階音を特定し、上昇順であることを要求する。オンセット検出は最大200 msさかのぼり、局所的な2% RMSしきい値と5 msのガードを使う。可聴倍音から固定チューニングオフセットを推定し、ラベルから75セント以内であることを確認する。弱い倍音は除外する。レンダラーにはノートオン前にこの測定オフセットを渡す。音高、時間アラインメント、ノートごとの合成パラメーターを録音に合わせて調整することはない。
 
@@ -78,8 +78,8 @@ University of Iowaの[Steinway model Bの録音](https://theremin.music.uiowa.ed
 
 `folk_tuning.py` は独立した音高の検査である。24 kHzと48 kHzで、速度0.35、0.65、0.95のノートを1.2秒保持する。ホイッスルはD5–D7（MIDI 74–98）、ダルシマーはC3–C6（MIDI 48–84）が対象である。最初の350 msを捨て、20 Hzからmin(10 kHz, 0.49 × サンプルレート)の範囲で最も強いピークを、補間した基音のピークとあわせて確認する。
 
-<a id="running-them"></a>
-## 実行方法
+<a id="running-the-measures"></a>
+## 測定の実行
 
 Pythonツールは `uv` で実行する。Windowsで `uv.exe` がPATHにない場合はインストール先のパスを使い、ワーカーには `.exe` のパスを使う。ツールはスクリプト環境を使うため、学習用の環境やGPUは不要である。フォークのコホートを準備するには、MP3プレビューのために `ffmpeg` もPATHに必要である。クラリネットとフォークのフェッチャーは、`--offline` を指定するとキャッシュ済みのキャプチャーから準備する。
 
@@ -119,9 +119,23 @@ Iowaコホートを正確に抽出するには、記録された依存関係の�
 uv run --with numpy --with scipy --with soundfile --with pytest pytest \
   tools/eval/test_physical_mel.py tools/eval/test_piano_register.py \
   tools/eval/test_clarinet_copy.py tools/eval/test_fetch_clarinet_reference.py \
-  tools/eval/test_fetch_folk_reference.py
+  tools/eval/test_fetch_folk_reference.py tools/eval/test_physical_ab.py
 uv run --with ruff ruff check tools/eval
 cargo test -p auris-synth --example physical_fit_render
 ```
 
 数値テストでは、無音または非有限の候補を拒否し、ゲインと極性に対する不変性を検証し、音高、倍音、アタック、減衰の変化を検出し、抽出とチューニングを確認し、合成したノートから既知の減衰とオンセットを読み戻し、固定した学習／検証の分離を保護する。
+
+<a id="listening-to-two-builds"></a>
+## 2つのビルドを聴き比べる
+
+`physical_phrases` は、固定した編集可能なプロジェクトを3つ保存する。ピアノの和音と旋律、ギターのピッキングとストローク、Legato を有効にして音を重ねたバイオリンのフレーズである。それぞれを、変更前に凍結した `auris` CLIと変更後にビルドしたCLIでレンダリングし、ビルドごとのディレクトリに `piano.wav`、`guitar.wav`、`violin.wav` として置く。`physical_ab.py` は、各ペアを変更前、変更後の順につなげ、RMSをそろえて両方のピークを0.9未満に保ち、ゲインをWAVの横に書き出す。こうすれば、音量の変化を音色の変化と取り違えることがない。
+
+```sh
+cargo run --release -p auris-session --example physical_phrases -- target/phrases
+mkdir -p target/phrases/before target/phrases/after
+<before-auris> render target/phrases/piano/piano.auris -o target/phrases/before/piano.wav
+<after-auris> render target/phrases/piano/piano.auris -o target/phrases/after/piano.wav
+# The same for guitar and violin, then:
+uv run tools/eval/physical_ab.py target/phrases/before target/phrases/after target/phrases/ab.wav
+```
