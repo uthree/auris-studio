@@ -1,13 +1,20 @@
-# Physical instrument copy synthesis
+# Physical instruments against real recordings
 
 [日本語](physical-copy-synthesis.ja.md)
 
-The native piano, guitar and violin are calibrated against **real recordings**, using a fixed
-temporal mel-spectrogram loss. The Rust instrument renders every candidate; the search adjusts
-shared excitation/loss parameters and twelve radiation-filter gains. Only those numbers enter
-the product. Downloads, Python, optimization, plots and listening files are development tools.
+The physical piano, guitar, strings, reeds, whistles and hammered strings are measured against
+frozen cohorts of **real recordings**. Each tool plays the recorded notes through the actual
+Rust instrument and reports how far the result lies from the recording. The instrument is
+played by the worker, `physical_fit_render`: freeze a copy of it before changing anything that
+sounds, and measure both builds afterwards. None of these tools changes an instrument.
+Downloads, Python, plots and listening files are development tools, and no recording enters
+the product.
 
-## Reference and split
+What the instruments currently read is reported with them, in
+[physical instruments](physical-instruments.md). This page is what the tools record, measure
+and need.
+
+## Piano, guitar and violin
 
 The [University of Iowa Musical Instrument Samples](https://theremin.music.uiowa.edu/MIS.html)
 are created by Lawrence Fritts and the Electronic Music Studios. The university permits their
@@ -18,8 +25,8 @@ are on the [piano](https://theremin.music.uiowa.edu/MISpiano.html),
 
 The cohort uses the Steinway model B played by Evan Mazunik, Raimundo 118 classical guitar
 played by Brian Penkrot, and Nicolai Tambovsky violin played by Leonid Iogansen. Guitar and violin
-were recorded in an anechoic chamber; piano was recorded in a room. Thus radiation fits still
-include excitation, microphone and recording coloration; they are not isolated body admittances.
+were recorded in an anechoic chamber; piano was recorded in a room. A distance to these
+recordings therefore includes the microphone and, for the piano, the room.
 
 There are 36 source captures and 165 extracted notes, at pp/mf/ff mapped to velocities
 0.35/0.65/0.95. These are ordinal performance conditions, not measured MIDI velocities.
@@ -36,16 +43,17 @@ Prepared float WAVs omit timestamped PEAK metadata so repeated extraction preser
 
 Piano pitches 52/60/67 are held out. Guitar/violin pitches whose MIDI number modulo three is one
 are held out. All pp recordings are also held out, including pp on otherwise trained pitches.
-Only training notes enter either optimization stage. Validation is loaded after fitting finishes.
-This tests new pitches and weak dynamics from the same recording sessions, not new instruments.
+The split is part of the frozen cohort: a search over an instrument's controls may read the
+training notes only, and the validation notes are the ones to quote. They are new pitches and
+weak dynamics from the same recording sessions, not new instruments.
 
 Pitch-conditioned harmonic tracking locates stable scale notes and requires ascending order.
 Onset detection backtracks up to 200 ms and uses a local 2% RMS threshold with a 5 ms guard.
 Audible harmonics estimate a fixed tuning offset, checked within 75 cents of the label; weak
 harmonics are excluded. The renderer receives this measured offset before note-on. No pitch,
-time alignment, or per-note synthesis parameter is optimized against the validation recordings.
+time alignment or per-note synthesis parameter is adjusted to a recording.
 
-## Objective and search
+### Temporal mel distance
 
 Every note is mono at 24 kHz and covers the first **one second** after onset, with the key held.
 This common window fits every capture. Each whole note is normalized to RMS 0.1. Individual
@@ -54,122 +62,188 @@ frames are never normalized, so attack and decay remain measurable; there is no 
 Two Hann STFTs use 512/2048-sample windows and a 240-sample hop. Sixty-four triangular HTK mel
 bands span 30 Hz to 10 kHz with unit-area normalization. Power is compressed as
 `log(1 + 10000 * mel_power)`. For each resolution, absolute error is averaged separately over
-the first 15 frames and remaining frames; their means have equal weight. The final loss averages
-both resolutions and all notes equally. Smaller is closer under this definition. It is a
-dimensionless acoustic distance, not a perceptual quality score or a measurement in decibels.
+the first 15 frames and remaining frames; their means have equal weight. The final distance
+averages both resolutions and all notes equally. Smaller is closer under this definition. It is
+a dimensionless acoustic distance, not a perceptual quality score or a measurement in decibels.
+It discards phase and resolves harmonics only within its bands; listening and pitch/stability
+tests remain needed. `tools/eval/physical_mel.py` is the definition.
 
-`fit_physical_mel.py` alternates two stages twice:
+`evaluate_physical_mel.py` reports the distance of both builds for every note of both halves
+of the split, with each build's factory parameters and hash. Both builds play at those factory
+settings, which for the Strings is a section of three players where the recording is a solo
+violin. `--production-rate 48000` plays both builds at 48 kHz and resamples them into the same
+24 kHz measure.
 
-1. Seeded differential evolution searches the actual Rust excitation/loss controls, with
-   population size five per parameter, eight generations, and no polishing. Bounds and defaults
-   are saved in the report. The seeds are 20261001 and 20261002.
-2. A causal filter-bank surrogate fits the twelve gains by regularized least squares, with
-   each gain bounded to ±9 dB. Anchor and neighboring-gain penalties are 0.012 and 0.01. A fit
-   is retained only if it improves the primary temporal L1 objective. Surrogate PCM agreement
-   with the actual Rust bank is checked before optimization, within 0.0002 maximum error.
-
-Piano searches hardness, strike position, decay, damping and stiffness. Guitar searches hardness,
-pluck position, decay and damping. Violin also searches bow pressure and speed. Release is held
-fixed because this window does not measure key release. Body blend remains 0.65. The fitted
-filter gains and factory controls are rounded into Rust; the final measurement uses those actual
-compiled values. Existing explicit project parameters still take precedence over new defaults.
-
-A separate scalar preserves median training-note RMS relative to the previous factory voice.
-It applies within the instrument, including when level is automated, instead of changing the
-public level default. It does not enter the gain-invariant objective. Bass, bell and mallet
-settings are unchanged. SoundFont import and its playback path are unaffected.
-
-## First calibration result
-
-Baseline: `5a6ccac`, before this calibration. The final tools repeated the training search with
-the same seeds and obtained the same result. Evaluating two actual worker binaries at 24 kHz:
-
-The complete calibration and per-note validation reports are committed in
-`tools/eval/references/physical-mel-calibration.json`, `physical-mel-validation.json`,
-and `physical-mel-validation-48k.json`.
-
-| Instrument | Training before → after | Validation before → after | Validation reduction | Improved notes |
-| --- | --- | --- | ---: | ---: |
-| Piano | 0.258680 → 0.161204 | 0.234200 → 0.169513 | 27.6% | 10/12 |
-| Guitar | 0.183417 → 0.119994 | 0.211496 → 0.148237 | 29.9% | 42/44 |
-| Violin | 0.114397 → 0.077856 | 0.124071 → 0.084689 | 31.7% | 35/39 |
-
-A separate 48 kHz render, resampled into the same 24 kHz feature space, also improves validation:
-piano 0.234175 → 0.171541 (26.7%), guitar 0.210189 → 0.148302 (29.4%),
-violin 0.126719 → 0.088016 (30.5%). This check reconstructs the earlier defaults and filter bank
-through the unchanged string/modal algorithms. Before using that reconstruction, it verifies PCM
-agreement with the frozen 24 kHz baseline. The 24 kHz table above uses the frozen binary directly.
-Future oscillator changes require a separately frozen worker at the production rate instead.
-
-The evaluation emits a deterministic audition: piano, guitar, violin, each in the order
+It also emits a deterministic audition: piano, guitar, violin, each in the order
 **recorded / before / after**, with whole-note RMS matched and common peak headroom. The mf
 validation note nearest MIDI 60/55/67 is chosen ahead of scoring; no best-performing note is
 selected. Plots use the same color scale for each instrument's three panels.
 Audition cuts have 5 ms boundary fades to prevent clicks; scoring uses the untouched PCM.
 
-The symbolic measurement is byte-identical before/after. Nine normally balanced composition
-presets still give mixed Audiobox Aesthetics results: mean CE 5.938 → 5.887, PQ 7.749 → 7.734.
-Pop-band and rock CE improve; orchestral and ambient CE decrease by about 0.36 and 0.43. Ambient
-PQ decreases by about 0.17. A smaller isolated-note mel loss therefore does not establish that
-every composition or sustained pad sounds better. These learned scores remain secondary checks,
-not search targets.
+## A Steinway from C1 to C8
 
-At 48 kHz, 256 frames and 24 held voices, a release-build measurement gives piano mean/p99
-1.025/1.681 ms, guitar 0.083/0.123 ms, violin 0.073/0.116 ms, against a 5.333 ms callback budget.
-Longer-lived piano modes increase mean CPU from the preceding calibration's roughly 0.82 ms.
-Callback allocation checks still pass. These timings describe this machine and workload.
+The University of Iowa's [Steinway model B recordings](https://theremin.music.uiowa.edu/MISpiano.html),
+performed by Evan Mazunik, supply mf notes on every C from C1 to C8, and pp/ff notes on C2, C4,
+C6 and C7. pp C6 and pp C7 lie within a few dB of the recording's noise floor and are not
+measured: 14 of the 16 locked captures are. URLs, sizes and hashes are in
+[piano-register-captures.json](../tools/eval/references/piano-register-captures.json).
 
-The first pass covers attack and early sustain/decay. The subsequent
-[sustained/trajectory calibration](physical-trajectories.md) adds 3/6-second notes and real
-violin glissandi with pitch/expression guides and annotated releases. Some piano EQ gains reach
-the ±9 dB bounds, indicating that the compact
-excitation/radiation structure still limits reconstruction. Mel distance also discards phase
-and resolves harmonics only within its bands; listening and pitch/stability tests remain needed.
+`piano_register.py` measures at 24 kHz on onset-aligned notes, every 25 ms, against each file's
+own noise floor:
 
-## Reproduce and continue
+| Measure | What it compares |
+| --- | --- |
+| decay | Each of up to twelve partials' level relative to itself at 100 ms, with the recording's floor added to the render |
+| envelope | Broadband level relative to 100 ms, through the same floor |
+| spectrum | Partial levels over 50–400 ms relative to their total |
+| level | 50–500 ms level, compared with the same-dynamic C4 through offsets frozen at the start |
+| knock | Band power under 0.6 f0 at 20/60/120 ms, absolute through the same offsets, above the floor only |
+
+Each is a mean absolute distance in decibels. Every measure is relative within one note except
+`level` and `knock`, which go through the per-dynamic offsets taken at C4. One recorded piano,
+one microphone position and three dynamic labels stand behind them, and there is no reference
+for the dampers, the release or the pedal. These measures describe resemblance to recordings,
+not preference; listen.
+
+## B♭ clarinet
+
+The [University of Iowa Bb Clarinet MIS page](https://theremin.music.uiowa.edu/MISBbclarinet.html)
+identifies a Buffet R13 Bb clarinet, Glenn Bowen, recorded on 3 August 1998
+in the Wendell Johnson anechoic chamber with a Neumann KM 84, at 16-bit,
+44.1 kHz mono. The [MIS collection terms](https://theremin.music.uiowa.edu/MIS.html)
+permit downloading and using these recordings in any project without restrictions.
+An online preparation run caches both pages beside the original captures.
+
+The frozen cohort uses `D3B3`, `C4B4` and `C5B5` recordings at `pp`, `mf` and `ff`:
+34 sounding pitches, MIDI 50–83, and 102 note instances. The filenames identify
+concert pitches: D3, C4 and C5 fundamentals are approximately 147, 262 and 523 Hz.
+Do not transpose these labels for the instrument's Bb designation. All three
+dynamics of each even pitch belong to training (51 notes); odd pitches belong to
+validation (51 notes). This holds out pitches within one instrument, player and
+recording setup, rather than an independent instrument or player.
+
+Chronological regions are detected using a 5 ms RMS envelope at 2% of capture
+peak, with short gaps merged. Each note starts with 5 ms preroll and ends 250 ms
+after its detected region, then is cropped or zero-padded to three seconds and
+polyphase-resampled to 24 kHz. Detected region duration supplies an approximate
+hold, capped at 2.98 seconds in the renderer. Some notes therefore sustain for
+the entire retained window; T90 measures energy timing in that window, rather
+than a complete physical release. Velocity maps `pp/mf/ff` to 0.35/0.65/0.95;
+these are development choices, not measured MIDI velocities. Measured recording
+detuning is passed to the renderer. Source and prepared hashes, times and pitches
+are retained in `tools/eval/references/clarinet-notes.json`.
+The manifest checksum normalizes CRLF to LF so Git's platform line endings
+do not invalidate it.
+
+`clarinet_copy.py` measures the worker's `clarinet`, the Reeds instrument. Both signals receive
+a causal 30 Hz highpass and whole-note RMS normalization to 0.1. There is no time warping or
+framewise gain adjustment. The log-mel configuration is the one above: 512/2048 Hann windows,
+240-sample hop and 64 bands from 30 Hz to 10 kHz. Its mean absolute distance is weighted
+0.3/0.3/0.4 over attack (0–50 ms), body (50–250 ms) and tail (250 ms–3 s). Beside it stand
+the 20 ms RMS-envelope distance in dB and the absolute error of T90, the time containing 90%
+of the band-limited energy. A paired bootstrap with 2,000 resamples keeps all dynamics of each
+pitch together. The instrument plays at 24 kHz unless `--rate 48000` asks for 48 kHz, which
+is then resampled to 24 kHz for the same measure.
+
+## Hammered dulcimer and tin whistle
+
+The reference manifest is `tools/eval/references/folk-notes.json`. It contains 18 notes:
+10 dulcimer pitches (six training and four validation) and eight whistle pitches (four training
+and four validation). MIDI pitches are disjoint between the splits. The whistle material is one
+continuous D-major scale, so its notes are steady excerpts from one recording rather than eight
+independent takes. The dulcimer clips are complete public previews, but the available dulcimer
+material is a public HQ MP3 preview transcoded to WAV; the original WAV download requires a
+Freesound login.
+
+The whistle source is [Whistle.wav on Wikimedia Commons](https://commons.wikimedia.org/wiki/File:Whistle.wav)
+([direct WAV](https://upload.wikimedia.org/wikipedia/commons/6/65/Whistle.wav)), licensed CC BY-SA
+4.0. Its author field is not machine-readable; the manifest credits Escola Superior de Música de
+Catalunya (ESMUC), without asserting that credit as an author identity. Dulcimer previews come
+from [iternetcone's Freesound pack](https://freesound.org/people/iternetcone/packs/19445/) and
+the individual source pages recorded in the manifest; they are CC BY 4.0. The prepared reference
+manifest checksum is `bcf55f3f56d867ec5f3e88aaf7813b9963df7009e891520ded691f182be19016`,
+with CRLF normalized to LF. Each raw capture and prepared WAV also has a strict byte checksum.
+Harmonic spacing and autocorrelation distinguish the weak fundamentals of C4/D4/E4 from their
+stronger upper partials. The separately recorded High C5/High D5 notes remain distinct pitches;
+the rounded octave audit is retained in `tools/eval/references/folk-pitch-audit.json`.
+
+`folk_copy.py` measures the worker's `hammered_dulcimer` and `tin_whistle`, the Hammered Strings
+and Whistles instruments. Renderer velocities are fixed at 0.65, rather than inferred from
+recording dynamics. Measured source detuning is passed to the renderer; available excerpt
+duration supplies an approximate note hold. Dulcimer uses the phase-weighted log-mel distance
+of the clarinet (30% attack, 30% body, 40% tail), envelope error, and T90; whistle uses
+steady-excerpt log-mel and envelope error. The two are different and their numeric values must
+not be compared between instruments. Notes are normalized to RMS 0.1 after a causal second-order
+30 Hz highpass, without time warping or framewise gain adjustment. Whistle references discard
+the first 150 ms and last 100 ms of each stable scale region; the comparison uses up to one
+second of the retained steady excerpt and the same duration of synth audio starting 200 ms after
+note-on. T90 is the time containing 90% of band-limited energy in the retained three-second
+window, rather than a measurement of a complete physical decay beyond the available preview.
+`--rate 48000` is as for the clarinet.
+
+Each validation result covers only four held-out pitches, so the paired 95% interval of a
+change, from 2,000 paired pitch bootstrap resamples, is wide. These are regression measurements
+for a small corpus, not evidence of a perceptual difference.
+
+`folk_tuning.py` is an independent pitch probe. It holds notes for 1.2 seconds at velocities
+0.35, 0.65 and 0.95, at 24 and 48 kHz: the whistle over D5–D7 (MIDI 74–98) and the dulcimer over
+C3–C6 (MIDI 48–84). It discards 350 ms and checks the strongest peak across 20 Hz to
+min(10 kHz, 0.49 × sample rate), alongside the interpolated fundamental peak.
+
+## Running them
 
 Run Python tools with `uv`. On Windows, use the installed `uv.exe` path if it is missing from
-PATH. The tools use script environments; no trainer environment or GPU is required.
+PATH, and `.exe` worker paths. The tools use script environments; no trainer environment or GPU
+is required. Preparing the folk cohort also needs `ffmpeg` on PATH for the MP3 previews; the
+clarinet and folk fetchers take `--offline` to prepare from cached captures.
 
 ```sh
-uv run tools/eval/fetch_physical_reference.py target/copy-synthesis/iowa
-uv run tools/eval/prepare_physical_reference.py target/copy-synthesis/iowa \
-  --lock tools/eval/references/iowa-notes.json
 cargo build --release -p auris-synth --example physical_fit_render
-# Freeze this executable before changing any audio code; use .exe on Windows.
-cp target/release/examples/physical_fit_render target/copy-synthesis/before-renderer
-uv run tools/eval/fit_physical_mel.py target/copy-synthesis/iowa \
-  target/copy-synthesis/before-renderer target/copy-synthesis/fit.json
-# Review held-out loss, apply candidate controls/gains and cumulative output normalization,
-# then rebuild the example and compare the actual Rust builds:
-uv run tools/eval/evaluate_physical_mel.py target/copy-synthesis/iowa \
-  target/copy-synthesis/before-renderer target/release/examples/physical_fit_render \
-  target/copy-synthesis/evaluation
+# Freeze this executable before changing any audio code, as <before-worker>.
+
+uv run tools/eval/fetch_physical_reference.py target/physical-reference
+uv run tools/eval/prepare_physical_reference.py target/physical-reference \
+  --lock tools/eval/references/iowa-notes.json
+uv run tools/eval/evaluate_physical_mel.py target/physical-reference \
+  <before-worker> <after-worker> target/physical-eval
+
+uv run tools/eval/piano_register.py target/piano-register prepare
+uv run tools/eval/piano_register.py target/piano-register evaluate \
+  <before-worker> <after-worker> target/piano-register/evaluation.json
+
+uv run tools/eval/fetch_clarinet_reference.py target/physical-next/clarinet-reference \
+  --lock tools/eval/references/clarinet-notes.json
+uv run tools/eval/clarinet_copy.py target/physical-next/clarinet-reference <after-worker> \
+  target/physical-next/clarinet-validation.json --baseline <before-worker>
+
+uv run tools/eval/fetch_folk_reference.py target/folk-physical/reference \
+  --lock tools/eval/references/folk-notes.json
+uv run tools/eval/folk_copy.py target/folk-physical/reference <after-worker> \
+  target/folk-physical/dulcimer-validation.json --model hammered_dulcimer \
+  --baseline <before-worker>
+uv run tools/eval/folk_copy.py target/folk-physical/reference <after-worker> \
+  target/folk-physical/whistle-validation.json --model tin_whistle \
+  --baseline <before-worker>
+uv run tools/eval/folk_tuning.py <after-worker> target/folk-physical/folk-tuning.json
 ```
 
-To repeat this first calibration with the archived worker, pass
-`--profiles tools/eval/references/physical-body-before-copy.json` to the fitter. The 48 kHz
-cross-check additionally uses `--production-rate 48000 --calibration target/copy-synthesis/fit.json`.
-Pin the recorded dependency versions for exact extraction: NumPy 2.5.3, SciPy 1.18.1,
-SoundFile 0.14.0; the original run used Python 3.12.14. The canonical note-manifest SHA-256 is
+Pin the recorded dependency versions for exact extraction of the Iowa cohort: NumPy 2.5.3,
+SciPy 1.18.1, SoundFile 0.14.0. Its canonical note-manifest SHA-256 is
 `878f66a719dd47400ad6246d9a23c8ecb09676c26837bbfa569993099b76c4bc`.
 Manifest identity uses sorted, compact JSON encoded as UTF-8, independent of file line endings.
-The reports also record worker hashes, defaults, bounds, stage history and every per-note error.
-To rebuild the original DSP baseline, use source at `5a6ccac` in an isolated checkout and copy
-the current worker example there, adding `serde_json` as an `auris-synth` dev dependency. Use an
-independent Cargo target directory. A rebuilt executable's hash depends on its toolchain and
-build path; compare PCM and metrics rather than expecting the original worker binary hash.
+The reports record worker hashes, factory parameters and every per-note distance. A rebuilt
+executable's hash depends on its toolchain and build path; compare PCM and metrics rather than
+expecting an archived worker's hash.
 
 ```sh
 uv run --with numpy --with scipy --with soundfile --with pytest pytest \
-  tools/eval/test_physical_mel.py tools/eval/test_fit_physical_body.py tools/eval/test_physical_ab.py
-uv run --with ruff ruff check tools/eval/*physical*.py
-cargo test --workspace
+  tools/eval/test_physical_mel.py tools/eval/test_piano_register.py \
+  tools/eval/test_clarinet_copy.py tools/eval/test_fetch_clarinet_reference.py \
+  tools/eval/test_fetch_folk_reference.py
+uv run --with ruff ruff check tools/eval
 cargo test -p auris-synth --example physical_fit_render
-cargo clippy --workspace --all-targets
 ```
 
 The numeric tests reject silent/non-finite candidates, verify gain and polarity invariance,
-detect changed pitch/harmonics/attack/decay, check extraction/tuning, and protect the fixed
-training/validation separation. Standard DSP tests continue to check tuning, loss, velocity,
-controls, live level normalization, extreme notes and zero allocations.
+detect changed pitch/harmonics/attack/decay, check extraction/tuning, read known decays and
+onsets back from synthetic notes, and protect the fixed training/validation separation.

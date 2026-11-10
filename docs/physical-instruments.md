@@ -198,7 +198,9 @@ The last column is the instruments these replaced, which were fitted to the reco
 second column. It is the mark a fitted model reaches, and the piano, the guitar and the
 strings are still short of it. The mel distance is a spectrogram
 distance over a note's first second, defined in `tools/eval/physical_mel.py`; it says how
-close a note is to one recording, not how it sounds.
+close a note is to one recording, not how it sounds. The recordings, what each measure
+compares and the commands behind every row are in
+[physical instruments against real recordings](physical-copy-synthesis.md).
 
 Key to key, a piano's notes are within 0.8 dB rms of the keys around them, and a guitar's and
 the strings' within 1.5 dB.

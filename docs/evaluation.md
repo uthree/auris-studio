@@ -17,48 +17,37 @@ The [preset arrangement study](preset-arrangement.md) pairs these measurements w
 participation and density across the form, and records the default-seed selection, fresh-seed
 check, and per-preset tradeoffs from the 2026-10-04 revision.
 
-The [physical-instrument copy-synthesis loop](physical-copy-synthesis.md) measures temporal
-mel-spectrogram distance against a frozen cohort of real piano, guitar and violin recordings.
-It fits only training notes and evaluates held-out pitches and dynamics with the actual Rust
-renderer. This acoustic distance complements the symbolic and learned song measurements below.
-The [grand-piano calibration](grand-piano-calibration.md) fits three-second Steinway notes
-and checks held-out pitches/dynamics at one, three and six seconds, at 24/48 kHz.
-The [whole-keyboard piano voicing](grand-piano-register.md) measures per-partial two-stage decay,
-register level and soundboard knock from C1 to C8, and checks itself on that cohort's held-out notes.
-The [low-register correction](physical-low-register.md) measures bow-force continuity,
-bass-note periodicity and piano partial stretch, with paired audition files.
-The [piano stretch tuning](piano-stretch-tuning.md) measures each key's fundamental, heard
-pitch and octave beats against equal temperament.
-The [long-note/trajectory extension](physical-trajectories.md) adds 3/6-second notes, real
-violin glissandi, recorded performance guides and separate late-sustain/transition/release losses.
-The [physical-model experiments](physical-extensions.md) add causal radiation modes,
-register/gesture ablations, paired confidence intervals and synchronized piano-pedal references.
-The [bass/bar/drum calibration](physical-pack.md) adds 391 real-recording excerpts, separate
-attack/body/tail loss and acoustic-role guards for every snare/tom register.
-The [electric-guitar experiment](electric-guitar.md) adds independent pickup DI, an
-oversampled amplifier and a paired clean/pedal recording benchmark with pitch-grouped splits.
-The [folk-instrument experiment](folk-physical-instruments.md) adds hammered dulcimer strikes
-and settled tin-whistle scale excerpts, with distinct-pitch validation and frozen source hashes.
+The [physical-instrument measurements](physical-copy-synthesis.md) compare the piano, guitar,
+strings, reeds, whistles and hammered strings with frozen cohorts of real recordings, through
+the actual Rust renderer: temporal mel-spectrogram distance on held-out pitches and dynamics,
+and per-partial decay, register level and soundboard knock across a Steinway's keyboard.
+This acoustic distance complements the symbolic and learned song measurements below.
+The drum kit, the guitar amplifier and the choir are fitted to recordings as well, each on its
+training notes only and evaluated on held-out ones.
+The [drum-kit calibration](physical-pack.md) fits seven kit families to 151 real drum hits,
+with separate attack/body/tail loss and acoustic-role guards for every snare/tom register.
+The [guitar-amplifier experiment](electric-guitar.md) adds an oversampled amplifier and a
+paired clean/pedal recording benchmark with pitch-grouped splits.
 The [choir calibration](choir-copy-synthesis.md) fits the native vocal-tract ensemble to
 real sustained vowels, with 24 training notes and 80 notes from separate held-out singers.
+The [piano stretch tuning](piano-stretch-tuning.md) measures each key's fundamental, heard
+pitch and octave beats against equal temperament.
 
 ## Native instrument upper-midrange voicing
 
 The 2026-10-19 upper-midrange study follows the
 [snare and ride correction](physical-pack.md#targeted-snare-and-ride-voicing).
-It screens all sixteen native instrument families, additional pulse/saw/FM lead patches,
-unmodulated controls and the production pop/rock guitar-amp chains. The worker uses the
-actual instrument implementation at 44.1/48/96 kHz and velocities 0.35/0.65/1: 2,295 paired
-conditions, with 1.2 seconds held in each 1.8-second capture.
+It screens the native instrument families, additional pulse/saw/FM lead patches and
+unmodulated controls. The worker uses the actual instrument implementation at 44.1/48/96 kHz
+and velocities 0.35/0.65/1, with 1.2 seconds held in each 1.8-second capture.
 
-Piano, acoustic guitar, electric guitar, bowed strings, clarinet and pulse/saw leads receive
-a Q=0.9 section at 3.2 kHz. Maximum cuts are respectively 3.5/2/3/3/2/3 dB. This runs per
-voice before its amplitude envelope; the acoustic models' feedback and modal frequencies
-are unchanged. The wet amount falls linearly from full at a 1 kHz fundamental to zero at
-2 kHz, with 3 ms smoothing for bends, glides and timbre changes. FM applies up to 3 dB while
-its modulation envelope is active; an unmodulated sine is unchanged. The preview voice
-reduces its 2.6 kHz formant by up to 20% with the same fundamental protection, retaining
-the two lower formants. This does not change the physical choir's vocal tract.
+Pulse and saw leads receive a Q=0.9 section at 3.2 kHz, cutting at most 3 dB. This runs per
+voice before its amplitude envelope. The wet amount falls linearly from full at a 1 kHz
+fundamental to zero at 2 kHz, with 3 ms smoothing for bends, glides and timbre changes. FM
+applies up to 3 dB while its modulation envelope is active; an unmodulated sine is unchanged.
+The preview voice reduces its 2.6 kHz formant by up to 20% with the same fundamental
+protection, retaining the two lower formants. This does not change the physical choir's vocal
+tract.
 
 The following medians describe the paired probe windows whose fundamental is below 1.4 kHz
 and whose original 2–5 kHz power exceeds 1% of audible power. Attack is 0–150 ms; sustain is
@@ -66,24 +55,16 @@ and whose original 2–5 kHz power exceeds 1% of audible power. Attack is 0–15
 
 | Sound | Attack 2–5 kHz | Sustain 2–5 kHz |
 | --- | ---: | ---: |
-| Piano | -2.15 dB | -2.20 dB |
-| Acoustic guitar | -1.21 dB | -1.19 dB |
-| Electric guitar DI | -1.84 dB | -1.81 dB |
-| Bowed strings | -2.43 dB | -2.47 dB |
-| Clarinet | -1.65 dB | -1.65 dB |
 | Pulse lead, width 0.125 | -2.21 dB | -2.21 dB |
 | Saw lead | -2.25 dB | -2.25 dB |
 | Factory FM | -2.11 dB | — |
 | Preview voice | -1.36 dB | -1.37 dB |
-| Pop amplified guitar | -1.80 dB | -1.81 dB |
-| Rock amplified guitar | -1.19 dB | -1.55 dB |
 
 The report also retains deltas after audible-power matching, to distinguish spectral
 changes from overall attenuation. Hann-periodogram normalization excludes frequencies
 below 30 Hz, so a narrow pulse's DC offset cannot hide its upper harmonics. All tested
-notes at MIDI 96 and above match the baseline sample for sample, including the amp chains.
-The bass, bell, mallet, dulcimer, whistle, choir, complete drum kit and legacy noise drum
-also remain identical, as do sine/triangle and zero-index FM controls.
+notes at MIDI 96 and above match the baseline sample for sample. The choir, complete drum kit
+and legacy noise drum also remain identical, as do sine/triangle and zero-index FM controls.
 
 `tools/eval/references/instrument-harshness.json` retains the cohort, hashes and results.
 The symbolic ruler is unchanged. A frozen solo pulse-lead melody through `music.py` has

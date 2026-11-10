@@ -7,7 +7,7 @@ import soundfile as sf
 from physical_mel import RATE, configuration, features, normalize
 from scipy.signal import butter, sosfilt
 
-FAMILIES = ("bass", "bell", "mallet", "kick", "snare", "closed_hat", "open_hat", "crash", "ride", "tom")
+FAMILIES = ("kick", "snare", "closed_hat", "open_hat", "crash", "ride", "tom")
 PHASES = (("attack", 0, 5, 0.3), ("body", 5, 25, 0.3), ("tail", 25, None, 0.4))
 
 
@@ -117,6 +117,27 @@ def rows(notes, reference, audio):
             for index, note in enumerate(notes)]
 
 
+def paired_summary(before, after):
+    """Paired bootstrap of the mel change, clustered by original source capture."""
+    if [row["id"] for row in before] != [row["id"] for row in after]:
+        raise ValueError("unpaired evaluation rows")
+    groups = {}
+    for a, b in zip(before, after, strict=True):
+        groups.setdefault(a["source"], []).append(b["mel"] - a["mel"])
+    clusters = list(groups.values())
+    rng = np.random.default_rng(20261003)
+    boot = [float(np.mean([value for index in rng.integers(0, len(clusters), len(clusters))
+                          for value in clusters[index]])) for _ in range(2000)]
+    a = np.array([row["mel"] for row in before])
+    b = np.array([row["mel"] for row in after])
+    return {"count": len(a), "source_clusters": len(clusters), "before": float(a.mean()),
+            "after": float(b.mean()), "relative_reduction": float(1 - b.mean() / a.mean()),
+            "improved": int(np.sum(b < a)), "worse": int(np.sum(b > a)),
+            "mean_delta_ci95": np.quantile(boot, [0.025, 0.975]).tolist(),
+            "envelope_before_db": float(np.mean([row["envelope_db"] for row in before])),
+            "envelope_after_db": float(np.mean([row["envelope_db"] for row in after]))}
+
+
 def metric_configuration():
     return configuration() | {"loss": "0.3 attack + 0.3 body + 0.4 tail log-mel L1, mean of resolutions",
                               "attack_frames": 5,
@@ -126,7 +147,7 @@ def metric_configuration():
 
 
 def load(root, manifest, family, split):
-    notes = [note for note in manifest["notes"] if note.get("family", note["model"]) == family and note["split"] == split]
+    notes = [note for note in manifest["notes"] if note["family"] == family and note["split"] == split]
     if not notes:
         raise ValueError(f"empty {family} {split} cohort")
     audio = []

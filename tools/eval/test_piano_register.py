@@ -95,16 +95,3 @@ def test_a_faster_rendered_decay_is_penalized():
     same = register.note_losses(note, recorded[register.onset(recorded) :], None)
     worse = register.note_losses(note, faster[register.onset(faster) :], None)
     assert worse["decay"] > same["decay"] + 3.0
-
-
-def test_smooth_register_curves_cost_nothing():
-    voicing = {
-        "contact": [4.0 / 1.5**k for k in range(8)],
-        "strike": [1.0] * 8,
-        "aftersound": [1.0 * 1.3**k for k in range(8)],
-        "bridge": [5.0] * 8,
-        "soundboard": [0.0] * 12,
-    }
-    assert register.penalty(voicing) < 1e-9
-    voicing["contact"][3] *= 3.0
-    assert register.penalty(voicing) > 0.5

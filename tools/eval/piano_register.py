@@ -2,19 +2,14 @@
 # requires-python = ">=3.10"
 # dependencies = ["numpy>=1.26", "scipy>=1.11", "soundfile>=0.12"]
 # ///
-"""Voice the native piano across its whole keyboard against Steinway notes from C1 to C8.
+"""Measure the native piano across its whole keyboard against Steinway notes from C1 to C8.
 
 prepare   download the hash-locked Iowa notes into REFERENCE
-fit       search register curves stage by stage; the worker needs `--features piano-calibration`
-evaluate  compare two workers' factory pianos note by note, with no override
-
-The `mel` stage refits hammer and soundboard on the project's temporal mel distance over these
-notes and the grand-piano cohort's training notes (`--grand`, prepared by grand_piano.py).
-Voicing keys starting with an underscore are instrument parameters, such as `_position`.
+evaluate  compare two workers' factory pianos note by note
 
 Every measurement is relative within one note except `level`, which compares a note with the
 same-dynamic C4 through offsets frozen at the start, and `knock`, which goes through the same
-offsets. See docs/grand-piano-register.md.
+offsets. See docs/physical-copy-synthesis.md.
 """
 
 import argparse
@@ -22,15 +17,12 @@ import hashlib
 import json
 import struct
 import subprocess
-import sys
-import time
 from math import gcd
 from pathlib import Path
 from urllib.request import urlopen
 
 import numpy as np
 import soundfile as sf
-from physical_mel import distances, features
 from scipy.signal import resample_poly
 
 REPO = Path(__file__).resolve().parents[2]
@@ -41,8 +33,6 @@ SECONDS = 8.0
 T0 = 0.1
 KNOCK_EDGES = ((40, 80), (80, 160), (160, 320), (320, 640), (640, 1280), (1280, 2560))
 KNOCK_TIMES = (0.02, 0.06, 0.12)
-STAGES = ("decay", "spectrum", "knock", "mel")
-MEL_SECONDS = 3
 
 
 def hz(pitch):
@@ -66,9 +56,7 @@ class Worker:
         self.process.stdin.flush()
         header = self.process.stdout.read(4)
         if len(header) != 4:
-            raise RuntimeError(
-                "worker closed: was it built with --features piano-calibration?"
-            )
+            raise RuntimeError("worker closed before its PCM header")
         (count,) = struct.unpack("<I", header)
         data = self.process.stdout.read(count * 4)
         return np.frombuffer(data, dtype="<f4").astype(np.float64)
@@ -194,7 +182,6 @@ class Note:
         tail = x[-int(1.5 * RATE) :]
         self.level = early_level(x[start:])
         x = x[start : start + int(SECONDS * RATE)]
-        self.mel = features(x[None, : MEL_SECONDS * RATE])
         self.f0 = hz(self.pitch)
         self.freqs = find_partials(x, self.f0, 12)
         self.size = window_size(self.freqs[0])
@@ -209,7 +196,7 @@ class Note:
         self.knock = knock_bands(x, self.freqs[0], knock_floor)
         start_levels = self.levels[:, self.i0]
         top = start_levels.max()
-        # Partials worth fitting stand well clear of their floor and of the strongest one.
+        # Partials worth measuring stand well clear of their floor and of the strongest one.
         self.use = [
             n
             for n in range(len(self.freqs))
@@ -272,37 +259,14 @@ def note_losses(note, y, offset):
     return losses
 
 
-class CohortNote:
-    """A grand-piano cohort note: a mel target and its recorded tuning, nothing more."""
-
-    def __init__(self, note, audio):
-        self.pitch, self.velocity = note["pitch"], note["velocity"]
-        self.tuning = note.get("tuning_cents", 0.0)
-        self.label = f"grand.{self.pitch}.{self.velocity}"
-        self.dynamic = None
-        self.mel = features(audio[None, :])
-
-
-def split_parameters(voicing):
-    """Separate instrument parameters (underscored keys) from the voicing proper."""
-    if voicing is None:
-        return None, {}
-    voicing = dict(voicing)
-    params = {key[1:]: voicing.pop(key) for key in [k for k in voicing if k[0] == "_"]}
-    return voicing, params
-
-
 class Evaluator:
     def __init__(self, notes, worker):
         self.notes = notes
         self.worker = worker
-        self.seconds = SECONDS
         self.offsets = {}
-        self.renders = 0
 
-    def render(self, voicing, notes, seconds=None):
-        voicing, params = split_parameters(voicing)
-        length = seconds or self.seconds + 0.2
+    def render(self, notes):
+        length = SECONDS + 0.2
         request = {
             "model": "piano",
             "notes": [
@@ -311,206 +275,38 @@ class Evaluator:
             ],
             "seconds": length,
             "hold": length,
-            "params": params,
+            "params": {},
             "sample_rate": RATE,
         }
-        if voicing is not None:
-            request["piano_voicing"] = voicing
         pcm = self.worker.render(request)
-        self.renders += 1
         length = len(pcm) // len(notes)
         return [pcm[i * length : (i + 1) * length] for i in range(len(notes))]
 
-    def freeze_levels(self, voicing):
+    def freeze_levels(self):
         """Per-dynamic offsets from rendered to recorded level, taken at C4."""
         references = [n for n in self.notes if n.pitch == 60]
-        for note, y in zip(references, self.render(voicing, references)):
+        for note, y in zip(references, self.render(references)):
             self.offsets[note.dynamic] = note.level - early_level(y[onset(y) :])
 
-    def losses(self, voicing, notes):
+    def losses(self, notes):
         return {
             note.label: note_losses(note, y, self.offsets.get(note.dynamic))
-            for note, y in zip(notes, self.render(voicing, notes))
+            for note, y in zip(notes, self.render(notes))
         }
-
-    def mel_cost(self, voicing, notes):
-        """Mean mel distance (x100), with the level guard on register notes."""
-        total = 0.0
-        for note, y in zip(notes, self.render(voicing, notes, MEL_SECONDS)):
-            total += 100 * float(distances(note.mel, features(y[None, :]))[0])
-            if note.dynamic in self.offsets:
-                level = early_level(y[onset(y) :]) + self.offsets[note.dynamic]
-                total += 0.5 * abs(note.level - level)
-        return total / len(notes) + penalty(voicing)
-
-    def cost(self, voicing, notes, weights):
-        if weights is None:
-            return self.mel_cost(voicing, notes)
-        detail = self.losses(voicing, notes)
-        total = sum(
-            weights.get(key, 0.0) * value
-            for parts in detail.values()
-            for key, value in parts.items()
-        )
-        return total / len(notes) + penalty(voicing)
-
-
-def penalty(voicing):
-    """Smoothness of register curves and of the soundboard."""
-    total = 0.0
-    for key, weight in (
-        ("contact", 1.0),
-        ("strike", 1.0),
-        ("aftersound", 0.1),
-        ("bridge", 0.1),
-    ):
-        curve = np.log(np.maximum(np.array(voicing[key], float), 1e-6))
-        total += weight * float(np.sum(np.diff(curve, 2) ** 2))
-    gains = np.array(voicing["soundboard"], float)
-    return (
-        total
-        + 0.002 * float(np.sum(np.diff(gains) ** 2))
-        + 0.001 * float(np.sum(gains**2))
-    )
-
-
-def updated(voicing, key, index, value):
-    voicing = json.loads(json.dumps(voicing))
-    if index is None:
-        voicing[key] = value
-    else:
-        voicing[key][index] = value
-    return voicing
-
-
-def handles(stage, notes):
-    """(key, index, kind, step, low, high, notes) for every searched coefficient."""
-    if stage != "mel":
-        notes = [note for note in notes if isinstance(note, Note)]
-    at = {k: [n for n in notes if n.pitch == 24 + 12 * k] for k in range(8)}
-    if stage == "decay":
-        found = []
-        for k in range(8):
-            found.append(("aftersound", k, "log", 0.4, 0.2, 80.0, at[k]))
-            found.append(("bridge", k, "log", 0.4, 0.0, 200.0, at[k]))
-        found += [
-            ("friction", None, "log", 0.4, 0.01, 20.0, None),
-            ("bridge_slope", None, "lin", 0.2, -1.0, 1.5, None),
-            ("detune", 0, "log", 0.4, 0.01, 4.0, None),
-            ("detune", 1, "log", 0.4, 0.01, 2.0, None),
-            ("unevenness", None, "log", 0.4, 0.001, 0.8, None),
-            ("polarization", 0, "log", 0.4, 0.01, 0.7, at[0]),
-            ("polarization", 1, "log", 0.4, 0.01, 1.0, at[0]),
-            ("polarization", 2, "lin", 0.2, -2.0, 2.0, at[0]),
-        ]
-        return found, {"decay": 1.0, "envelope": 0.5}
-    if stage == "spectrum":
-        found = []
-        for k in range(8):
-            found.append(("contact", k, "log", 0.3, 0.3, 12.0, at[k]))
-            found.append(("strike", k, "log", 0.2, 0.5, 2.0, at[k]))
-        found += [
-            ("shape", 0, "log", 0.15, 0.35, 1.6, None),
-            ("shape", 1, "log", 0.15, 0.6, 3.0, None),
-            ("contact_velocity", None, "lin", 0.1, 0.0, 1.5, None),
-            ("core", 0, "log", 0.3, 0.02, 1.0, None),
-            ("core", 1, "log", 0.4, 0.001, 1.0, None),
-            ("core", 2, "lin", 0.3, 0.0, 4.0, None),
-            ("highpass", None, "log", 0.3, 20.0, 400.0, None),
-        ]
-        found += [("soundboard", i, "lin", 2.0, -15.0, 15.0, None) for i in range(12)]
-        return found, {"spectrum": 1.0, "level": 0.5}
-    if stage == "knock":
-        found = [("knock", k, "lin", 4.0, -80.0, 20.0, at[k]) for k in range(3, 8)]
-        found += [
-            ("knock_shape", 0, "log", 0.3, 60.0, 600.0, None),
-            ("knock_shape", 1, "log", 0.3, 40.0, 1000.0, None),
-            ("knock_shape", 2, "log", 0.3, 800.0, 10000.0, None),
-        ]
-        return found, {"knock": 1.0, "level": 0.5}
-    if stage == "mel":
-        near = {
-            k: [n for n in notes if abs(n.pitch - (24 + 12 * k)) < 12] for k in range(8)
-        }
-        found = []
-        for k in range(1, 7):
-            found.append(("contact", k, "log", 0.25, 0.3, 12.0, near[k]))
-            found.append(("strike", k, "log", 0.15, 0.5, 2.0, near[k]))
-        found += [
-            ("shape", 0, "log", 0.15, 0.35, 1.6, None),
-            ("shape", 1, "log", 0.15, 0.6, 3.0, None),
-            ("contact_velocity", None, "lin", 0.1, 0.0, 1.5, None),
-            ("core", 0, "log", 0.3, 0.02, 1.0, None),
-            ("core", 1, "log", 0.3, 0.001, 1.0, None),
-            ("core", 2, "lin", 0.3, 0.0, 4.0, None),
-            ("highpass", None, "log", 0.25, 20.0, 400.0, None),
-            ("_position", None, "log", 0.15, 0.08, 0.4, None),
-        ]
-        found += [("soundboard", i, "lin", 2.0, -15.0, 15.0, None) for i in range(12)]
-        return found, None
-    raise ValueError(f"unknown stage {stage}")
-
-
-def coordinate(evaluator, voicing, stage, passes, log):
-    """Bounded coordinate search; a register anchor renders only the notes it voices."""
-    searched, weights = handles(stage, evaluator.notes)
-    pool = [
-        note for note in evaluator.notes if stage == "mel" or isinstance(note, Note)
-    ]
-    cache = {}
-
-    def cost(candidate, notes):
-        key = (json.dumps(candidate, sort_keys=True), tuple(n.label for n in notes))
-        if key not in cache:
-            cache[key] = evaluator.cost(candidate, notes, weights)
-        return cache[key]
-
-    steps = {(key, index): step for key, index, _, step, *_ in searched}
-    for sweep in range(passes):
-        improved = False
-        for key, index, kind, _, low, high, notes in searched:
-            notes = notes or pool
-            if not notes:
-                continue
-            step = steps[(key, index)]
-            base = cost(voicing, notes)
-            current = voicing[key] if index is None else voicing[key][index]
-            best = (base, current)
-            for direction in (1, -1):
-                trial = (
-                    current * np.exp(direction * step)
-                    if kind == "log"
-                    else current + direction * step
-                )
-                trial = float(np.clip(trial, low, high))
-                if trial != current:
-                    value = cost(updated(voicing, key, index, trial), notes)
-                    if value < best[0] - 1e-4:
-                        best = (value, trial)
-            if best[1] != current:
-                voicing = updated(voicing, key, index, best[1])
-                improved = True
-                log(
-                    f"  {sweep} {key}[{index}] {current:.5g} -> {best[1]:.5g}: {base:.4f} -> {best[0]:.4f}"
-                )
-            else:
-                steps[(key, index)] = step * 0.6
-        if not improved and all(step < 0.02 for step in steps.values()):
-            break
-    return voicing
 
 
 def read_lock():
     return json.loads(LOCK.read_text(encoding="utf-8"))["captures"]
 
 
-def load_notes(root, fitted_only=True):
+def load_notes(root):
     notes = []
     for capture in read_lock():
         path = root / capture["path"]
         if digest(path) != capture["sha256"]:
             raise ValueError(f"reference hash mismatch: {path}")
-        if capture["fit"] or not fitted_only:
+        # The lock clears `fit` on the two captures that lie in their own noise floor.
+        if capture["fit"]:
             notes.append(Note(path, capture))
     return notes
 
@@ -530,50 +326,6 @@ def prepare(root):
         print(path.name, flush=True)
 
 
-def cohort_notes(grand):
-    """The grand-piano calibration's training notes, three seconds each."""
-    from grand_piano import load_cohort
-
-    notes, audio = load_cohort(grand, MEL_SECONDS, "train")
-    return [CohortNote(note, clip) for note, clip in zip(notes, audio)]
-
-
-def fit(root, executable, start, output, stages, passes, grand=None):
-    notes = load_notes(root)
-    if "mel" in stages:
-        if grand is None:
-            sys.exit("the mel stage needs --grand")
-        notes += cohort_notes(grand)
-    evaluator = Evaluator(notes, Worker(executable))
-    voicing = json.loads(start.read_text(encoding="utf-8"))
-    if "mel" in stages:
-        # The factory Excitation Position, which the mel stage refines with the voicing.
-        voicing.setdefault("_position", 0.2444)
-    lines = []
-
-    def log(text):
-        print(text, flush=True)
-        lines.append(text)
-
-    started = time.time()
-    evaluator.freeze_levels(voicing)
-    register_notes = [n for n in notes if isinstance(n, Note)]
-    report = {"renderer_sha256": digest(executable), "start": voicing, "stages": []}
-    for stage in stages:
-        log(f"== {stage}")
-        evaluator.seconds = SECONDS if stage == "decay" else 0.8
-        voicing = coordinate(evaluator, voicing, stage, passes, log)
-        evaluator.seconds = SECONDS
-        report["stages"].append({"stage": stage, "voicing": voicing})
-    report["losses"] = evaluator.losses(voicing, register_notes)
-    report["voicing"] = voicing
-    report["log"] = lines
-    report["renders"] = evaluator.renders
-    report["seconds"] = round(time.time() - started)
-    output.write_text(json.dumps(report, indent=1) + "\n", encoding="utf-8")
-    evaluator.worker.close()
-
-
 def evaluate(root, before, after, output):
     notes = load_notes(root)
     report = {
@@ -585,8 +337,8 @@ def evaluate(root, before, after, output):
     means = {}
     for label, executable in (("before", before), ("after", after)):
         evaluator = Evaluator(notes, Worker(executable))
-        evaluator.freeze_levels(None)
-        losses = evaluator.losses(None, notes)
+        evaluator.freeze_levels()
+        losses = evaluator.losses(notes)
         evaluator.worker.close()
         for note, parts in losses.items():
             report["notes"].setdefault(note, {})[label] = parts
@@ -607,13 +359,6 @@ def main():
     parser.add_argument("reference", type=Path)
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("prepare")
-    fitter = commands.add_parser("fit")
-    fitter.add_argument("renderer", type=Path)
-    fitter.add_argument("start", type=Path)
-    fitter.add_argument("output", type=Path)
-    fitter.add_argument("--stages", default="decay,spectrum,knock")
-    fitter.add_argument("--passes", type=int, default=8)
-    fitter.add_argument("--grand", type=Path, help="grand_piano.py reference directory")
     evaluator = commands.add_parser("evaluate")
     evaluator.add_argument("before", type=Path)
     evaluator.add_argument("after", type=Path)
@@ -621,19 +366,6 @@ def main():
     args = parser.parse_args()
     if args.command == "prepare":
         prepare(args.reference)
-    elif args.command == "fit":
-        stages = args.stages.split(",")
-        if not set(stages) <= set(STAGES):
-            sys.exit(f"stages are {', '.join(STAGES)}")
-        fit(
-            args.reference,
-            args.renderer,
-            args.start,
-            args.output,
-            stages,
-            args.passes,
-            args.grand,
-        )
     else:
         evaluate(args.reference, args.before, args.after, args.output)
 
