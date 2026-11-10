@@ -1617,6 +1617,8 @@ pub struct AurisApp {
     /// Keeping this separate from the document root lets a menu command move focus to another
     /// pane without the overlay teardown mistaking that intentional move for a lost menu focus.
     pub(crate) menu_focus: FocusHandle,
+    /// The inputs an inline prompt is typed into, Atelier's own rather than the window's handle.
+    pub(crate) inline_input: crate::ui::inline_edit::InlineInput,
     /// A menu's activation release, which must not press the control that regains focus.
     pub(crate) menu_activation: Option<(gpui::WindowId, String)>,
     /// Window whose transport consumed Space, so its release cannot also click a button.
@@ -2180,6 +2182,7 @@ impl AurisApp {
             note_selection_preview: None,
             focus: cx.focus_handle(),
             menu_focus: cx.focus_handle(),
+            inline_input: crate::ui::inline_edit::InlineInput::new(cx),
             menu_activation: None,
             transport_space_window: None,
             modal_focus: ModalFocus::new(cx),
@@ -2413,7 +2416,7 @@ impl AurisApp {
             && let Some(focus) = self.agent_chat.input_focus()
         {
             window.focus(focus);
-        } else if self.taking_text_input() {
+        } else if self.taking_text_input() && !self.inline_prompt_open(window) {
             window.focus(&self.focus);
         } else {
             window.focus(self.panes.handle(pane));
@@ -2509,11 +2512,17 @@ impl AurisApp {
             if !focus.is_focused(window) {
                 window.focus(focus);
             }
+        } else if self.inline_prompt_open(window) {
+            // Atelier's inline field focuses its own input when it opens, and gives the keyboard
+            // back when it closes.
         } else if self.taking_text_input() {
             if !self.focus.is_focused(window) {
                 window.focus(&self.focus);
             }
-        } else if self.focus.is_focused(window) || self.modal_focus.contains_focused(window, cx) {
+        } else if self.focus.is_focused(window)
+            || self.modal_focus.contains_focused(window, cx)
+            || self.inline_input.is_focused(window, cx)
+        {
             // Back where it came from, so the panel bindings work again the moment the sheet is
             // gone rather than after the next click.
             if let Some(pane) = self.local_pane(self.last_pane, window) {

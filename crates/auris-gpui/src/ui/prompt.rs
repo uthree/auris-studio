@@ -196,7 +196,7 @@ pub enum PromptTarget {
 }
 
 /// Whether an empty field carries a target-specific meaning instead of being a missing name.
-fn empty_prompt_is_meaningful(target: PromptTarget) -> bool {
+pub(crate) fn empty_prompt_is_meaningful(target: PromptTarget) -> bool {
     matches!(
         target,
         PromptTarget::Lyric { .. }
@@ -742,20 +742,14 @@ impl Prompt {
         self.place.as_ref()
     }
 
+    /// What the field held when it opened.
+    pub(crate) fn initial(&self) -> &str {
+        &self.initial
+    }
+
     /// The last rejected answer, while it is waiting to be corrected.
     pub(crate) fn error(&self) -> Option<&SharedString> {
         self.error.as_ref()
-    }
-
-    /// Whether leaving the field now would write nothing worth writing: its text is what it
-    /// opened with, or it was emptied where an empty answer means nothing.
-    pub(crate) fn is_untouched(&self) -> bool {
-        let Some(field) = self.field() else {
-            return true;
-        };
-        let text = field.content().trim();
-        text == self.initial.trim()
-            || (text.is_empty() && self.target().is_none_or(|t| !empty_prompt_is_meaningful(t)))
     }
 
     /// Edits a saved sound's name while retaining the exact entry being renamed.
@@ -1684,6 +1678,29 @@ impl AurisApp {
         // ⌘ on macOS, Ctrl elsewhere. Reading `platform` directly would put select-all on the
         // Windows key, which opens the shell's own menu long before the application sees it.
         let command = event.keystroke.modifiers.secondary();
+
+        // Drawn in place, the field is Atelier's input, which takes its own editing keys before
+        // they get here. Tab is the one left: it walks the completions, which the field is then
+        // given back on the next frame. Everything else is typing, and goes on to the input.
+        if self.inline_prompt_open(window) {
+            if event.keystroke.key != "tab" {
+                return false;
+            }
+            let composing = self
+                .prompt
+                .as_ref()
+                .and_then(Prompt::target)
+                .is_some_and(|target| {
+                    let input = self
+                        .inline_input
+                        .input(crate::ui::inline_edit::is_multiline(target));
+                    input.read(cx).buffer().marked().is_some()
+                });
+            if !composing && let Some(prompt) = self.prompt.as_mut() {
+                prompt.complete_next();
+            }
+            return true;
+        }
 
         if let Some(foci) = self
             .prompt

@@ -500,12 +500,18 @@ impl AurisApp {
             .edit_clip_event(clip, event, edit)
             .map_err(|error| error.to_string())?;
         self.select_event(landed);
+        self.walk_event_prompt(clip, landed, column);
+        Ok(())
+    }
+
+    /// Opens the sheet on the same cell of the row after `event`, when a row after it has one.
+    pub(crate) fn walk_event_prompt(&mut self, clip: ClipId, event: EventRef, column: EventColumn) {
         // The next row along in the list as it stands now, which a moved event has rejoined
         // wherever it now falls.
         let events = self.event_rows(clip);
         let next = events
             .iter()
-            .position(|each| each.event == landed)
+            .position(|each| each.event == event)
             .and_then(|at| {
                 events[at + 1..]
                     .iter()
@@ -515,7 +521,6 @@ impl AurisApp {
         if let Some(next) = next {
             self.open_event_prompt(clip, next, column);
         }
-        Ok(())
     }
 
     /// Makes `event` the list's selected row, and the roll's selected note when it is one.

@@ -315,11 +315,26 @@ impl AurisApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
+        let (mut overlays, inline) = self.render_document_overlays_split(window, cx);
+        overlays.extend(inline);
+        overlays
+    }
+
+    /// [`Self::render_document_overlays`], with a prompt drawn in place apart from the rest.
+    ///
+    /// Atelier's inline field floats itself over the window, which gpui allows only outside
+    /// another floating layer, so a host that floats its overlays has to place this one beside
+    /// them rather than among them.
+    pub(crate) fn render_document_overlays_split(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> (Vec<AnyElement>, Option<AnyElement>) {
         if self
             .event_window
             .is_some_and(|id| id != window.window_handle().window_id())
         {
-            return Vec::new();
+            return (Vec::new(), None);
         }
         // A menu owns Enter/Space while open; they must not activate its focused trigger.
         let menu_open = self.menu.is_some() || self.menu_bar.is_some();
@@ -334,6 +349,7 @@ impl AurisApp {
         }
         let export_overlay = self.render_export_overlay(cx);
         let export_dialog = self.render_export_dialog(cx);
+        let inline = self.inline_prompt_open(window);
         let prompt = self.render_prompt(window, cx);
         let palette = self.render_palette(cx);
         let menu = self.render_context_menu(window, cx);
@@ -365,8 +381,13 @@ impl AurisApp {
             overlays.push(element);
         }
 
+        let mut inline_prompt = None;
         if let Some(element) = prompt {
-            overlays.push(element.into_any_element());
+            if inline {
+                inline_prompt = Some(element.into_any_element());
+            } else {
+                overlays.push(element.into_any_element());
+            }
         }
         if let Some(element) = palette {
             overlays.push(element.into_any_element());
@@ -375,7 +396,7 @@ impl AurisApp {
             overlays.push(element.into_any_element());
         }
 
-        overlays
+        (overlays, inline_prompt)
     }
 
     /// Note commands shared by docked and independent score editors.
