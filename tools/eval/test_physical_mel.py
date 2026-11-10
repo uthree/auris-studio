@@ -5,7 +5,6 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from fit_physical_mel import body_profiles, color
 from physical_mel import RATE, distances, features, mel_bank
 from prepare_physical_reference import (
     manifest_digest,
@@ -53,18 +52,6 @@ def test_mel_band_area_is_normalized():
         bank = mel_bank(window)
         assert bank.shape == (64, window // 2 + 1)
         np.testing.assert_allclose(bank.sum(axis=1), 1, atol=1e-14)
-
-
-def test_radiation_identity_and_causal_tail():
-    impulse = np.zeros(RATE)
-    impulse[0] = 1
-    np.testing.assert_allclose(color(impulse, np.zeros(12)), impulse, atol=1e-14)
-    profiles = body_profiles()
-    assert set(profiles) == {"piano", "guitar", "violin"}
-    for gains in profiles.values():
-        result = color(impulse, gains)
-        assert np.isfinite(result).all()
-        assert np.max(abs(result[-1000:])) < 1e-6
 
 
 def test_reference_extractor_finds_order_and_tuning_and_fails_on_missing_pitch():

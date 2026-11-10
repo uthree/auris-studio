@@ -10,7 +10,7 @@ import json
 from pathlib import Path
 
 import numpy as np
-from fit_physical_mel import Renderer
+from fit_worker import Renderer
 
 
 def measure(audio, rate, pitch):

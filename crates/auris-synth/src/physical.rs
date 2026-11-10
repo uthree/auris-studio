@@ -489,6 +489,14 @@ pub(crate) mod dials {
     pub(crate) const SPEED_LAW: usize = 51;
     /// The felt's hysteresis.
     pub(crate) const FELT_LOSS: usize = 52;
+    /// Multiplies what the bridge takes from the motion a unison shares.
+    pub(crate) const BRIDGE: usize = 53;
+    /// Multiplies the strings' own loss.
+    pub(crate) const AFTERSOUND: usize = 61;
+    /// Added to the exponent of the bridge's loss over partial number.
+    pub(crate) const BRIDGE_SLOPE: usize = 69;
+    /// Multiplies the internal friction of the partials above the fundamental.
+    pub(crate) const FRICTION: usize = 70;
 }
 
 /// A dial for each C from C1 to C8, read at a pitch between them along straight lines.

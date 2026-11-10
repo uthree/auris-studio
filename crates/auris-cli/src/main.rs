@@ -357,7 +357,7 @@ fn list_progressions() -> Result<(), String> {
             writeln!(out, "  {:<15} {}", "", entry.chart)?;
         }
         // Then the ones this installation has been taught. Listed under a heading of their own
-        // rather than mixed in, because the difference matters: an `.asong` quotes a built-in by
+        // rather than mixed in, because the difference matters: a document quotes a built-in by
         // name and carries a kept one as *chords*, so a document referring to one of these is
         // portable and a document saying `@axis` needs the reader to have the same catalogue.
         let book = auris_session::progressions::ProgressionBook::load();

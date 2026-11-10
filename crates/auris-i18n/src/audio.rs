@@ -33,7 +33,7 @@ pub fn theory_description(text: &str, language: Language) -> &str {
 /// The short name a chord progression is shown under, or `name` itself when it is not known here.
 ///
 /// Keyed on the catalogue's own name — `axis`, `royal-road` — because that is the stable thing: it
-/// is what a `.asong` writes and what `auris compose` takes, and it does not move when somebody
+/// is what a document stores and what a tool takes, and it does not move when somebody
 /// rewords a description.
 ///
 /// The only table here whose English column is a real entry rather than the key, and it has to be:

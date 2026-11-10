@@ -4,11 +4,12 @@
 
 Choose **Electric Guitar** (`auris.physical.electric_guitar`) in the instrument library,
 then add **Guitar Amp** (`auris.fx.guitar_amp`) to its track. Both are built in, work without
-samples, and save through ordinary instrument/effect state. GM hints 26–31 select the DI;
-the amp is an explicit effect. The composer's existing guitar performance stages also
-recognize the new instrument ID.
+samples, and save through ordinary instrument/effect state. The instrument is the guitar as
+its pickup hears it, before any amplifier, and is described with the other
+[physical instruments](physical-instruments.md). The amp is an explicit effect, and this page
+is its account. The composer's guitar performance stages recognize the instrument ID.
 
-Song presets now author their amplifier settings in each part's `effects` chain. Rock uses
+Song presets author their amplifier settings in each part's `effects` chain. Rock uses
 bridge pickup DI with driven lead/rhythm amps and separate clean parts; pop, city-pop and
 synthwave also amplify their DI guitars. These choices save with the song specification
 and become editable instrument and mixer controls after composition.
@@ -56,33 +57,7 @@ affected preset with `--seed 501`, then render its saved project with
 `--bit-depth 32 --no-tail`. Existing projects retain their saved effects; compose a
 new piece from the updated preset to receive these initial chains.
 
-## The signal path
-
-Electric Guitar shares the acoustic guitar's finite-width pluck, passive loss and
-allpass-tuned string loop. Its independent pickup observation bypasses acoustic-body
-radiation. A position-dependent comb and differentiated motion approximate the induced
-voltage; a resonant lowpass approximates pickup/cable coloration. This is a reduced model,
-not a reconstruction of a specific guitar's magnet, winding or electrical circuit.
-
-Pick and pickup distances refer to open-string length. Standard tuning E2/A2/D3/G3/B3/E4
-and the highest playable string determine the fret and shorten the effective string.
-MIDI has no string/fret identity here, so alternate frettings are not represented.
-Pickup position changes smoothly over 5 ms and does not alter the vibrating loop or pitch.
-Pickup resonance and Q can change during a note. Pick contact changes at the next attack.
-Decay is nominal at E4; **Decay per Octave** multiplies it above E4 and divides below it.
-The result is bounded to 0.1–40 seconds. Pitches outside the calibrated E2–D6 register
-remain playable with bounded geometry and low-note voltage scaling.
-
-| DI control | Factory value | Meaning |
-| --- | ---: | --- |
-| Contact Hardness | 0.186606 | Width of the initial pluck contact |
-| Excitation Position | 0.069559 | Pick distance as a fraction of open-string length |
-| Resonance Decay | 7.493398 s | Nominal fundamental T60 at E4, before damping |
-| Damping | 0.021633 | Additional fundamental/upper-partial loss |
-| Pickup Position | 0.235997 | Neck-like observation; 0.064146 supplies the fitted bridge setting |
-| Pickup Resonance | 2717.688 Hz | Electrical-response lowpass frequency |
-| Pickup Q | 1.883881 | Resonance sharpness |
-| Decay per Octave | 0.55 | Register-dependent decay ratio |
+## The amplifier
 
 Guitar Amp has Bass/Middle/Treble controls before a single symmetric soft-clipping stage.
 It uses
@@ -120,8 +95,7 @@ original/prepared SHA-256 hashes. Published whole-archive MD5 values are metadat
 the entire archives are not downloaded or verified. Audio stays ignored under `target/`.
 Prepared float WAVs use deterministic headers without libsndfile's timestamped PEAK chunk.
 During development, all 188 decoded waveforms were checked bit-identical across that header
-migration. The earlier diagnostic report retains the pre-migration manifest hash.
-Each recording is mono 48 kHz. Onset is its first sample reaching 2% of peak, with a 1 ms
+migration. Each recording is mono 48 kHz. Onset is its first sample reaching 2% of peak, with a 1 ms
 preroll. Three seconds are retained and zero-padded if needed; preparation downsamples
 to 24 kHz with a polyphase filter. Both signals receive the same causal 30 Hz highpass
 and whole-note RMS normalization to 0.1. There is no frame normalization or time warping.
@@ -131,15 +105,6 @@ The primary measure is phase-weighted log-mel L1: Hann windows 512/2048, 240-sam
 Attack 0–50 ms, body 50–250 ms and tail 250 ms–3 s receive weights 0.3/0.3/0.4.
 Secondary measures are 20 ms RMS-envelope L1 in dB and absolute 90%-energy-time error
 in seconds. The latter refers to the retained three-second window.
-
-DI fitting uses actual 24 kHz Rust PCM, nine bounded controls, seeded differential
-evolution, population multiplier 4, eight iterations and no polishing (324 evaluations).
-An earlier eight-control training fit initializes the search. The final objective adds
-`0.006 × envelope dB error + 0.15 × T90 seconds error` to mel L1. Training diagnostics
-showed the earlier constant-decay candidate sustaining high notes too long, motivating
-the octave decay control. The final search retained its supplied initial point; this is
-bounded calibration rather than proof of a global optimum. Parameter bounds, seed and
-training IDs are retained in the fit JSON. Rounded fitted controls become factory defaults.
 
 The first amp comparison used a two-stage candidate and is retained as a historical
 diagnostic. The refined amp uses one `tanh` stage and the same 0–48 dB Drive range as the
@@ -156,48 +121,30 @@ Lower error is better. Validation includes 23 held-out pitches and both pickups.
 
 | Comparison | Before | After | Change |
 | --- | ---: | ---: | ---: |
-| DI log-mel L1 | 0.284290 | 0.123607 | 56.52% lower |
-| DI envelope L1 | 4.8095 dB | 2.2680 dB | 52.84% lower |
-| DI T90 absolute error | 0.2901 s | 0.1875 s | 35.35% lower mean |
 | Blues Driver log-mel L1, validation | 0.067339 | 0.066224 | 1.66% lower |
 
-The DI baseline is the pre-change, already acoustic-calibrated Guitar with Pickup blend=1,
-not a newly fitted electric model. The pedal baseline is the separately optimized existing
-distortion, with the same Drive bounds and training-only fitting. DI training mel falls
-from 0.282219 to 0.128512. The earlier candidate without octave decay reduced validation
-mel by 49.70% but worsened envelope and T90; those diagnostic artifacts remain available.
+The pedal baseline is the separately optimized existing distortion, with the same Drive
+bounds and training-only fitting.
 
-Paired bootstrap uses 2,000 resamples of pitches, keeping both pickups together. Validation
-DI mean mel delta has a descriptive 95% interval [−0.184786, −0.131593], and envelope delta
-[−3.0386, −1.9211] dB. T90 delta's interval [−0.2082, +0.0128] s crosses zero, so its
-lower mean does not establish an equally clear improvement. The pedal mel delta interval
-[+0.008795, +0.016097] belongs to the historical two-stage candidate. The refined amp's
-validation mel falls from 0.067339 to 0.066224, with a paired delta interval
+Paired bootstrap uses 2,000 resamples of pitches, keeping both pickups together. The refined
+amp's validation mel falls from 0.067339 to 0.066224, with a paired delta interval
 [−0.001333, −0.000912]; its training mel falls from 0.0707509 to
 0.0693664. Cabinet frequency-response and anti-aliasing tests establish DSP
 behavior, not fidelity to a recorded amplifier/cabinet. These intervals are descriptive
 after model development rather than an untouched final test or a perceptual-quality score.
 
-Per-note errors, factory/fitted parameters, reference/renderer hashes and metric settings
-are in `tools/eval/references/electric-validation.json`. The frozen cohort and fit artifacts
-are alongside it. Numeric Rust tests cover tuning, independent pickup coloration, extreme
+Per-note errors, fitted parameters, reference/renderer hashes and metric settings
+are in `tools/eval/references/amp-refinement.json`. The frozen cohort is
+`electric-notes.json` beside it. Numeric Rust tests cover extreme
 controls/rates, measured FIR latency, alias suppression, cabinet response, allocation-free
 callback/control changes, reset and block-size independence. A session test checks composition,
 saved instrument/effect controls, reopening and identical rendered PCM.
-On the development machine, a 24-voice electric/amp callback at 48 kHz stereo, 256 frames,
-uses 0.365 ms mean and 0.523 ms p99 of a 5.333 ms budget over 512 blocks. This is a local
-timing measurement, not a guarantee for every CPU.
-The symbolic ruler's rows and all nine preset WAV hashes/Audiobox scores are unchanged.
-Those presets do not exercise the new plugins, so this establishes regression behavior
-only. `tools/eval/references/electric-regressions.json` retains the paired probes, timing
-and equal-RMS audition provenance.
 
 ## Reproducing and auditioning
 
-The original DI measurements used workers from `ba18d5e` and `f022ceb`.
-For the current amp comparison, preserve a release `physical_fit_render` worker
+For the amp comparison, preserve a release `physical_fit_render` worker
 from `f022ceb` as `<before-worker>` in a separate checkout. Use `.exe` suffixes
-on Windows. To replay the current full-cohort amp comparison:
+on Windows. To replay the full-cohort amp comparison:
 
 ```sh
 cargo build --release -p auris-synth --example physical_fit_render
@@ -205,7 +152,7 @@ uv run tools/eval/fetch_electric_reference.py target/electric-guitar/reference
 uv run tools/eval/amp_refinement.py --renderer <new-worker> --baseline <before-worker> --fit tools/eval/references/amp-refinement-fit.json --out target/physical-next/amp-validation.json
 ```
 
-To repeat the current amp's training search instead of replaying retained controls:
+To repeat the amp's training search instead of replaying retained controls:
 
 ```sh
 uv run tools/eval/amp_refinement.py --renderer <new-worker> --baseline <before-worker> --out target/physical-next/amp-validation.json
@@ -215,7 +162,6 @@ Create three editable, sample-free projects and their native WAV exports:
 
 ```sh
 cargo run --release -p auris-session --example electric_demo -- target/electric-guitar/demo
-cargo run --release -p auris-synth --example physical_bench -- --amp
 ```
 
 The example saves one project per folder, preserving the project's asset rules. Listen

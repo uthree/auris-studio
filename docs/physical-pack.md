@@ -1,41 +1,30 @@
-# Copy synthesis for bass, struck bars and physical drums
+# Copy synthesis for the physical drum kit
 
 [日本語](physical-pack.ja.md)
 
 Factory excitation/loss settings and causal radiation coloration are fitted against real
-recordings for Bass, Bell, Mallet and seven Drum Kit families. The baseline is
-`cfcd5a9`; the comparison uses actual production Rust PCM at 24 and 48 kHz.
-Every coefficient is selected on training audio. Validation determines whether the resulting
-change is useful; it is not an optimizer input.
+recordings for seven Drum Kit families. The baseline is `cfcd5a9`; the comparison uses actual
+production Rust PCM at 24 and 48 kHz. Every coefficient is selected on training audio.
+Validation determines whether the resulting change is useful; it is not an optimizer input.
 
 ## References and split
 
-The [University of Iowa Musical Instrument Samples](https://theremin.music.uiowa.edu/MIS.html)
-provide 21 ascending-scale captures: pizzicato double bass, yarn-mallet marimba and plastic-mallet
-orchestral bells, at pp/mf/ff. These instruments use the site's anechoic recordings. Bell's target
-is orchestral bells/glockenspiel, not a recording of every kind of cast bell. The recordings may
-be used without restrictions under the site's stated terms; credit Lawrence Fritts and the
-University of Iowa.
-
-Drums use Alexander Holm's original
+The recordings are Alexander Holm's original
 [Salamander Drumkit](https://github.com/endolith/Salamander-Drumkit), mirrored in the
 [original archive](https://archive.org/details/SalamanderDrumkit). These are overhead recordings
 of a real kit, not sound synthesizer renders. The archive was originally CC BY-SA 3.0; the author
 [dedicated his sampled instruments to the public domain in 2022](https://rytmenpinne.wordpress.com/2022/03/04/good-news-everyone/).
-Attribution and original archive/member identities are retained in the capture manifest.
+Attribution and the original archive's identity are retained in the capture manifest, and each
+hit's original member name and hash in the note manifest.
 
-The cohort is fixed before fitting: 240 melodic notes and 151 original drum hits, with no
-result-dependent exclusions. For each melodic family, pp and MIDI pitches congruent to 1 modulo
-3 are withheld. Drum selection uses the first eight numbered hits per original family/layer;
+The cohort is fixed before fitting: 151 original drum hits, with no result-dependent
+exclusions. Selection uses the first eight numbered hits per original family/layer;
 odd hits train, even hits validate. Alternative snares, ghosts, sticks, semi-open hats and other
 articulations are outside this fixed cohort. A hit cannot occur in both splits. Named dynamics
 are velocity proxies, not measured MIDI velocities.
 
 | Family | Training | Validation |
 | --- | ---: | ---: |
-| Bass | 42 | 54 |
-| Bell | 32 | 40 |
-| Mallet | 32 | 40 |
 | Kick | 12 | 12 |
 | Snare | 12 | 12 |
 | Closed hat | 8 | 8 |
@@ -43,16 +32,12 @@ are velocity proxies, not measured MIDI velocities.
 | Crash | 6 | 5 |
 | Ride | 6 | 6 |
 | Tom, low/high | 23 | 23 |
-| Total | 183 | 208 |
+| Total | 77 | 74 |
 
-Source hashes, onset offsets, available duration, tuning and extracted float32 WAV hashes are
-locked in `tools/eval/references/physical-pack-{captures,notes}.json`. Melodic stable-pitch
-detection accepts runs longer than 200 ms because quiet upper bass notes decay quickly.
-Bell onset detection uses a local high-passed energy rise to distinguish a strike from microphone
-rumble and the preceding long tail. Only its detector and tuning check use this 100 Hz highpass;
-the saved reference PCM is untouched. Drum onset is the first local 2% RMS crossing at 1 ms
-resolution, including captures with more than one second of initial silence. Excerpts last three
-seconds, stop before the next melodic strike, and zero-pad shorter available captures. Synthetic
+Source hashes, onset offsets, available duration and extracted float32 WAV hashes are
+locked in `tools/eval/references/physical-pack-{captures,notes}.json`. Onset is the first
+local 2% RMS crossing at 1 ms resolution, including captures with more than one second of
+initial silence. Excerpts last three seconds and zero-pad shorter available captures. Synthetic
 notes remain held for those three seconds, so an artificial note-off cannot improve the fit.
 
 ## Measurements
@@ -70,13 +55,13 @@ different aspects of a strike and remain visible when spectral distance improves
 48 kHz production render is polyphase downsampled for the same 24 kHz analysis.
 
 Paired 95% intervals use 2,000 bootstrap resamples, seed 20261003, grouped by original capture.
-They describe this cohort, without multiple-comparison correction. Held-out pitches and hits
-share their instruments, performer and recording chain with training. They establish internal
-recording-domain improvement rather than generalization to every bass, bar or drum kit.
+They describe this cohort, without multiple-comparison correction. Held-out hits share their
+kit, performer and recording chain with training. They establish internal recording-domain
+improvement rather than generalization to every drum kit.
 
 ## Fitting and runtime behavior
 
-The bounded coordinate search starts from the unchanged model. Contact hardness, strike/pluck
+The bounded coordinate search starts from the unchanged model. Contact hardness, strike
 position, decay and damping use steps 0.18/0.06 of their declared bounds, followed by a 0.03
 refinement. Twelve peaking sections at geometrically spaced 90 Hz–10 kHz centers, Q=0.9, use
 gains bounded to ±9 dB and steps 0.25/0.10, with a 0.0001 mean-square gain penalty. These broad
@@ -84,8 +69,6 @@ priors include excitation and microphone coloration; they are not measured body 
 The Rust worker renders every contact/loss candidate. A causal filter surrogate accelerates
 radiation search; final actual PCM must agree within `2e-4` absolute sample error.
 
-Bass, Bell and Mallet retain their cavity response and add the fitted bank after it, anchored
-at Body Resonance 0.35. Their existing contact/loss defaults change to the fitted values.
 The kit fits each family independently, while its shared controls keep their existing defaults:
 hardness/position/damping receive factory-relative offsets and decay multiplies the fitted ratio.
 Per-family radiation follows the summed current and retiring hits. Median training-note RMS
@@ -140,36 +123,12 @@ The symbolic ruler is unchanged. A separate eight-second, four-hit snare diagnos
 and MuQ-MuLan positive cosine by +0.00089. Conditions and excerpt positions match. These mixed
 isolated-hit scores do not establish improved song preference or perceived timbre.
 
-## Tuned marimba bars
-
-The 2026-10-26 revision corrects Mallet's mode topology, which the spectral fit above could not:
-its bar used a free bar's bending ratios, 1 : 2.756 : 5.404. A marimba bar is undercut until its
-first overtones sit two octaves, and three octaves and a major third, above the fundamental.
-All 36 notes of the yarn-mallet captures `Marimba.yarn.{mf,ff}.C4B4.aif` and
-`Marimba.yarn.mf.C3B3.aif` show their first overtone at 3.99–4.01 times the fundamental and the
-next at 9.5–10.3 times. Mallet now uses 1 : 4.0 : 9.9, with higher modes on a free bar's quadratic
-spacing above the third.
-
-The same notes also measure loss. Over 50–600 ms the fundamental falls at about 25 dB/s near C3,
-40 dB/s near C4 and 55 dB/s near B4; the 4x mode at about 95 dB/s, the 10x mode faster still.
-The factory decay, fitted at 4.859 s against these recordings, rang every fundamental at a fixed
-14 dB/s. Both now follow the 0.6th power of frequency, and Resonance Decay is the fundamental's
-T60 at middle C: 1.5 s by default. The model's fundamental falls at 26/40/58 dB/s at C3/C4/B4,
-its overtones sit at 4.00x and 9.90x, and at mf their levels stay within the spread the
-recordings show across neighbouring notes (4x: -36 to -49 dB here, -12 to -68 dB recorded).
-Contact, position, radiation and normalization keep their fitted values; the held-out mel study
-above was not repeated. General MIDI glockenspiel and music box now choose Bell, which was
-fitted to orchestral bells; vibraphone, marimba and xylophone choose Mallet.
-
 ## Held-out production results
 
 These are final actual 48 kHz Rust renders; lower distance is better.
 
 | Family | Before mel L1 | After | Reduction |
 | --- | ---: | ---: | ---: |
-| Bass | 0.174774 | 0.152830 | 12.56% |
-| Bell | 0.166574 | 0.069223 | 58.44% |
-| Mallet | 0.245040 | 0.145587 | 40.59% |
 | Kick | 0.113811 | 0.083642 | 26.51% |
 | Snare | 0.565809 | 0.553065 | 2.25% |
 | Closed hat | 0.368537 | 0.323287 | 12.28% |
@@ -178,20 +137,15 @@ These are final actual 48 kHz Rust renders; lower distance is better.
 | Ride | 0.367159 | 0.269354 | 26.64% |
 | Tom | 0.229406 | 0.145699 | 36.49% |
 
-All ten paired mean-delta intervals lie below zero. Bass's RMS-envelope error worsens from
-17.07 to 19.81 dB, although its 90%-energy-time error falls from 0.386 to 0.267 seconds.
-Its tail-phase mel error also rises from 0.057956 to 0.064503, while attack and body improve.
-Snare envelope error is almost unchanged at 11.39→11.40 dB. Open hat and ride still have large
-envelope errors of 42.35 and 35.70 dB: their late recorded tails are not closely reproduced.
-Bell's mode topology remains a compact struck shell, and Mallet was a free bar until the
-tuning above; spectral fitting
-does not reconstruct their recorded mechanics. Per-note phases, intervals and secondary
+All seven paired mean-delta intervals lie below zero. Snare envelope error is almost unchanged
+at 11.39→11.40 dB. Open hat and ride still have large envelope errors of 42.35 and 35.70 dB:
+their late recorded tails are not closely reproduced. Per-note phases, intervals and secondary
 measurements are retained in `tools/eval/references/physical-pack-validation.json`.
 
 On the development machine, 24 overlapping crashes use approximately 0.22 ms median and
 0.23 ms p99 of a 5.333 ms callback budget; motion observation stays within the same budget.
-Physical-model callback means remain below 1 ms. Allocation, timing, reset, rate/extreme-control,
-pitch, wire, choking and complete-kit acoustic-role tests verify the runtime behavior.
+Allocation, timing, reset, rate/extreme-control, pitch, wire, choking and complete-kit
+acoustic-role tests verify the runtime behavior.
 The composer measurement rows are unchanged. The nine-preset Audiobox measurements and WAV
 hashes are identical: this preset probe does not exercise the modified factory sounds and
 establishes no quality improvement for them. See `physical-pack-regressions.json` beside the
@@ -203,8 +157,7 @@ single learned regression diagnostic rather than an objective perceptual-quality
 
 The audio remains ignored under `target/`; manifests, fitted coefficients and reports are
 versioned. Keep the pre-change worker before applying coefficients, since an archived executable
-is the performer baseline. The extended worker supports all six models and `drums` on either
-side of the change.
+is the performer baseline.
 
 ```sh
 cargo build --release -p auris-synth --example physical_fit_render
@@ -216,5 +169,5 @@ uv run tools/eval/fit_physical_pack.py target/physical-pack/reference <before-wo
 
 Use `.exe` paths on Windows. Baseline/candidate executable hashes, dependency versions and
 canonical reference/fit hashes are recorded. The complete reference archive is bounded to
-387,611,727 bytes; individual Iowa captures to 120 MB. Hashes are checked before extraction;
-only explicitly selected drum files are read from the archive into flat local paths.
+387,611,727 bytes. Hashes are checked before extraction; only explicitly selected drum files
+are read from the archive into flat local paths.
