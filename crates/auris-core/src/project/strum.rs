@@ -405,7 +405,10 @@ mod tests {
             assert!(spread >= even * (1.0 - SPEED_WANDER) - 1.0, "{stroke:?}");
             // The chords are struck at 0.5, softer than nominal, so they may sweep slower too.
             let soft = 1.0 + SOFT_SLOWING * (NOMINAL_VELOCITY - 0.5);
-            assert!(spread <= even * (1.0 + SPEED_WANDER) * soft + 1.0, "{stroke:?}");
+            assert!(
+                spread <= even * (1.0 + SPEED_WANDER) * soft + 1.0,
+                "{stroke:?}"
+            );
         }
         let distinct: std::collections::BTreeSet<_> = strokes.iter().collect();
         assert!(distinct.len() > 4, "strokes should differ: {strokes:?}");
