@@ -1887,6 +1887,18 @@ pub mod composition {
     //! closure, so the write is refused unless a rest follows that note. A reading without
     //! `|`, and the composer, keep one mora to a note.
     //!
+    //! [`Session::lyric_accent`](crate::Session::lyric_accent) is the other half of fitting
+    //! words to a tune: not how many notes, but which way they move. It measures a singer
+    //! track's melody against the Tokyo pitch accent the dictionary gives its sung lines,
+    //! counting where speech rises or falls between two notes and whether the melody steps the
+    //! same way, repeats or goes against it. It warns only on a whole section that goes against
+    //! speech too often and merely notes one that traces it almost exactly, because listeners
+    //! punish the first and do not reward the second, and departing from speech on purpose is
+    //! a composer's right; [`lyric_accent`](crate::session::lyric_accent) has the measurements
+    //! behind that asymmetry. The accent it used is shown in kana with ＼ after the nucleus,
+    //! the form [`analyze_lyrics`](crate::Session::analyze_lyrics) also reports, and a wrong
+    //! one is corrected for a single measurement, never saved.
+    //!
     //! Kana is read a phrase at a time, never a mora at a time, because three kana are read
     //! by the words around them: the particles は and へ sing *wa* and *e*
     //! ([`spoken_kana_lyric`](auris_vocal::spoken_kana_lyric)). A space ends a word, and with
