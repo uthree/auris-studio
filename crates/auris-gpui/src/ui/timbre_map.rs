@@ -1761,7 +1761,7 @@ mod tests {
         assert!(utility.debug_bounds("timbre-plot").is_some());
         click("timbre-search-clear", &mut utility);
         app.read_with(&utility, |this, _| {
-            assert!(this.timbre_map.search.as_str().is_empty());
+            assert!(this.timbre_map.search.is_empty());
             assert_eq!(this.project(), &before);
         });
     }
@@ -1790,7 +1790,7 @@ mod tests {
         let before = app.read_with(cx, |this, _| {
             assert!(this.timbre_map.open);
             assert_eq!(this.timbre_map.search.as_str(), "strings");
-            assert!(this.library_search.as_str().is_empty());
+            assert!(this.library_search.is_empty());
             this.project().clone()
         });
         paint(&app, cx);

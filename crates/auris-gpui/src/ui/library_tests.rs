@@ -610,7 +610,7 @@ fn choosing_a_japanese_search_result_changes_only_the_selected_instrument(cx: &m
                 expected
             );
         }
-        assert!(this.library_search.as_str().is_empty());
+        assert!(this.library_search.is_empty());
         assert!(!this.library_search_focused);
     });
 }
