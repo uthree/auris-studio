@@ -160,6 +160,9 @@ pub(crate) struct ProviderAssets;
 
 impl AssetSource for ProviderAssets {
     fn load(&self, path: &str) -> gpui::Result<Option<Cow<'static, [u8]>>> {
+        if path == crate::titlebar::APP_ICON {
+            return Ok(Some(Cow::Borrowed(crate::titlebar::APP_ICON_PNG)));
+        }
         Ok(MARKS
             .iter()
             .find(|(name, _)| *name == path)
@@ -169,8 +172,10 @@ impl AssetSource for ProviderAssets {
     fn list(&self, path: &str) -> gpui::Result<Vec<SharedString>> {
         Ok(MARKS
             .iter()
-            .filter(|(name, _)| name.starts_with(path))
-            .map(|(name, _)| (*name).into())
+            .map(|(name, _)| *name)
+            .chain([crate::titlebar::APP_ICON])
+            .filter(|name| name.starts_with(path))
+            .map(SharedString::from)
             .collect())
     }
 }
