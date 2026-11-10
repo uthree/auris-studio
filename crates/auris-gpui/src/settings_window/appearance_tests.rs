@@ -464,7 +464,7 @@ fn signal_editor_saves_overrides_preserves_base_edits_and_restores_fallbacks(
         assert_eq!(this.theme.signal_palette, saved.theme().signal_palette);
         let declared: gpui::Hsla = gpui::rgb(0xbb44cc).into();
         assert!((this.theme.playing.h - declared.h).abs() < 1e-4);
-        assert_eq!(this.theme.meter_color(-20.0), this.theme.playing);
+        assert_eq!(this.theme.meter_low, this.theme.playing);
     });
     crate::harness::click("edit-theme", cx);
     crate::harness::click("theme-signal-active", cx);

@@ -193,11 +193,6 @@ pub enum PromptTarget {
         /// Which column of it.
         column: crate::ui::event_list::EventColumn,
     },
-    /// One of the note-roll video's colours, as a code such as `#3D7BFF`.
-    ///
-    /// The picker's sliders find a colour by eye; this is for the one that is already known —
-    /// a brand colour, the same blue as last time.
-    VideoColour(crate::ui::video_export::VideoColourSlot),
 }
 
 /// Whether an empty field carries a target-specific meaning instead of being a missing name.
@@ -242,8 +237,6 @@ pub enum Notation {
     MidiNote,
     /// A place in the song, as bar, beat and hundredth.
     Position,
-    /// A colour code, `#3D7BFF`.
-    Colour,
 }
 
 impl PromptTarget {
@@ -268,7 +261,6 @@ impl PromptTarget {
             | PromptTarget::NewDrumLane(_)
             | PromptTarget::DrumLaneNote { .. } => Notation::MidiNote,
             PromptTarget::Position => Notation::Position,
-            PromptTarget::VideoColour(_) => Notation::Colour,
             PromptTarget::SaveSound(_)
             | PromptTarget::SavePerformancePreset { .. }
             | PromptTarget::WorkshopThreadName { .. }
@@ -328,7 +320,6 @@ impl Notation {
             Notation::Gain => Key::HintClipGain,
             Notation::MidiNote => Key::HintMidiNote,
             Notation::Position => Key::HintPosition,
-            Notation::Colour => Key::HintColour,
         }
     }
 
@@ -348,8 +339,7 @@ impl Notation {
             | Notation::Tempo
             | Notation::Gain
             | Notation::MidiNote
-            | Notation::Position
-            | Notation::Colour => &[],
+            | Notation::Position => &[],
         }
     }
 
@@ -1389,16 +1379,6 @@ impl AurisApp {
                     return;
                 }
             },
-            PromptTarget::VideoColour(slot) => match crate::ui::colour_picker::parse_hex(&text) {
-                Some(color) => {
-                    self.set_video_colour(slot, color);
-                    Ok(())
-                }
-                None => {
-                    self.reject_prompt(messages::not_a_colour(self.language(), &text));
-                    return;
-                }
-            },
             PromptTarget::Position => {
                 match crate::ui::transport_bar::parse_position(&text, &self.project().signatures) {
                     Some(at) => {
@@ -1896,9 +1876,13 @@ impl AurisApp {
     }
 
     /// Draws the sheet over everything else.
-    pub(crate) fn render_prompt(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+    pub(crate) fn render_prompt(
+        &self,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui::AnyElement> {
         let prompt = self.prompt.as_ref()?;
-        if let Some(bounds) = self.inline_bounds(prompt) {
+        if let Some(bounds) = self.inline_bounds(prompt, window) {
             return self.render_inline_prompt(prompt, bounds, cx);
         }
         let theme = self.theme.clone();
@@ -3022,7 +3006,6 @@ mod tests {
             },
             PromptTarget::ClipSourceTempo(ClipId(1)),
             PromptTarget::Position,
-            PromptTarget::VideoColour(crate::ui::video_export::VideoColourSlot::Single),
             PromptTarget::Event {
                 clip: ClipId(1),
                 event: auris_session::EventRef::Note(0),
@@ -3064,7 +3047,6 @@ mod tests {
                 | PromptTarget::DrumLaneNote { .. }
                 | PromptTarget::ClipSourceTempo(_)
                 | PromptTarget::Position
-                | PromptTarget::VideoColour(_)
                 | PromptTarget::Event { .. } => {}
             }
         }

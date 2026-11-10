@@ -24,15 +24,11 @@ use gpui::{
 };
 use image::{Frame, RgbaImage};
 
-use crate::app::{AurisApp, Drag, ExportState};
+use crate::app::{AurisApp, ExportState};
 use crate::auxiliary_window::Surface;
 use crate::theme::{Metrics, Theme};
-use crate::ui::colour_picker::{Hsv, HsvChannel, hex};
 use crate::ui::context_menu::{ContextMenu, MenuCommand};
-use crate::ui::prompt::{Prompt, PromptTarget};
-use crate::ui::widgets::{
-    ButtonState, ButtonStyle, SliderFill, SliderKeyboardEvent, button, button_enabled, value_slider,
-};
+use crate::ui::widgets::{ButtonState, ButtonStyle, button, button_enabled};
 
 /// Width of the preview image; a portrait video is previewed at this height instead.
 const PREVIEW_EDGE: u32 = 640;
@@ -173,22 +169,16 @@ impl VideoColourSlot {
     }
 }
 
-/// The colour picker that is open, and what it holds while it is.
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub(crate) struct ColourPicking {
-    /// Which colour it edits.
-    pub(crate) slot: VideoColourSlot,
-    /// The colour as the sliders hold it, which keeps a hue through grey.
-    pub(crate) hsv: Hsv,
-}
-
 /// The window's state, kept on the document's view so the window itself stays a view.
 #[derive(Default)]
 pub(crate) struct VideoExportState {
     /// Whether the window is open.
     pub(crate) open: bool,
-    /// The colour picker open under a swatch, if one is.
-    pub(crate) picking: Option<ColourPicking>,
+    /// The slot whose colour picker is open under its swatch, if one is. The picker keeps its
+    /// own hue through grey; this only says where it is.
+    pub(crate) picking: Option<VideoColourSlot>,
+    /// Whether a save of a colour the picker is still moving is already on its way.
+    colour_save_pending: bool,
     pub(crate) ffmpeg: FfmpegProbe,
     /// The notes of the document at a revision.
     score: Option<(u64, NoteScore)>,
@@ -223,6 +213,17 @@ fn size_label(size: VideoSize) -> String {
 fn hsla(color: Color) -> gpui::Hsla {
     gpui::rgb(color.0).into()
 }
+
+/// The document colour a picked one stands for: opaque, each channel rounded to a byte.
+fn document_colour(color: gpui::Hsla) -> Color {
+    let rgba = gpui::Rgba::from(color);
+    let byte = |channel: f32| (channel.clamp(0.0, 1.0) * 255.0).round() as u32;
+    Color((byte(rgba.r) << 16) | (byte(rgba.g) << 8) | byte(rgba.b))
+}
+
+/// How long a colour the picker is moving waits before it is written to the settings file, so
+/// a drag across a slider writes the file once rather than on every step.
+const COLOUR_SAVE_DELAY: std::time::Duration = std::time::Duration::from_millis(400);
 
 impl AurisApp {
     /// Opens the video window, or brings it forward, and looks for ffmpeg if it has not been
@@ -289,65 +290,47 @@ impl AurisApp {
 
     /// Opens the picker on `slot`, or closes it if it was already open there.
     pub(crate) fn toggle_video_colour_picker(&mut self, slot: VideoColourSlot) {
-        let open_here = self
-            .video_export
-            .picking
-            .is_some_and(|picking| picking.slot == slot);
-        self.video_export.picking = match (open_here, slot.get(&self.settings.video)) {
-            (false, Some(color)) => Some(ColourPicking {
-                slot,
-                hsv: Hsv::from_color(color),
-            }),
-            _ => None,
-        };
+        let open_here = self.video_export.picking == Some(slot);
+        self.video_export.picking =
+            (!open_here && slot.get(&self.settings.video).is_some()).then_some(slot);
     }
 
-    /// Puts a whole colour in a slot — a preset, or a typed code — and remembers it.
+    /// Puts a whole colour in a slot (a preset) and remembers it.
     pub(crate) fn set_video_colour(&mut self, slot: VideoColourSlot, color: Color) {
         self.edit_video_style(|style| slot.set(style, color));
-        if let Some(picking) = self.video_export.picking.as_mut()
-            && picking.slot == slot
-        {
-            picking.hsv = Hsv::from_color(color);
-        }
     }
 
-    /// Moves one of the open picker's sliders to `fraction`.
-    ///
-    /// `save` is false while a drag is under way: the look is changed at once, so the preview
-    /// follows the hand, and written to the settings file once, when the drag lets go.
-    pub(crate) fn set_video_colour_channel(
+    /// Takes a colour the open picker has moved to. The look changes at once, so the preview
+    /// follows the hand; the settings file is written a moment after the colour stops moving.
+    pub(crate) fn pick_video_colour(
         &mut self,
-        channel: HsvChannel,
-        fraction: f32,
-        save: bool,
+        slot: VideoColourSlot,
+        color: Color,
+        cx: &mut Context<Self>,
     ) {
-        let Some(picking) = self.video_export.picking.as_mut() else {
+        slot.set(&mut self.settings.video, color);
+        if std::mem::replace(&mut self.video_export.colour_save_pending, true) {
             return;
-        };
-        picking.hsv = picking.hsv.with(channel, fraction);
-        let (slot, color) = (picking.slot, picking.hsv.to_color());
-        if save {
-            self.edit_video_style(|style| slot.set(style, color));
-        } else {
-            slot.set(&mut self.settings.video, color);
         }
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(COLOUR_SAVE_DELAY).await;
+            let _ = this.update(cx, |this, _| {
+                this.video_export.colour_save_pending = false;
+                if let Err(error) = this.save_settings() {
+                    log::warn!("could not save settings: {error}");
+                }
+            });
+        })
+        .detach();
     }
 
-    /// Closes a picker whose slot is no longer on screen, and catches its sliders up with a
-    /// colour that was changed some other way.
+    /// Closes a picker whose slot is no longer on screen.
     fn sync_video_colour_picker(&mut self) {
         let style = &self.settings.video;
-        let Some(picking) = self.video_export.picking.as_mut() else {
-            return;
-        };
-        match picking.slot.get(style) {
-            Some(color) if picking.slot.shown(style) => {
-                if picking.hsv.to_color() != color {
-                    picking.hsv = Hsv::from_color(color);
-                }
-            }
-            _ => self.video_export.picking = None,
+        if let Some(slot) = self.video_export.picking
+            && !(slot.shown(style) && slot.get(style).is_some())
+        {
+            self.video_export.picking = None;
         }
     }
 
@@ -853,21 +836,11 @@ impl AurisApp {
         id: ElementId,
         color: Color,
         selected: bool,
-        theme: &Theme,
         on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
-    ) -> gpui::Stateful<gpui::Div> {
-        let selector = id.to_string();
-        div()
-            .id(id)
-            .debug_selector(move || selector.clone()) // atelier: allow — a colour swatch has no component.
-            .tab_index(0)
-            .key_context(atelier::CONTROL_CONTEXT)
+    ) -> atelier::ColorSwatch {
+        atelier::ColorSwatch::new(id, hsla(color))
             .size(px(22.))
-            .rounded(Metrics::RADIUS_SM)
-            .bg(hsla(color))
-            .border_2()
-            .border_color(if selected { theme.accent } else { theme.border })
-            .focus(|this| this.border_color(theme.selection))
+            .selected(selected)
             .on_click(on_click)
     }
 
@@ -928,35 +901,17 @@ impl AurisApp {
         )
     }
 
-    /// Opens the sheet a colour code is typed into.
-    fn open_video_colour_code(&mut self, slot: VideoColourSlot) {
-        let Some(color) = slot.get(&self.settings.video) else {
-            return;
-        };
-        self.open_prompt(Prompt::new(
-            self.t(Key::VideoColourCode),
-            PromptTarget::VideoColour(slot),
-            hex(color),
-        ));
-    }
-
     /// A swatch that opens and closes the picker on its slot.
     fn picker_swatch(
         &self,
         slot: VideoColourSlot,
         color: Color,
-        theme: &Theme,
         cx: &mut Context<Self>,
-    ) -> gpui::Stateful<gpui::Div> {
-        let open = self
-            .video_export
-            .picking
-            .is_some_and(|picking| picking.slot == slot);
+    ) -> atelier::ColorSwatch {
         Self::swatch(
             ElementId::Name(format!("video-swatch-{}", slot.id()).into()),
             color,
-            open,
-            theme,
+            self.video_export.picking == Some(slot),
             cx.listener(move |this, _, _, cx| {
                 this.toggle_video_colour_picker(slot);
                 cx.notify();
@@ -964,109 +919,30 @@ impl AurisApp {
         )
     }
 
-    /// The open picker, when it is open on `slot`: the colour and its code, the three sliders,
-    /// and `presets` to start from.
+    /// The open picker, when it is open on `slot`: Atelier's colour and code, hue, saturation
+    /// and brightness sliders, and `presets` to start from. Its parts are selected as
+    /// `video-picker-{slot}-code`, `-hue`, `-saturation`, `-value` and `-preset-{n}`.
     fn video_colour_picker(
         &self,
         slot: VideoColourSlot,
         presets: &[Color],
-        theme: &Theme,
         cx: &mut Context<Self>,
-    ) -> Option<gpui::Stateful<gpui::Div>> {
-        let picking = self
-            .video_export
-            .picking
-            .filter(|picking| picking.slot == slot)?;
-        let hsv = picking.hsv;
-        let color = hsv.to_color();
-        let name = slot.id();
-        let head = div()
-            .flex()
-            .items_center()
-            .gap_2()
-            .child(
-                div()
-                    .size(px(28.))
-                    .flex_none()
-                    .rounded(Metrics::RADIUS_SM)
-                    .bg(hsla(color))
-                    .border_1()
-                    .border_color(theme.border),
+    ) -> Option<atelier::ColorPicker> {
+        if self.video_export.picking != Some(slot) {
+            return None;
+        }
+        let color = slot.get(&self.settings.video)?;
+        Some(
+            atelier::ColorPicker::new(
+                ElementId::Name(format!("video-picker-{}", slot.id()).into()),
+                hsla(color),
             )
-            .child(button(
-                ElementId::Name(format!("video-colour-code-{name}").into()),
-                hex(color),
-                ButtonStyle::Normal,
-                false,
-                theme.accent,
-                theme,
-                cx.listener(move |this, _, _, cx| {
-                    this.open_video_colour_code(slot);
-                    cx.notify();
-                }),
-            ));
-        let selector = format!("video-picker-{name}");
-        let mut panel = div()
-            .id(ElementId::Name(selector.clone().into()))
-            .debug_selector(move || selector.clone()) // atelier: allow — the picker is the application's own; Atelier has none yet.
-            .flex()
-            .flex_col()
-            .gap_1()
-            .p_2()
-            .rounded(Metrics::RADIUS_MD)
-            .border_1()
-            .border_color(theme.border_subtle)
-            .child(head);
-        for channel in HsvChannel::ALL {
-            let fraction = hsv.fraction(channel);
-            let label = match channel {
-                HsvChannel::Hue => Key::VideoHue,
-                HsvChannel::Saturation => Key::VideoSaturation,
-                HsvChannel::Value => Key::VideoBrightness,
-            };
-            panel = panel.child(value_slider(
-                ElementId::Name(format!("video-{}-{name}", channel.id()).into()),
-                self.t(label),
-                hsv.label(channel),
-                fraction,
-                hsla(hsv.slider_fill(channel)),
-                SliderFill::FromStart,
-                // A degree of hue, a percent of the others: the steps their readouts count in.
-                match channel {
-                    HsvChannel::Hue => 1.0 / 360.0,
-                    HsvChannel::Saturation | HsvChannel::Value => 0.01,
-                },
-                theme,
-                cx.listener(move |this, event: &gpui::MouseDownEvent, _, _| {
-                    this.begin_drag(Drag::VideoColour {
-                        channel,
-                        start_fraction: fraction,
-                        start_x: event.position.x,
-                    });
-                }),
-                cx.listener(move |this, event: &SliderKeyboardEvent, _, cx| {
-                    this.set_video_colour_channel(channel, event.fraction, true);
-                    cx.notify();
-                }),
-            ));
-        }
-        if !presets.is_empty() {
-            let mut row = div().flex().flex_wrap().gap_1().pt_1();
-            for (index, preset) in presets.iter().copied().enumerate() {
-                row = row.child(Self::swatch(
-                    ElementId::NamedInteger(format!("video-preset-{name}").into(), index as u64),
-                    preset,
-                    preset == color,
-                    theme,
-                    cx.listener(move |this, _, _, cx| {
-                        this.set_video_colour(slot, preset);
-                        cx.notify();
-                    }),
-                ));
-            }
-            panel = panel.child(row);
-        }
-        Some(panel)
+            .presets(presets.iter().copied().map(hsla))
+            .on_change(cx.listener(move |this, color: &gpui::Hsla, _, cx| {
+                this.pick_video_colour(slot, document_colour(*color), cx);
+                cx.notify();
+            })),
+        )
     }
 
     fn video_color_section(
@@ -1120,16 +996,11 @@ impl AurisApp {
             NoteColoring::Palette => {
                 let mut row = div().flex().flex_wrap().gap_1();
                 for (index, color) in style.palette.iter().copied().enumerate() {
-                    row = row.child(self.picker_swatch(
-                        VideoColourSlot::Palette(index),
-                        color,
-                        theme,
-                        cx,
-                    ));
+                    row = row.child(self.picker_swatch(VideoColourSlot::Palette(index), color, cx));
                 }
                 section = section.child(row);
                 if let Some(picker) = (0..style.palette.len()).find_map(|index| {
-                    self.video_colour_picker(VideoColourSlot::Palette(index), &VIVID, theme, cx)
+                    self.video_colour_picker(VideoColourSlot::Palette(index), &VIVID, cx)
                 }) {
                     section = section.child(picker);
                 }
@@ -1140,10 +1011,9 @@ impl AurisApp {
                     .child(div().flex().child(self.picker_swatch(
                         VideoColourSlot::Single,
                         style.single_color,
-                        theme,
                         cx,
                     )))
-                    .children(self.video_colour_picker(VideoColourSlot::Single, &VIVID, theme, cx));
+                    .children(self.video_colour_picker(VideoColourSlot::Single, &VIVID, cx));
             }
             NoteColoring::Pitch => {
                 section = section
@@ -1203,15 +1073,10 @@ impl AurisApp {
                         .flex()
                         .items_center()
                         .gap_2()
-                        .child(self.picker_swatch(
-                            VideoColourSlot::Chords,
-                            style.chord_color,
-                            theme,
-                            cx,
-                        ))
+                        .child(self.picker_swatch(VideoColourSlot::Chords, style.chord_color, cx))
                         .child(self.note(self.t(Key::VideoChordColour), theme)),
                 )
-                .children(self.video_colour_picker(VideoColourSlot::Chords, &CAPTIONS, theme, cx));
+                .children(self.video_colour_picker(VideoColourSlot::Chords, &CAPTIONS, cx));
         }
         section.child(self.note(self.t(Key::VideoChordsHint), theme))
     }
@@ -1239,15 +1104,10 @@ impl AurisApp {
                         .flex()
                         .items_center()
                         .gap_2()
-                        .child(self.picker_swatch(
-                            VideoColourSlot::Lyrics,
-                            style.lyric_color,
-                            theme,
-                            cx,
-                        ))
+                        .child(self.picker_swatch(VideoColourSlot::Lyrics, style.lyric_color, cx))
                         .child(self.note(self.t(Key::VideoLyricColour), theme)),
                 )
-                .children(self.video_colour_picker(VideoColourSlot::Lyrics, &CAPTIONS, theme, cx));
+                .children(self.video_colour_picker(VideoColourSlot::Lyrics, &CAPTIONS, cx));
         }
         section.child(self.note(self.t(Key::VideoLyricsHint), theme))
     }
@@ -1312,15 +1172,10 @@ impl AurisApp {
                         .flex()
                         .items_center()
                         .gap_2()
-                        .child(self.picker_swatch(
-                            VideoColourSlot::Meter,
-                            style.meter_color,
-                            theme,
-                            cx,
-                        ))
+                        .child(self.picker_swatch(VideoColourSlot::Meter, style.meter_color, cx))
                         .child(self.note(self.t(Key::VideoChordColour), theme)),
                 )
-                .children(self.video_colour_picker(VideoColourSlot::Meter, &CAPTIONS, theme, cx));
+                .children(self.video_colour_picker(VideoColourSlot::Meter, &CAPTIONS, cx));
         }
         section.child(self.note(self.t(Key::VideoMeterHint), theme))
     }
@@ -1337,7 +1192,6 @@ impl AurisApp {
                 ElementId::NamedInteger("video-background".into(), index as u64),
                 color,
                 style.background == color,
-                theme,
                 cx.listener(move |this, _, _, cx| {
                     this.set_video_colour(VideoColourSlot::Background, color);
                     cx.notify();
@@ -1347,10 +1201,7 @@ impl AurisApp {
         // The presets are the row itself, so the picker under it holds only the sliders and
         // the code. Its button reads as on while the fill in use is none of the presets.
         let custom = !BACKGROUNDS.contains(&style.background);
-        let picking = self
-            .video_export
-            .picking
-            .is_some_and(|picking| picking.slot == VideoColourSlot::Background);
+        let picking = self.video_export.picking == Some(VideoColourSlot::Background);
         fills = fills.child(button(
             "video-background-custom",
             self.t(Key::VideoCustomColour),
@@ -1375,7 +1226,7 @@ impl AurisApp {
         let mut section = self
             .section(Key::VideoBackground, theme)
             .child(fills)
-            .children(self.video_colour_picker(VideoColourSlot::Background, &[], theme, cx));
+            .children(self.video_colour_picker(VideoColourSlot::Background, &[], cx));
         if let Some(path) = &style.background_image {
             images = images.child(button(
                 "video-clear-image",
@@ -1602,6 +1453,30 @@ mod tests {
         (app, window, style)
     }
 
+    /// The hue of a document colour, in degrees.
+    fn hue_of(color: Color) -> f32 {
+        atelier::Hsv::from_color(hsla(color)).hue
+    }
+
+    /// Clicks a slider of an open picker `fraction` of the way along it.
+    fn click_slider(
+        app: &gpui::Entity<AurisApp>,
+        cx: &mut gpui::VisualTestContext,
+        selector: &'static str,
+        fraction: f32,
+    ) {
+        let bar = cx.debug_bounds(selector).expect("the slider is drawn");
+        let x = if fraction <= 0.0 {
+            px(1.)
+        } else if fraction >= 1.0 {
+            bar.size.width - px(1.)
+        } else {
+            bar.size.width * fraction
+        };
+        cx.simulate_click(bar.origin + gpui::point(x, px(4.)), Default::default());
+        harness::paint(app, cx);
+    }
+
     #[gpui::test]
     fn a_swatch_opens_a_picker_whose_sliders_and_presets_set_the_colour(cx: &mut TestAppContext) {
         let (app, mut cx, original) = open_window(cx);
@@ -1622,36 +1497,23 @@ mod tests {
         );
 
         // A preset is still one click away.
-        harness::click("video-preset-palette-0-4", &mut cx);
+        harness::click("video-picker-palette-0-preset-4", &mut cx);
         harness::paint(&app, &mut cx);
         app.read_with(&cx, |app, _| {
             assert_eq!(app.settings.video.palette[0], VIVID[4]);
         });
 
-        // Dragging brightness to the bottom makes black, and back up again restores the hue
-        // the colour had: the picker holds it through black.
-        let bar = cx.debug_bounds("video-value-palette-0").unwrap();
-        let from = bar.center();
-        harness::drag(&mut cx, from, from - gpui::point(px(240.), px(0.)));
-        harness::paint(&app, &mut cx);
+        // Brightness to the bottom makes black, and back up again restores the hue the colour
+        // had: the picker holds it through black.
+        click_slider(&app, &mut cx, "video-picker-palette-0-value", 0.0);
         app.read_with(&cx, |app, _| {
             assert_eq!(app.settings.video.palette[0], Color(0x000000));
         });
-        // Back up in two shorter strokes, which keep the pointer inside the window: a full
-        // sweep is [`crate::ui::widgets::DRAG_RANGE_PIXELS`].
-        for _ in 0..2 {
-            let from = cx.debug_bounds("video-value-palette-0").unwrap().center();
-            harness::drag(&mut cx, from, from + gpui::point(px(120.), px(0.)));
-            harness::paint(&app, &mut cx);
-        }
+        click_slider(&app, &mut cx, "video-picker-palette-0-value", 1.0);
         app.read_with(&cx, |app, _| {
-            let back = Hsv::from_color(app.settings.video.palette[0]);
-            let preset = Hsv::from_color(VIVID[4]);
-            assert!(
-                (back.hue - preset.hue).abs() < 1.0,
-                "{back:?} against {preset:?}"
-            );
-            assert_eq!(back.value, 1.0);
+            let back = hue_of(app.settings.video.palette[0]);
+            let preset = hue_of(VIVID[4]);
+            assert!((back - preset).abs() < 1.0, "{back} against {preset}");
         });
 
         // Clicking the open swatch again closes it.
@@ -1673,42 +1535,26 @@ mod tests {
         harness::paint(&app, &mut cx);
         harness::click("video-swatch-single", &mut cx);
         harness::paint(&app, &mut cx);
-        harness::click("video-colour-code-single", &mut cx);
-        harness::paint(&app, &mut cx);
+        let before = app.read_with(&cx, |app, _| app.settings.video.single_color);
 
         let answer = |text: &str, cx: &mut gpui::VisualTestContext| {
-            app.update(cx, |app, _| {
-                let Some(Prompt {
-                    body: crate::ui::prompt::PromptBody::Text { target, field },
-                    ..
-                }) = app.prompt.as_mut()
-                else {
-                    panic!("the code sheet is open");
-                };
-                assert_eq!(*target, PromptTarget::VideoColour(VideoColourSlot::Single));
-                let all = 0..field.content().len();
-                field.replace(all, text);
-            });
+            harness::click("video-picker-single-code", cx);
+            harness::paint(&app, cx);
+            cx.simulate_keystrokes("secondary-a backspace");
+            cx.simulate_input(text);
             cx.simulate_keystrokes("enter");
             harness::paint(&app, cx);
         };
         answer("blue", &mut cx);
         app.read_with(&cx, |app, _| {
-            assert!(
-                app.prompt.is_some(),
-                "a word is not a colour, and the sheet stays"
+            assert_eq!(
+                app.settings.video.single_color, before,
+                "a word is not a colour, and nothing changes"
             );
         });
         answer("#38f", &mut cx);
         app.read_with(&cx, |app, _| {
-            assert!(app.prompt.is_none());
             assert_eq!(app.settings.video.single_color, Color(0x3388ff));
-            let picking = app.video_export.picking.unwrap();
-            assert_eq!(
-                picking.hsv.to_color(),
-                Color(0x3388ff),
-                "the sliders follow"
-            );
         });
 
         app.update(&mut cx, |app, _| {
@@ -1719,21 +1565,22 @@ mod tests {
     #[gpui::test]
     fn the_background_takes_any_colour_beside_its_presets(cx: &mut TestAppContext) {
         let (app, mut cx, original) = open_window(cx);
+        app.update(&mut cx, |app, _| {
+            app.edit_video_style(|style| style.background = Color(0x3d7bff));
+        });
         harness::click("video-background-custom", &mut cx);
         harness::paint(&app, &mut cx);
         assert!(cx.debug_bounds("video-picker-background").is_some());
-        app.update(&mut cx, |app, _| {
-            app.set_video_colour_channel(HsvChannel::Value, 0.5, true);
-            app.set_video_colour_channel(HsvChannel::Saturation, 1.0, true);
-            app.set_video_colour_channel(HsvChannel::Hue, 0.0, true);
-            assert_eq!(app.settings.video.background, Color(0x800000));
+        click_slider(&app, &mut cx, "video-picker-background-value", 0.0);
+        app.read_with(&cx, |app, _| {
+            assert_eq!(app.settings.video.background, Color(0x000000));
         });
-        // A preset in the row above moves the open picker's sliders too.
+        // A preset in the row above is taken up by the open picker too.
         harness::click("video-background-0", &mut cx);
         harness::paint(&app, &mut cx);
         app.read_with(&cx, |app, _| {
             assert_eq!(app.settings.video.background, BACKGROUNDS[0]);
-            assert_eq!(app.video_export.picking.unwrap().hsv.value, 0.0);
+            assert_eq!(app.video_export.picking, Some(VideoColourSlot::Background));
         });
         app.update(&mut cx, |app, _| {
             app.edit_video_style(|style| *style = original);
@@ -1750,11 +1597,13 @@ mod tests {
         harness::resize(&app, &mut cx, gpui::size(px(1100.), px(1600.)));
         harness::click("video-swatch-chords", &mut cx);
         harness::paint(&app, &mut cx);
-        harness::click("video-preset-chords-3", &mut cx);
+        harness::click("video-picker-chords-preset-3", &mut cx);
         harness::paint(&app, &mut cx);
-        app.update(&mut cx, |app, _| {
+        app.read_with(&cx, |app, _| {
             assert_eq!(app.settings.video.chord_color, CAPTIONS[3]);
-            app.set_video_colour_channel(HsvChannel::Value, 0.5, true);
+        });
+        click_slider(&app, &mut cx, "video-picker-chords-value", 0.5);
+        app.update(&mut cx, |app, _| {
             assert_ne!(app.settings.video.chord_color, CAPTIONS[3]);
             let drawn = app.settings.video.chord_color;
             assert_eq!(
@@ -1781,7 +1630,7 @@ mod tests {
         harness::resize(&app, &mut cx, gpui::size(px(1100.), px(1800.)));
         harness::click("video-swatch-lyrics", &mut cx);
         harness::paint(&app, &mut cx);
-        harness::click("video-preset-lyrics-3", &mut cx);
+        harness::click("video-picker-lyrics-preset-3", &mut cx);
         harness::paint(&app, &mut cx);
         app.read_with(&cx, |app, _| {
             assert_eq!(app.settings.video.lyric_color, CAPTIONS[3]);
@@ -1846,7 +1695,7 @@ mod tests {
         harness::paint(&app, &mut cx);
         harness::click("video-swatch-meter", &mut cx);
         harness::paint(&app, &mut cx);
-        harness::click("video-preset-meter-3", &mut cx);
+        harness::click("video-picker-meter-preset-3", &mut cx);
         harness::paint(&app, &mut cx);
         app.read_with(&cx, |app, _| {
             assert_eq!(app.settings.video.meter_color, CAPTIONS[3]);

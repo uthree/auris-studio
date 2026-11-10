@@ -11,16 +11,21 @@
 //! Selecting a note's row selects that note in the roll and scrolls the grid to it, so the two
 //! views are one selection seen twice. A double-click on a cell opens a field in the cell itself,
 //! and Return there walks on to the same cell of the next row — the flow a list editor teaches.
+//!
+//! The table itself is Atelier's [`atelier::Table`]: its heading, its rows built only while on
+//! screen, the stripe and tint of each event's family, the row being heard, the arrow keys, and
+//! the spot every visible cell records so a field can open over it.
 
 use auris_i18n::controller::controller_name;
 use auris_i18n::{Key, Language};
 use auris_session::prelude::*;
 use auris_session::{ClipEvent, ClipEventKind, EventEdit, EventRef, parse_root_note};
 
-use gpui::{MouseButton, MouseDownEvent, Pixels, SharedString, div, prelude::*, px};
+use atelier::{Column, RowMark, Table, TableCell, TableRow};
+use gpui::{Pixels, SharedString, div, prelude::*, px};
 
 use crate::app::AurisApp;
-use crate::ui::inline_edit::{InlinePlace, spot};
+use crate::ui::inline_edit::InlinePlace;
 use crate::ui::prompt::{Prompt, PromptTarget};
 use crate::ui::timeline::pitch_name;
 
@@ -30,11 +35,11 @@ use crate::ui::timeline::pitch_name;
 /// and no wider: every pixel it takes is a pixel of grid the notes no longer have.
 pub(crate) const EVENT_LIST_WIDTH: Pixels = px(370.0);
 
-/// How wide the stripe down a row's left edge is, in its family's colour.
-const STRIPE_WIDTH: Pixels = px(3.0);
-
 /// How tall one row is.
 const ROW_HEIGHT: Pixels = px(18.0);
+
+/// The table's id: its rows' and cells' selectors and its cells' spots start with it.
+const TABLE_ID: &str = "event-list";
 
 /// What the list remembers between frames.
 #[derive(Default)]
@@ -116,6 +121,24 @@ impl EventColumn {
             EventColumn::Tick | EventColumn::Step | EventColumn::Gate => Some(px(46.0)),
             EventColumn::Event => None,
             EventColumn::Value => Some(px(58.0)),
+        }
+    }
+
+    /// The column's place in [`EventColumn::ALL`], which is the table's column index.
+    pub fn index(self) -> usize {
+        EventColumn::ALL
+            .iter()
+            .position(|each| *each == self)
+            .unwrap_or(0)
+    }
+
+    /// The column as Atelier's table draws it: the numbers fixed and to the right, the event's
+    /// name taking what is left.
+    fn column(self, language: Language) -> Column {
+        let column = Column::new(self.label().get(language));
+        match self.width() {
+            Some(width) => column.width(width).end(),
+            None => column.grow(1.0),
         }
     }
 
@@ -227,10 +250,7 @@ fn cell_text(
         signatures,
         Language::English,
     );
-    let index = EventColumn::ALL
-        .iter()
-        .position(|each| *each == column)
-        .unwrap_or(0);
+    let index = column.index();
     match (column, events[row].kind) {
         // The name for reading; a number is as good for typing and the parser takes either.
         (EventColumn::Event, ClipEventKind::Note { pitch, .. }) => pitch_name(pitch),
@@ -289,9 +309,16 @@ pub(crate) fn parse_cell(
     })
 }
 
-/// The spot key a cell records where it was painted under, so its field opens in the cell.
-fn cell_spot(clip: ClipId, event: EventRef, column: EventColumn) -> SharedString {
-    format!("event-cell:{}:{event:?}:{column:?}", clip.0).into()
+/// The spot key the table's cell at `row` and `column` records where it was painted under, so
+/// its field opens in the cell.
+fn cell_spot(row: usize, column: EventColumn) -> SharedString {
+    Table::cell_key(
+        TABLE_ID,
+        TableCell {
+            row,
+            column: column.index(),
+        },
+    )
 }
 
 /// The family a row's event belongs to, which is what its colour says.
@@ -327,22 +354,23 @@ impl EventTint {
         }
     }
 
-    /// Its colour in `theme`.
-    ///
-    /// Notes take the theme's own text colour. The other families take fixed hues — orange,
-    /// green, purple, blue — at a lightness chosen against the theme's background: many schemes
-    /// draw every semantic colour (warning, solo, meter) from their one accent, and four families
-    /// in one colour would be no colouring at all.
-    fn colour(self, theme: &crate::theme::Theme) -> gpui::Hsla {
-        let hue = match self {
-            EventTint::Note => return theme.text,
-            EventTint::Bend => 0.08,
-            EventTint::Level => 0.36,
-            EventTint::Pedal => 0.78,
-            EventTint::Controller => 0.58,
-        };
-        let lightness = if theme.background.l < 0.5 { 0.68 } else { 0.38 };
-        gpui::hsla(hue, 0.65, lightness, 1.0)
+    /// The theme's categorical colour the family's stripe is drawn in: one each, so a stray
+    /// sustain pedal or a volume ride among the notes stands out on any theme, even one that
+    /// draws every semantic colour from its accent.
+    fn mark(self) -> RowMark {
+        RowMark::Category(match self {
+            EventTint::Note => 0,
+            EventTint::Bend => 1,
+            EventTint::Level => 2,
+            EventTint::Pedal => 3,
+            EventTint::Controller => 4,
+        })
+    }
+
+    /// Whether the row's text is in its family's colour too. A note's is not: notes are most of
+    /// any list, and the colour is what makes the rest stand out among them.
+    fn tints_text(self) -> bool {
+        self != EventTint::Note
     }
 }
 
@@ -396,17 +424,6 @@ fn now_playing(events: &[ClipEvent], at: Ticks) -> (Vec<bool>, Option<usize>) {
     (sounding, cursor)
 }
 
-/// A row ready to draw.
-struct DrawnRow {
-    event: EventRef,
-    tint: EventTint,
-    cells: [String; 6],
-    selected: bool,
-    beyond_clip: bool,
-    /// Being heard right now, while the transport rolls.
-    sounding: bool,
-}
-
 impl AurisApp {
     /// Shows or hides the roll's event list, and remembers it.
     pub(crate) fn toggle_event_list(&mut self) {
@@ -449,7 +466,7 @@ impl AurisApp {
                 },
                 text,
             )
-            .inline(InlinePlace::Spot(cell_spot(clip, event, column))),
+            .inline(InlinePlace::Spot(cell_spot(row, column))),
         );
     }
 
@@ -529,19 +546,14 @@ impl AurisApp {
         }
     }
 
-    /// A press on one cell: select the row, or on a second click edit the cell.
-    fn press_event_cell(
-        &mut self,
-        clip: ClipId,
-        event: EventRef,
-        column: EventColumn,
-        mouse: &MouseDownEvent,
-    ) {
-        if mouse.click_count >= 2 {
-            self.open_event_prompt(clip, event, column);
+    /// A click on a row, or an arrow key onto it: select it, or with Shift or the secondary
+    /// modifier add it to (or take it from) the selection of notes.
+    fn press_event_row(&mut self, clip: ClipId, row: usize, modifiers: gpui::Modifiers) {
+        let Some(found) = self.event_rows(clip).into_iter().nth(row) else {
             return;
-        }
-        let extend = mouse.modifiers.shift || mouse.modifiers.secondary();
+        };
+        let event = found.event;
+        let extend = modifiers.shift || modifiers.secondary();
         match (event, extend) {
             (EventRef::Note(index), true) => {
                 self.event_list.row = Some(event);
@@ -551,13 +563,7 @@ impl AurisApp {
             }
             _ => self.select_event(event),
         }
-        if let Some(row) = self
-            .event_rows(clip)
-            .into_iter()
-            .find(|each| each.event == event)
-        {
-            self.reveal_event(clip, &row);
-        }
+        self.reveal_event(clip, &found);
     }
 
     /// The rows the list showed when it was last laid out, as a half-open range.
@@ -610,7 +616,8 @@ impl AurisApp {
         }
         self.event_list.followed = cursor;
         let mut previous = clip_start;
-        let rows: Vec<DrawnRow> = events
+        let refs: Vec<EventRef> = events.iter().map(|event| event.event).collect();
+        let rows: Vec<TableRow> = events
             .iter()
             .zip(sounding)
             .map(|(event, sounding)| {
@@ -620,135 +627,37 @@ impl AurisApp {
                     EventRef::Note(index) => self.selected_notes.contains(&index),
                     curve => self.event_list.row == Some(curve),
                 };
-                DrawnRow {
-                    event: event.event,
-                    tint: EventTint::of(event.kind),
-                    cells,
-                    selected,
-                    beyond_clip: event.at >= clip_length,
-                    sounding,
-                }
+                let tint = EventTint::of(event.kind);
+                let row = TableRow::new(cells)
+                    .mark(tint.mark())
+                    .active(sounding)
+                    .faint(event.at >= clip_length)
+                    .selected(selected);
+                if tint.tints_text() { row.tinted() } else { row }
             })
             .collect();
-        let rows = std::sync::Arc::new(rows);
 
-        let spots = self.canvas.spots.clone();
-        let cell = |column: EventColumn, text: SharedString| {
-            let base = div()
-                .relative()
-                .h_full()
-                .px_1()
-                .flex()
-                .items_center()
-                .overflow_hidden()
-                .whitespace_nowrap();
-            let base = match column.width() {
-                Some(width) => base.w(width).flex_shrink_0().justify_end(),
-                None => base.flex_1().min_w_0(),
-            };
-            base.child(text)
-        };
-
-        let heading = div()
-            .flex()
-            .flex_shrink_0()
-            .h(ROW_HEIGHT + px(4.0))
-            .bg(theme.surface_raised)
-            .border_b_1()
-            .border_color(theme.border)
-            .text_xs()
-            .text_color(theme.text_muted)
-            .child(div().w(STRIPE_WIDTH).flex_shrink_0())
-            .children(
-                EventColumn::ALL
-                    .into_iter()
-                    .map(|column| cell(column, self.t(column.label()).into())),
-            );
-
-        let body = if rows.is_empty() {
-            div()
-                .flex_1()
-                .p_2()
-                .text_xs()
-                .text_color(theme.text_faint)
-                .child(self.t(Key::EventListEmpty))
-                .into_any_element()
-        } else {
-            let count = rows.len();
-            let theme = theme.clone();
-            gpui::uniform_list(
-                "event-list",
-                count,
-                cx.processor(move |_app, range: std::ops::Range<usize>, _window, cx| {
-                    range
-                        .map(|index| {
-                            let row = &rows[index];
-                            let event = row.event;
-                            let colour = if row.selected {
-                                theme.text_on_accent
-                            } else if row.beyond_clip {
-                                theme.text_faint
-                            } else {
-                                row.tint.colour(&theme)
-                            };
-                            div()
-                                .id(("event-row", index))
-                                .flex()
-                                // Across the whole list, so the columns line up with the heading.
-                                .w_full()
-                                .h(ROW_HEIGHT)
-                                .text_xs()
-                                .text_color(colour)
-                                .when(row.sounding && !row.selected, |this| {
-                                    this.bg(theme.accent_soft)
-                                })
-                                .when(row.selected, |this| this.bg(theme.accent))
-                                .when(!row.selected, |this| {
-                                    this.hover(|style| style.bg(theme.surface_hover))
-                                })
-                                // A stripe in the family's colour, which stays when the row is
-                                // selected and its text turns to the selection's.
-                                .child(
-                                    div()
-                                        .w(STRIPE_WIDTH)
-                                        .flex_shrink_0()
-                                        .h_full()
-                                        .bg(row.tint.colour(&theme)),
-                                )
-                                .children(EventColumn::ALL.into_iter().zip(row.cells.iter()).map(
-                                    |(column, text)| {
-                                        cell(column, text.clone().into())
-                                            .when(column.applies_to(event), |this| {
-                                                this.child(spot(
-                                                    &spots,
-                                                    cell_spot(clip, event, column),
-                                                ))
-                                            })
-                                            .debug_selector(move || {
-                                                format!("event-cell-{index}-{column:?}")
-                                            })
-                                            .on_mouse_down(
-                                                MouseButton::Left,
-                                                cx.listener(
-                                                    move |app, mouse: &MouseDownEvent, _, cx| {
-                                                        app.press_event_cell(
-                                                            clip, event, column, mouse,
-                                                        );
-                                                        cx.notify();
-                                                    },
-                                                ),
-                                            )
-                                    },
-                                ))
-                        })
-                        .collect()
-                }),
-            )
-            .track_scroll(self.event_list.scroll.clone())
-            .flex_1()
-            .min_h_0()
-            .into_any_element()
-        };
+        let table = Table::new(
+            TABLE_ID,
+            EventColumn::ALL.map(|column| column.column(language)),
+            rows,
+        )
+        .row_height(ROW_HEIGHT)
+        .track_scroll(&self.event_list.scroll)
+        .spots(&self.canvas.spots)
+        .empty(self.t(Key::EventListEmpty))
+        .on_select(cx.listener(move |app, row: &usize, window, cx| {
+            app.press_event_row(clip, *row, window.modifiers());
+            cx.notify();
+        }))
+        .on_activate(cx.listener(move |app, cell: &TableCell, _, cx| {
+            if let (Some(event), Some(column)) =
+                (refs.get(cell.row), EventColumn::ALL.get(cell.column))
+            {
+                app.open_event_prompt(clip, *event, *column);
+            }
+            cx.notify();
+        }));
 
         div()
             .id("event-list-panel")
@@ -760,8 +669,7 @@ impl AurisApp {
             .bg(theme.surface)
             .border_r_1()
             .border_color(theme.border)
-            .child(heading)
-            .child(body)
+            .child(table)
             .into_any_element()
     }
 }
@@ -801,7 +709,7 @@ mod tests {
         column: EventColumn,
     ) -> gpui::Point<Pixels> {
         let selector: &'static str =
-            Box::leak(format!("event-cell-{row}-{column:?}").into_boxed_str());
+            Box::leak(format!("{TABLE_ID}-cell-{row}-{}", column.index()).into_boxed_str());
         cx.debug_bounds(selector)
             .unwrap_or_else(|| panic!("no cell `{selector}` was drawn"))
             .center()
@@ -841,11 +749,14 @@ mod tests {
         // Return walked on to the wheel point's value, and the field sits in the list, not
         // in a sheet over the window.
         let cell = cx
-            .debug_bounds("event-cell-1-Value")
+            .debug_bounds("event-list-cell-1-5")
             .expect("the wheel's value cell is drawn");
-        app.read_with(cx, |this, _| {
+        cx.update(|window, cx| {
+            let this = app.read(cx);
             let prompt = this.prompt.as_ref().expect("the walk opened the next cell");
-            let field = this.inline_bounds(prompt).expect("the field is in place");
+            let field = this
+                .inline_bounds(prompt, window)
+                .expect("the field is in place");
             assert!(
                 field.contains(&cell.center()),
                 "the field {field:?} covers the cell {cell:?}"
@@ -969,8 +880,7 @@ mod tests {
         assert_eq!(EventTint::of(controller(64)), EventTint::Pedal);
         assert_eq!(EventTint::of(controller(1)), EventTint::Controller);
         assert_eq!(EventTint::of(controller(74)), EventTint::Controller);
-        // Told apart even in a theme that draws every semantic colour from its accent.
-        let theme = crate::theme::Theme::default();
+        // Each family has a stripe of its own, and only the notes keep the text colour.
         let tints = [
             EventTint::Note,
             EventTint::Bend,
@@ -980,9 +890,11 @@ mod tests {
         ];
         for (i, a) in tints.iter().enumerate() {
             for b in &tints[i + 1..] {
-                assert_ne!(a.colour(&theme), b.colour(&theme), "{a:?} and {b:?}");
+                assert_ne!(a.mark(), b.mark(), "{a:?} and {b:?}");
             }
         }
+        assert!(!EventTint::Note.tints_text());
+        assert!(EventTint::Pedal.tints_text());
     }
 
     #[test]

@@ -178,12 +178,12 @@ impl Render for AurisApp {
             .map_or(window.viewport_size().width, |bounds| bounds.size.width);
 
         // Keep the playhead on screen while the transport rolls, until a hand scrolls it out
-        // of view — see `PlayheadFollow` for when following comes back.
+        // of view — see `TimelineView::follow` for when following comes back.
         let playing = self.is_playing();
         let playhead = self.playhead_ticks();
         let width = self.arrangement_width;
-        self.playhead_follow
-            .update(&mut self.timeline, playhead, width, playing);
+        self.timeline
+            .follow(&mut self.playhead_follow, playhead, width, playing);
 
         // The taskbar and the Alt-Tab list are where a user looks to tell one project's window
         // from another's, and they were both showing a constant. Only on a change: setting it is
@@ -315,12 +315,6 @@ impl AurisApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
-        // Every window that draws the document starts a frame of painted spots here, before
-        // the early return, so a label that stops being painted in it is forgotten.
-        self.canvas
-            .spots
-            .borrow_mut()
-            .next_frame(window.window_handle().window_id());
         if self
             .event_window
             .is_some_and(|id| id != window.window_handle().window_id())
@@ -340,7 +334,7 @@ impl AurisApp {
         }
         let export_overlay = self.render_export_overlay(cx);
         let export_dialog = self.render_export_dialog(cx);
-        let prompt = self.render_prompt(cx);
+        let prompt = self.render_prompt(window, cx);
         let palette = self.render_palette(cx);
         let menu = self.render_context_menu(window, cx);
         let mut overlays = Vec::new();
@@ -2002,7 +1996,8 @@ impl AurisApp {
                 subject, handle, ..
             } => self.drag_envelope_handle(subject, handle, event.position),
             Drag::EqNode { subject, band, .. } => self.drag_eq_node(subject, band, event.position),
-            Drag::SynthPlot { .. } => self.drag_synth_plot(event.position, event.modifiers),
+            // Atelier's plot follows its own drag and reports it to `synth_edit`.
+            Drag::SynthPlot { .. } => {}
             Drag::PartDial {
                 clip,
                 dial,
@@ -2054,18 +2049,6 @@ impl AurisApp {
                 bounds,
             } => {
                 self.drag_volume_contour_point(clip, index, bounds, event.position);
-            }
-            Drag::VideoColour {
-                channel,
-                start_fraction,
-                start_x,
-            } => {
-                let delta = crate::ui::widgets::fine_scaled(
-                    f32::from(event.position.x - start_x),
-                    event.modifiers,
-                );
-                let fraction = crate::ui::widgets::dragged(start_fraction, delta);
-                self.set_video_colour_channel(channel, fraction, false);
             }
             Drag::TimeZoom {
                 start_fraction,
@@ -2132,13 +2115,6 @@ impl AurisApp {
             Some(Drag::DrumLaneReorder { track, .. }) => Some(*track),
             _ => None,
         };
-        // A colour drag changed the look without writing it down on every move; this is the
-        // one write for the whole sweep.
-        if matches!(self.drag, Some(Drag::VideoColour { .. }))
-            && let Err(error) = self.save_settings()
-        {
-            log::warn!("could not save settings: {error}");
-        }
         self.stop_audition();
         // A key of the drawn keyboard pressed with the pointer is let go of here rather than on
         // the key itself, because the pointer may well have left it — or the panel — by now.

@@ -704,13 +704,14 @@ impl AurisApp {
                 SectionHeader::new(self.t(Key::SynthSidebands))
                     .description(self.t(Key::SynthSidebandsHint)),
             )
-            .child(self.synth_plot_well(
+            .child(self.synth_plot(
                 "synth-sidebands",
                 track,
                 SynthPlot::Sidebands,
                 PlotScale {
                     across: highest,
                     reach: highest,
+                    span: (highest, 1.0),
                 },
                 plot,
                 cx,
@@ -815,13 +816,14 @@ impl AurisApp {
                 .color(color),
             );
         }
-        let stack_well = self.synth_plot_well(
+        let stack_well = self.synth_plot(
             "synth-stack",
             track,
             SynthPlot::Stack,
             PlotScale {
                 across: stack_across(reach),
                 reach,
+                span: (2.0 * reach, 1.0),
             },
             LinePlot::new()
                 .x_range(-reach, reach)
@@ -829,13 +831,14 @@ impl AurisApp {
                 .series(Series::stems(stack).color(color)),
             cx,
         );
-        let filter_well = self.synth_plot_well(
+        let filter_well = self.synth_plot(
             "synth-filter",
             track,
             SynthPlot::Filter,
             PlotScale {
                 across: highest * note / tracked.max(f32::MIN_POSITIVE),
                 reach: highest,
+                span: (highest, FILTER_CEILING),
             },
             filter,
             cx,
@@ -924,13 +927,14 @@ impl AurisApp {
                 (t * 1_000.0, envelope(t))
             })
             .collect();
-        let punch_well = self.synth_plot_well(
+        let punch_well = self.synth_plot(
             "synth-punch",
             track,
             SynthPlot::Punch,
             PlotScale {
                 across: 0.1,
                 reach: window_ms,
+                span: (window_ms, 2.0),
             },
             LinePlot::new()
                 .x_range(0., window_ms)
@@ -949,13 +953,14 @@ impl AurisApp {
                 (x, soft_clip(x, drive))
             })
             .collect();
-        let drive_well = self.synth_plot_well(
+        let drive_well = self.synth_plot(
             "synth-drive",
             track,
             SynthPlot::Drive,
             PlotScale {
                 across: 1.0,
                 reach: 1.0,
+                span: (2.0, 2.0),
             },
             LinePlot::new()
                 .x_range(-1., 1.)
@@ -1081,13 +1086,14 @@ impl AurisApp {
                 (t * 1_000.0, envelope(t))
             })
             .collect();
-        let kick_well = self.synth_plot_well(
+        let kick_well = self.synth_plot(
             "synth-kick",
             track,
             SynthPlot::Kick,
             PlotScale {
                 across: 1.0,
                 reach: window_ms,
+                span: (window_ms, 2.0),
             },
             LinePlot::new()
                 .x_range(0., window_ms)
@@ -1106,13 +1112,14 @@ impl AurisApp {
                 (khz, hat_filter(khz * 1_000.0, hat_tone).min(1.0))
             })
             .collect();
-        let metal_well = self.synth_plot_well(
+        let metal_well = self.synth_plot(
             "synth-metal",
             track,
             SynthPlot::Metal,
             PlotScale {
                 across: 1.0,
                 reach: METAL_CEILING_KHZ,
+                span: (METAL_CEILING_KHZ, 1.0),
             },
             LinePlot::new()
                 .x_range(0., METAL_CEILING_KHZ)
@@ -1196,7 +1203,7 @@ impl AurisApp {
         let reach = self
             .held_reach(track, SynthPlot::ChipStack)
             .unwrap_or_else(|| stack_reach(spread));
-        let cycle_well = self.synth_plot_well(
+        let cycle_well = self.synth_plot(
             "synth-cycle",
             track,
             SynthPlot::Cycle,
@@ -1204,6 +1211,7 @@ impl AurisApp {
                 // Only a square has a duty cycle to move; the other shapes take the bit depth.
                 across: if square { 1.0 } else { 0.0 },
                 reach: 1.0,
+                span: (1.0, 2.0),
             },
             LinePlot::new()
                 .x_range(0., 1.)
@@ -1211,13 +1219,14 @@ impl AurisApp {
                 .series(Series::line(shape).style(SeriesStyle::Steps).color(color)),
             cx,
         );
-        let stack_well = self.synth_plot_well(
+        let stack_well = self.synth_plot(
             "synth-chip-stack",
             track,
             SynthPlot::ChipStack,
             PlotScale {
                 across: stack_across(reach),
                 reach,
+                span: (2.0 * reach, 1.0),
             },
             LinePlot::new()
                 .x_range(-reach, reach)
@@ -1323,7 +1332,7 @@ pub(crate) fn chip_stack(count: f32, spread: f32) -> Vec<(f32, f32)> {
 fn plot_column(
     theme: &Theme,
     header: SectionHeader,
-    body: gpui::Stateful<gpui::Div>,
+    body: impl IntoElement,
     hint: Option<&'static str>,
 ) -> gpui::Div {
     let spacing = theme.atelier.spacing;

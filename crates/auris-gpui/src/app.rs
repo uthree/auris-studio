@@ -37,7 +37,7 @@ use crate::ui::menu_bar::OpenMenu;
 use crate::ui::piano_roll::RollTool;
 use crate::ui::prompt::Prompt;
 use crate::ui::score_layer::{ScoreLayer, ScorePreview};
-use crate::ui::timeline::{PitchView, PlayheadFollow, TimelineView};
+use crate::ui::timeline::{PitchView, TimelineView};
 use crate::voice_setup_window::VoiceSetupWindow;
 
 /// What a press or a sweep at one position should do to whatever is already sounding.
@@ -646,12 +646,8 @@ pub enum Drag {
         /// How the horizontal axis turns into its parameter, signed for the side of a stack the
         /// press landed on.
         scale: crate::ui::synth_edit::PlotScale,
-        /// Where the drag is measured from.
-        anchor: Point<Pixels>,
-        /// The horizontal and vertical parameters at the anchor.
+        /// The horizontal and vertical parameters when the drag began.
         start: (f32, f32),
-        /// Whether Shift was held when the anchor was taken.
-        fine: bool,
     },
     /// Dragging one band's node around the equalizer's curve.
     ///
@@ -777,15 +773,6 @@ pub enum Drag {
         index: usize,
         /// Drawable graph bounds captured when the drag begins.
         bounds: Bounds<Pixels>,
-    },
-    /// Dragging one of the video window's colour sliders.
-    VideoColour {
-        /// Which slider of the open picker.
-        channel: crate::ui::colour_picker::HsvChannel,
-        /// Slider position when the drag began, from 0 to 1.
-        start_fraction: f32,
-        /// Pointer x when the drag began.
-        start_x: Pixels,
     },
     /// Dragging the time-zoom slider.
     TimeZoom {
@@ -930,8 +917,6 @@ impl Drag {
             Drag::Comment { .. } => Some(Edit::MoveComment),
             // How far in the view is zoomed is a property of the window, like a panel's width.
             Drag::TimeZoom { .. } => None,
-            // The video's look is an application setting, not part of the document.
-            Drag::VideoColour { .. } => None,
             // Panel and window geometry is a property of the window, not the document: resizing
             // a panel or moving the plugin editor is not an edit and must never land on the undo
             // stack.
@@ -1419,7 +1404,7 @@ pub struct CanvasBounds {
     /// reopened wants the rectangle it had.
     curves: CurveBounds,
     /// Where labels that can be edited in place were painted, for an inline prompt to cover.
-    pub spots: crate::ui::inline_edit::SpotBook,
+    pub spots: atelier::SpotBook,
 }
 
 impl CanvasBounds {
@@ -1497,7 +1482,7 @@ pub struct AurisApp {
     pub(crate) timeline: TimelineView,
     /// Whether the timeline keeps the playhead in view during playback, or a scroll has
     /// released it.
-    pub(crate) playhead_follow: PlayheadFollow,
+    pub(crate) playhead_follow: atelier::Follow,
     /// Fractional time-signature wheel notches carried between precise-scroll events.
     pub(crate) signature_scroll_remainder: f32,
     pub(crate) pitch: PitchView,
@@ -2136,7 +2121,7 @@ impl AurisApp {
             theme,
             appearance,
             timeline: TimelineView::default(),
-            playhead_follow: PlayheadFollow::default(),
+            playhead_follow: atelier::Follow::new(),
             signature_scroll_remainder: 0.0,
             pitch: PitchView::default(),
             drum_editor: crate::ui::drum_editor::DrumEditorState::default(),
@@ -2697,7 +2682,7 @@ impl AurisApp {
         self.playhead_follow.engage();
         let playhead = self.playhead_ticks();
         let width = self.arrangement_width;
-        self.timeline.scroll_to_reveal(playhead, width);
+        self.timeline.page_to(playhead, width);
     }
 
     // ---------------------------------------------------------------- selection

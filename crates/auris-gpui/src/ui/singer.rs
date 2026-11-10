@@ -14,7 +14,6 @@ use std::sync::Arc;
 
 use crate::app::AurisApp;
 use crate::ui::context_menu::{ContextMenu, MenuCommand};
-use crate::ui::tooltip::keyed_tip;
 use crate::ui::widgets::{ButtonStyle, button, divider};
 
 impl AurisApp {
@@ -77,7 +76,7 @@ impl AurisApp {
             .w_full()
             .min_w_0()
             .truncate()
-            .tooltip(keyed_tip(voice, "", &theme))
+            .tooltip(crate::ui::tooltip::text_tip(voice))
             .into_any_element(),
         ];
         if let Some(info) = &info {
@@ -115,7 +114,7 @@ impl AurisApp {
                 .w_full()
                 .min_w_0()
                 .truncate()
-                .tooltip(keyed_tip(speaker, "", &theme))
+                .tooltip(crate::ui::tooltip::text_tip(speaker))
                 .into_any_element(),
             );
             if !info.capabilities.manual_phonemes || !info.capabilities.phoneme_timing {

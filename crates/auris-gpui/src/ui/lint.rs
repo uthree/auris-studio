@@ -874,10 +874,8 @@ impl AurisApp {
                                 cx.notify();
                             }),
                         )
-                        .tooltip(crate::ui::tooltip::keyed_tip(
+                        .tooltip(crate::ui::tooltip::text_tip(
                             self.t(Key::ProblemsBackgroundTip),
-                            "",
-                            &theme,
                         )),
                     )
                     .when(!suppressions.is_empty(), |this| {
@@ -895,10 +893,8 @@ impl AurisApp {
                                     cx.notify();
                                 }),
                             )
-                            .tooltip(crate::ui::tooltip::keyed_tip(
+                            .tooltip(crate::ui::tooltip::text_tip(
                                 self.t(Key::ProblemsIgnoreRulesTip),
-                                "",
-                                &theme,
                             )),
                         )
                     }),
@@ -1010,11 +1006,7 @@ impl AurisApp {
                             this.apply_lint(&fix_id, cx);
                         }),
                     )
-                    .tooltip(crate::ui::tooltip::keyed_tip(
-                        self.lint_fix_label(fix),
-                        "",
-                        theme,
-                    )),
+                    .tooltip(crate::ui::tooltip::text_tip(self.lint_fix_label(fix))),
                 )
             })
             .child(button(
@@ -1151,7 +1143,6 @@ impl AurisApp {
         clip_start: auris_session::prelude::Ticks,
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
-        let theme = self.theme.clone();
         flagged
             .iter()
             .filter_map(|entry| {
@@ -1177,11 +1168,7 @@ impl AurisApp {
                         .w(width)
                         .h(SQUIGGLE_GRAB_ABOVE + SQUIGGLE_GRAB_BELOW)
                         .cursor_pointer()
-                        .tooltip(crate::ui::tooltip::keyed_tip(
-                            self.lint_hover(&diagnostics),
-                            "",
-                            &theme,
-                        ))
+                        .tooltip(crate::ui::tooltip::text_tip(self.lint_hover(&diagnostics)))
                         .on_mouse_down(
                             gpui::MouseButton::Left,
                             AurisApp::opens_menu(cx, move |this, at| this.lint_menu(at, &first)),

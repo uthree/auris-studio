@@ -10,7 +10,8 @@
 //! geometry the view already keeps — the timeline's scale, the lane rows, the roll's pitch rows
 //! — so their rectangle is *computed* from the target ([`InlinePlace::Target`]). A track's name
 //! is laid out by flex in two different panels, so its label records where it was painted with
-//! [`spot`] and the prompt names that record ([`InlinePlace::Spot`]). When neither can say where
+//! Atelier's [`atelier::SpotBook::spot`] and the prompt names that record
+//! ([`InlinePlace::Spot`]). When neither can say where
 //! the label is — the panel is closed, the strip is hidden — the prompt falls back to the sheet,
 //! so nothing that used to be editable stops being so.
 //!
@@ -19,15 +20,11 @@
 //! empty is not an answer, closes it instead, so wandering off a box never writes an edit
 //! nobody made or traps the pointer behind an error.
 
-use std::cell::RefCell;
-use std::collections::HashMap;
-use std::rc::Rc;
-
 use auris_session::prelude::*;
 
 use gpui::{
     AnyElement, Bounds, Context, IntoElement, MouseButton, MouseDownEvent, Pixels, SharedString,
-    canvas, div, point, prelude::*, px, size,
+    div, point, prelude::*, px, size,
 };
 
 use crate::app::AurisApp;
@@ -38,7 +35,8 @@ use crate::ui::prompt::{Prompt, PromptTarget};
 /// Where an inline prompt is drawn.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum InlinePlace {
-    /// Over the element that recorded this key with [`spot`] when it was last painted.
+    /// Over the element that recorded this key with [`atelier::SpotBook::spot`] when it was
+    /// last painted.
     Spot(SharedString),
     /// Over the target itself, from the geometry the view draws it with.
     Target,
@@ -56,70 +54,6 @@ const MAX_WIDTH: Pixels = px(420.0);
 const COMMENT_WIDTH: Pixels = px(260.0);
 /// The height of a one-line inline field.
 pub(crate) const LINE_HEIGHT: Pixels = px(22.0);
-
-/// The rectangles [`spot`] recorded, per window, with the frame each was painted in.
-#[derive(Default)]
-pub struct Spots {
-    /// The frame each window is rendering now.
-    frames: HashMap<gpui::WindowId, u64>,
-    /// Each key's last paint: its window, its frame and its rectangle.
-    painted: HashMap<SharedString, (gpui::WindowId, u64, Bounds<Pixels>)>,
-}
-
-/// The shared book of painted spots; `Rc` because paint closures are `'static`.
-pub type SpotBook = Rc<RefCell<Spots>>;
-
-impl Spots {
-    /// Starts a new frame in `window`, so a spot that is not painted again is forgotten.
-    pub(crate) fn next_frame(&mut self, window: gpui::WindowId) {
-        *self.frames.entry(window).or_default() += 1;
-    }
-
-    /// Where `key` was painted in `window`, if it was painted in the frame before this one or
-    /// in this one.
-    ///
-    /// A label that has scrolled out of its panel or whose panel was closed stops being painted,
-    /// and an editor floating over the place it used to be would be worse than the sheet.
-    pub(crate) fn get(&self, key: &str, window: gpui::WindowId) -> Option<Bounds<Pixels>> {
-        let frame = self.frames.get(&window).copied().unwrap_or_default();
-        self.painted
-            .get(key)
-            .filter(|(painted_in, painted_at, _)| {
-                *painted_in == window && fresh(*painted_at, frame)
-            })
-            .map(|(_, _, bounds)| *bounds)
-    }
-
-    fn record(&mut self, key: SharedString, window: gpui::WindowId, bounds: Bounds<Pixels>) {
-        let frame = self.frames.get(&window).copied().unwrap_or_default();
-        self.painted.insert(key, (window, frame, bounds));
-    }
-}
-
-/// Whether a spot painted in frame `painted_at` still describes the screen in frame `frame`.
-///
-/// The frame before counts: the prompt is drawn while the frame is being built, before this
-/// frame's labels are painted, so last frame's paint is the newest there is.
-fn fresh(painted_at: u64, frame: u64) -> bool {
-    painted_at + 1 >= frame
-}
-
-/// An invisible child that records its parent's rectangle under `key` each time it is painted.
-pub(crate) fn spot(book: &SpotBook, key: impl Into<SharedString>) -> impl IntoElement {
-    let book = Rc::clone(book);
-    let key = key.into();
-    canvas(
-        move |bounds, window, _| {
-            book.borrow_mut()
-                .record(key, window.window_handle().window_id(), bounds);
-        },
-        |_, _, _, _| {},
-    )
-    .absolute()
-    .top_0()
-    .left_0()
-    .size_full()
-}
 
 /// The spot key of a track's name in the arrangement's header.
 pub(crate) fn header_name_spot(track: TrackId) -> SharedString {
@@ -188,12 +122,15 @@ fn span(
 
 impl AurisApp {
     /// Where an open prompt is drawn in place, or `None` when it is a sheet.
-    pub(crate) fn inline_bounds(&self, prompt: &Prompt) -> Option<Bounds<Pixels>> {
+    pub(crate) fn inline_bounds(
+        &self,
+        prompt: &Prompt,
+        window: &gpui::Window,
+    ) -> Option<Bounds<Pixels>> {
         let target = prompt.target()?;
         match prompt.place()? {
             InlinePlace::Spot(key) => {
-                let window = self.event_window?;
-                let book = self.canvas.spots.borrow();
+                let book = &self.canvas.spots;
                 let found = book.get(key, window).or_else(|| match target {
                     // A rename opened from a menu does not know which panel asked; the other
                     // one's label will do when the first is not on screen.
@@ -213,12 +150,17 @@ impl AurisApp {
                     None,
                 ))
             }
-            InlinePlace::Target => self.target_bounds(prompt, target),
+            InlinePlace::Target => self.target_bounds(prompt, target, window),
         }
     }
 
     /// The rectangle a target is drawn in, computed from the view's own geometry.
-    fn target_bounds(&self, prompt: &Prompt, target: PromptTarget) -> Option<Bounds<Pixels>> {
+    fn target_bounds(
+        &self,
+        prompt: &Prompt,
+        target: PromptTarget,
+        window: &gpui::Window,
+    ) -> Option<Bounds<Pixels>> {
         match target {
             PromptTarget::Section(at) => {
                 let lane = self.canvas.structure.get()?;
@@ -305,12 +247,12 @@ impl AurisApp {
             PromptTarget::NewComment { host, at, pitch } => {
                 self.comment_bounds(prompt, host, at, pitch)
             }
-            PromptTarget::Comment { host, id } => {
-                self.comment_tag_bounds(prompt, host, id).or_else(|| {
+            PromptTarget::Comment { host, id } => self
+                .comment_tag_bounds(prompt, host, id, window)
+                .or_else(|| {
                     let comment = self.session.comment(host, id)?;
                     self.comment_bounds(prompt, host, comment.at, comment.pitch)
-                })
-            }
+                }),
             _ => None,
         }
     }
@@ -340,12 +282,11 @@ impl AurisApp {
         prompt: &Prompt,
         host: CommentHost,
         id: CommentId,
+        window: &gpui::Window,
     ) -> Option<Bounds<Pixels>> {
-        let window = self.event_window?;
         let tag = self
             .canvas
             .spots
-            .borrow()
             .get(&crate::ui::comments::tag_selector(host, id), window)?;
         let text = prompt.field().map_or("", |field| field.content());
         let height = crate::ui::text_area::area_height(text, 2, 6);
@@ -643,13 +584,6 @@ mod tests {
     }
 
     #[test]
-    fn a_spot_from_an_earlier_frame_is_forgotten() {
-        assert!(fresh(5, 5), "painted this frame");
-        assert!(fresh(4, 5), "painted in the frame before");
-        assert!(!fresh(3, 5), "not painted since");
-    }
-
-    #[test]
     fn only_comments_are_written_over_several_lines() {
         assert!(is_multiline(PromptTarget::Comment {
             host: CommentHost::Track(TrackId(1)),
@@ -675,10 +609,11 @@ mod window_tests {
         cx: &mut gpui::VisualTestContext,
     ) -> Option<gpui::Bounds<gpui::Pixels>> {
         paint(app, cx);
-        app.read_with(cx, |this, _| {
+        cx.update(|window, cx| {
+            let this = app.read(cx);
             this.prompt
                 .as_ref()
-                .and_then(|prompt| this.inline_bounds(prompt))
+                .and_then(|prompt| this.inline_bounds(prompt, window))
         })
     }
 
@@ -687,11 +622,10 @@ mod window_tests {
         cx: &mut gpui::VisualTestContext,
         track: TrackId,
     ) -> gpui::Bounds<gpui::Pixels> {
-        app.read_with(cx, |this, _| {
-            let window = this.event_window.expect("the window has rendered");
-            this.canvas
+        cx.update(|window, cx| {
+            app.read(cx)
+                .canvas
                 .spots
-                .borrow()
                 .get(&super::header_name_spot(track), window)
                 .expect("the header's name was painted")
         })

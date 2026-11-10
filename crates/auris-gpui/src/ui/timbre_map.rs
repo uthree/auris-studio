@@ -1199,15 +1199,11 @@ impl AurisApp {
                     .overflow_hidden()
                     .child(plot);
                 if let Some(index) = self.timbre_map.hovered.filter(|i| *i < map.sounds.len()) {
-                    well = well.tooltip(crate::ui::tooltip::keyed_tip(
-                        format!(
-                            "{} · {}",
-                            map.sounds[index].name,
-                            self.timbre_cluster_name(map.clusters()[index])
-                        ),
-                        "",
-                        &self.theme,
-                    ));
+                    well = well.tooltip(crate::ui::tooltip::text_tip(format!(
+                        "{} · {}",
+                        map.sounds[index].name,
+                        self.timbre_cluster_name(map.clusters()[index])
+                    )));
                 }
                 let camera = &self.timbre_map.camera;
                 let arrangements = SegmentedControl::new(
@@ -1311,7 +1307,7 @@ impl AurisApp {
                             .items_center()
                             .gap(spacing.xs)
                             .max_w(gpui::rems(15.))
-                            .tooltip(super::tooltip::keyed_tip(tip, "", &self.theme))
+                            .tooltip(crate::ui::tooltip::text_tip(tip))
                             .child(
                                 atelier::Icon::new(atelier::IconSource::svg(
                                     super::icons::sound_icon_path(

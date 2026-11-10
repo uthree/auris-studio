@@ -1029,7 +1029,7 @@ impl AurisApp {
         }
         let input = self.render_workshop_input(window, cx);
         let prompt = chord_prompt
-            .then(|| self.render_prompt(cx))
+            .then(|| self.render_prompt(window, cx))
             .flatten()
             .map(IntoElement::into_any_element);
         let attachment_preview = self.render_attachment_preview(true, window, cx);

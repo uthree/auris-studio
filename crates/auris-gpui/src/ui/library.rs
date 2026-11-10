@@ -1108,8 +1108,7 @@ impl AurisApp {
             .and_then(|track| self.project().track(track))
             .map(|track| auris_i18n::messages::voice_target(self.language(), &track.name))
             .unwrap_or_else(|| self.t(Key::SingerSelectTrack).to_string());
-        let tooltip =
-            crate::ui::tooltip::keyed_tip(format!("{target_label} · {name} · {shown}"), "", &theme);
+        let tooltip = crate::ui::tooltip::text_tip(format!("{target_label} · {name} · {shown}"));
         let backend = match auris_session::voice_source_kind(&path) {
             Some(auris_session::VoiceSourceKind::DiffSinger) => Some(Key::VoiceBackendDiffSinger),
             Some(auris_session::VoiceSourceKind::Voicevox) => Some(Key::VoiceBackendVoicevox),
@@ -2414,7 +2413,7 @@ impl AurisApp {
     {
         let theme = self.theme.clone();
         let label_color = style.label;
-        let tooltip = crate::ui::tooltip::keyed_tip(format!("{label} · {detail}"), "", &theme);
+        let tooltip = crate::ui::tooltip::text_tip(format!("{label} · {detail}"));
         div()
             .id(id.into())
             .debug_selector({
@@ -2566,16 +2565,12 @@ impl AurisApp {
         } else {
             self.t(Key::LibraryNeedsInstrumentTrack)
         };
-        let tooltip = crate::ui::tooltip::keyed_tip(
-            format!(
-                "{name} · {}{tip_description} {target_hint}",
-                plugin.format.map_or_else(String::new, |format| {
-                    format!("{} · ", crate::i18n::plugin_format_label(format))
-                }),
-            ),
-            "",
-            &theme,
-        );
+        let tooltip = crate::ui::tooltip::text_tip(format!(
+            "{name} · {}{tip_description} {target_hint}",
+            plugin.format.map_or_else(String::new, |format| {
+                format!("{} · ", crate::i18n::plugin_format_label(format))
+            }),
+        ));
         div()
             .id(gpui::SharedString::from(format!("lib-{}", plugin.id)))
             .debug_selector({
@@ -2699,11 +2694,10 @@ impl AurisApp {
             Some(tag) => format!("{} · {detail}", self.cluster_tip(tag)),
             None => detail.clone(),
         };
-        let tooltip = crate::ui::tooltip::keyed_tip(
-            format!("{} · {tooltip_detail} {target_hint}", preset.name),
-            "",
-            &theme,
-        );
+        let tooltip = crate::ui::tooltip::text_tip(format!(
+            "{} · {tooltip_detail} {target_hint}",
+            preset.name
+        ));
         div()
             .id(gpui::SharedString::from(format!(
                 "lib-preset-{}-{}-{}",
