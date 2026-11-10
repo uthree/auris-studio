@@ -73,6 +73,13 @@ const BLOW_NEWTONS: f32 = 60.0;
 const NATURAL_DECAY: f32 = 10.0;
 /// Hammer speed at full velocity, in metres per second: a fortissimo.
 const FULL_SPEED: f32 = 4.6;
+/// A piano hammer's speed at full velocity, in metres per second.
+const GRAND_SPEED: f32 = 5.6;
+/// The power of a key's velocity a piano hammer's speed follows. With [`GRAND_SPEED`] it is
+/// read off the recorded Steinway's three dynamics from C3 to G4, taken as velocities of 0.35,
+/// 0.65 and 0.95: its pianissimo lies 13 dB under its mezzo-forte and its fortissimo 10 dB
+/// over, and the piano's lie 12.7 dB under and 7.0 dB over.
+const TOUCH: f32 = 1.9;
 /// Brings a blow's impulse, in newton seconds, to the scale the rest of the instrument works at.
 const DRIVE: f32 = 60.0;
 /// How hard a blow knocks the case, against how hard it drives a string.
@@ -142,6 +149,21 @@ fn between(curve: &[f32; 8], pitch: f32) -> f32 {
     let position = ((pitch - 24.0) / 12.0).clamp(0.0, 7.0);
     let low = (position as usize).min(6);
     curve[low] + (curve[low + 1] - curve[low]) * (position - low as f32)
+}
+
+/// The strings' own loss at the fundamental of `pitch`, in decibels per second.
+fn aftersound(pitch: f32) -> f32 {
+    register(&AFTERSOUND, pitch) * dial_across(dials::AFTERSOUND, pitch, 1.0)
+}
+
+/// What the bridge takes from the motion a unison shares at `pitch`, in decibels per second.
+fn bridge(pitch: f32) -> f32 {
+    register(&BRIDGE, pitch) * dial_across(dials::BRIDGE, pitch, 1.0)
+}
+
+/// Exponent of the bridge's loss over partial number.
+fn bridge_slope() -> f32 {
+    BRIDGE_SLOPE + dial(dials::BRIDGE_SLOPE, 0.0)
 }
 
 pub(super) fn descriptors(model: Model) -> Vec<ParamDescriptor> {
@@ -411,13 +433,13 @@ impl Sympathetic {
             // Before `prepare` there is no line yet, and nothing to hold a period to.
             let longest = (string.size.saturating_sub(3) as f32).max(2.0);
             string.period = (rate / hz - filter).clamp(2.0, longest);
-            let free = register(&AFTERSOUND, pitch) + register(&BRIDGE, pitch) / 3.0;
+            let free = aftersound(pitch) + bridge(pitch) / 3.0;
             string.ring = 10.0_f32.powf(-free / (20.0 * hz));
             // A bridge that moves adds its own velocity to the wave a string sends back from
             // it, once a period; and what the strings of a unison then do to the bridge in
             // return is what the bridge takes from them when they are struck, the measured
             // loss of their shared motion. The two together, each time round:
-            string.takes = register(&BRIDGE, pitch) * NEPERS_PER_DB / hz;
+            string.takes = bridge(pitch) * NEPERS_PER_DB / hz;
         }
     }
 
@@ -732,9 +754,8 @@ impl Struck {
         if self.is_piano() {
             let scale = NATURAL_DECAY / settings.decay.max(0.01) * (1.0 + 6.0 * settings.damping);
             let (khz, low) = (hz * 1.0e-3, fundamental * 1.0e-3);
-            (register(&AFTERSOUND, key) + FRICTION * (khz * khz - low * low).max(0.0))
-                * scale
-                * NEPERS_PER_DB
+            let friction = FRICTION * dial(dials::FRICTION, 1.0);
+            (aftersound(key) + friction * (khz * khz - low * low).max(0.0)) * scale * NEPERS_PER_DB
         } else {
             let (friction, bending) = material(0.05);
             let target = decay_rate(settings.decay) * (fundamental / 293.66).powf(0.4);
@@ -746,7 +767,7 @@ impl Struck {
     /// What the bridge takes from the shared motion of partial `order`, in nepers per second.
     fn bridge_loss(&self, key: f32, order: f32) -> f32 {
         if self.is_piano() {
-            register(&BRIDGE, key) * order.powf(BRIDGE_SLOPE) * NEPERS_PER_DB
+            bridge(key) * order.powf(bridge_slope()) * NEPERS_PER_DB
         } else {
             (3.0 + 36.0 * self.settings.damping) * NEPERS_PER_DB
         }
@@ -763,9 +784,9 @@ impl Struck {
     fn give(&self, key: f32, fundamental: f32, order: f32) -> f32 {
         let strings = self.struck_strings(fundamental);
         if self.is_piano() {
-            let taken =
-                register(&BRIDGE, key) * order.powf(BRIDGE_SLOPE) + register(&AFTERSOUND, key);
-            let middle = (BRIDGE[3] + AFTERSOUND[3]) / (3.0 * across_keys(grand::IMPEDANCE, 60.0));
+            let taken = bridge(key) * order.powf(bridge_slope()) + aftersound(key);
+            let middle =
+                (bridge(60.0) + aftersound(60.0)) / (3.0 * across_keys(grand::IMPEDANCE, 60.0));
             let brought = between(&REGISTER, key) + dial_across(dials::LEVEL, key, 0.0);
             let trim = 10.0_f32.powf(brought / 20.0);
             taken / (strings * self.impedance(key)) / middle * trim
@@ -1049,10 +1070,10 @@ impl Engine for Struck {
         let felt =
             10.0_f32.powf(2.0 * (settings.hardness - 0.5) + voiced) * FELT_PIVOT.powf(-shape);
         // A felt hammer's blow grows a little faster than its speed, and a key's velocity
-        // is asked for a little more than the speed: together they are the range of touch a
-        // piano has, half as wide again in decibels as an instrument that is simply louder.
+        // is asked for nearly the square of the speed: together they are the range of touch
+        // a piano has, twice as wide in decibels as an instrument that is simply louder.
         let speed = if piano {
-            dial(dials::SPEED, FULL_SPEED) * note.velocity.powf(dial(dials::SPEED_LAW, 1.45))
+            dial(dials::SPEED, GRAND_SPEED) * note.velocity.powf(dial(dials::SPEED_LAW, TOUCH))
         } else {
             FULL_SPEED * note.velocity
         };

@@ -180,14 +180,14 @@ sound goes on. Watching changes nothing that is heard.
 ## Measured against recordings
 
 The instruments are checked against recordings of real ones with the tools under `tools/eval`,
-which render through the code the application runs. These are what they read on 2026-11-10;
+which render through the code the application runs. These are what they read on 2026-11-11;
 smaller is closer.
 
 | Measure | Recorded | Reads | A model fitted to the same recordings |
 | --- | --- | --- | --- |
-| Piano, mel distance | Steinway B, C3–G4, 12 held-out notes | 0.167 | 0.152 |
-| Piano, partial decay and envelope | Steinway B, C1–C8 | 4.7 dB, 1.5 dB | 5.3 dB, 2.0 dB |
-| Piano, partial balance, register level, knock | the same | 5.2 dB, 1.9 dB, 5.2 dB | 4.3 dB, 1.7 dB, 3.4 dB |
+| Piano, mel distance | Steinway B, C3–G4, 12 held-out notes | 0.162 | 0.152 |
+| Piano, partial decay and envelope | Steinway B, C1–C8 | 4.8 dB, 1.5 dB | 5.4 dB, 2.0 dB |
+| Piano, partial balance, register level, knock | the same | 4.0 dB, 1.8 dB, 5.1 dB | 4.2 dB, 1.7 dB, 3.4 dB |
 | Guitar, mel distance | classical guitar, 44 held-out notes | 0.167, and 0.157 as Nylon guitar | 0.144 |
 | Strings, mel distance | solo violin, 39 held-out notes | 0.111 | 0.080 |
 | Reeds, mel distance | B♭ clarinet, held-out pitches | 0.043 | 0.054 |
@@ -201,6 +201,10 @@ distance over a note's first second, defined in `tools/eval/physical_mel.py`; it
 close a note is to one recording, not how it sounds. The recordings, what each measure
 compares and the commands behind every row are in
 [physical instruments against real recordings](physical-copy-synthesis.md).
+
+From C3 to G4 the piano's pianissimo lies 12.7 dB under its mezzo-forte and its fortissimo
+7.0 dB over, at velocities of 0.35, 0.65 and 0.95; the recorded Steinway's lie 13.3 dB under
+and 9.6 dB over.
 
 Key to key, a piano's notes are within 0.8 dB rms of the keys around them, and a guitar's and
 the strings' within 1.5 dB.
