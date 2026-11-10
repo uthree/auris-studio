@@ -5,7 +5,8 @@ use gpui::{Entity, VisualTestContext, point, size};
 #[test]
 fn frame_history_accepts_observed_motion_once_and_stays_bounded() {
     let mut view = PhysicalView::default();
-    for index in 0..20 {
+    let frames = PhysicalView::HISTORY_LIMIT + 8;
+    for index in 0..frames {
         let mut frame = MotionFrame {
             active: 1,
             ..Default::default()
@@ -201,16 +202,18 @@ fn open_model(
 #[gpui::test]
 fn every_physical_model_shows_its_bodies_in_every_direction(cx: &mut gpui::TestAppContext) {
     let (app, cx) = harness::open(cx);
+    // A physical instrument has its inside under its bodies; a kit, a choir and an oscillator
+    // have the picture that suits them instead.
     for (id, analysis) in [
         ("auris.physical.clarinet", false),
         ("auris.physical.guitar", false),
         ("auris.physical.electric_guitar", false),
         ("auris.physical.bass", false),
         ("auris.physical.violin", false),
-        ("auris.physical.piano", true),
-        ("auris.physical.bell", true),
-        ("auris.physical.mallet", true),
-        ("auris.physical.hammered_dulcimer", true),
+        ("auris.physical.piano", false),
+        ("auris.physical.bell", false),
+        ("auris.physical.mallet", false),
+        ("auris.physical.hammered_dulcimer", false),
         ("auris.physical.tin_whistle", false),
         ("auris.physical.choir", true),
         ("auris.synth.drumkit", true),
@@ -233,6 +236,16 @@ fn every_physical_model_shows_its_bodies_in_every_direction(cx: &mut gpui::TestA
         assert_eq!(
             utility.debug_bounds("physical-analysis").is_some(),
             analysis,
+            "{id}"
+        );
+        assert_eq!(
+            utility.debug_bounds("physical-resonance").is_some(),
+            !analysis,
+            "{id}"
+        );
+        assert_eq!(
+            utility.debug_bounds("physical-exciter").is_some(),
+            super::super::physical_stage::Exciter::of(id).is_some(),
             "{id}"
         );
     }
@@ -822,4 +835,72 @@ fn the_fm_and_chiptune_pictures_take_a_drag(cx: &mut gpui::TestAppContext) {
     let spread = param(&app, &mut utility, track, "spread");
     drag_plot(&app, &mut utility, "synth-chip-stack", (30., 0.), (40., 0.));
     assert!(param(&app, &mut utility, track, "spread") > spread);
+}
+
+#[gpui::test]
+fn the_inside_of_an_instrument_turns_and_changes_picture(cx: &mut gpui::TestAppContext) {
+    use super::super::physical_stage::Resonance;
+    let (app, cx) = harness::open(cx);
+    // A piano has a soundboard to look at, and opens on it.
+    let (_, mut utility) = open_model(&app, cx, "auris.physical.piano");
+    app.read_with(&utility, |app, _| {
+        assert_eq!(app.physical_view.resonance, Resonance::Body);
+    });
+    // Tall enough that the picture is on screen, under the bodies and the keys.
+    harness::resize(&app, &mut utility, size(px(1080.), px(1800.)));
+    let plot = utility.debug_bounds("physical-resonance-plot").unwrap();
+    let before = app.read_with(&utility, |app, _| app.physical_view.orbit);
+    // Dragging across the picture turns it, and it stays turned.
+    // The picture follows the pointer from the frame after the press, once it knows it is
+    // held.
+    utility.simulate_mouse_down(plot.center(), MouseButton::Left, gpui::Modifiers::default());
+    harness::paint(&app, &mut utility);
+    utility.simulate_mouse_move(
+        plot.center() + point(px(60.), px(-20.)),
+        MouseButton::Left,
+        gpui::Modifiers::default(),
+    );
+    harness::paint(&app, &mut utility);
+    utility.simulate_mouse_up(
+        plot.center() + point(px(60.), px(-20.)),
+        MouseButton::Left,
+        gpui::Modifiers::default(),
+    );
+    harness::paint(&app, &mut utility);
+    let after = app.read_with(&utility, |app, _| app.physical_view.orbit);
+    assert_ne!(before, after, "the drag did not turn the picture");
+    // Frames with partials in them are drawn in both pictures without complaint.
+    for resonance in [Resonance::Body, Resonance::Decay] {
+        app.update(&mut utility, |app, cx| {
+            app.physical_view.resonance = resonance;
+            for step in 0..4 {
+                let mut frame = MotionFrame {
+                    active: 1,
+                    ..Default::default()
+                };
+                frame.voices[0].pitch = 60.;
+                frame.voices[0].level = 0.5;
+                frame.voices[0].held = true;
+                frame.voices[0].partials[0] = 0.05 / (step + 1) as f32;
+                frame.voices[0].partials[1] = 0.02;
+                frame.voices[0].scope[4] = 0.6;
+                frame.body[0] = 0.01;
+                frame.body[1] = -0.004;
+                app.physical_view.accept_frame(frame);
+            }
+            cx.notify();
+        });
+        harness::paint(&app, &mut utility);
+        assert!(utility.debug_bounds("physical-resonance-plot").is_some());
+    }
+    // The choice and the angle outlive the window being pointed at another instrument.
+    let (_, utility) = open_model(&app, cx, "auris.physical.guitar");
+    app.read_with(&utility, |app, _| {
+        assert_eq!(app.physical_view.resonance, Resonance::Decay);
+        assert_eq!(app.physical_view.orbit, after);
+    });
+    // A pipe has no box: only its decay is there to turn, whatever was chosen.
+    let (_, mut utility) = open_model(&app, cx, "auris.physical.tin_whistle");
+    assert!(utility.debug_bounds("physical-resonance").is_some());
+    assert!(utility.debug_bounds("physical-exciter").is_some());
 }

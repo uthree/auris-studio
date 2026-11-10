@@ -1099,7 +1099,7 @@ mod tests {
                 "auris.synth.chiptune",
                 "auris.synth.fm2",
                 "auris.synth.noisedrum",
-                auris_synth::Clarinet::ID,
+                auris_synth::Model::Clarinet.id(),
             ][index % 4];
             let track = project.add_instrument_track(format!("Built-in {index}"), instrument);
             project.add_effect(Some(track), "auris.fx.eq");

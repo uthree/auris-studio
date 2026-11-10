@@ -3,7 +3,7 @@
 use std::sync::OnceLock;
 
 use auris_core::{Instrument, PluginState};
-use auris_synth::{Choir, Clarinet, DrumKit, HammeredDulcimer, Model, Physical, TinWhistle};
+use auris_synth::{Choir, DrumKit, Model, Physical};
 
 use super::SoundPreset;
 
@@ -70,35 +70,52 @@ pub fn factory_sound_families() -> &'static [SoundFamily] {
             family(
                 Physical::new(Model::Violin),
                 &[
-                    ("Violin", &[]),
+                    ("String section", &[]),
+                    (
+                        "Violin",
+                        &[("instrument", 1.0), ("players", 1.0), ("vibrato", 0.45)],
+                    ),
                     (
                         "Viola",
                         &[
-                            ("body", 0.72),
-                            ("damping", 0.42),
-                            ("bow_pressure", 0.38),
-                            ("bow_speed", 0.24),
-                            ("release", 0.18),
+                            ("instrument", 2.0),
+                            ("players", 1.0),
+                            ("vibrato", 0.4),
+                            ("bow_pressure", 0.45),
                         ],
                     ),
                     (
                         "Cello",
                         &[
-                            ("body", 0.85),
-                            ("damping", 0.5),
-                            ("bow_pressure", 0.42),
-                            ("bow_speed", 0.28),
+                            ("instrument", 3.0),
+                            ("players", 1.0),
+                            ("vibrato", 0.4),
+                            ("bow_pressure", 0.45),
                             ("release", 0.3),
                         ],
                     ),
                     (
                         "Contrabass",
                         &[
-                            ("body", 0.95),
-                            ("damping", 0.62),
-                            ("bow_pressure", 0.48),
-                            ("bow_speed", 0.32),
-                            ("release", 0.4),
+                            ("instrument", 4.0),
+                            ("players", 1.0),
+                            ("vibrato", 0.2),
+                            ("bow_pressure", 0.5),
+                            ("bow_response", 0.06),
+                            ("release", 0.35),
+                        ],
+                    ),
+                    (
+                        "Sul ponticello",
+                        &[("position", 0.045), ("bow_pressure", 0.6), ("players", 2.0)],
+                    ),
+                    (
+                        "Sul tasto",
+                        &[
+                            ("position", 0.2),
+                            ("bow_pressure", 0.25),
+                            ("bow_speed", 0.6),
+                            ("damping", 0.5),
                         ],
                     ),
                 ],
@@ -109,22 +126,10 @@ pub fn factory_sound_families() -> &'static [SoundFamily] {
                     ("Grand piano", &[]),
                     (
                         "Felt piano",
-                        &[
-                            ("hardness", 0.2),
-                            ("damping", 0.25),
-                            ("decay", 5.0),
-                            ("body", 0.8),
-                        ],
+                        &[("hardness", 0.15), ("damping", 0.2), ("sympathetic", 0.4)],
                     ),
-                    (
-                        "Bright piano",
-                        &[
-                            ("hardness", 0.9),
-                            ("position", 0.12),
-                            ("damping", 0.03),
-                            ("body", 0.5),
-                        ],
-                    ),
+                    ("Bright piano", &[("hardness", 0.9), ("position", 0.1)]),
+                    ("Honky-tonk piano", &[("detune", 7.0), ("hardness", 0.6)]),
                 ],
             ),
             family(
@@ -133,11 +138,15 @@ pub fn factory_sound_families() -> &'static [SoundFamily] {
                     ("Acoustic guitar", &[]),
                     (
                         "Nylon guitar",
+                        &[("hardness", 0.06), ("position", 0.28), ("damping", 0.12)],
+                    ),
+                    (
+                        "Steel guitar",
                         &[
-                            ("hardness", 0.12),
-                            ("position", 0.35),
-                            ("damping", 0.18),
-                            ("body", 0.8),
+                            ("hardness", 0.45),
+                            ("position", 0.22),
+                            ("decay", 5.5),
+                            ("damping", 0.08),
                         ],
                     ),
                     (
@@ -149,6 +158,7 @@ pub fn factory_sound_families() -> &'static [SoundFamily] {
                             ("release", 0.06),
                         ],
                     ),
+                    ("Piezo guitar", &[("pickup", 1.0)]),
                 ],
             ),
             family(
@@ -190,6 +200,10 @@ pub fn factory_sound_families() -> &'static [SoundFamily] {
                             ("release", 0.06),
                         ],
                     ),
+                    (
+                        "Upright bass",
+                        &[("body", 1.0), ("hardness", 0.3), ("position", 0.25)],
+                    ),
                 ],
             ),
             family(
@@ -200,16 +214,27 @@ pub fn factory_sound_families() -> &'static [SoundFamily] {
                         "Soft bell",
                         &[("hardness", 0.15), ("damping", 0.35), ("decay", 3.0)],
                     ),
+                    ("Bright bell", &[("hardness", 0.95), ("damping", 0.05)]),
+                    ("Tubular bells", &[("bell", 1.0)]),
+                    ("Handbell", &[("bell", 2.0), ("decay", 4.0)]),
                     (
-                        "Bright bell",
-                        &[("hardness", 0.95), ("damping", 0.05), ("decay", 8.0)],
+                        "Singing bowl",
+                        &[("bell", 3.0), ("hardness", 0.3), ("decay", 14.0)],
                     ),
                 ],
             ),
             family(
                 Physical::new(Model::Mallet),
                 &[
-                    ("Rounded mallet", &[]),
+                    ("Marimba", &[]),
+                    ("Vibraphone", &[("bar", 1.0), ("tremolo", 0.3)]),
+                    ("Xylophone", &[("bar", 2.0), ("hardness", 0.7)]),
+                    ("Glockenspiel", &[("bar", 3.0), ("hardness", 0.8)]),
+                    ("Kalimba", &[("bar", 4.0), ("hardness", 0.5), ("body", 0.6)]),
+                    (
+                        "Music box",
+                        &[("bar", 4.0), ("hardness", 0.85), ("body", 0.2)],
+                    ),
                     (
                         "Hard mallet",
                         &[("hardness", 0.9), ("decay", 0.8), ("damping", 0.2)],
@@ -221,13 +246,13 @@ pub fn factory_sound_families() -> &'static [SoundFamily] {
                 ],
             ),
             family(
-                Clarinet::new(),
+                Physical::new(Model::Clarinet),
                 &[
                     ("Clarinet", &[]),
                     (
                         "Soft clarinet",
                         &[
-                            ("pressure", 0.4),
+                            ("pressure", 0.3),
                             ("reed_stiffness", 0.32),
                             ("breath_noise", 0.07),
                             ("attack", 0.12),
@@ -245,14 +270,14 @@ pub fn factory_sound_families() -> &'static [SoundFamily] {
                 ],
             ),
             family(
-                HammeredDulcimer::new(),
+                Physical::new(Model::HammeredDulcimer),
                 &[
                     ("Hammered dulcimer", &[]),
                     (
                         "Bright dulcimer",
                         &[
                             ("hardness", 0.75),
-                            ("position", 0.12),
+                            ("position", 0.1),
                             ("damping", 0.08),
                             ("detune", 2.0),
                         ],
@@ -269,7 +294,7 @@ pub fn factory_sound_families() -> &'static [SoundFamily] {
                 ],
             ),
             family(
-                TinWhistle::new(),
+                Physical::new(Model::TinWhistle),
                 &[
                     ("Tin whistle", &[]),
                     (
@@ -289,6 +314,7 @@ pub fn factory_sound_families() -> &'static [SoundFamily] {
                             ("breath_noise", 0.32),
                         ],
                     ),
+                    ("Recorder", &[("jet_shape", 0.12), ("breath_noise", 0.06)]),
                 ],
             ),
             family(

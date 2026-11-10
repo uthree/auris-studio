@@ -181,6 +181,7 @@ const PLUGIN_NAMES: &[(&str, &str)] = &[
     ("Bright piano", "ブライトピアノ"),
     ("Acoustic guitar", "アコースティックギター"),
     ("Nylon guitar", "ナイロンギター"),
+    ("Steel guitar", "スチール弦ギター"),
     ("Muted guitar", "ミュートギター"),
     ("Clean electric guitar", "クリーンエレキギター"),
     ("Warm electric guitar", "ウォームエレキギター"),
@@ -191,7 +192,22 @@ const PLUGIN_NAMES: &[(&str, &str)] = &[
     ("Classic bell", "クラシックベル"),
     ("Soft bell", "ソフトベル"),
     ("Bright bell", "ブライトベル"),
-    ("Rounded mallet", "ラウンドマレット"),
+    ("String section", "ストリングスセクション"),
+    ("Sul ponticello", "スル・ポンティチェロ"),
+    ("Sul tasto", "スル・タスト"),
+    ("Honky-tonk piano", "ホンキートンクピアノ"),
+    ("Piezo guitar", "ピエゾギター"),
+    ("Upright bass", "アップライトベース"),
+    ("Tubular bells", "チューブラーベル"),
+    ("Handbell", "ハンドベル"),
+    ("Singing bowl", "シンギングボウル"),
+    ("Marimba", "マリンバ"),
+    ("Vibraphone", "ビブラフォン"),
+    ("Xylophone", "シロフォン"),
+    ("Glockenspiel", "グロッケンシュピール"),
+    ("Kalimba", "カリンバ"),
+    ("Music box", "オルゴール"),
+    ("Recorder", "リコーダー"),
     ("Hard mallet", "ハードマレット"),
     ("Muted mallet", "ミュートマレット"),
     ("Clarinet", "クラリネット"),
@@ -248,8 +264,44 @@ const PLUGIN_NAMES: &[(&str, &str)] = &[
 /// Japanese versions of the one-line descriptions shown in the plugin browser.
 const PLUGIN_DESCRIPTIONS: &[(&str, &str)] = &[
     (
-        "Bowed strings: nonlinear friction, bow pressure, position and body",
-        "弓で弦を擦るストリングス音源。弓の圧力、位置、胴の共鳴を調整",
+        "Bowed strings: stick-slip friction, a section of players, their bodies",
+        "弓と弦の摩擦で鳴らす弦楽器。奏者の人数、弓圧と位置、楽器ごとの胴を再現",
+    ),
+    (
+        "Felt hammers on bridge-coupled unison strings, with dampers and a soundboard",
+        "フェルトのハンマーで駒を共有する複弦を叩くピアノ。ダンパー、共鳴弦、響板を再現",
+    ),
+    (
+        "Light hammers on courses of strings over a shallow box",
+        "軽いハンマーで複弦を叩く打弦楽器。浅い箱の胴と弦同士のうなりを再現",
+    ),
+    (
+        "Plucked strings in two polarisations on a resonant body",
+        "弦をはじくギター。弦の二方向の振動と、胴の共鳴を再現",
+    ),
+    (
+        "Steel strings under a magnetic pickup, before the amplifier",
+        "マグネットピックアップで拾うスチール弦。アンプに入る前の素の信号",
+    ),
+    (
+        "Plucked bass strings under a pickup or on an upright's body",
+        "弦をはじくベース。ピックアップの音とアップライトの胴の音を切り替え可能",
+    ),
+    (
+        "Tuned bars over resonator tubes, struck with a mallet",
+        "共鳴管の上に並べた音板をマレットで叩く鍵盤打楽器。マリンバからオルゴールまで",
+    ),
+    (
+        "Struck shells and tubes: paired modes that beat as they ring",
+        "鐘や管を叩くベル。対になった振動がうなりながら鳴り続ける様子を再現",
+    ),
+    (
+        "A reed valve on a cylinder of air, closed at the reed",
+        "リードの弁と円筒の気柱で鳴らすクラリネット系の管楽器",
+    ),
+    (
+        "An air jet across the window of an open pipe",
+        "開いた管の歌口を横切る空気ジェットで鳴らす笛",
     ),
     (
         "Hammer-excited coupled string courses with passive bridge coupling",
@@ -559,6 +611,17 @@ const PARAMETERS: &[(&str, &str)] = &[
     ("LP Gain", "LP ゲイン"),
     ("LP On", "LP 有効"),
     ("LP Q", "LP Q"),
+    ("Bar", "音板の種類"),
+    ("Bell", "ベルの種類"),
+    ("Bow Position", "弓の位置"),
+    ("Instrument", "楽器"),
+    ("Players", "奏者の人数"),
+    ("Resonator Tubes", "共鳴管"),
+    ("Sympathetic Resonance", "共鳴弦の響き"),
+    ("Tremolo", "トレモロ"),
+    ("Tremolo Rate", "トレモロ速度"),
+    ("Unison Detune", "ユニゾンの調律差"),
+    ("Warble", "うなり"),
 ];
 
 /// The short names the progression pickers show, keyed on the catalogue's own name.
@@ -781,6 +844,20 @@ const CHOICES: &[(&str, &str)] = &[
     ("1/8", "1/8"),
     ("1/8T", "1/8T"),
     ("1/16", "1/16"),
+    ("Section", "セクション"),
+    ("Violin", "バイオリン"),
+    ("Viola", "ビオラ"),
+    ("Cello", "チェロ"),
+    ("Contrabass", "コントラバス"),
+    ("Marimba", "マリンバ"),
+    ("Vibraphone", "ビブラフォン"),
+    ("Xylophone", "シロフォン"),
+    ("Glockenspiel", "グロッケンシュピール"),
+    ("Tine", "タイン（金属の舌）"),
+    ("Cast bell", "鋳造ベル"),
+    ("Tubular bell", "チューブラーベル"),
+    ("Handbell", "ハンドベル"),
+    ("Singing bowl", "シンギングボウル"),
 ];
 
 #[cfg(test)]

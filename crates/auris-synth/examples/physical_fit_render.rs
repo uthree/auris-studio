@@ -10,10 +10,7 @@ use std::{
 };
 
 use auris_core::{AudioBuffer, Effect, Instrument, NoteEvent, PrepareContext, ProcessContext};
-use auris_synth::{
-    Chiptune, Choir, Clarinet, DrumKit, Fm2, HammeredDulcimer, Model, NoiseDrum, Physical,
-    TinWhistle, Vocal,
-};
+use auris_synth::{Chiptune, Choir, DrumKit, Fm2, Model, NoiseDrum, Physical, Vocal};
 use serde::Deserialize;
 
 const RATE: u32 = 24_000;
@@ -70,8 +67,9 @@ struct Request {
     inputs: Vec<std::path::PathBuf>,
     #[serde(default)]
     choir_calibration: Option<ChoirCalibration>,
+    /// Voicing dials of the physical instruments, by number.
     #[serde(default)]
-    piano_voicing: Option<serde_json::Value>,
+    dials: BTreeMap<usize, f32>,
 }
 
 #[derive(Deserialize)]
@@ -103,6 +101,20 @@ fn render(request: &Request) -> Result<Vec<f32>, Box<dyn Error>> {
 }
 
 fn render_blocks(request: &Request, block: usize) -> Result<Vec<f32>, Box<dyn Error>> {
+    #[cfg(feature = "physical-calibration")]
+    {
+        auris_synth::physical::calibration::clear();
+        for (index, value) in &request.dials {
+            if !value.is_finite() || *index >= auris_synth::physical::calibration::DIALS {
+                return Err("invalid dial".into());
+            }
+            auris_synth::physical::calibration::set(*index, Some(*value));
+        }
+    }
+    #[cfg(not(feature = "physical-calibration"))]
+    if !request.dials.is_empty() {
+        return Err("physical-calibration feature is required".into());
+    }
     let mut instrument: Box<dyn Instrument> = if request.model == "choir" {
         #[cfg(feature = "choir-calibration")]
         let mut choir = Choir::new();
@@ -132,11 +144,7 @@ fn render_blocks(request: &Request, block: usize) -> Result<Vec<f32>, Box<dyn Er
         if request.choir_calibration.is_some() {
             return Err("tract calibration requires the choir model".into());
         }
-        match &request.piano_voicing {
-            Some(voicing) if request.model == "piano" => voiced_piano(voicing)?,
-            Some(_) => return Err("piano voicing requires the piano model".into()),
-            None => instrument(&request.model)?,
-        }
+        instrument(&request.model)?
     };
     if !request.seconds.is_finite()
         || !(0.05..=20.0).contains(&request.seconds)
@@ -287,21 +295,6 @@ fn render_blocks(request: &Request, block: usize) -> Result<Vec<f32>, Box<dyn Er
     Ok(samples)
 }
 
-fn voiced_piano(voicing: &serde_json::Value) -> Result<Box<dyn Instrument>, Box<dyn Error>> {
-    #[cfg(feature = "piano-calibration")]
-    {
-        let voicing: auris_synth::PianoVoicing = serde_json::from_value(voicing.clone())?;
-        let mut piano = Physical::new(Model::Piano);
-        piano.set_piano_voicing(voicing);
-        Ok(Box::new(piano))
-    }
-    #[cfg(not(feature = "piano-calibration"))]
-    {
-        let _ = voicing;
-        Err("piano-calibration feature is required".into())
-    }
-}
-
 fn instrument(name: &str) -> Result<Box<dyn Instrument>, Box<dyn Error>> {
     let model = match name {
         "chiptune" => return Ok(Box::new(Chiptune::new())),
@@ -309,18 +302,12 @@ fn instrument(name: &str) -> Result<Box<dyn Instrument>, Box<dyn Error>> {
         "vocal" => return Ok(Box::new(Vocal::new())),
         "noisedrum" => return Ok(Box::new(NoiseDrum::new())),
         "choir" => return Ok(Box::new(Choir::new())),
-        "clarinet" => return Ok(Box::new(Clarinet::new())),
-        "hammered_dulcimer" => return Ok(Box::new(HammeredDulcimer::new())),
-        "tin_whistle" => return Ok(Box::new(TinWhistle::new())),
-        "piano" => Model::Piano,
-        "guitar" => Model::Guitar,
-        "electric_guitar" => Model::ElectricGuitar,
-        "violin" => Model::Violin,
-        "bass" => Model::Bass,
-        "bell" => Model::Bell,
-        "mallet" => Model::Mallet,
         "drums" => return Ok(Box::new(DrumKit::new())),
-        _ => return Err("unknown model".into()),
+        // A physical instrument goes by the last part of its plugin id.
+        name => Model::ALL
+            .into_iter()
+            .find(|model| model.id().rsplit('.').next() == Some(name))
+            .ok_or("unknown model")?,
     };
     Ok(Box::new(Physical::new(model)))
 }
@@ -356,21 +343,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             Ok((name, parameters))
         })
         .collect::<Result<_, _>>()?;
-        let mut description = serde_json::to_value(&models)?;
-        let response_fraction = if description["violin"].get("bow_response").is_some() {
-            0.5
-        } else {
-            0.0
-        };
-        description["_performance"] = serde_json::json!({
-            "expression_response_fraction": response_fraction,
-            "expression_exponent": Model::Violin.expression_exponent()
-        });
-        description["_radiation"] = serde_json::json!({
-            "piano": Model::Piano.radiation_modes(),
-            "guitar": Model::Guitar.radiation_modes(),
-            "violin": Model::Violin.radiation_modes()
-        });
+        let description = serde_json::to_value(&models)?;
         println!("{}", serde_json::to_string(&description)?);
         return Ok(());
     }
@@ -477,6 +450,7 @@ mod tests {
             effects: Vec::new(),
             inputs: Vec::new(),
             choir_calibration: None,
+            dials: BTreeMap::new(),
         };
         for model in [
             "piano",
@@ -526,6 +500,7 @@ mod tests {
             effects: Vec::new(),
             inputs: Vec::new(),
             choir_calibration: None,
+            dials: BTreeMap::new(),
         };
         assert!(
             render(&request)
@@ -561,6 +536,7 @@ mod tests {
             effects: Vec::new(),
             inputs: Vec::new(),
             choir_calibration: None,
+            dials: BTreeMap::new(),
         };
         assert_eq!(render(&request).unwrap().len(), 6000);
         request.sample_rate = 1;
