@@ -213,22 +213,17 @@ def top_line(notes: list[dict]) -> list[dict]:
 
 
 def lines_of(project: dict, track: dict) -> list[Line]:
-    """Cut the foreground into lines: lyric annotation lines, else clips split at rests."""
+    """Cut the foreground into lines: at lyric annotation lines, clip boundaries and rests.
+
+    An annotation laid over a whole clip names a section, not a line, so the rests inside it
+    still cut.
+    """
     clips = list(active_clips(track))
     end = max((clip["start"] + clip["length"] for clip in clips), default=0)
-    lyric_points = project.get("lyrics", {}).get("points") or []
-    lyric_spans = spans(lyric_points, "text", end)
-    notes = top_line([note for clip in clips for note in clip_notes(clip)])
-    if lyric_spans and track.get("kind", {}).get("type") == "singer":
-        lines = []
-        covered = 0
-        for start, stop, _ in lyric_spans:
-            inside = [note for note in notes if start <= note["at"] < stop]
-            covered += len(inside)
-            if inside:
-                lines.append(Line(start=inside[0]["at"], notes=inside))
-        if notes and covered == len(notes):
-            return lines
+    annotated: list[int] = []
+    if track.get("kind", {}).get("type") == "singer":
+        lyric_points = project.get("lyrics", {}).get("points") or []
+        annotated = [start for start, _, _ in spans(lyric_points, "text", end)]
     lines = []
     for clip in sorted(clips, key=lambda clip: clip["start"]):
         current: list[dict] = []
@@ -236,7 +231,10 @@ def lines_of(project: dict, track: dict) -> list[Line]:
             if current:
                 previous = current[-1]
                 gap = note["at"] - (previous["at"] + previous["length"])
-                if gap >= PARAMETERS["line_gap_ticks"]:
+                next_line = any(
+                    previous["at"] < start <= note["at"] for start in annotated
+                )
+                if gap >= PARAMETERS["line_gap_ticks"] or next_line:
                     lines.append(Line(start=current[0]["at"], notes=current))
                     current = []
             current.append(note)

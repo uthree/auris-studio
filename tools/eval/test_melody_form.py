@@ -186,13 +186,19 @@ def test_strum_spread_is_read_per_chord_and_extremes_are_flagged() -> None:
     assert "unstrummed_chords" in flag_codes(none)
 
 
-def test_lines_follow_the_lyric_annotation_and_otherwise_split_at_rests() -> None:
+def test_lines_are_cut_at_rests_and_at_lyric_annotation_lines() -> None:
     first = [note(i * BEAT, pitch=60 + i) for i in range(4)]
     second = [note(BAR + 2 * BEAT + i * BEAT, pitch=67 - i) for i in range(4)]
     one_clip = singer([(0, first + second)])
     assert len(measure(song([one_clip]))["lines"]) == 2
-    annotated = song([one_clip], lyrics=[(0, "ひとつのぎょう"), (3 * BAR, None)])
-    assert len(measure(annotated)["lines"]) == 1
+    # An annotation laid over the whole clip does not hide the rest between its phrases.
+    whole = song([one_clip], lyrics=[(0, "ふたつのぎょう"), (3 * BAR, None)])
+    assert len(measure(whole)["lines"]) == 2
+    # Annotated lines are cut apart where no rest separates them.
+    legato = singer([(0, [note(i * BEAT, pitch=60 + i % 5) for i in range(8)])])
+    assert len(measure(song([legato]))["lines"]) == 1
+    two = song([legato], lyrics=[(0, "いち"), (BAR, "に"), (2 * BAR, None)])
+    assert len(measure(two)["lines"]) == 2
 
 
 def test_contours_follow_first_middle_and_last_pitch() -> None:

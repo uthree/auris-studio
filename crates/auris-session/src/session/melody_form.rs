@@ -25,7 +25,7 @@ pub const UNIFORM_SPACING_COUNT: usize = 50;
 pub const PREDICTABLE_BITS: f64 = 1.0;
 /// Lines a section other than a chorus must hold before singing an earlier section's lines
 /// again, note for note, is reported: a second verse copied from the first. One is enough, since
-/// a lyric annotation may make a whole verse one line. A chorus repeats by design.
+/// a verse sung without a beat of rest is one line. A chorus repeats by design.
 pub const RESTATED_SECTION_LINES: usize = 1;
 /// Longest context the short-term model predicts from, in notes.
 const PPM_ORDER: usize = 4;
@@ -60,49 +60,35 @@ fn melody_notes(project: &Project, track: TrackId) -> Vec<(Ticks, Ticks, i32)> {
         .collect()
 }
 
-/// The foreground cut into lines: the song-wide lyric annotation when it covers every note,
-/// otherwise at rests of a beat or more.
+/// The foreground cut into lines: at each line of the song-wide lyric annotation, and at every
+/// rest of a beat or more. An annotation laid over a whole clip names a section, not a line, so
+/// the rests inside it still cut.
 fn lines_of(project: &Project, track: TrackId) -> Vec<Line> {
     let notes = melody_notes(project, track);
     let Some(last) = notes.last() else {
         return Vec::new();
     };
     let end = last.0 + last.1 + Ticks(1);
-    let spans = project.lyrics.spans_in(Ticks::ZERO, end);
-    if !spans.is_empty() {
-        let lines: Vec<Line> = spans
-            .iter()
-            .map(|span| Line {
-                start: span.start,
-                notes: notes
-                    .iter()
-                    .copied()
-                    .filter(|(at, _, _)| *at >= span.start && *at < span.end)
-                    .collect(),
-            })
-            .filter(|line| !line.notes.is_empty())
-            .collect();
-        let covered: usize = lines.iter().map(|line| line.notes.len()).sum();
-        if covered == notes.len() {
-            return lines
-                .into_iter()
-                .map(|line| Line {
-                    start: line.notes[0].0,
-                    notes: line.notes,
-                })
-                .collect();
-        }
-    }
+    let annotated: Vec<Ticks> = project
+        .lyrics
+        .spans_in(Ticks::ZERO, end)
+        .iter()
+        .map(|span| span.start)
+        .collect();
     let mut lines = Vec::new();
     let mut current: Vec<(Ticks, Ticks, i32)> = Vec::new();
     for note in notes {
-        if let Some(previous) = current.last()
-            && note.0 - (previous.0 + previous.1) >= Ticks::QUARTER
-        {
-            lines.push(Line {
-                start: current[0].0,
-                notes: std::mem::take(&mut current),
-            });
+        if let Some(previous) = current.last() {
+            let rested = note.0 - (previous.0 + previous.1) >= Ticks::QUARTER;
+            let next_line = annotated
+                .iter()
+                .any(|start| *start > previous.0 && *start <= note.0);
+            if rested || next_line {
+                lines.push(Line {
+                    start: current[0].0,
+                    notes: std::mem::take(&mut current),
+                });
+            }
         }
         current.push(note);
     }
@@ -380,7 +366,7 @@ fn form(project: &Project, track: TrackId) -> (Value, Vec<String>, Vec<String>) 
             "syncopated_notes": syncopated,
             "tonic_endings": tonic_endings,
             "per_line": rows,
-            "note": "Lines follow the song-wide lyric annotation, else rests of a beat. Letters: same onsets and pitches share one; same onsets under other pitches add a prime. bits_per_note is a short-term model that learns only from this song: an exact repeat falls towards zero.",
+            "note": "Lines are cut at the lines of the song-wide lyric annotation and at rests of a beat. Letters: same onsets and pitches share one; same onsets under other pitches add a prime. bits_per_note is a short-term model that learns only from this song: an exact repeat falls towards zero.",
         }),
         warnings,
         development,
@@ -484,6 +470,41 @@ mod tests {
                 .iter()
                 .all(|w| !w.contains("tonic") && !w.contains("pitches"))
         );
+    }
+
+    #[test]
+    fn an_annotation_laid_over_a_whole_verse_does_not_hide_its_lines() {
+        let (mut project, track) = song(8, template);
+        // One annotation for all eight lines, as a composer annotating clip by clip writes it.
+        project
+            .lyrics
+            .write_line(Ticks::ZERO, Ticks(BAR * 32), "eight lines of words");
+        let (form, warnings) = melody_form(&project, track);
+        assert_eq!(form["lines"], 8);
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains("All 8 lines enter at the same point")),
+            "{warnings:?}"
+        );
+    }
+
+    #[test]
+    fn annotated_lines_are_cut_apart_where_no_rest_separates_them() {
+        // Sixteen quarter notes sung through four bars without a rest.
+        let (mut project, track) = song(1, |_| {
+            (0..16)
+                .map(|i| Note::new(60 + (i % 5) as u8, Ticks(960 * i), Ticks(960)))
+                .collect()
+        });
+        assert_eq!(melody_form(&project, track).0["lines"], 1);
+        project
+            .lyrics
+            .write_line(Ticks::ZERO, Ticks(BAR * 2), "first line");
+        project
+            .lyrics
+            .write_line(Ticks(BAR * 2), Ticks(BAR * 4), "second line");
+        assert_eq!(melody_form(&project, track).0["lines"], 2);
     }
 
     #[test]

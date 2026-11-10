@@ -153,8 +153,8 @@ uv run tools/eval/melody_form.py MySong/MySong.auris --json form.json
 uv run tools/eval/melody_form.py runs/ --track Vocal
 ```
 
-Cuts the foreground (the first singer track, or `--track`) into lines at the song-wide lyric
-annotation, otherwise at clip boundaries and rests of a beat or more. Each line gets a letter
+Cuts the foreground (the first singer track, or `--track`) into lines at the lines of the song-wide
+lyric annotation, at clip boundaries and at rests of a beat or more. Each line gets a letter
 in its section's form (the same onsets and pitches share a letter; the same onsets under other
 pitches add a prime), the beat it enters on and whether that is a pickup, its syncopated and
 anticipated notes, the spacing of its onsets, the scale degree and chord it ends on, Huron's

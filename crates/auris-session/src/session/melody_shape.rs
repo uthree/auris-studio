@@ -24,12 +24,22 @@ pub const MIN_PEAK_LIFT: i32 = 2;
 /// An interval this wide or wider, in semitones, counts as a leap: a perfect fourth.
 pub const LEAP: i32 = 5;
 
-/// Whether a section label names a chorus, in the words composers actually use.
+/// Whether a section label names a chorus, in the words composers actually use. A pre-chorus
+/// or a post-chorus leads into one or away from it and is not one, however it is spelled:
+/// `Pre-chorus 1`, `PreChorus2`, `プリサビ`.
 pub fn is_chorus(label: &str) -> bool {
-    let label = label.to_lowercase();
-    ["サビ", "chorus", "hook", "refrain"]
-        .iter()
-        .any(|word| label.contains(word))
+    let label: String = label
+        .to_lowercase()
+        .chars()
+        .filter(|c| !c.is_whitespace() && !"-_‐・".contains(*c))
+        .collect();
+    ["サビ", "chorus", "hook", "refrain"].iter().any(|word| {
+        label.match_indices(word).any(|(at, _)| {
+            !["pre", "post", "プリ", "プレ", "ポスト"]
+                .iter()
+                .any(|prefix| label[..at].ends_with(prefix))
+        })
+    })
 }
 
 struct Section {
@@ -291,6 +301,50 @@ mod tests {
         assert!(warnings[1].as_str().unwrap().contains("only by step"));
         assert_eq!(report["chorus_lifts"][0]["mean_lift_semitones"], 1.5);
         assert_eq!(report["chorus_lifts"][0]["peak_lift_semitones"], 2);
+    }
+
+    #[test]
+    fn a_pre_chorus_is_not_a_chorus_however_it_is_spelled() {
+        for label in [
+            "Pre-chorus 1",
+            "PreChorus2",
+            "pre chorus",
+            "Post-Chorus",
+            "プリサビ",
+        ] {
+            assert!(!is_chorus(label), "{label}");
+        }
+        for label in [
+            "Chorus 1",
+            "Final Chorus",
+            "サビ2",
+            "落ちサビ",
+            "ラストサビ",
+            "Hook",
+        ] {
+            assert!(is_chorus(label), "{label}");
+        }
+    }
+
+    #[test]
+    fn a_chorus_is_judged_against_a_pre_chorus_named_in_english() {
+        let (mut project, track) = song(&[64, 65, 67, 65], &[65, 67, 69, 66]);
+        let bar = Ticks::QUARTER * 4;
+        project
+            .sections
+            .set_point(bar * 8, Some("Pre-chorus 1".into()));
+        project.sections.set_point(bar * 9, Some("Chorus 1".into()));
+        let report = melody_shape(&project, track).unwrap();
+        assert_eq!(report["chorus_lifts"].as_array().unwrap().len(), 1);
+        assert_eq!(report["chorus_lifts"][0]["chorus"], "Chorus 1");
+        assert_eq!(report["chorus_lifts"][0]["after"], "Pre-chorus 1");
+        let warnings = report["warnings"].as_array().unwrap();
+        assert!(
+            warnings
+                .iter()
+                .all(|w| !w.as_str().unwrap().starts_with("Pre-chorus")),
+            "{warnings:?}"
+        );
     }
 
     #[test]
