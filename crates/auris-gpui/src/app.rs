@@ -2696,7 +2696,7 @@ impl AurisApp {
     pub(crate) fn reveal_playhead(&mut self) {
         let playhead = self.playhead_ticks();
         let width = self.arrangement_width;
-        crate::ui::timeline::return_to_playhead(
+        crate::ui::timeline::jump_to_playhead(
             &mut self.playhead_follow,
             &mut self.timeline,
             playhead,

@@ -181,7 +181,7 @@ pub fn follow_playhead(
 }
 
 /// Puts the playhead back in view, a page turn's lead inside the left edge, and follows again.
-pub fn return_to_playhead(
+pub fn jump_to_playhead(
     follow: &mut Follow,
     view: &mut TimelineView,
     playhead: Ticks,
@@ -359,7 +359,7 @@ mod tests {
             "and kept on the next frame too"
         );
 
-        return_to_playhead(&mut follow, &mut view, Ticks(14 * beat), px(480.0));
+        jump_to_playhead(&mut follow, &mut view, Ticks(14 * beat), px(480.0));
         assert!(!follow.is_released());
         assert!(shows(&view, 14 * beat));
         frame(&mut follow, &mut view, 14 * beat);
