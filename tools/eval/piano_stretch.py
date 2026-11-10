@@ -20,6 +20,8 @@ four such pairs, the 2:1, 4:2, 6:3 and 8:4: the bass is tuned on the last two.
 
 Each string's stiffness is read as well, off the line its partials make, with where that line
 puts the first partial: a recorded bass note's fundamental lies under its own string's line.
+With --recorded the stiffness of every recorded string is listed beside the worker's at the
+same key, which is what the instrument's own table of stiffness is drawn through.
 """
 
 import argparse
@@ -39,6 +41,7 @@ SECONDS = 2.5
 KEYS = (("A0", 21), ("B0", 23), ("C1", 24), ("A1", 33), ("C2", 36), ("A2", 45), ("C3", 48),
         ("C4", 60), ("A4", 69), ("C5", 72), ("C6", 84), ("C7", 96), ("C8", 108))
 TOP = 108
+NAMES = ("C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B")
 # The pairs of partials an octave is read on, by the lower note's partial.
 OCTAVES = (("octave_2_1", 2), ("octave_4_2", 4), ("octave_6_3", 6), ("octave_8_4", 8))
 # The stretches of a note that are read, in seconds from its strike: its partials once the
@@ -67,6 +70,10 @@ HEARD_TOLERANCE = 1.0
 
 def hz(pitch):
     return 440.0 * 2 ** ((pitch - 69) / 12)
+
+
+def name(pitch):
+    return f"{NAMES[pitch % 12]}{pitch // 12 - 1}"
 
 
 def channels(audio):
@@ -223,10 +230,12 @@ class Note:
         return reading if reading is not None and reading.clear > NOISE_DB else None
 
     def string(self, pitch):
-        """The string of this note at `pitch`, or `None` where fewer than three partials show.
+        """The string of this note at `pitch`, or `None` where fewer than two partials show.
 
         Each partial is looked for where the ones below it say it will be, no further off than
         two fifths of the way to the next. The line is then drawn through those that lie on it.
+        Two partials are a line with nothing to check it by: the top of a recorded piano shows
+        no more, and its stiffness is good to a third there.
         """
         numbers, hertz = [], []
         stiffness, limp = 0.0, hz(pitch)
@@ -242,7 +251,7 @@ class Note:
             if len(numbers) >= 3:
                 stiffness, limp = line(np.array(numbers), np.array(hertz))
                 stiffness = max(stiffness, 0.0)
-        if len(numbers) < 3:
+        if len(numbers) < 2:
             return None
         numbers, hertz = np.array(numbers), np.array(hertz)
 
@@ -313,9 +322,21 @@ def onto_its_own_a4(rows):
     return a4
 
 
-def played(renderer, rate=RATE):
-    """The worker's factory piano at every key `measure` reads, by pitch."""
-    pitches = sorted({pitch for _, pitch in KEYS} | {pitch + 12 for _, pitch in KEYS if pitch + 12 <= TOP})
+def strings(ours, theirs):
+    """The stiffness of every string of `theirs` beside that of `ours` at the same key."""
+    listed = []
+    for pitch in sorted(theirs):
+        own, other = ours[pitch].string(pitch), theirs[pitch].string(pitch)
+        listed.append({"key": name(pitch), "pitch": pitch, "model": own.stiffness if own else None,
+                       "recorded": other.stiffness if other else None,
+                       "recorded_partials": other.partials[0] if other else None})
+    return listed
+
+
+def played(renderer, pitches=None, rate=RATE):
+    """The worker's factory piano at `pitches`, or at every key `measure` reads, by pitch."""
+    if pitches is None:
+        pitches = sorted({pitch for _, pitch in KEYS} | {pitch + 12 for _, pitch in KEYS if pitch + 12 <= TOP})
     notes = [{"pitch": pitch, "velocity": VELOCITY} for pitch in pitches]
     audio = renderer.render("piano", notes, {}, SECONDS, SECONDS, rate=rate)
     return {pitch: Note(samples, rate) for pitch, samples in zip(pitches, audio, strict=True)}
@@ -366,6 +387,8 @@ def main():
     renderer = Renderer(args.renderer.resolve())
     try:
         rows = measure(played(renderer))
+        theirs = recorded(args.recorded) if args.recorded else {}
+        listed = strings(played(renderer, sorted(theirs)), theirs) if theirs else []
     finally:
         renderer.close()
     missing = [row["key"] for row in rows if row["fundamental"] is None]
@@ -384,13 +407,18 @@ def main():
               "model": {"renderer_sha256": register.digest(args.renderer), "keys": rows}}
     table("Worker, from equal temperament at A4 = 440 Hz", rows)
     if args.recorded:
-        rows = measure(recorded(args.recorded))
+        rows = measure(theirs)
         a4 = onto_its_own_a4(rows)
         lock = json.loads(LOCK.read_text(encoding="utf-8"))
         report["recorded"] = {"source": lock["source"], "a4_cents_from_440": a4,
                               "references": {capture["path"]: capture["sha256"] for capture in lock["captures"]},
                               "keys": rows}
+        report["strings"] = listed
         table(f"\nRecorded, from equal temperament on its own A4 ({a4:+.1f} cents from 440 Hz)", rows)
+        print("\nStiffness of every recorded string, e-4: worker / recorded (partials it is read from)")
+        for each in listed:
+            cells = ["-" if each[side] is None else f"{each[side] * 1e4:.2f}" for side in ("model", "recorded")]
+            print(f"{each['key']:<4}{cells[0]:>8} /{cells[1]:>7}  ({each['recorded_partials'] or '-'})")
     args.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
 
 

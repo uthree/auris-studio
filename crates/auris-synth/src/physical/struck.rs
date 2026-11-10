@@ -619,23 +619,25 @@ impl Struck {
     ///
     /// A stiff string's overtones run sharp of its harmonics. A piano with every fundamental
     /// on equal temperament therefore beats in its octaves, and its bass sounds sharp, because
-    /// the ear hears a low note's pitch in its overtones. Tuned the way a technician tunes one,
-    /// outward from A4, each octave is widened to split the difference between two pure
-    /// octaves: the 2:1 and the 4:2 from A2 up, the 6:3 and the 8:4 from C2 down, and between
-    /// those keys a pair that moves from the one to the other. Without stiffness every octave
-    /// is pure and the piano is in equal temperament.
+    /// the ear hears a low note's pitch in its overtones. It is tuned the way a technician
+    /// tunes one, outward from A4. The octave under A4 is laid first, evenly; every other key
+    /// then lies an octave from one already tuned, by a width that splits the difference
+    /// between two pure octaves: the 2:1 and the 4:2 from A2 up, the 6:3 and the 8:4 from C2
+    /// down, and between those keys a pair that moves from the one to the other. Without
+    /// stiffness every octave is pure and the piano is in equal temperament.
     ///
-    /// From A2 up a key moves by a twelfth of the width its own octave asks for, so an octave
-    /// is as wide as the twelve keys in it ask for together. Below A2 that width changes too
-    /// much from key to key to be shared out, and each key lies an octave under the key above
-    /// it by its own width. `docs/piano-stretch-tuning.md` reads both off the sound, beside a
-    /// recorded Steinway.
+    /// With the stiffness of a recorded Steinway B's strings, which `grand::INHARMONICITY`
+    /// is, this lays the strings where that Steinway's were found.
+    /// `docs/piano-stretch-tuning.md` reads both pianos off their sound.
     fn tune_keyboard(&mut self) {
         self.tuned_for = self.settings.stiffness;
         if !self.is_piano() {
             self.stretch = [0.0; 128];
             return;
         }
+        /// The octave that is laid first: A3 to A4.
+        const A3: usize = 57;
+        const A4: usize = 69;
         /// The lowest key whose octave is judged on the 2:1 and the 4:2: A2.
         const TENOR: usize = 45;
         /// The highest key whose octave is judged on the 6:3 and the 8:4: C2.
@@ -645,29 +647,26 @@ impl Struck {
             let b = stiffness(key);
             600.0 * ((1.0 + b * n * n) / (1.0 + b)).log2()
         };
-        // Width of the octave from `key` to `key + 12` beyond 1200 cents. In the top two
-        // octaves the fourth partial is too high and too short-lived to judge by, and the
-        // octave is tuned on the 2:1 alone.
-        let octave = |key: i32| {
+        // Width of the octave from `key` to `key + 12` beyond 1200 cents.
+        let octave = |key: usize| {
+            let key = key as i32;
             // How far the pair of partials has moved from the tenor's to the bass's.
             let low = ((TENOR as f32 - key as f32) / (TENOR - BASS) as f32).clamp(0.0, 1.0);
             let (nearer, further) = (1.0 + 2.0 * low, 1.0 + low);
             let narrow = partial(key, 2.0 * nearer) - partial(key + 12, nearer);
             let wide = partial(key, 4.0 * further) - partial(key + 12, 2.0 * further);
-            let by_wide = 0.5 * ((84.0 - key as f32) / 24.0).clamp(0.0, 1.0);
-            narrow + by_wide * (wide - narrow)
+            0.5 * (narrow + wide)
         };
         let mut stretch = [0.0_f32; 128];
-        for (pitch, slot) in stretch.iter_mut().enumerate().skip(TENOR) {
-            let pitch = pitch as i32;
-            *slot = if pitch >= 69 {
-                (69..pitch).map(octave).sum::<f32>() / 12.0
-            } else {
-                -(pitch..69).map(octave).sum::<f32>() / 12.0
-            };
+        let first = octave(A3);
+        for (pitch, slot) in stretch.iter_mut().enumerate().take(A4).skip(A3) {
+            *slot = -first * (A4 - pitch) as f32 / 12.0;
         }
-        for pitch in (0..TENOR).rev() {
-            stretch[pitch] = stretch[pitch + 12] - octave(pitch as i32);
+        for pitch in A4 + 1..stretch.len() {
+            stretch[pitch] = stretch[pitch - 12] + octave(pitch - 12);
+        }
+        for pitch in (0..A3).rev() {
+            stretch[pitch] = stretch[pitch + 12] - octave(pitch);
         }
         self.stretch = stretch;
     }

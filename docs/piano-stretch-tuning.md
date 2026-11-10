@@ -13,23 +13,12 @@ temperament (A4 = 440 Hz) goes wrong in two ways together.
 
 ## How it is tuned
 
-The piano is tuned the way a technician tunes one: outward from A4, each octave is widened
-to split the difference between two pure octaves. From A2 up they are the 2:1 (the lower
-note's second partial on the upper note's fundamental) and the 4:2 (its fourth on the upper
-note's second). From C2 down they are the 6:3 and the 8:4, and between A2 and C2 the pair
-moves from the one to the other key by key. Above C4 the 4:2 counts for less and less, and
-an octave that starts at C6 or higher, where the fourth partial is too high and too
-short-lived to judge by, is tuned on the 2:1 alone.
-
-From A2 up, each key is moved by a twelfth of the width this rule gives the octave that
-starts on it. An octave therefore ends as wide as the average of the widths the rule gives
-the twelve keys it spans, not as wide as the rule gives the octave itself. Up to C4, where
-the stiffness changes little from key to key, the two are within a cent of each other; in
-the treble, where the stiffness climbs with every key, the octave comes out wider.
-
-Below A2 the rule's width changes too much from key to key to be shared out that way: the
-octaves on A1 and C2 would come out about half as wide as the rule gives them. There each
-key lies an octave under the key above it, by the width the rule gives its own octave.
+The piano is tuned the way a technician tunes one, outward from A4. The octave from A3 to A4
+is laid first, its width shared evenly among its twelve keys. Every other key then lies an
+octave from a key already tuned, by a width that splits the difference between two pure
+octaves. From A2 up these are the 2:1 (the lower note's second partial on the upper note's
+fundamental) and the 4:2 (its fourth on the upper note's second). From C2 down they are the
+6:3 and the 8:4, and between A2 and C2 the pair moves from the one to the other key by key.
 
 The widths come from the same stiff-string relation and the same key-by-key stiffness the
 strings sound with, so the String Stiffness control moves the tuning with the inharmonicity,
@@ -37,11 +26,15 @@ and at zero stiffness the piano is exactly in equal temperament. A4 stays at 440
 stretch is fixed when the key is struck, so a stiffness automation retunes the next note
 rather than one already sounding.
 
+Both the stiffness and the rule are held against a recorded Steinway, read below. The
+stiffness of Physical Piano's strings is drawn through that Steinway's, and with it the rule
+lays the strings within a cent of where the Steinway's lie.
+
 ## Measurement
 
 `tools/eval/piano_stretch.py` reads the tuning off the sound of two pianos. One is
 Physical Piano: the factory sound at velocity 0.7 and 48 kHz. The other is a recorded
-Steinway model B: fifteen mf notes of the
+Steinway model B: twenty-eight mf notes of the
 [University of Iowa Musical Instrument Samples](https://theremin.music.uiowa.edu/MISpiano.html).
 Its lowest recorded note is B0, so A0 has no recorded figure.
 
@@ -53,31 +46,31 @@ meet: below zero the two notes lie further apart than that pure octave, above ze
 
 | Key | Fundamental | Heard pitch | 2:1 octave | 4:2 octave |
 |---|---|---|---|---|
-| A0 | -19.2 / – | +16.5 / – | -10.2 / – | -7.5 / – |
-| B0 | -17.3 / -22.4 | +10.7 / +9.7 | -9.3 / -2.1 | -6.9 / -6.1 |
-| C1 | -16.4 / -24.9 | +12.2 / +4.7 | -8.5 / -7.3 | -6.1 / -8.4 |
-| A1 | -8.2 / -16.6 | +7.9 / +8.4 | -4.5 / -1.0 | -3.2 / -3.3 |
-| C2 | -7.2 / -14.5 | +4.7 / +5.8 | -3.7 / -7.4 | -2.7 / -2.7 |
-| A2 | -3.3 / -10.3 | +3.9 / +4.0 | -0.4 / +0.2 | +0.2 / +0.1 |
-| C3 | -3.1 / -0.2 | +3.4 / +3.1 | -0.5 / -0.3 | +0.1 / +0.2 |
-| C4 | -2.2 / -2.1 | +2.1 / +4.2 | -1.5 / -0.8 | -0.4 / +0.7 |
-| A4 | -0.4 / 0.0 | +1.4 / +2.4 | -2.5 / -4.4 | 0.0 / -0.5 |
-| C5 | +0.4 / +0.6 | +1.5 / +0.4 | -2.9 / -2.5 | +0.2 / +2.5 |
-| C6 | +6.1 / +5.3 | +6.5 / +5.0 | -5.3 / -5.3 | – / – |
-| C7 | +19.6 / +16.1 | – / +15.0 | -4.7 / – | – / – |
-| C8 | +46.1 / -63.2 | – / – | – | – |
+| A0 | -15.0 / – | +15.0 / – | -9.1 / – | -6.7 / – |
+| B0 | -14.5 / -22.4 | +10.8 / +9.7 | -8.7 / -2.1 | -6.5 / -6.1 |
+| C1 | -14.2 / -24.9 | +12.8 / +4.7 | -8.1 / -7.3 | -5.9 / -8.4 |
+| A1 | -5.3 / -16.6 | +7.9 / +8.4 | -3.0 / -1.0 | -2.1 / -3.3 |
+| C2 | -5.4 / -14.5 | +5.3 / +5.8 | -3.3 / -7.4 | -2.4 / -2.7 |
+| A2 | -2.0 / -10.3 | +4.2 / +4.0 | -0.2 / +0.2 | +0.4 / +0.1 |
+| C3 | -1.7 / -0.2 | +3.4 / +3.1 | -0.1 / -0.3 | +0.3 / +0.2 |
+| C4 | -1.3 / -2.1 | +2.3 / +4.2 | -0.5 / -0.8 | +0.2 / +0.7 |
+| A4 | -0.4 / 0.0 | +1.2 / +2.4 | -1.8 / -4.4 | +1.5 / -0.5 |
+| C5 | +0.1 / +0.6 | +1.1 / +0.4 | -2.7 / -2.5 | +2.3 / +2.5 |
+| C6 | +5.4 / +5.3 | +5.7 / +5.0 | -4.9 / -5.3 | – / – |
+| C7 | +15.9 / +16.1 | – / +15.0 | -10.9 / – | – / – |
+| C8 | +39.6 / -63.2 | – / – | – | – |
 
 The bass octaves are tuned on higher partials than those two columns read. These are the
 same octaves on the 6:3 and the 8:4:
 
 | Key | 6:3 octave | 8:4 octave |
 |---|---|---|
-| A0 | -3.1 / – | +3.1 / – |
-| B0 | -2.8 / +1.5 | +2.8 / 0.0 |
-| C1 | -2.3 / -4.0 | +3.1 / -1.2 |
-| A1 | -1.0 / -1.6 | +2.1 / -0.8 |
-| C2 | -1.0 / -0.3 | +1.4 / -0.3 |
-| A2 | +1.3 / +1.1 | +2.8 / +2.2 |
+| A0 | -2.8 / – | +2.7 / – |
+| B0 | -2.6 / +1.5 | +2.6 / 0.0 |
+| C1 | -2.2 / -4.0 | +3.0 / -1.2 |
+| A1 | -0.5 / -1.6 | +1.6 / -0.8 |
+| C2 | -0.9 / -0.3 | +1.2 / -0.3 |
+| A2 | +1.3 / +1.1 | +2.7 / +2.2 |
 
 A partial is looked for as the strongest frequency within 150 cents of a whole multiple of
 the note's equal-tempered frequency, in the spectrum of the two seconds that start 0.3 s
@@ -99,80 +92,113 @@ there.
 
 | Key | Stiffness B × 10⁴ | First partial by the line | First partial from the line |
 |---|---|---|---|
-| A0 | 3.00 / – | -19.1 / – | 0.0 / – |
-| B0 | 2.72 / 2.54 | -17.2 / -15.2 | 0.0 / -7.2 |
-| C1 | 2.60 / 2.47 | -16.3 / -19.2 | 0.0 / -5.7 |
-| A1 | 1.63 / 1.14 | -8.2 / -6.0 | +0.1 / -10.5 |
-| C2 | 1.40 / 1.32 | -7.3 / -5.8 | +0.1 / -8.7 |
-| A2 | 1.42 / 1.24 | -3.2 / -2.6 | -0.1 / -7.7 |
-| C3 | 1.60 / 1.17 | -3.0 / -2.4 | -0.1 / +2.2 |
-| C4 | 3.82 / 3.15 | -2.0 / -0.3 | -0.1 / -1.8 |
-| A4 | 8.45 / 7.59 | -0.4 / 0.0 | 0.0 / 0.0 |
-| C5 | 11.02 / 10.33 | +0.4 / +0.2 | 0.0 / +0.5 |
-| C6 | 31.96 / – | +6.1 / – | 0.0 / – |
-| C7 | 86.01 / – | +19.6 / – | 0.0 / – |
-| C8 | – / – | – / – | – / – |
+| A0 | 2.60 / – | -15.0 / – | 0.0 / – |
+| B0 | 2.51 / 2.54 | -14.4 / -15.2 | 0.0 / -7.2 |
+| C1 | 2.47 / 2.47 | -14.2 / -19.2 | 0.0 / -5.7 |
+| A1 | 1.20 / 1.14 | -5.3 / -6.0 | +0.1 / -10.5 |
+| C2 | 1.20 / 1.32 | -5.5 / -5.8 | +0.1 / -8.7 |
+| A2 | 1.20 / 1.24 | -1.9 / -2.6 | -0.1 / -7.7 |
+| C3 | 1.20 / 1.17 | -1.6 / -2.4 | -0.1 / +2.2 |
+| C4 | 3.17 / 3.15 | -1.2 / -0.3 | -0.1 / -1.8 |
+| A4 | 7.68 / 7.59 | -0.4 / 0.0 | 0.0 / 0.0 |
+| C5 | 10.32 / 10.33 | 0.0 / +0.2 | 0.0 / +0.5 |
+| C6 | 21.96 / 21.60 | +5.4 / +5.3 | 0.0 / 0.0 |
+| C7 | 50.01 / – | +15.9 / – | 0.0 / – |
+| C8 | 110.03 / – | +39.6 / – | 0.0 / – |
 
-Physical Piano's partials stand on their lines, none of the first three more than 0.15 cents
-off, and the stiffness read off its sound is the stiffness in the instrument's own table to
-within one percent.
+Physical Piano's stiffness is the Steinway's. The instrument's own table of it,
+`grand::INHARMONICITY`, is drawn through what the tool reads off the Steinway at twenty-six
+keys:
 
-The Steinway's strings are a little less stiff: by 5 to 7 percent at B0, C1, C2 and C5, by
-10 to 17 at A2, C4 and A4, and by 27 to 30 at A1 and C3.
+| Key | Physical Piano, B × 10⁴ | Steinway, B × 10⁴ | Partials the Steinway's is read from |
+|---|---|---|---|
+| B0 | 2.51 | 2.54 | 36 |
+| C1 | 2.47 | 2.47 | 35 |
+| E1 | 1.38 | 1.38 | 35 |
+| G1 | 1.20 | 1.09 | 33 |
+| A1 | 1.20 | 1.14 | 36 |
+| B1 | 1.20 | 1.27 | 31 |
+| C2 | 1.20 | 1.32 | 32 |
+| E2 | 1.20 | 1.11 | 36 |
+| G2 | 1.20 | 1.27 | 33 |
+| A2 | 1.20 | 1.24 | 32 |
+| C3 | 1.20 | 1.17 | 29 |
+| E3 | 1.66 | 1.55 | 21 |
+| G3 | 2.11 | 2.08 | 17 |
+| A3 | 2.49 | 2.28 | 16 |
+| C4 | 3.17 | 3.15 | 14 |
+| E4 | 4.70 | 4.92 | 11 |
+| G4 | 6.31 | 6.60 | 11 |
+| A4 | 7.68 | 7.59 | 8 |
+| C5 | 10.32 | 10.33 | 5 |
+| E5 | 13.29 | 12.59 | 7 |
+| G5 | 16.03 | 15.95 | 5 |
+| A5 | 18.18 | 18.53 | 4 |
+| C6 | 21.96 | 21.60 | 2 |
+| E6 | 28.85 | 35.29 | 2 |
+| G6 | 35.48 | 37.01 | 2 |
+| A6 | 40.72 | 40.18 | 2 |
+| C7 | 50.01 | – | – |
+| C8 | 110.03 | – | – |
 
-The larger difference is in the lowest partials. From A2 down the Steinway's first partial
-lies 6 to 11 cents under its string's line, and from C2 down its second lies 2 to 6 cents
-under and its third 1 to 2.5. Physical Piano has nothing of the kind. By the lines
-themselves, the two pianos are tuned within 3 cents of each other on every key from B0 to C5.
+From B0 to A5, where three or more partials can be read, the table is within 10 percent of
+every reading. From C6 to A6 the recording shows two partials, which make a line with
+nothing to check it by, and those readings are good to a third. Above A6 it shows no second
+partial at all, and the table goes on as it rose through the two octaves below.
+
+What the two pianos do not share is in the lowest partials. Physical Piano's stand on their
+lines, none of the first three more than 0.15 cents off. From A2 down the Steinway's first
+partial lies 6 to 11 cents under its string's line, and from C2 down its second lies 2 to 6
+cents under and its third 1 to 2.5.
+
+By the lines themselves, the two pianos are tuned within a cent of each other on every key
+from B0 to C6 but one: the recorded C1 lies 5 cents lower.
 
 ### Octaves
 
-On A2 and C3 an octave of Physical Piano sits between the pure 2:1 and the pure 4:2, about
-half a cent from each at most. From C4 up it runs wider than the rule gives it, because of
-that averaging: at A4 it has reached the pure 4:2, and the octaves on C6 and C7, which the
-rule tunes on the 2:1 alone, are about five cents wider than a pure 2:1. From C2 down it
-sits between the pure 6:3 and the pure 8:4, one to three cents from each.
+From A2 up an octave of Physical Piano sits midway between its pure 2:1 and its pure 4:2,
+and from C2 down midway between its pure 6:3 and its pure 8:4: the two readings are equal
+and opposite to within about a cent.
 
-From A2 up, every 2:1 and 4:2 reading of the Steinway lies within two and a half cents of
-Physical Piano's. Its octave on C6 is 5.3 cents wider than a pure 2:1 as well.
+The Steinway's octaves agree. From A2 to C6 its 2:1 and its 4:2 read within half a cent of
+Physical Piano's, except on A4, where its octave is two to two and a half cents wider.
 
-From B0 to C2 the Steinway's octaves lie within a cent and a quarter of its pure 8:4. An
-8:4 meets on partials that stand on their strings' lines in both pianos. A 2:1 and a 4:2
-meet on the upper note's first and second partials, which in the Steinway's bass lie under
-theirs. So on a pure 8:4 Physical Piano's 4:2 would read one to four cents wider than the
-Steinway's. Tuned between the 6:3 and the 8:4 instead, its 4:2 on B0, A1 and C2 reads within
-a cent of the Steinway's, and on C1 two cents narrower. The 2:1 still differs, by up to 7
-cents.
+From B0 to C2 the Steinway's octaves lie within a cent and a quarter of its pure 8:4, where
+Physical Piano's lie between the 6:3 and the 8:4. An 8:4 meets on partials that stand on
+their strings' lines in both pianos. A 2:1 and a 4:2 meet on the upper note's first and
+second partials, which in the Steinway's bass lie under theirs. On the 4:2 the two pianos'
+bass octaves read alike all the same: within a cent and a quarter on B0, A1 and C2, and two
+and a half cents apart on C1.
 
 ### Fundamentals
 
-Physical Piano's fundamentals run from 19 cents flat at A0 to 46 sharp at C8. The 0.4 cents
+Physical Piano's fundamentals run from 15 cents flat at A0 to 40 sharp at C8. The 0.4 cents
 at A4 is the unison and not the tuning: the strings of one key are tuned a little apart, and
 with Unison Detune at zero A4 reads 0.0.
 
-From C3 to C7 they lie within three and a half cents of the Steinway's. Below C3 the
-Steinway's are 5 to 9 cents lower. That is its first partials lying under their strings'
-lines, and not its tuning: by the lines the two pianos are within 3 cents of each other.
+From C3 to C7 they lie within a cent and a half of the Steinway's. Below C3 the Steinway's
+are 8 to 11 cents lower. That is its first partials lying under their strings' lines, and
+not its tuning.
 
 ### Heard pitch
 
 Physical Piano's heard pitch lies on the fundamental at C6, within half a cent. Downwards
 the overtones weigh more in it, and a note is heard above its own fundamental: by 4 cents at
-C4, 7 at C3, 12 at C2 and 36 at A0. The tuning lowers the fundamentals there, which takes
-back 19 of those 36 cents at A0 and 7 of the 12 at C2. By this reading the bass is therefore
-still heard above equal temperament: 17 cents at A0, 11 to 12 at B0 and C1, 8 at A1 and 5 at
+C4, 5 at C3, 11 at C2 and 30 at A0. The tuning lowers the fundamentals there, which takes
+back 15 of those 30 cents at A0 and 5 of the 11 at C2. By this reading the bass is therefore
+still heard above equal temperament: 15 cents at A0, 11 to 13 at B0 and C1, 8 at A1 and 5 at
 C2.
 
 So is the Steinway's bass, by 4 to 10 cents from B0 to A2. From B0 to C6 the two pianos are
-heard within about two cents of each other, except at C1, where Physical Piano is heard 7.5
-cents higher: the recorded C1 lies lower than the recorded notes either side of it.
+heard within two cents of each other, except at C1, where Physical Piano is heard 8 cents
+higher: the recorded C1 is the one whose string lies low.
 
 ### What is not given, and how far to trust the rest
 
 No heard pitch is given where the period does not hold still. Physical Piano's C7 and C8 die
 away within the half second their period is read over, and the period moves as their
 overtones die: read again with the middle of the stretch weighted over its ends, C7 comes out
-1.3 cents lower and C8 14, each close to its fundamental. A heard pitch that moves by more
+1.3 cents lower and C8 13, each close to its fundamental. A heard pitch that moves by more
 than a cent that way is not one figure.
 
 An octave is not given where either of its partials lies more than 60 dB under the note's
@@ -200,21 +226,21 @@ uv run tools/eval/piano_stretch.py measure target/release/examples/physical_fit_
   target/piano-stretch.json --recorded target/piano-stretch
 ```
 
-`prepare` downloads the fifteen recordings, 84 MB, and checks them against the hashes in
-[piano-stretch-captures.json](../tools/eval/references/piano-stretch-captures.json). `measure`
-without `--recorded` reads Physical Piano alone. On Windows the executable's path ends in
-`.exe`. The report holds every figure unrounded, with both readings of each heard pitch.
-`tools/eval/test_piano_stretch.py` checks the readings against synthetic strings whose
-tuning is known.
+`prepare` downloads the twenty-eight recordings, 157 MB, and checks them against the hashes
+in [piano-stretch-captures.json](../tools/eval/references/piano-stretch-captures.json).
+`measure` without `--recorded` reads Physical Piano alone. On Windows the executable's path
+ends in `.exe`. The report holds every figure unrounded, with both readings of each heard
+pitch. `tools/eval/test_piano_stretch.py` checks the readings against synthetic strings
+whose tuning is known.
 
 ## Tests
 
 Three tests in `auris-synth` hold the tuning. `a_piano_is_tuned_like_a_piano` keeps A4
 within 0.6 cents of 440 Hz, C1 between 6 and 30 cents flat and C7 between 6 and 30 cents
 sharp, and both within 1.5 cents of equal temperament once String Stiffness is zero.
-`piano_octaves_lie_between_a_pure_two_to_one_and_a_pure_four_to_two` holds the octaves on C3
-and C4: the lower note's second partial at most half a cent above the upper note's
-fundamental, and its fourth between half a cent below and six cents above the upper note's
-second. `piano_bass_octaves_lie_between_a_pure_six_to_three_and_a_pure_eight_to_four` holds
-the octaves on A0, C1, A1 and C2: the lower note's sixth partial below the upper note's
-third and its eighth above the upper note's fourth, each by 0.3 to 6 cents.
+`piano_octaves_lie_between_a_pure_two_to_one_and_a_pure_four_to_two` holds the octaves on
+C3, C4, C5 and C6: the lower note's second partial no more than half a cent above the upper
+note's fundamental, and its fourth no more than half a cent below the upper note's second.
+`piano_bass_octaves_lie_between_a_pure_six_to_three_and_a_pure_eight_to_four` holds the
+octaves on A0, C1, A1 and C2 the same way, on the sixth partial with the third and on the
+eighth with the fourth. Neither lets a partial lie more than six cents the other way.

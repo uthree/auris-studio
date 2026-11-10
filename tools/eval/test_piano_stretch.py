@@ -174,8 +174,22 @@ def test_a_partial_that_is_not_the_strings_own_is_left_off_the_line():
     assert read.partials == (29, 30)
 
 
-def test_two_partials_do_not_make_a_string():
-    assert stretch.Note(string(108, levels=(1.0, 0.5)), RATE).string(108) is None
+def test_two_partials_make_a_line_and_one_makes_none():
+    # All that the top of a keyboard shows under 10 kHz.
+    read = stretch.Note(string(108, cents=46.0, stiffness=1.3e-2, levels=(1.0, 0.5)), RATE).string(108)
+    assert read.stiffness == pytest.approx(1.3e-2, rel=0.01)
+    assert read.cents == pytest.approx(46.0, abs=0.05)
+    assert read.partials == (2, 2) and read.low[2] is None
+    assert stretch.Note(string(108, levels=(1.0,)), RATE).string(108) is None
+
+
+def test_every_recorded_string_is_listed_beside_the_models_at_its_key():
+    ours = {60: stretch.Note(string(60, stiffness=3.8e-4), RATE), 108: stretch.Note(string(108, levels=(1.0,)), RATE)}
+    theirs = {60: stretch.Note(string(60, cents=3.0, stiffness=3.15e-4), RATE), 108: stretch.Note(string(108, levels=(1.0,)), RATE)}
+    middle, top = stretch.strings(ours, theirs)
+    assert (middle["key"], middle["pitch"], middle["recorded_partials"]) == ("C4", 60, 4)
+    assert middle["model"] == pytest.approx(3.8e-4, rel=0.01) and middle["recorded"] == pytest.approx(3.15e-4, rel=0.01)
+    assert top == {"key": "C8", "pitch": 108, "model": None, "recorded": None, "recorded_partials": None}
 
 
 def test_an_octave_is_not_judged_by_a_partial_too_weak_to_hear():
@@ -239,12 +253,13 @@ def test_every_key_is_measured_from_one_render_of_the_factory_piano(keyboard):
         assert row["fundamental"] < row["heard"] < row["fundamental"] + sharp(Strings.STIFFNESS, 4)
         assert row["heard_readings"][0] == row["heard"]
     # Four partials under 10 kHz make a string of every key but the top one, which has two.
-    for row in rows[:-1]:
+    for row in rows:
         assert row["stiffness"] == pytest.approx(Strings.STIFFNESS, rel=0.02)
         assert row["string"] == pytest.approx(Strings.tuned(row["pitch"]), abs=0.05)
+    for row in rows[:-1]:
         assert row["from_the_line"] == pytest.approx([0.0, 0.0, 0.0], abs=0.05)
         assert row["string_partials"] == [4, 4]
-    assert rows[-1]["stiffness"] is None and rows[-1]["string"] is None
+    assert rows[-1]["string_partials"] == [2, 2]
     # An octave of these strings is three cents wide, less what stiffness adds to the lower one.
     for row in rows[:-1]:
         assert row["octave_2_1"] == pytest.approx(sharp(Strings.STIFFNESS, 2) - 3.0, abs=0.03)

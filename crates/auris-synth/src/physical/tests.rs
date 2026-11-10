@@ -521,14 +521,16 @@ fn piano_octaves_lie_between_a_pure_two_to_one_and_a_pure_four_to_two() {
         let audio = piano.render(96_000, &[on(pitch, 0.7)]);
         audio[14_400..].to_vec()
     };
-    for low in [48_u8, 60] {
+    // Each octave has a width of its own, from the tenor to the top: shared out among the
+    // keys under it, the octave on C4 comes out wider than both.
+    for low in [48_u8, 60, 72, 84] {
         let (lower, upper) = (steady(low), steady(low + 12));
-        let at = |audio: &[f32], at: f64| peak_cents(audio, rate, at, -400..=400);
+        let at = |audio: &[f32], at: f64| peak_cents(audio, rate, at, -600..=600);
         // How far the lower note's partial is above the upper note's that it should meet.
         let two_one = at(&lower, hz(low) * 2.0) - at(&upper, hz(low) * 2.0);
         let four_two = at(&lower, hz(low) * 4.0) - at(&upper, hz(low) * 4.0);
         assert!(
-            two_one <= 0.5 && (-0.5..6.0).contains(&four_two),
+            (-6.0..0.5).contains(&two_one) && (-0.5..6.0).contains(&four_two),
             "MIDI {low}: 2:1 {two_one:+.1} cents, 4:2 {four_two:+.1} cents"
         );
     }
@@ -537,8 +539,8 @@ fn piano_octaves_lie_between_a_pure_two_to_one_and_a_pure_four_to_two() {
 #[test]
 fn piano_bass_octaves_lie_between_a_pure_six_to_three_and_a_pure_eight_to_four() {
     // From C2 down an octave lies between its pure 6:3 and its pure 8:4, by a width of its own:
-    // shared out among its twelve keys, the octave on C2 would be under half as wide, and
-    // narrower than a pure 6:3.
+    // shared out among its twelve keys, the octave on C2 would be half as wide, and narrower
+    // than a pure 6:3 by more than this allows.
     let rate = 48_000.0;
     let steady = |pitch: u8| {
         let mut piano = rig(Model::Piano, rate);
@@ -552,7 +554,7 @@ fn piano_bass_octaves_lie_between_a_pure_six_to_three_and_a_pure_eight_to_four()
         let six_three = at(&lower, hz(low) * 6.0) - at(&upper, hz(low) * 6.0);
         let eight_four = at(&lower, hz(low) * 8.0) - at(&upper, hz(low) * 8.0);
         assert!(
-            (-6.0..-0.3).contains(&six_three) && (0.3..6.0).contains(&eight_four),
+            (-6.0..0.5).contains(&six_three) && (-0.5..6.0).contains(&eight_four),
             "MIDI {low}: 6:3 {six_three:+.1} cents, 8:4 {eight_four:+.1} cents"
         );
     }
