@@ -391,15 +391,7 @@ impl AurisApp {
     ) -> Option<AnyElement> {
         let target = prompt.target()?;
         let field = prompt.field()?;
-        let multiline = is_multiline(target);
-        let input = self.inline_input.input(multiline).clone();
-        // The prompt's field is the text the commit reads. The input writes it on every change;
-        // this is the other direction, for a prompt just opened, or a completion written by Tab
-        // or a chip.
-        if input.read(cx).text() != field.content() {
-            let text = field.content().to_string();
-            input.update(cx, |input, cx| input.set_text(text, cx));
-        }
+        let input = self.sync_prompt_input(prompt, target, field, cx);
         let error = prompt.error().cloned();
         // Atelier pads the label by four pixels each side and clamps the width; the rectangle
         // here is already fitted, so it is handed over as the label it was fitted from.
@@ -539,14 +531,46 @@ impl AurisApp {
         }
     }
 
-    /// Copies the inline input's text into the open prompt's field, which is what completions,
+    /// The input `target` is typed into, given the prompt's text when it differs.
+    ///
+    /// The prompt's field is the text the commit reads. The input writes it on every change;
+    /// this is the other direction, for a prompt just opened, or a completion written by Tab or
+    /// a chip.
+    pub(crate) fn sync_prompt_input(
+        &self,
+        prompt: &Prompt,
+        target: PromptTarget,
+        field: &crate::ui::text_field::TextField,
+        cx: &mut Context<Self>,
+    ) -> Entity<TextInput> {
+        let input = self.prompt_input.for_target(target).clone();
+        let opened = self.prompt_input.loaded.replace(prompt.serial()) != prompt.serial();
+        if opened || input.read(cx).text() != field.content() {
+            let text = field.content().to_string();
+            // A prompt opens with its text selected, so the first key replaces it; a completion
+            // leaves the caret after what it wrote.
+            let selected = opened && !text.is_empty();
+            input.update(cx, |input, cx| {
+                input.set_text(text, cx);
+                if selected {
+                    input.select_all(cx);
+                }
+            });
+        }
+        input
+    }
+
+    /// Copies the prompt input's text into the open prompt's field, which is what completions,
     /// validation and the commit read.
     fn take_inline_text(&mut self, input: &Entity<TextInput>, cx: &mut Context<Self>) {
         let text = input.read(cx).text().to_string();
         let Some(prompt) = self.prompt.as_mut() else {
             return;
         };
-        if prompt.target().is_none_or(is_multiline) != input.read(cx).buffer().is_multiline() {
+        let Some(target) = prompt.target() else {
+            return;
+        };
+        if self.prompt_input.for_target(target) != input {
             return;
         }
         if let Some(field) = prompt.field()
@@ -575,14 +599,18 @@ fn walks_on_return(target: PromptTarget) -> bool {
     )
 }
 
-/// The two inputs an inline prompt is typed into: a line for names and notations, an area for a
-/// comment.
-pub(crate) struct InlineInput {
+/// The two inputs a text prompt is typed into, in place or on the sheet: a line for names and
+/// notations, an area for a comment or an impression.
+pub(crate) struct PromptInput {
     line: Entity<TextInput>,
     area: Entity<TextInput>,
+    /// The [`Prompt::serial`] last loaded into an input.
+    loaded: std::cell::Cell<u64>,
+    line_focus: gpui::FocusHandle,
+    area_focus: gpui::FocusHandle,
 }
 
-impl InlineInput {
+impl PromptInput {
     /// Both inputs, each writing what is typed back into the open prompt.
     pub(crate) fn new(cx: &mut Context<AurisApp>) -> Self {
         let line = cx.new(TextInput::new);
@@ -595,12 +623,55 @@ impl InlineInput {
             })
             .detach();
         }
-        Self { line, area }
+        let line_focus = gpui::Focusable::focus_handle(line.read(cx), cx);
+        let area_focus = gpui::Focusable::focus_handle(area.read(cx), cx);
+        Self {
+            line,
+            area,
+            loaded: std::cell::Cell::new(0),
+            line_focus,
+            area_focus,
+        }
     }
 
-    /// The input for a prompt written over one line or several.
-    pub(crate) fn input(&self, multiline: bool) -> &Entity<TextInput> {
-        if multiline { &self.area } else { &self.line }
+    /// The input `target` is typed into: the area for a comment or a workshop impression, the
+    /// line for everything else.
+    pub(crate) fn for_target(&self, target: PromptTarget) -> &Entity<TextInput> {
+        if is_multiline(target) || matches!(target, PromptTarget::WorkshopFeedback { .. }) {
+            &self.area
+        } else {
+            &self.line
+        }
+    }
+
+    /// The focus handle of the input `target` is typed into.
+    pub(crate) fn focus_for(&self, target: PromptTarget) -> &gpui::FocusHandle {
+        if self.for_target(target) == &self.area {
+            &self.area_focus
+        } else {
+            &self.line_focus
+        }
+    }
+
+    /// The focus handle of the area.
+    pub(crate) fn area_focus(&self) -> &gpui::FocusHandle {
+        &self.area_focus
+    }
+
+    /// The area, which a workshop impression is always typed into.
+    pub(crate) fn area(&self) -> &Entity<TextInput> {
+        &self.area
+    }
+
+    /// The input that holds the keyboard, when one does.
+    pub(crate) fn focused(
+        &self,
+        window: &gpui::Window,
+        cx: &gpui::App,
+    ) -> Option<&Entity<TextInput>> {
+        [&self.line, &self.area]
+            .into_iter()
+            .find(|input| input.read(cx).is_focused(window))
     }
 
     /// Whether either input holds the keyboard.

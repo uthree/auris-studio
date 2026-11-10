@@ -695,6 +695,14 @@ pub struct Prompt {
     place: Option<InlinePlace>,
     /// What the field held when it opened, so leaving it untouched can close it without an edit.
     initial: String,
+    /// Which prompt this is, so the input it is typed into is loaded once when it opens.
+    serial: u64,
+}
+
+/// The next [`Prompt::serial`].
+fn next_serial() -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
 impl Prompt {
@@ -728,6 +736,7 @@ impl Prompt {
             sound: None,
             place: None,
             initial: text,
+            serial: next_serial(),
         }
     }
 
@@ -740,6 +749,11 @@ impl Prompt {
     /// Where this prompt asked to be drawn in place, if it did.
     pub(crate) fn place(&self) -> Option<&InlinePlace> {
         self.place.as_ref()
+    }
+
+    /// Which prompt this is: two prompts with the same text are still two openings.
+    pub(crate) fn serial(&self) -> u64 {
+        self.serial
     }
 
     /// What the field held when it opened.
@@ -786,6 +800,7 @@ impl Prompt {
             sound: None,
             place: None,
             initial: String::new(),
+            serial: next_serial(),
         }
     }
 
@@ -805,6 +820,7 @@ impl Prompt {
             sound: None,
             place: None,
             initial: String::new(),
+            serial: next_serial(),
         }
     }
 
@@ -936,8 +952,6 @@ pub(crate) fn recovery_prompt(snapshot: &RecoverySnapshot, language: Language) -
 
 /// Font size of the edited text.
 pub(crate) const TEXT_SIZE: Pixels = px(13.0);
-/// Height of the field's box.
-const FIELD_HEIGHT: Pixels = px(28.0);
 /// Space between the field's edge and its text.
 pub(crate) const FIELD_PADDING: Pixels = px(8.0);
 
@@ -1675,32 +1689,6 @@ impl AurisApp {
         cx: &mut Context<Self>,
     ) -> bool {
         let shift = event.keystroke.modifiers.shift;
-        // ⌘ on macOS, Ctrl elsewhere. Reading `platform` directly would put select-all on the
-        // Windows key, which opens the shell's own menu long before the application sees it.
-        let command = event.keystroke.modifiers.secondary();
-
-        // Drawn in place, the field is Atelier's input, which takes its own editing keys before
-        // they get here. Tab is the one left: it walks the completions, which the field is then
-        // given back on the next frame. Everything else is typing, and goes on to the input.
-        if self.inline_prompt_open(window) {
-            if event.keystroke.key != "tab" {
-                return false;
-            }
-            let composing = self
-                .prompt
-                .as_ref()
-                .and_then(Prompt::target)
-                .is_some_and(|target| {
-                    let input = self
-                        .inline_input
-                        .input(crate::ui::inline_edit::is_multiline(target));
-                    input.read(cx).buffer().marked().is_some()
-                });
-            if !composing && let Some(prompt) = self.prompt.as_mut() {
-                prompt.complete_next();
-            }
-            return true;
-        }
 
         if let Some(foci) = self
             .prompt
@@ -1709,7 +1697,7 @@ impl AurisApp {
         {
             let mut handles = foci.to_vec();
             handles.extend([
-                self.focus.clone(),
+                gpui::Focusable::focus_handle(self.prompt_input.area().read(cx), cx),
                 self.modal_focus.prompt_cancel().clone(),
                 self.modal_focus.prompt_confirm().clone(),
             ]);
@@ -1718,10 +1706,9 @@ impl AurisApp {
                 .position(|handle| handle.is_focused(window))
                 .unwrap_or(5);
             let composing = self
-                .prompt
-                .as_ref()
-                .and_then(Prompt::field)
-                .is_some_and(|f| f.marked().is_some());
+                .prompt_input
+                .focused(window, cx)
+                .is_some_and(|input| input.read(cx).buffer().marked().is_some());
             if !composing {
                 match event.keystroke.key.as_str() {
                     "escape" => {
@@ -1737,10 +1724,6 @@ impl AurisApp {
                         window.focus(&handles[next]);
                         return true;
                     }
-                    "enter" if command => {
-                        self.commit_prompt(window, cx);
-                        return true;
-                    }
                     "enter" | "space" | " " if focused < 5 => {
                         self.set_feedback_rating(focused as u8 + 1);
                         return true;
@@ -1749,26 +1732,12 @@ impl AurisApp {
                         self.activate_focused_prompt_button(window, cx);
                         return true;
                     }
-                    "enter" => {
-                        if let Some(field) = self.prompt.as_mut().and_then(Prompt::field_mut) {
-                            field.insert("\n");
-                        }
-                        return true;
-                    }
-                    "up" | "down" if focused == 5 => {
-                        if let Some(field) = self.prompt.as_mut().and_then(Prompt::field_mut) {
-                            if event.keystroke.key == "up" {
-                                field.move_up(shift);
-                            } else {
-                                field.move_down(shift);
-                            }
-                        }
-                        return true;
-                    }
                     _ if focused != 5 => return true,
-                    _ => {}
+                    // Typing, which the comment's input has already taken what it wanted of.
+                    _ => return false,
                 }
             }
+            return false;
         }
 
         let button_prompt = self.prompt.as_ref().and_then(|prompt| match &prompt.body {
@@ -1811,69 +1780,30 @@ impl AurisApp {
             return true;
         }
 
-        // Tab walks the completions, and is answered before the field is taken. `field_mut` ends
-        // a walk in progress, which is right for every key that changes the text and wrong for
-        // the one key that is *continuing* the walk — taking it here would reset on every step.
+        // A text prompt is typed into Atelier's input, which takes its editing keys — Return and
+        // Escape among them, which it hands back as actions — before they get here. Tab is the
+        // one left: it walks the completions, which the input is given back on the next frame.
+        // Not while an IME is composing: Tab belongs to the candidate window then.
         //
-        // Not while an IME is composing: Tab belongs to the candidate window then, and the
-        // platform has already offered it there before the window sees it.
-        if event.keystroke.key == "tab"
-            && let Some(field) = self.prompt.as_ref().and_then(Prompt::field)
-        {
-            if field.marked().is_none()
-                && let Some(prompt) = self.prompt.as_mut()
-            {
-                prompt.complete_next();
-            }
-            // Swallowed either way. There is nothing else on the sheet for Tab to reach, and a
-            // sheet that let it out would move the focus ring behind a box that is still open.
-            return true;
-        }
-
-        let Some(prompt) = self.prompt.as_mut() else {
+        // Swallowed either way. There is nothing else on the sheet for Tab to reach, and a sheet
+        // that let it out would move the focus ring behind a box that is still open.
+        let Some(prompt) = self.prompt.as_ref() else {
             return false;
         };
-        let target = prompt.target();
-        // A question has no field to type into, so only its explicit answer keys apply. A Mac's
-        // key labelled Delete reports `backspace`; accepting that spelling only on macOS avoids
-        // making an ordinary PC Backspace permanently discard recovery data.
-        let Some(field) = prompt.field_mut() else {
-            match event.keystroke.key.as_str() {
-                "escape" => {
-                    self.cancel_prompt();
-                }
-                "enter" => self.commit_prompt(window, cx),
-                // Notices and questions cover the fields behind them as fully as text prompts.
-                _ => {}
+        if prompt.field().is_some() {
+            if event.keystroke.key != "tab" {
+                return false;
+            }
+            let composing = self
+                .prompt_input
+                .focused(window, cx)
+                .is_some_and(|input| input.read(cx).buffer().marked().is_some());
+            if !composing && let Some(prompt) = self.prompt.as_mut() {
+                prompt.complete_next();
             }
             return true;
-        };
-        // While the IME is composing, these keys belong to the candidate window, and the
-        // platform has already offered them to it before we see them.
-        let composing = field.marked().is_some();
-
-        // A comment is written over several lines: Shift-Return breaks the line, Return still
-        // commits, and Up and Down move between the lines rather than to the ends.
-        let multiline = target.is_some_and(crate::ui::inline_edit::is_multiline);
-        match event.keystroke.key.as_str() {
-            "escape" if !composing => {
-                self.cancel_prompt();
-            }
-            "enter" if !composing && multiline && shift => field.insert("\n"),
-            "enter" if !composing => {
-                self.commit_prompt(window, cx);
-            }
-            "up" if multiline => field.move_up(shift),
-            "down" if multiline => field.move_down(shift),
-            "up" => field.move_home(shift),
-            "down" => field.move_end(shift),
-            // Editing and clipboard shortcuts are shared with every other text field.
-            key => {
-                return field.apply_key_with_clipboard(key, shift, command, multiline, cx)
-                    != crate::ui::text_field::KeyEffect::Ignored;
-            }
         }
-        true
+        false
     }
 
     fn activate_focused_prompt_button(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1904,8 +1834,6 @@ impl AurisApp {
         }
         let theme = self.theme.clone();
         let title = prompt.title.clone();
-        let focus = self.focus.clone();
-        let view = cx.entity();
 
         let medium = matches!(
             &prompt.body,
@@ -1919,7 +1847,7 @@ impl AurisApp {
             )
         );
         let (body, buttons) = match &prompt.body {
-            PromptBody::Text { target, field } => (
+            PromptBody::Text { target, .. } => (
                 div()
                     .w_full()
                     .debug_selector(|| "prompt-text-body".into())
@@ -1928,19 +1856,10 @@ impl AurisApp {
                     .gap_2()
                     .children(self.render_feedback_rating(prompt, cx))
                     .child(if matches!(target, PromptTarget::WorkshopFeedback { .. }) {
-                        self.render_feedback_comment(field, cx).into_any_element()
-                    } else if crate::ui::inline_edit::is_multiline(*target) {
-                        self.render_prompt_area(field, cx).into_any_element()
+                        self.render_feedback_comment(prompt, window, cx)
+                            .into_any_element()
                     } else {
-                        self.render_prompt_field(
-                            field.content().to_string().into(),
-                            field.selection(),
-                            field.marked(),
-                            focus,
-                            view,
-                            &theme,
-                        )
-                        .into_any_element()
+                        self.render_prompt_input(prompt, window, cx)
                     })
                     .children(prompt.error.as_ref().map(|error| {
                         div()
@@ -2091,6 +2010,15 @@ impl AurisApp {
                             MouseButton::Left,
                             |_: &MouseDownEvent, _, cx: &mut gpui::App| cx.stop_propagation(),
                         )
+                        // Return and Escape in the sheet's input, which bubble up from it.
+                        .on_action(cx.listener(|this, _: &atelier::SubmitText, window, cx| {
+                            this.commit_prompt(window, cx);
+                            cx.notify();
+                        }))
+                        .on_action(cx.listener(|this, _: &atelier::CancelText, _, cx| {
+                            this.cancel_prompt();
+                            cx.notify();
+                        }))
                         .child(
                             div()
                                 .flex_shrink_0()
@@ -2119,48 +2047,29 @@ impl AurisApp {
         )
     }
 
-    /// The box a comment is typed into on the sheet: several lines, as in place.
-    fn render_prompt_area(
+    /// The sheet's field: Atelier's well around the prompt's input, a line or an area.
+    fn render_prompt_input(
         &self,
-        field: &TextField,
+        prompt: &Prompt,
+        window: &Window,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement + use<> {
-        let theme = self.theme.clone();
+    ) -> gpui::AnyElement {
+        let (Some(target), Some(field)) = (prompt.target(), prompt.field()) else {
+            return div().into_any_element();
+        };
+        let input = self.sync_prompt_input(prompt, target, field, cx);
+        let focused = input.read(cx).is_focused(window);
+        let area = input.read(cx).buffer().is_multiline();
         div()
-            .id("prompt-text-area")
             .debug_selector(|| "prompt-text-field".into())
-            .h(crate::ui::text_area::area_height(field.content(), 3, 8))
             .w_full()
-            .rounded(Metrics::RADIUS_SM)
-            .bg(theme.surface_sunken)
-            .border_1()
-            .border_color(theme.accent)
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, event: &MouseDownEvent, window, cx| {
-                    if let Some(field) = this.prompt.as_mut().and_then(Prompt::field_mut) {
-                        match crate::ui::text_area::area_offset_at(
-                            window,
-                            field.content(),
-                            event.position,
-                        ) {
-                            Some(offset) => field.place_caret(offset, event.modifiers.shift),
-                            None => field.caret_to_end(),
-                        }
-                    }
-                    this.focus.focus(window);
-                    cx.notify();
-                }),
+            .child(
+                atelier::TextField::new()
+                    .focused(focused)
+                    .when(area, atelier::TextField::area)
+                    .child(input),
             )
-            .child(crate::ui::text_area::editable_area(
-                field.content().to_owned().into(),
-                field.selection(),
-                field.marked(),
-                Vec::new(),
-                self.focus.clone(),
-                cx.entity(),
-                theme,
-            ))
+            .into_any_element()
     }
 
     /// Change the explicit star choice without altering the user's written impressions.
@@ -2223,7 +2132,8 @@ impl AurisApp {
 
     fn render_feedback_comment(
         &self,
-        field: &TextField,
+        prompt: &Prompt,
+        window: &Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
         let theme = self.theme.clone();
@@ -2237,68 +2147,18 @@ impl AurisApp {
                     .id("feedback-comment")
                     .debug_selector(|| "feedback-comment".into())
                     .w_full()
-                    .h(gpui::rems(7.0))
-                    .rounded(theme.atelier.shape.radius_sm)
-                    .bg(theme.surface_sunken)
-                    .border_1()
-                    .border_color(theme.border)
+                    .min_h(gpui::rems(7.0))
+                    // The box is taller than the lines in it; a press below them still means
+                    // the impressions.
                     .on_mouse_down(
                         MouseButton::Left,
-                        cx.listener(|this, event: &MouseDownEvent, window, cx| {
-                            if let Some(field) = this.prompt.as_mut().and_then(Prompt::field_mut) {
-                                if let Some(offset) = crate::ui::text_area::wrapped_area_offset_at(
-                                    window,
-                                    field.content(),
-                                    event.position,
-                                ) {
-                                    field.place_caret(offset, event.modifiers.shift);
-                                } else {
-                                    field.caret_to_end();
-                                }
-                            }
-                            this.focus.focus(window);
-                            cx.notify();
+                        cx.listener(|this, _: &MouseDownEvent, window, _| {
+                            window.focus(this.prompt_input.area_focus());
                         }),
                     )
-                    .child(crate::ui::text_area::editable_wrapped_area(
-                        field.content().to_owned().into(),
-                        field.selection(),
-                        field.marked(),
-                        true,
-                        self.focus.clone(),
-                        cx.entity(),
-                        theme.clone(),
-                    )),
+                    .child(self.render_prompt_input(prompt, window, cx)),
             )
             .child(self.render_prompt_hint(Key::WorkshopFeedbackHint, &theme))
-    }
-
-    /// The box the rename sheet types into.
-    fn render_prompt_field(
-        &self,
-        text: SharedString,
-        selection: Range<usize>,
-        marked: Option<Range<usize>>,
-        focus: gpui::FocusHandle,
-        view: gpui::Entity<AurisApp>,
-        theme: &Theme,
-    ) -> impl IntoElement + use<> {
-        div()
-            .debug_selector(|| "prompt-text-field".into())
-            .h(FIELD_HEIGHT)
-            .w_full()
-            .rounded(Metrics::RADIUS_SM)
-            .bg(theme.surface_sunken)
-            .border_1()
-            .border_color(theme.accent)
-            .child(editable_text(
-                text,
-                selection,
-                marked,
-                focus,
-                view,
-                theme.clone(),
-            ))
     }
 
     /// The line under the field saying what a valid answer looks like.
@@ -2595,8 +2455,9 @@ impl AurisApp {
         // the text typed into the workshop, or every letter vanishes while Backspace, which the
         // workshop handles as a key, still works.
         if self.project_chooser.is_some() {
+            // A text prompt is typed into Atelier's input.
             if self.workshop_prompt_open() {
-                return self.prompt.as_mut()?.field_mut();
+                return None;
             }
 
             return self.song_workshop.as_mut()?.field_mut();
@@ -2609,10 +2470,11 @@ impl AurisApp {
         if let Some(palette) = self.palette.as_mut() {
             return Some(&mut palette.field);
         }
-        if let Some(prompt) = self.prompt.as_mut() {
-            return prompt.field_mut();
+        // A text prompt is typed into Atelier's input, and a question takes no text; either way
+        // nothing under it is typed into while it is open.
+        if self.prompt.is_some() {
+            return None;
         }
-
         if let Some(workshop) = self.song_workshop.as_mut() {
             return workshop.field_mut();
         }
@@ -2646,7 +2508,7 @@ impl crate::ui::text_field::HasTextField for AurisApp {
         // In step with `writable_field`.
         if self.project_chooser.is_some() {
             if self.workshop_prompt_open() {
-                return self.prompt.as_ref()?.field();
+                return None;
             }
 
             return self.song_workshop.as_ref()?.field();
@@ -2657,10 +2519,9 @@ impl crate::ui::text_field::HasTextField for AurisApp {
         if let Some(palette) = self.palette.as_ref() {
             return Some(&palette.field);
         }
-        if let Some(prompt) = self.prompt.as_ref() {
-            return prompt.field();
+        if self.prompt.is_some() {
+            return None;
         }
-
         if let Some(workshop) = self.song_workshop.as_ref() {
             return workshop.field();
         }
@@ -3809,17 +3670,31 @@ mod window_tests {
         paint(&app, cx);
         cx.simulate_input("5/3");
         cx.simulate_keystrokes("shift-left");
-        let rejected = app.read_with(cx, |this, _| {
-            this.prompt.as_ref().unwrap().field().unwrap().clone()
-        });
-        assert_eq!(rejected.selected_text(), "3");
-        assert!(rejected.is_reversed());
+        let selected = |app: &gpui::Entity<crate::app::AurisApp>,
+                        cx: &mut gpui::VisualTestContext| {
+            app.read_with(cx, |this, cx| {
+                let input = this
+                    .prompt_input
+                    .for_target(PromptTarget::Signature(Ticks::ZERO))
+                    .read(cx);
+                (
+                    input.text().to_string(),
+                    input.buffer().selected_text().to_string(),
+                )
+            })
+        };
+        assert_eq!(selected(&app, cx), ("5/3".to_string(), "3".to_string()));
 
         cx.simulate_keystrokes("enter");
         paint(&app, cx);
+        assert_eq!(
+            selected(&app, cx),
+            ("5/3".to_string(), "3".to_string()),
+            "the rejected answer keeps its selection"
+        );
         app.read_with(cx, |this, _| {
             let prompt = this.prompt.as_ref().expect("the answer can be corrected");
-            assert_eq!(prompt.field(), Some(&rejected));
+            assert_eq!(prompt.field().unwrap().content(), "5/3");
             assert!(prompt.error.is_some());
             assert_eq!(this.session.signature_at(Ticks::ZERO).to_string(), "4/4");
         });

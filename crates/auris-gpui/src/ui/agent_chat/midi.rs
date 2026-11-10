@@ -624,7 +624,7 @@ mod tests {
                 "shared prompt was not painted in place"
             );
             assert!(
-                editor.read(cx).inline_input.is_focused(window, cx),
+                editor.read(cx).prompt_input.is_focused(window, cx),
                 "reference focus lost; parent field: {:?}; parent prompt: {:?}",
                 app.read(cx).agent_chat.focused,
                 app.read(cx).prompt.as_ref()

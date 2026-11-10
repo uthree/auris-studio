@@ -1618,7 +1618,7 @@ pub struct AurisApp {
     /// pane without the overlay teardown mistaking that intentional move for a lost menu focus.
     pub(crate) menu_focus: FocusHandle,
     /// The inputs an inline prompt is typed into, Atelier's own rather than the window's handle.
-    pub(crate) inline_input: crate::ui::inline_edit::InlineInput,
+    pub(crate) prompt_input: crate::ui::inline_edit::PromptInput,
     /// A menu's activation release, which must not press the control that regains focus.
     pub(crate) menu_activation: Option<(gpui::WindowId, String)>,
     /// Window whose transport consumed Space, so its release cannot also click a button.
@@ -2182,7 +2182,7 @@ impl AurisApp {
             note_selection_preview: None,
             focus: cx.focus_handle(),
             menu_focus: cx.focus_handle(),
-            inline_input: crate::ui::inline_edit::InlineInput::new(cx),
+            prompt_input: crate::ui::inline_edit::PromptInput::new(cx),
             menu_activation: None,
             transport_space_window: None,
             modal_focus: ModalFocus::new(cx),
@@ -2308,6 +2308,13 @@ impl AurisApp {
             || self.menu_bar.is_some()
     }
 
+    /// The focus handle of the input the open text prompt is typed into, when it takes text.
+    pub(crate) fn prompt_text_focus(&self) -> Option<&FocusHandle> {
+        let prompt = self.prompt.as_ref()?;
+        prompt.field()?;
+        Some(self.prompt_input.focus_for(prompt.target()?))
+    }
+
     /// Whether text is being typed into something in this window.
     ///
     /// Narrower than [`Self::keys_are_claimed`], and the two must not be written out separately.
@@ -2417,7 +2424,10 @@ impl AurisApp {
         {
             window.focus(focus);
         } else if self.taking_text_input() && !self.inline_prompt_open(window) {
-            window.focus(&self.focus);
+            match self.prompt_text_focus() {
+                Some(input) => window.focus(input),
+                None => window.focus(&self.focus),
+            }
         } else {
             window.focus(self.panes.handle(pane));
         }
@@ -2515,13 +2525,18 @@ impl AurisApp {
         } else if self.inline_prompt_open(window) {
             // Atelier's inline field focuses its own input when it opens, and gives the keyboard
             // back when it closes.
+        } else if let Some(input) = self.prompt_text_focus() {
+            // The sheet's field is Atelier's input, which owns its own focus handle.
+            if !input.is_focused(window) {
+                window.focus(input);
+            }
         } else if self.taking_text_input() {
             if !self.focus.is_focused(window) {
                 window.focus(&self.focus);
             }
         } else if self.focus.is_focused(window)
             || self.modal_focus.contains_focused(window, cx)
-            || self.inline_input.is_focused(window, cx)
+            || self.prompt_input.is_focused(window, cx)
         {
             // Back where it came from, so the panel bindings work again the moment the sheet is
             // gone rather than after the next click.
@@ -3894,8 +3909,9 @@ mod panel_input_tests {
             app.update(cx, |this, _| {
                 this.focus_pane(Pane::Arrangement, window);
                 assert!(this.prompt.is_some());
-                assert!(this.focus.is_focused(window));
             });
+            let this = app.read(cx);
+            assert!(this.prompt_input.is_focused(window, cx));
         });
         cx.simulate_input("3/4");
         app.read_with(cx, |this, _| {
