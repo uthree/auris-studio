@@ -214,7 +214,7 @@ impl AurisApp {
                     theme,
                     step(-1),
                 )
-                .tooltip(self.tip(Key::SamplerRootDown, "")),
+                .tooltip(self.t(Key::SamplerRootDown)),
             )
             .child(
                 div()
@@ -231,7 +231,7 @@ impl AurisApp {
                     theme,
                     step(1),
                 )
-                .tooltip(self.tip(Key::SamplerRootUp, "")),
+                .tooltip(self.t(Key::SamplerRootUp)),
             )
             .child(
                 div()
@@ -267,7 +267,7 @@ impl AurisApp {
                         cx.notify();
                     }),
                 )
-                .tooltip(self.tip(Key::SamplerRemoveSample, "")),
+                .tooltip(self.t(Key::SamplerRemoveSample)),
             )
             .into_any_element()
     }

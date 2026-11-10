@@ -10,6 +10,8 @@ pub(super) struct AgentSettings {
     selected_connection: auris_agent::ModelConnection,
     pub(super) fields: [TextField; 8],
     pub(super) focus: [FocusHandle; 8],
+    /// The inputs the six one-line fields are typed into; the two prompts are prose areas.
+    inputs: [crate::ui::text_input::MirroredInput; 6],
     pub(super) active: Option<usize>,
     expanded_providers: [bool; 4],
     provider_status: [Option<auris_agent::ProviderStatus>; 5],
@@ -96,6 +98,12 @@ impl AgentSettings {
 }
 
 impl AgentSettings {
+    /// The inputs of the one-line fields.
+    #[cfg(test)]
+    pub(super) fn inputs(&self) -> impl Iterator<Item = &crate::ui::text_input::MirroredInput> {
+        self.inputs.iter()
+    }
+
     pub(super) const PROMPT_FIELD: usize = 6;
     pub(super) const PREFERENCE_FIELD: usize = 7;
 
@@ -127,6 +135,23 @@ impl AgentSettings {
                 prefs.system_prompt.clone()
             },
         };
+        let inputs: [crate::ui::text_input::MirroredInput; 6] = std::array::from_fn(|index| {
+            crate::ui::text_input::MirroredInput::new(
+                cx,
+                move |this: &mut SettingsWindow, event, text, cx| {
+                    match event {
+                        atelier::TextInputEvent::Changed => {
+                            let field = &mut this.agent.fields[index];
+                            let all = 0..field.content().len();
+                            field.replace(all, &text);
+                        }
+                        atelier::TextInputEvent::Submit => this.apply_agent(cx),
+                        atelier::TextInputEvent::Cancel => {}
+                    }
+                    cx.notify();
+                },
+            )
+        });
         Self {
             selected_connection,
             saved,
@@ -141,15 +166,16 @@ impl AgentSettings {
                 TextField::new(String::new()),
             ],
             focus: [
-                cx.focus_handle().tab_stop(true),
-                cx.focus_handle().tab_stop(true),
-                cx.focus_handle().tab_stop(true),
-                cx.focus_handle().tab_stop(true),
-                cx.focus_handle().tab_stop(true),
-                cx.focus_handle().tab_stop(true),
+                inputs[0].focus_handle().clone(),
+                inputs[1].focus_handle().clone(),
+                inputs[2].focus_handle().clone(),
+                inputs[3].focus_handle().clone(),
+                inputs[4].focus_handle().clone(),
+                inputs[5].focus_handle().clone(),
                 cx.focus_handle().tab_stop(true),
                 cx.focus_handle().tab_stop(true),
             ],
+            inputs,
             active: None,
             expanded_providers: [false; 4],
             provider_status: Default::default(),
@@ -458,17 +484,8 @@ impl SettingsWindow {
             cx.notify();
             return true;
         }
-        if event.keystroke.key == "enter" && self.agent.fields[index].marked().is_none() {
-            self.apply_agent(cx);
-            return true;
-        }
-        self.agent.fields[index].apply_key_with_clipboard(
-            &event.keystroke.key,
-            event.keystroke.modifiers.shift,
-            event.keystroke.modifiers.secondary(),
-            false,
-            cx,
-        ) != KeyEffect::Ignored
+        // A one-line field is Atelier's input, which takes its own keys; Return applies.
+        false
     }
 
     fn agent_field(&self, index: usize, cx: &mut Context<Self>) -> AnyElement {
@@ -480,56 +497,23 @@ impl SettingsWindow {
             "agent-opencode-path",
             "agent-antigravity-path",
         ][index];
-        let focus = self.agent.focus[index].clone();
-        let field = &self.agent.fields[index];
-        let editing = self.agent.active == Some(index);
-        // Only the field being typed into paints as an editable line. Both used to, so the one
-        // nobody was in showed a caret or a selection of its own and registered a second input
-        // handler.
-        let contents = if editing {
-            crate::ui::prompt::editable_text(
-                field.content().to_owned().into(),
-                field.selection(),
-                field.marked(),
-                focus.clone(),
-                cx.entity(),
-                self.theme.clone(),
-            )
-            .into_any_element()
-        } else {
-            crate::ui::prompt::field_text(field.content().to_owned(), self.theme.text)
-                .into_any_element()
-        };
+        let input = self.agent.inputs[index].sync(self.agent.fields[index].content(), cx);
         div()
-            .id(id)
-            .debug_selector(move || id.to_owned())
-            .track_focus(&focus)
-            .tab_index(0)
             .w_full()
             .min_w_0()
-            .h_8()
-            .bg(self.theme.surface_sunken)
-            .border_1()
-            .rounded(Metrics::RADIUS_SM)
-            .border_color(self.theme.border)
-            .focus(|el| el.border_color(self.theme.accent))
-            .cursor_text()
-            .child(contents)
-            .on_mouse_down(
-                gpui::MouseButton::Left,
-                cx.listener(move |this, event: &gpui::MouseDownEvent, window, cx| {
-                    crate::ui::prompt::click_field(
-                        &mut this.agent.fields[index],
-                        &focus,
-                        editing,
-                        window,
-                        event,
-                    );
-                    this.agent.active = Some(index);
-                    this.editing_search = false;
-                    window.focus(&focus);
-                    cx.notify();
-                }),
+            // On the way down, before the input under the pointer takes the press.
+            .capture_any_mouse_down(cx.listener(move |this, _, _, cx| {
+                this.agent.active = Some(index);
+                this.editing_search = false;
+                cx.notify();
+            }))
+            .child(
+                atelier::TextField::new()
+                    .id(id)
+                    .debug_selector(move || id.to_owned())
+                    .track_focus(&self.agent.inputs[index].tab_stop())
+                    .tab_index(0)
+                    .child(input),
             )
             .into_any_element()
     }
@@ -1674,7 +1658,7 @@ mod tests {
         assert!(cx.debug_bounds("agent-model").is_none());
         handle
             .update(cx, |this, _, _| {
-                assert_eq!(this.search.content(), "出力トークン")
+                assert_eq!(this.search.as_str(), "出力トークン")
             })
             .unwrap();
     }
@@ -1713,14 +1697,14 @@ mod tests {
             gpui::Modifiers::none(),
         );
         handle
-            .update(settings, |this, _, _| {
-                let field = &this.agent.fields[0];
+            .update(settings, |this, _, cx| {
+                let field = this.agent.inputs[0].input().read(cx).buffer();
                 assert!(field.selection().is_empty(), "{:?}", field.selection());
                 assert!(
-                    field.selection().start < field.content().len() / 2,
+                    field.selection().start < field.text().len() / 2,
                     "a click near the start put the caret at {} of {}",
                     field.selection().start,
-                    field.content().len()
+                    field.text().len()
                 );
             })
             .unwrap();
@@ -1742,8 +1726,8 @@ mod tests {
         crate::harness::click("tab-agent", cx);
         click_visible_control("agent-url", cx);
         handle
-            .update(cx, |this, _, _| {
-                let field = &this.agent.fields[0];
+            .update(cx, |this, _, cx| {
+                let field = this.agent.inputs[0].input().read(cx).buffer();
                 assert!(
                     field.selection().is_empty(),
                     "a click left {:?} selected, so no caret was drawn",

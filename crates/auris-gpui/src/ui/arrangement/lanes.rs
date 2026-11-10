@@ -361,11 +361,7 @@ impl AurisApp {
                                 .w(mark.width)
                                 .h(crate::ui::lint::MARK_STRIP)
                                 .cursor_pointer()
-                                .tooltip(crate::ui::tooltip::keyed_tip(
-                                    mark.message.clone(),
-                                    "",
-                                    &theme,
-                                ))
+                                .tooltip(crate::ui::tooltip::text_tip(mark.message.clone()))
                                 .on_mouse_down(
                                     MouseButton::Left,
                                     AurisApp::opens_menu(cx, move |this, at| {
@@ -375,7 +371,12 @@ impl AurisApp {
                         }))
                         .on_mouse_down(
                             MouseButton::Left,
-                            cx.listener(|this, event: &MouseDownEvent, _, cx| {
+                            cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                                // A control over the lanes (the return-to-playhead button)
+                                // took the press and its focus first; it is not a sweep.
+                                if window.default_prevented() {
+                                    return;
+                                }
                                 this.begin_lane_drag(event, cx);
                             }),
                         )
@@ -403,51 +404,27 @@ impl AurisApp {
             )
     }
 
-    /// While a scroll has taken the view away from a rolling playhead, a button in the corner
-    /// the playhead went out of that takes the view back to it.
+    /// While a scroll has taken the view away from a rolling playhead, Atelier's
+    /// [`atelier::BackToPlayhead`] in the corner the playhead went out of, which takes the view
+    /// back to it.
     fn return_to_playhead_chip(
         &self,
         playhead: Ticks,
         cx: &mut gpui::Context<Self>,
-    ) -> Option<gpui::AnyElement> {
-        if !self.is_playing() || !self.playhead_follow.is_released() {
+    ) -> Option<atelier::BackToPlayhead> {
+        if !self.is_playing() {
             return None;
         }
-        let behind = playhead < self.timeline.scroll_ticks;
-        let label = self.t(Key::CmdRevealPlayhead);
-        let label = match behind {
-            true => format!("← {label}"),
-            false => format!("{label} →"),
-        };
-        let chip = crate::ui::widgets::button(
-            "return-to-playhead",
-            label,
-            crate::ui::widgets::ButtonStyle::Primary,
-            false,
-            self.theme.accent,
-            &self.theme,
-            cx.listener(|this, _, _, cx| {
-                this.reveal_playhead();
-                cx.notify();
-            }),
-        )
-        .debug_selector(|| "return-to-playhead".into())
-        // The lanes under it would take the press for a rubber band otherwise.
-        .on_mouse_down(
-            MouseButton::Left,
-            cx.listener(|this, _: &MouseDownEvent, _, cx| {
-                cx.stop_propagation();
-                this.reveal_playhead();
-                cx.notify();
-            }),
-        );
-        let placed = div().absolute().bottom(px(12.0)).child(chip);
+        let side =
+            self.timeline
+                .playhead_side(&self.playhead_follow, playhead, self.arrangement_width)?;
         Some(
-            match behind {
-                true => placed.left(px(12.0)),
-                false => placed.right(px(12.0)),
-            }
-            .into_any_element(),
+            atelier::BackToPlayhead::new("return-to-playhead", side)
+                .label(self.t(Key::CmdRevealPlayhead))
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.reveal_playhead();
+                    cx.notify();
+                })),
         )
     }
 
