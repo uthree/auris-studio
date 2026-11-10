@@ -2061,10 +2061,10 @@ impl AurisApp {
         let focused = input.read(cx).is_focused(window);
         let area = input.read(cx).buffer().is_multiline();
         div()
-            .debug_selector(|| "prompt-text-field".into())
             .w_full()
             .child(
                 atelier::TextField::new()
+                    .id("prompt-text-field")
                     .focused(focused)
                     .when(area, atelier::TextField::area)
                     .child(input),
