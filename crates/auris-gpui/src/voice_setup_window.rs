@@ -1720,7 +1720,10 @@ mod tests {
             );
             assert!(
                 this.voice_list()
-                    .contains(&("My LeapSinger".into(), path.clone()))
+                    .contains(&auris_session::ShelfVoice::voice(
+                        "My LeapSinger",
+                        path.clone()
+                    ))
             );
         });
         // The saved source snapshot allows a second edit without reopening the dialog.

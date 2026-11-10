@@ -171,4 +171,4 @@ VOICEVOX Engine 0.25.2 は子音を前の休符の半分に切り詰めること
 
 接続の出力サンプルレートは、Engine の各フレームに対して整数個のサンプルに分割できなければなりません。標準93.75 fps Engine には24000または48000 Hzを使います。44100 Hzはこのグリッドを正確に表せないため、接続の読み込み時に拒否されます。これはプロジェクトの音声出力レートとは独立した、音声接続のレートです。
 
-設定の **Set Up VOICEVOX…** ボタンは、Engine URL と query／frame-decode style ID の接続エディターを開きます。同じ画面からローカル Engine 実行ファイルを選択・起動し、`/version` と `/singers` を確認し、Auris Studio の管理 Voices フォルダーに `*.voicevox.json` エントリを保存できます。保存したエントリは **VOICEVOX** バッジ付きで棚に表示されます。
+設定の **Set Up VOICEVOX…** ボタンは、Engine URL と query／frame-decode style ID の接続エディターを開きます。同じ画面からローカル Engine 実行ファイルを選択・起動し、`/version` と `/singers` を確認し、Auris Studio の管理 Voices フォルダーに `*.voicevox.json` エントリを保存できます。保存後は、Engine が提供する歌唱スタイルがそれぞれ独立した声として **VOICEVOX** バッジとスタイルのアイコン付きで棚に並びます。選ぶとそのスタイルがエントリに保存されます。歌手一覧を自動で問い合わせるのは同じマシン上（ループバック）の Engine だけで、別マシンへの接続は保存済みのスタイルを表示します。

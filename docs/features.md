@@ -315,7 +315,8 @@ section's own *Add Voice Folder…* row, remembered and never copied, the way pl
 are. **One click puts the voice on the selected singer track**, exactly as one click puts a
 sound on an instrument track, and the search box finds voices by name like everything else.
 **Track → Choose Voice…** remains as the file dialog for a one-off file somewhere unusual.
-DiffSinger, LeapSinger, and VOICEVOX entries carry backend badges on the shelf. A
+DiffSinger, LeapSinger, and VOICEVOX entries carry backend badges on the shelf, and every
+singing style of a VOICEVOX Engine is a shelf row of its own. A
 LeapSinger voice enters through a `.leapsinger.json` file naming its exported acoustic model,
 NHVSing vocoder, and phoneme dictionary; [setup and export instructions](singing-backends.md#leapsinger-voices)
 cover the supported variants and speaker choices. Settings' Voice Setup buttons create a

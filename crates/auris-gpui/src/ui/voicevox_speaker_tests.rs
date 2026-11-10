@@ -67,10 +67,17 @@ impl Drop for Scratch {
     }
 }
 
+fn speaker_of(this: &AurisApp, track: TrackId) -> Option<String> {
+    this.session
+        .singer_voice(track)
+        .unwrap()
+        .unwrap()
+        .speaker
+        .clone()
+}
+
 #[gpui::test]
-fn a_voicevox_connection_is_one_library_choice_and_its_styles_are_the_inspectors(
-    cx: &mut TestAppContext,
-) {
+fn every_voicevox_style_is_a_library_choice_of_its_own(cx: &mut TestAppContext) {
     let scratch = Scratch::new();
     let path = scratch.voice("library.voicevox.json", "http://127.0.0.1:50021");
     let mut file: serde_json::Value =
@@ -80,31 +87,76 @@ fn a_voicevox_connection_is_one_library_choice_and_its_styles_are_the_inspectors
         {"name":"Singer B / Soft","query_style_id":6000,"decode_style_id":3002}
     ]);
     std::fs::write(&path, serde_json::to_vec(&file).unwrap()).unwrap();
+    let style = |id, singer: &str, name: &str| VoicevoxStyle {
+        id,
+        singer: singer.into(),
+        name: name.into(),
+    };
+    let catalog = VoicevoxCatalog {
+        version: "test".into(),
+        query: vec![style(6000, "Teacher", "Normal")],
+        decode: vec![
+            style(3001, "Singer A", "Normal"),
+            style(3002, "Singer B", "Soft"),
+            style(3003, "Singer C", "Bright"),
+        ],
+    };
     let (app, cx, track, _) = with_a_singer_clip(cx);
-    app.update(cx, |this, cx| {
+    let rows_for = |this: &mut AurisApp| -> Vec<auris_session::ShelfVoice> {
+        this.voice_list()
+            .into_iter()
+            .filter(|row| row.path == path)
+            .collect()
+    };
+    app.update(cx, |this, _| {
         this.settings.voice_paths.push(scratch.root.clone());
         this.voices = None;
-        let rows = this
-            .voice_list()
+        let names: Vec<_> = rows_for(this).into_iter().map(|row| row.name).collect();
+        assert_eq!(
+            names,
+            ["Singer A / Normal", "Singer B / Soft"],
+            "offline, the saved styles are the rows"
+        );
+        this.finish_voicevox_shelf(path.clone(), Ok(catalog.clone()));
+        let names: Vec<_> = rows_for(this).into_iter().map(|row| row.name).collect();
+        assert_eq!(
+            names,
+            ["Singer A / Normal", "Singer B / Soft", "Singer C / Bright"],
+            "the Engine's singers join the shelf once it answers"
+        );
+        // A failed refresh keeps the singers the Engine last offered.
+        this.finish_voicevox_shelf(path.clone(), Err("Engine stopped".into()));
+        assert_eq!(rows_for(this).len(), 3);
+    });
+    let row = |this: &mut AurisApp, name: &str| {
+        rows_for(this)
             .into_iter()
-            .filter(|(_, entry)| entry == &path)
-            .count();
-        assert_eq!(rows, 1, "styles are not separate shelf entries");
-        this.apply_singer_voice_selection(track, path.clone(), None, cx);
+            .find(|row| row.name == name)
+            .unwrap()
+    };
+    app.update(cx, |this, cx| {
+        let soft = row(this, "Singer B / Soft");
+        this.choose_shelf_voice(track, soft, cx);
     });
     cx.run_until_parked();
     app.update(cx, |this, cx| {
-        this.set_singer_speaker_for(track, "Singer B / Soft".into());
-        // Choosing the same voice again from the shelf keeps the inspector's style.
-        this.apply_singer_voice_selection(track, path.clone(), None, cx);
+        assert_eq!(speaker_of(this, track).as_deref(), Some("Singer B / Soft"));
+        let bright = row(this, "Singer C / Bright");
+        assert!(!bright.style.as_ref().unwrap().saved);
+        this.choose_shelf_voice(track, bright, cx);
         assert_eq!(
-            this.session
-                .singer_voice(track)
-                .unwrap()
-                .unwrap()
-                .speaker
-                .as_deref(),
-            Some("Singer B / Soft")
+            speaker_of(this, track).as_deref(),
+            Some("Singer C / Bright")
+        );
+        let connection = this.session.voicevox_connection_at(&path, None).unwrap();
+        assert_eq!(connection.styles().last().unwrap().decode_style_id, 3003);
+        let bright = row(this, "Singer C / Bright");
+        assert!(bright.style.as_ref().unwrap().saved, "the click saved it");
+        assert!(bright.is_selected(&path, Some("Singer C / Bright")));
+        let normal = row(this, "Singer A / Normal");
+        assert!(
+            normal.is_selected(&path, None),
+            "the first style is the default"
         );
     });
 }

@@ -27,6 +27,9 @@ pub struct SingerPortraitSource {
     pub(crate) backend: Option<BackendKind>,
     pub(crate) speaker: Option<String>,
     pub(crate) automatic: bool,
+    /// An Engine style the connection file does not name yet, for a shelf row the Engine
+    /// advertised; it takes the place of `speaker` when present.
+    pub(crate) decode_style: Option<u32>,
 }
 
 impl SingerPortraitSource {
@@ -40,6 +43,7 @@ impl SingerPortraitSource {
             path,
             speaker,
             automatic: false,
+            decode_style: None,
         }
     }
 
@@ -51,6 +55,16 @@ impl SingerPortraitSource {
         Self {
             automatic: true,
             ..Self::for_voice(path, speaker)
+        }
+    }
+
+    /// Identifies one Engine style of a VOICEVOX shelf row that is not saved in its file yet.
+    ///
+    /// Automatic in the same way as [`Self::for_library_voice`].
+    pub fn for_library_style(path: PathBuf, decode_style_id: u32) -> Self {
+        Self {
+            decode_style: Some(decode_style_id),
+            ..Self::for_library_voice(path, None)
         }
     }
 
@@ -133,7 +147,11 @@ fn load_artwork(
                     "automatic VOICEVOX artwork access is limited to the loopback host".into(),
                 ));
             }
-            fetch_voicevox_artwork(&connection.url, connection.decode_style_id, artwork)
+            fetch_voicevox_artwork(
+                &connection.url,
+                source.decode_style.unwrap_or(connection.decode_style_id),
+                artwork,
+            )
         }
     }
 }

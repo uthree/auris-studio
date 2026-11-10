@@ -137,8 +137,8 @@ pub use audition::{AuditionNote, AuditionSection, AuditionTimeline, AuditionTrac
 pub use history::{Edit, History};
 pub use library::{
     DICTIONARY_DIR_VAR, DICTIONARY_FOLDER, GENERAL_MIDI, JAPANESE_DICTIONARY, LIBRARY_DIR_VAR,
-    LIBRARY_FOLDER, ShippedDictionary, ShippedFont, VOICES_DIR_VAR, VOICES_FOLDER, VoiceSourceKind,
-    voice_source_kind,
+    LIBRARY_FOLDER, ShelfStyle, ShelfVoice, ShippedDictionary, ShippedFont, VOICES_DIR_VAR,
+    VOICES_FOLDER, VoiceSourceKind, voice_source_kind,
 };
 pub use param::ParamTarget;
 pub use registry::{DEFAULT_INSTRUMENT, default_registry, plugin_catalogue, registry_with_samples};

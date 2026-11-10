@@ -617,7 +617,13 @@ mod tests {
     fn a_shelf_voice_needs_a_singer_track(cx: &mut TestAppContext) {
         let (app, cx) = open(cx);
         app.update(cx, |this, cx| {
-            this.set_track_voice(std::path::PathBuf::from("/nowhere/voice.onnx"), cx);
+            this.set_track_voice(
+                auris_session::ShelfVoice::voice(
+                    "voice",
+                    std::path::PathBuf::from("/nowhere/voice.onnx"),
+                ),
+                cx,
+            );
             assert!(
                 this.status
                     .contains(auris_i18n::Key::ErrorNoSingerTrack.get(this.language())),
