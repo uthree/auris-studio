@@ -23,6 +23,10 @@ pub const UNIFORM_LINES: usize = 8;
 pub const UNIFORM_SPACING_SHARE: f64 = 0.75;
 /// Onset spacings needed before that share is judged.
 pub const UNIFORM_SPACING_COUNT: usize = 50;
+/// Onset spacings a section needs before the spacing warning may name it.
+const SECTION_SPACING_COUNT: usize = 8;
+/// Sections the spacing warning names at most.
+const NAMED_SECTIONS: usize = 4;
 /// Bits a note under which a line counts as predictable from the song so far.
 pub const PREDICTABLE_BITS: f64 = 1.0;
 /// Lines a section other than a chorus must hold before singing an earlier section's lines
@@ -261,6 +265,44 @@ fn letters(lines: &[Line]) -> Vec<String> {
         .collect()
 }
 
+/// Where the spacing warning's one value sits: the sections in which `value` takes
+/// [`UNIFORM_SPACING_SHARE`] of the spacings or more, the highest share first, as a clause to
+/// follow the song-wide figure. Composers sent back with the song-wide figure alone rewrote one
+/// kind of section, usually the verses, and left the others at four spacings in five. Naming is
+/// all this does: no section is judged on its own, since the corpus behind the threshold has no
+/// section boundaries to take one from. Nothing is named where every section is alike, which the
+/// song-wide figure has already said.
+fn most_uniform_sections(sections: &[(String, BTreeMap<i64, usize>)], value: i64) -> String {
+    let judged: Vec<(&str, f64)> = sections
+        .iter()
+        .filter(|(name, _)| !name.is_empty())
+        .filter_map(|(name, spacings)| {
+            let total: usize = spacings.values().sum();
+            let share = *spacings.get(&value).unwrap_or(&0) as f64 / total.max(1) as f64;
+            (total >= SECTION_SPACING_COUNT).then_some((name.as_str(), share))
+        })
+        .collect();
+    let mut shares: Vec<(&str, f64)> = judged
+        .iter()
+        .copied()
+        .filter(|(_, share)| *share >= UNIFORM_SPACING_SHARE)
+        .collect();
+    if shares.is_empty() || shares.len() == judged.len() {
+        return String::new();
+    }
+    shares.sort_by(|a, b| b.1.total_cmp(&a.1));
+    let named: Vec<String> = shares
+        .iter()
+        .take(NAMED_SECTIONS)
+        .map(|(name, share)| format!("{name} ({:.0}%)", share * 100.0))
+        .collect();
+    let more = match shares.len().saturating_sub(NAMED_SECTIONS) {
+        0 => String::new(),
+        more => format!(" and {more} more"),
+    };
+    format!(", most of all in {}{more}", named.join(", "))
+}
+
 /// The line-by-line shape of a track's melody, with warnings only at the extremes.
 pub fn melody_form(project: &Project, track: TrackId) -> (Value, Vec<String>) {
     let (report, warnings, _) = form(project, track);
@@ -294,6 +336,7 @@ fn form(project: &Project, track: TrackId) -> (Value, Vec<String>, Vec<String>) 
     let mut second_half = 0;
     let mut syncopated = 0;
     let mut spacings: BTreeMap<i64, usize> = BTreeMap::new();
+    let mut section_spacings: Vec<(String, BTreeMap<i64, usize>)> = Vec::new();
     let mut tonic_endings = 0;
     let mut endings = 0;
     let mut note_counts = BTreeSet::new();
@@ -316,8 +359,18 @@ fn form(project: &Project, track: TrackId) -> (Value, Vec<String>, Vec<String>) 
             }
         }
         syncopated += line_syncopated;
+        let label = section_of(project, line);
+        let in_section = match section_spacings.iter().position(|(name, _)| *name == label) {
+            Some(index) => index,
+            None => {
+                section_spacings.push((label.clone(), BTreeMap::new()));
+                section_spacings.len() - 1
+            }
+        };
         for pair in line.notes.windows(2) {
-            *spacings.entry((pair[1].0 - pair[0].0).raw()).or_insert(0) += 1;
+            let spacing = (pair[1].0 - pair[0].0).raw();
+            *spacings.entry(spacing).or_insert(0) += 1;
+            *section_spacings[in_section].1.entry(spacing).or_insert(0) += 1;
         }
         note_counts.insert(line.notes.len());
         let last = line.notes[line.notes.len() - 1];
@@ -327,7 +380,6 @@ fn form(project: &Project, track: TrackId) -> (Value, Vec<String>, Vec<String>) 
         if degree == 0 {
             tonic_endings += 1;
         }
-        let label = section_of(project, line);
         match sections.last_mut() {
             Some((name, form)) if *name == label => form.push(letters[index].clone()),
             _ => sections.push((label.clone(), vec![letters[index].clone()])),
@@ -388,9 +440,10 @@ fn form(project: &Project, track: TrackId) -> (Value, Vec<String>, Vec<String>) 
         && *count as f64 / total as f64 >= UNIFORM_SPACING_SHARE
     {
         development.push(format!(
-            "{:.0}% of the melody's notes start {:.2} beats after the one before; mix shorter and longer values",
+            "{:.0}% of the melody's notes start {:.2} beats after the one before{}; mix shorter and longer values",
             *count as f64 * 100.0 / total as f64,
-            *value as f64 / Ticks::QUARTER.raw() as f64
+            *value as f64 / Ticks::QUARTER.raw() as f64,
+            most_uniform_sections(&section_spacings, *value)
         ));
     }
     warnings.extend(development.iter().cloned());
@@ -493,6 +546,80 @@ mod tests {
             .map(|line| line["bits_per_note"].as_f64().unwrap())
             .collect();
         assert!(bits[0] > 4.0 && bits[7] < 0.5, "{bits:?}");
+    }
+
+    #[test]
+    fn the_spacing_warning_names_the_section_that_holds_the_one_spacing() {
+        let mut project = Project::new("Song", 48_000.0);
+        let track = project.add_singer_track("Lead", "auris.synth.vocal");
+        project
+            .sections
+            .set_point(Ticks::ZERO, Some("Verse".into()));
+        project
+            .sections
+            .set_point(Ticks(BAR * 8), Some("Chorus".into()));
+        project.sections.set_point(Ticks(BAR * 24), None);
+        // Two verse lines in dotted eighths, sixteenths and a quarter: ten spacings, none an
+        // eighth. Four chorus lines of sixteen eighths: sixty spacings, every one an eighth.
+        for index in 0..6 {
+            let clip = project
+                .add_midi_clip(track, "Line", Ticks(BAR * 4 * index), Ticks(BAR * 4))
+                .unwrap();
+            let onsets: Vec<i64> = if index < 2 {
+                vec![0, 720, 960, 1680, 1920, 2880]
+            } else {
+                (0..16).map(|step| step * 480).collect()
+            };
+            project.midi_clip_mut(clip).unwrap().notes = onsets
+                .iter()
+                .enumerate()
+                .map(|(i, &at)| {
+                    let length = onsets.get(i + 1).map_or(480, |next| next - at);
+                    Note::new(
+                        60 + (i as u8 * 2 + index as u8) % 9,
+                        Ticks(at),
+                        Ticks(length),
+                    )
+                })
+                .collect();
+        }
+        let text = development_warnings(&project, track).join(
+            "
+",
+        );
+        assert!(
+            text.contains(
+                "86% of the melody's notes start 0.50 beats after the one before, most of all in Chorus (100%); mix shorter and longer values"
+            ),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn the_spacing_warning_names_at_most_four_sections_the_most_uniform_first() {
+        let section = |name: &str, eighths: usize, others: usize| {
+            (
+                name.to_string(),
+                BTreeMap::from([(480_i64, eighths), (960_i64, others)]),
+            )
+        };
+        let sections = [
+            section("Verse 1", 5, 5),
+            section("Pre 1", 8, 2),
+            section("Chorus 1", 9, 1),
+            section("Verse 2", 10, 0),
+            section("Pre 2", 16, 4),
+            section("Chorus 2", 18, 2),
+            section("Bridge", 7, 0),
+            section("", 20, 0),
+        ];
+        assert_eq!(
+            most_uniform_sections(&sections, 480),
+            ", most of all in Verse 2 (100%), Chorus 1 (90%), Chorus 2 (90%), Pre 1 (80%) and 1 more"
+        );
+        // One spacing throughout is what the song-wide figure already says.
+        assert_eq!(most_uniform_sections(&sections[1..6], 480), "");
+        assert_eq!(most_uniform_sections(&sections[..1], 480), "");
     }
 
     #[test]
