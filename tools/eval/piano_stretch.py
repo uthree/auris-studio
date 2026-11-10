@@ -17,6 +17,9 @@ at A4 = 440 Hz for the worker, and on its own A4 for the recorded piano, which w
 below zero the two notes lie further apart than that pure octave, above zero closer, so a
 negative 2:1 beside a positive 4:2 is an octave tuned between the two. Each octave is read on
 four such pairs, the 2:1, 4:2, 6:3 and 8:4: the bass is tuned on the last two.
+
+Each string's stiffness is read as well, off the line its partials make, with where that line
+puts the first partial: a recorded bass note's fundamental lies under its own string's line.
 """
 
 import argparse
@@ -49,6 +52,12 @@ FLOOR_DB = -60.0
 # A recorded partial counts when it stands this far above what the same file holds once the
 # note is over. The recordings carry a steady line at 8 kHz that otherwise reads as one.
 NOISE_DB = 10.0
+# The partials followed up one string to read its stiffness, and how faint one of them may be.
+MOST = 40
+FAINT_DB = -70.0
+# A partial further than this from the line the others make is not the string's own. A real
+# bass string has partials of another kind beside these, and its first few lie under the line.
+OFF_LINE = 3.0
 # Lags to the sample when a period is looked for: the top octave's is a dozen samples long.
 FINE = 8
 # A heard pitch that moves further than this with the weight given to the ends of the stretch
@@ -113,7 +122,7 @@ def partial(magnitudes, resolution, target, noise=None, span=150.0):
     centre = peak + 0.5 * (a - c) / (a - 2 * b + c)
     # As far below the strongest frequency as above it, so that one string alone reads where
     # it peaks; a bin counts for as much of itself as lies inside.
-    reach = centre * (2 ** (UNISON / 1200) - 1)
+    reach = centre * (2 ** (min(UNISON, span) / 1200) - 1)
     low, high = max(centre - reach, 0.5), min(centre + reach, len(magnitudes) - 1.5)
     bins = np.arange(int(np.floor(low + 0.5)), int(np.ceil(high - 0.5)) + 1)
     lower, upper = np.maximum(bins - 0.5, low), np.minimum(bins + 0.5, high)
@@ -174,6 +183,27 @@ def heard_readings(audio, rate, pitch):
     return heard_cents(audio, rate, pitch), heard_cents(audio, rate, pitch, np.hanning(len(audio)))
 
 
+class String(NamedTuple):
+    """A string as its partials show it: its stiffness; the cents from equal temperament at
+    which the line through its partials puts the first of them; the cents the first three lie
+    from that line; and how many partials the line is drawn through, of how many followed."""
+
+    stiffness: float
+    cents: float
+    low: list
+    partials: tuple
+
+
+def line(numbers, hertz):
+    """The stiffness and the limp frequency of the string whose partials these are.
+
+    Partial `n` of a stiff string lies at `n f sqrt(1 + B n^2)`, so `(f_n / n)^2` against `n^2`
+    is a straight line, and its slope over its intercept is `B`.
+    """
+    slope, intercept = np.polyfit(numbers ** 2, (hertz / numbers) ** 2, 1)
+    return slope / intercept, np.sqrt(max(intercept, 1e-12))
+
+
 class Note:
     """A note from its strike on, and what its recording holds when no note sounds."""
 
@@ -187,10 +217,54 @@ class Note:
         self.magnitudes, self.resolution = spectrum(steady, rate)
         self.noise = None if noise is None else spectrum(channels(noise)[-len(steady):], rate)[0]
 
-    def partial(self, target):
+    def partial(self, target, span=150.0):
         """Its partial near `target`, or `None` where none stands clear of the noise."""
-        reading = partial(self.magnitudes, self.resolution, target, self.noise)
+        reading = partial(self.magnitudes, self.resolution, target, self.noise, span)
         return reading if reading is not None and reading.clear > NOISE_DB else None
+
+    def string(self, pitch):
+        """The string of this note at `pitch`, or `None` where fewer than three partials show.
+
+        Each partial is looked for where the ones below it say it will be, no further off than
+        two fifths of the way to the next. The line is then drawn through those that lie on it.
+        """
+        numbers, hertz = [], []
+        stiffness, limp = 0.0, hz(pitch)
+        for n in range(1, MOST + 1):
+            target = n * limp * np.sqrt(1 + stiffness * n * n)
+            if target > min(10_000.0, 0.45 * self.rate):
+                break
+            reading = self.partial(target, span=min(150.0, 480 * np.log2((n + 1) / n)))
+            if reading is None or reading.level < FAINT_DB:
+                continue
+            numbers.append(float(n))
+            hertz.append(target * 2 ** (reading.cents / 1200))
+            if len(numbers) >= 3:
+                stiffness, limp = line(np.array(numbers), np.array(hertz))
+                stiffness = max(stiffness, 0.0)
+        if len(numbers) < 3:
+            return None
+        numbers, hertz = np.array(numbers), np.array(hertz)
+
+        def drawn(through):
+            stiffness, limp = line(numbers[through], hertz[through])
+            return stiffness, limp, 1200 * np.log2(hertz / (numbers * limp * np.sqrt(1 + max(stiffness, 0.0) * numbers ** 2)))
+
+        on = np.ones(len(numbers), dtype=bool)
+        for _ in range(4):
+            stiffness, limp, off = drawn(on)
+            spread = 1.4826 * np.median(abs(off[on] - np.median(off[on])))
+            still = abs(off) <= max(OFF_LINE, 3 * spread)
+            if still.sum() < 3 or (still == on).all():
+                break
+            on = still
+        else:
+            stiffness, limp, off = drawn(on)
+        if stiffness <= 0:
+            return None
+        low = [float(off[numbers == n][0]) if n in numbers else None for n in (1.0, 2.0, 3.0)]
+        first = 1200 * np.log2(limp * np.sqrt(1 + stiffness) / hz(pitch))
+        return String(float(stiffness), float(first), low, (int(on.sum()), len(numbers)))
 
 
 def octave(lower, upper, low_hz, n):
@@ -212,8 +286,12 @@ def measure(notes):
         fundamental = note.partial(hz(pitch)) if note else None
         readings = list(heard_readings(note.early, note.rate, pitch)) if note else None
         settled = readings is not None and abs(readings[0] - readings[1]) <= HEARD_TOLERANCE
+        string = note.string(pitch) if note else None
         row = {"key": name, "pitch": pitch, "fundamental": fundamental.cents if fundamental else None,
-               "heard": readings[0] if settled else None, "heard_readings": readings}
+               "heard": readings[0] if settled else None, "heard_readings": readings,
+               "stiffness": string.stiffness if string else None, "string": string.cents if string else None,
+               "from_the_line": string.low if string else None,
+               "string_partials": list(string.partials) if string else None}
         if pitch + 12 <= TOP:
             for label, n in OCTAVES:
                 row[label] = octave(note, above, hz(pitch), n) if note and above else None
@@ -227,7 +305,7 @@ def onto_its_own_a4(rows):
     if a4 is None:
         raise ValueError("no A4 to measure the other keys from")
     for row in rows:
-        for label in ("fundamental", "heard"):
+        for label in ("fundamental", "heard", "string"):
             if row[label] is not None:
                 row[label] -= a4
         if row["heard_readings"] is not None:
@@ -266,10 +344,11 @@ def shown(value):
 
 
 def table(title, rows):
-    print(f"{title}\nkey  fundamental   heard     2:1     4:2     6:3     8:4")
+    print(f"{title}\nkey  fundamental   heard     2:1     4:2     6:3     8:4  string  stiffness")
     for row in rows:
-        cells = "".join(f"{shown(row.get(key)):>8}" for key in ("heard", *(label for label, _ in OCTAVES)))
-        print(f"{row['key']:<4}{shown(row['fundamental']):>12}{cells}")
+        cells = "".join(f"{shown(row.get(key)):>8}" for key in ("heard", *(label for label, _ in OCTAVES), "string"))
+        stiffness = "-" if row["stiffness"] is None else f"{row['stiffness'] * 1e4:.2f}e-4"
+        print(f"{row['key']:<4}{shown(row['fundamental']):>12}{cells}{stiffness:>11}")
 
 
 def main():
@@ -299,7 +378,9 @@ def main():
                         f"{STEADY[1] - STEADY[0]:g} s only; "
                         f"heard pitch: normalized autocorrelation peak of {EARLY[0]:g}-{EARLY[1]:g} s, given where a "
                         f"Hann-weighted reading of the same stretch lies within {HEARD_TOLERANCE:g} cent; "
-                        f"octaves: lower note's partial minus the upper note's, above {FLOOR_DB:g} dB only",
+                        f"octaves: lower note's partial minus the upper note's, above {FLOOR_DB:g} dB only; "
+                        f"strings: a line through (n^2, (f_n / n)^2) for up to {MOST} partials below 10 kHz, "
+                        f"those more than {OFF_LINE:g} cents off it left out",
               "model": {"renderer_sha256": register.digest(args.renderer), "keys": rows}}
     table("Worker, from equal temperament at A4 = 440 Hz", rows)
     if args.recorded:

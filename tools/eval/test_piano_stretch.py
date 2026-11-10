@@ -17,17 +17,18 @@ def sharp(stiffness, n):
     return 600 * np.log2((1 + stiffness * n * n) / (1 + stiffness))
 
 
-def string(pitch, cents=0.0, stiffness=0.0, levels=LEVELS, seconds=2.5, falling=None, rate=RATE):
+def string(pitch, cents=0.0, stiffness=0.0, levels=LEVELS, seconds=2.5, falling=None, rate=RATE, moved=None):
     """A stiff string whose first partial lies `cents` from equal temperament.
 
-    Partial `n` is `levels[n - 1]` strong and falls `falling[n - 1]` decibels a second.
+    Partial `n` is `levels[n - 1]` strong and falls `falling[n - 1]` decibels a second, and
+    lies `moved[n]` cents from where the string alone would put it.
     """
     t = np.arange(round(seconds * rate)) / rate
     first = stretch.hz(pitch) * 2 ** (cents / 1200)
     falling = falling or (0.0,) * len(levels)
     audio = np.zeros(len(t))
     for n, (level, fall) in enumerate(zip(levels, falling, strict=True), start=1):
-        hz = first * n * 2 ** (sharp(stiffness, n) / 1200)
+        hz = first * n * 2 ** ((sharp(stiffness, n) + (moved or {}).get(n, 0.0)) / 1200)
         audio += level * 10 ** (-fall * t / 20) * np.sin(2 * np.pi * hz * t)
     return audio
 
@@ -144,6 +145,39 @@ def test_a_bass_octave_is_read_on_the_six_to_three_and_the_eight_to_four():
     assert stretch.octave(lower, upper, stretch.hz(24), 8) == pytest.approx(-9.0 + sharp(low, 8) - sharp(high, 4), abs=0.03)
 
 
+THIRTY = tuple(1 / n for n in range(1, 31))
+
+
+def test_a_strings_stiffness_is_read_off_the_line_its_partials_make():
+    # The thirtieth partial of this C1 lies 182 cents above thirty times the first: it is
+    # found by following the string up, not by looking near a whole multiple.
+    read = stretch.Note(string(24, cents=-16.0, stiffness=2.6e-4, levels=THIRTY), RATE).string(24)
+    assert read.stiffness == pytest.approx(2.6e-4, rel=0.01)
+    assert read.cents == pytest.approx(-16.0, abs=0.05)
+    assert read.low == pytest.approx([0.0, 0.0, 0.0], abs=0.05)
+    assert read.partials == (30, 30)
+
+
+def test_first_partials_under_the_line_leave_the_string_where_it_is():
+    # A recorded bass note: its first partials lie under the line the rest of them make.
+    under = {1: -9.0, 2: -5.0, 3: -2.0}
+    read = stretch.Note(string(24, cents=-16.0, stiffness=2.6e-4, levels=THIRTY, moved=under), RATE).string(24)
+    assert read.stiffness == pytest.approx(2.6e-4, rel=0.02)
+    assert read.cents == pytest.approx(-16.0, abs=0.3)
+    assert read.low == pytest.approx([-9.0, -5.0, -2.0], abs=0.3)
+    assert read.partials == (28, 30)
+
+
+def test_a_partial_that_is_not_the_strings_own_is_left_off_the_line():
+    read = stretch.Note(string(24, cents=-16.0, stiffness=2.6e-4, levels=THIRTY, moved={13: 12.0}), RATE).string(24)
+    assert read.stiffness == pytest.approx(2.6e-4, rel=0.01)
+    assert read.partials == (29, 30)
+
+
+def test_two_partials_do_not_make_a_string():
+    assert stretch.Note(string(108, levels=(1.0, 0.5)), RATE).string(108) is None
+
+
 def test_an_octave_is_not_judged_by_a_partial_too_weak_to_hear():
     lower = stretch.Note(string(84, levels=(1.0, 0.5, 0.25, 1e-4)), RATE)
     upper = stretch.Note(string(96), RATE)
@@ -204,6 +238,13 @@ def test_every_key_is_measured_from_one_render_of_the_factory_piano(keyboard):
         assert row["fundamental"] == pytest.approx(Strings.tuned(row["pitch"]), abs=0.02)
         assert row["fundamental"] < row["heard"] < row["fundamental"] + sharp(Strings.STIFFNESS, 4)
         assert row["heard_readings"][0] == row["heard"]
+    # Four partials under 10 kHz make a string of every key but the top one, which has two.
+    for row in rows[:-1]:
+        assert row["stiffness"] == pytest.approx(Strings.STIFFNESS, rel=0.02)
+        assert row["string"] == pytest.approx(Strings.tuned(row["pitch"]), abs=0.05)
+        assert row["from_the_line"] == pytest.approx([0.0, 0.0, 0.0], abs=0.05)
+        assert row["string_partials"] == [4, 4]
+    assert rows[-1]["stiffness"] is None and rows[-1]["string"] is None
     # An octave of these strings is three cents wide, less what stiffness adds to the lower one.
     for row in rows[:-1]:
         assert row["octave_2_1"] == pytest.approx(sharp(Strings.STIFFNESS, 2) - 3.0, abs=0.03)
@@ -227,6 +268,7 @@ def test_a_key_that_is_not_there_leaves_its_row_and_its_octaves_empty(keyboard):
     notes = {pitch: note for pitch, note in keyboard[1].items() if pitch not in (21, 72)}
     rows = {row["key"]: row for row in stretch.measure(notes)}
     assert rows["A0"] == {"key": "A0", "pitch": 21, "fundamental": None, "heard": None, "heard_readings": None,
+                          "stiffness": None, "string": None, "from_the_line": None, "string_partials": None,
                           "octave_2_1": None, "octave_4_2": None, "octave_6_3": None, "octave_8_4": None}
     # C4 is there, but the C5 its octave is judged against is not.
     assert rows["C4"]["fundamental"] is not None and rows["C4"]["octave_2_1"] is None
@@ -241,6 +283,7 @@ def test_a_piano_tuned_to_another_pitch_is_measured_from_its_own_a4(keyboard):
     assert a4 == pytest.approx(5.0, abs=0.02)
     for row in rows:
         assert row["fundamental"] == pytest.approx(0.25 * (row["pitch"] - 69), abs=0.03)
+        assert row["string"] is None or row["string"] == pytest.approx(0.25 * (row["pitch"] - 69), abs=0.05)
         assert row["heard_readings"][0] == row["heard"]
     assert rows[0]["heard"] == pytest.approx(heard - a4)
     assert [row.get("octave_2_1") for row in rows] == octaves

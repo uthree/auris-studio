@@ -31,8 +31,9 @@ paired clean/pedal recording benchmark with pitch-grouped splits.
 The [choir calibration](choir-copy-synthesis.md) fits the native vocal-tract ensemble to
 real sustained vowels, with 24 training notes and 80 notes from separate held-out singers.
 The [piano stretch tuning](piano-stretch-tuning.md) is how the piano's fundamentals leave
-equal temperament: the rule, the fundamentals, heard pitch and octaves measured at thirteen
-keys beside the same reading of a recorded Steinway, and the tests that hold them.
+equal temperament: the rule; the fundamentals, heard pitch, octaves and string stiffness
+measured at thirteen keys beside the same reading of a recorded Steinway; and the tests that
+hold them.
 
 ## Native instrument upper-midrange voicing
 
