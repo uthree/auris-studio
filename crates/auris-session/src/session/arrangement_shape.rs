@@ -394,10 +394,11 @@ fn cadence(project: &Project, span: &auris_core::SectionSpan) -> Value {
 }
 
 /// A warning when the drums do not shade the form by strength: a verse and the last chorus struck
-/// alike is heard as a machine, however the notes differ. Where the song has both, the choruses'
+/// alike is heard as a machine, however the notes differ. Where the song has both, every chorus's
 /// mean velocity must stand [`FLAT_DYNAMICS`] above the verses', since a softer intro or bridge
-/// alone leaves the verse and chorus the same; a song without both is read by the spread across
-/// all its sections. The arrangement phase's `drums_follow_sections` check reads it too.
+/// alone leaves the verse and chorus the same, and one hard chorus leaves the others at the
+/// verse's strength if the choruses are averaged; a song without both is read by the spread
+/// across all its sections. The arrangement phase's `drums_follow_sections` check reads it too.
 pub(crate) fn flat_drums(project: &Project, spans: &[auris_core::SectionSpan]) -> Option<String> {
     let mut sums = vec![(0.0_f64, 0_usize); spans.len()];
     for track in project.tracks.iter().filter(|track| track.kind.is_drum()) {
@@ -422,20 +423,23 @@ pub(crate) fn flat_drums(project: &Project, spans: &[auris_core::SectionSpan]) -
         .filter(|(_, (_, count))| *count > 0)
         .map(|(span, (sum, count))| (span.label.as_str(), sum / *count as f64))
         .collect();
-    let average = |keep: &dyn Fn(&str) -> bool| {
-        let picked: Vec<f64> = by_section
-            .iter()
-            .filter(|(label, _)| keep(label))
-            .map(|(_, mean)| *mean)
-            .collect();
-        (!picked.is_empty()).then(|| picked.iter().sum::<f64>() / picked.len() as f64)
-    };
+    let verses: Vec<f64> = by_section
+        .iter()
+        .filter(|(label, _)| is_verse(label))
+        .map(|(_, mean)| *mean)
+        .collect();
+    let weakest_chorus = by_section
+        .iter()
+        .filter(|(label, _)| is_chorus(label))
+        .min_by(|a, b| a.1.total_cmp(&b.1));
     if by_section.len() >= DYNAMIC_SECTIONS
-        && let (Some(chorus), Some(verse)) = (average(&is_chorus), average(&is_verse))
+        && !verses.is_empty()
+        && let Some((label, chorus)) = weakest_chorus
     {
+        let verse = verses.iter().sum::<f64>() / verses.len() as f64;
         return (chorus - verse < FLAT_DYNAMICS).then(|| {
             format!(
-                "The drums strike the choruses no harder than the verses (mean velocity {chorus:.2} against {verse:.2}); strike the verses softer and the choruses harder, the last chorus hardest"
+                "The drums strike {label} no harder than the verses (mean velocity {chorus:.2} against {verse:.2}); strike the verses softer and all the choruses harder, the last chorus hardest"
             )
         });
     }
@@ -705,6 +709,38 @@ mod tests {
             notes
         });
         assert!(!unshaded(&shaded), "{:?}", warnings(&shaded));
+    }
+
+    #[test]
+    fn one_chorus_struck_hard_does_not_cover_a_chorus_struck_like_the_verse() {
+        // Aメロ in bars 4 to 8 and サビ in 12 to 16, as `song` lays them, then a last chorus.
+        let two_choruses = |last: f32| {
+            let mut project = song((4, 16), 24, &|index| {
+                let mut notes = groove(index);
+                notes[0].velocity = match index {
+                    4..8 => 0.5,
+                    16..20 => last,
+                    _ => 0.8,
+                };
+                notes
+            });
+            let bar = Ticks::QUARTER * 4;
+            project
+                .sections
+                .set_point(bar * 16, Some("ラストサビ".into()));
+            project.sections.set_point(bar * 20, None);
+            project
+        };
+        // The two choruses average 0.65 against the verse's 0.5, and the last is the verse again.
+        let covered = warnings(&two_choruses(0.5));
+        assert!(
+            covered
+                .iter()
+                .any(|w| w.contains("The drums strike ラストサビ no harder than the verses")),
+            "{covered:?}"
+        );
+        let both = warnings(&two_choruses(0.85));
+        assert!(!both.iter().any(|w| w.contains("no harder")), "{both:?}");
     }
 
     #[test]
