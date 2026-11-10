@@ -209,7 +209,9 @@ impl Session {
             .registry
             .instruments()
             .filter(|d| {
-                !auris_sampler::needs_asset(&d.id) && d.id.as_ref() != "auris.synth.noisedrum"
+                !auris_sampler::needs_asset(&d.id)
+                    && d.id.as_ref() != "auris.synth.noisedrum"
+                    && auris_synth::ElectroStyle::from_id(&d.id).is_none()
             })
             .map(|d| TimbreSound {
                 name: d.name.to_string(),
