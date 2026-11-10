@@ -2,7 +2,7 @@
 # requires-python = ">=3.10"
 # dependencies = ["numpy==2.5.3", "scipy==1.18.1", "soundfile==0.14.0"]
 # ///
-"""Fit remaining physical models and drum families on disjoint real captures."""
+"""Fit the drum kit's families on disjoint real captures."""
 
 import argparse
 import hashlib
@@ -17,8 +17,7 @@ os.environ.setdefault("OMP_NUM_THREADS", "1")
 import numpy as np
 import scipy
 import soundfile as sf
-from fit_physical_extensions import coordinate, paired_summary
-from fit_physical_mel import Renderer, color
+from fit_worker import Renderer
 from physical_pack import (
     FAMILIES,
     envelope,
@@ -26,16 +25,54 @@ from physical_pack import (
     load,
     metric_configuration,
     pack_features,
+    paired_summary,
     rows,
     snare_fitness,
     snare_wire_ratio,
     tom_role_margin,
 )
 from prepare_physical_reference import RATE, manifest_digest
-from scipy.signal import resample_poly
+from scipy.signal import resample_poly, sosfilt
 
-PHYSICAL_BOUNDS = {"hardness": (0.05, 0.95), "position": (0.05, 0.45), "decay": (0.3, 12), "damping": (0, 0.6)}
-DRUM_BOUNDS = {"hardness": (0.05, 0.95), "position": (0.05, 0.95), "decay": (0.5, 2), "damping": (0, 0.8)}
+BOUNDS = {"hardness": (0.05, 0.95), "position": (0.05, 0.95), "decay": (0.5, 2), "damping": (0, 0.8)}
+CENTERS = np.geomspace(90, 10000, 12)
+
+
+def radiation(audio, gains, rate=RATE):
+    """Causal surrogate of a pad's twelve peaking sections; checked against the Rust kit."""
+    sections = []
+    for center, gain in zip(CENTERS, gains, strict=True):
+        omega = 2 * np.pi * center / rate
+        alpha = np.sin(omega) / (2 * 0.9)
+        amplitude = 10 ** (gain / 40)
+        a0 = 1 + alpha / amplitude
+        sections.append(np.array([1 + alpha * amplitude, -2 * np.cos(omega),
+                                  1 - alpha * amplitude, a0, -2 * np.cos(omega),
+                                  1 - alpha / amplitude]) / a0)
+    return sosfilt(np.array(sections), audio, axis=-1)
+
+
+def coordinate(objective, initial, bounds, fractions):
+    """Fixed local search including the unchanged starting model, on training only."""
+    vector = np.array(initial, dtype=float)
+    best = objective(vector)
+    calls = 1
+    for fraction in fractions:
+        for index, (low, high) in enumerate(bounds):
+            options = []
+            for direction in (-1, 1):
+                candidate = vector.copy()
+                candidate[index] = np.clip(candidate[index] + direction * fraction * (high - low), low, high)
+                if np.array_equal(candidate, vector):
+                    continue
+                options.append((objective(candidate), candidate))
+                calls += 1
+            if options:
+                value, candidate = min(options, key=lambda pair: pair[0])
+                if value < best:
+                    best, vector = value, candidate
+        print("local", fraction, "calls", calls, "loss", best, flush=True)
+    return vector.tolist(), best
 
 
 def guard_drums(renderer, root, manifest, family, result):
@@ -49,7 +86,7 @@ def guard_drums(renderer, root, manifest, family, result):
     keys = [38] if family == "snare" else [41, 43, 45, 47, 48, 50]
 
     def valid(probe, gains):
-        audio = color(probe, gains, amount=1.0, rate=48000)
+        audio = radiation(probe, gains, rate=48000)
         if family == "snare":
             return snare_fitness(audio[0]) >= 0.65 and snare_wire_ratio(audio[0]) > 2.05
         return min(tom_role_margin(note) for note in audio) >= 0.05
@@ -62,7 +99,7 @@ def guard_drums(renderer, root, manifest, family, result):
         probe = probe_audio(settings)
         for scale in grid:
             gains = np.array(result["gains_db"]) * scale
-            candidate = color(source, gains, amount=1.0)
+            candidate = radiation(source, gains)
             envelope_error = abs(envelope(reference) - envelope(candidate)).mean()
             loss = float(errors(target, pack_features(candidate))["mel"].mean())
             if valid(probe, gains) and envelope_error <= baseline_envelope * 1.05 and (best is None or loss < best[0]):
@@ -76,14 +113,14 @@ def guard_drums(renderer, root, manifest, family, result):
     def constrained(gains):
         if not valid(probe, gains):
             return 1000.0
-        audio = color(source, gains, amount=1.0)
+        audio = radiation(source, gains)
         if abs(envelope(reference) - envelope(audio)).mean() > baseline_envelope * 1.05:
             return 1000.0
         return float(errors(target, pack_features(audio))["mel"].mean()) + 0.0001 * np.mean(np.array(gains)**2)
 
     gains, _ = coordinate(constrained, np.array(result["gains_db"]) * scale, [(-9, 9)] * 12, (0.125, 0.05, 0.02))
     gains = [round(gain, 6) for gain in gains]
-    candidate = color(source, gains, amount=1.0)
+    candidate = radiation(source, gains)
     loss = float(errors(target, pack_features(candidate))["mel"].mean())
     return result | {"params": {key: settings.get(key, renderer.defaults["drums"][key]) for key in result["params"]},
                      "gains_db": gains,
@@ -98,8 +135,7 @@ def fit(renderer, root, manifest, family):
     notes, reference = load(root, manifest, family, "train")
     model = notes[0]["model"]
     target = pack_features(reference)
-    bounds = PHYSICAL_BOUNDS if model != "drums" else DRUM_BOUNDS
-    keys = list(bounds)
+    keys = list(BOUNDS)
     initial = [renderer.defaults[model][key] for key in keys]
     gains = np.zeros(12)
 
@@ -111,27 +147,27 @@ def fit(renderer, root, manifest, family):
 
     baseline = render(initial)
     print(family, len(notes), "baseline", loss(baseline), flush=True)
-    params, _ = coordinate(lambda x: loss(render(x)), initial, list(bounds.values()), (0.18, 0.06))
+    params, _ = coordinate(lambda x: loss(render(x)), initial, list(BOUNDS.values()), (0.18, 0.06))
     source = render(params)
-    gains, _ = coordinate(lambda x: loss(color(source, x, amount=1.0)) + 0.0001 * np.mean(np.array(x)**2),
+    gains, _ = coordinate(lambda x: loss(radiation(source, x)) + 0.0001 * np.mean(np.array(x)**2),
                           gains, [(-9, 9)] * 12, (0.25, 0.10))
     gains = [round(value, 6) for value in gains]
-    params, _ = coordinate(lambda x: loss(color(render(x), gains, amount=1.0)), params,
-                           list(bounds.values()), (0.03,))
+    params, _ = coordinate(lambda x: loss(radiation(render(x), gains)), params,
+                           list(BOUNDS.values()), (0.03,))
     params = {key: round(value, 6) for key, value in zip(keys, params, strict=True)}
-    candidate = color(renderer.render(model, notes, params, 3, 3), gains, amount=1.0)
+    candidate = radiation(renderer.render(model, notes, params, 3, 3), gains)
     normalization = float(np.median(np.sqrt(np.mean(baseline**2, axis=-1) / np.mean(candidate**2, axis=-1))))
     return {"model": model, "params": params, "gains_db": gains, "normalization": normalization,
             "training_notes": len(notes), "train_before": float(loss(baseline)), "train_after": float(loss(candidate)),
-            "bounds": bounds}
+            "bounds": BOUNDS}
 
 
 def evaluate(before, after, root, manifest, family, fit_result, rate, audition):
     notes, reference = load(root, manifest, family, "validation")
     model = notes[0]["model"]
     initial = before.render(model, notes, {}, 3, 3, rate=rate)
-    predicted = color(before.render(model, notes, fit_result["params"], 3, 3, rate=rate),
-                      fit_result["gains_db"], amount=1.0, rate=rate) * fit_result["normalization"]
+    predicted = radiation(before.render(model, notes, fit_result["params"], 3, 3, rate=rate),
+                          fit_result["gains_db"], rate=rate) * fit_result["normalization"]
     final = after.render(model, notes, {}, 3, 3, rate=rate) if after else predicted
     agreement = float(np.max(abs(final - predicted))) if after else None
     if agreement is not None and agreement > 2e-4:

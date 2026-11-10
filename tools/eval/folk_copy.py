@@ -13,7 +13,7 @@ from pathlib import Path
 
 import numpy as np
 import soundfile as sf
-from fit_physical_mel import Renderer
+from fit_worker import Renderer
 from physical_mel import normalize
 from physical_pack import envelope, errors, metric_configuration, pack_features, t90
 from scipy.optimize import differential_evolution
@@ -166,9 +166,11 @@ def main(args):
         defaults = renderer.defaults[args.model]
         baseline_renderer = Renderer(args.baseline) if args.baseline else renderer
         try:
+            # The baseline worker plays these controls, and it may be an older build with others.
+            described = baseline_renderer.defaults[args.model]
             initial = (json.loads(args.initial_params.read_text(encoding="utf-8")) if args.initial_params
-                       else baseline_renderer.defaults[args.model])
-            if set(initial) != set(defaults) or not all(np.isfinite(value) for value in initial.values()):
+                       else described)
+            if set(initial) != set(described) or not all(np.isfinite(value) for value in initial.values()):
                 raise ValueError("initial controls do not match the instrument's parameters")
             baseline = render(baseline_renderer, manifest, notes, initial, args.model, args.rate)
         finally:
@@ -187,7 +189,7 @@ def main(args):
                   "baseline_renderer_sha256": hashlib.sha256((args.baseline or args.renderer).read_bytes()).hexdigest(),
                   "native_rate": args.rate, "versions": {"python": platform.python_version(), **{n: version(n) for n in ("numpy", "scipy", "soundfile")}},
                   "evaluation_sources_sha256": {name: digest(Path(__file__).with_name(name)) for name in
-                      ("folk_copy.py", "fetch_folk_reference.py", "physical_pack.py", "physical_mel.py", "fit_physical_mel.py", "electric_copy.py")},
+                      ("folk_copy.py", "fetch_folk_reference.py", "physical_pack.py", "physical_mel.py", "fit_worker.py", "electric_copy.py")},
                   "text_hash_encoding": "UTF-8 with CRLF normalized to LF",
                   "metrics": metrics(args.model),
                   "fit": fit_report,
