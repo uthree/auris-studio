@@ -29,7 +29,10 @@ pub mod openjtalk;
 pub mod ornament;
 pub mod phoneme;
 
-pub use accent::{AccentPhrase, SungMora, accent_contour, kana_accent_phrase};
+pub use accent::{
+    ACCENT_MARK, AccentPhrase, SungMora, accent_contour, accent_levels, accent_notation,
+    kana_accent_phrase, parse_accent_notation,
+};
 pub use frames::{
     CurveSource, CurveSources, SingerFrames, SingerNote, SingerScore, phoneme_layout,
     render_expression_frames, render_frames, render_frames_with_sources, render_score,

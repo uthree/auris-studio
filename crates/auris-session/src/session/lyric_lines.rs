@@ -257,7 +257,7 @@ fn push_line(lines: &mut Vec<SungLine>, line: SungLine) {
 
 /// Appends one note's word to a line: run together, as Japanese is written, except between two
 /// words of Latin script, which a reader needs a space between.
-fn join_word(line: &mut String, word: &str) {
+pub(super) fn join_word(line: &mut String, word: &str) {
     if word.is_empty() {
         return;
     }

@@ -143,7 +143,7 @@ pub enum Command {
         /// Inspect, validate or apply. Copy stable clip IDs and native parameter addresses from inspection.
         operation: crate::arrangement::Operation,
     },
-    /// Analyze Japanese lyrics into source-located phrases, readings and moras without editing. Each mora's slot is note, hold (a long vowel, ー or the second あ of さあ, that may end the previous note) or rest (っ, sung as a rest after the previous note). Each phrase reports min_notes..max_notes and note_reading, the reading cut into notes with '|' for write_lyrics. Pass fit to check phrases against the note count of their melody (字余り/字足らず). readings and fit number phrases from 1: the first line is phrase 1. Explicit kana readings are diagnostic-only; use repair_lyrics to apply a pronunciation to existing note slots.
+    /// Analyze Japanese lyrics into source-located phrases, readings and moras without editing. Each mora's slot is note, hold (a long vowel, ー or the second あ of さあ, that may end the previous note) or rest (っ, sung as a rest after the previous note). Each phrase reports min_notes..max_notes and note_reading, the reading cut into notes with '|' for write_lyrics. Pass fit to check phrases against the note count of their melody (字余り/字足らず). With the dictionary each phrase also reports its Tokyo pitch accent in kana with ＼ after the nucleus (は＼し 箸, はし＼ 橋, はし 端), the speech lyric_accent measures a melody against. readings and fit number phrases from 1: the first line is phrase 1. Explicit kana readings are diagnostic-only; use repair_lyrics to apply a pronunciation to existing note slots.
     AnalyzeLyrics {
         /// Original Japanese lyric, up to 65536 UTF-8 bytes.
         text: String,
@@ -162,7 +162,7 @@ pub enum Command {
         #[serde(default)]
         comparisons: Vec<crate::lyric_harness::ClipComparison>,
     },
-    /// Preview or atomically apply a local lyric repair using 1..3 candidates. Keep the same target, template and required keywords throughout the repair round. Only a passing candidate may change target lyrics/phonemes; pitches, timing, ornaments and all other notes are preserved. Stop after three alternatives and report unresolved diagnostics. Read notes first; stale revisions are rejected.
+    /// Preview or atomically apply a local lyric repair using 1..3 candidates. Keep the same target, template and required keywords throughout the repair round. Only a passing candidate may change target lyrics/phonemes; pitches, timing, ornaments and all other notes are preserved. Stop after three alternatives and report unresolved diagnostics. candidate_accents tallies each candidate's spoken accent against the target's melody (followed, same_pitch, opposed), as lyric_accent does; prefer fewer opposed steps between passing candidates. Read notes first; stale revisions are rejected.
     RepairLyrics {
         /// Bounded alternatives, immutable musical template, keywords and revision.
         #[serde(flatten)]
@@ -177,6 +177,14 @@ pub enum Command {
     MelodyShape {
         /// The track holding the melody, usually the lead singer.
         track: u64,
+    },
+    /// Measure how a singer track's melody moves against the spoken Tokyo pitch accent of its Japanese lyric, section by section. Of the places where speech rises or falls between two notes, it counts the steps the melody takes the same way (followed), repeats (same_pitch) or takes the opposite way (opposed). Songs follow the accent as a tendency, not a rule: a section with too many opposed steps is a warning, listing the widest steps against speech with clip and note for edit_notes, because listeners mishear and dislike melodies far from their words; a section that follows almost everything is only a note, since departing from speech is a composer's choice. Single lines are never judged. Each line shows the dictionary's accent in kana with ＼ after the nucleus (は＼し 箸, はし＼ 橋, はし 端); when it is wrong for the intended reading or dialect, pass accents to correct that line and measure again. Read it after the lyrics are written onto the melody. Needs the Japanese dictionary; changes nothing.
+    LyricAccent {
+        /// The singer track whose sung lyrics to measure.
+        track: u64,
+        /// Optional request-local accent corrections, by line number from a previous report.
+        #[serde(default)]
+        accents: Vec<crate::session::lyric_accent::AccentOverride>,
     },
     /// Measure the arrangement against the form: which parts play in each section, how many different bars each part plays, whether the drums change in the bar before each chorus, and how many bars of intro and outro surround the voice. Warns when every section has the same parts, a chorus adds nothing to the section before it, no fill leads into a chorus, or the intro or outro is shorter than eight bars. Read it after writing the backing and act on its warnings; it measures the written notes, not how they sound.
     ArrangementShape {},
@@ -749,6 +757,7 @@ impl Command {
             Self::Inspect {}
             | Self::ReportStatus { .. }
             | Self::MelodyShape { .. }
+            | Self::LyricAccent { .. }
             | Self::ArrangementShape {}
             | Self::LintProject { .. }
             | Self::SuggestIssueReport { .. }
@@ -1272,6 +1281,9 @@ impl Session {
             Command::ArrangementShape {} => Ok(
                 crate::session::arrangement_shape::arrangement_shape(self.project()).to_string(),
             ),
+            Command::LyricAccent { track, accents } => self
+                .lyric_accent(TrackId(track), &accents)
+                .and_then(|report| serde_json::to_string(&report).map_err(|e| e.to_string())),
             Command::MelodyShape { track } => {
                 crate::session::melody_shape::melody_shape(self.project(), TrackId(track))
                     .map(|report| report.to_string())

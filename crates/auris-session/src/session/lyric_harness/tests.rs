@@ -513,3 +513,48 @@ fn phrase_count_and_capacity_diagnostics_use_the_actual_fixed_bar_allocator() {
     );
     assert!(session.validate_song_lyrics(&spec).is_err());
 }
+
+#[test]
+fn analysis_shows_the_dictionary_accent_and_nothing_without_it() {
+    let analysis = session().analyze_lyrics("箸を持つ", &[]).unwrap();
+    assert_eq!(analysis.phrases[0].accent, None, "no dictionary, no guess");
+    let Some(folder) = std::env::var_os("AURIS_JAPANESE_DICTIONARY") else {
+        return;
+    };
+    let mut session = session();
+    session
+        .set_japanese_dictionary(Some(std::path::Path::new(&folder)))
+        .unwrap();
+    let analysis = session.analyze_lyrics("箸を持つ、橋を渡る", &[]).unwrap();
+    let accents: Vec<_> = analysis
+        .phrases
+        .iter()
+        .map(|phrase| phrase.accent.clone().unwrap())
+        .collect();
+    assert!(
+        accents[0].starts_with("は＼し"),
+        "箸 is 頭高: {}",
+        accents[0]
+    );
+    assert!(
+        accents[1].starts_with("はし＼"),
+        "橋 is 尾高: {}",
+        accents[1]
+    );
+    // The notation reads back as the same accent phrases.
+    let parsed = auris_vocal::parse_accent_notation(&accents[1]).unwrap();
+    assert_eq!(
+        auris_vocal::accent_notation(&parsed).as_deref(),
+        Some(accents[1].as_str())
+    );
+    let explicit = session
+        .analyze_lyrics(
+            "橋",
+            &[PhraseReading {
+                phrase: 1,
+                kana: "はし".into(),
+            }],
+        )
+        .unwrap();
+    assert_eq!(explicit.phrases[0].accent, None);
+}
