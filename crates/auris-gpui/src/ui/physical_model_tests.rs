@@ -377,7 +377,9 @@ fn an_oscillator_is_drawn_as_its_waveform_and_played_like_a_key(cx: &mut gpui::T
         app.read_with(&utility, |app, _| {
             let touch = app.physical_view.touch.expect("the key is held");
             assert!(touch.sounding, "{id} sounds as it is pressed");
-            assert_eq!(touch.pitch, 60);
+            // A kick bass is auditioned two octaves down, where it is played.
+            let audition = if id.contains("_bass") { 36 } else { 60 };
+            assert_eq!(touch.pitch, audition, "{id}");
         });
         harness::release(&mut utility, at);
         harness::paint(&app, &mut utility);

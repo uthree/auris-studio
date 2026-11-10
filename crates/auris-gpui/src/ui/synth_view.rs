@@ -217,8 +217,14 @@ pub(crate) fn metal_stems(hat_tone: f32, metal: f32) -> Vec<(f32, f32)> {
             *level *= metal / loudest;
         }
     }
+    // Hundreds of harmonics reach the ceiling; the ones the filter all but removes are left
+    // out, so the picture shows what is heard rather than a lawn.
+    stems.retain(|(_, level)| *level >= metal * METAL_FLOOR);
     stems
 }
+
+/// The quietest hat harmonic drawn, relative to the loudest.
+const METAL_FLOOR: f32 = 0.08;
 
 /// Highest multiple of the note the sideband and harmonic plots reach.
 const HIGHEST_HARMONIC: usize = 16;
@@ -1018,8 +1024,8 @@ impl AurisApp {
             .child(
                 div().w_full().flex().child(plot_column(
                     theme,
-                    SectionHeader::new(self.t(Key::SynthHarmonics))
-                        .description(self.t(Key::SynthHarmonicsHint)),
+                    SectionHeader::new(self.t(Key::SynthBoomHarmonics))
+                        .description(self.t(Key::SynthBoomHarmonicsHint)),
                     harmonics_well,
                     None,
                 )),
@@ -1520,6 +1526,7 @@ mod tests {
         let loudest = stems.iter().fold(0.0_f32, |a, (_, level)| a.max(*level));
         assert!((loudest - 0.6).abs() < 1e-5);
         assert!(stems.iter().all(|(khz, _)| *khz <= METAL_CEILING_KHZ));
+        assert!(stems.iter().all(|(_, level)| *level >= 0.6 * METAL_FLOOR));
         assert!(metal_stems(0.5, 0.0).iter().all(|(_, level)| *level == 0.0));
     }
 }

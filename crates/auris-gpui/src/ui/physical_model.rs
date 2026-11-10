@@ -14,7 +14,7 @@ use std::{cell::Cell, rc::Rc};
 
 use super::physical_bodies::{BodyPlot, BoreEnd, LANE_INSET, Shape, ring_fraction};
 use super::plugin_window::PluginSubject;
-use super::synth_view::{is_electro_kit, is_oscillator_model};
+use super::synth_view::{is_boom, is_electro_kit, is_oscillator_model};
 use crate::{app::AurisApp, theme::Theme};
 use atelier::plot::{LinePlot, Series};
 use atelier::viz::{Heatmap, StringLane, Waveform};
@@ -282,7 +282,10 @@ impl AurisApp {
             self.close_physical_view();
             if let Some((_, id)) = &source {
                 let drums = is_pad_kit(id);
-                if drums != self.physical_view.drum_preview {
+                if is_boom(id) {
+                    // A kick bass is auditioned where it is played, two octaves down.
+                    self.physical_view.pitch = 36;
+                } else if drums != self.physical_view.drum_preview {
                     self.physical_view.pitch = if drums { 36 } else { 60 };
                 }
                 self.physical_view.drum_preview = drums;
@@ -624,12 +627,16 @@ impl AurisApp {
             .p(spacing.lg)
             .gap(spacing.md)
             .child(
-                SectionHeader::new(self.t(if oscillator {
+                SectionHeader::new(self.t(if pads && oscillator {
+                    Key::SynthPadWaveforms
+                } else if oscillator {
                     Key::SynthWaveforms
                 } else {
                     Key::PhysicalMotion
                 }))
-                .description(self.t(if oscillator {
+                .description(self.t(if pads && oscillator {
+                    Key::SynthPadObserved
+                } else if oscillator {
                     Key::SynthObserved
                 } else {
                     Key::PhysicalObserved
