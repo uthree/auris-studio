@@ -1,4 +1,4 @@
-from melody_form import contour_type, measure, period, same_cycle
+from melody_form import clip_notes, contour_type, measure, period, same_cycle
 
 BEAT = 960
 BAR = 4 * BEAT
@@ -144,6 +144,47 @@ def test_sections_sharing_one_drum_bar_are_flagged() -> None:
     report = measure(project)
     shared = [flag for flag in report["flags"] if flag["code"] == "shared_main_groove"]
     assert shared and shared[0]["sections"] == ["Intro", "Verse", "Outro"]
+
+
+def test_a_looped_drum_clip_is_read_once_for_every_pass() -> None:
+    groove = [note(0, 100, 36), note(2 * BEAT, 100, 38)]
+    other = [note(0, 100, 36), note(BEAT, 100, 36), note(3 * BEAT, 100, 38)]
+    clip = {"length": BAR, "muted": False}
+    cut_short = dict(clip, start=6 * BAR, notes=groove, loop_end=5 * BAR // 2)
+    drums = {
+        "id": 2,
+        "name": "Kit",
+        "mixer": {"mute": False},
+        "kind": {
+            "type": "drum",
+            "clips": [
+                dict(clip, start=0, notes=groove, loop_end=3 * BAR),
+                dict(clip, start=3 * BAR, notes=groove),
+                dict(clip, start=4 * BAR, notes=other, loop_end=2 * BAR),
+                cut_short,
+            ],
+        },
+    }
+    project = song(
+        [singer([(0, PHRASE)]), drums],
+        sections=[
+            (0, "Intro"),
+            (3 * BAR, "Verse"),
+            (6 * BAR, "Outro"),
+            (9 * BAR, None),
+        ],
+    )
+    report = measure(project)
+    assert "shared_main_groove" not in flag_codes(report)
+    hits = {s["section"]: s["main_groove"] for s in report["sections"]}
+    assert hits == {"Intro": 2, "Verse": 3, "Outro": 2}
+    assert [n["at"] - 6 * BAR for n in clip_notes(cut_short)] == [
+        0,
+        2 * BEAT,
+        BAR,
+        BAR + 2 * BEAT,
+        2 * BAR,
+    ]
 
 
 def guitar(transforms: list[dict]) -> dict:

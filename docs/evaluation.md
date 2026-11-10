@@ -154,7 +154,8 @@ uv run tools/eval/melody_form.py runs/ --track Vocal
 ```
 
 Cuts the foreground (the first singer track, or `--track`) into lines at the lines of the song-wide
-lyric annotation, at clip boundaries and at rests of a beat or more. A line still longer than
+lyric annotation, at clip boundaries and at rests of a beat or more; a looped clip is read once
+for every pass. A line still longer than
 four bars is cut again at its longest rest of half a beat or more, so a verse breathed in eighth
 rests under one annotation is not counted as one line. A line belongs to the section most of its
 notes start in, which keeps a line entering with a pickup in its own section. Each line gets a letter

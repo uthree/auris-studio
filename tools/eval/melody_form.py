@@ -182,13 +182,25 @@ def active_clips(track: dict):
             yield clip
 
 
+def sounding_length(clip: dict) -> int:
+    """How long a clip sounds: its content, or its `loop_end` when that reaches further."""
+    return max(clip.get("length", 0), clip.get("loop_end") or 0)
+
+
 def clip_notes(clip: dict) -> list[dict]:
-    """Notes of a clip on the song timeline; notes past the clip's end do not play."""
+    """Notes of a clip on the song timeline, once for every pass of a looped clip.
+
+    A note past the end of the content does not play, and the last pass is cut at `loop_end`,
+    as `auris_core::loop_passes` cuts it.
+    """
     length = clip.get("length", 0)
+    total = sounding_length(clip)
     notes = []
-    for note in clip.get("notes", []) or []:
-        if note["start"] < length:
-            notes.append(dict(note, at=clip["start"] + note["start"]))
+    for offset in range(0, total, length) if length > 0 else ():
+        visible = min(length, total - offset)
+        for note in clip.get("notes", []) or []:
+            if note["start"] < visible:
+                notes.append(dict(note, at=clip["start"] + offset + note["start"]))
     return sorted(notes, key=lambda note: (note["at"], note["pitch"]))
 
 
@@ -288,7 +300,7 @@ def lines_of(project: dict, track: dict) -> list[Line]:
     """
     meter = Meter(project)
     clips = list(active_clips(track))
-    end = max((clip["start"] + clip["length"] for clip in clips), default=0)
+    end = max((clip["start"] + sounding_length(clip) for clip in clips), default=0)
     annotated: list[int] = []
     if track.get("kind", {}).get("type") == "singer":
         lyric_points = project.get("lyrics", {}).get("points") or []
