@@ -32,6 +32,13 @@ changed. Upstrokes can strike only the highest one to four pitches and have thei
 velocity scale. Downstrokes can emphasize lower pitches. This uses pitch order, not a
 guitar fingering model. Skipped pitches remain in Source; freezing explicitly removes
 those attacks from the visible phrase while preserving hidden notes outside the clip.
+**Time per string** gives the stroke's length per string instead of for the whole chord,
+so a six-string chord takes longer than a power chord and a partial upstroke is quicker.
+**Stroke variation** lets each stroke's speed and string spacing wander a little; the wander
+is reproducible from the chord's position, and at zero every chord is struck alike. Listeners
+need about 15 to 20 ms to tell which of two sounds came first, so a whole-chord spread under
+about 10 ms is heard as every string at once; `lint_project` reports such a guitar part, and
+`inspect_performance` returns the measured spread of the performed chords.
 
 **Expression & groove** separates timing wander from velocity wander without changing the
 take's seed. The main Humanize control scales both while preserving their current ratio.

@@ -35,6 +35,6 @@ pub use frames::{
     render_expression_frames, render_frames, render_frames_with_sources, render_score,
 };
 pub use g2p::{JapaneseDictionary, VocalError, lyric_phonemes, spoken_kana_lyric};
-pub use kana::{kana_phonemes, split_kana_lyric, split_kana_moras};
+pub use kana::{kana_phonemes, split_kana_lyric, split_kana_moras, tucks_under_previous};
 pub use ornament::{ornament_offset, ornament_reach};
 pub use phoneme::{SILENCE, is_syllabic, is_voiceless, phoneme_moras};

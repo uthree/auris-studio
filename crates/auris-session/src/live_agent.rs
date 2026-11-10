@@ -66,6 +66,32 @@ fn sound_search_limit() -> usize {
 ///
 /// Left off an unlooped clip so the common case costs a model nothing to read; present, it is the
 /// absolute tick where the repeats stop, which is the value `edit_clip`'s `loop` takes back.
+/// How far before `start_bar` a clip opened with `pickup_beats` begins.
+///
+/// The beat is that of the bar before, the bar the pickup is sung in, and the pickup is at most
+/// that whole bar: a longer lead-in is a clip that starts a bar earlier.
+fn clip_pickup(
+    signatures: &SignatureMap,
+    start_bar: u32,
+    pickup_beats: Option<f64>,
+) -> Result<Ticks, String> {
+    let Some(beats) = pickup_beats else {
+        return Ok(Ticks::ZERO);
+    };
+    if start_bar < 2 {
+        return Err("pickup_beats needs a bar before start_bar, and bar 1 has none".into());
+    }
+    let before = signatures.signature_at(signatures.bar_start(start_bar - 1));
+    let pickup = Ticks((beats * before.ticks_per_beat().raw() as f64).round() as i64);
+    if !(beats > 0.0 && pickup <= before.ticks_per_bar()) {
+        return Err(format!(
+            "Use pickup_beats above 0 and at most {}, one bar of the meter before start_bar",
+            before.numerator
+        ));
+    }
+    Ok(pickup)
+}
+
 fn with_loop_end(
     mut summary: serde_json::Value,
     start: Ticks,
@@ -173,12 +199,12 @@ pub enum Command {
         /// List, or restore named clips from one source.
         operation: crate::session::source_material::Operation,
     },
-    /// Measure a melody section by section — register, range, leaps — and check that every chorus lifts above the section leading into it: at least a minor third higher on average, a higher peak, and at least one leap of a fourth or more. Also reports the bars of intro before the melody and of outro after it, and warns under eight, while the form is still easy to change. Read it after writing the melody and before lyrics are sung, and act on its warnings; it measures the written notes, not how they sound.
+    /// Measure a melody section by section — register, range, leaps — and check that every chorus lifts above the section leading into it: at least a minor third higher on average, a higher peak, and at least one leap of a fourth or more. Also reports the bars of intro before the melody and of outro after it, and warns under eight, while the form is still easy to change. lines reports each section's line form (A A' B ...), where each line enters, its syncopated notes, the degree it ends on and how predictable it is from the song so far, and warns at extremes: a section of identical lines, every line entering at one point, no syncopation, one note value, no tonic ending, a run of lines that only repeat. Read it after writing the melody and before lyrics are sung, and act on its warnings; it measures the written notes, not how they sound.
     MelodyShape {
         /// The track holding the melody, usually the lead singer.
         track: u64,
     },
-    /// Measure the arrangement against the form: which parts play in each section, how many different bars each part plays, whether the drums change in the bar before each chorus, and how many bars of intro and outro surround the voice. Warns when every section has the same parts, a chorus adds nothing to the section before it, no fill leads into a chorus, or the intro or outro is shorter than eight bars. Read it after writing the backing and act on its warnings; it measures the written notes, not how they sound.
+    /// Measure the arrangement against the form: which parts play in each section, how many different bars each part plays, whether the drums change in the bar before each chorus, and how many bars of intro and outro surround the voice. Warns when every section has the same parts, a chorus adds nothing to the section before it, no fill leads into a chorus, or the intro or outro is shorter than eight bars; also when three or more sections share one main drum bar, or a chorus loops a verse's progression started on another chord. Read it after writing the backing and act on its warnings; it measures the written notes, not how they sound.
     ArrangementShape {},
     /// Workshop candidates only: tell the user, in one short line, what you are working on now. The candidate's card shows it while you work until the next one replaces it; elsewhere it is not shown. Call it when you start each new step, before that step's first tool call, in the language of the assignment. Keep it short, about 30 characters, since the card has room for two lines. Name the concrete musical work, such as "Fitting the chorus lyrics to the melody" or "Thinning the strings under the second verse", never a generic "Working" or a tool name. Changes nothing.
     ReportStatus {
@@ -648,7 +674,7 @@ pub enum Command {
         ceiling_db: Option<f32>,
     },
 
-    /// Add an empty MIDI clip to an instrument, drum or singer track and return its numeric clip ID. start_bar is 1-based in the project's meter; bars is a duration. Audio and bus tracks cannot hold MIDI clips.
+    /// Add an empty MIDI clip to an instrument, drum or singer track and return its numeric clip ID. start_bar is 1-based in the project's meter; bars is a duration. A line that enters before its barline (a pickup, 弱起) needs a clip that starts before it: pickup_beats opens the clip that many beats before start_bar, and it may overlap the end of the clip before as long as their notes do not sound together. Audio and bus tracks cannot hold MIDI clips.
     AddClip {
         /// Stable track ID.
         track: u64,
@@ -661,8 +687,11 @@ pub enum Command {
         /// Duration in bars, 1 through 1024.
         #[schemars(range(min = 1, max = 1024))]
         bars: u32,
+        /// Beats before start_bar at which the clip begins instead, in the meter's beat (quarter in 4/4, eighth in 6/8) and at most one bar: 1 opens the clip on the last beat of the bar before, 0.5 on its last offbeat. The clip still ends where start_bar + bars ends. Write the pickup notes at their own song positions, in bar start_bar - 1. Omit for a clip that starts on the barline.
+        #[serde(default)]
+        pickup_beats: Option<f64>,
     },
-    /// Generate a new MIDI phrase on an existing instrument or drum track using the project's key, chords and meter. Write melodic harmony with edit_harmony first; drum parts use the track's sound assignments. part is lead, chords, pad, arp, bass, drums, kick, snare or hat. Returns clip ID, note count and seed; zero notes is an empty clip, not a finished phrase. Existing clips are preserved. One Undo removes the new clip; persistence follows the host.
+    /// Generate a new MIDI phrase on an existing instrument or drum track using the project's key, chords and meter. Write melodic harmony with edit_harmony first; drum parts use the track's sound assignments. part is lead, chords, pad, arp, bass, drums, kick, snare or hat. A drum part is struck for the section most of it lies in: softer in a verse, harder in a chorus, hardest in the last chorus; edit_recipe's intensity changes it. Returns clip ID, note count, seed and intensity; zero notes is an empty clip, not a finished phrase. Existing clips are preserved. One Undo removes the new clip; persistence follows the host.
     GeneratePhrase {
         /// Stable instrument or drum track ID from inspect_project or add_track.
         track: u64,
@@ -1273,8 +1302,14 @@ impl Session {
                 crate::session::arrangement_shape::arrangement_shape(self.project()).to_string(),
             ),
             Command::MelodyShape { track } => {
-                crate::session::melody_shape::melody_shape(self.project(), TrackId(track))
-                    .map(|report| report.to_string())
+                crate::session::melody_shape::melody_shape(self.project(), TrackId(track)).map(
+                    |mut report| {
+                        if let Some(accent) = self.accent_fit(TrackId(track)) {
+                            report["accent"] = accent;
+                        }
+                        report.to_string()
+                    },
+                )
             }
             Command::ReportStatus { status } => report_status(&status)
                 .map(|status| serde_json::json!({ "shown": status }).to_string()),
@@ -1420,13 +1455,16 @@ impl Session {
                 name,
                 start_bar,
                 bars,
+                pickup_beats,
             } => {
                 if name.trim().is_empty() || start_bar == 0 || !(1..=1024).contains(&bars) {
                     return Err("Use a name, start_bar >= 1 and bars 1..1024".into());
                 }
                 let end = start_bar.checked_add(bars).ok_or("Bar range overflow")?;
-                let start = self.project().signatures.bar_start(start_bar);
-                let length = self.project().signatures.bar_start(end) - start;
+                let signatures = &self.project().signatures;
+                let pickup = clip_pickup(signatures, start_bar, pickup_beats)?;
+                let start = signatures.bar_start(start_bar) - pickup;
+                let length = signatures.bar_start(end) - start;
                 let id = self
                     .add_midi_clip(TrackId(track), name, start, length)
                     .map_err(error)?;
@@ -1457,24 +1495,35 @@ impl Session {
                 {
                     return Err("No chords in this range; use edit_harmony before generating a melodic phrase".into());
                 }
+                let mut recipe = ClipRecipe::new(preset, seed);
+                let section = preset
+                    .is_drums()
+                    .then(|| {
+                        crate::session::arrangement_shape::drum_intensity(
+                            self.project(),
+                            start,
+                            end,
+                        )
+                    })
+                    .flatten();
+                if let Some((_, intensity)) = &section {
+                    recipe.intensity = *intensity;
+                }
+                let intensity = recipe.intensity;
                 let clip = self
-                    .generate_clip(
-                        TrackId(track),
-                        start,
-                        end - start,
-                        ClipRecipe::new(preset, seed),
-                    )
+                    .generate_clip(TrackId(track), start, end - start, recipe)
                     .map_err(error)?;
                 let notes = self
                     .project()
                     .midi_clip(clip)
                     .map_or(0, |(_, clip)| clip.notes.len());
-                Ok(
-                    serde_json::json!({"clip":clip.0,"track":track,"part":preset.name(),
-                    "start_bar":start_bar,"bars":bars,"seed":seed,"notes":notes,
-                    "unsaved":true})
-                    .to_string(),
-                )
+                let mut result = serde_json::json!({"clip":clip.0,"track":track,
+                    "part":preset.name(),"start_bar":start_bar,"bars":bars,"seed":seed,
+                    "notes":notes,"intensity":intensity,"unsaved":true});
+                if let Some((label, _)) = section {
+                    result["struck_for"] = label.into();
+                }
+                Ok(result.to_string())
             }
             Command::SetLoop { start_bar, bars } => {
                 if start_bar == 0 || !(1..=1024).contains(&bars) {
@@ -1524,6 +1573,95 @@ mod tests {
             )
             .is_ok_and(|op| op.name == "edit_project.report_status" && !op.mutating)
         );
+    }
+
+    #[test]
+    fn a_clip_opened_with_a_pickup_starts_before_its_bar_and_ends_where_it_would() {
+        let mut session = session();
+        let track = session.add_singer_track("Lead");
+        let add = |session: &mut Session, start_bar, pickup_beats| {
+            session
+                .agent_command(Command::AddClip {
+                    track: track.0,
+                    name: "Line".into(),
+                    start_bar,
+                    bars: 2,
+                    pickup_beats,
+                })
+                .map(|text| serde_json::from_str::<serde_json::Value>(&text).unwrap())
+        };
+        let bar = Ticks::QUARTER.raw() * 4;
+        let verse = add(&mut session, 1, None).unwrap();
+        assert_eq!(verse["start_tick"], 0);
+        // A beat and a half before bar 3: the clip overlaps the verse's last beats and ends
+        // with bar 4, as a clip without a pickup would.
+        let chorus = add(&mut session, 3, Some(1.5)).unwrap();
+        assert_eq!(chorus["start_tick"], bar * 2 - 1440);
+        assert_eq!(chorus["length_ticks"], bar * 2 + 1440);
+        // Bar 1 has no bar before it, and a pickup is at most one bar.
+        assert!(add(&mut session, 1, Some(1.0)).is_err());
+        assert!(add(&mut session, 3, Some(0.0)).is_err());
+        assert!(add(&mut session, 3, Some(4.5)).is_err());
+        assert!(add(&mut session, 3, Some(4.0)).is_ok());
+        // The beat is the eighth of 6/8, as edit_notes counts it.
+        session.set_signature_at(Ticks::ZERO, TimeSignature::new(6, 8));
+        let compound = add(&mut session, 2, Some(2.0)).unwrap();
+        assert_eq!(compound["start_tick"], 2880 - 960);
+    }
+
+    #[test]
+    fn a_pickup_clip_over_the_end_of_the_clip_before_is_sung_in_its_place() {
+        let mut session = session();
+        let track = session.add_singer_track("Lead");
+        let verse = session
+            .add_midi_clip(track, "Verse", Ticks::ZERO, Ticks::QUARTER * 8)
+            .unwrap();
+        // The verse stops after beat 2 of its second bar; the chorus enters on beat 4 of it.
+        for beat in 0..6 {
+            session
+                .add_note(verse, Note::new(60, Ticks::QUARTER * beat, Ticks::QUARTER))
+                .unwrap();
+        }
+        let chorus: serde_json::Value = serde_json::from_str(
+            &session
+                .agent_command(Command::AddClip {
+                    track: track.0,
+                    name: "Chorus".into(),
+                    start_bar: 3,
+                    bars: 1,
+                    pickup_beats: Some(1.0),
+                })
+                .unwrap(),
+        )
+        .unwrap();
+        let chorus = ClipId(chorus["clip"].as_u64().unwrap());
+        for beat in 0..4 {
+            session
+                .add_note(chorus, Note::new(72, Ticks::QUARTER * beat, Ticks::QUARTER))
+                .unwrap();
+        }
+        session
+            .write_lyrics(verse, &[0, 1, 2, 3, 4, 5], "あいうえおか")
+            .unwrap();
+        session
+            .write_lyrics(chorus, &[0, 1, 2, 3], "さしすせ")
+            .unwrap();
+        // At 120 BPM a beat is half a second: the verse's C4 at beat 5.5, silence at 6.5, and
+        // the chorus's C5 from beat 7, a beat before the barline.
+        let frames = session.singer_frames(track).unwrap();
+        let pitch_at = |seconds: f64| frames.f0_hz[(seconds / frames.hop_seconds) as usize];
+        assert!((pitch_at(2.75) - 261.6).abs() < 15.0, "{}", pitch_at(2.75));
+        assert_eq!(pitch_at(3.25), 0.0);
+        assert!((pitch_at(3.75) - 523.3).abs() < 30.0, "{}", pitch_at(3.75));
+        assert!((pitch_at(5.25) - 523.3).abs() < 30.0, "{}", pitch_at(5.25));
+        // Two clips sharing a beat of the timeline ask the voice for nothing it cannot do.
+        let warnings: Vec<_> = session
+            .lint_score()
+            .diagnostics
+            .into_iter()
+            .filter(|diagnostic| diagnostic.severity != crate::lint::Severity::Info)
+            .collect();
+        assert!(warnings.is_empty(), "{warnings:?}");
     }
 
     #[test]
@@ -1642,6 +1780,80 @@ mod tests {
         assert_eq!(result["seed"], 0);
         assert!(result["notes"].as_u64().unwrap() > 0);
         assert!(session.project().harmony.is_empty());
+    }
+
+    #[test]
+    fn generated_drums_are_struck_harder_in_a_chorus_than_in_a_verse() {
+        let bar = Ticks::QUARTER * 4;
+        let labels = [
+            "Intro", "Verse 1", "Chorus 1", "Verse 2", "Chorus 2", "Outro",
+        ];
+        // Sixteen takes of the song, each section generated from a seed of its own: whichever
+        // take a verse and a chorus are, the check on the finished drums reads a difference.
+        for take in 0..16_u64 {
+            let mut session = session();
+            let track = session.add_default_drum_track("Beat").unwrap();
+            for (index, label) in labels.iter().enumerate() {
+                session.set_section(bar * (index as i64 * 8), Some((*label).into()));
+            }
+            session.set_section(bar * 48, None);
+            let mut results = Vec::new();
+            for index in 0..labels.len() as u32 {
+                let command = Command::GeneratePhrase {
+                    track: track.0,
+                    part: "drums".into(),
+                    start_bar: index * 8 + 1,
+                    bars: 8,
+                    seed: take * 31 + u64::from(index) * 7,
+                };
+                let result: serde_json::Value =
+                    serde_json::from_str(&session.agent_command(command).unwrap()).unwrap();
+                results.push(result);
+            }
+            let stored = |result: &serde_json::Value| {
+                let clip = ClipId(result["clip"].as_u64().unwrap());
+                let clip = session.project().midi_clip(clip).unwrap().1;
+                let mean = clip
+                    .notes
+                    .iter()
+                    .map(|n| f64::from(n.velocity))
+                    .sum::<f64>()
+                    / clip.notes.len() as f64;
+                (clip.recipe.as_ref().unwrap().intensity, mean)
+            };
+            for (index, result) in results.iter().enumerate() {
+                let reported = result["intensity"].as_f64().unwrap();
+                assert!((reported - f64::from(stored(result).0)).abs() < 1e-6);
+                match index {
+                    0 | 5 => assert!(result.get("struck_for").is_none(), "{result}"),
+                    _ => assert_eq!(result["struck_for"], labels[index]),
+                }
+            }
+            let plain = ClipRecipe::new(ClipPreset::Drums, 0).intensity;
+            assert_eq!(stored(&results[0]).0, plain);
+            assert!(stored(&results[1]).0 < plain && plain < stored(&results[2]).0);
+            assert_eq!(stored(&results[1]).0, stored(&results[3]).0);
+            assert!(stored(&results[2]).0 < stored(&results[4]).0);
+            let (verse, chorus, last) = (
+                stored(&results[1]).1.max(stored(&results[3]).1),
+                stored(&results[2]).1,
+                stored(&results[4]).1,
+            );
+            assert!(
+                verse < chorus && chorus < last,
+                "take {take}: {verse} {chorus} {last}"
+            );
+            // Wide enough to hear, not only to pass the check: the first slope left a verse and
+            // a chorus 0.06 apart, about one decibel on a drums-only render.
+            assert!(chorus - verse > 0.15, "take {take}: {verse} {chorus}");
+            let project = session.project();
+            let spans = project.sections.spans_in(Ticks::ZERO, project.end_tick());
+            assert_eq!(
+                crate::session::arrangement_shape::flat_drums(project, &spans),
+                None,
+                "take {take}"
+            );
+        }
     }
 
     #[test]

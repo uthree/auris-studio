@@ -228,9 +228,16 @@ pub(crate) fn read_note_groups(
         let shared = &slots[range.start + 1..range.end];
         let rest_after = shared.last() == Some(&MoraSlot::Rest);
         let held = &shared[..shared.len() - usize::from(rest_after)];
-        if held.iter().any(|slot| *slot != MoraSlot::Hold) {
+        // ん or a bare vowel after the first mora (さん, あい) is sung on the same note in pop
+        // singing, as long as it is the only extra sung mora; the singer splits it from there.
+        let tail = range.start + 1;
+        let tucked = |at: usize| auris_vocal::tucks_under_previous(&moras[at].0);
+        let ok = held.iter().enumerate().all(|(offset, slot)| {
+            *slot == MoraSlot::Hold || (offset == 0 && tucked(tail) && held.len() == 1)
+        });
+        if !ok {
             return Err(format!(
-                "Note group {} \"{text}\" puts {size} moras on one note; only a held long vowel (ー, or a repeated vowel as in さあ) and a final っ may share a note",
+                "Note group {} \"{text}\" puts {size} moras on one note; only a held long vowel (ー, or a repeated vowel as in さあ), one ん or one bare vowel after the first mora (さん, あい) and a final っ may share a note",
                 index + 1
             ));
         }
@@ -341,6 +348,18 @@ mod tests {
         // A grouped reading may then hold that vowel on one note.
         let groups = read_note_groups("両手で", "りょう|て|で", Some(&dictionary)).unwrap();
         assert_eq!(groups[0].phonemes, ["ɾʲ", "o", "o"]);
+    }
+
+    #[test]
+    fn a_moraic_nasal_or_a_bare_vowel_may_ride_on_the_note_before_it() {
+        let groups = read_note_groups("", "さん|ぽ", None).unwrap();
+        assert_eq!(groups[0].text, "さん");
+        assert_eq!(groups[0].phonemes.len(), 3, "{:?}", groups[0].phonemes);
+        let groups = read_note_groups("", "あい|たい", None).unwrap();
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[1].phonemes, ["t", "a", "i"]);
+        // One tucked mora only: a third sung mora still needs a note of its own.
+        assert!(read_note_groups("", "さんい|く", None).is_err());
     }
 
     #[test]

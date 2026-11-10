@@ -1259,7 +1259,17 @@ impl AurisApp {
             // newest entries end past the end of the scroll range, under the composer, where no
             // scrolling reaches them. Across a row the width is the main axis, which the layout
             // clamps first, so the height is measured at the width the column is drawn at.
-            .child(div().w_full().flex().justify_center().child(transcript));
+            //
+            // The row is also the transcript's one selection: a drag runs from a request through
+            // the answers below it, and scrolls the body on while it is held past the edge.
+            .child(
+                atelier::SelectionScope::new("song-workshop-selection")
+                    .scroll(&s.scroll)
+                    .w_full()
+                    .flex()
+                    .justify_center()
+                    .child(transcript),
+            );
         let memory = s.snapshot.as_ref().is_some_and(|s| s.preferences.enabled);
         // On a surface of its own for the same reason the transcript's text is: see `text_panel`.
         let options = div()
@@ -3320,6 +3330,64 @@ mod tests {
         ] {
             assert!(cx.debug_bounds(selector).is_some(), "{selector} is drawn");
         }
+    }
+
+    #[gpui::test]
+    fn a_drag_selects_from_the_request_into_the_answer(cx: &mut gpui::TestAppContext) {
+        use auris_session::workshop::Message;
+
+        let (app, cx) = crate::harness::open(cx);
+        cx.update(|window, cx| {
+            app.update(cx, |this, cx| {
+                this.show_project_chooser(window, cx);
+                this.open_song_workshop(window, cx);
+            })
+        });
+        make_ready(&app, cx);
+        app.update(cx, |this, _| {
+            let snapshot = this
+                .song_workshop
+                .as_mut()
+                .unwrap()
+                .snapshot
+                .as_mut()
+                .unwrap();
+            for (user, text) in [(true, "A fast song"), (false, "Here is a **plan**.")] {
+                snapshot.document.messages.push(Message {
+                    choices: None,
+                    references: vec![],
+                    attachments: Vec::new(),
+                    user,
+                    text: text.into(),
+                });
+            }
+        });
+        crate::harness::resize(&app, cx, gpui::size(gpui::px(1200.0), gpui::px(800.0)));
+        let from = cx
+            .debug_bounds("song-workshop-message-0-text")
+            .expect("the request is visible");
+        // The answer's last block, whichever number Markdown gave it.
+        let to = (0..8)
+            .rev()
+            .find_map(|n| cx.debug_bounds(format!("song-workshop-message-1-block-{n}").leak()))
+            .expect("the answer is visible");
+        let start = from.origin + gpui::point(gpui::px(0.5), gpui::px(0.5));
+        let end = to.bottom_right() - gpui::point(gpui::px(0.5), gpui::px(0.5));
+        crate::harness::press(cx, start);
+        crate::harness::paint(&app, cx);
+        crate::harness::drag_to(cx, end);
+        crate::harness::paint(&app, cx);
+        crate::harness::release(cx, end);
+        crate::harness::paint(&app, cx);
+        cx.simulate_keystrokes("secondary-c");
+        cx.update(|_, cx| {
+            assert_eq!(
+                cx.read_from_clipboard()
+                    .and_then(|item| item.text())
+                    .as_deref(),
+                Some("A fast song\n\nHere is a plan.")
+            );
+        });
     }
 
     /// A wrapped Japanese answer is as tall as its blocks, and the candidates follow it.

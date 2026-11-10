@@ -118,8 +118,8 @@ pub use auris_analysis::{AnalysisControl, AnalysisError};
 pub use auris_core::CoreError;
 /// Mechanical observations exposed through the session boundary.
 pub use auris_core::motion::{
-    MOTION_BODY, MOTION_PARTIALS, MOTION_POINTS, MOTION_SCOPE, MOTION_VOICES, MotionFrame,
-    MotionGeometry, MotionVoice,
+    MOTION_BODY, MOTION_MODES, MOTION_PARTIALS, MOTION_POINTS, MOTION_SCOPE, MOTION_VOICES,
+    MotionFrame, MotionGeometry, MotionVoice,
 };
 /// PCM-derived drum measurements, exposed without a frontend DSP dependency.
 pub use auris_dsp::drum_analysis::{AcousticCharacter, DrumAcoustics, DrumSpectrum};
@@ -320,11 +320,12 @@ pub mod prelude {
     pub use auris_core::{
         AudioBuffer, AudioClip, AudioSource, AuxSend, ClipId, ClipPreset, ClipRecipe, Color,
         ConsonantWidths, DrumMap, DrumRole, EffectSlot, EffectSlotId, FadeCurve, Fall, GhostNotes,
-        GhostPattern, LayerShape, LayerVoice, MAX_LAYER_OFFSET, MidiClip, MixerStrip, Note,
-        NoteTransform, Output, PluginRegistry, PresetRef, Project, STRUM_VALUES, SUSTAIN_MAX_TICKS,
-        Scoop, SectionMap, SectionPoint, SectionSpan, SendId, SingerPitch, SingerTrack,
-        SoundFontId, SoundFontRef, SourceId, StrokeDirection, Subdivision, Track, TrackId,
-        TrackKind, Vibrato, default_frame_hop, default_loop_end, loop_passes, sounding_length,
+        GhostPattern, LayerShape, LayerVoice, MAX_LAYER_OFFSET, MAX_STRING_MS, MidiClip,
+        MixerStrip, Note, NoteTransform, Output, PluginRegistry, PresetRef, Project, STRUM_VALUES,
+        SUSTAIN_MAX_TICKS, Scoop, SectionMap, SectionPoint, SectionSpan, SendId, SingerPitch,
+        SingerTrack, SoundFontId, SoundFontRef, SourceId, StrokeDirection, Subdivision, Track,
+        TrackId, TrackKind, Vibrato, default_frame_hop, default_loop_end, loop_passes,
+        sounding_length,
     };
     pub use auris_core::{Comment, CommentId, JoinRefusal};
     pub use auris_core::{

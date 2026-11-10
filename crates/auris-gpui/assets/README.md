@@ -12,9 +12,14 @@ The native formats are checked in so ordinary builds need no image-conversion to
 - `auris-studio.ico` is the Windows multi-size export embedded as resource 1 by `windows.rc`.
 - `auris-studio.icns` contains the macOS Retina representations referenced by `Info.plist`.
 
-The generated source and size-specific exports are kept in the design-language repository. Release
-packaging may replace these committed development files with the versioned output from its app-icon
-action. The redistributed canonical files are covered by the upstream Apache-2.0 text in
+- `title-bar.png` is the small drawing of the cell at 64 px, which every window's title bar shows
+  at its top-left corner on Windows and Linux (`TitleBar::app_icon`; macOS leaves it out). It is
+  Atelier's `assets/app-icons/auris-studio/title-bar.png`, copied unchanged.
+
+The generated source and size-specific exports are kept in the design-language repository. The
+release workflow draws the icon again for the tag being released with Atelier's app-icon action and
+puts that `.icns` and `.ico` in place of these committed development files before it builds, so the
+version in the corner is always the release's own. The redistributed canonical files are covered by the upstream Apache-2.0 text in
 `ATELIER-LICENSE`.
 
 The original `icons/sound-*.svg` library presets share Atelier's 24×24 grid, two-pixel stroke,

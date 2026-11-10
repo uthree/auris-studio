@@ -80,6 +80,43 @@ impl AuditionClip {
             .decode(&self.wav_base64)
             .map_err(|error| error.to_string())
     }
+
+    /// How long the clip plays, read from its WAV header without decoding the samples.
+    pub fn seconds(&self) -> Result<f64, String> {
+        let reader = hound::WavReader::new(std::io::Cursor::new(self.wav()?))
+            .map_err(|error| error.to_string())?;
+        let spec = reader.spec();
+        Ok(f64::from(reader.duration()) / f64::from(spec.sample_rate.max(1)))
+    }
+
+    /// The clip as audio at `sample_rate`, for a person to hear what the model was played.
+    pub fn audio(&self, sample_rate: f64) -> Result<AudioBuffer, String> {
+        let mut reader = hound::WavReader::new(std::io::Cursor::new(self.wav()?))
+            .map_err(|error| error.to_string())?;
+        let spec = reader.spec();
+        let count = usize::from(spec.channels.max(1));
+        let scale = match spec.sample_format {
+            hound::SampleFormat::Int => 1.0 / (1_i64 << (spec.bits_per_sample.max(1) - 1)) as f32,
+            hound::SampleFormat::Float => 1.0,
+        };
+        let samples: Vec<f32> = match spec.sample_format {
+            hound::SampleFormat::Int => reader
+                .samples::<i32>()
+                .map(|sample| sample.map(|sample| sample as f32 * scale))
+                .collect::<Result<_, _>>(),
+            hound::SampleFormat::Float => reader.samples::<f32>().collect::<Result<_, _>>(),
+        }
+        .map_err(|error| error.to_string())?;
+        let mut channels = vec![Vec::with_capacity(samples.len() / count); count];
+        for frame in samples.chunks_exact(count) {
+            for (channel, sample) in channels.iter_mut().zip(frame) {
+                channel.push(*sample);
+            }
+        }
+        let audio = AudioBuffer::from_planar(channels, f64::from(spec.sample_rate))
+            .map_err(|error| error.to_string())?;
+        auris_io::resample_buffer(&audio, sample_rate).map_err(|error| error.to_string())
+    }
 }
 
 /// What `listen` answers: a report for the model to read and the clips for it to hear.
@@ -433,6 +470,23 @@ mod tests {
             .sum::<f64>()
             / samples.len() as f64)
             .sqrt()
+    }
+
+    #[test]
+    fn a_clip_plays_back_at_the_window_rate_for_as_long_as_its_header_says() {
+        let (mut session, _) = fixture();
+        let audition = listen(&mut session, None);
+        let clip = &audition.clips[0];
+        let seconds = clip.seconds().unwrap();
+        // One 4/4 bar at the default 120 BPM.
+        assert!((seconds - 2.0).abs() < 0.01, "{seconds}");
+        let native = clip.audio(f64::from(AUDITION_SAMPLE_RATE)).unwrap();
+        assert_eq!(native.channel_count(), 2);
+        assert_eq!(native.frame_count(), (seconds * 48_000.0).round() as usize);
+        assert!(native.channel(0).iter().any(|sample| sample.abs() > 0.01));
+        let window = clip.audio(44_100.0).unwrap();
+        assert_eq!(window.sample_rate(), 44_100.0);
+        assert!((window.duration_seconds() - seconds).abs() < 0.01);
     }
 
     #[test]

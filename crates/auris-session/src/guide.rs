@@ -2916,7 +2916,10 @@ pub mod harmony {
     //! refused. These resolved edges are preserved even between grid lines.
     //! The live agent's `generate_phrase` command uses [`Session::generate_clip`](crate::Session::generate_clip)
     //! with an explicit bar range, part and seed. It adds stored notes and a recipe as one Undo
-    //! step in the open document. The shared live catalog exposes it to native model APIs,
+    //! step in the open document. A drum part's intensity follows the section most of the range
+    //! lies in — a verse softer, a chorus harder, the last of several choruses hardest, at the
+    //! levels the composer gives sections of those names — because drums generated at one level
+    //! are what the arrangement check reports as a chorus struck no harder than the verse. The shared live catalog exposes it to native model APIs,
     //! Codex and Claude Code with the same edit permissions; melodic parts require existing
     //! harmony in the selected range.
     //!

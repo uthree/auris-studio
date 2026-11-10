@@ -891,3 +891,44 @@ fn sustain_holds_releases_reads_back_and_resets_to_nothing() {
             .is_empty()
     );
 }
+
+#[test]
+fn a_tight_strum_reports_its_measured_spread_and_says_it_is_heard_as_one_hit() {
+    let (mut session, clip) = fixture();
+    session
+        .replace_notes(
+            clip,
+            (0..4)
+                .flat_map(|bar| {
+                    [40, 47, 52].map(|pitch| Note::new(pitch, Ticks(bar * 3840), Ticks::QUARTER))
+                })
+                .collect(),
+        )
+        .unwrap();
+    let heard_as_one = |stage: &Value| {
+        stage["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|w| w.as_str().unwrap().contains("every string at once"))
+    };
+    let tight = edit(
+        &mut session,
+        clip,
+        json!({"strum":{"spread_ms":7,"variation":0,"direction":"low_to_high","clock":"attacks"}}),
+        None,
+    )
+    .unwrap();
+    let stage = &tight["note_effects"]["stages"][0];
+    assert_eq!(stage["strum_spread"]["chords"], 4, "{stage}");
+    // Seven milliseconds at 120 bpm rounds to 13 ticks, 6.8 ms.
+    assert_eq!(stage["strum_spread"]["median_ms"], 6.8, "{stage}");
+    assert!(heard_as_one(stage), "{stage}");
+    let wide = edit(&mut session, clip, json!({"strum":{"spread_ms":24}}), None).unwrap();
+    let stage = &wide["note_effects"]["stages"][0];
+    assert!(!heard_as_one(stage), "{stage}");
+    assert!(
+        stage["strum_spread"]["median_ms"].as_f64().unwrap() > 15.0,
+        "{stage}"
+    );
+}

@@ -796,7 +796,8 @@ async fn receive_turn(rpc: &mut Rpc, bridge: &Bridge, thread: &str) -> Result<St
                     bridge.emit(json!({"event":"phase","phase":"tool"}));
                     bridge.emit(json!({"event":"call","call_id":item["id"],"tool":item["tool"],"args":item["arguments"]}));
                 } else {
-                    // Images belong to the model input, not to the transcript's text details.
+                    // Images stay out of the text details; the transcript shows them as pictures.
+                    let images = super::result_images(&item["result"]["content"]);
                     let text = item["error"]["message"]
                         .as_str()
                         .map(str::to_owned)
@@ -812,7 +813,7 @@ async fn receive_turn(rpc: &mut Rpc, bridge: &Bridge, thread: &str) -> Result<St
                                 })
                                 .unwrap_or_default()
                         });
-                    bridge.emit(json!({"event":"result","call_id":item["id"],"tool":item["tool"],"ok":item["status"] == "completed" && item["error"].is_null() && item["result"]["isError"] != true,"text":text}));
+                    bridge.emit(json!({"event":"result","call_id":item["id"],"tool":item["tool"],"ok":item["status"] == "completed" && item["error"].is_null() && item["result"]["isError"] != true,"text":text,"images":images}));
                 }
             }
             "turn/completed" => {

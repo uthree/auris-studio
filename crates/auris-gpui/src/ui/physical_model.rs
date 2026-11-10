@@ -16,7 +16,7 @@ use std::{cell::Cell, rc::Rc};
 use super::physical_bodies::{BodyPlot, BoreEnd, LANE_INSET, Shape, ring_fraction};
 use super::physical_stage::{DECAY_FRAMES, Resonance};
 use super::plugin_window::PluginSubject;
-use super::synth_view::is_oscillator_model;
+use super::synth_view::{is_boom, is_electro_kit, is_oscillator_model};
 use crate::{app::AurisApp, theme::Theme};
 use atelier::plot::{LinePlot, Series};
 use atelier::viz::{Heatmap, StringLane, Waveform};
@@ -129,6 +129,8 @@ impl Gesture {
             | "auris.physical.clarinet"
             | "auris.physical.tin_whistle"
             | "auris.physical.choir" => Self::Sustain,
+            // An electronic kit's pads are struck like any other drum's.
+            id if is_electro_kit(id) => Self::Strike,
             // An oscillator is played like a key: it sounds while held and stops when let go.
             id if is_oscillator_model(id) => Self::Key,
             _ => Self::Strike,
@@ -293,8 +295,11 @@ impl AurisApp {
         if source != self.physical_view.source {
             self.close_physical_view();
             if let Some((_, id)) = &source {
-                let drums = is_drum_model(id);
-                if drums != self.physical_view.drum_preview {
+                let drums = is_pad_kit(id);
+                if is_boom(id) {
+                    // A kick bass is auditioned where it is played, two octaves down.
+                    self.physical_view.pitch = 36;
+                } else if drums != self.physical_view.drum_preview {
                     self.physical_view.pitch = if drums { 36 } else { 60 };
                 }
                 self.physical_view.drum_preview = drums;
@@ -338,8 +343,13 @@ impl AurisApp {
     fn transpose_physical_preview(&mut self, delta: i16, cx: &mut Context<Self>) {
         let playing = self.physical_view.playing;
         self.release_physical_preview();
+        let electro = self
+            .physical_view
+            .source
+            .as_ref()
+            .is_some_and(|(_, id)| is_electro_kit(id));
         self.physical_view.pitch = if self.physical_view.drum_preview {
-            next_drum_preview(self.physical_view.pitch, delta > 0)
+            next_drum_preview(self.physical_view.pitch, delta > 0, electro)
         } else {
             (i16::from(self.physical_view.pitch) + delta).clamp(24, 96) as u8
         };
@@ -365,16 +375,15 @@ impl AurisApp {
     /// The geometry `lane` is drawn as, which decides how a pointer on it is read.
     fn lane_geometry(&self, lane: usize) -> MotionGeometry {
         let frame = self.physical_view.frame.unwrap_or_default();
+        let id = self
+            .physical_view
+            .source
+            .as_ref()
+            .map_or("", |(_, id)| id.as_str());
         match lane_voices(&frame)[lane] {
             Some(index) => frame.voices[index].geometry.unwrap_or(frame.geometry),
-            None if self.physical_view.drum_preview => drum_geometry(self.physical_view.pitch),
-            None => resting_geometry(
-                self.physical_view
-                    .source
-                    .as_ref()
-                    .map_or("", |(_, id)| id.as_str()),
-                frame.geometry,
-            ),
+            None if is_drum_model(id) => drum_geometry(self.physical_view.pitch),
+            None => resting_geometry(id, frame.geometry),
         }
     }
 
@@ -475,6 +484,7 @@ impl AurisApp {
         let (track, id) = self.physical_view.source.clone()?;
         let piano = id == "auris.physical.piano";
         let drums = is_drum_model(&id);
+        let pads = is_pad_kit(&id);
         let oscillator = is_oscillator_model(&id);
         let gesture = Gesture::of(&id);
         let frame = self.physical_view.frame.unwrap_or_default();
@@ -486,8 +496,8 @@ impl AurisApp {
         let effects_disabled = self.physical_view.effects_disabled;
         let gain = self.physical_view.gain;
         let language = self.language;
-        let note = if drums {
-            drum_name(self.physical_view.pitch, language).to_owned()
+        let note = if pads {
+            drum_name(self.physical_view.pitch, !drums, language).to_owned()
         } else {
             midi_name(i32::from(self.physical_view.pitch))
         };
@@ -518,6 +528,8 @@ impl AurisApp {
         };
         let hint = self.t(if drums {
             Key::PhysicalTouchHead
+        } else if pads {
+            Key::SynthTouchPad
         } else if oscillator {
             Key::SynthTouchKey
         } else {
@@ -555,6 +567,7 @@ impl AurisApp {
                 Vec::new()
             },
             drums,
+            pads,
             instrument: id.clone(),
             language,
         };
@@ -629,12 +642,16 @@ impl AurisApp {
             .p(spacing.lg)
             .gap(spacing.md)
             .child(
-                SectionHeader::new(self.t(if oscillator {
+                SectionHeader::new(self.t(if pads && oscillator {
+                    Key::SynthPadWaveforms
+                } else if oscillator {
                     Key::SynthWaveforms
                 } else {
                     Key::PhysicalMotion
                 }))
-                .description(self.t(if oscillator {
+                .description(self.t(if pads && oscillator {
+                    Key::SynthPadObserved
+                } else if oscillator {
                     Key::SynthObserved
                 } else {
                     Key::PhysicalObserved
@@ -664,7 +681,7 @@ impl AurisApp {
         } else {
             self.physical_analysis(&id, &frame, &theme)
         };
-        let audition = self.physical_audition(drums, playing, &note, cx);
+        let audition = self.physical_audition(pads, playing, &note, cx);
         // What is touched stays together: the bodies, then the keys that choose their note.
         // The inside of the instrument is for looking at, and comes after.
         let inside = self.physical_resonance(&id, &frame, &theme, cx);
@@ -714,8 +731,9 @@ impl AurisApp {
             let surface = self.touch_surface(lane, plot, cx);
             let (label, state) = match shown {
                 Some(voice) => (
-                    if bodies.drums {
-                        drum_name(voice.pitch.round() as u8, bodies.language).to_owned()
+                    if bodies.pads {
+                        drum_name(voice.pitch.round() as u8, !bodies.drums, bodies.language)
+                            .to_owned()
                     } else {
                         let cents = (voice.pitch - voice.pitch.round()) * 100.;
                         let name = midi_name(voice.pitch.round().clamp(0., 127.) as i32);
@@ -733,8 +751,8 @@ impl AurisApp {
                     .get(bodies.language),
                 ),
                 None if lane == 0 => (
-                    if bodies.drums {
-                        drum_name(bodies.resting_pitch, bodies.language).to_owned()
+                    if bodies.pads {
+                        drum_name(bodies.resting_pitch, !bodies.drums, bodies.language).to_owned()
                     } else {
                         midi_name(i32::from(bodies.resting_pitch))
                     },
@@ -1061,7 +1079,10 @@ struct Bodies {
     resting_pitch: u8,
     /// One cycle of an oscillator's patch, drawn faintly on its first lane at rest.
     resting_cycle: Vec<f32>,
+    /// Whether the bodies are drawn as a kit's heads and cymbals.
     drums: bool,
+    /// Whether the lanes are a kit's pads, named by pad rather than by note.
+    pads: bool,
     /// The instrument's id, which tells one string-like body from another.
     instrument: String,
     language: Language,
@@ -1147,8 +1168,13 @@ impl Bodies {
                     .collect(),
                 (None, None) => vec![0.; auris_session::MOTION_POINTS],
             };
-            // Two periods, so the join between one cycle and the next is seen as well.
-            let samples = cycle.iter().chain(cycle.iter()).copied().collect();
+            // Two periods, so the join between one cycle and the next is seen as well. A pad's
+            // trace is a stretch of its hit, not a cycle, and is drawn once.
+            let samples = if self.pads {
+                cycle
+            } else {
+                cycle.iter().chain(cycle.iter()).copied().collect()
+            };
             let color = if active { color } else { color.opacity(0.55) };
             return Waveform::new(samples)
                 .color(color)
@@ -1210,6 +1236,11 @@ fn is_drum_model(id: &str) -> bool {
     id == "auris.synth.drumkit"
 }
 
+/// Whether `id` is played by pad rather than by note: the modelled kit or an electronic one.
+fn is_pad_kit(id: &str) -> bool {
+    is_drum_model(id) || is_electro_kit(id)
+}
+
 /// What a model's body is when nothing is sounding, before any frame has said so.
 fn resting_geometry(id: &str, observed: MotionGeometry) -> MotionGeometry {
     match id {
@@ -1249,16 +1280,20 @@ pub(crate) fn model_thumbnail(
         resting_pitch: 60,
         resting_cycle: Vec::new(),
         drums: is_drum_model(&id),
+        pads: is_pad_kit(&id),
         instrument: id,
         language: Language::English,
     }
     .plot(0, loudest, geometry, &theme)
 }
 
-fn next_drum_preview(pitch: u8, forward: bool) -> u8 {
+fn next_drum_preview(pitch: u8, forward: bool, electro: bool) -> u8 {
     const KEYS: [u8; 12] = [36, 38, 42, 46, 49, 51, 41, 43, 45, 47, 48, 50];
-    let current = KEYS.iter().position(|key| *key == pitch).unwrap_or(0);
-    KEYS[(current + if forward { 1 } else { KEYS.len() - 1 }) % KEYS.len()]
+    // The electronic kits have a boom kick, a clap, a rim and a cowbell as well.
+    const ELECTRO_KEYS: [u8; 13] = [36, 35, 38, 39, 37, 42, 46, 49, 51, 56, 41, 45, 50];
+    let keys: &[u8] = if electro { &ELECTRO_KEYS } else { &KEYS };
+    let current = keys.iter().position(|key| *key == pitch).unwrap_or(0);
+    keys[(current + if forward { 1 } else { keys.len() - 1 }) % keys.len()]
 }
 
 fn drum_geometry(pitch: u8) -> MotionGeometry {
@@ -1269,8 +1304,14 @@ fn drum_geometry(pitch: u8) -> MotionGeometry {
     }
 }
 
-fn drum_name(pitch: u8, language: Language) -> &'static str {
+/// What a kit's key strikes. The electronic kits give some keys a pad of their own that the
+/// modelled kit plays as a neighbour.
+fn drum_name(pitch: u8, electro: bool, language: Language) -> &'static str {
     let key = match pitch {
+        35 if electro => Key::DrumBoomKick,
+        37 if electro => Key::DrumRim,
+        39 if electro => Key::DrumClap,
+        56 if electro => Key::DrumCowbell,
         35 | 36 => Key::RoleKick,
         37..=40 => Key::RoleSnare,
         42 | 44 => Key::DrumClosedHat,

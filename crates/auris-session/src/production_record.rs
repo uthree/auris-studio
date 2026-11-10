@@ -487,6 +487,7 @@ fn phase_checks(
                 check("lyrics_annotated", list("unannotated_lyric_lines")),
                 check("vocal_takes_current", behind_takes),
                 check("foreground_covers_song", foreground_unmet(roles, facts)),
+                check("melody_develops", development_unmet(roles, facts)),
                 // Read again in every later phase, since an arrangement can add findings too.
                 check("lint_warnings_resolved", lint_unmet(facts)),
             ]
@@ -511,6 +512,14 @@ fn phase_checks(
                                 && t["track"].as_u64().is_some_and(|id| guide.contains(&id))
                         })
                         .map(|t| t["track"].clone())
+                        .collect(),
+                ),
+                check(
+                    "drums_follow_sections",
+                    facts["drum_dynamics"]
+                        .as_str()
+                        .map(|warning| json!({"arrangement_shape": warning}))
+                        .into_iter()
                         .collect(),
                 ),
             ]
@@ -546,6 +555,32 @@ fn bars_with_notes(project: &Project, clips: &[auris_core::project::MidiClip]) -
         }
     }
     runs
+}
+
+/// The development warnings `melody_shape` gives a sung foreground track, which the score phase
+/// is not finished with: every line entering at one point of the bar, a melody with no
+/// syncopation, every line one length, most notes one spacing apart, or a section other than a
+/// chorus sung again to notes the song already had.
+fn development_unmet(roles: Option<&Roles>, facts: &Value) -> Vec<Value> {
+    let Some(roles) = roles else {
+        return vec![];
+    };
+    facts["tracks"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|track| {
+            track["track"]
+                .as_u64()
+                .is_some_and(|id| roles.foreground.contains(&id))
+        })
+        .filter(|track| {
+            track["melody_development"]
+                .as_array()
+                .is_some_and(|warnings| !warnings.is_empty())
+        })
+        .map(|track| json!({"track":track["track"],"melody_shape":track["melody_development"]}))
+        .collect()
 }
 
 /// How many of the song's bars at least one foreground track sounds in, against the song's
@@ -684,6 +719,8 @@ pub fn phase_facts(session: &crate::Session) -> Value {
                     _ => "missing",
                 }
                 .into();
+                fact["melody_development"] =
+                    crate::session::melody_form::development_warnings(project, track.id).into();
             }
             Some(fact)
         })
@@ -700,6 +737,7 @@ pub fn phase_facts(session: &crate::Session) -> Value {
     json!({"bars":bars,"unsectioned_bars":unsectioned.into_iter().take(CAP).collect::<Vec<_>>(),
         "sections_without_chords":without_chords,"tracks":tracks,"unannotated_lyric_lines":unannotated,
         "lint":session.unresolved_lint_counts(),
+        "drum_dynamics":crate::session::arrangement_shape::flat_drums(project, &spans),
         "score_bars":crate::phase::score_bars(project)})
 }
 
@@ -990,6 +1028,66 @@ mod tests {
     }
 
     #[test]
+    fn a_sung_lead_on_one_rhythm_throughout_is_unmet_structure() {
+        use auris_core::project::Note;
+        let mut session =
+            crate::Session::new(crate::SessionOptions::headless().with_balance(false)).unwrap();
+        let lead = session.add_singer_track("Lead");
+        let bar = Ticks(Ticks::QUARTER.raw() * 4);
+        // Eight two-bar lines, each four quarter notes from the downbeat and a bar's rest.
+        let clip = session
+            .add_midi_clip(lead, "Verse", Ticks::ZERO, bar * 16)
+            .unwrap();
+        let notes = (0..8)
+            .flat_map(|line| {
+                (0..4).map(move |i| {
+                    Note::new(
+                        60 + i as u8,
+                        bar * (2 * line) + Ticks::QUARTER * i,
+                        Ticks(Ticks::QUARTER.raw() * 3 / 4),
+                    )
+                })
+            })
+            .collect();
+        session.replace_notes(clip, notes).unwrap();
+        let mut record = Record::default();
+        record
+            .update(Operation::EnterPhase {
+                phase: Phase::Score,
+                reason: "new song".into(),
+                writing_order: None,
+            })
+            .unwrap();
+        record
+            .update(Operation::SetRoles {
+                foreground: vec![lead.0],
+                guide: vec![],
+                no_foreground: None,
+            })
+            .unwrap();
+        let rhythm: Vec<Value> = unmet_structure(&record, &session)
+            .into_iter()
+            .filter(|c| c["check"] == "melody_develops")
+            .collect();
+        assert_eq!(rhythm.len(), 1, "{rhythm:?}");
+        let text = rhythm[0]["unmet"].to_string();
+        assert!(text.contains("same point of the bar"), "{text}");
+        // A track that is not the foreground is not held to it.
+        record
+            .update(Operation::SetRoles {
+                foreground: vec![],
+                guide: vec![],
+                no_foreground: Some("an instrumental".into()),
+            })
+            .unwrap();
+        assert!(
+            unmet_structure(&record, &session)
+                .iter()
+                .all(|c| c["check"] != "melody_develops")
+        );
+    }
+
+    #[test]
     fn a_foreground_that_stops_after_a_verse_is_unmet_structure_until_it_covers_the_song() {
         use auris_core::project::Note;
         let mut session =
@@ -1115,5 +1213,57 @@ mod tests {
             json!([7])
         );
         assert!(serde_json::from_value::<Operation>(json!({"kind":"put","evidence":[]})).is_err());
+    }
+
+    #[test]
+    fn drums_struck_alike_in_every_section_are_unmet_arrangement_until_shaded() {
+        use auris_core::project::Note;
+        let mut session =
+            crate::Session::new(crate::SessionOptions::headless().with_balance(false)).unwrap();
+        let bar = Ticks(Ticks::QUARTER.raw() * 4);
+        let drums = session.add_default_drum_track("Drums").unwrap();
+        let clip = session
+            .add_midi_clip(drums, "Drums", Ticks::ZERO, bar * 12)
+            .unwrap();
+        let strike = |velocity: &dyn Fn(i64) -> f32| -> Vec<Note> {
+            (0..12)
+                .map(|index| {
+                    let mut note = Note::new(36, bar * index, Ticks::QUARTER);
+                    note.velocity = velocity(index);
+                    note
+                })
+                .collect()
+        };
+        session.replace_notes(clip, strike(&|_| 0.8)).unwrap();
+        for (at, label) in [(0, "Verse"), (4, "Pre-chorus"), (8, "Chorus")] {
+            session.set_section(bar * at, Some(label.into()));
+        }
+        let mut record = Record::default();
+        record
+            .update(Operation::SetRoles {
+                foreground: vec![],
+                guide: vec![],
+                no_foreground: Some("a drum study".into()),
+            })
+            .unwrap();
+        for phase in [Phase::Score, Phase::Arrangement] {
+            record
+                .update(Operation::EnterPhase {
+                    phase,
+                    reason: "test".into(),
+                    writing_order: None,
+                })
+                .unwrap();
+        }
+        let flat = |record: &Record, session: &crate::Session| {
+            unmet_structure(record, session)
+                .iter()
+                .any(|c| c["check"] == "drums_follow_sections")
+        };
+        assert!(flat(&record, &session));
+        session
+            .replace_notes(clip, strike(&|index| if index < 4 { 0.5 } else { 0.85 }))
+            .unwrap();
+        assert!(!flat(&record, &session));
     }
 }

@@ -28,11 +28,46 @@ env:
 
 # Application builds are deliberately uncached.
 jobs:
+  # The checked-in icon carries the version it was last drawn at. Each release draws its own with
+  # Atelier's app-icon action, so the number in the icon's corner is this release's. It is drawn
+  # once, on Linux where the action's Python tools install cleanly, and handed to the two builds
+  # that embed it. Keep the ref at the Atelier revision `auris-gpui` pins.
+  icon:
+    name: Draw the app icon
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag && format('refs/tags/{0}', inputs.release_tag) || github.ref }}
+
+      - name: Name branch dry-run artifacts from Cargo version
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag == '' }}
+        run: |
+          version=$(sed -n 's/^version = "\([^"]*\)".*/\1/p' Cargo.toml | head -n 1)
+          test -n "$version"
+          echo "RELEASE_NAME=v$version" >> "$GITHUB_ENV"
+
+      - name: Draw
+        id: draw
+        uses: uthree/design-language/.github/actions/app-icon@a3c5f69e1db8d19e7c70bf427250473c77208055
+        with:
+          slug: auris-studio
+          version: ${{ env.RELEASE_NAME }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: app-icon
+          path: |
+            ${{ steps.draw.outputs.dir }}/icon.icns
+            ${{ steps.draw.outputs.dir }}/icon.ico
+          if-no-files-found: error
+
   # Apple Silicon only. Intel Macs were dropped in 0.19: macOS 26 is the last release Apple ships
   # for them, the x86_64 runner images are being retired, and `ort` has no Intel prebuilt, so
   # keeping them meant building ONNX Runtime from source on every release.
   macos:
     name: Build for macOS
+    needs: icon
     if: github.event_name != 'workflow_dispatch' || inputs.platform == 'all' || inputs.platform == 'macos'
     runs-on: macos-latest
     steps:
@@ -57,6 +92,15 @@ jobs:
           sparse-checkout: |
             tools/fetch-dictionary.sh
           sparse-checkout-cone-mode: false
+
+      - name: Use this release's app icon
+        uses: actions/download-artifact@v4
+        with:
+          name: app-icon
+          path: ${{ runner.temp }}/app-icon
+
+      - name: Put it in place
+        run: cp "$RUNNER_TEMP/app-icon/icon.icns" crates/auris-gpui/assets/auris-studio.icns
 
       - name: Install the toolchain
         run: |
@@ -162,6 +206,7 @@ jobs:
 
   windows:
     name: Build for Windows
+    needs: icon
     if: github.event_name != 'workflow_dispatch' || inputs.platform == 'all' || inputs.platform == 'windows'
     runs-on: windows-latest
     env:
@@ -195,6 +240,17 @@ jobs:
       - name: Prepare LLVM for ASIO
         shell: pwsh
         run: ./tools/setup-windows.ps1 -InstallLlvm
+
+      # Before the build: `build.rs` embeds the .ico as the executable's resource.
+      - name: Use this release's app icon
+        uses: actions/download-artifact@v4
+        with:
+          name: app-icon
+          path: ${{ runner.temp }}/app-icon
+
+      - name: Put it in place
+        shell: bash
+        run: cp "$RUNNER_TEMP/app-icon/icon.ico" crates/auris-gpui/assets/auris-studio.ico
 
       - name: Install the toolchain
         run: rustup toolchain install stable --profile minimal
