@@ -3,8 +3,9 @@
 //! Each body is drawn as what it is: a [`StringLane`] per plucked, struck or bowed string, a
 //! circular [`Heatmap`] per drum head or cymbal, and for the rest the painters in
 //! [`super::physical_bodies`] — a piano string between its hammer and damper, a mallet bar on its
-//! supports, a bell's rim as a ring, a bore or a vocal tract as a tube of air. The modes the body
-//! rings in are on a stem plot beside them. Every body is also a surface. Pressing it excites the model at
+//! supports, a bell's rim as a ring, a bore or a vocal tract as a tube of air. What goes on
+//! inside a physical instrument — its soundboard, its partials dying away, what excites it — is
+//! [`super::physical_stage`]'s, under the bodies. Every body is also a surface. Pressing it excites the model at
 //! that place, the way the instrument itself is played: a string is pulled and let go, a head or
 //! a struck string is pressed, a bowed string, a bore or a tract sounds for as long as the press
 //! is held. The note is the voice the lane is showing, or the audition note when the lane is at
@@ -13,6 +14,7 @@
 use std::{cell::Cell, rc::Rc};
 
 use super::physical_bodies::{BodyPlot, BoreEnd, LANE_INSET, Shape, ring_fraction};
+use super::physical_stage::{DECAY_FRAMES, Resonance};
 use super::plugin_window::PluginSubject;
 use super::synth_view::is_oscillator_model;
 use crate::{app::AurisApp, theme::Theme};
@@ -40,10 +42,10 @@ pub(crate) struct PhysicalView {
     pub(crate) playing: bool,
     pub(crate) pitch: u8,
     drum_preview: bool,
-    gain: f32,
+    pub(super) gain: f32,
     effects_disabled: bool,
     /// Recent captured frames used for short, bounded motion trails.
-    history: Vec<MotionFrame>,
+    pub(super) history: Vec<MotionFrame>,
     /// A press on a body that has not been let go yet.
     pub(crate) touch: Option<Touch>,
     /// A plucked or struck note left ringing after its touch, released by the next one.
@@ -55,6 +57,10 @@ pub(crate) struct PhysicalView {
     pub(crate) plots: super::synth_edit::PlotBounds,
     /// Wheel travel over a picture whose wheel steps a count, not yet worth a whole step.
     pub(crate) wheel: f32,
+    /// Which picture of the instrument's inside is turning, and the angle it is seen from:
+    /// azimuth and elevation, in degrees.
+    pub(crate) resonance: Resonance,
+    pub(crate) orbit: (f32, f32),
 }
 impl Default for PhysicalView {
     fn default() -> Self {
@@ -73,12 +79,18 @@ impl Default for PhysicalView {
             surfaces: Rc::default(),
             plots: Rc::default(),
             wheel: 0.0,
+            resonance: Resonance::default(),
+            // From above the near corner, low enough that a surface's height reads as height.
+            orbit: (-32., 34.),
         }
     }
 }
 
 impl PhysicalView {
-    const HISTORY_LIMIT: usize = 12;
+    /// As far back as any picture looks: the decay surface's whole depth.
+    const HISTORY_LIMIT: usize = DECAY_FRAMES;
+    /// As far back as a body's trails go.
+    const TRAIL_FRAMES: usize = 6;
 
     fn accept_frame(&mut self, frame: MotionFrame) -> bool {
         if self.frozen || self.frame == Some(frame) {
@@ -186,7 +198,7 @@ fn active(voice: &MotionVoice) -> bool {
 
 /// Which voice each lane shows: the sounding ones from the highest pitch down, so a chord keeps
 /// its order however the instrument ranks its voices by recency, and then the silent slots.
-fn lane_voices(frame: &MotionFrame) -> [Option<usize>; LANES] {
+pub(super) fn lane_voices(frame: &MotionFrame) -> [Option<usize>; LANES] {
     let mut order: Vec<usize> = (0..LANES).filter(|i| active(&frame.voices[*i])).collect();
     order.sort_by(|a, b| frame.voices[*b].pitch.total_cmp(&frame.voices[*a].pitch));
     std::array::from_fn(|lane| order.get(lane).copied())
@@ -243,6 +255,8 @@ impl AurisApp {
             drum_preview: self.physical_view.drum_preview,
             gain: self.physical_view.gain,
             effects_disabled: self.physical_view.effects_disabled,
+            resonance: self.physical_view.resonance,
+            orbit: self.physical_view.orbit,
             ..Default::default()
         };
     }
@@ -523,7 +537,8 @@ impl AurisApp {
             history: if effects_disabled {
                 Vec::new()
             } else {
-                self.physical_view.history.clone()
+                let history = &self.physical_view.history;
+                history[history.len().saturating_sub(PhysicalView::TRAIL_FRAMES)..].to_vec()
             },
             gain,
             touch: self.physical_view.touch,
@@ -650,6 +665,9 @@ impl AurisApp {
             self.physical_analysis(&id, &frame, &theme)
         };
         let audition = self.physical_audition(drums, playing, &note, cx);
+        // What is touched stays together: the bodies, then the keys that choose their note.
+        // The inside of the instrument is for looking at, and comes after.
+        let inside = self.physical_resonance(&id, &frame, &theme, cx);
         Some(
             div()
                 .id("physical-view")
@@ -660,6 +678,7 @@ impl AurisApp {
                 .child(motion_card)
                 .children(analysis)
                 .child(audition)
+                .children(inside)
                 .into_any_element(),
         )
     }
@@ -861,7 +880,7 @@ impl AurisApp {
         .into_any_element()
     }
 
-    /// The modes a modal body rings in, or the shape of a singer's tract.
+    /// The modes a drum's head rings in, or the shape of a singer's tract.
     fn physical_analysis(
         &self,
         id: &str,
@@ -871,13 +890,7 @@ impl AurisApp {
         let tokens = &theme.atelier;
         let spacing = tokens.spacing;
         let tract = id == "auris.physical.choir";
-        let modal = matches!(
-            id,
-            "auris.physical.piano"
-                | "auris.physical.bell"
-                | "auris.physical.mallet"
-                | "auris.physical.hammered_dulcimer"
-        ) || is_drum_model(id);
+        let modal = is_drum_model(id);
         if !tract && !modal {
             return None;
         }

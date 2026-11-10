@@ -319,7 +319,7 @@ DAWは静かに失敗することがある。移動したSoundFontはセッシ�
 <a id="physical-instruments"></a>
 ## 物理楽器
 
-ライブラリーには **Physical Piano、Guitar、Electric Guitar、Bass、Bell、Mallet、Violin、Clarinet、Hammered Dulcimer、Tin Whistle** があり、サンプルファイルのインストールは不要である。新しいメロディートラックはPhysical Pianoで始まる。編集可能な接触硬度、励振位置、ダンピング、ボディーレゾナンスを持つ表現豊かな縮約物理モデルである。[physical instruments](physical-instruments.ja.md) を参照する。
+ライブラリーには **Physical Piano、Hammered Strings、Guitar、Electric Guitar、Bass、Strings、Mallet、Bell、Reeds、Whistles** があり、サンプルファイルのインストールは不要である。新しいメロディートラックはPhysical Pianoで始まる。どれもハンマーのフェルト、弓圧、リードの硬さといった楽器そのもののモデルで、エディターには演奏中の弦、響板、励振の様子が表示される。[physical instruments](physical-instruments.ja.md) を参照する。
 
 <a id="importing-a-soundfont-of-your-own"></a>
 ## 自分のSoundFontをインポートする

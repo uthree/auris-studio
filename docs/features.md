@@ -832,10 +832,11 @@ drawn on — in all four colour schemes, which is checked rather than eyeballed.
 
 ## Physical instruments
 
-The library includes **Physical Piano, Guitar, Electric Guitar, Bass, Bell, Mallet, Violin,
-Clarinet, Hammered Dulcimer and Tin Whistle**, with no sample
-files to install. New melodic tracks start on Physical Piano. These are expressive reduced
-physical models with editable contact hardness, excitation position, damping and body resonance.
+The library includes **Physical Piano, Hammered Strings, Guitar, Electric Guitar, Bass,
+Strings, Mallet, Bell, Reeds and Whistles**, with no sample files to install. New melodic
+tracks start on Physical Piano. Each is a model of the instrument itself — a hammer's felt, a
+bow's pressure, a reed's stiffness — and its editor shows the strings, the soundboard and what
+excites them as it plays.
 See [physical instruments](physical-instruments.md) for the models, controls and composition use.
 ## Importing a SoundFont of your own
 

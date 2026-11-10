@@ -1,200 +1,113 @@
-//! Measures callback cost with all 24 physical voices held; no audio device is needed.
+//! How much of a processor each physical instrument takes.
+//!
+//! ```sh
+//! cargo run --release -p auris-synth --example physical_bench
+//! cargo run --release -p auris-synth --example physical_bench -- --quality 2 --rate 96000
+//! ```
+//!
+//! For every model it holds one note, then a handful, then as many as the model has voices,
+//! renders ten seconds in host-sized blocks and prints how long that took as a share of the
+//! ten seconds: the part of one core the instrument would use live. `--quality` picks the
+//! live quality (0 draft, 1 standard, 2 high), `--rate` the sample rate and `--block` the
+//! host's block size.
+//!
+//! Development tooling: build it with `--release`, or the numbers mean nothing.
 
 use std::time::Instant;
 
 use auris_core::{
-    AudioBuffer, Effect, Instrument, NoteEvent, Parameterized, PrepareContext, ProcessContext,
+    AudioBuffer, Instrument, NoteEvent, Parameterized, PrepareContext, ProcessContext,
 };
-use auris_synth::{Model, Physical, Quality};
+use auris_synth::{Model, Physical};
+
+const SECONDS: f64 = 10.0;
+
+/// Notes spread over the middle of each model's range.
+fn chord(model: Model, count: usize) -> Vec<u8> {
+    let (low, high): (u8, u8) = match model {
+        Model::Piano => (33, 96),
+        Model::HammeredDulcimer => (50, 86),
+        Model::Guitar | Model::ElectricGuitar => (40, 84),
+        Model::Bass => (28, 55),
+        Model::Violin => (36, 93),
+        Model::Mallet => (45, 93),
+        Model::Bell => (55, 88),
+        Model::Clarinet => (50, 86),
+        Model::TinWhistle => (72, 96),
+    };
+    (0..count)
+        .map(|n| {
+            let span = f32::from(high - low);
+            (f32::from(low) + span * (n as f32 + 0.5) / count as f32).round() as u8
+        })
+        .collect()
+}
+
+fn measure(model: Model, voices: usize, quality: f32, rate: f64, block: usize) -> (f64, usize) {
+    let mut instrument = Physical::new(model);
+    instrument.set_param_by_key("quality", quality);
+    instrument.prepare(&PrepareContext::new(rate, block, 2));
+    let mut buffer = AudioBuffer::stereo(block, rate);
+    let frames = (SECONDS * rate) as usize;
+    // Struck and plucked notes die away, so they are struck again every second.
+    let again = rate as usize;
+    let notes = chord(model, voices);
+    let mut sounding = 0;
+    let started = Instant::now();
+    for start in (0..frames).step_by(block) {
+        let mut events = Vec::new();
+        if start % again < block {
+            for (index, pitch) in notes.iter().enumerate() {
+                if start > 0 && !model.is_sustained() {
+                    events.push(NoteEvent::NoteOff {
+                        frame: 0,
+                        pitch: *pitch,
+                    });
+                }
+                if start == 0 || !model.is_sustained() {
+                    events.push(NoteEvent::NoteOn {
+                        frame: 0,
+                        pitch: *pitch,
+                        velocity: 0.6 + 0.3 * (index % 3) as f32 / 2.0,
+                    });
+                }
+            }
+        }
+        let context = ProcessContext::realtime(rate, block, start as u64, 120.0, true);
+        instrument.process(&events, &mut buffer, &context);
+        sounding = sounding.max(instrument.active_voices());
+    }
+    (started.elapsed().as_secs_f64() / SECONDS, sounding)
+}
 
 fn main() {
-    if std::env::args().any(|arg| arg == "--folk") {
-        measure_folk();
-    }
-    if std::env::args().any(|arg| arg == "--clarinet") {
-        measure_clarinet();
-    }
-    if std::env::args().any(|arg| arg == "--amp") {
-        measure_amp();
-    }
-    let observe = std::env::args().any(|arg| arg == "--motion");
-    let rate = 48_000.0;
-    let frames = 256;
-    // `--quality draft|standard|high` measures one level of `Quality`; Standard by default.
-    let quality = std::env::args()
-        .skip_while(|arg| arg != "--quality")
-        .nth(1)
-        .map_or(Quality::Standard, |level| match level.as_str() {
-            "draft" => Quality::Draft,
-            "high" => Quality::High,
-            _ => Quality::Standard,
-        });
-    println!("{quality:?} quality");
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let option = |name: &str, default: f64| {
+        args.iter()
+            .position(|arg| arg == name)
+            .and_then(|index| args.get(index + 1))
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(default)
+    };
+    let quality = option("--quality", 1.0) as f32;
+    let rate = option("--rate", 48_000.0);
+    let block = option("--block", 256.0) as usize;
+    println!("quality {quality}, {rate} Hz, blocks of {block}: share of one core");
+    println!(
+        "{:<20} {:>10} {:>10} {:>14}",
+        "model", "1 voice", "6 voices", "every voice"
+    );
     for model in Model::ALL {
-        let mut instrument = Physical::new(model);
-        instrument.set_param_by_key("decay", 12.0);
-        instrument.set_param_by_key("quality", quality.value());
-        instrument.prepare(&PrepareContext::new(rate, frames, 2));
-        let monitor = instrument.motion_monitor();
-        if let Some(monitor) = &monitor {
-            monitor.watch(observe);
-        }
-        let mut buffer = AudioBuffer::stereo(frames, rate);
-        let events: Vec<_> = (0..24)
-            .map(|index| NoteEvent::NoteOn {
-                frame: 0,
-                pitch: 48 + index % 12,
-                velocity: 0.8,
-            })
-            .collect();
-        let context = ProcessContext::realtime(rate, frames, 0, 120.0, true);
-        // The block that strikes all 24 notes also prepares them; time it on its own.
-        let mut strikes = Vec::with_capacity(32);
-        for _ in 0..32 {
-            instrument.reset();
-            let started = Instant::now();
-            instrument.process(&events, &mut buffer, &context);
-            strikes.push(started.elapsed().as_secs_f64() * 1000.0);
-        }
-        strikes.sort_by(f64::total_cmp);
-        let mut times = Vec::with_capacity(512);
-        for _ in 0..512 {
-            let started = Instant::now();
-            instrument.process(&[], &mut buffer, &context);
-            times.push(started.elapsed().as_secs_f64() * 1000.0);
-            std::hint::black_box(&buffer);
-        }
-        let mean = times.iter().sum::<f64>() / times.len() as f64;
-        times.sort_by(f64::total_cmp);
+        let most = model.voices();
+        let (one, _) = measure(model, 1, quality, rate, block);
+        let (six, _) = measure(model, 6.min(most), quality, rate, block);
+        let (all, sounding) = measure(model, most, quality, rate, block);
         println!(
-            "{model:?}: mean {mean:.3} ms, p99 {:.3} ms, {:.1}% of 5.333 ms callback budget; \
-             24-note strike block median {:.3} ms",
-            times[506],
-            mean / (frames as f64 / rate * 1000.0) * 100.0,
-            strikes[16]
+            "{:<20} {:>9.2}% {:>9.2}% {:>9.2}% ({sounding})",
+            model.name(),
+            one * 100.0,
+            six * 100.0,
+            all * 100.0,
         );
     }
-}
-
-fn measure_folk() {
-    measure_folk_instrument(
-        "Hammered Dulcimer",
-        Box::new(auris_synth::HammeredDulcimer::new()),
-        24,
-        48,
-    );
-    measure_folk_instrument(
-        "Tin Whistle",
-        Box::new(auris_synth::TinWhistle::new()),
-        16,
-        74,
-    );
-}
-
-fn measure_folk_instrument(
-    name: &str,
-    mut instrument: Box<dyn Instrument>,
-    voices: u8,
-    first_pitch: u8,
-) {
-    let rate = 48_000.0;
-    let frames = 256;
-    let context = ProcessContext::realtime(rate, frames, 0, 120.0, true);
-    instrument.prepare(&PrepareContext::new(rate, frames, 2));
-    let mut buffer = AudioBuffer::stereo(frames, rate);
-    let events: Vec<_> = (0..voices)
-        .map(|index| NoteEvent::NoteOn {
-            frame: 0,
-            pitch: first_pitch.saturating_add(index % 12),
-            velocity: 0.8,
-        })
-        .collect();
-    instrument.process(&events, &mut buffer, &context);
-    for _ in 0..96 {
-        instrument.process(&[], &mut buffer, &context);
-    }
-    let mut times = Vec::with_capacity(512);
-    for _ in 0..512 {
-        let started = Instant::now();
-        instrument.process(&[], &mut buffer, &context);
-        times.push(started.elapsed().as_secs_f64() * 1000.0);
-        std::hint::black_box(&buffer);
-    }
-    let mean = times.iter().sum::<f64>() / times.len() as f64;
-    times.sort_by(f64::total_cmp);
-    println!(
-        "{name} ({voices} voices): mean {mean:.3} ms, p99 {:.3} ms, {:.1}% of 5.333 ms callback budget",
-        times[506],
-        mean / (frames as f64 / rate * 1000.0) * 100.0
-    );
-}
-
-fn measure_clarinet() {
-    let rate = 48_000.0;
-    let frames = 256;
-    let context = ProcessContext::realtime(rate, frames, 0, 120.0, true);
-    let mut instrument = auris_synth::Clarinet::new();
-    instrument.prepare(&PrepareContext::new(rate, frames, 2));
-    let mut buffer = AudioBuffer::stereo(frames, rate);
-    let events: Vec<_> = (0..16)
-        .map(|index| NoteEvent::NoteOn {
-            frame: 0,
-            pitch: 50 + index,
-            velocity: 0.8,
-        })
-        .collect();
-    instrument.process(&events, &mut buffer, &context);
-    // Let all reed/bore feedback loops reach their sustained state before timing.
-    for _ in 0..96 {
-        instrument.process(&[], &mut buffer, &context);
-    }
-    let mut times = Vec::with_capacity(512);
-    for _ in 0..512 {
-        let started = Instant::now();
-        instrument.process(&[], &mut buffer, &context);
-        times.push(started.elapsed().as_secs_f64() * 1000.0);
-        std::hint::black_box(&buffer);
-    }
-    let mean = times.iter().sum::<f64>() / times.len() as f64;
-    times.sort_by(f64::total_cmp);
-    println!(
-        "Clarinet (16 voices): mean {mean:.3} ms, p99 {:.3} ms, {:.1}% of 5.333 ms callback budget",
-        times[506],
-        mean / (frames as f64 / rate * 1000.0) * 100.0
-    );
-}
-
-fn measure_amp() {
-    let rate = 48_000.0;
-    let frames = 256;
-    let prepare = PrepareContext::new(rate, frames, 2);
-    let context = ProcessContext::realtime(rate, frames, 0, 120.0, true);
-    let mut instrument = Physical::new(Model::ElectricGuitar);
-    let mut amp = auris_dsp::GuitarAmp::new();
-    instrument.prepare(&prepare);
-    amp.prepare(&prepare);
-    let mut buffer = AudioBuffer::stereo(frames, rate);
-    let events: Vec<_> = (0..24)
-        .map(|index| NoteEvent::NoteOn {
-            frame: 0,
-            pitch: 40 + index,
-            velocity: 0.8,
-        })
-        .collect();
-    instrument.process(&events, &mut buffer, &context);
-    let mut times = Vec::with_capacity(512);
-    for _ in 0..512 {
-        let started = Instant::now();
-        instrument.process(&[], &mut buffer, &context);
-        amp.process(&mut buffer, &context);
-        times.push(started.elapsed().as_secs_f64() * 1000.0);
-        std::hint::black_box(&buffer);
-    }
-    let mean = times.iter().sum::<f64>() / times.len() as f64;
-    times.sort_by(f64::total_cmp);
-    println!(
-        "ElectricGuitar + GuitarAmp: mean {mean:.3} ms, p99 {:.3} ms, {:.1}% of 5.333 ms callback budget",
-        times[506],
-        mean / (frames as f64 / rate * 1000.0) * 100.0
-    );
 }

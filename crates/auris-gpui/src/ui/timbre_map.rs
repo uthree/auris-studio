@@ -2313,10 +2313,32 @@ mod tests {
             native_plot = native_plot.scatter(points, None);
         }
         let plot_bounds = utility.debug_bounds("timbre-plot").unwrap();
-        let point = native_plot.project(plot_bounds, positions[index]).0;
-        crate::harness::click_at(&mut utility, point, gpui::Modifiers::none());
+        // The point that stands furthest from every other on the screen. Two sounds alike
+        // enough to be drawn on top of one another cannot say which of them a click meant.
+        let on_screen: Vec<_> = positions
+            .iter()
+            .map(|at| native_plot.project(plot_bounds, *at).0)
+            .collect();
+        let alone = |point: usize| {
+            on_screen
+                .iter()
+                .enumerate()
+                .filter(|(other, _)| *other != point)
+                .map(|(_, other)| {
+                    let (dx, dy) = (
+                        f32::from(other.x - on_screen[point].x),
+                        f32::from(other.y - on_screen[point].y),
+                    );
+                    dx.hypot(dy)
+                })
+                .fold(f32::INFINITY, f32::min)
+        };
+        let plotted = (0..on_screen.len())
+            .max_by(|a, b| alone(*a).total_cmp(&alone(*b)))
+            .unwrap();
+        crate::harness::click_at(&mut utility, on_screen[plotted], gpui::Modifiers::none());
         app.read_with(&utility, |this, _| {
-            assert_eq!(this.timbre_map.selected, Some(index));
+            assert_eq!(this.timbre_map.selected, Some(plotted));
         });
         let center = utility.debug_bounds("timbre-plot").unwrap().center();
         crate::harness::drag(
@@ -2325,7 +2347,7 @@ mod tests {
             center + gpui::point(gpui::px(50.), gpui::px(20.)),
         );
         app.read_with(&utility, |this, _| {
-            assert_eq!(this.timbre_map.selected, Some(index));
+            assert_eq!(this.timbre_map.selected, Some(plotted));
             assert_eq!(this.timbre_map.camera.preset, None);
             assert_eq!(this.project(), &before);
         });
