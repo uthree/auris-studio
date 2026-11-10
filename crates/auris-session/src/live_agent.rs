@@ -691,7 +691,7 @@ pub enum Command {
         #[serde(default)]
         pickup_beats: Option<f64>,
     },
-    /// Generate a new MIDI phrase on an existing instrument or drum track using the project's key, chords and meter. Write melodic harmony with edit_harmony first; drum parts use the track's sound assignments. part is lead, chords, pad, arp, bass, drums, kick, snare or hat. Returns clip ID, note count and seed; zero notes is an empty clip, not a finished phrase. Existing clips are preserved. One Undo removes the new clip; persistence follows the host.
+    /// Generate a new MIDI phrase on an existing instrument or drum track using the project's key, chords and meter. Write melodic harmony with edit_harmony first; drum parts use the track's sound assignments. part is lead, chords, pad, arp, bass, drums, kick, snare or hat. A drum part is struck for the section most of it lies in: softer in a verse, harder in a chorus, hardest in the last chorus; edit_recipe's intensity changes it. Returns clip ID, note count, seed and intensity; zero notes is an empty clip, not a finished phrase. Existing clips are preserved. One Undo removes the new clip; persistence follows the host.
     GeneratePhrase {
         /// Stable instrument or drum track ID from inspect_project or add_track.
         track: u64,
@@ -1495,24 +1495,35 @@ impl Session {
                 {
                     return Err("No chords in this range; use edit_harmony before generating a melodic phrase".into());
                 }
+                let mut recipe = ClipRecipe::new(preset, seed);
+                let section = preset
+                    .is_drums()
+                    .then(|| {
+                        crate::session::arrangement_shape::drum_intensity(
+                            self.project(),
+                            start,
+                            end,
+                        )
+                    })
+                    .flatten();
+                if let Some((_, intensity)) = &section {
+                    recipe.intensity = *intensity;
+                }
+                let intensity = recipe.intensity;
                 let clip = self
-                    .generate_clip(
-                        TrackId(track),
-                        start,
-                        end - start,
-                        ClipRecipe::new(preset, seed),
-                    )
+                    .generate_clip(TrackId(track), start, end - start, recipe)
                     .map_err(error)?;
                 let notes = self
                     .project()
                     .midi_clip(clip)
                     .map_or(0, |(_, clip)| clip.notes.len());
-                Ok(
-                    serde_json::json!({"clip":clip.0,"track":track,"part":preset.name(),
-                    "start_bar":start_bar,"bars":bars,"seed":seed,"notes":notes,
-                    "unsaved":true})
-                    .to_string(),
-                )
+                let mut result = serde_json::json!({"clip":clip.0,"track":track,
+                    "part":preset.name(),"start_bar":start_bar,"bars":bars,"seed":seed,
+                    "notes":notes,"intensity":intensity,"unsaved":true});
+                if let Some((label, _)) = section {
+                    result["struck_for"] = label.into();
+                }
+                Ok(result.to_string())
             }
             Command::SetLoop { start_bar, bars } => {
                 if start_bar == 0 || !(1..=1024).contains(&bars) {
@@ -1769,6 +1780,77 @@ mod tests {
         assert_eq!(result["seed"], 0);
         assert!(result["notes"].as_u64().unwrap() > 0);
         assert!(session.project().harmony.is_empty());
+    }
+
+    #[test]
+    fn generated_drums_are_struck_harder_in_a_chorus_than_in_a_verse() {
+        let bar = Ticks::QUARTER * 4;
+        let labels = [
+            "Intro", "Verse 1", "Chorus 1", "Verse 2", "Chorus 2", "Outro",
+        ];
+        // Sixteen takes of the song, each section generated from a seed of its own: whichever
+        // take a verse and a chorus are, the check on the finished drums reads a difference.
+        for take in 0..16_u64 {
+            let mut session = session();
+            let track = session.add_default_drum_track("Beat").unwrap();
+            for (index, label) in labels.iter().enumerate() {
+                session.set_section(bar * (index as i64 * 8), Some((*label).into()));
+            }
+            session.set_section(bar * 48, None);
+            let mut results = Vec::new();
+            for index in 0..labels.len() as u32 {
+                let command = Command::GeneratePhrase {
+                    track: track.0,
+                    part: "drums".into(),
+                    start_bar: index * 8 + 1,
+                    bars: 8,
+                    seed: take * 31 + u64::from(index) * 7,
+                };
+                let result: serde_json::Value =
+                    serde_json::from_str(&session.agent_command(command).unwrap()).unwrap();
+                results.push(result);
+            }
+            let stored = |result: &serde_json::Value| {
+                let clip = ClipId(result["clip"].as_u64().unwrap());
+                let clip = session.project().midi_clip(clip).unwrap().1;
+                let mean = clip
+                    .notes
+                    .iter()
+                    .map(|n| f64::from(n.velocity))
+                    .sum::<f64>()
+                    / clip.notes.len() as f64;
+                (clip.recipe.as_ref().unwrap().intensity, mean)
+            };
+            for (index, result) in results.iter().enumerate() {
+                let reported = result["intensity"].as_f64().unwrap();
+                assert!((reported - f64::from(stored(result).0)).abs() < 1e-6);
+                match index {
+                    0 | 5 => assert!(result.get("struck_for").is_none(), "{result}"),
+                    _ => assert_eq!(result["struck_for"], labels[index]),
+                }
+            }
+            let plain = ClipRecipe::new(ClipPreset::Drums, 0).intensity;
+            assert_eq!(stored(&results[0]).0, plain);
+            assert!(stored(&results[1]).0 < plain && plain < stored(&results[2]).0);
+            assert_eq!(stored(&results[1]).0, stored(&results[3]).0);
+            assert!(stored(&results[2]).0 < stored(&results[4]).0);
+            let (verse, chorus, last) = (
+                stored(&results[1]).1.max(stored(&results[3]).1),
+                stored(&results[2]).1,
+                stored(&results[4]).1,
+            );
+            assert!(
+                verse < chorus && chorus < last,
+                "take {take}: {verse} {chorus} {last}"
+            );
+            let project = session.project();
+            let spans = project.sections.spans_in(Ticks::ZERO, project.end_tick());
+            assert_eq!(
+                crate::session::arrangement_shape::flat_drums(project, &spans),
+                None,
+                "take {take}"
+            );
+        }
     }
 
     #[test]

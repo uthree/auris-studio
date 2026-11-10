@@ -228,9 +228,14 @@ starting at bar 5. Parts are `lead`, `chords`, `pad`, `arp`, `bass`, `drums`, `k
 and `hat`. `start_bar` is 1-based; `bars` is 1..1024; `seed` defaults to zero.
 Melodic parts use the project's key and chords, so write their harmony with `edit_harmony`
 first. Drum parts use the drum track's sound assignments and do not require chords.
+A drum part is struck for the section most of it lies in: softer in a verse, harder in a
+chorus, hardest in the last of several choruses. Any other section keeps the recipe's own
+level, and `edit_recipe`'s `intensity` changes it afterwards.
 
-The result reports the new clip ID, note count and seed. The clip retains its generation
-recipe and stored notes, so it can be edited or regenerated through the usual clip controls.
+The result reports the new clip ID, note count, seed and intensity, and for a drum part
+fitted to a verse or a chorus the section's name as `struck_for`. The clip retains its
+generation recipe and stored notes, so it can be edited or regenerated through the usual
+clip controls.
 
 `edit_recipe` reads, patches or regenerates 1..16 explicit clip IDs. A `patch`
 changes only supplied recipe settings; `regenerate` selects the same, next or an
