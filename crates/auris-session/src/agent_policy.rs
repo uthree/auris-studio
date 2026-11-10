@@ -256,7 +256,6 @@ pub const OPERATIONS: &[&str] = &[
     "edit_project.edit_clip",
     "edit_project.edit_clip_curve",
     "edit_project.edit_timeline",
-    "edit_project.compose",
     "edit_project.add_track",
     "edit_project.rename_project",
     "edit_project.rename_track",
@@ -276,9 +275,7 @@ pub const OPERATIONS: &[&str] = &[
     "edit_project.set_loop",
     "search_instruments",
     "instrument_diagnostics",
-    "list_presets",
     "list_progressions",
-    "spec_reference",
     "search_documentation",
     "tool_help",
     "discover_tools",
@@ -339,7 +336,6 @@ impl Operation {
                     parsed,
                     crate::live_agent::Command::IgnoreLint { .. }
                         | crate::live_agent::Command::RemoveTrack { .. }
-                        | crate::live_agent::Command::Compose { replace: true, .. }
                 );
             Ok(Self {
                 name: if matches!(action, "search_instruments" | "instrument_diagnostics") {
@@ -919,10 +915,6 @@ mod tests {
             (
                 "edit_project",
                 serde_json::json!({"command":{"action":"remove_track","track":1}}),
-            ),
-            (
-                "edit_project",
-                serde_json::json!({"command":{"action":"compose","preset":"game-loop","replace":true}}),
             ),
             ("search_internet", serde_json::json!({"query":"music"})),
         ] {

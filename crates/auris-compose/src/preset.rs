@@ -71,7 +71,7 @@ pub const PRESETS: &[SongPreset] = &[
     SongPreset {
         name: "game-loop",
         description: "A sixteen-bar chiptune loop for game background music",
-        source: include_str!("../../../examples/game-loop.asong"),
+        source: GAME_LOOP,
     },
     SongPreset {
         name: "pop-band",
@@ -1040,6 +1040,71 @@ melody_from = "verse"
 parts = "pad glass cello"
 "#;
 
+/// A sixteen-bar chiptune cycle that ends where it began, for game background music.
+const GAME_LOOP: &str = r#"
+# A complete sixteen-bar cycle. Both sections play on every repetition.
+performance = "chiptune"
+writing_style = "chiptune"
+title = "Pixel Journey"
+key = "C major"
+tempo = 120
+ending = "loop"
+chords = "@axis"
+groove = "four-on-the-floor"
+mood = "bright"
+seed = 53
+fill = 0.35
+humanize = 0.668
+dynamics = 0.407
+form = ["verse", "chorus"]
+
+[section.verse]
+bars = 8
+intensity = 0.65
+parts = "lead chords bass kick snare hat"
+
+[section.chorus]
+bars = 8
+intensity = 0.75
+parts = "lead alt_chords arp bass kick snare hat"
+
+[[part]]
+name = "lead"
+role = "melody"
+density = 0.45
+
+[[part]]
+name = "chords"
+role = "chords"
+gate = 0.65
+
+[[part]]
+name = "arp"
+role = "arp"
+density = 0.3
+
+[[part]]
+name = "alt_chords"
+role = "chords"
+gate = 0.45
+
+[[part]]
+name = "bass"
+role = "bass"
+
+[[part]]
+name = "kick"
+role = "kick"
+
+[[part]]
+name = "snare"
+role = "snare"
+
+[[part]]
+name = "hat"
+role = "hat"
+"#;
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
@@ -1499,7 +1564,7 @@ mod tests {
 
     #[test]
     fn game_loop_keeps_its_sixteen_bar_cycle_while_rotating_layers() {
-        let spec = SongSpec::parse(include_str!("../../../examples/game-loop.asong")).unwrap();
+        let spec = SongSpec::parse(GAME_LOOP).unwrap();
         assert_eq!(spec.form, vec!["verse".to_string(), "chorus".to_string()]);
         assert_eq!(
             spec.form

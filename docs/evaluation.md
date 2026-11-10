@@ -13,10 +13,6 @@ The [local refinement loop](composition-refinement.md) connects those trials to
 SongEval, bounded foreground edits and retained before/after audio. It records
 per-axis evidence and validity checks without an automatic musical winner.
 
-The [preset arrangement study](preset-arrangement.md) pairs these measurements with track
-participation and density across the form, and records the default-seed selection, fresh-seed
-check, and per-preset tradeoffs from the 2026-10-04 revision.
-
 The [physical-instrument copy-synthesis loop](physical-copy-synthesis.md) measures temporal
 mel-spectrogram distance against a frozen cohort of real piano, guitar and violin recordings.
 It fits only training notes and evaluates held-out pitches and dynamics with the actual Rust
@@ -121,11 +117,6 @@ the table reads the *pattern* the composer chose rather than where the feel late
 The functions behind the table are `auris_compose::metrics`, public and unit-tested, so a
 future command or test can read the same numbers the example prints.
 
-The optional [composition search](composition-search.md) uses a separate, explicit symbolic
-target: written note events per bar. It maximizes negative absolute distance from that target,
-with parameter bounds and a fixed composition seed. Moving closer to a requested density is
-a measurable arrangement change; it does not establish that the song sounds better.
-
 ## Inspecting the saved score
 
 ```
@@ -215,19 +206,15 @@ warning sits at the 90th percentile and fires on one in ten: at the 95th, four s
 a row all finished at 76-78%, just under it. With `--any-part`, 518 songs give 3.9%, 5.8% and
 11% for the three rows.
 
-`tools/eval/fixtures/vocal-phrases.asong` supplies a fixed lyric probe with shared verses and
-unvoiced closures. Use the same dictionary and sound assets for both renders. An instrument
-audition of sung notes checks melody/rhythm, not the intelligibility of a learned singer.
-
 ## The learned ear
 
 ```sh
-uv run tools/eval/music.py --preset all --seeds 3 --workdir target/before --json before.json
-uv run tools/eval/music.py --preset all --seeds 3 --workdir target/after --baseline before.json --json after.json
+uv run tools/eval/music.py target/before --json before.json
+uv run tools/eval/music.py target/after --baseline before.json --json after.json
 ```
 
-Pass `--cli path/to/auris.exe` (or `auris` on macOS) to freeze a renderer, or
-pass existing WAVs/directories instead of `--preset`. Both models are development
+Pass WAVs or directories of WAVs; each file's prompt profile is recognised from its
+name, or named for all of them with `--preset`. Both models are development
 tools; rendering and inference stay local. The initial run fetches several GB of
 public weights into `target/composition-eval/models` and a pinned copy of the
 official TuneJury source beside them. Python and packages are managed by uv.
@@ -340,64 +327,21 @@ shipped in the application or calibrated as an automatic selector. The retained
 successful local inference from the Antigravity CLI attempt, which did not
 deliver raw audio and produced no valid music assessment.
 
-`melody_ab.py` transplants an instrumental lead into a frozen backing;
-`melody_continuity_ab.py` freezes the renderer and makes level-matched chorus
-excerpts. `melody_phrase_ab.py` compares baseline, pitch, rhythm and combined
-variants with explicit artifact hashes and component-change guards. Existing
+`melody_ab.py` transplants an instrumental lead into a frozen backing. Existing
 notes, backing, IDs, mixer and performance transforms remain in editable projects.
 `structure.py`, `melody_continuity.py` and `seed_metrics.py` inspect written-score
 rhythm, phrase continuity, overlap and voice motion independently of model scores.
 
-Score **the listening excerpts** with `music.py --segments 1`. The four-condition
-`melody_phrase_listening.py --scores scores.json` specification has schema_version
-1 and a `variants` object. Each condition supplies `music: {path, sha256}` for its
-evaluation report and `excerpt_sha256`, a complete label-to-WAV-hash map. Reports
-must share model, preprocessing and prompt metadata. Omitting scores leaves cells
-blank. `seed_listening.py --manifest manifest.json --scores music.json --output
-listening.html` produces a shuffled seed comparison and verifies that scored hashes
-match the listening excerpts. Both reports use local audio players and upload nothing.
-
-## Preset tuning
-
-```sh
-uv run tools/eval/tune.py --preset all --trials 18 --out tune-results.json --workdir target/tuning
-uv run tools/eval/tune.py --preset chiptune --dials humanize dynamics --trials 12 --out focused.json
-```
-
-Optuna TPE maximizes two separate objectives: TuneJury reward and MuQ-MuLan positive
-cosine. The continuous dials are humanize, dynamics, fill, variation, mood, tempo
-within ±6%, and swing within ±6 points only for already swung presets. Key, groove,
-progression, form and instruments stay fixed. Trial zero uses the current preset;
-training seeds are 101/102 and independent validation seeds are 301/302.
-`--dials` confines an experiment to the named parameters; every other resolved
-value, including tempo and swing, remains fixed.
-
-Select a Pareto candidate whose two training objectives are no worse than trial
-zero; prioritize reward among those candidates. Acceptance requires both validation
-means to be no worse than current and at least one to improve. Every trial retains
-its effective dial settings, editable projects, full renders, window positions,
-PCM hashes and scores under distinct filenames. Results save after each preset.
-An improvement on training alone is insufficient to update `preset.rs`.
-
-The [October 2026 calibration](learned-music-tuning.md) records the shipped dials,
-writer changes, fresh paired measurements and rejected candidates.
-
-For writer changes, archive the original renderer, run the symbolic ruler and
-`music.py` before editing, change one musical rule, then compare matching seeds
-through the same instruments and render settings. Retain failed candidates and
-regressions. Use fresh seeds for a final generalization check after model-guided
-selection, since validation seeds used repeatedly become training evidence.
-
-These models provide a measurable optimization objective, not a substitute for
-listening. Check timbral identity, score diversity, note bounds, and per-case
-regressions along with mean reward. Optimizing one reward can reward a repeated
-texture or a specific renderer artifact instead of better musical development.
+Score **the listening excerpts** with `music.py --segments 1`.
+`seed_listening.py --manifest manifest.json --scores music.json --output
+listening.html` produces a shuffled comparison and verifies that scored hashes
+match the listening excerpts. It uses local audio players and uploads nothing.
 
 ## Verify the measuring tools
 
 ```sh
-uv run --python 3.11 --with pytest --with numpy --with scipy --with soundfile --with optuna pytest tools/eval/test_music.py tools/eval/test_render_audio.py tools/eval/test_tune.py
-uv run --with ruff ruff check tools/eval/music.py tools/eval/learned_models.py tools/eval/render_audio.py tools/eval/tune.py
+uv run --python 3.11 --with pytest --with numpy --with scipy --with soundfile pytest tools/eval/test_music.py
+uv run --with ruff ruff check tools/eval/music.py tools/eval/learned_models.py
 ```
 
 The contract tests require no model download. Real-model comparisons should use

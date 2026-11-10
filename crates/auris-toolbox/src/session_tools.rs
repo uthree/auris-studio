@@ -48,7 +48,7 @@ pub(crate) fn definitions() -> Vec<ToolDefinition> {
         })
         .map(|tool| {
             let name = tool.name;
-            let optional_project = matches!(name.as_str(), "analyze_lyrics" | "diagnose_song");
+            let optional_project = name == "analyze_lyrics";
             let mut parameters = tool.parameters;
             parameters["properties"].as_object_mut().expect("session object schema").insert("project".into(), serde_json::json!({"type":"string","description":"Project path or project_id from open_project/create_project."}));
             if parameters.get("required").is_none() { parameters["required"] = serde_json::json!([]); }
@@ -269,7 +269,7 @@ mod tests {
     }
 
     #[test]
-    fn lyric_drafts_are_diagnosed_without_a_project_and_large_reports_are_paged() {
+    fn lyric_drafts_are_analysed_without_a_project_and_large_reports_are_paged() {
         let call = |name, args| {
             crate::runtime::call_saved(&crate::ToolGroups::default(), name, args).unwrap()
         };
@@ -279,17 +279,6 @@ mod tests {
         ))
         .unwrap();
         assert_eq!(analysis["complete"], true);
-        let spec = "form='verse verse2'\n[section.verse]\nlyrics='ずっときみと'\n[section.verse2]\nmelody_from='verse'\nlyrics='きみとあえる'";
-        let report: Value =
-            serde_json::from_str(&call("diagnose_song", json!({"spec":spec}))).unwrap();
-        assert_eq!(report["status"], "fail");
-        assert!(
-            report["issues"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|i| i["code"] == "closure_position_mismatch")
-        );
         let paged: Value = serde_json::from_str(&call(
             "analyze_lyrics",
             json!({"text":"あいうえお\n".repeat(100)}),

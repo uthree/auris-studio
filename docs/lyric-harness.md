@@ -77,19 +77,16 @@ first mora keeping three fifths of it. A group ending in `っ` sings no
 closure phoneme, so the next note must start at least a thirty-second note (120 ticks) after
 that note ends.
 
-## Diagnose a composition or existing phrases
+## Diagnose existing phrases
 
-`check_spec` checks syntax and settings. Next call `diagnose_song` with `spec` containing
-the complete `.asong` TOML document. Shared lyrics are compared only where `melody_from`
-declares a shared melody. The diagnostic checks each musical phrase, not the section's
-total mora count. Empty later lyrics intentionally leave a section instrumental.
+`diagnose_song` compares sung phrases that should share a melody. The diagnostic checks each
+musical phrase, not the section's total mora count.
 
 The result includes source-ordered analyses and independent issues with stable `code`,
 `severity`, section/phrase addresses, reference, expected/actual values and repair scope.
 `status` is `pass`, `fail`, or `incomplete`. Known violations take precedence over incomplete
 input, while `complete` independently records whether all checks could run. An unreadable
 phrase prevents dependent comparisons, but does not hide errors in other readable phrases.
-Composition uses the same diagnostic before replacing the document.
 
 For an existing project, use exact singer clip IDs and zero-based storage note indices
 returned by `read_notes`:
@@ -103,15 +100,15 @@ returned by `read_notes`:
 }
 ```
 
-Pass exactly one of `spec` or nonempty `comparisons`. Live comparisons read stored phonemes
+Pass nonempty `comparisons`. Live comparisons read stored phonemes
 and verify pitch, relative onset, duration and ornaments as well as mora/closure positions.
 Selected indices must form a contiguous, nonoverlapping phrase. Original phrase labels
 followed by `+` are supported when stored phonemes establish one mora on every note, as
 `write_lyrics` does for kanji. Empty lyrics or missing/multi-mora phonemes are reported as
 incomplete. Every diagnosis returns the current document revision.
 
-Saved-file tools add `project` with a project ID or path. It is optional for `analyze_lyrics`
-and spec-based `diagnose_song`, so a project need not be created just to check a draft.
+Saved-file tools add `project` with a project ID or path. It is optional for `analyze_lyrics`,
+so a project need not be created just to check a draft.
 Live tools use the open document and omit `project`. Large results use the existing
 immutable `read_report` pages; retain the returned report ID and JSON pointers.
 

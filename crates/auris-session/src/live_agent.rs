@@ -180,12 +180,10 @@ pub enum Command {
         #[serde(default)]
         fit: Vec<crate::lyric_harness::PhraseFit>,
     },
-    /// Diagnose lyrics before composition or compare explicit singer-clip phrases. Pass exactly one of spec (an .asong TOML document) or comparisons. Returns all independent complaints and the live document revision. No audio synthesis or document edits.
+    /// Compare explicit singer-clip phrases. Returns all independent complaints and the live document revision. No audio synthesis or document edits.
     DiagnoseSong {
-        /// Full .asong text; shared relationships are declared with melody_from.
-        spec: Option<String>,
-        /// Existing one-mora-per-note singer phrases to compare, at most sixteen.
-        #[serde(default)]
+        /// Existing one-mora-per-note singer phrases to compare, one to sixteen.
+        #[schemars(length(min = 1, max = 16))]
         comparisons: Vec<crate::lyric_harness::ClipComparison>,
     },
     /// Preview or atomically apply a local lyric repair using 1..3 candidates. Keep the same target, template and required keywords throughout the repair round. Only a passing candidate may change target lyrics/phonemes; pitches, timing, ornaments and all other notes are preserved. Stop after three alternatives and report unresolved diagnostics. Read notes first; stale revisions are rejected.
@@ -613,16 +611,6 @@ pub enum Command {
         #[schemars(length(min = 1, max = 8))]
         clips: Vec<note_editing::NoteRead>,
     },
-    /// Compose into the current document. Replacing existing tracks requires replace=true.
-    Compose {
-        /// Inline .asong TOML, mutually exclusive with preset.
-        spec: Option<String>,
-        /// A name returned by list_presets, mutually exclusive with spec.
-        preset: Option<String>,
-        /// Explicit permission to replace a nonempty arrangement.
-        #[serde(default)]
-        replace: bool,
-    },
     /// Add one empty track and return its numeric track ID. Pass kind as one string, for example {"name":"Drums","kind":"drum"}. Instrument and drum tracks start with a default sound; then use set_instrument with an ID from search_instruments. Use add_clip followed by edit_notes to write music. The host owns persistence.
     AddTrack {
         /// The exact desired name; must contain non-whitespace text.
@@ -956,19 +944,11 @@ impl Session {
                 fit,
             } => serde_json::to_string(&self.analyze_lyrics_fitted(&text, &readings, &fit)?)
                 .map_err(|e| e.to_string()),
-            Command::DiagnoseSong { spec, comparisons } => {
-                if spec.is_some() == !comparisons.is_empty() {
-                    return Err("Pass exactly one of spec or nonempty comparisons".into());
+            Command::DiagnoseSong { comparisons } => {
+                if comparisons.is_empty() {
+                    return Err("Pass nonempty comparisons".into());
                 }
-                let report = if let Some(source) = spec {
-                    if source.len() > 262144 {
-                        return Err("Song specifications are limited to 262144 bytes".into());
-                    }
-                    let spec = SongSpec::parse(&source).map_err(|e| format!("{e:?}"))?;
-                    self.diagnose_song_lyrics(&spec)?
-                } else {
-                    self.diagnose_clip_lyrics(&comparisons)?
-                };
+                let report = self.diagnose_clip_lyrics(&comparisons)?;
                 let mut value = serde_json::to_value(report).map_err(|e| e.to_string())?;
                 value["revision"] = self.agent_document_revision()?.into();
                 Ok(value.to_string())
@@ -1361,30 +1341,6 @@ impl Session {
                 serde_json::to_string(&self.continue_listening(result)?).map_err(|e| e.to_string())
             }
             Command::ReadNotes { clips } => self.agent_read_notes(&clips),
-            Command::Compose {
-                spec,
-                preset: name,
-                replace,
-            } => {
-                if !replace && !self.project().tracks.is_empty() {
-                    return Err("The arrangement is not empty. Edit its tracks, or pass replace=true only when the user requests a replacement.".into());
-                }
-                let source = match (spec, name) {
-                    (Some(spec), None) => spec,
-                    (None, Some(name)) => preset(&name)
-                        .ok_or("Unknown preset; use list_presets")?
-                        .source
-                        .to_string(),
-                    _ => return Err("Pass exactly one of spec or preset".into()),
-                };
-                let spec = SongSpec::parse(&source).map_err(|e| format!("{e:?}"))?;
-                let piece = compose(&spec);
-                let report = self.compose_without_balance(&piece).map_err(error)?;
-                Ok(format!(
-                    "Composed {} tracks and {} notes in the current document. Changes are unsaved.",
-                    report.tracks, report.notes
-                ))
-            }
             Command::AddTrack { name, kind } => {
                 if name.trim().is_empty() {
                     return Err("A track needs a name".into());
@@ -2063,53 +2019,10 @@ mod tests {
     }
 
     #[test]
-    fn composition_changes_the_open_document_without_creating_a_file() {
-        let mut session = session();
-        let before = session.project().clone();
-        let name = PRESETS.first().unwrap().name;
-        session
-            .agent_command(Command::Compose {
-                spec: None,
-                preset: Some(name.into()),
-                replace: false,
-            })
-            .unwrap();
-        assert!(!session.project().tracks.is_empty());
-        assert!(session.project().tracks.iter().any(|track| {
-            track
-                .kind
-                .note_clips()
-                .is_some_and(|clips| clips.iter().any(|clip| !clip.notes.is_empty()))
-        }));
-        assert!(session.path().is_none());
-        assert!(session.is_dirty());
-        session.undo();
-        assert_eq!(session.project(), &before);
-    }
-
-    #[test]
-    fn composing_does_not_silently_replace_existing_tracks() {
-        let mut session = session();
-        session.add_audio_track("Existing");
-        let before = session.project().clone();
-        assert!(
-            session
-                .agent_command(Command::Compose {
-                    spec: None,
-                    preset: Some("anything".into()),
-                    replace: false,
-                })
-                .is_err()
-        );
-        assert_eq!(session.project(), &before);
-    }
-
-    #[test]
     fn file_commands_and_destinations_are_rejected() {
         for value in [
             serde_json::json!({"action":"create_project", "output":"song.auris"}),
             serde_json::json!({"action":"render", "output":"song.wav"}),
-            serde_json::json!({"action":"compose", "preset":"game-loop", "output":"song.auris"}),
             serde_json::json!({"action":"inspect", "project":"other.auris"}),
         ] {
             assert!(serde_json::from_value::<Command>(value).is_err());

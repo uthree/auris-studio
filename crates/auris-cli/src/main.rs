@@ -54,8 +54,6 @@ fn main() -> ExitCode {
         "progressions" => list_progressions(),
         "soundfonts" => list_soundfonts(&args),
         "dictionary" => list_dictionary(&args),
-        "presets" => list_presets(),
-        "compose" => compose(&args),
         "info" => with_path(&args, info),
         "render" => render(&args),
         "video" => video(&args),
@@ -375,36 +373,6 @@ fn list_progressions() -> Result<(), String> {
     printed(print)
 }
 
-/// Lists the whole songs the composer can start from.
-fn list_presets() -> Result<(), String> {
-    let stdout = std::io::stdout();
-    let mut out = stdout.lock();
-    let print = (|| {
-        writeln!(out, "{}", Key::CliPresets.get(LANGUAGE))?;
-        for preset in auris_session::prelude::PRESETS {
-            let spec = preset.spec();
-            writeln!(
-                out,
-                "  {} {}",
-                pad(preset.name, 13),
-                auris_i18n::audio::preset_description(preset.description, LANGUAGE)
-            )?;
-            // The three facts that decide whether it is the right one to start from, and the
-            // three a description would otherwise have to spell out in words.
-            writeln!(
-                out,
-                "  {} {} · {:.0} BPM · {}",
-                pad("", 13),
-                spec.key.to_text(),
-                spec.tempo,
-                spec.groove
-            )?;
-        }
-        Ok(())
-    })();
-    printed(print)
-}
-
 /// Lists known optional SoundFonts and whether they are installed.
 ///
 /// With `--manifest`, prints the same list as tab-separated fields instead:
@@ -475,167 +443,6 @@ fn list_dictionary(args: &[String]) -> Result<(), String> {
         Ok(())
     })();
     printed(print)
-}
-
-/// Writes a piece from a specification and saves it as a project.
-///
-/// The specification is a file, or — with `--preset` and no file — one of the styles the composer
-/// ships with. Both land in the same `SongSpec`, so every other option means the same thing
-/// whichever way the piece was started.
-fn compose(args: &[String]) -> Result<(), String> {
-    let source = args
-        .get(1)
-        .filter(|arg| !arg.starts_with('-'))
-        .map(PathBuf::from);
-    let preset_at = args.iter().position(|arg| arg == "--preset");
-    let named = match preset_at {
-        Some(at) => Some(
-            args.get(at + 1)
-                .filter(|value| !value.starts_with('-'))
-                .ok_or_else(|| {
-                    messages::option_needs_value(
-                        LANGUAGE,
-                        "--preset",
-                        Key::CliNeedsValue.get(LANGUAGE),
-                    )
-                })?,
-        ),
-        None => None,
-    };
-    if source.is_none() && named.is_none() {
-        return Err(Key::CliExpectedSpecPath.get(LANGUAGE).to_string());
-    }
-    if source.is_some() && named.is_some() {
-        return Err(Key::CliSpecOrPreset.get(LANGUAGE).to_string());
-    }
-
-    let mut output = match (&source, named) {
-        (Some(path), _) => path.with_extension(auris_session::PROJECT_EXTENSION),
-        // Beside nothing, so it lands in the working directory under the style's own name —
-        // there is no file to sit next to.
-        (None, Some(name)) => PathBuf::from(name).with_extension(auris_session::PROJECT_EXTENSION),
-        (None, None) => unreachable!("one of the two was required above"),
-    };
-    let mut overrides: Vec<(String, String)> = Vec::new();
-    let mut print_only = false;
-    let mut force = false;
-
-    let mut index = if source.is_some() { 2 } else { 1 };
-    while index < args.len() {
-        match args[index].as_str() {
-            "-o" | "--output" => {
-                index += 1;
-                output = PathBuf::from(args.get(index).ok_or_else(|| {
-                    messages::option_needs_value(
-                        LANGUAGE,
-                        "--output",
-                        Key::CliNeedsPath.get(LANGUAGE),
-                    )
-                })?);
-            }
-            // Every override names a field of the format, so the command line needs no
-            // vocabulary of its own and can never drift from it.
-            "--set" => {
-                index += 1;
-                let pair = args.get(index).ok_or_else(|| {
-                    messages::option_needs_value(LANGUAGE, "--set", "field: value")
-                })?;
-                overrides.push(split_override(pair)?);
-            }
-            "--seed" | "--key" | "--tempo" | "--mood" | "--groove" | "--scale" | "--swing" => {
-                let field = args[index].trim_start_matches('-').to_string();
-                index += 1;
-                let value = args.get(index).ok_or_else(|| {
-                    // Through the table, like every sibling arm: a literal here was English
-                    // interpolated verbatim into the middle of the Japanese message.
-                    messages::option_needs_value(LANGUAGE, &field, Key::CliNeedsValue.get(LANGUAGE))
-                })?;
-                overrides.push((field, value.clone()));
-            }
-            "--print" => print_only = true,
-            "--force" => force = true,
-            // Already read, above, because it decides what there is to read at all.
-            "--preset" => index += 1,
-            other => return Err(messages::unknown_option(LANGUAGE, other)),
-        }
-        index += 1;
-    }
-
-    // A named style and a file both arrive here as text, so `--set` and every other override
-    // reaches one exactly as it reaches the other.
-    let (origin, text) = match (&source, named) {
-        (Some(path), _) => (
-            path.display().to_string(),
-            auris_session::settings::read_config_text(path)
-                .map_err(|error| format!("{}: {error}", path.display()))?,
-        ),
-        (None, Some(name)) => {
-            let preset = auris_session::prelude::preset(name)
-                .ok_or_else(|| messages::unknown_preset(LANGUAGE, name))?;
-            (preset.name.to_string(), preset.source.to_string())
-        }
-        (None, None) => unreachable!("one of the two was required above"),
-    };
-    let spec = auris_session::prelude::SongSpec::parse_with_overrides(&text, &overrides).map_err(
-        |errors| {
-            let mut message = messages::spec_rejected(LANGUAGE, &origin);
-            for error in errors {
-                message.push_str(&format!("\n  {error}"));
-            }
-            message
-        },
-    )?;
-
-    if print_only {
-        return printed(write!(std::io::stdout(), "{}", spec.to_toml()));
-    }
-
-    let piece = auris_session::prelude::compose(&spec);
-    let mut session = headless()?;
-    let report = session.compose(&piece).map_err(|error| error.to_string())?;
-    for missing in &report.substituted {
-        warned(messages::instrument_substituted(LANGUAGE, missing));
-    }
-    for section in &report.unsung {
-        warned(messages::song_section_unsung(LANGUAGE, section));
-    }
-    let written = save_new_project(&mut session, &output, force)?;
-
-    printed(writeln!(
-        std::io::stdout(),
-        "{}",
-        messages::composed(
-            LANGUAGE,
-            written.display().to_string(),
-            report.tracks,
-            report.notes,
-            piece.seed,
-        )
-    ))?;
-    // What listening to the piece did about its levels. On its own line rather than appended,
-    // because the summary below is a table and this is about the whole of it.
-    if let Some(lufs) = report.balance.as_ref().and_then(|balance| balance.now_lufs) {
-        printed(writeln!(
-            std::io::stdout(),
-            "{}",
-            messages::mixed_to(LANGUAGE, lufs)
-        ))?;
-    }
-    printed(write!(std::io::stdout(), "{}", piece.summary()))?;
-    Ok(())
-}
-
-/// Splits `--set "field: value"` into its two halves.
-///
-/// Either separator is accepted: the document itself writes `field = value`, and the option was
-/// documented with a colon long before it did. Neither is ambiguous, because no field name of
-/// the format contains one. The value is left exactly as it was typed — `D minor` rather than
-/// `"D minor"` — and quoted for TOML on the other side, where a number can still be a number.
-fn split_override(pair: &str) -> Result<(String, String), String> {
-    let (field, value) = pair
-        .split_once([':', '='])
-        .ok_or_else(|| messages::option_needs_value(LANGUAGE, "--set", "field: value"))?;
-    Ok((field.trim().to_string(), value.trim().to_string()))
 }
 
 fn list_plugins() -> Result<(), String> {
@@ -1604,39 +1411,6 @@ fn new_project(args: &[String]) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn an_override_is_split_on_either_separator() {
-        // The document writes `field = value`; this option was documented with a colon long
-        // before it did, and both are unambiguous because no field name of the format has one.
-        assert_eq!(
-            split_override("tempo: 128").unwrap(),
-            ("tempo".to_string(), "128".to_string())
-        );
-        assert_eq!(
-            split_override("tempo = 128").unwrap(),
-            ("tempo".to_string(), "128".to_string())
-        );
-        // The value keeps its spaces and its quotes stay off: `key: D minor`, not `key: "D
-        // minor"`. Quoting it for TOML is the format's job, not the shell's.
-        assert_eq!(
-            split_override("key: D minor").unwrap(),
-            ("key".to_string(), "D minor".to_string())
-        );
-        assert!(split_override("tempo").is_err());
-    }
-
-    #[test]
-    fn compose_refuses_a_file_and_a_preset_together() {
-        let error = compose(&[
-            "compose".to_string(),
-            "song.asong".to_string(),
-            "--preset".to_string(),
-            "jazz-trio".to_string(),
-        ])
-        .unwrap_err();
-        assert!(error.contains("--preset"));
-    }
 
     #[test]
     fn render_keeps_an_existing_file_unless_forced() {

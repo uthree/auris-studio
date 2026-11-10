@@ -223,26 +223,16 @@ pub fn tool_catalog() -> Vec<ToolDefinition> {
             inspect_composition::DESCRIPTION,
             inspect_composition::run,
         ),
-        definition::<NoArgs>(spec_reference::NAME, spec_reference::DESCRIPTION, |_| {
-            Ok(spec_reference::run())
-        }),
         definition::<search_documentation::Args>(
             search_documentation::NAME,
             search_documentation::DESCRIPTION,
             search_documentation::run,
         ),
-        definition::<check_spec::Args>(check_spec::NAME, check_spec::DESCRIPTION, check_spec::run),
         definition::<configure_plugin_paths::Args>(
             configure_plugin_paths::NAME,
             configure_plugin_paths::DESCRIPTION,
             configure_plugin_paths::run,
         ),
-        definition::<preview_composition::Args>(
-            preview_composition::NAME,
-            preview_composition::DESCRIPTION,
-            preview_composition::run,
-        ),
-        definition::<compose::Args>(compose::NAME, compose::DESCRIPTION, compose::run),
         definition::<analyze::Args>(analyze::NAME, analyze::DESCRIPTION, analyze::run),
         definition::<analyze_drum_kit::Args>(
             analyze_drum_kit::NAME,
@@ -269,9 +259,6 @@ pub fn tool_catalog() -> Vec<ToolDefinition> {
             list_progressions::DESCRIPTION,
             |_| Ok(list_progressions::run()),
         ),
-        definition::<NoArgs>(list_presets::NAME, list_presets::DESCRIPTION, |_| {
-            Ok(list_presets::run())
-        }),
         definition::<accompany::Args>(accompany::NAME, accompany::DESCRIPTION, accompany::run),
         definition::<tool_help::Args>(tool_help::NAME, tool_help::DESCRIPTION, tool_help::run),
         definition::<convert_track_to_audio::Args>(

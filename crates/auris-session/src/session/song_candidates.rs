@@ -980,11 +980,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let mut session = Session::new(SessionOptions::headless().with_balance(false)).unwrap();
         session
-            .agent_command(crate::live_agent::Command::Compose {
-                spec: None,
-                preset: Some("chiptune".into()),
-                replace: false,
-            })
+            .compose_without_balance(&compose(&preset("chiptune").unwrap().spec()))
             .unwrap();
         let idea = SongIdea {
             title: "Original".into(),

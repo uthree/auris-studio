@@ -11,7 +11,6 @@
 
     uv run tools/eval/music.py target/before --json before.json
     uv run tools/eval/music.py target/after --baseline before.json --json after.json
-    uv run tools/eval/music.py --preset all --seeds 3 --json before.json
 
 Frozen ten-second windows, empty-prompt TuneJury, and MuQ-MuLan positive/contrast
 cosines. Reports retain model/source revisions, hashes, prompts, and PCM hashes.
@@ -34,7 +33,6 @@ RATE = 24_000
 WINDOW = 10 * RATE
 MANIFEST = Path(__file__).with_name("music_prompts.json")
 METRICS = ("tunejury_reward", "positive_cosine", "contrast_cosine", "contrast_margin")
-import render_audio
 from learned_models import LearnedModels
 
 
@@ -106,7 +104,7 @@ def preset_for(path: Path, profiles: dict, override: str | None = None) -> str:
     """Recognize CLI preset filenames, including the fixed additional seeds."""
     preset = override or re.sub(r"-s\d+$", "", path.stem)
     if preset not in profiles:
-        raise ValueError(f"no prompt profile for {path.name}; use --preset")
+        raise ValueError(f"no prompt profile for {path.name}; pass --preset")
     return preset
 
 
@@ -260,17 +258,10 @@ def compare(report: dict, baseline: dict) -> dict:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("wavs", nargs="*", type=Path, help="WAV files or folders")
+    parser.add_argument("wavs", nargs="+", type=Path, help="WAV files or folders")
     parser.add_argument(
         "--preset",
-        action="append",
-        default=[],
-        help="render these presets when no WAVs are supplied; otherwise select one prompt profile",
-    )
-    parser.add_argument("--seeds", type=int, default=1)
-    parser.add_argument("--cli", type=Path)
-    parser.add_argument(
-        "--workdir", type=Path, default=Path("target/composition-eval/renders")
+        help="prompt profile for every WAV (default: recognised from each file name)",
     )
     parser.add_argument(
         "--json", required=True, type=Path, help="save complete measurement report"
@@ -284,14 +275,9 @@ def main() -> None:
         "--cache", type=Path, default=Path("target/composition-eval/models")
     )
     args = parser.parse_args()
-    if args.segments < 1 or args.threads < 1 or not 1 <= args.seeds <= 8:
+    if args.segments < 1 or args.threads < 1:
         parser.error("--segments and --threads must be positive")
     wavs = []
-    if not args.wavs and args.preset:
-        render_audio.CLI = args.cli.resolve() if args.cli else None
-        presets = render_audio.preset_names() if "all" in args.preset else args.preset
-        args.workdir.mkdir(parents=True, exist_ok=True)
-        wavs = render_audio.render_presets(presets, args.seeds, args.workdir.resolve())
     for path in args.wavs:
         if path.is_dir():
             wavs.extend(sorted(path.rglob("*.wav")))
@@ -309,14 +295,7 @@ def main() -> None:
     try:
         manifest = load_manifest(args.prompts)
         profiles = manifest["presets"]
-        presets = [
-            preset_for(
-                path,
-                profiles,
-                args.preset[0] if args.wavs and len(args.preset) == 1 else None,
-            )
-            for path in wavs
-        ]
+        presets = [preset_for(path, profiles, args.preset) for path in wavs]
     except ValueError as error:
         parser.error(str(error))
     backend = LearnedModels(args.cache, args.device, args.threads)

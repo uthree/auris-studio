@@ -1744,7 +1744,7 @@ ErrorFile = "ファイルエラー"
 ErrorEngine = "オーディオエンジンのエラー"
 ErrorPlugin = "プラグインのエラー"
 ErrorDocument = "ドキュメントが不正です"
-CliUsage = "auris — コマンドラインから使う Auris Studio\n\n使い方\n    auris <コマンド> [オプション]\n\nコマンド\n    compose <song.asong> [opts]   仕様ファイルから曲を書き出す\n    presets                       曲の出発点になる楽曲プリセットを一覧表示\n    progressions                  名前の付いたコード進行を一覧表示\n    plugins                       登録済みの音源とエフェクトを一覧表示\n    soundfonts [--manifest]       同梱サウンドフォントを一覧表示\n    dictionary [--manifest]       同梱日本語辞書とその導入状態を表示\n    info <project.auris>          プロジェクトのトラック・クリップ・長さを表示\n    analyze-chords <project.auris> [--track <name>] [--apply]\n                                  ノーツからコードをCPUで推定\n    analyze-audio <audio-file>    音声のBPMとメジャー・マイナーコードをCPUで推定\n    analyze-instruments <audio-file> --model <yamnet.onnx> [--threshold 0.2]\n    render <project.auris> [opts] プロジェクトを WAV に書き出す\n    video <project.auris> [opts]  ノートが流れる動画を ffmpeg で書き出す\n    sing <project.auris> [opts]   シンガートラックを声のモデルで歌わせる\n    frames <project.auris> [opts] シンガートラックが声のモデルに渡すフレームを書き出す\n    sing-frames <frames.json> [opts]\n                                  フレームファイルを声のモデルで歌わせて WAV にする\n    new <project.auris> [opts]    ソフト音源トラック 1 本のプロジェクトを作成\n    collect <project.auris>       プロジェクトが使うファイルをフォルダ内に集める\n    analyze-drums <project.auris> --track <name|id:number> [--apply] [--remap-clips]\n                                  実際の出音を解析し、ドラムの割り当てを提案する\n        --first-note <n> --last-note <n>  測定するMIDIノートの範囲を指定（既定: 0〜127）\n    help                          このメッセージを表示\n\ncompose のオプション\n        --preset <name>           ファイルの代わりに楽曲プリセットから書き出す\n    -o, --output <file.auris>     出力先（既定: 仕様ファイルと同じ場所）\n        --seed <n>                シードを上書き。同じ仕様から別の曲になります\n        --key <key>               調を上書き（例: `C minor`）\n        --tempo <bpm>             テンポを上書き\n        --mood <word>             曲調を上書き\n        --groove <name>           グルーヴを上書き\n        --scale <name>            スケールを上書き\n        --swing <amount>          スウィングを上書き（0〜1）\n        --set \"<field>: <value>\"  任意の項目を上書き\n        --print                   書き出さずに解決後の仕様を表示\n        --force                   同名のプロジェクトフォルダがあっても書き出す\n\nrender のオプション\n    -o, --output <file.wav>       出力先（既定: プロジェクトと同じ場所）\n        --bit-depth <16|24|32>    量子化ビット数。32 は 32bit float（既定: 24）\n        --dither                  TPDF ディザを付加（16bit マスター向け）\n        --no-tail                 エフェクトの残響を待たず最後のクリップで終える\n        --loop                    サイクル範囲のみを書き出す\n        --stems <folder>          ミックスの代わりにトラックごとのファイルをフォルダに書き出す\n        --force                   出力ファイルが既にあれば置き換える\n\nsing のオプション\n        --track <name>            歌わせるシンガートラック（既定: プロジェクト唯一の 1 本）\n        --voice <voice-file>      先にボイスを選んで記憶させる\n                                  dsconfig.yaml、.voicevox.json、.leapsinger.json\n        --speaker <name>          声のどの話者が歌うかを選んで記憶させる\n        --seed <n>                合成用シード（対応ボイスのみ。既定: 現在のテイクのシード）\n\nframes のオプション\n        --track <name>            対象のシンガートラック（既定: プロジェクト唯一の 1 本）\n    -o, --output <file.json>      出力先（既定: プロジェクトと同じ場所）\n\nsing-frames のオプション\n        --voice <voice-file>      歌わせるボイス（必須）\n        --speaker <name>          声のどの話者が歌うか（既定: 最初の話者）\n        --seed <n>                合成用シード（対応ボイスのみ。既定: 0）\n        --acceleration <auto|gpu|cpu>\n                                  モデルの推論を走らせる場所（既定: auto）\n    -o, --output <file.wav>       出力先（既定: フレームファイルと同じ場所）\n        --report <file.json>      テイクの情報と所要時間を JSON でも書き出す\n\nvideo のオプション（既定: デスクトップ版で最後に選んだ見た目）\n    -o, --output <file.mp4>       出力先（既定: プロジェクトと同じ場所）\n        --size <width>x<height>   画面サイズ（例: 1920x1080）\n        --fps <n>                 1 秒あたりのフレーム数\n        --colors <track|palette|pitch|single>\n                                  ノートの色の付け方\n        --background <image>      ノートの背後に敷く PNG・JPEG・WebP\n        --seconds <n>             画面の幅に収める曲の秒数\n        --lead-in <seconds>       演奏が始まる前の無音の秒数（既定: 1）\n        --tail <seconds>          演奏が終わった後の無音の秒数（既定: 2）\n        --particles <amount>      再生線でノートが散らす火花の量（0 でなし、1 が標準）\n        --sink <amount>           演奏中のノートが沈み込む深さ（0 で動かない、1 が標準）\n        --parallax <amount>       トラックごとにスクロール速度をずらす奥行き（既定の 0 で平面、1 が標準）\n        --drums                   ドラムトラックも描く\n        --no-chords               左上のコード名を表示しない\n        --no-lyrics               歌詞の字幕を表示しない\n        --no-tempo                右上のテンポ（BPM）を表示しない\n        --no-beats                右上の拍子カウンターを表示しない\n\nnew のオプション\n        --bpm <tempo>             新規プロジェクトのテンポ（既定: 120）\n        --sample-rate <hz>        新規プロジェクトのサンプルレート（既定: 48000）\n        --force                   同名のプロジェクトフォルダがあっても書き出す"
+CliUsage = "auris — コマンドラインから使う Auris Studio\n\n使い方\n    auris <コマンド> [オプション]\n\nコマンド\n    progressions                  名前の付いたコード進行を一覧表示\n    plugins                       登録済みの音源とエフェクトを一覧表示\n    soundfonts [--manifest]       同梱サウンドフォントを一覧表示\n    dictionary [--manifest]       同梱日本語辞書とその導入状態を表示\n    info <project.auris>          プロジェクトのトラック・クリップ・長さを表示\n    analyze-chords <project.auris> [--track <name>] [--apply]\n                                  ノーツからコードをCPUで推定\n    analyze-audio <audio-file>    音声のBPMとメジャー・マイナーコードをCPUで推定\n    analyze-instruments <audio-file> --model <yamnet.onnx> [--threshold 0.2]\n    render <project.auris> [opts] プロジェクトを WAV に書き出す\n    video <project.auris> [opts]  ノートが流れる動画を ffmpeg で書き出す\n    sing <project.auris> [opts]   シンガートラックを声のモデルで歌わせる\n    frames <project.auris> [opts] シンガートラックが声のモデルに渡すフレームを書き出す\n    sing-frames <frames.json> [opts]\n                                  フレームファイルを声のモデルで歌わせて WAV にする\n    new <project.auris> [opts]    ソフト音源トラック 1 本のプロジェクトを作成\n    collect <project.auris>       プロジェクトが使うファイルをフォルダ内に集める\n    analyze-drums <project.auris> --track <name|id:number> [--apply] [--remap-clips]\n                                  実際の出音を解析し、ドラムの割り当てを提案する\n        --first-note <n> --last-note <n>  測定するMIDIノートの範囲を指定（既定: 0〜127）\n    help                          このメッセージを表示\n\nrender のオプション\n    -o, --output <file.wav>       出力先（既定: プロジェクトと同じ場所）\n        --bit-depth <16|24|32>    量子化ビット数。32 は 32bit float（既定: 24）\n        --dither                  TPDF ディザを付加（16bit マスター向け）\n        --no-tail                 エフェクトの残響を待たず最後のクリップで終える\n        --loop                    サイクル範囲のみを書き出す\n        --stems <folder>          ミックスの代わりにトラックごとのファイルをフォルダに書き出す\n        --force                   出力ファイルが既にあれば置き換える\n\nsing のオプション\n        --track <name>            歌わせるシンガートラック（既定: プロジェクト唯一の 1 本）\n        --voice <voice-file>      先にボイスを選んで記憶させる\n                                  dsconfig.yaml、.voicevox.json、.leapsinger.json\n        --speaker <name>          声のどの話者が歌うかを選んで記憶させる\n        --seed <n>                合成用シード（対応ボイスのみ。既定: 現在のテイクのシード）\n\nframes のオプション\n        --track <name>            対象のシンガートラック（既定: プロジェクト唯一の 1 本）\n    -o, --output <file.json>      出力先（既定: プロジェクトと同じ場所）\n\nsing-frames のオプション\n        --voice <voice-file>      歌わせるボイス（必須）\n        --speaker <name>          声のどの話者が歌うか（既定: 最初の話者）\n        --seed <n>                合成用シード（対応ボイスのみ。既定: 0）\n        --acceleration <auto|gpu|cpu>\n                                  モデルの推論を走らせる場所（既定: auto）\n    -o, --output <file.wav>       出力先（既定: フレームファイルと同じ場所）\n        --report <file.json>      テイクの情報と所要時間を JSON でも書き出す\n\nvideo のオプション（既定: デスクトップ版で最後に選んだ見た目）\n    -o, --output <file.mp4>       出力先（既定: プロジェクトと同じ場所）\n        --size <width>x<height>   画面サイズ（例: 1920x1080）\n        --fps <n>                 1 秒あたりのフレーム数\n        --colors <track|palette|pitch|single>\n                                  ノートの色の付け方\n        --background <image>      ノートの背後に敷く PNG・JPEG・WebP\n        --seconds <n>             画面の幅に収める曲の秒数\n        --lead-in <seconds>       演奏が始まる前の無音の秒数（既定: 1）\n        --tail <seconds>          演奏が終わった後の無音の秒数（既定: 2）\n        --particles <amount>      再生線でノートが散らす火花の量（0 でなし、1 が標準）\n        --sink <amount>           演奏中のノートが沈み込む深さ（0 で動かない、1 が標準）\n        --parallax <amount>       トラックごとにスクロール速度をずらす奥行き（既定の 0 で平面、1 が標準）\n        --drums                   ドラムトラックも描く\n        --no-chords               左上のコード名を表示しない\n        --no-lyrics               歌詞の字幕を表示しない\n        --no-tempo                右上のテンポ（BPM）を表示しない\n        --no-beats                右上の拍子カウンターを表示しない\n\nnew のオプション\n        --bpm <tempo>             新規プロジェクトのテンポ（既定: 120）\n        --sample-rate <hz>        新規プロジェクトのサンプルレート（既定: 48000）\n        --force                   同名のプロジェクトフォルダがあっても書き出す"
 LogPanel = "ログ"
 ProblemsTab = "問題"
 ProblemsLogTab = "ログ"
@@ -2141,7 +2141,6 @@ AgentModelsFetch = "更新"
 AgentModelsFetching = "モデル一覧を取得中…"
 AgentModelsEmpty = "モデルが見つかりませんでした。プロバイダ設定を確認してから更新してください。"
 AgentJumpLatest = "最新へ"
-CliPresets = "楽曲プリセット"
 CliSoundFonts = "追加サウンドフォント"
 CliSoundFontMissing = "未インストール — tools/fetch-soundfonts.sh を実行してください"
 BrowserVoices = "シンガーボイス"
@@ -2236,8 +2235,6 @@ CliFieldRouting = "ルーティング"
 CliClipCount = "クリップ"
 CliProgressions = "コード進行"
 CliKeptProgressions = "登録済みのコード進行"
-CliExpectedSpecPath = "曲の仕様ファイルのパスを指定してください"
-CliSpecOrPreset = "曲の仕様ファイルと --preset はどちらか一方だけ指定してください"
 ValueOn = "オン"
 ValueOff = "オフ"
 SamplerSamples = "サンプル"
@@ -2544,8 +2541,6 @@ unknown_option = "`{name}` というオプションはありません"
 project_folder_taken = "`{path}` には既にプロジェクトがあります。置き換えるには `--force` を指定してください"
 # A render whose output file is already there, refused without `--force`.
 output_exists = "`{path}` は既に存在します。置き換えるには `--force` を指定してください"
-# A `--preset` naming a style the composer does not ship.
-unknown_preset = "`{name}` というプリセットはありません。`auris presets` で一覧を表示できます"
 # An option that needs a value it was not given.
 option_needs_value = "{name} には{kind}が必要です"
 # A bit depth the exporter does not offer.
@@ -2615,24 +2610,10 @@ monitor_gaps = "モニター音が {count} 回途切れました — オーデ�
 warning_missing_audio = "警告: オーディオファイル {path} が見つかりません"
 # The command line's version of the door-side note, for a build that named itself.
 warning_saved_by_build = "警告: Auris Studio {version} で保存されたプロジェクトです。再生成は現在のスタイルで書き直します"
-# Confirmation that a piece was composed and written.
-composed = "{path} を作曲しました · {tracks} トラック · {notes} ノート · シード {seed}"
-# Confirmation that a piece was composed into the open document.
-composed_document = "{tracks} トラック · {notes} ノートを作曲しました · シード {seed}"
-# The same, with a note that some parts did not get the instrument they asked for.
-composed_document_substituted = "{tracks} トラック · {notes} ノートを作曲しました · シード {seed} · {missing} 個の音源を代替しました"
 # Confirmation that a mix was set by measuring it.
 mix_balanced = "{parts} パートのバランスを調整しました · {lufs:.1} LUFS"
 # The same, where a fader ran out of travel before its part reached the level it wanted.
 mix_balanced_short = "{parts} パートのバランスを調整しました · {lufs:.1} LUFS · 1 パートは目標より {short:.0} dB 小さいままです"
-# What the balance pass did, as a tail on the line that says a piece was composed.
-mixed_to = "ミックスを {lufs:.1} LUFS に調整"
-# A part asked for an instrument this build does not have.
-instrument_substituted = "警告: `{id}` という音源がないため既定の音源を使います"
-# A requested lyrical section could not be written and stayed instrumental.
-song_section_unsung = "警告: `{section}` の歌詞を作曲できなかったため、このセクションは伴奏のみです"
-# A song specification would not parse.
-spec_rejected = "{path} を曲の仕様として読めませんでした"
 # The name a duplicated object takes.
 copy_of = "{name} のコピー"
 # Confirmation that a VOICEVOX Engine process was started.

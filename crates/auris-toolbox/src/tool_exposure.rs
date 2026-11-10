@@ -26,8 +26,6 @@ impl ToolGroups {
     pub fn allows(&self, name: &str) -> bool {
         self.0.is_empty()
             || self.0.iter().any(|g| g == "all" || g == tool_group(name))
-            || (matches!(name, "analyze_lyrics" | "diagnose_song")
-                && self.0.iter().any(|g| g == "composition"))
             || (matches!(name, "accompaniment" | "suggest_harmony" | "candidates")
                 && self.0.iter().any(|g| g == "manual"))
             || tool_group(name) == "common"
@@ -53,7 +51,7 @@ impl ToolGroups {
                 "mix" => "For mixing, read mixer_graph for stable track/effect nodes and outgoing edges; follow next_offset. Track nodes contain fader controls; inserts still process before the fader. Edit graph connections and inserts through mixer_graph; all output/send/sidechain cycles are rejected. Parallel effects use bus branches. Inspect mixer parameters in native dB/pan units, and measure the same rendered range before and after edits. After sound changes remeasure loudness; normalize_mix moves source faders toward the target (default -14 LUFS, -1 dBTP) and leans on a master auris.fx.limiter kept last in the chain. Render inspects the encoded WAV; use verify_render for target, peak and ending checks. ",
                 "transcription" => "For transcription, analyze the source and fetch tool_help before applying recognized notes. ",
                 "vocals" => "For vocals, analyze_lyrics establishes readings and, with fit, whether each line fits its melody's notes (long vowels may share a note, っ is a rest); pass its note_reading to write_lyrics. diagnose_song checks shared phrases. Read notes before repair_lyrics, keep the template and keywords fixed, preview at most three alternatives and apply only a pass with the current revision. Recheck related phrases and meaning, then sing and confirm a current take. ",
-                "composition" => "For explicitly requested automatic preset compositions, fetch spec_reference, validate syntax with check_spec and lyric fit with diagnose_song before compose; regeneration is an explicit edit. ",
+                "composition" => "Rule-based writers only fill plain backing: generate_phrase and accompaniment write one clip at a time on tracks you made; regeneration is an explicit edit. ",
                 _ => "",
             });
         }
@@ -98,20 +96,10 @@ pub fn tool_group(name: &str) -> &'static str {
         | "section_gain"
         | "set_instrument_params"
         | "convert_track_to_audio" => "mix",
-        "spec_reference"
-        | "check_spec"
-        | "preview_composition"
-        | "compose"
-        | "edit_recipe"
-        | "teach_progression"
-        | "forget_progression"
-        | "list_progressions"
-        | "list_presets"
-        | "generate_phrase"
-        | "accompaniment"
-        | "candidates"
-        | "suggest_harmony"
-        | "accompany" => "composition",
+        "edit_recipe" | "teach_progression" | "forget_progression" | "list_progressions"
+        | "generate_phrase" | "accompaniment" | "candidates" | "suggest_harmony" | "accompany" => {
+            "composition"
+        }
         "arrangement"
         | "phrase_variation"
         | "create_project"
@@ -350,8 +338,6 @@ mod tests {
         assert!(ToolGroups::parse("typo").is_err());
         let manual = ToolGroups::parse("manual").unwrap();
         assert!(manual.allows("tool_help") && manual.allows("edit_notes"));
-        assert!(!manual.allows("compose"));
-        assert!(!manual.instructions().contains("spec_reference"));
         assert!(manual.allows("accompaniment"));
         assert!(manual.allows("suggest_harmony"));
         assert!(

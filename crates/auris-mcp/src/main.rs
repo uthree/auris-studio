@@ -394,9 +394,12 @@ mod tests {
         let client = ().serve(client_transport).await.unwrap();
         let listed = client.list_tools(None).await.unwrap();
         assert!(listed.tools.iter().any(|t| t.name == "setup_tracks"));
-        assert!(!listed.tools.iter().any(|t| t.name == "transcribe_audio"
-            || t.name == "compose"
-            || t.name == "automation"));
+        assert!(
+            !listed
+                .tools
+                .iter()
+                .any(|t| t.name == "transcribe_audio" || t.name == "automation")
+        );
         let full = toolbox::tool_catalog();
         for actual in &listed.tools {
             let original = full.iter().find(|t| t.name == actual.name).unwrap();
@@ -405,7 +408,7 @@ mod tests {
             assert_eq!(actual.input_schema.as_ref(), compact.as_object().unwrap());
         }
         let denied = client
-            .call_tool(rmcp::model::CallToolRequestParams::new("compose"))
+            .call_tool(rmcp::model::CallToolRequestParams::new("automation"))
             .await
             .unwrap();
         assert_eq!(denied.is_error, Some(true));
