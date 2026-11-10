@@ -207,12 +207,11 @@ that hold eight lines or more, which is what the warnings need. In the 282 such 
 | --- | --- | --- | --- | --- |
 | Share of lines at the commonest entry point | 45% | 75% | 87% | 3.2% reach 90% |
 | Share of lines entering in the second half of a bar | 44% | 82% | 91% | 4.6% have none |
-| Share of onset spacings taken by the commonest one | 52% | 75% | 82% | 13% reach 70% |
+| Share of onset spacings taken by the commonest one | 52% | 75% | 82% | 5.0% reach 82% |
 
-Each entry warning therefore fires on about one corpus song in twenty-five. The note-value
-warning's 70% is older than this measurement and is not at an extreme in the same way: one
-corpus song in eight reaches it. With `--any-part`, 518 songs give 3.9% and 5.8% for the two
-entry rows.
+Each warning therefore fires on one corpus song in twenty to thirty. The note-value warning
+fired at 70% before this measurement, which one corpus song in eight reaches, and was moved to
+the 95th percentile. With `--any-part`, 518 songs give 3.9%, 5.8% and 5.1% for the three rows.
 
 `tools/eval/fixtures/vocal-phrases.asong` supplies a fixed lyric probe with shared verses and
 unvoiced closures. Use the same dictionary and sound assets for both renders. An instrument
