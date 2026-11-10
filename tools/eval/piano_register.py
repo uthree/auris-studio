@@ -92,7 +92,12 @@ def stft(x, size):
 
 
 def find_partials(x, f0, count):
-    """Measured partial frequencies, each search centred on the previous stretch."""
+    """Measured partial frequencies, each search centred on the previous stretch.
+
+    The first is looked for within 4 % of `f0`, which is equal temperament: a piano's top is
+    tuned two percent above it, and the recorded C8 lies three percent below. The others
+    follow within 1.5 % of where the one below puts them.
+    """
     segment = x[int(0.1 * RATE) : int(1.1 * RATE)]
     spectrum = np.abs(np.fft.rfft(segment * np.hanning(len(segment)), 1 << 19))
     freqs = np.fft.rfftfreq(1 << 19, 1 / RATE)
@@ -101,7 +106,8 @@ def find_partials(x, f0, count):
         target = n * f0 * ratio
         if target > 9000:
             break
-        mask = (freqs > target * 0.985) & (freqs < target * 1.015)
+        reach = 0.04 if n == 1 else 0.015
+        mask = (freqs > target * (1 - reach)) & (freqs < target * (1 + reach))
         frequency = freqs[mask][np.argmax(spectrum[mask])]
         found.append(float(frequency))
         ratio = frequency / (n * f0)

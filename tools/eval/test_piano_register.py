@@ -95,3 +95,14 @@ def test_a_faster_rendered_decay_is_penalized():
     same = register.note_losses(note, recorded[register.onset(recorded) :], None)
     worse = register.note_losses(note, faster[register.onset(faster) :], None)
     assert worse["decay"] > same["decay"] + 3.0
+
+
+def test_a_note_tuned_well_away_from_equal_temperament_is_still_found():
+    # The recorded C8 lies 56 cents under equal temperament and a piano's own top note two
+    # percent above it. Either way its partials are followed from where its first one is.
+    for cents in (-56.0, 40.0):
+        tuned = 1046.5 * 2 ** (cents / 1200)
+        x = struck(tuned, seconds=3.0)[int(0.25 * RATE) :]
+        found = register.find_partials(x, 1046.5, 3)
+        for n, frequency in enumerate(found, start=1):
+            assert abs(1200 * np.log2(frequency / (n * tuned))) < 1.0
