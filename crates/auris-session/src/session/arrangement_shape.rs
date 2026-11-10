@@ -26,8 +26,9 @@ const FULLER: f64 = 1.15;
 
 /// Sections with drums that must sound before one strength throughout is reported.
 pub const DYNAMIC_SECTIONS: usize = 3;
-/// The spread of the drums' mean velocity across sections under which they are one strength:
-/// about what a performance stage's random jitter alone moves a section's mean.
+/// The spread of the drums' mean velocity across sections under which they are one strength,
+/// and how much harder than the verses the choruses must be struck: about what a performance
+/// stage's random jitter alone moves a section's mean.
 pub const FLAT_DYNAMICS: f64 = 0.04;
 
 /// Bars in a phrase whose last bar a drummer marks.
@@ -392,9 +393,11 @@ fn cadence(project: &Project, span: &auris_core::SectionSpan) -> Value {
     json!({"kind": kind, "chords": [before.map(|c| c.to_string()), last.to_string()]})
 }
 
-/// A warning when the drums play every section at one written strength: a verse and the last
-/// chorus struck alike is heard as a machine, however the notes differ. The arrangement phase's
-/// `drums_follow_sections` check reads it too.
+/// A warning when the drums do not shade the form by strength: a verse and the last chorus struck
+/// alike is heard as a machine, however the notes differ. Where the song has both, the choruses'
+/// mean velocity must stand [`FLAT_DYNAMICS`] above the verses', since a softer intro or bridge
+/// alone leaves the verse and chorus the same; a song without both is read by the spread across
+/// all its sections. The arrangement phase's `drums_follow_sections` check reads it too.
 pub(crate) fn flat_drums(project: &Project, spans: &[auris_core::SectionSpan]) -> Option<String> {
     let mut sums = vec![(0.0_f64, 0_usize); spans.len()];
     for track in project.tracks.iter().filter(|track| track.kind.is_drum()) {
@@ -413,20 +416,45 @@ pub(crate) fn flat_drums(project: &Project, spans: &[auris_core::SectionSpan]) -
             }
         }
     }
-    let means: Vec<f64> = sums
+    let by_section: Vec<(&str, f64)> = spans
         .iter()
-        .filter(|(_, count)| *count > 0)
-        .map(|(sum, count)| sum / *count as f64)
+        .zip(&sums)
+        .filter(|(_, (_, count))| *count > 0)
+        .map(|(span, (sum, count))| (span.label.as_str(), sum / *count as f64))
         .collect();
+    let average = |keep: &dyn Fn(&str) -> bool| {
+        let picked: Vec<f64> = by_section
+            .iter()
+            .filter(|(label, _)| keep(label))
+            .map(|(_, mean)| *mean)
+            .collect();
+        (!picked.is_empty()).then(|| picked.iter().sum::<f64>() / picked.len() as f64)
+    };
+    if by_section.len() >= DYNAMIC_SECTIONS
+        && let (Some(chorus), Some(verse)) = (average(&is_chorus), average(&is_verse))
+    {
+        return (chorus - verse < FLAT_DYNAMICS).then(|| {
+            format!(
+                "The drums strike the choruses no harder than the verses (mean velocity {chorus:.2} against {verse:.2}); strike the verses softer and the choruses harder, the last chorus hardest"
+            )
+        });
+    }
+    let means: Vec<f64> = by_section.iter().map(|(_, mean)| *mean).collect();
     let (low, high) = means
         .iter()
         .fold((f64::MAX, f64::MIN), |(lo, hi), v| (lo.min(*v), hi.max(*v)));
     (means.len() >= DYNAMIC_SECTIONS && high - low < FLAT_DYNAMICS).then(|| {
         format!(
-            "The drums play all {} sections at one strength (mean velocity {low:.2} to {high:.2}); strike the verses and a bridge softer and the choruses harder",
+            "The drums play all {} sections at one strength (mean velocity {low:.2} to {high:.2}); strike the verses softer and the choruses harder, the last chorus hardest",
             means.len()
         )
     })
+}
+
+/// Whether a section label names a verse (Aメロ).
+fn is_verse(label: &str) -> bool {
+    let label = label.to_lowercase();
+    label.contains("verse") || label.contains("aメロ")
 }
 
 fn section_kind(label: &str) -> String {
@@ -464,13 +492,9 @@ fn borrowed_progressions(project: &Project, spans: &[auris_core::SectionSpan]) -
         }
         bars
     };
-    let verse = |label: &str| {
-        let label = label.to_lowercase();
-        label.contains("verse") || label.contains("aメロ")
-    };
     let verses: Vec<(String, Vec<String>)> = spans
         .iter()
-        .filter(|span| verse(&span.label))
+        .filter(|span| is_verse(&span.label))
         .map(|span| (span.label.clone(), loop_of(&progression(span)).to_vec()))
         .filter(|(_, cycle)| cycle.iter().any(|chord| chord != "-"))
         .collect();
@@ -660,23 +684,27 @@ mod tests {
 
     #[test]
     fn drums_struck_alike_in_every_section_are_reported_and_a_softer_verse_is_not() {
+        let unshaded = |project: &Project| {
+            warnings(project)
+                .iter()
+                .any(|w| w.contains("choruses harder"))
+        };
         let flat = song((4, 16), 20, &groove);
-        assert!(
-            warnings(&flat).iter().any(|w| w.contains("one strength")),
-            "{:?}",
-            warnings(&flat)
-        );
+        assert!(unshaded(&flat), "{:?}", warnings(&flat));
+        // A softer Bメロ alone spreads the sections but leaves the verse and chorus alike.
+        let soft_bridge = song((4, 16), 20, &|index| {
+            let mut notes = groove(index);
+            notes[0].velocity = if (8..12).contains(&index) { 0.5 } else { 0.8 };
+            notes
+        });
+        assert!(unshaded(&soft_bridge), "{:?}", warnings(&soft_bridge));
         // The Aメロ (bars 4 to 8) at 0.5, everything else at 0.8.
         let shaded = song((4, 16), 20, &|index| {
             let mut notes = groove(index);
             notes[0].velocity = if (4..8).contains(&index) { 0.5 } else { 0.8 };
             notes
         });
-        assert!(
-            !warnings(&shaded).iter().any(|w| w.contains("one strength")),
-            "{:?}",
-            warnings(&shaded)
-        );
+        assert!(!unshaded(&shaded), "{:?}", warnings(&shaded));
     }
 
     #[test]
