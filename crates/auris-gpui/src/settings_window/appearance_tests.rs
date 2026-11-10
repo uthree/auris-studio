@@ -507,6 +507,17 @@ fn intermediate_gradient_points_edit_validate_persist_and_delete(cx: &mut TestAp
     // Tab must switch the input handler as well as the visible focus.
     cx.simulate_keystrokes("tab secondary-a");
     cx.simulate_input("#ABCDEF");
+    // Shift-Tab steps back out of a field into the one before it, not into its own frame.
+    cx.simulate_keystrokes("shift-tab");
+    handle
+        .update(cx, |this, window, cx| {
+            let input = this
+                .focused_input(window)
+                .expect("a field holds the keyboard");
+            assert_eq!(input.read(cx).text(), "60");
+        })
+        .unwrap();
+    cx.simulate_keystrokes("tab");
     app.read_with(cx, |this, _| {
         assert_eq!(this.theme.velocity_color(0.6), before)
     });

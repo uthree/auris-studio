@@ -48,6 +48,11 @@ impl MirroredInput {
         self.input.clone()
     }
 
+    /// Selects everything the input holds, so the next keystroke types over it.
+    pub(crate) fn select_all(&self, cx: &mut App) {
+        self.input.update(cx, |input, cx| input.select_all(cx));
+    }
+
     /// The input itself, for reading its selection.
     #[cfg(test)]
     pub(crate) fn input(&self) -> &Entity<TextInput> {
@@ -74,4 +79,32 @@ impl MirroredInput {
     pub(crate) fn is_composing(&self, cx: &App) -> bool {
         self.input.read(cx).buffer().marked().is_some()
     }
+}
+
+/// Shift-Tab, for a window whose fields are mirrored inputs.
+///
+/// A field's frame tracks its input's focus as the tab stop and the input then tracks the same
+/// handle again, untabbed, inside it. gpui keeps the later of the two entries for the handle, so
+/// the stop before a focused input is its own frame and a step back goes nowhere. Tab forward
+/// skips the untabbed entry and works, so the stop before the field is found by walking forward
+/// round the window's tab order until it comes back. Only the last focus of the walk is seen by
+/// anything listening, since focus changes are reported when the window next draws.
+pub(crate) fn focus_prev(window: &mut Window, cx: &App) {
+    let Some(from) = window.focused(cx) else {
+        window.focus_prev();
+        return;
+    };
+    window.focus_prev();
+    if window.focused(cx).as_ref() != Some(&from) {
+        return;
+    }
+    let mut before = None;
+    for _ in 0..1024 {
+        window.focus_next();
+        match window.focused(cx) {
+            Some(now) if now != from => before = Some(now),
+            _ => break,
+        }
+    }
+    window.focus(before.as_ref().unwrap_or(&from));
 }

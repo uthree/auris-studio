@@ -1990,7 +1990,7 @@ impl SettingsWindow {
         }
         if event.keystroke.key == "tab" {
             if event.keystroke.modifiers.shift {
-                window.focus_prev();
+                crate::ui::text_input::focus_prev(window, cx);
             } else {
                 window.focus_next();
             }
