@@ -20,6 +20,8 @@ pub(super) fn family(instrument: &InstrumentTrack, drum: bool) -> &'static str {
         "auris.synth.chiptune" => "synth",
         // The subtractive patches are all synthesisers, whatever sound each one imitates.
         id if auris_synth::AnalogPatch::from_id(id).is_some() => "synth",
+        // The kick basses are basses: they hold the low end, whatever drum they are made from.
+        id if auris_synth::BoomPatch::from_id(id).is_some() => "bass",
         auris_sampler::SAMPLER_ID => {
             match auris_sampler::stored_preset(&instrument.instrument_state) {
                 Some(p) if p.bank == 128 => "drums",

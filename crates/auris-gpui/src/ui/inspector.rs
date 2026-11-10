@@ -1457,13 +1457,20 @@ fn sound_artwork(
         match id {
             "auris.physical.piano" => SoundIcon::Piano,
             "auris.physical.guitar" | "auris.physical.electric_guitar" => SoundIcon::Guitar,
-            "auris.physical.bass" => SoundIcon::Bass,
+            "auris.physical.bass"
+            | "auris.synth.boom_bass"
+            | "auris.synth.kick_bass"
+            | "auris.synth.sub_bass" => SoundIcon::Bass,
             "auris.physical.violin" => SoundIcon::Strings,
             "auris.physical.clarinet" | "auris.physical.tin_whistle" => SoundIcon::Wind,
             "auris.physical.mallet"
             | "auris.physical.hammered_dulcimer"
             | "auris.physical.bell" => SoundIcon::Bell,
-            "auris.synth.drumkit" | "auris.synth.noisedrum" => SoundIcon::Drum,
+            "auris.synth.drumkit"
+            | "auris.synth.noisedrum"
+            | "auris.synth.electro_kit"
+            | "auris.synth.edm_kit"
+            | "auris.synth.trap_kit" => SoundIcon::Drum,
             "auris.synth.vocal" | "auris.physical.choir" => SoundIcon::Voice,
             id if super::synth_view::is_oscillator_model(id) => SoundIcon::Synth,
             _ => SoundIcon::Sound,

@@ -19,6 +19,9 @@
 //! [`PluginRegistry`](auris_core::PluginRegistry).
 //! [`Analog`] is the subtractive synthesiser — a detuned unison stack, sub oscillator and noise
 //! through a resonant low-pass — registered once per [`AnalogPatch`], SuperSaw among them.
+//! [`ElectroKit`] is the electronic drum machine — every pad a formula of swept sines, noise and
+//! square-wave metal — registered once per [`ElectroStyle`], and [`BoomBass`] plays the same kick
+//! from the keyboard as the trap "808", the club kick bass and a plain sub, one per [`BoomPatch`].
 //! [`Physical`] adds seven sample-free instruments using modal and travelling-wave models;
 //! [`Model`] selects the structure and excitation while keeping the same host contract.
 //! [`Clarinet`] couples a nonlinear single reed to a cylindrical-bore waveguide.
@@ -53,10 +56,12 @@
 #![warn(missing_docs)]
 
 pub mod analog;
+pub mod boom;
 pub mod chiptune;
 pub mod choir;
 pub mod clarinet;
 pub mod drumkit;
+pub mod electro;
 pub mod fm2;
 pub mod hammered_dulcimer;
 pub mod lfo;
@@ -83,10 +88,12 @@ mod stereo_tests;
 mod voicing_tests;
 
 pub use analog::{Analog, AnalogPatch};
+pub use boom::{BoomBass, BoomPatch};
 pub use chiptune::Chiptune;
 pub use choir::Choir;
 pub use clarinet::Clarinet;
 pub use drumkit::DrumKit;
+pub use electro::{ElectroKit, ElectroStyle, electro_drum_map};
 pub use fm2::Fm2;
 pub use hammered_dulcimer::HammeredDulcimer;
 pub use noisedrum::NoiseDrum;
@@ -100,6 +107,31 @@ pub use render::{SegmentRenderer, render_segments, spread_to_all_channels};
 pub use tin_whistle::TinWhistle;
 pub use vocal::Vocal;
 pub use voice::{MAX_VOICES, VoiceAllocator, VoiceAssignment, VoiceMask, VoiceSlot, VoiceState};
+
+/// Whether `id` is one of this crate's drum machines, whose keys choose sounds rather than
+/// pitches.
+pub fn is_drum_kit(id: &str) -> bool {
+    id == DrumKit::ID || id == NoiseDrum::ID || ElectroStyle::from_id(id).is_some()
+}
+
+/// The map a drum track playing one of this crate's kits starts with, or `None` for an
+/// instrument that has no authored map.
+///
+/// [`NoiseDrum`] has none: it is one voice tuned by key, so no key is any particular drum.
+pub fn authored_drum_map(id: &str) -> Option<auris_core::DrumMap> {
+    use auris_core::{DrumMap, DrumRole};
+    if id == DrumKit::ID {
+        return Some(DrumMap::from_voices([
+            (DrumRole::Kick, 36),
+            (DrumRole::Snare, 38),
+            (DrumRole::ClosedHat, 42),
+            (DrumRole::OpenHat, 46),
+            (DrumRole::Crash, 49),
+            (DrumRole::Tom, 47),
+        ]));
+    }
+    ElectroStyle::from_id(id).map(|_| electro_drum_map())
+}
 
 /// Narrows a host rate without allowing a finite `f64` to become infinite in DSP state.
 fn sample_rate_f32(sample_rate: f64) -> f32 {
