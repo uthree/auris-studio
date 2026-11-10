@@ -558,3 +558,20 @@ fn analysis_shows_the_dictionary_accent_and_nothing_without_it() {
         .unwrap();
     assert_eq!(explicit.phrases[0].accent, None);
 }
+
+#[test]
+fn a_misfit_offers_the_melody_side_ways_to_close_it() {
+    assert_eq!(
+        melody_options(2),
+        [
+            MelodyOption::AddPickup { notes: 2 },
+            MelodyOption::Split { notes: 2 }
+        ]
+    );
+    assert_eq!(melody_options(-1), [MelodyOption::Merge { notes: 1 }]);
+    assert!(melody_options(0).is_empty());
+    assert_eq!(
+        serde_json::to_value(MelodyOption::AddPickup { notes: 1 }).unwrap(),
+        serde_json::json!({"kind": "add_pickup", "notes": 1})
+    );
+}

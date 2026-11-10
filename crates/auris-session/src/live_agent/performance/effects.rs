@@ -491,6 +491,14 @@ pub(super) fn measure(
         if strum && unchanged && complete {
             warnings.push("This strum stage changes zero performed note events. Do not claim an effective stroke from the stored setting.".into());
         }
+        let spread = strum
+            .then(|| stroke_spreads(paired(), context.bpm))
+            .flatten();
+        if let Some(median) = spread.as_ref().and_then(|s| s["median_ms"].as_f64())
+            && median < f64::from(crate::lint::TIGHT_STRUM_MS)
+        {
+            warnings.push(format!("Chords are struck from first to last string in {median} ms (median); under about 15 ms a listener hears every string at once. Widen spread_ms or set string_ms."));
+        }
         let pitch = matches!(stage, NoteTransform::Pitch { .. })
             .then(|| pitch_report(clip, stack, stage_index, voice, project));
         if let Some(report) = &pitch {
@@ -522,6 +530,7 @@ pub(super) fn measure(
             "changed_onsets":onsets,"changed_durations":durations,"changed_velocities":velocities,
             "changed_pitches":pitches,"added_notes":added,"removed_notes":removed,
             "note_events_unchanged":unchanged,"warnings":warnings,
+            "strum_spread":spread,
             "slide":slide,
             "pitch":pitch}));
         notes = slots.into_iter().flatten().take(NOTE_LIMIT + 1).collect();
@@ -532,4 +541,41 @@ pub(super) fn measure(
         "sampled_authored_notes":sampled,"note_limit":NOTE_LIMIT,"stage_limit":STAGE_LIMIT,
         "complete":complete,"truncated":!complete,"stages":stages,
         "pitch_effects":pitch_effects})
+}
+
+/// How long each performed chord takes from its first sounding note to its last, in ms.
+///
+/// Chords are the authored attacks shared by more than one note; a stroke's skipped strings
+/// are absent from `paired` and do not count. `None` when no chord sounds.
+fn stroke_spreads<'a>(
+    paired: impl Iterator<Item = (&'a Note, &'a Note)>,
+    bpm: f64,
+) -> Option<Value> {
+    let mut chords: BTreeMap<i64, (i64, i64, usize)> = BTreeMap::new();
+    for (before, after) in paired {
+        let start = after.start.raw();
+        let entry = chords
+            .entry(before.start.raw())
+            .or_insert((start, start, 0));
+        entry.0 = entry.0.min(start);
+        entry.1 = entry.1.max(start);
+        entry.2 += 1;
+    }
+    let ms_per_tick = 60_000.0 / (bpm.max(1e-6) * auris_core::Ticks::QUARTER.raw() as f64);
+    let mut spreads: Vec<f64> = chords
+        .values()
+        .filter(|(_, _, count)| *count > 1)
+        .map(|(first, last, _)| (last - first) as f64 * ms_per_tick)
+        .collect();
+    if spreads.is_empty() {
+        return None;
+    }
+    spreads.sort_by(f64::total_cmp);
+    let tenth = |value: f64| (value * 10.0).round() / 10.0;
+    Some(json!({
+        "chords": spreads.len(),
+        "min_ms": tenth(spreads[0]),
+        "median_ms": tenth(spreads[spreads.len() / 2]),
+        "max_ms": tenth(spreads[spreads.len() - 1]),
+    }))
 }

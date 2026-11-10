@@ -70,8 +70,10 @@ into notes with `|`, for the requested count when it fits and for `max_notes` ot
 When long vowels must be held, the ones nearest the end of the phrase are held first.
 
 Pass `note_reading` to `write_lyrics` as its `reading`. A reading without `|` still puts
-one mora on each note. A grouped reading may put only a held long vowel or a final `っ` on a
-note with the mora before it; anything else is refused. A group ending in `っ` sings no
+one mora on each note. A grouped reading may put a held long vowel, a final `っ`, or one `ん` or bare
+vowel after the first mora (`さん`, `あい`) on a note with the mora before it; anything
+else is refused. VOICEVOX, which takes one mora per note, sings such a note as two, the
+first mora keeping three fifths of it. A group ending in `っ` sings no
 closure phoneme, so the next note must start at least a thirty-second note (120 ticks) after
 that note ends.
 

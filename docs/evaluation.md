@@ -146,6 +146,75 @@ is a universal quality score. This reads written text, not performance transform
 muted clips/tracks are excluded from musical measures, while validation covers all stored
 notes. It does not simulate loops, routing, solo or audio clips.
 
+### Line form, entries and predictability
+
+```
+uv run tools/eval/melody_form.py MySong/MySong.auris --json form.json
+uv run tools/eval/melody_form.py runs/ --track Vocal
+```
+
+Cuts the foreground (the first singer track, or `--track`) into lines at the lines of the song-wide
+lyric annotation, at clip boundaries and at rests of a beat or more; a looped clip is read once
+for every pass. A line still longer than
+four bars is cut again at its longest rest of half a beat or more, so a verse breathed in eighth
+rests under one annotation is not counted as one line. A line belongs to the section most of its
+notes start in, which keeps a line entering with a pickup in its own section. Each line gets a letter
+in its section's form (the same onsets and pitches share a letter; the same onsets under other
+pitches add a prime), the beat it enters on and whether that is a pickup, its syncopated and
+anticipated notes, the spacing of its onsets, the scale degree and chord it ends on, Huron's
+contour type, and an IDyOM-style short-term information content: a PPM model over (interval,
+inter-onset interval) symbols that learns only from the song so far, so an exact repeat falls
+towards zero bits a note. Sections add their chord loop and main drum bar, and strummed tracks
+report the spread their strum stage gives each chord.
+
+Flags mark extremes only: every line of a section identical, nine lines in ten entering on one
+beat, no line entering in the second half of a bar, no syncopated note at all, every line one note count, one onset spacing for most notes, no line
+ending on the tonic, several lines in a row predictable from the song so far, three sections
+sharing one drum bar, a chorus looping the verse's progression from another chord, and a guitar
+strummed over less than 10 ms (below every shipped preset) or not at all. The song whose
+friends' feedback prompted the script raises all of them
+([plan](song-feedback-improvement-plan-2026-11-09.ja.md)). None is a target, an absent flag is
+not a judgement, and the model knows nothing about a genre's conventions.
+
+### How conventional a melody is against a corpus
+
+```
+uv run tools/eval/melody_corpus.py train corpus/ --out model.json --name "corpus name"
+uv run tools/eval/melody_corpus.py score MySong/MySong.auris --model model.json
+uv run tools/eval/melody_corpus.py lines corpus/
+```
+
+The long-term half of the same IDyOM-style model. `train` counts a PPM model over the same
+(interval, inter-onset interval) symbols from a folder of MusicXML or MIDI melodies, and
+cross-validates the corpus in five folds. `score` gives each line of a song its information
+content under the frozen model, and the song's mean as a z-score against the corpus's own
+cross-validated songs. Low means the melody is made of the corpus's commonplaces; it is never a
+target in either direction.
+
+Two corpora were tried. PJS (100 short songs written for phoneme balance, CC BY-SA 4.0) is
+Japanese but nothing like a fast rock song, and every trial song scored above it. 620 lead
+sheets with lyrics tagged pop or rock from PDMX's conflict-free, deduplicated subset (CC0 and
+public domain; 189,217 notes; cross-validated 5.57 ± 1.65 bits a note) are the better reference:
+fourteen trial songs fell between -0.6 and +1.3 sd of it. The PDMX melody is the first non-drum
+track's top line, which is a piano's right hand where a score has no lead part. Both models are
+kept on the machine that trained them; a model inherits its corpus's licence.
+
+`lines` cuts each MIDI file's sung part into lines by `melody_form.py`'s rule and reports where
+a corpus's lines enter the bar; the two entry warnings take their thresholds from it. It counts
+the files whose first melodic track is named as a voice (`--any-part` counts the rest too) and
+that hold eight lines or more, which is what the warnings need. In the 282 such PDMX songs:
+
+| Per song | Median | 90th percentile | 95th percentile | Songs at the warning |
+| --- | --- | --- | --- | --- |
+| Share of lines at the commonest entry point | 45% | 75% | 87% | 3.2% reach 90% |
+| Share of lines entering in the second half of a bar | 44% | 82% | 91% | 4.6% have none |
+| Share of onset spacings taken by the commonest one | 52% | 75% | 82% | 10% reach 75% |
+
+Each entry warning therefore fires on one corpus song in twenty to thirty. The note-value
+warning sits at the 90th percentile and fires on one in ten: at the 95th, four songs composed in
+a row all finished at 76-78%, just under it. With `--any-part`, 518 songs give 3.9%, 5.8% and
+11% for the three rows.
+
 `tools/eval/fixtures/vocal-phrases.asong` supplies a fixed lyric probe with shared verses and
 unvoiced closures. Use the same dictionary and sound assets for both renders. An instrument
 audition of sung notes checks melody/rhythm, not the intelligibility of a learned singer.
@@ -221,9 +290,61 @@ model of Lv et al. (Overall, Singing, Melody, Arrange and AudioQ, 0-100). Each s
 with Demucs `htdemucs`, cut into 10-second windows every 5 seconds, and embedded with MuQ. Windows
 with a silent vocal or a silent accompaniment are skipped. Both write the same report format as
 `songeval.py`. Against a set of commercial songs, only the second model kept rendered songs apart:
-every rendered vocal song scored below the lowest commercial one. Audiobox PQ rates clean renders
-above commercial masters. On an instrumental the separator hears the lead as a voice, so the
-multi-stem model's score there means nothing.
+every rendered vocal song scored below the lowest commercial one. That held at the commercial
+songs' own loudness, which is about six decibels above a -14 LUFS render (see below). Audiobox PQ
+rates clean renders above commercial masters. On an instrumental the separator hears the lead as
+a voice, so the multi-stem model's score there means nothing.
+
+### What the learned scorers were trained on
+
+None of these models was trained on Japanese songs, so none of them can say whether a Japanese
+lyric is natural, how well its prosody fits, or how its moras are laid on the notes. Those
+questions are for the symbolic checks: `melody_shape`, the lyric fit and the score linter.
+
+| Scorer | Training data | Japanese |
+| --- | --- | --- |
+| SongEval | 2,399 songs, English and Chinese, mostly AI-generated | none |
+| Multi-stem SAE (Lv et al.) | the SongEval set, plus 1,569 Chinese songs, mostly made by people, scored on its five axes by four experts | none |
+| Audiobox Aesthetics | 97k clips of speech, sound and music in roughly equal shares; the music sources are not named, and the speech is mostly English | not stated |
+| TuneJury | 17.5k preference pairs from AIME, SongEval, MusicPrefs and Music Arena | not stated |
+| MuQ `MuQ-large-msd-iter`, the encoder SongEval and SAE embed with | the Million Song Dataset | no breakdown published |
+
+Use them on a Japanese vocal song this way:
+
+* SongEval catches only gross audio regressions there.
+* SAE's Arrange and AudioQ axes read the accompaniment and the mix. Its Singing and Melody axes
+  carry the four experts' taste for Chinese pop.
+* On an instrumental, SAE has nothing to score, so SongEval is the main learned reference, read
+  alongside Audiobox.
+
+### Render the same way before comparing
+
+* **Sample rate.** The workshop's `audition.wav` is a 22.05 kHz preview. On 「限界線を蹴り破れ」
+  and on the 「限界線を蹴り飛ばせ」 candidate, auditions scored about three points lower on SAE
+  Overall than 48 kHz renders of the same projects, and five to six lower on Singing and AudioQ. It also narrowed the gap between two songs: 3.4 points of
+  Arrange between two auditions became 1.0 between their 48 kHz renders.
+  * Score `auris render` output, never auditions.
+* **Loudness.** SAE rises with loudness.
+  * Raising the master limiter's input by 4 dB, from -14.0 to -10.7 LUFS, added 2.0 to 2.6
+    points of Overall and about 2 of AudioQ on both songs tried.
+  * Gain-matching the commercial set from about -8 LUFS down to -14 LUFS took 2.2 points off
+    its Overall mean.
+  * Compare at matched integrated loudness, and normalise reference songs to the renders'
+    target rather than scoring their masters as they are.
+* **What else moves it.** At matched loudness, mix and performance changes left SAE where it
+  was. Each was tried on three songs and moved Melody, Arrange and Singing by under half a point:
+  limiting harder and turning the result down, a glue compressor on the master, brighter
+  guitars, a vocal delay, drums and bass up 2 dB, and vibrato on every note of half a second or
+  more. Overall wandered by up to two points, and in both directions on the same change. Singing
+  the take again with the same seed moved Singing by 0.1 at most and AudioQ by 0.4. Read SAE as telling songs
+  apart. It cannot steer a mix.
+* **What it does not see.** SAE scores windows of the song and averages them, so it cannot tell
+  whether the song is finished. A composer given only the user's request and the tools
+  (`AURIS_TRIAL_GUIDANCE=bare`) delivered four 21–43 second pieces of four tracks, with no
+  effects. Gain-matched to -14 LUFS, they averaged 73.4 Overall and 81.1 Arrange. Two finished
+  three-minute songs on the same request averaged 70.4 and 81.0. Audiobox did put the finished
+  songs higher: PQ 7.2 against 6.8, CE 6.7 against 5.9. Check length, form and the mix before
+  reading any learned score.
 
 `songeval.py` and `song_aesthetics.py` take `--device cuda:0`, which a ROCm build of PyTorch also
 answers. Audiobox takes the GPU whenever one is visible. On a GPU, scores match the CPU's to

@@ -65,6 +65,45 @@ pub struct NoteFit {
     pub verdict: FitVerdict,
     /// Moras to remove (positive) or add (negative) before it fits; zero when it fits.
     pub excess: isize,
+    /// Ways the melody can change instead of the words, each closing the whole gap: empty when
+    /// the phrase fits. Where a hook repeats exactly, change the words; elsewhere the melody
+    /// may adapt.
+    pub melody_options: Vec<MelodyOption>,
+}
+
+/// One way to change a phrase's notes so its words fit, as `analyze_lyrics` fit offers it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum MelodyOption {
+    /// Add `notes` short notes before the phrase's first, a pickup (弱起) into it.
+    AddPickup {
+        /// Notes to add.
+        notes: usize,
+    },
+    /// Split `notes` of the phrase's longer notes into two each, the second on the same pitch
+    /// or a step away.
+    Split {
+        /// Notes to split.
+        notes: usize,
+    },
+    /// Merge `notes` pairs of adjacent notes into one each, or hold a long vowel across them.
+    Merge {
+        /// Pairs to merge.
+        notes: usize,
+    },
+}
+
+/// The melody-side ways to close a fit's gap of `excess` moras (positive: too many).
+fn melody_options(excess: isize) -> Vec<MelodyOption> {
+    let gap = excess.unsigned_abs();
+    match excess.signum() {
+        1 => vec![
+            MelodyOption::AddPickup { notes: gap },
+            MelodyOption::Split { notes: gap },
+        ],
+        -1 => vec![MelodyOption::Merge { notes: gap }],
+        _ => Vec::new(),
+    }
 }
 
 /// How a pronunciation was obtained.
@@ -417,22 +456,26 @@ impl Session {
             let fit = targets
                 .get(&phrase)
                 .filter(|_| error.is_none())
-                .map(|&notes| NoteFit {
-                    notes,
-                    verdict: if notes < min_notes {
-                        FitVerdict::TooManyMoras
-                    } else if notes > max_notes {
-                        FitVerdict::TooFewMoras
-                    } else {
-                        FitVerdict::Fits
-                    },
-                    excess: if notes < min_notes {
+                .map(|&notes| {
+                    let excess = if notes < min_notes {
                         (min_notes - notes) as isize
                     } else if notes > max_notes {
                         -((notes - max_notes) as isize)
                     } else {
                         0
-                    },
+                    };
+                    NoteFit {
+                        notes,
+                        verdict: if notes < min_notes {
+                            FitVerdict::TooManyMoras
+                        } else if notes > max_notes {
+                            FitVerdict::TooFewMoras
+                        } else {
+                            FitVerdict::Fits
+                        },
+                        excess,
+                        melody_options: melody_options(excess),
+                    }
                 });
             let layout = fit
                 .as_ref()
