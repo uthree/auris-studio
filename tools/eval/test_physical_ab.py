@@ -27,7 +27,7 @@ def test_phrase_pairs_keep_their_order_and_gain_matching(tmp_path, monkeypatch):
         sf.write(before / f"{name}.wav", wave * 0.1, 48000, subtype="FLOAT")
         sf.write(after / f"{name}.wav", wave * 0.5, 48000, subtype="FLOAT")
     output = tmp_path / "ab.wav"
-    monkeypatch.setattr("sys.argv", ["physical_ab", str(before), str(after), str(output), "--phrases"])
+    monkeypatch.setattr("sys.argv", ["physical_ab", str(before), str(after), str(output)])
     main()
     audio, rate = sf.read(output)
     assert rate == 48000

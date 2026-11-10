@@ -2,7 +2,11 @@
 # requires-python = ">=3.10"
 # dependencies = ["numpy>=1.26", "soundfile>=0.12"]
 # ///
-"""Make an RMS-matched A/B audition from the six-model physical_demo WAVs."""
+"""Make an RMS-matched A/B audition from two renders of the physical_phrases projects.
+
+Each directory holds piano.wav, guitar.wav and violin.wav: the same saved projects rendered
+by a build frozen before a change and by the build after it.
+"""
 
 import argparse
 import json
@@ -28,26 +32,16 @@ def main():
     parser.add_argument("before", type=Path)
     parser.add_argument("after", type=Path)
     parser.add_argument("output", type=Path)
-    parser.add_argument("--phrases", action="store_true", help="compare named piano/guitar/violin WAVs in two directories")
     args = parser.parse_args()
-    if not args.phrases:
-        before, rate = sf.read(args.before)
-        after, after_rate = sf.read(args.after)
-        if rate != after_rate or before.shape != after.shape or before.ndim != 1:
-            raise ValueError("matching mono physical_demo renders are required")
     parts, report = [], {}
-    for name, index in (("piano", 0), ("guitar", 1), ("violin", 5)):
-        if args.phrases:
-            before, rate = sf.read(args.before / f"{name}.wav", always_2d=True)
-            after, after_rate = sf.read(args.after / f"{name}.wav", always_2d=True)
-            if rate != after_rate or before.shape != after.shape:
-                raise ValueError(f"incompatible {name} phrase renders")
-            if report and rate != report["piano"]["sample_rate"]:
-                raise ValueError("all phrase pairs must share a sample rate")
-            pair, gains = match_levels(before.mean(axis=1), after.mean(axis=1))
-        else:
-            region = slice(index * rate * 4, (index + 1) * rate * 4)
-            pair, gains = match_levels(before[region], after[region])
+    for name in ("piano", "guitar", "violin"):
+        before, rate = sf.read(args.before / f"{name}.wav", always_2d=True)
+        after, after_rate = sf.read(args.after / f"{name}.wav", always_2d=True)
+        if rate != after_rate or before.shape != after.shape:
+            raise ValueError(f"incompatible {name} phrase renders")
+        if report and rate != report["piano"]["sample_rate"]:
+            raise ValueError("all phrase pairs must share a sample rate")
+        pair, gains = match_levels(before.mean(axis=1), after.mean(axis=1))
         for audio in pair:
             parts.extend((audio, np.zeros(int(rate * 0.3))))
         report[name] = {"order": ["before", "after"], "gains": gains, "sample_rate": rate}

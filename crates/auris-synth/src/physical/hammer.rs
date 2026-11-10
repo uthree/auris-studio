@@ -282,19 +282,23 @@ pub(crate) mod grand {
     /// eighth of the way through most of the compass, and nearer the end at the top.
     pub(crate) const STRIKE: &[(f32, f32)] =
         &[(21.0, 1.0), (72.0, 1.0), (96.0, 0.55), (108.0, 0.5)];
-    /// Inharmonicity coefficient: wound strings fall to a minimum near C2, plain ones rise
-    /// from there to the top.
+    /// Inharmonicity coefficient, drawn through the stiffness read off the partials of a
+    /// recorded Steinway B at twenty-six keys: `tools/eval/piano_stretch.py` reads them, and
+    /// `docs/piano-stretch-tuning.md` lists them. The lowest strings are the stiffest in the
+    /// bass, those from G1 to C3 are all much alike, and from there the stiffness climbs to
+    /// the top. Above A6 the recording shows no second partial to read a string by, and the
+    /// curve goes on as it rose through the two octaves below.
     pub(crate) const INHARMONICITY: &[(f32, f32)] = &[
-        (21.0, 3.0e-4),
-        (24.0, 2.6e-4),
-        (36.0, 1.4e-4),
-        (43.0, 1.3e-4),
-        (48.0, 1.6e-4),
-        (60.0, 3.8e-4),
-        (72.0, 1.1e-3),
-        (84.0, 3.2e-3),
-        (96.0, 8.6e-3),
-        (108.0, 1.3e-2),
+        (21.0, 2.6e-4),
+        (24.0, 2.47e-4),
+        (28.0, 1.38e-4),
+        (31.0, 1.2e-4),
+        (48.0, 1.2e-4),
+        (60.0, 3.15e-4),
+        (72.0, 1.03e-3),
+        (84.0, 2.2e-3),
+        (96.0, 5.0e-3),
+        (108.0, 1.1e-2),
     ];
 }
 
