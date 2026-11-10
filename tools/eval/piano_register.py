@@ -66,9 +66,9 @@ class Worker:
         self.process.wait()
 
 
-def onset(x):
+def onset(x, rate=RATE):
     """Start of the rise into the loudest 2 ms frame, 25 dB below it."""
-    hop = int(0.002 * RATE)
+    hop = int(0.002 * rate)
     energy = np.sqrt(np.convolve(x**2, np.ones(hop) / hop, mode="valid")[::hop])
     db = 20 * np.log10(energy + 1e-12)
     peak = int(np.argmax(db))
@@ -295,8 +295,8 @@ class Evaluator:
         }
 
 
-def read_lock():
-    return json.loads(LOCK.read_text(encoding="utf-8"))["captures"]
+def read_lock(lock=LOCK):
+    return json.loads(Path(lock).read_text(encoding="utf-8"))["captures"]
 
 
 def load_notes(root):
@@ -311,9 +311,9 @@ def load_notes(root):
     return notes
 
 
-def prepare(root):
+def prepare(root, lock=LOCK):
     root.mkdir(parents=True, exist_ok=True)
-    for capture in read_lock():
+    for capture in read_lock(lock):
         path = root / capture["path"]
         if not path.exists():
             with urlopen(capture["url"], timeout=120) as response:

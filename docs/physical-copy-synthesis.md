@@ -88,6 +88,8 @@ performed by Evan Mazunik, supply mf notes on every C from C1 to C8, and pp/ff n
 C6 and C7. pp C6 and pp C7 lie within a few dB of the recording's noise floor and are not
 measured: 14 of the 16 locked captures are. URLs, sizes and hashes are in
 [piano-register-captures.json](../tools/eval/references/piano-register-captures.json).
+The same mf Cs, with five As, are what the [stretch tuning](piano-stretch-tuning.md) is read
+beside, under a lock of their own.
 
 `piano_register.py` measures at 24 kHz on onset-aligned notes, every 25 ms, against each file's
 own noise floor:

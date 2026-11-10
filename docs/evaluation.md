@@ -32,7 +32,7 @@ The [choir calibration](choir-copy-synthesis.md) fits the native vocal-tract ens
 real sustained vowels, with 24 training notes and 80 notes from separate held-out singers.
 The [piano stretch tuning](piano-stretch-tuning.md) is how the piano's fundamentals leave
 equal temperament: the rule, the fundamentals, heard pitch and octaves measured at twelve
-keys, and the tests that hold them.
+keys beside the same reading of a recorded Steinway, and the tests that hold them.
 
 ## Native instrument upper-midrange voicing
 
