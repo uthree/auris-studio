@@ -404,6 +404,15 @@ fn single(c: char) -> Option<Vec<String>> {
     Some(tokens(phonemes))
 }
 
+/// Whether a mora can ride on the note before it in pop singing: the moraic nasal or a vowel
+/// with no consonant, the two a singer folds into the previous syllable (さん, かい, そう).
+pub fn tucks_under_previous(mora: &str) -> bool {
+    matches!(
+        mora,
+        "ん" | "ン" | "あ" | "い" | "う" | "え" | "お" | "ア" | "イ" | "ウ" | "エ" | "オ"
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

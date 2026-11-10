@@ -779,9 +779,15 @@ pub struct ExpressionPatch {
 #[derive(Debug, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct StrumPatch {
-    /// Time between first and last struck pitches in milliseconds.
+    /// Time between first and last struck pitches in milliseconds. Under about 15 ms the strings are heard as one hit.
     #[schemars(range(min = 0, max = 100))]
     pub spread_ms: Option<f32>,
+    /// Time between adjacent struck pitches in milliseconds; when positive it replaces spread_ms, so wide chords take longer than power chords.
+    #[schemars(range(min = 0, max = 30))]
+    pub string_ms: Option<f32>,
+    /// How far each stroke's speed and string spacing wander, 0..1; zero strikes every chord identically.
+    #[schemars(range(min = 0, max = 1))]
+    pub variation: Option<f32>,
     /// Stroke direction.
     #[schemars(with = "Option<String>", extend("enum" = ["low_to_high","high_to_low","alternate",null]))]
     pub direction: Option<StrokeDirection>,
@@ -1016,6 +1022,17 @@ impl StrumPatch {
     fn validate(&self) -> Result<(), String> {
         if let Some(value) = self.spread_ms {
             bounded("StrumPatch.spread_ms", value as f64, 0.0, 100.0)?;
+        }
+        if let Some(value) = self.string_ms {
+            bounded(
+                "StrumPatch.string_ms",
+                value as f64,
+                0.0,
+                f64::from(auris_core::MAX_STRING_MS),
+            )?;
+        }
+        if let Some(value) = self.variation {
+            bounded("StrumPatch.variation", value as f64, 0.0, 1.0)?;
         }
         if let Some(value) = self.up_notes {
             bounded("StrumPatch.up_notes", value as f64, 0.0, 4.0)?;

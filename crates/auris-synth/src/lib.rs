@@ -22,11 +22,9 @@
 //! [`ElectroKit`] is the electronic drum machine — every pad a formula of swept sines, noise and
 //! square-wave metal — registered once per [`ElectroStyle`], and [`BoomBass`] plays the same kick
 //! from the keyboard as the trap "808", the club kick bass and a plain sub, one per [`BoomPatch`].
-//! [`Physical`] adds seven sample-free instruments using modal and travelling-wave models;
-//! [`Model`] selects the structure and excitation while keeping the same host contract.
-//! [`Clarinet`] couples a nonlinear single reed to a cylindrical-bore waveguide.
-//! [`HammeredDulcimer`] strikes coupled, slightly detuned courses of stiff strings;
-//! [`TinWhistle`] excites an open-open bore with a nonlinear fipple jet.
+//! [`Physical`] is the sample-free instruments — piano, hammered strings, guitars, bass, bowed
+//! strings, mallets, bells, reeds and whistles — as one polyphonic shell around an engine per
+//! family: [`Model`] chooses the instrument and [`Quality`] how much of it is computed.
 //! [`Choir`] adds a stereo, wordless vocal ensemble using glottal-flow excitation and
 //! physical vocal-tract waveguides, played with ordinary polyphonic MIDI notes.
 //!
@@ -59,11 +57,9 @@ pub mod analog;
 pub mod boom;
 pub mod chiptune;
 pub mod choir;
-pub mod clarinet;
 pub mod drumkit;
 pub mod electro;
 pub mod fm2;
-pub mod hammered_dulcimer;
 pub mod lfo;
 pub mod noisedrum;
 pub mod oscillator;
@@ -71,7 +67,6 @@ pub mod pack;
 pub mod params;
 pub mod physical;
 pub mod render;
-pub mod tin_whistle;
 pub mod vocal;
 pub mod voice;
 
@@ -91,20 +86,15 @@ pub use analog::{Analog, AnalogPatch};
 pub use boom::{BoomBass, BoomPatch};
 pub use chiptune::Chiptune;
 pub use choir::Choir;
-pub use clarinet::Clarinet;
 pub use drumkit::DrumKit;
 pub use electro::{ElectroKit, ElectroStyle, electro_drum_map};
 pub use fm2::Fm2;
-pub use hammered_dulcimer::HammeredDulcimer;
 pub use noisedrum::NoiseDrum;
 pub use oscillator::{Oscillator, Waveform};
 pub use pack::SynthPack;
 pub use params::ParamBank;
-#[cfg(feature = "piano-calibration")]
-pub use physical::PianoVoicing;
 pub use physical::{Model, Physical, Quality};
 pub use render::{SegmentRenderer, render_segments, spread_to_all_channels};
-pub use tin_whistle::TinWhistle;
 pub use vocal::Vocal;
 pub use voice::{MAX_VOICES, VoiceAllocator, VoiceAssignment, VoiceMask, VoiceSlot, VoiceState};
 

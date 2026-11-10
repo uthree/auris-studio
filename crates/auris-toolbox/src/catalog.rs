@@ -380,7 +380,8 @@ pub mod tool_help {
                 {"project":project,"name":"Lead","kind":"instrument"}
             ]),
             "add_clip" => serde_json::json!([
-                {"project":project,"track":1,"name":"Manual","start_bar":5,"bars":2}
+                {"project":project,"track":1,"name":"Manual","start_bar":5,"bars":2},
+                {"project":project,"track":1,"name":"Chorus","start_bar":17,"bars":8,"pickup_beats":1}
             ]),
             "listen" => serde_json::json!([
                 {"project":project,"start_bar":1,"bars":4},

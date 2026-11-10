@@ -17,20 +17,56 @@ chorus (サビ) is the arrival: the hook, the title words, the song's highest no
 three so a listener can tell where they are without the words. `melody_shape` checks the
 chorus side of this.
 
+### Line roles (起承転結)
+
+Decide what each line of a section does before writing its notes. Four lines can state an
+idea, answer it with one thing changed, turn (a new rhythm, a higher register or another
+chord), and land on a cadence: 起承転結. A pre-chorus can change the phrase length, two short
+lines against one long one; a chorus can state the hook, answer it, reach its peak and land.
+Record the plan with `production_record`, then check the written notes against it. Four lines
+that sing the same notes to new words are one line heard four times.
+
+### Entrances and anticipation (弱起・食い)
+
+Choose where each line enters: a pickup from the bar before (弱起), the downbeat, or a late
+entry after a rest. Starting every line on beat 1 makes every phrase sound like the last. An
+anticipation (食い) starts a strong beat's note an eighth or a sixteenth early and ties it
+over the beat; on a key word or the chorus's first word it adds drive, and the listener still
+hears where the beat is. Give the sections different note values as well: a verse speaking in
+eighths, a pre-chorus holding longer notes, sixteenths saved for pickups and turns.
+
+### Cadence plan
+
+Mark the note each line ends on and the chord under it. Open endings (degree 2, 5 or 7, or a
+chord other than the tonic) ask for more; closed ones (degree 1 or 3 over the tonic) answer.
+Pair them, end the song's last chorus on the tonic unless the brief wants it left open, and
+write falling and arched lines as well as rising ones: a melody whose lines all climb and end
+on the fifth or the seventh never settles.
+
+### Section harmony
+
+A verse may loop a simple progression; the pre-chorus and the chorus need their own. Change
+the progression, its rhythm (two chords a bar instead of one, or one chord held for two bars)
+or its bass line (a descending bass, a pedal). The verse's loop started on another chord is
+the same loop, and a chorus over it sounds like more verse.
+
 ### Chorus lift
 
 Keep the verse and pre-chorus low enough that the chorus can rise a minor third to a fifth on
 average, give the chorus the song's highest notes, and let its hook leap: a fifth, a sixth or
-an octave, even an octave jumped back and forth. End the pre-chorus on a held note, a rest or
-a rising line so the chorus lands on a strong beat. Read `melody_shape` after writing the
-melody and act on its warnings before singing.
+an octave, even an octave jumped back and forth. Put the leap where it matters; the same leap
+at the head of every chorus line stops being heard. End the pre-chorus on a held note, a rest
+or a rising line so the chorus lands on a strong beat or just before it. Read `melody_shape`
+after writing the melody and act on its warnings before singing.
 
 ### Motif repetition and development
 
-Write one short cell with a distinct rhythm or contour, then develop it: keep the rhythm and
-change the last interval, move it to another register, place it over another chord, stretch
-one value. Repeat it exactly where a hook must be recognised. A repeat that keeps the words'
-mora count keeps the motif; see the lyric-fitting rules in the vocal guidance.
+Write one short cell, two to six notes over a beat to two bars, with a distinct rhythm or
+contour, then develop it: keep the rhythm and change the last interval, move it to another
+register, place it over another chord, stretch one value. A cell is not a whole lyric line.
+Repeat it exactly where a hook must be recognised, and fit those repeats' words to its notes;
+elsewhere keep the cell's head and let the line around it change. See the lyric-fitting rules
+in the vocal guidance.
 
 ### The chorus hook in the intro
 
@@ -88,6 +124,16 @@ Mark the end of a section with a one-beat or one-bar drum fill and land the next
 first beat with a crash. Not every transition: the strongest ones (into a chorus, out of the
 drop chorus) earn them.
 
+### Drum groove by section
+
+Give each section a main groove of its own instead of one bar played everywhere with the
+cymbals changed: closed hats and a sparse kick for verse 1, sixteenth hats or snare ghosts in
+verse 2, half time or toms in the pre-chorus, the ride or crash on eighths with a busier kick
+in the chorus, half time again in the bridge. At fast rock tempos a two-beat feel (kick and
+snare alternating on eighths) is the classic chorus drive. Scale fills with the phrase: a
+small one every four bars, a larger one at eight, the largest into a chorus. Line hits up
+with the riff or the vocal's accents for a キメ.
+
 ### Build-up and break
 
 Before a chorus, build: add a snare roll, rising notes, a filter opening, or density that
@@ -113,6 +159,18 @@ double a chorus line, ghost notes and `humanize` on hats, `strum` on guitar chor
 for phrase dynamics, `gate` for detached playing. Swing is the song's feel, not seasoning: a
 straight song stays at 50, and a swung song swings every part, vocal included, at the same
 amount.
+
+### Strummed chords
+
+A hand sweeping a pick across strings never strikes them at once. Apply a guitar performance
+preset (`rock_rhythm_guitar`, `acoustic_strum`, `funk_cutting_guitar`) from
+`performance_presets`, then tune its `strum`. Keep `spread_ms`, the time from the first string
+to the last, at the preset's value or wider: listeners need about 15 to 20 ms to tell which of
+two sounds came first, so a chord spread over 7 ms is heard as one hit. `string_ms` sets the
+time per string instead, so a six-string chord takes longer than a three-string power chord.
+`variation` changes each stroke's speed and string spacing a little; at zero every chord is
+struck identically. Alternate the direction on the strumming clock, with lighter upstrokes on
+fewer strings (`up_notes`, `up_velocity`).
 
 ### Generators for scaffolding, authored notes for what is remembered
 

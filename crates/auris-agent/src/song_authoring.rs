@@ -323,6 +323,7 @@ mod tests {
                 name: "Hook".into(),
                 start_bar: 1,
                 bars: 2,
+                pickup_beats: None,
             })
             .unwrap();
         let revision = expected.agent_document_revision().unwrap();

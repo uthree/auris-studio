@@ -409,10 +409,9 @@ fn strings_presets_are_searchable_in_japanese(cx: &mut TestAppContext) {
     paint(&app, cx);
     click("lib-factory-sound:Cello", cx);
     app.read_with(cx, |this, _| {
-        assert!(
-            this.session
-                .sound_is_applied(track, &auris_session::factory_sounds()[2])
-        );
+        let sounds = auris_session::factory_sounds();
+        let cello = sounds.iter().find(|sound| sound.name == "Cello").unwrap();
+        assert!(this.session.sound_is_applied(track, cello));
     });
 }
 

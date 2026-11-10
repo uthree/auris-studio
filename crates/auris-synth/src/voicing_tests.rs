@@ -4,7 +4,7 @@ use auris_core::{Instrument, NoteEvent, Parameterized};
 use auris_dsp::{Biquad, BiquadCoefficients};
 
 use crate::test_support::{Rig, goertzel, rms};
-use crate::{Chiptune, Clarinet, Fm2, Model, Physical, Vocal};
+use crate::{Chiptune, Fm2, Model, Physical, Vocal};
 
 #[test]
 fn bright_instruments_reduce_upper_midrange_without_losing_the_note() {
@@ -34,7 +34,13 @@ fn bright_instruments_reduce_upper_midrange_without_losing_the_note() {
             0.85,
             0.012,
         ),
-        (Box::new(Clarinet::new()), 77, false, 0.23, 0.41),
+        (
+            Box::new(Physical::new(Model::Clarinet)),
+            77,
+            false,
+            0.23,
+            0.15,
+        ),
         (
             {
                 let mut synth = Chiptune::new();
@@ -70,6 +76,7 @@ fn bright_instruments_reduce_upper_midrange_without_losing_the_note() {
         ),
         (Box::new(Vocal::new()), 81, false, 0.48, 0.028),
     ];
+    let mut failures = Vec::new();
     for (instrument, pitch, attack, ceiling, minimum_fundamental) in cases {
         let name = instrument.descriptor().id.to_string();
         let mut rig = Rig::new(instrument, 48_000.0, 256, 2);
@@ -97,15 +104,24 @@ fn bright_instruments_reduce_upper_midrange_without_losing_the_note() {
             .collect();
         let window = if attack { 0..7_200 } else { 7_200..21_600 };
         let frequency = 440.0 * ((f64::from(pitch) - 69.0) / 12.0).exp2();
-        let fundamental = goertzel(&audio[window.clone()], 48_000.0, frequency);
+        // A stiff string's fundamental is not quite on its key: the strongest reading
+        // within a sixth of a semitone.
+        let fundamental = (-16..=16)
+            .map(|cents| {
+                let near = frequency * (f64::from(cents) / 1200.0).exp2();
+                goertzel(&audio[window.clone()], 48_000.0, near)
+            })
+            .fold(0.0, f64::max);
         let ratio = f64::from(rms(&band[window])) / fundamental;
-        assert!(
-            fundamental > minimum_fundamental,
-            "{name}: fundamental {fundamental}"
-        );
-        assert!(
-            ratio < ceiling,
-            "{name}: upper-midrange/fundamental {ratio}, ceiling {ceiling}"
-        );
+        if fundamental <= minimum_fundamental {
+            failures.push(format!("{name}: fundamental {fundamental:.4}"));
+        }
+        if ratio >= ceiling {
+            failures.push(format!(
+                "{name}: upper-midrange/fundamental {ratio:.3}, ceiling {ceiling}"
+            ));
+        }
+        println!("{name}: fundamental {fundamental:.4} ratio {ratio:.3}");
     }
+    assert!(failures.is_empty(), "{failures:#?}");
 }

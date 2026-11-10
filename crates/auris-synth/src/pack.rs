@@ -3,14 +3,12 @@
 use auris_core::{PluginPack, PluginRegistry};
 
 use crate::chiptune::Chiptune;
-use crate::clarinet::Clarinet;
 use crate::drumkit::DrumKit;
 use crate::fm2::Fm2;
 use crate::noisedrum::NoiseDrum;
 use crate::vocal::Vocal;
 use crate::{
-    Analog, AnalogPatch, BoomBass, BoomPatch, Choir, ElectroKit, ElectroStyle, HammeredDulcimer,
-    Model, Physical, TinWhistle,
+    Analog, AnalogPatch, BoomBass, BoomPatch, Choir, ElectroKit, ElectroStyle, Model, Physical,
 };
 
 /// Installs the built-in instruments into a registry.
@@ -30,9 +28,6 @@ impl PluginPack for SynthPack {
         for model in Model::ALL {
             registry.register_instrument(move || Box::new(Physical::new(model)));
         }
-        registry.register_instrument(|| Box::new(Clarinet::new()));
-        registry.register_instrument(|| Box::new(HammeredDulcimer::new()));
-        registry.register_instrument(|| Box::new(TinWhistle::new()));
         registry.register_instrument(|| Box::new(Choir::new()));
         registry.register_instrument(|| Box::new(Chiptune::new()));
         registry.register_instrument(|| Box::new(Fm2::new()));
@@ -252,7 +247,9 @@ mod tests {
         for (id, mut instrument) in every_instrument() {
             instrument.prepare(&PrepareContext::new(48_000.0, 512, 2));
             let pitch = if kit_with_pads(&id) { 36 } else { 60 };
-            let rendered = render(instrument.as_mut(), 64, 1, 2, &[note_on(3, pitch)]);
+            // Three hundred frames, not a handful: a pipe is silent until its first wave
+            // has been down the bore, a couple of milliseconds after the breath starts.
+            let rendered = render(instrument.as_mut(), 300, 1, 2, &[note_on(3, pitch)]);
             assert!(
                 rendered[..3].iter().all(|s| *s == 0.0),
                 "{id} sounded before its event in one-frame blocks"
