@@ -425,13 +425,8 @@ async fn tool_turn(
     for round in 0..MAX_ROUNDS {
         let answer: Answer = serde_json::from_value(cli.turn(prompt, Some(bridge)).await?)
             .map_err(|error| format!("Invalid Antigravity toolbox response: {error}"))?;
-        if answer.calls.len() > 8
-            || answer
-                .calls
-                .iter()
-                .any(|call| !ToolHost::contains(&call.name) || !call.arguments.is_object())
-        {
-            return Err("Antigravity requested unsupported tools or malformed arguments".into());
+        if answer.calls.len() > 8 || answer.calls.iter().any(|call| !call.arguments.is_object()) {
+            return Err("Antigravity requested too many tools or malformed arguments".into());
         }
         if answer.calls.is_empty() {
             if answer.text.trim().is_empty() {
@@ -458,25 +453,29 @@ async fn tool_turn(
                 .emit(json!({"event":"call","call_id":id,"tool":call.name,"args":call.arguments}));
             let signature = json!([call.name, call.arguments]).to_string();
             requests.push(signature.clone());
-            let reply = host
-                .call_with_origin(
+            // A name outside the catalog reaches nothing: the model is told so and goes on.
+            let reply = if ToolHost::contains(&call.name) {
+                host.call_with_origin(
                     &call.name,
                     call.arguments,
                     crate::permissions::call_origin(Some(&id), &call.name, "antigravity"),
                 )
                 .await
-                .and_then(|reply| {
-                    if reply["ok"] == true
-                        && let Some(inspection) = reply.get("inspection")
-                    {
-                        let report = serde_json::from_value(inspection.clone())
-                            .map_err(|error| error.to_string())?;
-                        return bridge
-                            .accept_inspection(&report)
-                            .map(|text| json!({"ok":true,"text":text}));
-                    }
-                    Ok(reply)
-                });
+            } else {
+                Err(format!("No such tool available: {}", call.name))
+            }
+            .and_then(|reply| {
+                if reply["ok"] == true
+                    && let Some(inspection) = reply.get("inspection")
+                {
+                    let report = serde_json::from_value(inspection.clone())
+                        .map_err(|error| error.to_string())?;
+                    return bridge
+                        .accept_inspection(&report)
+                        .map(|text| json!({"ok":true,"text":text}));
+                }
+                Ok(reply)
+            });
             let (ok, text) = match reply {
                 Ok(reply) => (
                     reply["ok"] == true,
@@ -852,10 +851,47 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unsupported_calls_and_native_tool_events_never_reach_the_session() {
+    async fn a_tool_outside_the_catalog_is_answered_and_the_turn_goes_on() {
+        tokio::time::timeout(Duration::from_secs(10), async {
+            let (bridge, _commands, events) = crate::worker::test_bridge();
+            let (client, server) = tokio::io::duplex(32768);
+            let (reader, writer) = tokio::io::split(client);
+            let mut cli = Cli::transport(None, writer, reader, "auris-fixture".into());
+            let peer = async {
+                let (reader, mut writer) = tokio::io::split(server);
+                let mut lines = BufReader::new(reader).lines();
+                lines.next_line().await.unwrap().unwrap();
+                reply(&mut writer, json!({"event":"init","init":{"agent":"auris-fixture"}})).await;
+                reply(&mut writer, result(json!({"text":"","calls":[{"name":"run_command","arguments":{"command":"do something"}}]}))).await;
+                let wire: Value = serde_json::from_str(&lines.next_line().await.unwrap().unwrap()).unwrap();
+                let content = wire["message"]["content"].as_str().unwrap();
+                let results: Value = serde_json::from_str(content.lines().last().unwrap()).unwrap();
+                assert_eq!(results["results"][0]["ok"], false);
+                assert_eq!(results["results"][0]["text"], "No such tool available: run_command");
+                reply(&mut writer, result(json!({"text":"Recovered","calls":[]}))).await;
+            };
+            let (answer, ()) = tokio::join!(tool_turn(&mut cli, "Test".into(), &bridge, 5), peer);
+            assert_eq!(answer.unwrap(), "Recovered");
+            let events: Vec<_> = events.try_iter().collect();
+            assert!(events.iter().any(|event| event["event"] == "result"
+                && event["tool"] == "run_command"
+                && event["ok"] == false));
+            // Nothing was asked of the session on its behalf.
+            assert!(
+                events
+                    .iter()
+                    .all(|event| event["event"] != "edit" && event["event"] != "permission")
+            );
+        })
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn malformed_calls_and_native_tool_events_never_reach_the_session() {
         for response in [
             result(
-                json!({"text":"","calls":[{"name":"add_track","arguments":{"name":"Never added","kind":"instrument"}},{"name":"run_command","arguments":{"command":"do something"}}]}),
+                json!({"text":"","calls":[{"name":"add_track","arguments":{"name":"Never added","kind":"instrument"}},{"name":"add_track","arguments":"do something"}]}),
             ),
             json!({"event":"step_update","step_update":{"step_type":"tool","tool_name":"run_command"}}),
             json!({"event":"result","result":{"status":"ERROR","error":"Sign in required"}}),

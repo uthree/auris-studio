@@ -543,13 +543,13 @@ impl Turn {
                         .as_str()
                         .or_else(|| update["title"].as_str())
                         .ok_or("OpenCode omitted a tool name")?;
+                    // The configuration switches every other tool off and denies it, so a
+                    // name outside the catalog fails inside OpenCode, which tells the model.
+                    // It is reported under the name it asked for, as the failed call it is.
                     let name = name
                         .strip_prefix("auris_live_")
                         .filter(|name| ToolHost::contains(name))
-                        .or_else(|| NATIVE_TOOLS.contains(&name).then_some(name))
-                        .ok_or_else(|| {
-                            format!("OpenCode requested a tool outside the Auris catalog: {name}")
-                        })?;
+                        .unwrap_or(name);
                     self.calls
                         .insert(id.to_owned(), (name.to_owned(), false, json!({})));
                 }
@@ -1136,6 +1136,24 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn a_tool_outside_the_catalog_is_a_failed_call_not_the_end_of_the_turn() {
+        let (bridge, _commands, events) = crate::worker::test_bridge();
+        let mut turn = Turn::default();
+        turn.update(&json!({"sessionUpdate":"tool_call","toolCallId":"missing","title":"webfetch","status":"pending","rawInput":{"url":"https://example.com"}}), Some(&bridge)).unwrap();
+        turn.update(&json!({"sessionUpdate":"tool_call_update","toolCallId":"missing","status":"failed","content":[{"content":{"type":"text","text":"The tool is disabled"}}]}), Some(&bridge)).unwrap();
+        let events: Vec<_> = events.try_iter().collect();
+        assert!(
+            events
+                .iter()
+                .any(|event| event["event"] == "call" && event["tool"] == "webfetch")
+        );
+        assert!(events.iter().any(|event| event["event"] == "result"
+            && event["tool"] == "webfetch"
+            && event["ok"] == false
+            && event["text"] == "The tool is disabled"));
     }
 
     #[tokio::test]
