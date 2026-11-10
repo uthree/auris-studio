@@ -14,7 +14,7 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 from electric_copy import paired
-from fit_physical_mel import Renderer
+from fit_worker import Renderer
 from physical_pack import envelope, errors, metric_configuration, pack_features, t90
 from scipy.optimize import differential_evolution
 from scipy.signal import resample_poly
@@ -145,7 +145,7 @@ def main(args):
                   "evaluation_sources_sha256": {
                       name: hashlib.sha256(Path(__file__).with_name(name).read_bytes()).hexdigest()
                       for name in ("clarinet_copy.py", "fetch_clarinet_reference.py", "electric_copy.py",
-                                   "physical_pack.py", "physical_mel.py", "fit_physical_mel.py")},
+                                   "physical_pack.py", "physical_mel.py", "fit_worker.py")},
                   "factory_parameters": baseline_defaults, "current_factory_parameters": defaults,
                   "calibration_sha256": (hashlib.sha256(args.calibration.read_bytes()).hexdigest()
                                          if args.calibration else None),

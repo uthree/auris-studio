@@ -17,7 +17,7 @@ os.environ.setdefault("OMP_NUM_THREADS", "1")
 
 import numpy as np
 import soundfile as sf
-from fit_physical_mel import Renderer
+from fit_worker import Renderer
 from physical_mel import normalize
 from physical_pack import envelope, errors, metric_configuration, pack_features, t90
 from prepare_physical_reference import tuning_cents
@@ -236,7 +236,7 @@ def evaluate(root, manifest, renderer, baseline, di, amp, output):
               "evaluation_sources_sha256": {
                   name: hashlib.sha256(Path(__file__).with_name(name).read_bytes()).hexdigest()
                   for name in ("electric_copy.py", "physical_pack.py", "physical_mel.py",
-                               "prepare_physical_reference.py", "fit_physical_mel.py")},
+                               "prepare_physical_reference.py", "fit_worker.py")},
               "metrics": metric_configuration(), "di": {}, "pedal": {}}
     simple = json.loads((output.parent / "simple-fit.json").read_text())
     report["fit_parameters"]["simple_distortion"] = simple["parameters"]

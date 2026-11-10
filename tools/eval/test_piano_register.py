@@ -97,14 +97,12 @@ def test_a_faster_rendered_decay_is_penalized():
     assert worse["decay"] > same["decay"] + 3.0
 
 
-def test_smooth_register_curves_cost_nothing():
-    voicing = {
-        "contact": [4.0 / 1.5**k for k in range(8)],
-        "strike": [1.0] * 8,
-        "aftersound": [1.0 * 1.3**k for k in range(8)],
-        "bridge": [5.0] * 8,
-        "soundboard": [0.0] * 12,
-    }
-    assert register.penalty(voicing) < 1e-9
-    voicing["contact"][3] *= 3.0
-    assert register.penalty(voicing) > 0.5
+def test_a_note_tuned_well_away_from_equal_temperament_is_still_found():
+    # The recorded C8 lies 56 cents under equal temperament and a piano's own top note two
+    # percent above it. Either way its partials are followed from where its first one is.
+    for cents in (-56.0, 40.0):
+        tuned = 1046.5 * 2 ** (cents / 1200)
+        x = struck(tuned, seconds=3.0)[int(0.25 * RATE) :]
+        found = register.find_partials(x, 1046.5, 3)
+        for n, frequency in enumerate(found, start=1):
+            assert abs(1200 * np.log2(frequency / (n * tuned))) < 1.0

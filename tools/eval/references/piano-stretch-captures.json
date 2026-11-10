@@ -1,0 +1,201 @@
+{
+  "source": "University of Iowa Musical Instrument Samples, Steinway model B (Evan Mazunik). https://theremin.music.uiowa.edu/MISpiano.html",
+  "captures": [
+    {
+      "path": "Piano.mf.B0.aiff",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Piano_Other/piano/Piano.mf.B0.aiff",
+      "pitch": 23,
+      "bytes": 5549218,
+      "sha256": "9812b67d929a7a2c84a032629ec2682ef9f683a7f74cba54ca2b189b176caa4e"
+    },
+    {
+      "path": "Piano.mf.C1.aiff",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Piano_Other/piano/Piano.mf.C1.aiff",
+      "pitch": 24,
+      "bytes": 5992554,
+      "sha256": "e30425350189828df0b989eb60e0624535efbb6ab353400f8f67992ff8f7f433"
+    },
+    {
+      "path": "Piano.mf.E1.aiff",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Piano_Other/piano/Piano.mf.E1.aiff",
+      "pitch": 28,
+      "bytes": 7776474,
+      "sha256": "4ba594120b76b6efdaaae622186cbf4ca345ade6c5e45079cd8b4570029cc8b4"
+    },
+    {
+      "path": "Piano.mf.G1.aiff",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Piano_Other/piano/Piano.mf.G1.aiff",
+      "pitch": 31,
+      "bytes": 10088498,
+      "sha256": "e796e52a0bf278751cc109bb0bbe24dd1e11fb12be326d4008d9b43d7b95e6c9"
+    },
+    {
+      "path": "Piano.mf.A1.aiff",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Piano_Other/piano/Piano.mf.A1.aiff",
+      "pitch": 33,
+      "bytes": 9769770,
+      "sha256": "d14886420f9d94df12ba213062ed7068753876bde26539c72592a677deb789de"
+    },
+    {
+      "path": "Piano.mf.B1.aiff",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Piano_Other/piano/Piano.mf.B1.aiff",
+      "pitch": 35,
+      "bytes": 9353238,
+      "sha256": "0cf73af35d8a96efe579ecdeba1ab4ef5acc1e0eeb9f5a0733d72b7178051fee"
+    },
+    {
+      "path": "Piano.mf.C2.aiff",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Piano_Other/piano/Piano.mf.C2.aiff",
+      "pitch": 36,
+      "bytes": 9033438,
+      "sha256": "a794e41d4a1f67265e6e67c1a91ef7e0ea5d85cf9cfebdb772c43c27c355ba5f"
+    },
+    {
+      "path": "Piano.mf.E2.aiff",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Piano_Other/piano/Piano.mf.E2.aiff",
+      "pitch": 40,
+      "bytes": 9218546,
+      "sha256": "303393356166e70ffa5627efdf4f89b3c0cbf4d43e7a8e82d98223b7bae6ea18"
+    },
+    {
+      "path": "Piano.mf.G2.aiff",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Piano_Other/piano/Piano.mf.G2.aiff",
+      "pitch": 43,
+      "bytes": 7079334,
+      "sha256": "a6f29e97b69797c81874cdc994888e392a1834497c63d99adfcc15b11b88ffc9"
+    },
+    {
+      "path": "Piano.mf.A2.aiff",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Piano_Other/piano/Piano.mf.A2.aiff",
+      "pitch": 45,
+      "bytes": 6923190,
+      "sha256": "3e43f1a8326c35c8df61f83dbe942ea0a469ab67a11c092ed266e9726a406259"
+    },
+    {
+      "path": "Piano.mf.C3.aiff",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Piano_Other/piano/Piano.mf.C3.aiff",
+      "pitch": 48,
+      "bytes": 7293410,
+      "sha256": "b39ff5e129df5557996dbdbadd1f2622cf33425d33714d70af16fd4f209355b5"
+    },
+    {
+      "path": "Piano.mf.E3.aiff",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Piano_Other/piano/Piano.mf.E3.aiff",
+      "pitch": 52,
+      "bytes": 5947346,
+      "sha256": "f2221cb8e022ff67da8924c33c66fd5b5736f9766d64f17814f5f637f073d167"
+    },
+    {
+      "path": "Piano.mf.G3.aiff",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Piano_Other/piano/Piano.mf.G3.aiff",
+      "pitch": 55,
+      "bytes": 6074234,
+      "sha256": "6ad72b234d9a33a8e04ed41f80e07a95defda1430552db66026898223b7a938e"
+    },
+    {
+      "path": "Piano.mf.A3.aiff",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Piano_Other/piano/Piano.mf.A3.aiff",
+      "pitch": 57,
+      "bytes": 5699206,
+      "sha256": "2f71ffc089556dceec0544ab6d6767d22e361c440ff99f3659b7571e8a7fa03d"
+    },
+    {
+      "path": "Piano.mf.C4.aiff",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Piano_Other/piano/Piano.mf.C4.aiff",
+      "pitch": 60,
+      "bytes": 5453058,
+      "sha256": "1a7d8ddea94a3639fa58d79ebcc0b09b170b9c324811d2b705f97e278fdefac2"
+    },
+    {
+      "path": "Piano.mf.E4.aiff",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Piano_Other/piano/Piano.mf.E4.aiff",
+      "pitch": 64,
+      "bytes": 5141834,
+      "sha256": "3ee2ace7fd571c8868b3582b68417b1e456ef71169b136b732804d2f4eeabd9d"
+    },
+    {
+      "path": "Piano.mf.G4.aiff",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Piano_Other/piano/Piano.mf.G4.aiff",
+      "pitch": 67,
+      "bytes": 5537038,
+      "sha256": "0bf10e0279d77cec93fe3c6cc47c53c4bab6b650e342b7c4badfa9bc11b9c3e3"
+    },
+    {
+      "path": "Piano.mf.A4.aiff",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Piano_Other/piano/Piano.mf.A4.aiff",
+      "pitch": 69,
+      "bytes": 5289358,
+      "sha256": "800a6be43a44125bda75f7907aba2f6299287b4060d67e85efcf32a226757563"
+    },
+    {
+      "path": "Piano.mf.C5.aiff",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Piano_Other/piano/Piano.mf.C5.aiff",
+      "pitch": 72,
+      "bytes": 4355518,
+      "sha256": "68c231a437a0d54004427c723d136814358deea8f913516bee6095ea6c407937"
+    },
+    {
+      "path": "Piano.mf.E5.aiff",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Piano_Other/piano/Piano.mf.E5.aiff",
+      "pitch": 76,
+      "bytes": 4610354,
+      "sha256": "bdec2a371b4d4ae11ee1b425e3de87c83d944bd77e2b8f97843de3707fe0a14c"
+    },
+    {
+      "path": "Piano.mf.G5.aiff",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Piano_Other/piano/Piano.mf.G5.aiff",
+      "pitch": 79,
+      "bytes": 3446422,
+      "sha256": "0afa1fbb5114bb254b7e03016aef2d3f93b38c60e92cea523c58979371303d17"
+    },
+    {
+      "path": "Piano.mf.A5.aiff",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Piano_Other/piano/Piano.mf.A5.aiff",
+      "pitch": 81,
+      "bytes": 2756990,
+      "sha256": "e846a6c12058ec8b5fc74af7dc4ae0c9456ab49fa7a6d92b58292a39a95af2b6"
+    },
+    {
+      "path": "Piano.mf.C6.aiff",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Piano_Other/piano/Piano.mf.C6.aiff",
+      "pitch": 84,
+      "bytes": 3020362,
+      "sha256": "897480810c72f06e4fc89cfe555925a344a7413230bd374d374a1796ae88acee"
+    },
+    {
+      "path": "Piano.mf.E6.aiff",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Piano_Other/piano/Piano.mf.E6.aiff",
+      "pitch": 88,
+      "bytes": 2466706,
+      "sha256": "04994729611273ff665c2ba996e58dad0932257fb69fc4eca8ecfb9c98a0ed3c"
+    },
+    {
+      "path": "Piano.mf.G6.aiff",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Piano_Other/piano/Piano.mf.G6.aiff",
+      "pitch": 91,
+      "bytes": 2490086,
+      "sha256": "4ba2516bd67b315b8bbfa4c4e88aff14f1c492bcd24144c26b00843c19f1f8df"
+    },
+    {
+      "path": "Piano.mf.A6.aiff",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Piano_Other/piano/Piano.mf.A6.aiff",
+      "pitch": 93,
+      "bytes": 2326426,
+      "sha256": "e5b2cc6e9894e7fbc4090bd961eb457362eda9d4e138d5fca7cf624b37d8b9d6"
+    },
+    {
+      "path": "Piano.mf.C7.aiff",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Piano_Other/piano/Piano.mf.C7.aiff",
+      "pitch": 96,
+      "bytes": 1882202,
+      "sha256": "dc6dbb6fde60ac3349330285a5467cc7a045d246615c713d96c409fe0ea5ada7"
+    },
+    {
+      "path": "Piano.mf.C8.aiff",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Piano_Other/piano/Piano.mf.C8.aiff",
+      "pitch": 108,
+      "bytes": 1960138,
+      "sha256": "4b32b00da510fc38359a98061b99334acb4d53b39d7fd0413d26ee9fed5034ef"
+    }
+  ]
+}

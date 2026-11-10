@@ -31,7 +31,7 @@
     "preprocessing": "causal second-order 30 Hz highpass on both signals before whole-note RMS",
     "secondary": "20 ms RMS-envelope L1 in dB; absolute 90%-energy-time error in seconds"
   },
-  "reference_sha256": "47444edf3224d883caf7d20801b3e34a94ff33b31618b137d9b0b40ba892bc04",
+  "reference_sha256": "e450f8a0bb9cfddaf0571df20f7f0134b3208c26b6ef5daba64b125feca2e76b",
   "renderer_sha256": "731487ba72feeecbdec685f6d9c49b9cd78f1975ef110b5a8d83bf305c81bbf9",
   "versions": {
     "python": "3.14.6 (main, Jul 18 2026, 17:08:46) [MSC v.1944 64 bit (AMD64)]",
@@ -40,210 +40,15 @@
     "soundfile": "0.14.0"
   },
   "defaults": {
-    "bass": {
-      "body": 0.3499999940395355,
-      "damping": 0.11999999731779099,
-      "decay": 3.5,
-      "hardness": 0.4000000059604645,
-      "level": -12.0,
-      "position": 0.30000001192092896,
-      "release": 0.15000000596046448
-    },
-    "bell": {
-      "body": 0.3499999940395355,
-      "damping": 0.11999999731779099,
-      "decay": 6.0,
-      "hardness": 0.6499999761581421,
-      "level": -12.0,
-      "position": 0.3499999940395355,
-      "release": 1.7999999523162842
-    },
     "drums": {
       "damping": 0.3499999940395355,
       "decay": 1.0,
       "hardness": 0.6499999761581421,
       "level": -6.0,
       "position": 0.6000000238418579
-    },
-    "guitar": {
-      "body": 0.6499999761581421,
-      "damping": 0.0,
-      "decay": 5.638205051422119,
-      "hardness": 0.2492009997367859,
-      "level": -12.0,
-      "pickup": 0.0,
-      "position": 0.2982800006866455,
-      "release": 0.11999999731779099
-    },
-    "mallet": {
-      "body": 0.3499999940395355,
-      "damping": 0.11999999731779099,
-      "decay": 1.7000000476837158,
-      "hardness": 0.4000000059604645,
-      "level": -12.0,
-      "position": 0.4000000059604645,
-      "release": 0.3499999940395355
-    },
-    "piano": {
-      "body": 0.6499999761581421,
-      "damping": 0.00010800000018207356,
-      "decay": 11.295999526977539,
-      "hardness": 0.7013310194015503,
-      "level": -12.0,
-      "position": 0.22864100337028503,
-      "release": 0.20000000298023224,
-      "stiffness": 0.0007692810031585395
-    },
-    "violin": {
-      "body": 0.6499999761581421,
-      "bow_pressure": 0.33682000637054443,
-      "bow_response": 0.057120900601148605,
-      "bow_speed": 0.20399799942970276,
-      "damping": 0.35928699374198914,
-      "decay": 10.46019458770752,
-      "hardness": 0.3193710148334503,
-      "legato": 0.0,
-      "level": -12.0,
-      "position": 0.10341600328683853,
-      "release": 1.5
     }
   },
   "families": {
-    "bass": {
-      "model": "bass",
-      "params": {
-        "hardness": 0.319,
-        "position": 0.312,
-        "decay": 6.659,
-        "damping": 0.0
-      },
-      "gains_db": [
-        4.5,
-        4.5,
-        1.8,
-        -4.5,
-        -4.5,
-        -4.5,
-        -2.7,
-        -1.8,
-        -1.8,
-        0.0,
-        0.0,
-        0.0
-      ],
-      "normalization": 0.43571187678346857,
-      "training_notes": 42,
-      "train_before": 0.17033443834798206,
-      "train_after": 0.15670533566487077,
-      "bounds": {
-        "hardness": [
-          0.05,
-          0.95
-        ],
-        "position": [
-          0.05,
-          0.45
-        ],
-        "decay": [
-          0.3,
-          12
-        ],
-        "damping": [
-          0,
-          0.6
-        ]
-      }
-    },
-    "bell": {
-      "model": "bell",
-      "params": {
-        "hardness": 0.407,
-        "position": 0.45,
-        "decay": 9.159,
-        "damping": 0.0
-      },
-      "gains_db": [
-        2.7,
-        2.7,
-        2.7,
-        6.3,
-        6.3,
-        6.3,
-        4.5,
-        -2.7,
-        -6.3,
-        -6.3,
-        -4.5,
-        -2.7
-      ],
-      "normalization": 0.21063060641973586,
-      "training_notes": 32,
-      "train_before": 0.17842172409625978,
-      "train_after": 0.09006091427852474,
-      "bounds": {
-        "hardness": [
-          0.05,
-          0.95
-        ],
-        "position": [
-          0.05,
-          0.45
-        ],
-        "decay": [
-          0.3,
-          12
-        ],
-        "damping": [
-          0,
-          0.6
-        ]
-      }
-    },
-    "mallet": {
-      "model": "mallet",
-      "params": {
-        "hardness": 0.157,
-        "position": 0.45,
-        "decay": 4.859,
-        "damping": 0.0
-      },
-      "gains_db": [
-        2.7,
-        6.3,
-        6.3,
-        4.5,
-        0.0,
-        -2.7,
-        -4.5,
-        -4.5,
-        -4.5,
-        -2.7,
-        0.0,
-        0.0
-      ],
-      "normalization": 0.11992108388841458,
-      "training_notes": 32,
-      "train_before": 0.21796487031451128,
-      "train_after": 0.12154186296465497,
-      "bounds": {
-        "hardness": [
-          0.05,
-          0.95
-        ],
-        "position": [
-          0.05,
-          0.45
-        ],
-        "decay": [
-          0.3,
-          12
-        ],
-        "damping": [
-          0,
-          0.6
-        ]
-      }
-    },
     "kick": {
       "model": "drums",
       "params": {
