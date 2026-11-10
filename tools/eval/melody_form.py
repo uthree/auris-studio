@@ -8,8 +8,9 @@
     uv run tools/eval/melody_form.py runs/ --track 歌
 
 Reads written notes from saved `.auris` projects. The foreground is a singer track (or the one
-named by --track), cut into lines at the song-wide lyric annotation when it covers the notes,
-otherwise at clip boundaries and rests of a beat or more. For every line it reports where it
+named by --track), cut into lines at the lines of the song-wide lyric annotation, at clip
+boundaries and at rests of a beat or more; a line still longer than four bars is cut again at its
+longest rest. For every line it reports where it
 enters in the bar, its onset positions, syncopated and anticipated notes, the spacing of its
 onsets, the scale degree and chord it ends on, its contour type and how predictable it is from
 the song so far. Lines with the same onsets and pitches share a letter; the same onsets under
@@ -23,7 +24,8 @@ repeats an earlier line exactly falls towards zero; a new idea is high. It is no
 model and says nothing about how conventional a line is within a genre.
 
 Flags mark extremes only, the kind no song would choose by accident: every line of a section
-the same, every line entering at one position, no syncopation at all, no line ending on the
+the same, nine lines in ten entering at one position, no line entering in the second half of a
+bar, no syncopation at all, no line ending on the
 tonic. None of them is a target to optimise, and an absent flag is not a judgement. Loops,
 performance timing other than strum spread, and audio are not simulated.
 """
@@ -37,16 +39,20 @@ import math
 import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
+from itertools import pairwise
 from pathlib import Path
 
 SCHEMA_VERSION = 1
 TICKS_PER_QUARTER = 960
 PARAMETERS = {
     "line_gap_ticks": TICKS_PER_QUARTER,
+    "long_line_bars": 4,
+    "split_rest_ticks": TICKS_PER_QUARTER // 2,
     "contour_tolerance_semitones": 0.5,
     "ppm_order": 4,
     "identical_section_min_lines": 3,
     "uniform_min_lines": 8,
+    "uniform_entry_share": 0.9,
     "uniform_ioi_share": 0.7,
     "uniform_ioi_min_count": 50,
     "plateau_bits": 1.0,
@@ -212,12 +218,75 @@ def top_line(notes: list[dict]) -> list[dict]:
     return [by_onset[at] for at in sorted(by_onset)]
 
 
+def split_long(notes: list[dict], meter: Meter) -> list[list[dict]]:
+    """`notes` as one line, or cut at its longest rest while it spans more than four bars.
+
+    The rest must be half a beat or more; among equals the one nearest the middle is taken.
+    """
+    start = notes[0]["at"]
+    span = notes[-1]["at"] + notes[-1]["length"] - start
+    middle = start + span // 2
+    rest, _, index = max(
+        (
+            (b["at"] - (a["at"] + a["length"]), -abs(b["at"] - middle), index)
+            for index, (a, b) in enumerate(pairwise(notes))
+        ),
+        default=(0, 0, 0),
+    )
+    if (
+        span <= PARAMETERS["long_line_bars"] * meter.bar_length(start)
+        or rest < PARAMETERS["split_rest_ticks"]
+    ):
+        return [notes]
+    return [
+        *split_long(notes[: index + 1], meter),
+        *split_long(notes[index + 1 :], meter),
+    ]
+
+
+def cut_lines(
+    notes: list[dict], annotated: list[int], meter: Meter
+) -> list[list[dict]]:
+    """One part's notes cut at annotation line starts and rests of a beat, long lines again."""
+    lines: list[list[dict]] = []
+    current: list[dict] = []
+    for note in notes:
+        if current:
+            previous = current[-1]
+            gap = note["at"] - (previous["at"] + previous["length"])
+            next_line = any(previous["at"] < start <= note["at"] for start in annotated)
+            if gap >= PARAMETERS["line_gap_ticks"] or next_line:
+                lines.extend(split_long(current, meter))
+                current = []
+        current.append(note)
+    if current:
+        lines.extend(split_long(current, meter))
+    return lines
+
+
+def entry_spread(starts: list[int], meter: Meter) -> dict:
+    """Where lines starting at `starts` enter the bar: the commonest beat, its share, pickups."""
+    beats = Counter(
+        round(1 + (at - meter.bar_start(at)) / meter.beat_length(at), 3)
+        for at in starts
+    )
+    beat, count = beats.most_common(1)[0] if beats else (None, 0)
+    return {
+        "most_common_entry_beat": beat,
+        "most_common_entry_share": round(count / len(starts), 3) if starts else None,
+        "second_half_entries": sum(
+            (at - meter.bar_start(at)) * 2 >= meter.bar_length(at) for at in starts
+        ),
+    }
+
+
 def lines_of(project: dict, track: dict) -> list[Line]:
     """Cut the foreground into lines: at lyric annotation lines, clip boundaries and rests.
 
     An annotation laid over a whole clip names a section, not a line, so the rests inside it
-    still cut.
+    still cut, and a line still longer than four bars is cut again at its longest rest.
     """
+    meter = Meter(project)
     clips = list(active_clips(track))
     end = max((clip["start"] + clip["length"] for clip in clips), default=0)
     annotated: list[int] = []
@@ -226,20 +295,8 @@ def lines_of(project: dict, track: dict) -> list[Line]:
         annotated = [start for start, _, _ in spans(lyric_points, "text", end)]
     lines = []
     for clip in sorted(clips, key=lambda clip: clip["start"]):
-        current: list[dict] = []
-        for note in top_line(clip_notes(clip)):
-            if current:
-                previous = current[-1]
-                gap = note["at"] - (previous["at"] + previous["length"])
-                next_line = any(
-                    previous["at"] < start <= note["at"] for start in annotated
-                )
-                if gap >= PARAMETERS["line_gap_ticks"] or next_line:
-                    lines.append(Line(start=current[0]["at"], notes=current))
-                    current = []
-            current.append(note)
-        if current:
-            lines.append(Line(start=current[0]["at"], notes=current))
+        for notes in cut_lines(top_line(clip_notes(clip)), annotated, meter):
+            lines.append(Line(start=notes[0]["at"], notes=notes))
     return lines
 
 
@@ -390,12 +447,28 @@ def letter_lines(lines: list[Line]) -> None:
         line.letter = variants[full]
 
 
+def section_of(sections: list[dict], line: Line) -> str | None:
+    """The section most of a line's notes start in, the later one when two hold as many.
+
+    A line entering with a pickup before its section's barline is that section's line.
+    """
+    counts: list[list] = []
+    for note in line.notes:
+        label = value_at(sections, "label", note["at"])
+        if counts and counts[-1][0] == label:
+            counts[-1][1] += 1
+        else:
+            counts.append([label, 1])
+    best = max(count for _, count in counts)
+    return [label for label, count in counts if count == best][-1]
+
+
 def describe_lines(project: dict, lines: list[Line], meter: Meter) -> None:
     keys = project.get("harmony", {}).get("keys", {}).get("points") or []
     chords = project.get("harmony", {}).get("chords", {}).get("points") or []
     sections = project.get("sections", {}).get("points") or []
     for line in lines:
-        line.section = value_at(sections, "label", line.start)
+        line.section = section_of(sections, line)
         position, kind = entry_kind(line, meter)
         last = line.notes[-1]
         key = parse_key(value_at(keys, "key", last["at"]))
@@ -517,7 +590,11 @@ def strum_report(project: dict) -> list[dict]:
 
 
 def flags_for(
-    lines: list[Line], sections: list[dict], strums: list[dict], ics: list
+    lines: list[Line],
+    sections: list[dict],
+    strums: list[dict],
+    ics: list,
+    entries: dict,
 ) -> list[dict]:
     flags = []
     for section in sections:
@@ -534,12 +611,19 @@ def flags_for(
                 }
             )
     if len(lines) >= PARAMETERS["uniform_min_lines"]:
-        entries = {line.features["entry_beat"] for line in lines}
-        if len(entries) == 1:
+        share = entries["most_common_entry_share"]
+        if share >= PARAMETERS["uniform_entry_share"]:
             flags.append(
                 {
                     "code": "same_entry",
-                    "message": f"all {len(lines)} lines enter at beat {entries.pop()}",
+                    "message": f"{share:.0%} of {len(lines)} lines enter at beat {entries['most_common_entry_beat']}",
+                }
+            )
+        if entries["second_half_entries"] == 0:
+            flags.append(
+                {
+                    "code": "no_second_half_entry",
+                    "message": f"none of {len(lines)} lines enters in the second half of a bar",
                 }
             )
         if sum(line.features["syncopated"] for line in lines) == 0:
@@ -685,7 +769,8 @@ def measure(project: dict, wanted: str | None = None) -> dict:
             }
         )
     strums = strum_report(project)
-    flags = flags_for(lines, sections, strums, ics)
+    entries = entry_spread([line.start for line in lines], meter)
+    flags = flags_for(lines, sections, strums, ics, entries)
     for section in sections:
         section["main_groove"] = (
             None if section["main_groove"] is None else len(section["main_groove"])
@@ -711,6 +796,7 @@ def measure(project: dict, wanted: str | None = None) -> dict:
             "downbeat_entries": sum(
                 line.features["entry"] == "downbeat" for line in lines
             ),
+            **entries,
             "syncopated_notes": sum(line.features["syncopated"] for line in lines),
             "tonic_endings": sum(
                 line.features["final_degree"] == "1" for line in lines

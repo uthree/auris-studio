@@ -27,6 +27,13 @@ pub const PREDICTABLE_BITS: f64 = 1.0;
 /// again, note for note, is reported: a second verse copied from the first. One is enough, since
 /// a verse sung without a beat of rest is one line. A chorus repeats by design.
 pub const RESTATED_SECTION_LINES: usize = 1;
+/// Bars a line may span before it is cut again at its longest rest. A sung line is two or four
+/// bars; a verse breathed in eighth rests, under an annotation laid over the whole section,
+/// would otherwise count as one line and its entry as the only one.
+pub const LONG_LINE_BARS: i64 = 4;
+/// Share of the lines one entry point may take before the entries are reported as one. The
+/// corpus figures behind it and behind the pickup warning are in `docs/evaluation.md`.
+pub const UNIFORM_ENTRY_SHARE: f64 = 0.9;
 /// Longest context the short-term model predicts from, in notes.
 const PPM_ORDER: usize = 4;
 /// Distinct (interval, spacing) symbols the model can name: ±12 semitones by 1..=16 sixteenths.
@@ -62,7 +69,8 @@ fn melody_notes(project: &Project, track: TrackId) -> Vec<(Ticks, Ticks, i32)> {
 
 /// The foreground cut into lines: at each line of the song-wide lyric annotation, and at every
 /// rest of a beat or more. An annotation laid over a whole clip names a section, not a line, so
-/// the rests inside it still cut.
+/// the rests inside it still cut, and what is still longer than [`LONG_LINE_BARS`] is cut again
+/// by [`split_long`].
 fn lines_of(project: &Project, track: TrackId) -> Vec<Line> {
     let notes = melody_notes(project, track);
     let Some(last) = notes.last() else {
@@ -84,21 +92,59 @@ fn lines_of(project: &Project, track: TrackId) -> Vec<Line> {
                 .iter()
                 .any(|start| *start > previous.0 && *start <= note.0);
             if rested || next_line {
-                lines.push(Line {
-                    start: current[0].0,
-                    notes: std::mem::take(&mut current),
-                });
+                split_long(project, std::mem::take(&mut current), &mut lines);
             }
         }
         current.push(note);
     }
     if !current.is_empty() {
-        lines.push(Line {
-            start: current[0].0,
-            notes: current,
-        });
+        split_long(project, current, &mut lines);
     }
     lines
+}
+
+/// Appends `notes` to `lines` as one line, or, when they span more than [`LONG_LINE_BARS`], as
+/// the lines on either side of their longest rest of half a beat or more: the one nearest the
+/// middle among equals. Each side is cut again while it is still too long.
+fn split_long(project: &Project, mut notes: Vec<(Ticks, Ticks, i32)>, lines: &mut Vec<Line>) {
+    let start = notes[0].0;
+    let last = notes[notes.len() - 1];
+    let span = (last.0 + last.1 - start).raw();
+    let bar = project.signatures.signature_at(start).ticks_per_bar().raw();
+    let middle = start.raw() + span / 2;
+    let cut = (0..notes.len() - 1)
+        .map(|index| {
+            let rest = (notes[index + 1].0 - (notes[index].0 + notes[index].1)).raw();
+            (rest, -(notes[index + 1].0.raw() - middle).abs(), index)
+        })
+        .max()
+        .filter(|(rest, _, _)| span > bar * LONG_LINE_BARS && *rest >= Ticks::QUARTER.raw() / 2);
+    match cut {
+        Some((_, _, index)) => {
+            let tail = notes.split_off(index + 1);
+            split_long(project, notes, lines);
+            split_long(project, tail, lines);
+        }
+        None => lines.push(Line { start, notes }),
+    }
+}
+
+/// The section a line belongs to: the one most of its notes start in, and the later one when
+/// two hold as many. A line entering with a pickup before its section's barline is that
+/// section's line, not the last line of the section before.
+fn section_of(project: &Project, line: &Line) -> String {
+    let mut counts: Vec<(&str, usize)> = Vec::new();
+    for &(at, _, _) in &line.notes {
+        let label = project.sections.label_at(at).unwrap_or_default();
+        match counts.last_mut() {
+            Some((name, count)) if *name == label => *count += 1,
+            _ => counts.push((label, 1)),
+        }
+    }
+    counts
+        .into_iter()
+        .max_by_key(|(_, count)| *count)
+        .map_or_else(String::new, |(name, _)| name.to_string())
 }
 
 /// One note as the model sees it: the interval from the note before and the spacing.
@@ -220,8 +266,8 @@ pub fn melody_form(project: &Project, track: TrackId) -> (Value, Vec<String>) {
 }
 
 /// The warnings of [`melody_form`] a score phase is not finished with. The rhythm ones are
-/// every line entering at one point of the bar, no syncopation, one note count for every line,
-/// and one spacing between most notes: a melody sung to one rhythm throughout sounds like a
+/// nearly every line entering at one point of the bar, no line entering in the second half of a
+/// bar, no syncopation, one note count for every line, and one spacing between most notes: a melody sung to one rhythm throughout sounds like a
 /// drill whatever its pitches do. The last is a section other than a chorus sung again to notes
 /// the song already had, such as a second verse copied from the first: new words want lines of
 /// their own.
@@ -242,7 +288,8 @@ fn form(project: &Project, track: TrackId) -> (Value, Vec<String>, Vec<String>) 
     let bits = predictability(&lines);
     let mut rows = Vec::new();
     let mut sections: Vec<(String, Vec<String>)> = Vec::new();
-    let mut entries = BTreeSet::new();
+    let mut entries: BTreeMap<i64, usize> = BTreeMap::new();
+    let mut second_half = 0;
     let mut syncopated = 0;
     let mut spacings: BTreeMap<i64, usize> = BTreeMap::new();
     let mut tonic_endings = 0;
@@ -253,7 +300,10 @@ fn form(project: &Project, track: TrackId) -> (Value, Vec<String>, Vec<String>) 
         let beat = signature.beat_ticks().raw().max(1);
         let bar = project.signatures.bar_floor(line.start);
         let entry = (line.start - bar).raw() as f64 / beat as f64 + 1.0;
-        entries.insert((entry * 1000.0).round() as i64);
+        *entries.entry((entry * 1000.0).round() as i64).or_insert(0) += 1;
+        if (line.start - bar).raw() * 2 >= signature.ticks_per_bar().raw() {
+            second_half += 1;
+        }
         let mut line_syncopated = 0;
         for &(at, length, _) in &line.notes {
             let bar = project.signatures.bar_floor(at);
@@ -275,11 +325,7 @@ fn form(project: &Project, track: TrackId) -> (Value, Vec<String>, Vec<String>) 
         if degree == 0 {
             tonic_endings += 1;
         }
-        let label = project
-            .sections
-            .label_at(line.start)
-            .unwrap_or_default()
-            .to_string();
+        let label = section_of(project, line);
         match sections.last_mut() {
             Some((name, form)) if *name == label => form.push(letters[index].clone()),
             _ => sections.push((label.clone(), vec![letters[index].clone()])),
@@ -303,10 +349,21 @@ fn form(project: &Project, track: TrackId) -> (Value, Vec<String>, Vec<String>) 
             ));
         }
     }
+    let (top_entry, top_entry_lines) = entries
+        .iter()
+        .max_by_key(|(_, count)| **count)
+        .map_or((0.0, 0), |(beat, count)| (*beat as f64 / 1000.0, *count));
+    let top_entry_share = top_entry_lines as f64 / lines.len() as f64;
     if lines.len() >= UNIFORM_LINES {
-        if entries.len() == 1 {
+        if top_entry_share >= UNIFORM_ENTRY_SHARE {
             development.push(format!(
-                "All {} lines enter at the same point of the bar; let some enter with a pickup (弱起) or late",
+                "{top_entry_lines} of {} lines enter at the same point of the bar (beat {top_entry}); let some enter with a pickup (弱起) or late",
+                lines.len()
+            ));
+        }
+        if second_half == 0 {
+            development.push(format!(
+                "None of {} lines enters in the second half of a bar; start some before the barline, as a pickup (弱起) into the next bar (add_clip's pickup_beats opens a clip before its bar)",
                 lines.len()
             ));
         }
@@ -363,10 +420,13 @@ fn form(project: &Project, track: TrackId) -> (Value, Vec<String>, Vec<String>) 
             "lines": lines.len(),
             "distinct_lines": distinct.len(),
             "form": form,
+            "most_common_entry_beat": top_entry,
+            "most_common_entry_share": (top_entry_share * 100.0).round() / 100.0,
+            "second_half_entries": second_half,
             "syncopated_notes": syncopated,
             "tonic_endings": tonic_endings,
             "per_line": rows,
-            "note": "Lines are cut at the lines of the song-wide lyric annotation and at rests of a beat. Letters: same onsets and pitches share one; same onsets under other pitches add a prime. bits_per_note is a short-term model that learns only from this song: an exact repeat falls towards zero.",
+            "note": "Lines are cut at the lines of the song-wide lyric annotation and at rests of a beat, and a line longer than four bars again at its longest rest. second_half_entries counts lines entering in the second half of a bar, as a pickup does. Letters: same onsets and pitches share one; same onsets under other pitches add a prime. bits_per_note is a short-term model that learns only from this song: an exact repeat falls towards zero.",
         }),
         warnings,
         development,
@@ -416,6 +476,7 @@ mod tests {
         for needle in [
             "same onsets and pitches",
             "same point of the bar",
+            "second half of a bar",
             "off the beat",
             "Every line has 12 notes",
             "100% of the melody's notes start 1.00 beats",
@@ -436,7 +497,7 @@ mod tests {
     fn varied_entries_rhythms_and_a_tonic_close_raise_nothing() {
         let (project, track) = song(8, |index| {
             // Each line enters somewhere else, holds a syncopated note and ends on C or E.
-            let entry = [0, 480, 1440, 960][index as usize % 4];
+            let entry = [0, 480, 2880, 960][index as usize % 4];
             let mut notes = vec![
                 Note::new(67, Ticks(entry), Ticks(480)),
                 Note::new(69, Ticks(entry + 480), Ticks(960)),
@@ -462,7 +523,7 @@ mod tests {
         let (project, track) = song(8, template);
         let rhythm = development_warnings(&project, track);
         let (_, warnings) = melody_form(&project, track);
-        assert_eq!(rhythm.len(), 4, "{rhythm:?}");
+        assert_eq!(rhythm.len(), 5, "{rhythm:?}");
         assert!(rhythm.iter().all(|w| warnings.contains(w)));
         // Pitch and form warnings stay out: the tonic ending, the repeated line.
         assert!(
@@ -470,6 +531,108 @@ mod tests {
                 .iter()
                 .all(|w| !w.contains("tonic") && !w.contains("pitches"))
         );
+    }
+
+    /// Eight bars sung in eighths with an eighth rest after every bar and a half: `phrases`
+    /// phrases of twelve notes, no rest of a beat anywhere.
+    fn breathed_in_eighths(phrases: i64) -> Vec<Note> {
+        (0..phrases)
+            .flat_map(|phrase| {
+                (0..12).map(move |i| {
+                    let at = phrase * 6240 + i * 480;
+                    Note::new(60 + (i as u8 % 5), Ticks(at), Ticks(480))
+                })
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_line_longer_than_four_bars_is_cut_at_its_longest_rest() {
+        // One clip of thirteen bars: eight phrases, each followed by an eighth rest.
+        let mut project = Project::new("Song", 48_000.0);
+        let track = project.add_singer_track("Lead", "auris.synth.vocal");
+        let clip = project
+            .add_midi_clip(track, "Verse", Ticks::ZERO, Ticks(BAR * 13))
+            .unwrap();
+        project.midi_clip_mut(clip).unwrap().notes = breathed_in_eighths(8);
+        let (report, _) = melody_form(&project, track);
+        // 13 bars halve to 6.5, then to 3.25: four lines of two phrases each.
+        assert_eq!(report["lines"], 4, "{report}");
+        let notes: Vec<u64> = report["per_line"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|line| line["notes"].as_u64().unwrap())
+            .collect();
+        assert_eq!(notes, [24, 24, 24, 24]);
+        // A line with no rest of half a beat stays whole, however long.
+        project.midi_clip_mut(clip).unwrap().notes = (0..100)
+            .map(|i| Note::new(60 + (i as u8 % 5), Ticks(i * 480), Ticks(480)))
+            .collect();
+        assert_eq!(melody_form(&project, track).0["lines"], 1);
+    }
+
+    #[test]
+    fn a_line_entering_before_its_section_is_that_sections_line() {
+        let mut project = Project::new("Song", 48_000.0);
+        let track = project.add_singer_track("Lead", "auris.synth.vocal");
+        project
+            .sections
+            .set_point(Ticks::ZERO, Some("Verse".into()));
+        project
+            .sections
+            .set_point(Ticks(BAR * 2), Some("Chorus".into()));
+        project.sections.set_point(Ticks(BAR * 4), None);
+        let clip = project
+            .add_midi_clip(track, "Song", Ticks::ZERO, Ticks(BAR * 4))
+            .unwrap();
+        // Four verse notes, a rest, then a chorus line whose first two notes are a pickup on
+        // beat 4 of the verse's last bar.
+        let verse = (0..4).map(|i| Note::new(60, Ticks(960 * i), Ticks(960)));
+        let chorus = (0..8).map(|i| Note::new(67, Ticks(BAR * 2 - 960 + 480 * i), Ticks(480)));
+        project.midi_clip_mut(clip).unwrap().notes = verse.chain(chorus).collect();
+        let (report, _) = melody_form(&project, track);
+        assert_eq!(report["per_line"][1]["section"], "Chorus", "{report}");
+        assert_eq!(report["per_line"][1]["entry_beat"], 4.0);
+        assert_eq!(report["second_half_entries"], 1);
+        assert_eq!(report["form"][1]["section"], "Chorus");
+    }
+
+    #[test]
+    fn entries_gathered_at_one_point_are_reported_short_of_all_of_them() {
+        // Ten lines: nine from the downbeat and one from beat 2.
+        let (project, track) = song(10, |index| {
+            let entry = if index == 4 { 960 } else { 0 };
+            (0..6)
+                .map(|i| Note::new(60 + i as u8, Ticks(entry + i * 480), Ticks(480)))
+                .collect()
+        });
+        let (report, _) = melody_form(&project, track);
+        assert_eq!(report["most_common_entry_share"], 0.9);
+        assert_eq!(report["second_half_entries"], 0);
+        let rhythm = development_warnings(&project, track).join(
+            "
+",
+        );
+        assert!(
+            rhythm.contains("9 of 10 lines enter at the same point of the bar (beat 1)"),
+            "{rhythm}"
+        );
+        assert!(rhythm.contains("None of 10 lines enters in the second half"));
+        // Two lines moved to beat 4, a pickup into the next bar, clear both.
+        let (project, track) = song(10, |index| {
+            let entry = if index % 5 == 4 { 2880 } else { 0 };
+            (0..6)
+                .map(|i| Note::new(60 + i as u8, Ticks(entry + i * 480), Ticks(480)))
+                .collect()
+        });
+        let rhythm = development_warnings(&project, track).join(
+            "
+",
+        );
+        assert!(!rhythm.contains("same point of the bar"), "{rhythm}");
+        assert!(!rhythm.contains("second half"), "{rhythm}");
+        assert_eq!(melody_form(&project, track).0["second_half_entries"], 2);
     }
 
     #[test]
@@ -484,7 +647,7 @@ mod tests {
         assert!(
             warnings
                 .iter()
-                .any(|w| w.contains("All 8 lines enter at the same point")),
+                .any(|w| w.contains("8 of 8 lines enter at the same point")),
             "{warnings:?}"
         );
     }

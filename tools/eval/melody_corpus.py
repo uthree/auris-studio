@@ -6,6 +6,7 @@
 
     uv run tools/eval/melody_corpus.py train corpus/ --out pjs-model.json
     uv run tools/eval/melody_corpus.py score MySong/MySong.auris --model pjs-model.json
+    uv run tools/eval/melody_corpus.py lines corpus/
 
 `train` reads melodies from the MusicXML and MIDI files in the folders given (MusicXML: one
 part, its first voice, ties merged, chords reduced to the top note; MIDI: the first non-drum
@@ -22,6 +23,15 @@ reported beside the corpus's cross-validated mean and spread. It is not a qualit
 never to be maximised (Cheung et al., 2019, found pleasure where surprise meets low uncertainty,
 not where surprise is highest); it says whether a melody is built from the corpus's commonplaces.
 
+`lines` cuts each MIDI file's sung part into lines by `melody_form.py`'s rule and reports how the
+corpus's songs spread their line entries over the bar: the share of a song's lines entering at
+its commonest point, and the share entering in the second half of a bar, as a pickup does. The
+thresholds of the two entry warnings are read off these distributions. It reports the share of
+a song's onset spacings taken by the commonest one as well, beside the share the note-value
+warning fires at. Only files whose first
+melodic track is named as a voice are counted unless --any-part is given, since the rests of a
+piano's right hand are not a singer's breaths.
+
 The model and its scores stay on the machine that made them. A corpus's licence travels with
 what is made from it, so a model trained on CC BY-SA scores is CC BY-SA too, and a model trained
 on scores whose rights are unclear is not published at all.
@@ -37,12 +47,42 @@ from collections import Counter
 from itertools import pairwise
 from pathlib import Path
 
-from melody_form import PARAMETERS, PPM, TICKS_PER_QUARTER, lines_of, pick_foreground
+from melody_form import (
+    PARAMETERS,
+    PPM,
+    TICKS_PER_QUARTER,
+    Meter,
+    cut_lines,
+    entry_spread,
+    lines_of,
+    pick_foreground,
+    top_line,
+)
 
 SCHEMA_VERSION = 1
 ALPHABET = 25 * 16
 FOLDS = 5
 STEPS = {"C": 0, "D": 2, "E": 4, "F": 5, "G": 7, "A": 9, "B": 11}
+VOICE_WORDS = (
+    "voice",
+    "vocal",
+    "sopran",
+    "alto",
+    "tenor",
+    "bariton",
+    "lead",
+    "solo",
+    "sing",
+    "melod",
+    "voix",
+    "chant",
+    "stimme",
+    "gesang",
+    "voz",
+    "voce",
+    "canto",
+)
+PERCENTILES = (5, 10, 25, 50, 75, 90, 95)
 
 
 def symbol(previous: tuple[float, int], note: tuple[float, int]) -> tuple[int, int]:
@@ -121,34 +161,45 @@ def _varlen(data: bytes, at: int) -> tuple[int, int]:
             return value, at
 
 
-def midi_melody(path: Path) -> list[tuple[float, int]]:
-    """The first non-drum track holding notes, as (onset in quarters, top pitch at each onset).
+def midi_tracks(
+    path: Path,
+) -> tuple[int, list[dict], list[tuple[int, int, int]]] | None:
+    """A MIDI file's division, tracks and time signatures as (tick, numerator, denominator).
 
-    A score exported from notation software puts its parts in score order, so the first part is
-    the melody of a lead sheet and the right hand's top line of a piano arrangement.
+    Each track is its name, the top pitch struck at each tick, and its notes as (on, off, pitch);
+    channel 10 is left out. A note never released has an onset and no note.
     """
     data = path.read_bytes()
     if data[:4] != b"MThd":
-        return []
+        return None
     division = int.from_bytes(data[12:14], "big")
     if division & 0x8000 or not division:
-        return []
+        return None
     at = 8 + int.from_bytes(data[4:8], "big")
+    tracks = []
+    signatures = []
     while at + 8 <= len(data):
         kind, length = data[at : at + 4], int.from_bytes(data[at + 4 : at + 8], "big")
         chunk, at = data[at + 8 : at + 8 + length], at + 8 + length
         if kind != b"MTrk":
             continue
+        name = ""
         onsets: dict[int, int] = {}
+        sounding: dict[int, int] = {}
+        notes: list[tuple[int, int, int]] = []
         tick, position, status = 0, 0, 0
         while position < len(chunk):
             delta, position = _varlen(chunk, position)
             tick += delta
             byte = chunk[position]
             if byte == 0xFF:
-                _, position = chunk[position + 1], position + 2
+                meta, position = chunk[position + 1], position + 2
                 size, position = _varlen(chunk, position)
-                position += size
+                body, position = chunk[position : position + size], position + size
+                if meta == 0x58 and size >= 2:
+                    signatures.append((tick, body[0], 2 ** body[1]))
+                elif meta == 0x03:
+                    name = body.decode("utf-8", "replace").strip("\x00 ")
                 continue
             if byte in (0xF0, 0xF7):
                 size, position = _varlen(chunk, position + 1)
@@ -159,11 +210,143 @@ def midi_melody(path: Path) -> list[tuple[float, int]]:
             kind_of, channel = status & 0xF0, status & 0x0F
             width = 1 if kind_of in (0xC0, 0xD0) else 2
             values, position = chunk[position : position + width], position + width
-            if kind_of == 0x90 and channel != 9 and len(values) == 2 and values[1] > 0:
+            if channel == 9 or len(values) != 2:
+                continue
+            if kind_of == 0x90 and values[1] > 0:
                 onsets[tick] = max(onsets.get(tick, 0), values[0])
-        if len(onsets) >= 2:
-            return [(t / division, p) for t, p in sorted(onsets.items())]
+                sounding.setdefault(values[0], tick)
+            elif kind_of in (0x80, 0x90) and values[0] in sounding:
+                notes.append((sounding.pop(values[0]), tick, values[0]))
+        tracks.append({"name": name, "onsets": onsets, "notes": notes})
+    return division, tracks, sorted(set(signatures))
+
+
+def midi_melody(path: Path) -> list[tuple[float, int]]:
+    """The first non-drum track holding notes, as (onset in quarters, top pitch at each onset).
+
+    A score exported from notation software puts its parts in score order, so the first part is
+    the melody of a lead sheet and the right hand's top line of a piano arrangement.
+    """
+    read = midi_tracks(path)
+    if read is None:
+        return []
+    division, tracks, _ = read
+    for track in tracks:
+        if len(track["onsets"]) >= 2:
+            return [(t / division, p) for t, p in sorted(track["onsets"].items())]
     return []
+
+
+def midi_part(path: Path) -> tuple[str, list[dict], list[dict]] | None:
+    """The track `midi_melody` reads, with lengths: its name, notes and signature points.
+
+    Notes and signature points are in a project's own shape and ticks, so `melody_form.py` cuts
+    them into lines exactly as it cuts a saved song.
+    """
+    read = midi_tracks(path)
+    if read is None:
+        return None
+    division, tracks, signatures = read
+
+    def ticks(value: int) -> int:
+        return round(value * TICKS_PER_QUARTER / division)
+
+    for track in tracks:
+        if len(track["onsets"]) < 2:
+            continue
+        notes = [
+            {"at": ticks(on), "length": ticks(off) - ticks(on), "pitch": pitch}
+            for on, off, pitch in track["notes"]
+        ]
+        points = [
+            {"tick": ticks(at), "signature": {"numerator": n, "denominator": d}}
+            for at, n, d in signatures
+        ]
+        if not points or points[0]["tick"] > 0:
+            points.insert(
+                0, {"tick": 0, "signature": {"numerator": 4, "denominator": 4}}
+            )
+        return track["name"], notes, points
+    return None
+
+
+def is_voice(name: str) -> bool:
+    """Whether a track's name says it is sung, in the languages the corpus's scores use."""
+    return any(word in name.lower() for word in VOICE_WORDS)
+
+
+def song_lines(notes: list[dict], points: list[dict]) -> dict | None:
+    """One corpus song's lines: how many, how long, and where they enter the bar."""
+    meter = Meter({"signatures": {"points": points}})
+    lines = cut_lines(top_line(notes), [], meter)
+    if not lines:
+        return None
+    spacings = Counter(b["at"] - a["at"] for line in lines for a, b in pairwise(line))
+    total = sum(spacings.values())
+    return {
+        "lines": len(lines),
+        "spacings": total,
+        "most_common_spacing_share": max(spacings.values()) / total if total else None,
+        "notes_per_line": [len(line) for line in lines],
+        "bars_per_line": [
+            (line[-1]["at"] + line[-1]["length"] - line[0]["at"])
+            / meter.bar_length(line[0]["at"])
+            for line in lines
+        ],
+        **entry_spread([line[0]["at"] for line in lines], meter),
+    }
+
+
+def percentiles(values: list[float]) -> dict[str, float]:
+    """The values at `PERCENTILES`, nearest rank."""
+    ordered = sorted(values)
+    return {
+        str(p): round(ordered[min(len(ordered) - 1, len(ordered) * p // 100)], 3)
+        for p in PERCENTILES
+    }
+
+
+def line_statistics(songs: list[dict]) -> dict:
+    """How a corpus's songs spread their line entries, from each song's `song_lines`.
+
+    Songs with fewer lines than the entry warnings need are left out, as the warnings leave
+    them out.
+    """
+    counted = [s for s in songs if s["lines"] >= PARAMETERS["uniform_min_lines"]]
+    if not counted:
+        return {"songs": 0}
+    shares = [song["most_common_entry_share"] for song in counted]
+    pickups = [song["second_half_entries"] / song["lines"] for song in counted]
+    threshold = PARAMETERS["uniform_entry_share"]
+    spacings = [
+        song["most_common_spacing_share"]
+        for song in counted
+        if song["spacings"] >= PARAMETERS["uniform_ioi_min_count"]
+    ]
+    return {
+        "songs": len(counted),
+        "lines_per_song": percentiles([song["lines"] for song in counted]),
+        "bars_per_line": percentiles([b for s in counted for b in s["bars_per_line"]]),
+        "notes_per_line": percentiles(
+            [n for s in counted for n in s["notes_per_line"]]
+        ),
+        "most_common_entry_share": percentiles(shares),
+        "songs_at_or_over_uniform_entry_share": round(
+            sum(share >= threshold for share in shares) / len(counted), 3
+        ),
+        "second_half_entry_share": percentiles(pickups),
+        "songs_without_a_second_half_entry": round(
+            sum(share == 0 for share in pickups) / len(counted), 3
+        ),
+        "most_common_spacing_share": percentiles(spacings) if spacings else None,
+        "songs_at_or_over_uniform_spacing_share": round(
+            sum(share >= PARAMETERS["uniform_ioi_share"] for share in spacings)
+            / len(spacings),
+            3,
+        )
+        if spacings
+        else None,
+    }
 
 
 def melody(path: Path) -> list[tuple[float, int]]:
@@ -313,6 +496,15 @@ def main() -> None:
     scorer.add_argument("songs", nargs="+", type=Path)
     scorer.add_argument("--model", type=Path, required=True)
     scorer.add_argument("--track", default=None)
+    liner = commands.add_parser(
+        "lines", help="measure where a corpus's sung lines enter the bar"
+    )
+    liner.add_argument("folders", nargs="+", type=Path)
+    liner.add_argument(
+        "--any-part",
+        action="store_true",
+        help="count files whose first melodic track is not named as a voice too",
+    )
     arguments = parser.parse_args()
     if arguments.command == "train":
         files = corpus_files(arguments.folders)
@@ -328,6 +520,35 @@ def main() -> None:
         }
         save(train(sequences, order), arguments.out, corpus)
         print(json.dumps(corpus, ensure_ascii=False))
+    elif arguments.command == "lines":
+        songs = []
+        for path in corpus_files(arguments.folders):
+            if path.suffix.lower() not in (".mid", ".midi"):
+                continue
+            part = midi_part(path)
+            if part is None or not (arguments.any_part or is_voice(part[0])):
+                continue
+            if (song := song_lines(part[1], part[2])) is not None:
+                songs.append(song)
+        parameters = {
+            key: PARAMETERS[key]
+            for key in (
+                "line_gap_ticks",
+                "long_line_bars",
+                "split_rest_ticks",
+                "uniform_min_lines",
+                "uniform_entry_share",
+                "uniform_ioi_share",
+                "uniform_ioi_min_count",
+            )
+        }
+        print(
+            json.dumps(
+                {"parameters": parameters, **line_statistics(songs)},
+                ensure_ascii=False,
+                indent=1,
+            )
+        )
     else:
         model, corpus = load(arguments.model)
         for path in arguments.songs:

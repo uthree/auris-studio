@@ -201,6 +201,68 @@ def test_lines_are_cut_at_rests_and_at_lyric_annotation_lines() -> None:
     assert len(measure(two)["lines"]) == 2
 
 
+def test_a_line_longer_than_four_bars_is_cut_at_its_longest_rest() -> None:
+    # Eight phrases of twelve eighths, an eighth rest after each: no rest of a beat anywhere.
+    eighths = [
+        note(phrase * 6240 + i * 480, length=480, pitch=60 + i % 5)
+        for phrase in range(8)
+        for i in range(12)
+    ]
+    clip = {"id": 1, "start": 0, "length": 13 * BAR, "notes": eighths, "muted": False}
+    track = {
+        "id": 1,
+        "name": "Vocal",
+        "mixer": {"mute": False},
+        "kind": {"type": "singer", "clips": [clip]},
+    }
+    report = measure(song([track]))
+    # Thirteen bars halve to 6.5 and again to 3.25: four lines of two phrases each.
+    assert [line["notes"] for line in report["lines"]] == [24, 24, 24, 24]
+    # With no rest of half a beat a line stays whole, however long.
+    clip["notes"] = [note(i * 480, length=480, pitch=60 + i % 5) for i in range(100)]
+    assert len(measure(song([track]))["lines"]) == 1
+
+
+def test_a_line_entering_before_its_section_is_that_sections_line() -> None:
+    verse = [note(i * BEAT, length=BEAT) for i in range(4)]
+    # Two pickup eighths on beat 4 of the verse's last bar, then six in the chorus.
+    chorus = [note(2 * BAR - BEAT + i * 480, length=480, pitch=67) for i in range(8)]
+    report = measure(
+        song(
+            [singer([(0, verse + chorus)])],
+            sections=((0, "Verse"), (2 * BAR, "Chorus"), (4 * BAR, None)),
+        )
+    )
+    assert [line["section"] for line in report["lines"]] == ["Verse", "Chorus"]
+    assert report["lines"][1]["entry"] == "pickup"
+    assert report["summary"]["second_half_entries"] == 1
+
+
+def test_entries_gathered_at_one_point_are_flagged_short_of_all_of_them() -> None:
+    def lines(entry_of) -> dict:
+        return singer(
+            [
+                (
+                    index * 4 * BAR,
+                    [
+                        note(entry_of(index) + i * 480, length=480, pitch=60 + i)
+                        for i in range(6)
+                    ],
+                )
+                for index in range(10)
+            ]
+        )
+
+    gathered = measure(song([lines(lambda index: BEAT if index == 4 else 0)]))
+    assert gathered["summary"]["most_common_entry_share"] == 0.9
+    assert gathered["summary"]["second_half_entries"] == 0
+    assert {"same_entry", "no_second_half_entry"} <= flag_codes(gathered)
+    # Two lines entering on beat 4, a pickup into the next bar, clear both flags.
+    spread = measure(song([lines(lambda index: 3 * BEAT if index % 5 == 4 else 0)]))
+    assert spread["summary"]["second_half_entries"] == 2
+    assert not {"same_entry", "no_second_half_entry"} & flag_codes(spread)
+
+
 def test_contours_follow_first_middle_and_last_pitch() -> None:
     assert contour_type([60, 62, 64]) == "ascending"
     assert contour_type([60, 67, 62]) == "convex"

@@ -154,7 +154,10 @@ uv run tools/eval/melody_form.py runs/ --track Vocal
 ```
 
 Cuts the foreground (the first singer track, or `--track`) into lines at the lines of the song-wide
-lyric annotation, at clip boundaries and at rests of a beat or more. Each line gets a letter
+lyric annotation, at clip boundaries and at rests of a beat or more. A line still longer than
+four bars is cut again at its longest rest of half a beat or more, so a verse breathed in eighth
+rests under one annotation is not counted as one line. A line belongs to the section most of its
+notes start in, which keeps a line entering with a pickup in its own section. Each line gets a letter
 in its section's form (the same onsets and pitches share a letter; the same onsets under other
 pitches add a prime), the beat it enters on and whether that is a pickup, its syncopated and
 anticipated notes, the spacing of its onsets, the scale degree and chord it ends on, Huron's
@@ -163,8 +166,8 @@ inter-onset interval) symbols that learns only from the song so far, so an exact
 towards zero bits a note. Sections add their chord loop and main drum bar, and strummed tracks
 report the spread their strum stage gives each chord.
 
-Flags mark extremes only: every line of a section identical, every line entering on one beat,
-no syncopated note at all, every line one note count, one onset spacing for most notes, no line
+Flags mark extremes only: every line of a section identical, nine lines in ten entering on one
+beat, no line entering in the second half of a bar, no syncopated note at all, every line one note count, one onset spacing for most notes, no line
 ending on the tonic, several lines in a row predictable from the song so far, three sections
 sharing one drum bar, a chorus looping the verse's progression from another chord, and a guitar
 strummed over less than 10 ms (below every shipped preset) or not at all. The song whose
@@ -177,6 +180,7 @@ not a judgement, and the model knows nothing about a genre's conventions.
 ```
 uv run tools/eval/melody_corpus.py train corpus/ --out model.json --name "corpus name"
 uv run tools/eval/melody_corpus.py score MySong/MySong.auris --model model.json
+uv run tools/eval/melody_corpus.py lines corpus/
 ```
 
 The long-term half of the same IDyOM-style model. `train` counts a PPM model over the same
@@ -193,6 +197,22 @@ public domain; 189,217 notes; cross-validated 5.57 ± 1.65 bits a note) are the 
 fourteen trial songs fell between -0.6 and +1.3 sd of it. The PDMX melody is the first non-drum
 track's top line, which is a piano's right hand where a score has no lead part. Both models are
 kept on the machine that trained them; a model inherits its corpus's licence.
+
+`lines` cuts each MIDI file's sung part into lines by `melody_form.py`'s rule and reports where
+a corpus's lines enter the bar; the two entry warnings take their thresholds from it. It counts
+the files whose first melodic track is named as a voice (`--any-part` counts the rest too) and
+that hold eight lines or more, which is what the warnings need. In the 282 such PDMX songs:
+
+| Per song | Median | 90th percentile | 95th percentile | Songs at the warning |
+| --- | --- | --- | --- | --- |
+| Share of lines at the commonest entry point | 45% | 75% | 87% | 3.2% reach 90% |
+| Share of lines entering in the second half of a bar | 44% | 82% | 91% | 4.6% have none |
+| Share of onset spacings taken by the commonest one | 52% | 75% | 82% | 13% reach 70% |
+
+Each entry warning therefore fires on about one corpus song in twenty-five. The note-value
+warning's 70% is older than this measurement and is not at an extreme in the same way: one
+corpus song in eight reaches it. With `--any-part`, 518 songs give 3.9% and 5.8% for the two
+entry rows.
 
 `tools/eval/fixtures/vocal-phrases.asong` supplies a fixed lyric probe with shared verses and
 unvoiced closures. Use the same dictionary and sound assets for both renders. An instrument
