@@ -43,6 +43,7 @@
 
 use std::f32::consts::TAU;
 
+use auris_core::motion::{MOTION_MODES, MOTION_POINTS, MotionFrame, MotionGeometry};
 use auris_core::param::db_to_gain;
 use auris_core::{
     AudioBuffer, DrumMap, DrumRole, Instrument, NoteEvent, ParamDescriptor, ParamId, ParamUnit,
@@ -52,6 +53,7 @@ use auris_core::{
 use auris_dsp::adsr::{SEGMENT_TIME_CONSTANTS, SILENCE_LEVEL};
 use auris_dsp::{Biquad, BiquadCoefficients};
 
+use crate::observe::{Observer, harmonics, recent_voices};
 use crate::params::{ParamBank, finite_or};
 use crate::render::{SegmentRenderer, render_segments, spread_to_all_channels};
 use crate::voice::{VoiceAllocator, VoiceState};
@@ -102,6 +104,12 @@ const ATTACK_SECONDS: f32 = 0.0003;
 
 /// Highest filter frequency as a fraction of the sample rate.
 const MAX_FILTER_FRACTION: f32 = 0.45;
+
+/// How much of a noisy pad's output its scope holds: a few milliseconds of hiss or ring.
+const SCOPE_SECONDS: f32 = 0.004;
+
+/// Periods of a tuned pad's body its scope holds, so a kick reads as a sine and not a smear.
+const SCOPE_PERIODS: f32 = 2.0;
 
 /// One of the electronic kits, each its own instrument.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -368,6 +376,11 @@ struct Hit {
     choke: f32,
     choke_coef: f32,
     rng: u32,
+    /// The hit's own output, decimated into a ring the display draws, oldest first from `scope_at`.
+    scope: [f32; MOTION_POINTS],
+    scope_at: usize,
+    scope_stride: u32,
+    scope_wait: u32,
 }
 
 impl Hit {
@@ -400,6 +413,37 @@ impl Hit {
             choke: 1.0,
             choke_coef: 1.0,
             rng: 1,
+            scope: [0.0; MOTION_POINTS],
+            scope_at: 0,
+            scope_stride: 1,
+            scope_wait: 0,
+        }
+    }
+
+    /// Keeps every `scope_stride`-th sample of the hit's output for the display.
+    #[inline]
+    fn record(&mut self, sample: f32) {
+        if self.scope_wait == 0 {
+            self.scope[self.scope_at] = sample;
+            self.scope_at = (self.scope_at + 1) % MOTION_POINTS;
+            self.scope_wait = self.scope_stride;
+        }
+        self.scope_wait -= 1;
+    }
+
+    /// The scope's ring unrolled, oldest sample first.
+    fn scope_points(&self, out: &mut [f32; MOTION_POINTS]) {
+        for (index, point) in out.iter_mut().enumerate() {
+            *point = self.scope[(self.scope_at + index) % MOTION_POINTS];
+        }
+    }
+
+    /// The body's pitch right now, in hertz, or zero for a pad with no tuned body.
+    fn body_hz(&self) -> f32 {
+        if self.body.amp.audible() {
+            self.body.end + self.body.extra
+        } else {
+            0.0
         }
     }
 
@@ -629,6 +673,17 @@ impl Hit {
         }
         let gain = 1.0 + self.drive * 9.0;
         self.drive_norm = 1.0 / gain.tanh();
+        // A tuned pad shows a couple of periods of its body; the rest a few milliseconds.
+        let tuned = matches!(pad, Pad::Kick | Pad::Boom | Pad::Tom | Pad::Snare);
+        let window = if tuned && self.body.end > 0.0 {
+            SCOPE_PERIODS / self.body.end
+        } else {
+            SCOPE_SECONDS
+        };
+        self.scope_stride = ((window * rate / MOTION_POINTS as f32).round() as u32).max(1);
+        self.scope = [0.0; MOTION_POINTS];
+        self.scope_at = 0;
+        self.scope_wait = 0;
     }
 
     #[inline]
@@ -716,6 +771,7 @@ pub struct ElectroKit {
     settings: Settings,
     output_gain: f32,
     channel_volume: f32,
+    observer: Observer,
 }
 
 impl ElectroKit {
@@ -745,6 +801,7 @@ impl ElectroKit {
             },
             output_gain: 1.0,
             channel_volume: 1.0,
+            observer: Observer::default(),
         };
         kit.refresh();
         kit
@@ -802,6 +859,48 @@ impl ElectroKit {
         if let Some(hit) = self.hits.get_mut(assignment.index) {
             hit.strike(pad, key, velocity, &settings, rate);
         }
+    }
+
+    /// The newest hits, each as the last moments of what it sounds.
+    fn publish_motion(&mut self) {
+        let mut frame = MotionFrame {
+            geometry: MotionGeometry::Oscillator,
+            active: self.allocator.active_count(),
+            expression: self.channel_volume,
+            ..MotionFrame::default()
+        };
+        let hits = &self.hits;
+        let selected = recent_voices(&self.allocator, |index| {
+            hits.get(index).is_some_and(Hit::is_active)
+        });
+        let gain = self.output_gain * self.channel_volume;
+        for (observed, index) in frame.voices.iter_mut().zip(selected) {
+            let Some(index) = index else {
+                break;
+            };
+            let hit = &self.hits[index];
+            let mut points = [0.0; MOTION_POINTS];
+            hit.scope_points(&mut points);
+            for point in &mut points {
+                *point *= gain;
+            }
+            let mut modes = [0.0; MOTION_MODES];
+            harmonics(&points, &mut modes);
+            observed.points = points;
+            observed.modes = modes;
+            observed.pitch = self
+                .allocator
+                .slot(index)
+                .map_or(0.0, |slot| f32::from(slot.pitch));
+            observed.level = hit.level();
+            observed.contact = 0.0;
+            observed.excitation = hit.body_hz();
+            observed.held = self
+                .allocator
+                .slot(index)
+                .is_some_and(|slot| slot.state == VoiceState::Held);
+        }
+        self.observer.publish(&frame);
     }
 }
 
@@ -903,7 +1002,9 @@ impl SegmentRenderer for ElectroKit {
             }
             let gain = hit.velocity * (0.35 + 0.65 * hit.velocity);
             for sample in dst.iter_mut() {
-                *sample += hit.next(inv_rate) * gain;
+                let value = hit.next(inv_rate) * gain;
+                hit.record(value);
+                *sample += value;
             }
             if !hit.first.coefficients().is_finite() || !(hit.body.phase.is_finite()) {
                 hit.silence();
@@ -946,12 +1047,20 @@ impl Instrument for ElectroKit {
         }
         self.allocator.clear();
         self.channel_volume = 1.0;
+        self.observer.reset(MotionGeometry::Oscillator);
     }
 
     fn process(&mut self, events: &[NoteEvent], out: &mut AudioBuffer, ctx: &ProcessContext) {
         let frames = ctx.block_frames.min(out.frame_count());
         render_segments(self, events, out, frames);
         spread_to_all_channels(out, frames);
+        if self.observer.due(frames, self.sample_rate) {
+            self.publish_motion();
+        }
+    }
+
+    fn motion_monitor(&self) -> Option<std::sync::Arc<auris_core::motion::MotionMonitor>> {
+        Some(self.observer.monitor())
     }
 
     fn active_voices(&self) -> usize {
@@ -1175,6 +1284,50 @@ mod tests {
         };
         assert!(at(1.0) > at(0.5) * 2.0);
         assert!(at(0.2) > 0.0);
+    }
+
+    #[test]
+    fn the_display_shows_each_hit_as_it_sounds() {
+        let mut rig = rig(ElectroStyle::Edm);
+        let monitor = rig.instrument.motion_monitor().unwrap();
+        monitor.watch(true);
+        rig.render(ms(200), &[hit(0, 36), hit(ms(150) as u32, 42)]);
+        let frame = monitor.read().unwrap();
+        assert_eq!(frame.geometry, MotionGeometry::Oscillator);
+        assert_eq!(frame.active, 2);
+        // Newest first: the hat, then the kick.
+        let (hat, kick) = (frame.voices[0], frame.voices[1]);
+        assert_eq!((hat.pitch, kick.pitch), (42.0, 36.0));
+        // The kick's punch is over and its body rings at its tune; a hat has no tuned body.
+        let tune = rig.instrument.param_by_key("kick_tune").unwrap();
+        assert!((kick.excitation - tune).abs() < 1.0, "{}", kick.excitation);
+        assert_eq!(hat.excitation, 0.0);
+        for voice in [hat, kick] {
+            assert!(voice.points.iter().any(|point| point.abs() > 1e-3));
+            assert!(voice.points.iter().all(|point| point.is_finite()));
+            assert!(voice.level > 0.0);
+        }
+        // Two periods of the kick: its scope rises through two cycles' worth of zero crossings.
+        let crossings = kick
+            .points
+            .windows(2)
+            .filter(|pair| pair[0] < 0.0 && pair[1] >= 0.0)
+            .count();
+        assert!((1..=3).contains(&crossings), "{crossings}");
+        rig.instrument.reset();
+        assert_eq!(monitor.read().unwrap().active, 0);
+    }
+
+    #[test]
+    fn watching_never_changes_the_sound() {
+        let mut watched = rig(ElectroStyle::Trap);
+        let mut plain = rig(ElectroStyle::Trap);
+        watched.instrument.motion_monitor().unwrap().watch(true);
+        let events = [hit(0, 36), hit(ms(50) as u32, 39), hit(ms(80) as u32, 46)];
+        assert_eq!(
+            watched.render(ms(400), &events),
+            plain.render(ms(400), &events)
+        );
     }
 
     #[test]

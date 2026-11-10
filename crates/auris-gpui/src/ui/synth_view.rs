@@ -8,7 +8,9 @@
 //! and the sidebands their depth throws out; for the chiptune voice, the one cycle its waveform,
 //! duty cycle and bit depth make, and that cycle's harmonics; for the subtractive patches, the
 //! unison stack spread across its detune and the filter's response with the note's harmonics
-//! under it.
+//! under it; for the kick basses, one note's punch falling onto its pitch and the curve its drive
+//! bends every sample through; and for the electronic kits, the kick pad as it is struck and the
+//! hats' metal oscillators under the filter that makes them hiss.
 //!
 //! The pictures of the patch are computed here from its parameters rather than read from the
 //! instrument, because they have to be there before a note is played — they are what a person
@@ -45,8 +47,184 @@ pub(crate) fn is_analog(id: &str) -> bool {
     ANALOG.contains(&id)
 }
 
+/// The kick basses: one pitched kick formula, played from the keyboard.
+pub(crate) const BOOM: [&str; 3] = [
+    "auris.synth.boom_bass",
+    "auris.synth.kick_bass",
+    "auris.synth.sub_bass",
+];
+
+/// Whether `id` is one of the kick basses.
+pub(crate) fn is_boom(id: &str) -> bool {
+    BOOM.contains(&id)
+}
+
+/// The electronic drum machines, every pad a formula.
+pub(crate) const ELECTRO: [&str; 3] = [
+    "auris.synth.electro_kit",
+    "auris.synth.edm_kit",
+    "auris.synth.trap_kit",
+];
+
+/// Whether `id` is one of the electronic drum machines.
+pub(crate) fn is_electro_kit(id: &str) -> bool {
+    ELECTRO.contains(&id)
+}
+
+/// Octaves a kick's punch starts above its pitch at a punch of one, as both instruments have it.
+const PUNCH_OCTAVES: f32 = 4.0;
+
+/// The velocity a picture of one note is drawn at: the audition's own.
+const PICTURE_VELOCITY: f32 = 0.75;
+
+/// How much of a kick bass's note its punch picture spans, in seconds.
+const PUNCH_WINDOW: f32 = 0.25;
+
+/// How much of a kit's kick its picture spans, in seconds.
+const KICK_WINDOW: f32 = 0.3;
+
+/// Points a sweep picture is drawn with: enough for the punch's fastest cycles.
+const SWEEP_POINTS: usize = 900;
+
+/// Time constants an exponential segment runs for, as `auris_dsp`'s envelope counts them.
+const SEGMENT_TIME_CONSTANTS: f32 = 9.4907;
+
+/// The kit's six hat oscillators, in hertz, before the hat tone scales them.
+const METAL_HZ: [f32; 6] = [205.3, 304.4, 369.6, 522.7, 540.0, 800.0];
+
+/// Highest frequency the hats' picture reaches, in kilohertz.
+const METAL_CEILING_KHZ: f32 = 18.0;
+
+/// The soft clipper both instruments put a kick through: `tanh(g·x) / tanh(g)`, `g = 1 + 9·drive`.
+pub(crate) fn soft_clip(x: f32, drive: f32) -> f32 {
+    if drive <= 0.0 {
+        return x;
+    }
+    let gain = 1.0 + drive.clamp(0.0, 1.0) * 9.0;
+    (x * gain).tanh() / gain.tanh()
+}
+
+/// A sine whose pitch follows `hz` over the first `seconds`, under the level `amp`, through the
+/// soft clipper: the shape of a struck kick, as `(milliseconds, sample)` points.
+pub(crate) fn sweep_wave(
+    seconds: f32,
+    drive: f32,
+    hz: impl Fn(f32) -> f32,
+    amp: impl Fn(f32) -> f32,
+) -> Vec<(f32, f32)> {
+    const SUBSTEPS: usize = 8;
+    let step = seconds / (SWEEP_POINTS * SUBSTEPS) as f32;
+    let mut phase = 0.0_f32;
+    let mut points = Vec::with_capacity(SWEEP_POINTS + 1);
+    for point in 0..=SWEEP_POINTS {
+        let t = point as f32 * seconds / SWEEP_POINTS as f32;
+        let sample = soft_clip((std::f32::consts::TAU * phase).sin(), drive) * amp(t);
+        points.push((t * 1_000.0, sample));
+        for sub in 0..SUBSTEPS {
+            phase += hz(t + sub as f32 * step) * step;
+        }
+        phase -= phase.floor();
+    }
+    points
+}
+
+/// A kick bass's note: its pitch `2^(sweep · e^(−t/τ))` above `note` hertz.
+pub(crate) fn boom_hz(note: f32, punch: f32, punch_time: f32) -> impl Fn(f32) -> f32 {
+    let sweep = punch * PUNCH_OCTAVES * (0.8 + 0.2 * PICTURE_VELOCITY);
+    let tau = punch_time.max(0.0005);
+    move |t| note * (sweep * (-t / tau).exp()).exp2()
+}
+
+/// A kit's kick: `tune + (start − tune) · e^(−t/τ)`, the punch falling linearly in hertz.
+pub(crate) fn kick_hz(tune: f32, punch: f32) -> impl Fn(f32) -> f32 {
+    let start = tune * (punch * PUNCH_OCTAVES * (0.8 + 0.2 * PICTURE_VELOCITY)).exp2();
+    let tau = 0.006 + 0.03 * (1.0 - punch);
+    move |t| tune + (start - tune) * (-t / tau).exp()
+}
+
+/// An exponential fall from one to silence over `seconds`, as the kit's decays are.
+fn falling(seconds: f32) -> impl Fn(f32) -> f32 {
+    let seconds = seconds.max(1.0e-3);
+    move |t| (-t * SEGMENT_TIME_CONSTANTS / seconds).exp()
+}
+
+/// An attack, then a fall onto `sustain` over `decay`: the kick bass's envelope while held.
+fn held_envelope(attack: f32, decay: f32, sustain: f32) -> impl Fn(f32) -> f32 {
+    let (attack, decay) = (attack.max(1.0e-4), decay.max(1.0e-3));
+    move |t| {
+        if t < attack {
+            t / attack
+        } else {
+            sustain + (1.0 - sustain) * (-(t - attack) * SEGMENT_TIME_CONSTANTS / decay).exp()
+        }
+    }
+}
+
+/// One steady cycle of a kick bass at `tone_ratio` times its note: the sine through the drive,
+/// then the one-pole tone filter, as the instrument publishes a sounding note.
+pub(crate) fn boom_cycle(drive: f32, tone_ratio: f32) -> Vec<f32> {
+    let coef = 1.0 - (-std::f32::consts::TAU * tone_ratio.max(0.0) / CYCLE_POINTS as f32).exp();
+    let mut state = 0.0_f32;
+    let mut cycle = vec![0.0; CYCLE_POINTS];
+    // Three cycles first, so the filter has settled.
+    for pass in 0..4 {
+        for (index, out) in cycle.iter_mut().enumerate() {
+            let x = (std::f32::consts::TAU * index as f32 / CYCLE_POINTS as f32).sin();
+            state += (soft_clip(x, drive) - state) * coef;
+            if pass == 3 {
+                *out = state;
+            }
+        }
+    }
+    cycle
+}
+
+/// The gain of a second-order high-pass at `fc` and quality `q`, at `f`.
+fn highpass_gain(f: f32, fc: f32, q: f32) -> f32 {
+    let r = f / fc.max(1.0);
+    r * r / ((1.0 - r * r).powi(2) + (r / q).powi(2)).sqrt()
+}
+
+/// The gain of a second-order band-pass at `fc` and quality `q`, at `f`: one at its centre.
+fn bandpass_gain(f: f32, fc: f32, q: f32) -> f32 {
+    let r = f / fc.max(1.0);
+    (r / q) / ((1.0 - r * r).powi(2) + (r / q).powi(2)).sqrt()
+}
+
+/// The hats' filter at `hz`: a high-pass into a band-pass, both moved up by the hat tone.
+pub(crate) fn hat_filter(hz: f32, hat_tone: f32) -> f32 {
+    let bright = 0.75 + 0.6 * hat_tone;
+    highpass_gain(hz, 6_500.0 * bright, 0.7) * bandpass_gain(hz, 9_500.0 * bright, 0.9)
+}
+
+/// The odd harmonics of the six hat squares that reach the picture, as `(kHz, level)` stems
+/// after the filter, the loudest at `metal`.
+pub(crate) fn metal_stems(hat_tone: f32, metal: f32) -> Vec<(f32, f32)> {
+    let ceiling = METAL_CEILING_KHZ * 1_000.0;
+    let mut stems = Vec::new();
+    for base in METAL_HZ {
+        let fundamental = base * (0.85 + 0.3 * hat_tone);
+        let mut harmonic = 1.0;
+        while fundamental * harmonic <= ceiling {
+            let hz = fundamental * harmonic;
+            stems.push((hz / 1_000.0, hat_filter(hz, hat_tone) / harmonic));
+            harmonic += 2.0;
+        }
+    }
+    let loudest = stems.iter().fold(0.0_f32, |a, (_, level)| a.max(*level));
+    if loudest > 0.0 {
+        for (_, level) in &mut stems {
+            *level *= metal / loudest;
+        }
+    }
+    stems
+}
+
 /// Highest multiple of the note the sideband and harmonic plots reach.
 const HIGHEST_HARMONIC: usize = 16;
+
+/// Harmonics a kick bass's picture shows: as many as its instrument publishes.
+const MOTION_MODES_SHOWN: usize = auris_session::MOTION_MODES;
 
 /// Top of the filter plot: unity gain sits halfway, so a resonant peak has room above it.
 const FILTER_CEILING: f32 = 2.0;
@@ -56,7 +234,7 @@ const CYCLE_POINTS: usize = auris_session::MOTION_POINTS;
 
 /// Whether `id` is drawn as oscillators rather than as a body.
 pub(crate) fn is_oscillator_model(id: &str) -> bool {
-    matches!(id, FM2 | CHIPTUNE) || is_analog(id)
+    matches!(id, FM2 | CHIPTUNE) || is_analog(id) || is_boom(id) || is_electro_kit(id)
 }
 
 /// The equal-tempered frequency of a MIDI pitch, A4 at 440 Hz.
@@ -335,6 +513,20 @@ impl AurisApp {
                 let ratio = param("ratio", 2.0);
                 fm_cycle(ratio, param("index", 5.0))
             }
+            id if is_boom(id) => {
+                let tone = param("tone", 3_000.0);
+                boom_cycle(param("drive", 0.0), tone / note_hz(pitch))
+            }
+            id if is_electro_kit(id) => {
+                // Two periods of the kick's ring, as a struck pad's scope holds them.
+                let drive = param("kick_drive", 0.2);
+                (0..CYCLE_POINTS)
+                    .map(|index| {
+                        let x = std::f32::consts::TAU * 2.0 * index as f32 / CYCLE_POINTS as f32;
+                        soft_clip(x.sin(), drive)
+                    })
+                    .collect()
+            }
             id if is_analog(id) => {
                 let cutoff = param("cutoff", 8_000.0)
                     * (param("key_track", 0.0) * (pitch - KEY_TRACK_CENTRE) / 12.0).exp2();
@@ -367,6 +559,10 @@ impl AurisApp {
             self.fm_operators(track, frame, theme, cx)
         } else if is_analog(id) {
             self.analog_patch(track, frame, theme, cx)
+        } else if is_boom(id) {
+            self.boom_patch(track, frame, theme, cx)
+        } else if is_electro_kit(id) {
+            self.electro_kit(track, frame, theme, cx)
         } else {
             self.chip_shape(track, theme, cx)
         };
@@ -681,6 +877,294 @@ impl AurisApp {
             .into_any_element()
     }
 
+    /// A kick bass: one note's punch, the drive curve every sample goes through, and the
+    /// harmonics the two leave on the note.
+    fn boom_patch(
+        &mut self,
+        track: TrackId,
+        frame: &MotionFrame,
+        theme: &Theme,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let tokens = &theme.atelier;
+        let spacing = tokens.spacing;
+        let resting_pitch = f32::from(self.physical_view.pitch);
+        let mut param =
+            |key: &str, default: f32| self.instrument_param(track, key).unwrap_or(default);
+        let punch = param("punch", 0.3);
+        let punch_time = param("punch_time", 0.025);
+        let drive = param("drive", 0.4);
+        let tone = param("tone", 3_200.0);
+        let attack = param("attack", 0.001);
+        let decay = param("decay", 1.0);
+        let sustain = param("sustain", 0.3);
+        let live = loudest_voice(frame);
+        let pitch = live.map_or(resting_pitch, |voice| voice.pitch);
+        let note = note_hz(pitch).max(1.0);
+        let color = tokens.colors.series[0];
+        let lit = live.map_or(color, |voice| voice_color(theme, voice.pitch));
+
+        let envelope = held_envelope(attack, decay, sustain);
+        let wave = sweep_wave(
+            PUNCH_WINDOW,
+            drive,
+            boom_hz(note, punch, punch_time),
+            &envelope,
+        );
+        let window_ms = PUNCH_WINDOW * 1_000.0;
+        let outline: Vec<(f32, f32)> = (0..=100)
+            .map(|step| {
+                let t = PUNCH_WINDOW * step as f32 / 100.0;
+                (t * 1_000.0, envelope(t))
+            })
+            .collect();
+        let punch_well = self.synth_plot_well(
+            "synth-punch",
+            track,
+            SynthPlot::Punch,
+            PlotScale {
+                across: 0.1,
+                reach: window_ms,
+            },
+            LinePlot::new()
+                .x_range(0., window_ms)
+                .y_range(-1., 1.)
+                .series(
+                    Series::line(outline)
+                        .color(tokens.colors.text_faint)
+                        .faint(),
+                )
+                .series(Series::line(wave).color(lit)),
+            cx,
+        );
+        let curve: Vec<(f32, f32)> = (0..=100)
+            .map(|step| {
+                let x = step as f32 / 50.0 - 1.0;
+                (x, soft_clip(x, drive))
+            })
+            .collect();
+        let drive_well = self.synth_plot_well(
+            "synth-drive",
+            track,
+            SynthPlot::Drive,
+            PlotScale {
+                across: 1.0,
+                reach: 1.0,
+            },
+            LinePlot::new()
+                .x_range(-1., 1.)
+                .y_range(-1., 1.)
+                .series(
+                    Series::line(vec![(-1., -1.), (1., 1.)])
+                        .color(tokens.colors.text_faint)
+                        .faint(),
+                )
+                .series(Series::line(curve).color(color)),
+            cx,
+        );
+        let harmonics: Vec<f32> = match live {
+            Some(voice) if voice.modes.iter().any(|mode| *mode > 0.0) => voice.modes.to_vec(),
+            _ => cycle_harmonics(&boom_cycle(drive, tone / note), MOTION_MODES_SHOWN),
+        };
+        let harmonics_well = div()
+            .id("synth-harmonics")
+            .debug_selector(|| "synth-harmonics".into())
+            .h(gpui::rems(8.))
+            .rounded(tokens.shape.radius_sm)
+            .bg(tokens.colors.sunken)
+            .overflow_hidden()
+            .p(spacing.xs)
+            .child(
+                LinePlot::new()
+                    .x_range(0., MOTION_MODES_SHOWN as f32 + 1.0)
+                    .y_range(0., 1.)
+                    .series(
+                        Series::stems(
+                            harmonics
+                                .iter()
+                                .enumerate()
+                                .map(|(n, value)| (n as f32 + 1., *value))
+                                .collect(),
+                        )
+                        .color(lit),
+                    ),
+            );
+        let now = live.map_or(note, |voice| voice.excitation);
+        div()
+            .flex()
+            .flex_col()
+            .gap(spacing.md)
+            .child(
+                div()
+                    .w_full()
+                    .flex()
+                    .flex_wrap()
+                    .gap(spacing.lg)
+                    .child(plot_column(
+                        theme,
+                        SectionHeader::new(self.t(Key::SynthPunch))
+                            .description(self.t(Key::SynthPunchHint)),
+                        punch_well,
+                        Some(self.t(Key::SynthPunchEdit)),
+                    ))
+                    .child(plot_column(
+                        theme,
+                        SectionHeader::new(self.t(Key::SynthDrive))
+                            .description(self.t(Key::SynthDriveHint)),
+                        drive_well,
+                        Some(self.t(Key::SynthDriveEdit)),
+                    )),
+            )
+            .child(
+                div().w_full().flex().child(plot_column(
+                    theme,
+                    SectionHeader::new(self.t(Key::SynthHarmonics))
+                        .description(self.t(Key::SynthHarmonicsHint)),
+                    harmonics_well,
+                    None,
+                )),
+            )
+            .child(
+                Label::new(format!(
+                    "{} {:.0}% · {:.0} ms · {} {:.0}% · {} {now:.0} Hz",
+                    self.t(Key::SynthPunchAmount),
+                    punch * 100.0,
+                    punch_time * 1_000.0,
+                    self.t(Key::SynthDrive),
+                    drive * 100.0,
+                    self.t(Key::SynthNow),
+                ))
+                .size(TextSize::XSmall)
+                .color(TextColor::Faint),
+            )
+            .into_any_element()
+    }
+
+    /// An electronic kit: its kick as struck, and its hats' metal under their filter.
+    fn electro_kit(
+        &mut self,
+        track: TrackId,
+        frame: &MotionFrame,
+        theme: &Theme,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let tokens = &theme.atelier;
+        let spacing = tokens.spacing;
+        let mut param =
+            |key: &str, default: f32| self.instrument_param(track, key).unwrap_or(default);
+        let tune = param("kick_tune", 50.0);
+        let decay = param("kick_decay", 0.5);
+        let punch = param("kick_punch", 0.4);
+        let drive = param("kick_drive", 0.2);
+        let hat_tone = param("hat_tone", 0.5);
+        let metal = param("metal", 0.6);
+        let color = tokens.colors.series[0];
+        // Lit in the colour of a kick still sounding, if one is.
+        let kick = frame
+            .voices
+            .iter()
+            .find(|voice| voice.level > 0.0 && matches!(voice.pitch.round() as i32, 35 | 36));
+        let lit = kick.map_or(color, |voice| voice_color(theme, voice.pitch));
+
+        let envelope = falling(decay);
+        let wave = sweep_wave(KICK_WINDOW, drive, kick_hz(tune, punch), &envelope);
+        let window_ms = KICK_WINDOW * 1_000.0;
+        let outline: Vec<(f32, f32)> = (0..=100)
+            .map(|step| {
+                let t = KICK_WINDOW * step as f32 / 100.0;
+                (t * 1_000.0, envelope(t))
+            })
+            .collect();
+        let kick_well = self.synth_plot_well(
+            "synth-kick",
+            track,
+            SynthPlot::Kick,
+            PlotScale {
+                across: 1.0,
+                reach: window_ms,
+            },
+            LinePlot::new()
+                .x_range(0., window_ms)
+                .y_range(-1., 1.)
+                .series(
+                    Series::line(outline)
+                        .color(tokens.colors.text_faint)
+                        .faint(),
+                )
+                .series(Series::line(wave).color(lit)),
+            cx,
+        );
+        let response: Vec<(f32, f32)> = (1..=180)
+            .map(|step| {
+                let khz = METAL_CEILING_KHZ * step as f32 / 180.0;
+                (khz, hat_filter(khz * 1_000.0, hat_tone).min(1.0))
+            })
+            .collect();
+        let metal_well = self.synth_plot_well(
+            "synth-metal",
+            track,
+            SynthPlot::Metal,
+            PlotScale {
+                across: 1.0,
+                reach: METAL_CEILING_KHZ,
+            },
+            LinePlot::new()
+                .x_range(0., METAL_CEILING_KHZ)
+                .y_range(0., 1.)
+                .series(
+                    Series::line(response)
+                        .color(tokens.colors.text_faint)
+                        .faint(),
+                )
+                .series(
+                    Series::stems(metal_stems(hat_tone, metal))
+                        .style(SeriesStyle::Stems)
+                        .color(color),
+                ),
+            cx,
+        );
+        div()
+            .flex()
+            .flex_col()
+            .gap(spacing.md)
+            .child(
+                div()
+                    .w_full()
+                    .flex()
+                    .flex_wrap()
+                    .gap(spacing.lg)
+                    .child(plot_column(
+                        theme,
+                        SectionHeader::new(self.t(Key::SynthKick))
+                            .description(self.t(Key::SynthKickHint)),
+                        kick_well,
+                        Some(self.t(Key::SynthKickEdit)),
+                    ))
+                    .child(plot_column(
+                        theme,
+                        SectionHeader::new(self.t(Key::SynthMetal))
+                            .description(self.t(Key::SynthMetalHint)),
+                        metal_well,
+                        Some(self.t(Key::SynthMetalEdit)),
+                    )),
+            )
+            .child(
+                Label::new(format!(
+                    "{} {tune:.0} Hz · {} {:.0}% · {} {:.0}% · {} {:.0}%",
+                    self.t(Key::SynthKickAmount),
+                    self.t(Key::SynthPunchAmount),
+                    punch * 100.0,
+                    self.t(Key::SynthDrive),
+                    drive * 100.0,
+                    self.t(Key::SynthMetalAmount),
+                    metal * 100.0,
+                ))
+                .size(TextSize::XSmall)
+                .color(TextColor::Faint),
+            )
+            .into_any_element()
+    }
+
     /// The chiptune voice's cycle beside the harmonics it has, and its unison stack.
     fn chip_shape(&mut self, track: TrackId, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
         let tokens = &theme.atelier;
@@ -973,5 +1457,69 @@ mod tests {
         assert!((plain[16] - 1.0).abs() < 1e-5);
         let bright = cycle_harmonics(&fm_cycle(1.0, 3.0), 8);
         assert!(bright[2..].iter().any(|value| *value > 0.3), "{bright:?}");
+    }
+
+    #[test]
+    fn the_soft_clipper_keeps_full_scale_and_squares_off_with_drive() {
+        assert_eq!(soft_clip(0.5, 0.0), 0.5);
+        for drive in [0.1, 0.5, 1.0] {
+            assert!((soft_clip(1.0, drive) - 1.0).abs() < 1e-6);
+            assert!((soft_clip(-1.0, drive) + 1.0).abs() < 1e-6);
+        }
+        assert!(soft_clip(0.3, 1.0) > 0.99);
+        assert!(soft_clip(0.3, 0.1) < 0.6);
+    }
+
+    #[test]
+    fn a_kick_falls_from_its_punch_onto_its_tune() {
+        let kick = kick_hz(50.0, 0.5);
+        let start = 50.0 * (0.5 * PUNCH_OCTAVES * (0.8 + 0.2 * PICTURE_VELOCITY)).exp2();
+        assert!((kick(0.0) - start).abs() < 1e-3);
+        assert!((kick(0.3) - 50.0).abs() < 0.01);
+        let boom = boom_hz(41.2, 0.3, 0.025);
+        assert!(boom(0.0) > 41.2 * 2.0);
+        assert!((boom(0.25) - 41.2).abs() < 0.05);
+        // No punch is the note from the first sample.
+        assert!((boom_hz(41.2, 0.0, 0.025)(0.0) - 41.2).abs() < 1e-4);
+    }
+
+    #[test]
+    fn a_kick_picture_rings_at_its_tune_once_the_punch_is_over() {
+        let wave = sweep_wave(KICK_WINDOW, 0.0, kick_hz(50.0, 0.4), |_| 1.0);
+        assert_eq!(wave.len(), SWEEP_POINTS + 1);
+        assert_eq!(wave.last().unwrap().0, KICK_WINDOW * 1_000.0);
+        // From 100 ms to 300 ms a 50 Hz ring rises through zero ten times.
+        let rising = wave
+            .windows(2)
+            .filter(|pair| pair[0].0 >= 100.0 && pair[0].1 < 0.0 && pair[1].1 >= 0.0)
+            .count();
+        assert!((9..=11).contains(&rising), "{rising}");
+        let quiet = sweep_wave(KICK_WINDOW, 0.0, kick_hz(50.0, 0.4), falling(0.1));
+        assert!(quiet.last().unwrap().1.abs() < 1e-3);
+    }
+
+    #[test]
+    fn the_kick_bass_cycle_is_a_sine_until_driven() {
+        let clean = cycle_harmonics(&boom_cycle(0.0, 100.0), 4);
+        assert!(clean[1] < 1e-3 && clean[2] < 1e-3, "{clean:?}");
+        let driven = cycle_harmonics(&boom_cycle(0.9, 100.0), 4);
+        assert!(driven[2] > 0.2, "{driven:?}");
+        assert!(driven[1] < 1e-3, "a symmetric clip makes no even harmonics");
+        // A tone below the note rounds the drive back off.
+        let dark = cycle_harmonics(&boom_cycle(0.9, 0.8), 4);
+        assert!(dark[2] < driven[2] * 0.5, "{dark:?}");
+    }
+
+    #[test]
+    fn the_hats_pass_their_band_and_the_tone_moves_it() {
+        let dull = hat_filter(9_500.0 * 0.75, 0.0);
+        assert!(dull > 0.5, "{dull}");
+        assert!(hat_filter(1_000.0, 0.5) < 0.01);
+        assert!(hat_filter(12_000.0, 1.0) > hat_filter(12_000.0, 0.0));
+        let stems = metal_stems(0.5, 0.6);
+        let loudest = stems.iter().fold(0.0_f32, |a, (_, level)| a.max(*level));
+        assert!((loudest - 0.6).abs() < 1e-5);
+        assert!(stems.iter().all(|(khz, _)| *khz <= METAL_CEILING_KHZ));
+        assert!(metal_stems(0.5, 0.0).iter().all(|(_, level)| *level == 0.0));
     }
 }

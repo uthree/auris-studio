@@ -778,6 +778,13 @@ The three basses are one monophonic voice with the same punch, click and drive, 
 and an ADSR. With **Glide** above zero, a note played while another is held slides to it rather
 than striking again.
 
+All six open in the instrument window the way the synthesisers and physical models do. A bass
+draws its sounding note as one cycle and, beside it, the first quarter second of a note — the
+punch falling onto the pitch under its envelope — and the drive's transfer curve; a kit draws each
+pad it is sounding as the last moments of its own output, the kick as struck, and the hats' six
+square oscillators' harmonics under their filter. The pictures take a drag: punch time and punch,
+drive, kick decay and punch, hat tone and metal.
+
 The pitched voices open in the same view the physical instruments do. Where a physical model
 draws its strings, **Oscillator waveforms** draws one cycle of each sounding voice — two periods,
 so the join shows — at the height its envelope has reached: an FM note's bright attack visibly

@@ -25,6 +25,7 @@
 
 use std::f32::consts::TAU;
 
+use auris_core::motion::{MOTION_MODES, MOTION_POINTS, MotionFrame, MotionGeometry};
 use auris_core::param::db_to_gain;
 use auris_core::plugin::pitch_to_hz;
 use auris_core::{
@@ -33,6 +34,7 @@ use auris_core::{
 };
 use auris_dsp::{Adsr, Biquad, BiquadCoefficients};
 
+use crate::observe::{Observer, harmonics};
 use crate::params::{ParamBank, finite_or};
 use crate::render::{SegmentRenderer, render_segments, spread_to_all_channels};
 
@@ -151,6 +153,7 @@ pub struct BoomBass {
     sweep_coef: f32,
     velocity: f32,
     tone_coef: f32,
+    tone_hz: f32,
     tone_state: f32,
     held: [u8; HELD_KEYS],
     held_count: usize,
@@ -163,6 +166,7 @@ pub struct BoomBass {
     bend: f32,
     output_gain: f32,
     channel_volume: f32,
+    observer: Observer,
 }
 
 impl BoomBass {
@@ -187,6 +191,7 @@ impl BoomBass {
             sweep_coef: 0.0,
             velocity: 0.0,
             tone_coef: 1.0,
+            tone_hz: 1_000.0,
             tone_state: 0.0,
             held: [0; HELD_KEYS],
             held_count: 0,
@@ -198,6 +203,7 @@ impl BoomBass {
             bend: 0.0,
             output_gain: 1.0,
             channel_volume: 1.0,
+            observer: Observer::default(),
         };
         bass.refresh();
         bass
@@ -217,6 +223,7 @@ impl BoomBass {
         self.drive = p(P_DRIVE);
         self.drive_norm = 1.0 / (1.0 + self.drive * 9.0).tanh();
         let tone = p(P_TONE).min(rate * 0.45);
+        self.tone_hz = tone;
         self.tone_coef = 1.0 - (-TAU * tone / rate).exp();
         self.envelope.set_sample_rate(rate);
         self.envelope
@@ -302,6 +309,41 @@ impl BoomBass {
         }
     }
 
+    /// The pitch sounding now, in hertz, punch included.
+    fn frequency(&self) -> f32 {
+        pitch_to_hz(self.pitch + self.bend) * self.sweep.exp2()
+    }
+
+    /// The note as one cycle of what leaves the voice.
+    fn publish_motion(&mut self) {
+        let sounding = self.envelope.is_active();
+        let mut frame = MotionFrame {
+            geometry: MotionGeometry::Oscillator,
+            active: usize::from(sounding),
+            expression: self.channel_volume,
+            ..MotionFrame::default()
+        };
+        if sounding {
+            let hz = self.frequency().max(1.0);
+            let mut cycle = [0.0; MOTION_POINTS];
+            boom_cycle(self.drive, self.tone_hz / hz, &mut cycle);
+            let mut modes = [0.0; MOTION_MODES];
+            harmonics(&cycle, &mut modes);
+            let level = self.envelope.level() * self.velocity;
+            let voice = &mut frame.voices[0];
+            for (point, sample) in voice.points.iter_mut().zip(cycle) {
+                *point = sample * level;
+            }
+            voice.modes = modes;
+            voice.pitch = self.pitch + self.bend;
+            voice.level = level;
+            voice.contact = 0.0;
+            voice.excitation = hz;
+            voice.held = self.held_count > 0;
+        }
+        self.observer.publish(&frame);
+    }
+
     #[inline]
     fn white(&mut self) -> f32 {
         let mut x = self.rng;
@@ -310,6 +352,29 @@ impl BoomBass {
         x ^= x << 5;
         self.rng = x;
         (x as f32 / u32::MAX as f32) * 2.0 - 1.0
+    }
+}
+
+/// One steady cycle of the voice's sine after its drive and tone filter, at a tone of
+/// `tone_ratio` times the note: what the display shows of a sounding note.
+fn boom_cycle(drive: f32, tone_ratio: f32, out: &mut [f32]) {
+    let length = out.len().max(1);
+    let gain = 1.0 + drive.clamp(0.0, 1.0) * 9.0;
+    let norm = 1.0 / gain.tanh();
+    // The one-pole at `length` samples a cycle; three cycles first so it has settled.
+    let coef = 1.0 - (-TAU * tone_ratio.max(0.0) / length as f32).exp();
+    let mut state = 0.0_f32;
+    for pass in 0..4 {
+        for (index, point) in out.iter_mut().enumerate() {
+            let mut x = (TAU * index as f32 / length as f32).sin();
+            if drive > 0.0 {
+                x = (x * gain).tanh() * norm;
+            }
+            state += (x - state) * coef;
+            if pass == 3 {
+                *point = state;
+            }
+        }
     }
 }
 
@@ -394,7 +459,7 @@ impl SegmentRenderer for BoomBass {
         let inv_rate = self.inv_sample_rate;
         for sample in dst.iter_mut() {
             self.pitch += (self.target - self.pitch) * self.glide_coef;
-            let hz = pitch_to_hz(self.pitch + self.bend) * self.sweep.exp2();
+            let hz = self.frequency();
             self.sweep *= self.sweep_coef;
             let mut x = (TAU * self.phase).sin();
             self.phase += hz * inv_rate;
@@ -449,12 +514,20 @@ impl Instrument for BoomBass {
         self.click_filter.reset();
         self.bend = 0.0;
         self.channel_volume = 1.0;
+        self.observer.reset(MotionGeometry::Oscillator);
     }
 
     fn process(&mut self, events: &[NoteEvent], out: &mut AudioBuffer, ctx: &ProcessContext) {
         let frames = ctx.block_frames.min(out.frame_count());
         render_segments(self, events, out, frames);
         spread_to_all_channels(out, frames);
+        if self.observer.due(frames, self.sample_rate) {
+            self.publish_motion();
+        }
+    }
+
+    fn motion_monitor(&self) -> Option<std::sync::Arc<auris_core::motion::MotionMonitor>> {
+        Some(self.observer.monitor())
     }
 
     fn active_voices(&self) -> usize {
@@ -621,6 +694,71 @@ mod tests {
         let back = zero_crossing_hz(&rendered[ms(550)..ms(800)], RATE);
         let want = f64::from(pitch_to_hz(33.0));
         assert!((back - want).abs() < want * 0.01, "{back} vs {want}");
+    }
+
+    #[test]
+    fn the_display_shows_the_note_punching_down_onto_its_pitch() {
+        let mut rig = rig(BoomPatch::KickBass);
+        rig.set_param("punch_time", 0.05);
+        let monitor = rig.instrument.motion_monitor().unwrap();
+        monitor.watch(true);
+        // The first frame is due a thirtieth of a second in, in the 512-frame blocks drawn here.
+        rig.render(ms(45), &[on(0, 36)]);
+        let early = monitor.read().unwrap();
+        assert_eq!(early.active, 1);
+        assert_eq!(early.geometry, MotionGeometry::Oscillator);
+        let voice = early.voices[0];
+        assert_eq!(voice.pitch, 36.0);
+        assert!(voice.held);
+        // Forty milliseconds in, a slow punch is still well above the note's 65 Hz.
+        assert!(voice.excitation > 100.0, "{}", voice.excitation);
+        rig.render(ms(60), &[]);
+        let later = monitor.read().unwrap().voices[0];
+        let note = pitch_to_hz(36.0);
+        assert!(
+            later.excitation < voice.excitation && later.excitation >= note,
+            "{} then {}",
+            voice.excitation,
+            later.excitation
+        );
+        // Driven hard, the cycle is squared off: its third harmonic is plainly there.
+        assert!(later.modes[2] > 0.15, "{:?}", later.modes);
+        assert!(later.points.iter().any(|point| point.abs() > 0.01));
+        rig.instrument.reset();
+        assert_eq!(monitor.read().unwrap().active, 0);
+    }
+
+    #[test]
+    fn the_sub_is_drawn_as_a_clean_sine() {
+        let mut rig = rig(BoomPatch::Sub);
+        let monitor = rig.instrument.motion_monitor().unwrap();
+        monitor.watch(true);
+        rig.render(ms(300), &[on(0, 28)]);
+        let voice = monitor.read().unwrap().voices[0];
+        // Barely driven: no even harmonics at all, and only a trace of the odd ones.
+        assert!((voice.modes[0] - 1.0).abs() < 1e-3);
+        assert!(
+            voice.modes[1] < 1e-3 && voice.modes[2] < 0.15,
+            "{:?}",
+            voice.modes
+        );
+        assert!(
+            voice.modes[3..].iter().all(|mode| *mode < 0.05),
+            "{:?}",
+            voice.modes
+        );
+    }
+
+    #[test]
+    fn watching_never_changes_the_sound() {
+        let mut watched = rig(BoomPatch::Boom);
+        let mut plain = rig(BoomPatch::Boom);
+        watched.instrument.motion_monitor().unwrap().watch(true);
+        let events = [on(0, 36), on(ms(100) as u32, 43), off(ms(300) as u32, 43)];
+        assert_eq!(
+            watched.render(ms(500), &events),
+            plain.render(ms(500), &events)
+        );
     }
 
     #[test]

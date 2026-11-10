@@ -178,7 +178,8 @@ mod tests {
 
     use crate::test_support::{Rig, count_allocations};
     use crate::{
-        Chiptune, Choir, Clarinet, DrumKit, Fm2, HammeredDulcimer, Model, Physical, TinWhistle,
+        BoomBass, BoomPatch, Chiptune, Choir, Clarinet, DrumKit, ElectroKit, ElectroStyle, Fm2,
+        HammeredDulcimer, Model, Physical, TinWhistle,
     };
     use auris_core::motion::TOUCH_CONTROLLER;
     use auris_core::{
@@ -389,6 +390,8 @@ mod tests {
             Box::new(HammeredDulcimer::new()),
             Box::new(Fm2::new()),
             Box::new(Chiptune::new()),
+            Box::new(BoomBass::new(BoomPatch::KickBass)),
+            Box::new(ElectroKit::new(ElectroStyle::Trap)),
         ] {
             instrument.prepare(&PrepareContext::new(48_000.0, 256, 2));
             instrument.motion_monitor().unwrap().watch(true);
