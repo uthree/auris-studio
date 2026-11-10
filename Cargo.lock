@@ -775,6 +775,7 @@ dependencies = [
  "auris-agent",
  "auris-i18n",
  "auris-session",
+ "base64 0.23.1",
  "embed-resource",
  "env_logger",
  "gpui",

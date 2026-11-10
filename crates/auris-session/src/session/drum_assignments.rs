@@ -36,7 +36,7 @@ impl Session {
 
     /// A source-authored starting map for a drum track that has no saved user map.
     ///
-    /// CLAP note names are the most precise answer. The built-in kit carries its six authored
+    /// CLAP note names are the most precise answer. The built-in kits carry their authored
     /// generation roles, and a SoundFont percussion bank gets the standard General MIDI map.
     /// Unknown sources deliberately return an empty map instead of inheriting another sound's
     /// labels.
@@ -50,15 +50,8 @@ impl Session {
             }
             return Some(map);
         }
-        if source.instrument_id == auris_synth::DrumKit::ID {
-            return Some(DrumMap::from_voices([
-                (DrumRole::Kick, 36),
-                (DrumRole::Snare, 38),
-                (DrumRole::ClosedHat, 42),
-                (DrumRole::OpenHat, 46),
-                (DrumRole::Crash, 49),
-                (DrumRole::Tom, 47),
-            ]));
+        if let Some(map) = auris_synth::authored_drum_map(&source.instrument_id) {
+            return Some(map);
         }
         if source
             .soundfont

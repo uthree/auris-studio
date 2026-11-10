@@ -134,7 +134,10 @@ mod tests {
     }
 
     use crate::test_support::{Rig, count_allocations};
-    use crate::{Chiptune, Choir, DrumKit, Fm2, Model, Physical};
+    use crate::{
+        BoomBass, BoomPatch, Chiptune, Choir, DrumKit, ElectroKit, ElectroStyle, Fm2, Model,
+        Physical,
+    };
     use auris_core::motion::TOUCH_CONTROLLER;
     use auris_core::{
         AudioBuffer, Instrument, NoteEvent, Parameterized, PrepareContext, ProcessContext,
@@ -415,6 +418,8 @@ mod tests {
             Box::new(Choir::new()) as Box<dyn Instrument>,
             Box::new(Fm2::new()),
             Box::new(Chiptune::new()),
+            Box::new(BoomBass::new(BoomPatch::KickBass)),
+            Box::new(ElectroKit::new(ElectroStyle::Trap)),
         ] {
             instrument.prepare(&PrepareContext::new(48_000.0, 256, 2));
             instrument.motion_monitor().unwrap().watch(true);

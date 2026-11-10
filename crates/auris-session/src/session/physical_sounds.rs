@@ -19,7 +19,14 @@ pub(super) fn native_sound(bank: i32, patch: i32) -> Option<(&'static str, Plugi
         return None;
     }
     if bank == 128 {
-        return (patch == 0).then(|| (auris_synth::DrumKit::ID, PluginState::empty()));
+        // GS put its drum machines on programs 24 (Electronic) and 25 (the analogue one).
+        let id = match patch {
+            0 => auris_synth::DrumKit::ID,
+            24 => auris_synth::ElectroStyle::Edm.id(),
+            25 => auris_synth::ElectroStyle::Electro.id(),
+            _ => return None,
+        };
+        return Some((id, PluginState::empty()));
     }
     if bank != 0 {
         return None;
@@ -333,12 +340,20 @@ mod tests {
                 auris_compose::gm::Program(patch as u8).name()
             );
         }
-        for patch in [8, 16, 25, 40, 48] {
+        for patch in [8, 16, 40, 48] {
             assert!(
                 native_sound(128, patch).is_none(),
                 "a specialty kit is not the standard physical kit"
             );
         }
+    }
+
+    #[test]
+    fn the_gs_drum_machines_become_the_electronic_kits() {
+        let id = |patch| native_sound(128, patch).map(|(id, _)| id);
+        assert_eq!(id(0), Some(auris_synth::DrumKit::ID));
+        assert_eq!(id(24), Some("auris.synth.edm_kit"));
+        assert_eq!(id(25), Some("auris.synth.electro_kit"));
     }
 
     #[test]

@@ -580,7 +580,8 @@ impl Turn {
                                     .join("\n")
                             })
                             .unwrap_or_default();
-                        bridge.emit(json!({"event":"result","call_id":id,"tool":name,"ok":update["status"] == "completed","text":text}));
+                        let images = super::result_images(&update["content"]);
+                        bridge.emit(json!({"event":"result","call_id":id,"tool":name,"ok":update["status"] == "completed","text":text,"images":images}));
                         self.calls.remove(id);
                     }
                 }

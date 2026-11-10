@@ -331,6 +331,10 @@ pub fn family_hint(track: &auris_core::Track) -> PresetFamily {
         }
     }
     let id = instrument.instrument_id.as_str();
+    if auris_synth::is_drum_kit(id) {
+        // A built-in kit on an instrument track still plays drums from every key.
+        return PresetFamily::Drums;
+    }
     let name = format!("{id} {}", track.name).to_lowercase();
     let any = |words: &[&str]| words.iter().any(|word| name.contains(word));
     if any(&["bassoon"]) {
