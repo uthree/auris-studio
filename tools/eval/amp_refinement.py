@@ -13,7 +13,7 @@ from pathlib import Path
 
 import numpy as np
 from electric_copy import amp_audio, input_files, load, measurements, paired
-from fit_physical_mel import Renderer
+from fit_worker import Renderer
 from physical_mel import normalize
 from physical_pack import errors, metric_configuration, pack_features
 from scipy.optimize import differential_evolution, minimize_scalar
@@ -136,7 +136,7 @@ def main():
                            **{name: version(name) for name in ("numpy", "scipy", "soundfile")}},
               "evaluation_sources_sha256": {name: digest(Path(__file__).with_name(name)) for name in
                   ("amp_refinement.py", "electric_copy.py", "physical_pack.py", "physical_mel.py",
-                   "fit_physical_mel.py", "prepare_physical_reference.py")},
+                   "fit_worker.py", "prepare_physical_reference.py")},
               "interpretation": "Held-out pitches within the same setup; descriptive after model development. Cabinet bypass; no recorded speaker target.",
               "splits": {}}
     renderer = Renderer(args.renderer)

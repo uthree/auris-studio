@@ -14,7 +14,7 @@ import numpy as np
 import scipy
 import soundfile as sf
 from drum_harshness import delta_db
-from fit_physical_mel import Renderer
+from fit_worker import Renderer
 from scipy.signal import periodogram
 
 RATES = (44100, 48000, 96000)
