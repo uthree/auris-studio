@@ -8,12 +8,12 @@
 //! silent.
 
 use auris_i18n::Key;
-use gpui::{AnyElement, IntoElement, SharedString, Window, div, prelude::*, px};
+use gpui::{IntoElement, Window, div, prelude::*, px};
 use log::Level;
 
 use crate::app::AurisApp;
 use crate::logbook::{Entry, book};
-use crate::theme::{Metrics, Theme};
+use crate::theme::Metrics;
 use crate::ui::lint::LogTab;
 use crate::ui::scrollbars::ScrollPanel;
 use crate::ui::widgets::{ButtonState, ButtonStyle, button, button_enabled};
@@ -35,12 +35,11 @@ impl AurisApp {
         let entries = book().entries();
         let empty = entries.is_empty();
 
-        let rows: Vec<AnyElement> = entries
-            .iter()
-            .rev()
-            .enumerate()
-            .map(|(index, entry)| log_row(index, entry, &theme))
-            .collect();
+        // Newest first, because the reason anybody opened this is the thing that just happened —
+        // scrolling to the bottom of five hundred lines to find it is the terminal's behaviour,
+        // and a terminal is what this replaces.
+        let lines: Vec<atelier::LogLine> = entries.iter().rev().map(log_line).collect();
+        let scroll = self.log_scroll.clone();
 
         div()
             .flex()
@@ -144,10 +143,15 @@ impl AurisApp {
                             .flex_col()
                             .p_1()
                             .overflow_y_scroll()
-                            // Newest first, because the reason anybody opened this is the thing that just
-                            // happened — scrolling to the bottom of five hundred lines to find it is the
-                            // terminal's behaviour, and a terminal is what this replaces.
-                            .children(rows)
+                            // One selection down the whole log: a drag runs across records and
+                            // copies them as a terminal would print them.
+                            .when(!empty, |this| {
+                                this.child(
+                                    atelier::LogView::new(LOG_VIEW_ID)
+                                        .scroll(&scroll)
+                                        .lines(lines),
+                                )
+                            })
                             .when(empty, |this| {
                                 this.child(
                                     div()
@@ -164,65 +168,29 @@ impl AurisApp {
     }
 }
 
-/// One line: how long after start-up, how bad, who said it, and what it said.
-fn log_row(index: usize, entry: &Entry, theme: &Theme) -> AnyElement {
-    div()
-        .id(("log-line", index))
-        .flex()
-        .min_w_0()
-        .items_start()
-        .gap_2()
-        .px_1p5()
-        .py_0p5()
-        .text_xs()
-        .child(
-            div()
-                .w(px(32.0))
-                .flex_shrink_0()
-                .text_color(theme.text_faint)
-                .child(format!("{}s", entry.seconds)),
-        )
-        .child(
-            div()
-                .w(px(44.0))
-                .flex_shrink_0()
-                .text_color(level_colour(entry.level, theme))
-                .debug_selector(move || format!("log-level-{index}"))
-                .child(level_word(entry.level)),
-        )
-        .child(
-            div()
-                .id(("log-target", index))
-                .w(px(120.0))
-                .min_w(px(24.0))
-                .flex_shrink()
-                .truncate()
-                .text_color(theme.text_faint)
-                .debug_selector(move || format!("log-target-{index}"))
-                .child(entry.target.clone())
-                .tooltip(crate::ui::tooltip::keyed_tip(
-                    entry.target.clone(),
-                    "",
-                    theme,
-                )),
-        )
-        .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .whitespace_normal()
-                .text_color(theme.text)
-                .debug_selector(move || format!("log-message-{index}"))
-                // Keyed on the record rather than the row, which every new line moves down one.
-                .child(
-                    atelier::SelectableText::new(
-                        SharedString::from(format!("log-text-{}", entry.number)),
-                        entry.message.clone(),
-                    )
-                    .size(atelier::TextSize::XSmall),
-                ),
-        )
-        .into_any_element()
+/// The log view's element id. A record's parts are `log-view-{number}-{part}`, where `part` is
+/// `time`, `level`, `source` or `message`, keyed on the record rather than its row, which every
+/// new line moves down one.
+pub(crate) const LOG_VIEW_ID: &str = "log-view";
+
+/// One record as Atelier's `LogView` draws it: how long after start-up, how bad, who said it,
+/// and what it said.
+fn log_line(entry: &Entry) -> atelier::LogLine {
+    atelier::LogLine::new(entry.number.to_string(), entry.message.clone())
+        .time(format!("{}s", entry.seconds))
+        .level(log_level(entry.level))
+        .source(entry.target.clone())
+}
+
+/// `log`'s level as the view names it.
+fn log_level(level: Level) -> atelier::LogLevel {
+    match level {
+        Level::Error => atelier::LogLevel::Error,
+        Level::Warn => atelier::LogLevel::Warn,
+        Level::Info => atelier::LogLevel::Info,
+        Level::Debug => atelier::LogLevel::Debug,
+        Level::Trace => atelier::LogLevel::Trace,
+    }
 }
 
 /// The whole log as text to paste into a report, oldest first as a terminal would have it.
@@ -236,40 +204,13 @@ fn log_text(entries: &[Entry]) -> String {
             format!(
                 "{}s {} {}: {}",
                 entry.seconds,
-                level_word(entry.level),
+                log_level(entry.level).word(),
                 entry.target,
                 entry.message
             )
         })
         .collect::<Vec<_>>()
         .join("\n")
-}
-
-/// The colour a level is drawn in.
-///
-/// Only the two that mean something get one. Colouring information and debug as well would make
-/// the panel a rainbow in which the one red line nobody is meant to miss is just another colour.
-fn level_colour(level: Level, theme: &Theme) -> gpui::Hsla {
-    match level {
-        Level::Error => theme.danger,
-        Level::Warn => theme.warning,
-        _ => theme.text_muted,
-    }
-}
-
-/// The word for a level.
-///
-/// Not translated. These are `log`'s own five names, they appear in `RUST_LOG` and in every
-/// terminal the same records also went to, and a panel that called a warning something else would
-/// be a panel somebody had to learn a second vocabulary for.
-fn level_word(level: Level) -> &'static str {
-    match level {
-        Level::Error => "ERROR",
-        Level::Warn => "WARN",
-        Level::Info => "INFO",
-        Level::Debug => "DEBUG",
-        Level::Trace => "TRACE",
-    }
 }
 
 #[cfg(test)]
@@ -283,24 +224,14 @@ mod tests {
     fn every_level_has_a_word_and_it_is_the_one_rust_log_uses() {
         // A panel that renamed these would be a second vocabulary to learn, for records that also
         // went to a terminal under the first one.
-        assert_eq!(level_word(Level::Error), "ERROR");
-        assert_eq!(level_word(Level::Warn), "WARN");
-        assert_eq!(level_word(Level::Info), "INFO");
-        assert_eq!(level_word(Level::Debug), "DEBUG");
-        assert_eq!(level_word(Level::Trace), "TRACE");
-    }
-
-    #[test]
-    fn only_a_warning_or_an_error_is_coloured() {
-        let theme = Theme::default();
-        assert_eq!(level_colour(Level::Error, &theme), theme.danger);
-        assert_eq!(level_colour(Level::Warn, &theme), theme.warning);
-        for quiet in [Level::Info, Level::Debug, Level::Trace] {
-            assert_eq!(
-                level_colour(quiet, &theme),
-                theme.text_muted,
-                "{quiet} should not have a colour of its own"
-            );
+        for level in [
+            Level::Error,
+            Level::Warn,
+            Level::Info,
+            Level::Debug,
+            Level::Trace,
+        ] {
+            assert_eq!(log_level(level).word(), level.as_str());
         }
     }
 
@@ -362,11 +293,47 @@ mod tests {
 
         // Newest first on screen, so row 0 is the error.
         let number = book().entries()[1].number;
-        harness::select_text(&app, cx, format!("log-text-{number}").leak());
+        harness::select_text(&app, cx, format!("log-view-{number}-message").leak());
         cx.simulate_keystrokes("secondary-c");
         cx.update(|_, cx| {
             let copied = cx.read_from_clipboard().and_then(|item| item.text());
             assert_eq!(copied.as_deref(), Some("the device disappeared"));
+        });
+
+        // A drag from the newest record's time down to the end of the older one runs across
+        // both, and copies them one to a line as a terminal prints them.
+        let older = book().entries()[0].number;
+        let from = cx
+            .debug_bounds(format!("log-view-{number}-time").leak())
+            .expect("the newest record's time is visible");
+        let to = cx
+            .debug_bounds(format!("log-view-{older}-message").leak())
+            .expect("the older record's message is visible");
+        let start = from.origin + gpui::point(px(0.5), px(0.5));
+        let end = to.bottom_right() - gpui::point(px(0.5), px(0.5));
+        harness::press(cx, start);
+        harness::paint(&app, cx);
+        harness::drag_to(cx, end);
+        harness::paint(&app, cx);
+        harness::release(cx, end);
+        harness::paint(&app, cx);
+        cx.simulate_keystrokes("secondary-c");
+        cx.update(|_, cx| {
+            let copied = cx
+                .read_from_clipboard()
+                .and_then(|item| item.text())
+                .unwrap_or_default();
+            let lines: Vec<&str> = copied
+                .lines()
+                .map(|line| line.split_once("s ").expect("seconds first").1)
+                .collect();
+            assert_eq!(
+                lines,
+                [
+                    "ERROR auris_engine: the device disappeared",
+                    "WARN auris_session::session: a font moved",
+                ]
+            );
         });
     }
 
@@ -384,7 +351,9 @@ mod tests {
         harness::resize(&app, cx, viewport);
 
         let lines = cx.debug_bounds("log-lines").expect("the log is visible");
-        for selector in ["log-level-0", "log-target-0", "log-message-0"] {
+        let number = book().entries()[0].number;
+        for part in ["level", "source", "message"] {
+            let selector: &'static str = format!("log-view-{number}-{part}").leak();
             let bounds = cx
                 .debug_bounds(selector)
                 .unwrap_or_else(|| panic!("`{selector}` is visible"));

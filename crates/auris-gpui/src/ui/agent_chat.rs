@@ -9187,6 +9187,54 @@ mod tests {
     }
 
     #[gpui::test]
+    fn a_drag_selects_from_a_question_through_the_answer_into_the_next_message(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, _| {
+            this.panels.show(crate::dock::Panel::Agent);
+            this.agent_chat.models_loaded = true;
+            this.agent_chat.models_error = Some("offline fixture".into());
+            this.agent_chat.entries = vec![
+                ChatEntry::user("Why is the bass quiet?".into()),
+                ChatEntry::Agent("Its **gain** is low.\n\n- Raise it by 6 dB".into()),
+                ChatEntry::user("Thanks".into()),
+            ];
+        });
+        crate::harness::resize(&app, cx, gpui::size(px(1200.0), px(800.0)));
+        let (question, last) = app.read_with(cx, |this, _| {
+            (
+                this.agent_chat.chat_row_id(0, "user").unwrap(),
+                this.agent_chat.chat_row_id(2, "user").unwrap(),
+            )
+        });
+        let from = cx
+            .debug_bounds(format!("{question}-text").leak())
+            .expect("the question is visible");
+        let to = cx
+            .debug_bounds(format!("{last}-text").leak())
+            .expect("the last message is visible");
+        let start = from.origin + gpui::point(px(1.0), px(4.0));
+        // Past the end of the last line, as a drag that means "all of it" ends.
+        let end = to.bottom_right() + gpui::point(px(20.0), px(-4.0));
+        crate::harness::press(cx, start);
+        crate::harness::paint(&app, cx);
+        crate::harness::drag_to(cx, end);
+        crate::harness::paint(&app, cx);
+        crate::harness::release(cx, end);
+        crate::harness::paint(&app, cx);
+        cx.simulate_keystrokes("secondary-c");
+        cx.update(|_, cx| {
+            assert_eq!(
+                cx.read_from_clipboard()
+                    .and_then(|item| item.text())
+                    .as_deref(),
+                Some("Why is the bass quiet?\n\nIts gain is low.\n\nRaise it by 6 dB\n\nThanks")
+            );
+        });
+    }
+
+    #[gpui::test]
     fn sent_attachments_remain_visible_inside_a_narrow_transcript_at_multiple_scales(
         cx: &mut gpui::TestAppContext,
     ) {
@@ -9222,14 +9270,13 @@ mod tests {
             cx.update(|window, _| window.set_rem_size(px(font_size)));
             crate::harness::resize(&app, cx, gpui::size(px(720.0), px(720.0)));
             let panel = cx.debug_bounds("agent-panel").unwrap();
-            for selector in [
-                "agent-message-attachment-0-0",
-                "agent-message-attachment-0-1",
-            ] {
+            for n in 0..2 {
+                let selector: &'static str = chat_view::attachment_chip(&app, cx, 0, n).leak();
                 let chip = cx.debug_bounds(selector).unwrap();
                 assert!(chip.left() >= panel.left() && chip.right() <= panel.right());
             }
-            assert!(cx.debug_bounds("agent-message-attachment-1-0").is_none());
+            let plain: &'static str = chat_view::attachment_chip(&app, cx, 1, 0).leak();
+            assert!(cx.debug_bounds(plain).is_none());
             assert!(cx.debug_bounds("agent-attachment-remove-0").is_none());
         }
         app.read_with(cx, |this, _| {
@@ -9261,7 +9308,9 @@ mod tests {
         });
         crate::harness::paint(&app, cx);
         assert_eq!(cx.opened_url(), None);
-        crate::harness::click("agent-message-attachment-0-0-open", cx);
+        let first: &'static str =
+            format!("{}-open", chat_view::attachment_chip(&app, cx, 0, 0)).leak();
+        crate::harness::click(first, cx);
         cx.run_until_parked();
         app.read_with(cx, |this, _| {
             assert_eq!(this.attachment_preview.as_ref().unwrap().path, paths[0])
@@ -9303,10 +9352,9 @@ mod tests {
             }];
         });
         crate::harness::paint(&app, cx);
-        for selector in [
-            "agent-message-attachment-0-0-open",
-            "agent-message-attachment-0-1-open",
-        ] {
+        for n in 0..2 {
+            let selector: &'static str =
+                format!("{}-open", chat_view::attachment_chip(&app, cx, 0, n)).leak();
             crate::harness::click(selector, cx);
             cx.run_until_parked();
         }
