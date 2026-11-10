@@ -55,6 +55,10 @@ pub enum PerformDial {
     StrumUpVelocity,
     /// Extra emphasis on the lower pitches of downstrokes.
     StrumLowAccent,
+    /// Time between adjacent struck strings, replacing the whole-chord spread when set.
+    StrumStringTime,
+    /// How far each stroke's speed and string spacing wander.
+    StrumVariation,
     /// Strength of short retriggers replacing the tail of notes held for at least an eighth note.
     Mute,
     /// Strength of quiet chords inserted on silent sixteenth-note grid positions.
@@ -125,6 +129,8 @@ impl PerformDial {
             PerformDial::GrooveVelocity => Key::PerformGrooveVelocity,
             PerformDial::StrumUpVelocity => Key::PerformStrumUpVelocity,
             PerformDial::StrumLowAccent => Key::PerformStrumLowAccent,
+            PerformDial::StrumStringTime => Key::PerformStrumStringTime,
+            PerformDial::StrumVariation => Key::PerformStrumVariation,
             PerformDial::GhostDensity => Key::PerformGhostDensity,
             PerformDial::GhostLength => Key::PerformGhostLength,
             PerformDial::GhostVariation => Key::PerformGhostVariation,
@@ -223,6 +229,10 @@ pub fn dial_fraction(stack: &[NoteTransform], dial: PerformDial) -> f32 {
             .unwrap_or(0.0),
         PerformDial::StrumUpVelocity => strum_settings(stack).up_velocity.clamp(0.0, 1.0),
         PerformDial::StrumLowAccent => strum_settings(stack).low_accent.clamp(0.0, 1.0),
+        PerformDial::StrumStringTime => {
+            strum_settings(stack).string_ms.clamp(0.0, MAX_STRING_MS) / MAX_STRING_MS
+        }
+        PerformDial::StrumVariation => strum_settings(stack).variation.clamp(0.0, 1.0),
         PerformDial::GhostDensity => ghost_settings(stack, 0).density.clamp(0.0, 1.0),
         PerformDial::GhostLength => {
             (ghost_settings(stack, 0).length_ms.clamp(1.0, 100.0) - 1.0) / 99.0
@@ -373,13 +383,21 @@ pub fn with_dial(
     }
     if matches!(
         dial,
-        PerformDial::Stroke | PerformDial::StrumUpVelocity | PerformDial::StrumLowAccent
+        PerformDial::Stroke
+            | PerformDial::StrumUpVelocity
+            | PerformDial::StrumLowAccent
+            | PerformDial::StrumStringTime
+            | PerformDial::StrumVariation
     ) {
         let mut settings = strum_settings(stack);
         match dial {
             PerformDial::Stroke => settings.spread_ms = (fraction * 100.0).round(),
             PerformDial::StrumUpVelocity => settings.up_velocity = fraction,
             PerformDial::StrumLowAccent => settings.low_accent = fraction,
+            PerformDial::StrumStringTime => {
+                settings.string_ms = (fraction * MAX_STRING_MS).round();
+            }
+            PerformDial::StrumVariation => settings.variation = fraction,
             _ => unreachable!(),
         }
         return with_strum_settings(stack, settings);
@@ -411,7 +429,11 @@ pub fn with_dial(
         | PerformDial::PerformanceDelay
         | PerformDial::GrooveTiming
         | PerformDial::GrooveVelocity => unreachable!(),
-        PerformDial::Stroke | PerformDial::StrumUpVelocity | PerformDial::StrumLowAccent => {
+        PerformDial::Stroke
+        | PerformDial::StrumUpVelocity
+        | PerformDial::StrumLowAccent
+        | PerformDial::StrumStringTime
+        | PerformDial::StrumVariation => {
             unreachable!()
         }
         PerformDial::Brush
@@ -521,9 +543,12 @@ pub fn dial_text(stack: &[NoteTransform], dial: PerformDial, straight: &str) -> 
         | PerformDial::EnsembleShared
         | PerformDial::GrooveTiming
         | PerformDial::GrooveVelocity => format!("{:.0}%", dial_fraction(stack, dial) * 100.0),
-        PerformDial::StrumUpVelocity | PerformDial::StrumLowAccent => {
+        PerformDial::StrumUpVelocity
+        | PerformDial::StrumLowAccent
+        | PerformDial::StrumVariation => {
             format!("{:.0}%", dial_fraction(stack, dial) * 100.0)
         }
+        PerformDial::StrumStringTime => format!("{:.0} ms", strum_settings(stack).string_ms),
         PerformDial::GhostLength => format!("{:.0} ms", ghost_settings(stack, 0).length_ms),
         PerformDial::GhostDensity | PerformDial::GhostVariation => {
             format!("{:.0}%", dial_fraction(stack, dial) * 100.0)
@@ -567,6 +592,8 @@ fn dial_element_key(dial: PerformDial) -> usize {
         PerformDial::GrooveVelocity => 19,
         PerformDial::StrumUpVelocity => 10,
         PerformDial::StrumLowAccent => 11,
+        PerformDial::StrumStringTime => 41,
+        PerformDial::StrumVariation => 42,
         PerformDial::GhostDensity => 7,
         PerformDial::GhostLength => 8,
         PerformDial::GhostVariation => 9,

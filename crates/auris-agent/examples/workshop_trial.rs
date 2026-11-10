@@ -10,6 +10,16 @@
 //! receives `composer-log.jsonl` and `song/song.auris` exactly as a workshop candidate would.
 //! A candidate that continued a parent continues the same parent here.
 //!
+//! `AURIS_TRIAL_DIRECT=1` asks the director for the round again first, from the conversation as
+//! it stood, and composes its first direction instead of the logged one; the new direction is
+//! written to `direction.json` beside the song. That tries a change to the director's guidance.
+//!
+//! `AURIS_TRIAL_GUIDANCE=bare` composes the baseline instead: the user's words and how to work
+//! the tools, without the director's assignment, the phases or the send-backs.
+//! `AURIS_TRIAL_REQUEST` replaces the user's last message before the round, so the same theme
+//! can be asked for in other words; the logged direction is kept unless the director is asked
+//! again.
+//!
 //! Another composer is tried without touching the settings: `AURIS_TRIAL_BACKEND` and
 //! `AURIS_TRIAL_MODEL` replace the configured backend and model, and `AURIS_TRIAL_FAST=0` or
 //! `1` the faster service tier. The other agent preferences, effort among them, are kept.
@@ -20,7 +30,7 @@
 
 use std::path::PathBuf;
 
-use auris_agent::workshop::compose_trial;
+use auris_agent::workshop::{Guidance, compose_trial, direct_trial};
 use auris_session::lint::Severity;
 use auris_session::workshop::{Candidate, Document};
 use auris_session::{Session, SessionOptions, Settings};
@@ -59,7 +69,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     planned
         .rounds
         .retain(|earlier| earlier.after_message < round.after_message);
-    let direction = candidate.direction.clone();
+    if let Ok(request) = std::env::var("AURIS_TRIAL_REQUEST") {
+        let last = planned
+            .messages
+            .iter_mut()
+            .rev()
+            .find(|message| message.user)
+            .ok_or("the conversation has no request to replace")?;
+        last.text = request;
+    }
+    let mut direction = candidate.direction.clone();
     let parent = candidate
         .parent
         .map(|parent| thread.join(parent.to_string()).join("song/song.auris"));
@@ -74,13 +93,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Ok(fast) = std::env::var("AURIS_TRIAL_FAST") {
         prefs.fast_mode = fast == "1";
     }
+    if std::env::var("AURIS_TRIAL_DIRECT").as_deref() == Ok("1") {
+        eprintln!(
+            "asking the director again with {} {}",
+            prefs.backend, prefs.model
+        );
+        let mut directions = direct_trial(&planned, prefs.clone(), &settings)?;
+        if directions.is_empty() {
+            return Err("the director proposed no direction".into());
+        }
+        direction = directions.remove(0);
+        eprintln!("{}", serde_json::to_string_pretty(&direction)?);
+    }
     eprintln!(
         "composing \"{}\" with {} {}",
-        candidate.direction.title, prefs.backend, prefs.model
+        direction.title, prefs.backend, prefs.model
     );
+    let chosen = direction.clone();
+    let guidance = match std::env::var("AURIS_TRIAL_GUIDANCE").as_deref() {
+        Ok("bare") => Guidance::Bare,
+        Ok("full") | Err(_) => Guidance::Full,
+        Ok(other) => return Err(format!("unknown AURIS_TRIAL_GUIDANCE {other}").into()),
+    };
     let started = std::time::Instant::now();
     let result = compose_trial(
         direction,
+        guidance,
         &planned,
         prefs,
         settings,
@@ -95,6 +133,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 started.elapsed().as_secs_f64(),
                 output.display()
             );
+            std::fs::write(
+                output.join("direction.json"),
+                serde_json::to_string_pretty(&chosen)?,
+            )?;
             let lint = score_lint(&output.join("song/song.auris"))?;
             eprintln!("score lint: {lint}");
             std::fs::write(output.join("lint.json"), lint.to_string())?;

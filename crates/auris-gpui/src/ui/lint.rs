@@ -235,6 +235,14 @@ impl AurisApp {
             Rule::DuplicateNote => Key::LintDuplicateNote,
             Rule::InaudibleVelocity => Key::LintInaudibleVelocity,
             Rule::ExtremePitch => Key::LintExtremePitch,
+            Rule::TightStrum => Key::LintTightStrum,
+            Rule::ImpossibleDrumHit if diagnostic.value.unwrap_or_default() <= 0.0 => {
+                Key::LintImpossibleHiHat
+            }
+            Rule::ImpossibleDrumHit => Key::LintImpossibleDrumHit,
+            Rule::NoBreath => Key::LintNoBreath,
+            Rule::UnfrettableChord => Key::LintUnfrettableChord,
+            Rule::GuitarPositionJump => Key::LintGuitarPositionJump,
             Rule::Clipping => Key::LintClipping,
             Rule::TooLoud => Key::LintTooLoud,
             Rule::TooQuiet => Key::LintTooQuiet,
@@ -465,6 +473,11 @@ impl AurisApp {
             Rule::DuplicateNote => Key::LintNameDuplicateNote,
             Rule::InaudibleVelocity => Key::LintNameInaudibleVelocity,
             Rule::ExtremePitch => Key::LintNameExtremePitch,
+            Rule::TightStrum => Key::LintNameTightStrum,
+            Rule::ImpossibleDrumHit => Key::LintNameImpossibleDrumHit,
+            Rule::NoBreath => Key::LintNameNoBreath,
+            Rule::UnfrettableChord => Key::LintNameUnfrettableChord,
+            Rule::GuitarPositionJump => Key::LintNameGuitarPositionJump,
             Rule::Clipping => Key::LintNameClipping,
             Rule::TooLoud => Key::LintNameTooLoud,
             Rule::TooQuiet => Key::LintNameTooQuiet,

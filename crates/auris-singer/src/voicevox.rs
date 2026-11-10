@@ -144,12 +144,24 @@ fn split_lyrics(score: &mut SingerScore) -> Result<Vec<usize>, SingError> {
                 issue: crate::LyricIssue::TooShort,
             });
         }
-        for (at, (lyric, _)) in moras.into_iter().enumerate() {
+        // A syllable with ん or a bare vowel tucked under it (サン, アイ) keeps most of the note
+        // for its first mora, as a singer does; anything else divides evenly.
+        let tucked = count == 2 && auris_vocal::tucks_under_previous(&moras[1].0);
+        let lengths: Vec<u32> = if tucked {
+            let first = (note.frame_length * 3)
+                .div_ceil(5)
+                .min(note.frame_length - 1);
+            vec![first, note.frame_length - first]
+        } else {
+            (0..count)
+                .map(|at| note.frame_length / count + u32::from(at < note.frame_length % count))
+                .collect()
+        };
+        for ((lyric, _), frame_length) in moras.into_iter().zip(lengths) {
             origins.push(index);
             notes.push(SingerNote {
                 key: note.key,
-                frame_length: note.frame_length / count
-                    + u32::from((at as u32) < note.frame_length % count),
+                frame_length,
                 lyric,
             });
         }
@@ -2426,6 +2438,15 @@ mod tests {
             test_score(&[(7, "こ"), (6, "オ"), (6, "ひ"), (6, "イ")]).notes
         );
         assert!(padded_score(&test_score(&[(1, "かな")]), 94).is_err());
+    }
+
+    #[test]
+    fn a_tucked_nasal_or_vowel_leaves_most_of_the_note_to_the_syllable() {
+        let outgoing = padded_score(&test_score(&[(20, "さん"), (10, "あい")]), 94).unwrap();
+        assert_eq!(
+            &outgoing.notes[1..5],
+            test_score(&[(12, "さ"), (8, "ん"), (6, "あ"), (4, "い")]).notes
+        );
     }
 
     #[test]
