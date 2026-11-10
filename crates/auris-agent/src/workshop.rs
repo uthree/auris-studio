@@ -1739,6 +1739,46 @@ fn candidate_options(settings: &Settings) -> SessionOptions {
     options
 }
 
+/// Asks the director again for the round a logged conversation held, headless, so its
+/// assignments can be compared with the logged ones and composed with [`compose_trial`].
+///
+/// The request carries what the window sends for a new song: the conversation as `document`
+/// holds it, its summary and the installed voices, with no selection, candidate history or
+/// preference evidence. It is not part of the application: nothing in the window calls it.
+pub fn direct_trial(
+    document: &Document,
+    prefs: AgentPreferences,
+    settings: &Settings,
+) -> Result<Vec<Direction>, String> {
+    let voices = auris_session::library::voices_with_settings(settings);
+    let prompt = json!({"conversation_summary": conversation_summary(document),
+        "conversation": document.model_messages(), "selected": null, "selected_score": null,
+        "candidate_history": [], "preference_evidence": null, "installed_voices": voices})
+    .to_string();
+    let mut planner = crate::song_ideas::SongPlanner::conversation(prefs, prompt)?;
+    loop {
+        if let Some(answer) = planner.poll_text() {
+            return Ok(decision(&answer?)?.directions);
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+/// How much of Auris's musical guidance a [`compose_trial`] composer receives.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Guidance {
+    /// Everything the workshop gives: the director's assignment, the phases and their
+    /// instructions, the technique documentation and the send-backs on lint and structure.
+    #[default]
+    Full,
+    /// The user's own words and how to work the tools, nothing else: the baseline that says
+    /// whether the guidance helps at all. The composer gets [`auris_toolbox::workshop::BARE_COMPOSER`]
+    /// for its system prompt and the user's messages for its assignment; the production record
+    /// and the documentation are denied, so no phase instructions reach it; a song reported
+    /// finished is taken as it is, with what lint and the structure checks find only logged.
+    Bare,
+}
+
 /// Composes one candidate from a direction, outside any conversation: development tooling for
 /// repeating a theme already in the workshop logs after a prompt or tool change.
 ///
@@ -1747,9 +1787,15 @@ fn candidate_options(settings: &Settings) -> SessionOptions {
 /// checkpoint, the same log in `folder` — so a trial's `composer-log.jsonl` compares line for
 /// line with a logged one. Pass the conversation as it stood when the candidate was planned.
 /// `parent` continues an earlier song; `progress` hears each stage, tool result and status line
-/// as it happens. It is not part of the application: nothing in the window calls it.
+/// as it happens. `guidance` chooses between the workshop's composer and the [`Guidance::Bare`]
+/// baseline. It is not part of the application: nothing in the window calls it.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "a trial names every input the workshop would supply"
+)]
 pub fn compose_trial(
     direction: Direction,
+    guidance: Guidance,
     document: &Document,
     prefs: AgentPreferences,
     settings: Settings,
@@ -1767,7 +1813,10 @@ pub fn compose_trial(
         tools: Default::default(),
         feedback: None,
     };
-    candidate.direction.instructions = composition_assignment(&candidate, document);
+    candidate.direction.instructions = match guidance {
+        Guidance::Full => composition_assignment(&candidate, document),
+        Guidance::Bare => bare_assignment(document),
+    };
     let (sender, receiver) = mpsc::channel();
     let cancel = AtomicBool::new(false);
     std::thread::scope(|scope| {
@@ -1779,7 +1828,7 @@ pub fn compose_trial(
                 wait_for_recovery,
                 |candidate| {
                     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        compose(
+                        compose_guided(
                             candidate,
                             prefs.clone(),
                             settings.clone(),
@@ -1788,6 +1837,7 @@ pub fn compose_trial(
                             &cancel,
                             &sender,
                             &[],
+                            guidance,
                         )
                     }))
                     .unwrap_or_else(|_| Err(AttemptError::permanent("Candidate worker failed")))
@@ -1825,6 +1875,45 @@ static AUDIO_WORK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 )]
 fn compose(
     candidate: &Candidate,
+    prefs: AgentPreferences,
+    settings: Settings,
+    folder: PathBuf,
+    parent: Option<PathBuf>,
+    cancel: &AtomicBool,
+    sender: &mpsc::Sender<JobEvent>,
+    references: &[PathBuf],
+) -> Result<SongCandidate, AttemptError> {
+    compose_guided(
+        candidate,
+        prefs,
+        settings,
+        folder,
+        parent,
+        cancel,
+        sender,
+        references,
+        Guidance::Full,
+    )
+}
+
+/// The user's messages, alone, as a [`Guidance::Bare`] composer's assignment.
+fn bare_assignment(document: &Document) -> String {
+    let request: Vec<&str> = document
+        .model_messages()
+        .iter()
+        .filter(|message| message.user)
+        .map(|message| message.text.as_str())
+        .collect();
+    json!({"assignment": request, "conversation_summary": conversation_summary(document)})
+        .to_string()
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "isolated candidate inputs and worker channels"
+)]
+fn compose_guided(
+    candidate: &Candidate,
     mut prefs: AgentPreferences,
     settings: Settings,
     folder: PathBuf,
@@ -1832,6 +1921,7 @@ fn compose(
     cancel: &AtomicBool,
     sender: &mpsc::Sender<JobEvent>,
     references: &[PathBuf],
+    guidance: Guidance,
 ) -> Result<SongCandidate, AttemptError> {
     if cancel.load(Ordering::Acquire) {
         return Err("Cancelled".into());
@@ -1900,11 +1990,20 @@ fn compose(
             "cli_file_read".into(),
         ],
     };
-    prefs.system_prompt = format!(
-        "{}\n{}",
-        crate::system_prompt(&prefs),
-        auris_toolbox::workshop::COMPOSER
-    );
+    prefs.system_prompt = match guidance {
+        Guidance::Full => format!(
+            "{}\n{}",
+            crate::system_prompt(&prefs),
+            auris_toolbox::workshop::COMPOSER
+        ),
+        Guidance::Bare => {
+            prefs.policy.deny.extend([
+                auris_toolbox::live_agent::production_record::NAME.into(),
+                auris_toolbox::search_documentation::NAME.into(),
+            ]);
+            auris_toolbox::workshop::BARE_COMPOSER.into()
+        }
+    };
     let worker = crate::Worker::spawn(prefs.clone(), None, true, None)?;
     let kept = folder.join(CHECKPOINT_RECORD);
     if checkpoint_exists && kept.is_file() {
@@ -2094,7 +2193,7 @@ fn compose(
                 let lint = session.unresolved_lint(LINT_SEND_BACK_FINDINGS);
                 if lint.is_some() || !structure.is_empty() {
                     let unresolved = json!({"lint":lint,"structure":structure});
-                    if lint_sends < SEND_BACKS {
+                    if guidance == Guidance::Full && lint_sends < SEND_BACKS {
                         lint_sends += 1;
                         log.note("send_back", unresolved.clone());
                         let _ = sender.send(JobEvent::Progress(candidate.id, "arrange".into()));
@@ -2214,7 +2313,7 @@ fn send_back(unresolved: &serde_json::Value) -> serde_json::Value {
     json!({
         "host_check": "The host checked the song you reported finished and found it incomplete: lint warnings or errors that remain, structural phase checks that are unmet, or both. Complete it now, then finish with your final report again.",
         "unresolved": unresolved,
-        "instruction": "For structure, do the missing work the assignment asks for: write the remaining sections, melody and lyrics, replace the guide, arrange and mix; production_record read lists the phase checks. For lint, run lint_project for the full list with ids; apply_lint_fixes takes the obvious fixes, and a finding without one needs your own edit. A change to locked material needs enter_phase to the phase that owns it, with this check as the reason. A warning you keep on purpose: name it and say why in your final report. Do not redo finished work.",
+        "instruction": "For structure, do the missing work the assignment asks for: write the remaining sections, melody and lyrics, replace the guide, arrange and mix; production_record read lists the phase checks. When a score check such as melody_develops is among several unmet, do it first and go on to the arrangement and the mix afterwards: a score change made after the mix means singing and balancing the song again. melody_develops is a score change: enter_phase score, rewrite the lead's entries, note values and restated lines as its melody_shape warnings say, sing it again, then fix the parts over the changed bars. drums_follow_sections is an arrangement change: rewrite the drum notes' velocities by section with edit_notes, since set_performance does not change them: every verse and a bridge softer, every chorus harder, the last chorus hardest, the accents within the bar kept, until arrangement_shape no longer reports a chorus struck no harder than a verse. For lint, run lint_project for the full list with ids; apply_lint_fixes takes the obvious fixes, and a finding without one needs your own edit. A change to locked material needs enter_phase to the phase that owns it, with this check as the reason. A warning you keep on purpose: name it and say why in your final report. Do not redo finished work.",
     })
 }
 
@@ -2701,6 +2800,45 @@ mod tests {
         assert!(owner.planner.is_none());
         assert!(owner.jobs.is_empty());
     }
+    #[test]
+    fn a_bare_assignment_carries_the_users_words_and_not_the_directors() {
+        let message = |user: bool, text: &str| Message {
+            choices: None,
+            references: vec![],
+            attachments: Vec::new(),
+            user,
+            text: text.into(),
+        };
+        let document = Document {
+            messages: vec![
+                message(true, "BPM 180 rock, all in one go."),
+                message(false, "Distorted guitars and a chorus that breaks through."),
+            ],
+            ..Default::default()
+        };
+        let assignment: serde_json::Value =
+            serde_json::from_str(&bare_assignment(&document)).unwrap();
+        assert_eq!(
+            assignment["assignment"],
+            json!(["BPM 180 rock, all in one go."])
+        );
+        assert!(!assignment.to_string().contains("guitars"));
+    }
+
+    #[test]
+    fn the_bare_composer_prompt_says_nothing_the_phases_say() {
+        let bare = auris_toolbox::workshop::BARE_COMPOSER;
+        for guidance in [
+            "enter_phase",
+            "generate_phrase",
+            "mixer",
+            "melody",
+            "arrange",
+        ] {
+            assert!(!bare.contains(guidance), "{guidance}");
+        }
+    }
+
     #[test]
     fn tool_observations_count_parallel_calls_once_and_accept_result_only_events() {
         use super::*;

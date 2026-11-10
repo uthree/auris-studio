@@ -1,4 +1,4 @@
-//! Interpretation of legacy musical sound hints as editable native instruments.
+//! General MIDI programs as the built-in instruments that are models of them.
 
 use auris_compose::Role;
 use auris_core::{PluginState, TrackId};
@@ -7,26 +7,29 @@ use auris_synth::Model;
 use super::Session;
 use crate::SessionError;
 
-/// Corresponding native models and the nearest synth or voice family; unsupported timbres and
-/// specialty kits need GM.
+/// The built-in instrument a General MIDI program names, and the patch that makes it that
+/// instrument; `None` for a timbre nothing here is a model of, which needs its GM sound.
+///
+/// A physical model is an instrument family, and several programs are one family played or
+/// built differently: a vibraphone and a glockenspiel are both bars, a cello and a violin are
+/// both a bowed string on a body. The patch is where that difference goes. It is a starting
+/// point in ordinary parameters, not a claim to reproduce anybody's sample.
 pub(super) fn native_sound(bank: i32, patch: i32) -> Option<(&'static str, PluginState)> {
     if !(0..=127).contains(&patch) {
         return None;
     }
     if bank == 128 {
-        return (patch == 0).then(|| (auris_synth::DrumKit::ID, PluginState::empty()));
+        // GS put its drum machines on programs 24 (Electronic) and 25 (the analogue one).
+        let id = match patch {
+            0 => auris_synth::DrumKit::ID,
+            24 => auris_synth::ElectroStyle::Edm.id(),
+            25 => auris_synth::ElectroStyle::Electro.id(),
+            _ => return None,
+        };
+        return Some((id, PluginState::empty()));
     }
     if bank != 0 {
         return None;
-    }
-    if patch == 71 {
-        return Some((auris_synth::Clarinet::ID, PluginState::empty()));
-    }
-    if patch == 15 {
-        return Some((auris_synth::HammeredDulcimer::ID, PluginState::empty()));
-    }
-    if patch == 78 {
-        return Some((auris_synth::TinWhistle::ID, PluginState::empty()));
     }
     // The voices General MIDI has no model for still have a nearest family: a choir and a
     // "synth voice" are ensembles of the human throat, and a square lead is what the chiptune
@@ -39,66 +42,98 @@ pub(super) fn native_sound(bank: i32, patch: i32) -> Option<(&'static str, Plugi
     } {
         return Some((id, PluginState::empty()));
     }
-    let model = match patch {
-        0..=3 | 6..=7 => Model::Piano,
-        // Glockenspiel and music box are untuned metal bars, which is what Bell was fitted to;
-        // vibraphone, marimba and xylophone bars are tuned, as Mallet's are.
-        8..=10 | 14 => Model::Bell,
-        11..=13 => Model::Mallet,
-        24..=25 => Model::Guitar,
-        26..=28 | 31 => Model::ElectricGuitar,
-        32..=35 => Model::Bass,
-        40..=45 | 48..=49 => Model::Violin,
+    let (model, params): (Model, &[(&str, f32)]) = match patch {
+        0 | 2 => (Model::Piano, &[]),
+        1 => (Model::Piano, &[("hardness", 0.68)]),
+        // A honky-tonk is a piano nobody has tuned: its unisons are cents apart.
+        3 => (Model::Piano, &[("detune", 7.0), ("hardness", 0.6)]),
+        // Harpsichord and clavinet: a hard, bright attack on strings that do not ring long.
+        6..=7 => (
+            Model::Piano,
+            &[("hardness", 0.9), ("decay", 3.0), ("sympathetic", 0.0)],
+        ),
+        // Celesta and glockenspiel are steel bars; a music box and a kalimba are tongues of
+        // metal held at one end, which is the tine.
+        8 => (
+            Model::Mallet,
+            &[("bar", 3.0), ("hardness", 0.3), ("body", 0.9)],
+        ),
+        9 => (Model::Mallet, &[("bar", 3.0), ("hardness", 0.8)]),
+        10 => (
+            Model::Mallet,
+            &[("bar", 4.0), ("hardness", 0.85), ("body", 0.2)],
+        ),
+        108 => (
+            Model::Mallet,
+            &[("bar", 4.0), ("hardness", 0.5), ("body", 0.6)],
+        ),
+        11 => (
+            Model::Mallet,
+            &[("bar", 1.0), ("hardness", 0.4), ("tremolo", 0.3)],
+        ),
+        12 => (Model::Mallet, &[]),
+        13 => (Model::Mallet, &[("bar", 2.0), ("hardness", 0.7)]),
+        14 => (Model::Bell, &[("bell", 1.0)]),
+        112 => (Model::Bell, &[("bell", 2.0), ("hardness", 0.7)]),
+        15 => (Model::HammeredDulcimer, &[]),
+        24 => (
+            Model::Guitar,
+            &[("hardness", 0.06), ("position", 0.28), ("damping", 0.12)],
+        ),
+        25 => (
+            Model::Guitar,
+            &[
+                ("hardness", 0.45),
+                ("position", 0.22),
+                ("decay", 5.5),
+                ("damping", 0.08),
+            ],
+        ),
+        26..=27 | 31 => (Model::ElectricGuitar, &[]),
+        28 => (
+            Model::ElectricGuitar,
+            &[("damping", 0.8), ("decay", 0.55), ("release", 0.06)],
+        ),
+        // An upright is its body; the electric basses are a magnet under the strings.
+        32 => (
+            Model::Bass,
+            &[("body", 1.0), ("hardness", 0.3), ("position", 0.25)],
+        ),
+        33 | 35 => (Model::Bass, &[("hardness", 0.35), ("position", 0.3)]),
+        34 => (Model::Bass, &[("hardness", 0.85), ("position", 0.13)]),
+        // One player on the instrument named, or the section that seats itself by register.
+        40 => (Model::Violin, &[("instrument", 1.0), ("players", 1.0)]),
+        41 => (Model::Violin, &[("instrument", 2.0), ("players", 1.0)]),
+        42 => (
+            Model::Violin,
+            &[("instrument", 3.0), ("players", 1.0), ("release", 0.3)],
+        ),
+        43 => (
+            Model::Violin,
+            &[("instrument", 4.0), ("players", 1.0), ("release", 0.3)],
+        ),
+        44 => (Model::Violin, &[("players", 4.0)]),
+        // Pizzicato is a string section plucked: the nearest thing here is the plucked string.
+        45 => (
+            Model::Guitar,
+            &[("hardness", 0.3), ("decay", 1.2), ("damping", 0.5)],
+        ),
+        48..=49 => (
+            Model::Violin,
+            &[("players", 4.0), ("bow_pressure", 0.4), ("release", 0.5)],
+        ),
+        71 => (Model::Clarinet, &[]),
+        // A recorder is a whistle in wood, voiced rounder.
+        74 => (
+            Model::TinWhistle,
+            &[("jet_shape", 0.12), ("breath_noise", 0.06)],
+        ),
+        78 => (Model::TinWhistle, &[]),
         _ => return None,
     };
     let mut state = PluginState::empty();
-    let mut set = |key: &str, value| {
-        state.params.insert(key.into(), value);
-    };
-    match patch {
-        // These hints are starting points for our models, not claims to reproduce the patch.
-        6..=7 => {
-            set("hardness", 0.8);
-            set("stiffness", 0.002);
-            set("decay", 2.4);
-        }
-        11 => {
-            set("hardness", 0.45);
-            set("decay", 6.0);
-        }
-        13 => {
-            set("hardness", 0.6);
-            set("decay", 0.6);
-        }
-        24 => {
-            set("hardness", 0.25);
-            set("position", 0.28);
-        }
-        28 => {
-            set("damping", 0.8);
-            set("decay", 0.55);
-            set("release", 0.06);
-        }
-        33 | 35 => {
-            set("hardness", 0.35);
-            set("position", 0.3);
-        }
-        34 => {
-            set("hardness", 0.85);
-            set("position", 0.13);
-        }
-        42 | 43 => {
-            set("body", 0.6);
-            set("release", 0.3);
-        }
-        44 => {
-            return Some((Model::Guitar.id(), state));
-        }
-        48..=49 => {
-            set("bow_pressure", 0.4);
-            set("release", 0.5);
-        }
-        _ => {}
+    for (key, value) in params {
+        state.params.insert((*key).into(), *value);
     }
     Some((model.id(), state))
 }
@@ -120,15 +155,15 @@ pub(super) const GM_PROGRAMS: &[(&str, u8)] = &[
     (Model::Piano.id(), 0),
     (Model::Mallet.id(), 12),
     (Model::Bell.id(), 14),
-    (auris_synth::HammeredDulcimer::ID, 15),
+    (Model::HammeredDulcimer.id(), 15),
     (Model::Guitar.id(), 25),
     (Model::ElectricGuitar.id(), 27),
     (Model::Bass.id(), 33),
-    (Model::Violin.id(), 40),
+    (Model::Violin.id(), 48),
     (auris_synth::Choir::ID, 52),
     (auris_synth::Vocal::ID, 54),
-    (auris_synth::Clarinet::ID, 71),
-    (auris_synth::TinWhistle::ID, 78),
+    (Model::Clarinet.id(), 71),
+    (Model::TinWhistle.id(), 78),
     (auris_synth::Chiptune::ID, 80),
 ];
 
@@ -305,12 +340,20 @@ mod tests {
                 auris_compose::gm::Program(patch as u8).name()
             );
         }
-        for patch in [8, 16, 25, 40, 48] {
+        for patch in [8, 16, 40, 48] {
             assert!(
                 native_sound(128, patch).is_none(),
                 "a specialty kit is not the standard physical kit"
             );
         }
+    }
+
+    #[test]
+    fn the_gs_drum_machines_become_the_electronic_kits() {
+        let id = |patch| native_sound(128, patch).map(|(id, _)| id);
+        assert_eq!(id(0), Some(auris_synth::DrumKit::ID));
+        assert_eq!(id(24), Some("auris.synth.edm_kit"));
+        assert_eq!(id(25), Some("auris.synth.electro_kit"));
     }
 
     #[test]
@@ -375,11 +418,11 @@ mod tests {
             .unwrap();
         assert_eq!(
             clarinet.kind.as_instrument().unwrap().instrument_id,
-            auris_synth::Clarinet::ID
+            Model::Clarinet.id()
         );
         let clarinet_id = clarinet.id;
         let pressure = session
-            .param_descriptors(auris_synth::Clarinet::ID)
+            .param_descriptors(Model::Clarinet.id())
             .iter()
             .find(|param| param.key == "pressure")
             .unwrap()
@@ -392,8 +435,8 @@ mod tests {
             0.64,
         );
         for (name, id, key, value) in [
-            ("dulcimer", auris_synth::HammeredDulcimer::ID, "detune", 3.0),
-            ("whistle", auris_synth::TinWhistle::ID, "pressure", 0.6),
+            ("dulcimer", Model::HammeredDulcimer.id(), "detune", 3.0),
+            ("whistle", Model::TinWhistle.id(), "pressure", 0.6),
         ] {
             let track = session
                 .project()
@@ -500,9 +543,9 @@ mod tests {
             }
         }
         for (patch, id) in [
-            (71, auris_synth::Clarinet::ID),
-            (15, auris_synth::HammeredDulcimer::ID),
-            (78, auris_synth::TinWhistle::ID),
+            (71, Model::Clarinet.id()),
+            (15, Model::HammeredDulcimer.id()),
+            (78, Model::TinWhistle.id()),
         ] {
             let track = session.add_default_instrument_track("Part").unwrap();
             session.forget_history();

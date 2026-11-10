@@ -84,7 +84,12 @@ impl AurisApp {
             return rows;
         }
         let settings = strum_settings(stack);
-        for dial in [PerformDial::StrumUpVelocity, PerformDial::StrumLowAccent] {
+        for dial in [
+            PerformDial::StrumUpVelocity,
+            PerformDial::StrumLowAccent,
+            PerformDial::StrumStringTime,
+            PerformDial::StrumVariation,
+        ] {
             rows.push(self.performance_slider(clip, dial, stack, cx));
         }
         rows.push(

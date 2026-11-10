@@ -453,6 +453,7 @@ async fn tool_turn(
                 .emit(json!({"event":"call","call_id":id,"tool":call.name,"args":call.arguments}));
             let signature = json!([call.name, call.arguments]).to_string();
             requests.push(signature.clone());
+            let mut images = Vec::new();
             // A name outside the catalog reaches nothing: the model is told so and goes on.
             let reply = if ToolHost::contains(&call.name) {
                 host.call_with_origin(
@@ -470,9 +471,9 @@ async fn tool_turn(
                 {
                     let report = serde_json::from_value(inspection.clone())
                         .map_err(|error| error.to_string())?;
-                    return bridge
-                        .accept_inspection(&report)
-                        .map(|text| json!({"ok":true,"text":text}));
+                    let (text, image) = bridge.accept_inspection(&report)?;
+                    images.push(image);
+                    return Ok(json!({"ok":true,"text":text}));
                 }
                 Ok(reply)
             });
@@ -486,8 +487,7 @@ async fn tool_turn(
                 ),
                 Err(error) => (false, error),
             };
-            bridge
-                .emit(json!({"event":"result","call_id":id,"tool":call.name,"ok":ok,"text":text}));
+            bridge.emit(json!({"event":"result","call_id":id,"tool":call.name,"ok":ok,"text":text,"images":images}));
             results.push(json!({"name":call.name,"ok":ok,"text":text}));
             failures.record(&call.name, &arguments, !ok);
         }

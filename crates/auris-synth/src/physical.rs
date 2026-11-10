@@ -1,101 +1,101 @@
-//! Sample-free instruments with editable excitation, loss and body resonance.
+//! Sample-free instruments built from the parts a real one is made of.
 //!
-//! Piano, bell and mallet use reduced modal expansions. Guitar and bass release a displaced
-//! travelling-wave string; violin drives two travelling waves through nonlinear bow friction.
-//! These are deliberately compact, expressive instruments rather than sampled replicas.
+//! Every instrument here is two things: something that *resonates* and something that *sets it
+//! going*. What resonates is linear, and a linear resonator is a set of modes, each a damped
+//! rotating phasor — a string's partials, a bar's bending modes, a bell's hum and tierce, a
+//! soundboard's hundred-odd resonances are all advanced by the one loop in `rotors`. What sets
+//! it going is not linear, and that is where an instrument's character is: a felt hammer that
+//! stiffens as it is driven into the string, a bow that grips and lets go once a period, a reed
+//! that closes against its mouthpiece, an air jet that flips either side of an edge. Each of
+//! those is solved sample by sample, against the resonator it is driving.
+//!
+//! | Model | What resonates | What sets it going |
+//! |---|---|---|
+//! | Piano, Hammered Strings | stiff strings in bridge-coupled unisons, on a soundboard | a felt or wooden hammer, solved against the string it strikes |
+//! | Guitar, Electric Guitar, Bass | a string in two polarisations, on a body or under a pickup | a finger or a pick, let go |
+//! | Strings | a travelling-wave string per player, on the body of its register | a bow: stick, slip, and the hysteresis between them |
+//! | Mallet | a tuned bar over a resonator tube | a yarn or rubber mallet's Hertzian contact |
+//! | Bell | the paired modes of a shell | a clapper or a hammer |
+//! | Reeds | an air column closed at the reed | the reed as a pressure-controlled valve |
+//! | Whistles | an air column open at both ends | a jet across the window, delayed by its own flight |
+//!
+//! Nothing is sampled, and no spectrum is shaped to match a recording's. The numbers are the
+//! kind a maker or a measurement gives — a string's stiffness, a hammer's mass, a plate's first
+//! resonances, how long a piano's notes take to die away — and the sound is what follows from
+//! them.
+//!
+//! The polyphonic shell around the engines — voices, MIDI, placement in the stereo field,
+//! quality, and the picture a frontend draws — is [`Physical`], one type for all of them.
+
+use std::borrow::Cow;
 
 use auris_core::motion::{
-    MOTION_VOICES, MotionCapture, MotionFrame, MotionGeometry, TOUCH_CONTROLLER,
+    MOTION_BODY, MOTION_PARTIALS, MOTION_SCOPE, MotionCapture, MotionFrame, MotionGeometry,
+    MotionVoice, TOUCH_CONTROLLER,
 };
 use auris_core::param::db_to_gain;
-use auris_core::plugin::pitch_to_hz;
 use auris_core::{
     AudioBuffer, Instrument, NoteEvent, ParamDescriptor, ParamId, ParamUnit, Parameterized,
     PluginCategory, PluginDescriptor, PrepareContext, ProcessContext,
 };
-use auris_dsp::Adsr;
-use std::borrow::Cow;
 
+use crate::observe::recent_voices;
 use crate::params::finite_or;
-use crate::render::{StereoImage, downmix_to_extra_channels, pan_gains};
+use crate::render::{StereoImage, downmix_to_extra_channels};
+use crate::voice::VoiceState;
 use crate::{ParamBank, SegmentRenderer, VoiceAllocator, render_segments};
 
+mod bars;
+mod bells;
 mod body;
-mod calibration;
-mod decimator;
+mod bowed;
+mod flutes;
+mod hammer;
 mod legato;
-mod modal;
-mod pack;
-mod string;
+mod plucked;
+mod reeds;
+mod rotors;
+mod strings;
+mod struck;
+mod unison;
+mod waveguide;
 
-use body::Body;
-use decimator::Decimator;
+#[cfg(test)]
+mod tests;
+
 use legato::Legato;
-use modal::{Modal, VOICING};
-use string::StringModel;
 
-#[cfg(not(feature = "piano-calibration"))]
-use modal::PianoVoicing;
-#[cfg(feature = "piano-calibration")]
-pub use modal::piano::PianoVoicing;
-
-const VOICES: usize = 24;
-/// Largest internal sample-rate multiple of any [`Quality`].
-const MAX_OVERSAMPLING: usize = 2;
-const P_HARDNESS: u32 = 0;
-const P_POSITION: u32 = 1;
-const P_DECAY: u32 = 2;
-const P_DAMPING: u32 = 3;
-const P_BODY: u32 = 4;
-const P_RELEASE: u32 = 5;
-const P_LEVEL: u32 = 6;
-const P_STIFFNESS: u32 = 7;
-const P_PRESSURE: u32 = 7;
-const P_PICKUP: u32 = 7;
-const P_BOW_SPEED: u32 = 8;
-const P_LEGATO: u32 = 9;
-const P_BOW_RESPONSE: u32 = 10;
-const P_PICKUP_POSITION: u32 = 4;
-const P_TONE: u32 = 7;
-const P_PICKUP_Q: u32 = 8;
-const P_DECAY_RATIO: u32 = 9;
+/// Samples between control updates: 0.67 ms at 48 kHz.
+///
+/// Envelopes, vibrato, pedals and the bookkeeping of which voices have died away move on this
+/// clock, which counts samples since the instrument was reset rather than since the host's last
+/// block. A render is therefore the same whatever block size the host asks for.
+pub(crate) const TICK: usize = 32;
 
 /// How finely a physical model is simulated.
 ///
 /// Every instrument has two of these controls: one for live playback, where the audio callback's
 /// budget is the limit, and one for offline rendering (export, freeze, bounce), where nothing but
-/// time is. A level is chosen when a note is struck and kept for that note, so changing either
-/// control never disturbs a sounding string and never allocates.
+/// time is. A level is chosen when a note starts and kept for that note, so changing either
+/// control never disturbs a sounding note and never allocates.
 ///
-/// [`Quality::Standard`] is the model every calibration in this module was fitted at. The other
-/// two levels move from it only where a measurement said the move was worth something:
+/// | Model | Draft | Standard | High |
+/// |---|---|---|---|
+/// | Piano, Hammered Strings | half the partials | every partial that can be heard | partials up to the band edge |
+/// | Guitar, Electric Guitar, Bass | half the partials | as the piano | as the piano |
+/// | Mallet, Bell | the lowest modes | every mode | as Standard |
+/// | Strings, Reeds, Whistles | the loop at the host rate | the loop at twice the host rate | as Standard |
 ///
-/// | Model | Draft | High |
-/// |---|---|---|
-/// | Piano | a third of the partial budget: 64 partial-strings a voice instead of 192 | as Standard |
-/// | Bell, Mallet | the first 8 modes instead of 32 | as Standard |
-/// | Guitar, Electric Guitar, Bass, Strings | as Standard | the string loop runs 2× oversampled |
-///
-/// The piano is the one expensive model, about eight times the cost of any other with 24 notes
-/// held, and Draft takes that to a little over half. What it costs in sound is small: over a
-/// second of a struck note it differs from Standard by -31 dB RMS on A0, -38 dB on A1 and less
-/// than -52 dB from A2 up. Giving the piano *more* partials instead was measured and left out:
-/// every partial below the band edge changed A0 by -73 dB and higher notes by nothing, because
-/// the hammer's contact spectrum and the strings' frictional loss have already taken them.
-/// Bars and bells are cheap at any level; their Draft is there so the control means the same
-/// thing on every model, and changes a struck bar by about -52 dB.
-///
-/// Oversampling a delay-line string halves the interpolation error in its loop. The audible
-/// place for that is the top of a plucked string's range: at the host rate the guitar's E6
-/// stretches its third to fifth harmonics one to three cents sharp, and at twice the rate they
-/// are harmonic again. A decimator band-limits the doubled rate back to the host's, and costs
-/// each string voice about as much as the string itself. Neither the bowed nor the plucked
-/// strings were measurably aliasing at the host rate, so that is not what High is for.
+/// The bow, the reed and the jet are discontinuous: a string lets go of the bow in a single
+/// sample. Solved at the host rate, what that puts above the band edge folds back onto it as a
+/// faint inharmonic grit under high notes; solved at twice the rate and brought back through a
+/// half-band filter, it is not there. That is what Standard buys over Draft for those models,
+/// and it roughly doubles their cost.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Quality {
-    /// Cheaper than the calibrated model, for dense live arrangements on a slow machine.
+    /// Cheaper than the full model, for dense live arrangements on a slow machine.
     Draft,
-    /// The calibrated model.
+    /// The full model.
     #[default]
     Standard,
     /// More of the physics than a live callback can always afford; the default for rendering.
@@ -127,413 +127,486 @@ impl Quality {
             Self::High => 2.0,
         }
     }
-
-    /// Internal sample-rate multiple of a delay-line string at this level.
-    fn oversampling(self) -> usize {
-        if self == Self::High { 2 } else { 1 }
-    }
 }
 
-/// Physical structure and excitation used by an instrument.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Which instrument a [`Physical`] is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Model {
-    /// Hammer-excited stiff string modes.
+    /// A grand piano: felt hammers, unison strings, dampers and a soundboard.
     Piano,
-    /// Plucked string with a pick-controlled initial displacement.
+    /// A hammered dulcimer: light hammers on courses of strings over a shallow box.
+    HammeredDulcimer,
+    /// An acoustic guitar: plucked strings on a resonant body.
     Guitar,
-    /// Plucked steel string observed through a magnetic pickup and its electrical resonance.
+    /// A solid-body electric guitar heard through its pickup, before any amplifier.
     ElectricGuitar,
-    /// Long plucked string with a lower body resonance.
+    /// A bass, from a pickup under roundwound strings to an upright's body.
     Bass,
-    /// Struck shell with inharmonic modes.
-    Bell,
-    /// Struck bar tuned like a marimba's, its overtones two and about three octaves up.
-    Mallet,
-    /// Bowed string with a nonlinear friction junction.
+    /// Bowed strings: a section seated by register, from basses to violins.
     Violin,
+    /// Tuned bars: marimba, vibraphone, xylophone, glockenspiel and a comb of tines.
+    Mallet,
+    /// Bells: a cast bell, a tubular chime, a handbell and a singing bowl.
+    Bell,
+    /// Reed woodwinds, from a clarinet's cylinder to a saxophone's cone.
+    Clarinet,
+    /// Whistles and flutes: an air jet across the open end of a pipe.
+    TinWhistle,
 }
 
 impl Model {
-    /// Factory radiation modes as `(frequency_hz, quality_factor, signed_gain)`.
-    ///
-    /// These fitted spectral resonances are not isolated measured bridge admittances.
-    /// They follow the broad coloration and scale with the body control, anchored at 0.65.
-    pub fn radiation_modes(self) -> [(f32, f32, f32); 6] {
-        body::radiation_modes(self)
-    }
-
-    /// Factory exponent mapping channel expression to bow motion and output expression.
-    pub fn expression_exponent(self) -> f64 {
-        if self == Self::Violin { 1.18 } else { 1.0 }
-    }
-
-    /// Every physical instrument, ordered by excitation family.
-    pub const ALL: [Self; 7] = [
+    /// Every physical instrument, ordered by how it is set going.
+    pub const ALL: [Self; 10] = [
         Self::Piano,
+        Self::HammeredDulcimer,
         Self::Guitar,
         Self::ElectricGuitar,
         Self::Bass,
-        Self::Bell,
-        Self::Mallet,
         Self::Violin,
+        Self::Mallet,
+        Self::Bell,
+        Self::Clarinet,
+        Self::TinWhistle,
     ];
 
     /// Stable plugin id stored in a project.
     pub const fn id(self) -> &'static str {
         match self {
             Self::Piano => "auris.physical.piano",
+            Self::HammeredDulcimer => "auris.physical.hammered_dulcimer",
             Self::Guitar => "auris.physical.guitar",
             Self::ElectricGuitar => "auris.physical.electric_guitar",
             Self::Bass => "auris.physical.bass",
-            Self::Bell => "auris.physical.bell",
-            Self::Mallet => "auris.physical.mallet",
             Self::Violin => "auris.physical.violin",
+            Self::Mallet => "auris.physical.mallet",
+            Self::Bell => "auris.physical.bell",
+            Self::Clarinet => "auris.physical.clarinet",
+            Self::TinWhistle => "auris.physical.tin_whistle",
         }
     }
 
-    fn name(self) -> &'static str {
+    /// The model a plugin id names.
+    pub fn from_id(id: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|model| model.id() == id)
+    }
+
+    /// The instrument's name in the browser.
+    pub const fn name(self) -> &'static str {
         match self {
             Self::Piano => "Physical Piano",
+            Self::HammeredDulcimer => "Physical Hammered Strings",
             Self::Guitar => "Physical Guitar",
             Self::ElectricGuitar => "Electric Guitar",
             Self::Bass => "Physical Bass",
-            Self::Bell => "Physical Bell",
-            Self::Mallet => "Physical Mallet",
             Self::Violin => "Physical Strings",
+            Self::Mallet => "Physical Mallet",
+            Self::Bell => "Physical Bell",
+            Self::Clarinet => "Physical Reeds",
+            Self::TinWhistle => "Physical Whistles",
         }
     }
 
-    fn description(self) -> &'static str {
+    const fn description(self) -> &'static str {
         match self {
-            Self::Piano => "Hammer-excited stiff strings: hardness, strike position and soundboard",
-            Self::Guitar => "Plucked string: pick hardness, pluck position, damping and body",
-            Self::ElectricGuitar => {
-                "Steel string DI: independent pick/pickup position and pickup resonance"
+            Self::Piano => {
+                "Felt hammers on bridge-coupled unison strings, with dampers and a soundboard"
             }
-            Self::Bass => "Plucked bass string: finger/pick hardness, damping and body",
-            Self::Bell => "Struck bell: inharmonic shell modes, beater hardness and decay",
-            Self::Mallet => "Tuned mallet bar: marimba overtones, beater hardness and damping",
-            Self::Violin => "Bowed strings: nonlinear friction, bow pressure, position and body",
+            Self::HammeredDulcimer => "Light hammers on courses of strings over a shallow box",
+            Self::Guitar => "Plucked strings in two polarisations on a resonant body",
+            Self::ElectricGuitar => "Steel strings under a magnetic pickup, before the amplifier",
+            Self::Bass => "Plucked bass strings under a pickup or on an upright's body",
+            Self::Violin => {
+                "Bowed strings: stick-slip friction, a section of players, their bodies"
+            }
+            Self::Mallet => "Tuned bars over resonator tubes, struck with a mallet",
+            Self::Bell => "Struck shells and tubes: paired modes that beat as they ring",
+            Self::Clarinet => "A reed valve on a cylinder of air, closed at the reed",
+            Self::TinWhistle => "An air jet across the window of an open pipe",
         }
     }
 
     /// Where the notes sit across the stereo field, heard from the player's seat.
     ///
     /// Keyboards and bars run low to high from left to right; the strings follow orchestral
-    /// seating, violins on the left and basses on the right. The electric guitar is a DI
-    /// signal and stays close to the centre.
-    pub(crate) fn stereo_image(self) -> StereoImage {
+    /// seating, violins on the left and basses on the right. An instrument held in the hands is
+    /// one source, and its width is its body's own.
+    pub(crate) const fn stereo_image(self) -> StereoImage {
         match self {
             Self::Piano => StereoImage::new(64.5, 43.5, 0.6),
-            Self::Guitar => StereoImage::new(62.0, 22.0, 0.3),
-            Self::ElectricGuitar => StereoImage::new(62.0, 22.0, 0.15),
-            Self::Bass => StereoImage::new(45.0, 18.0, 0.2),
-            Self::Bell => StereoImage::new(72.0, 18.0, 0.5),
-            Self::Mallet => StereoImage::new(64.5, 31.5, 0.6),
+            Self::HammeredDulcimer => StereoImage::new(68.0, 18.0, -0.35),
+            Self::Guitar => StereoImage::new(62.0, 22.0, 0.1),
+            Self::ElectricGuitar => StereoImage::new(62.0, 22.0, 0.1),
+            Self::Bass => StereoImage::new(45.0, 18.0, 0.1),
             Self::Violin => StereoImage::new(60.0, 28.0, -0.5),
+            Self::Mallet => StereoImage::new(64.5, 31.5, 0.6),
+            Self::Bell => StereoImage::new(72.0, 18.0, 0.4),
+            Self::Clarinet => StereoImage::new(70.0, 22.0, 0.25),
+            Self::TinWhistle => StereoImage::new(86.0, 12.0, 0.25),
         }
     }
 
-    fn is_string(self) -> bool {
-        matches!(
-            self,
-            Self::Guitar | Self::ElectricGuitar | Self::Bass | Self::Violin
-        )
+    /// Whether a note lasts as long as its key is held: bowed and blown, not struck or plucked.
+    pub const fn is_sustained(self) -> bool {
+        matches!(self, Self::Violin | Self::Clarinet | Self::TinWhistle)
     }
 
-    fn output_normalization(self) -> f32 {
-        // Keep the median factory-note RMS after real-recording mel calibration. The
-        // public level dial keeps its existing meaning for saved projects and automation.
+    /// What a frontend draws this instrument's bodies as.
+    pub const fn geometry(self) -> MotionGeometry {
         match self {
-            Self::Piano => 0.077_622,
-            Self::Guitar => 0.178_368,
-            Self::ElectricGuitar => 0.8,
-            Self::Violin => 1.787_516,
-            _ => pack::profile(self).map_or(1.0, |profile| profile.normalization),
+            Self::Mallet => MotionGeometry::Bar,
+            Self::Bell => MotionGeometry::Shell,
+            Self::Clarinet | Self::TinWhistle => MotionGeometry::Bore,
+            _ => MotionGeometry::String,
+        }
+    }
+
+    /// Most notes the model sounds at once; the quietest is taken for the next past that.
+    pub const fn voices(self) -> usize {
+        match self {
+            Self::Piano => 32,
+            Self::HammeredDulcimer | Self::Mallet | Self::Bell => 24,
+            Self::Guitar | Self::ElectricGuitar | Self::Violin => 16,
+            Self::Bass | Self::Clarinet | Self::TinWhistle => 12,
+        }
+    }
+
+    fn engine(self) -> Box<dyn Engine> {
+        match self {
+            Self::Piano | Self::HammeredDulcimer => Box::new(struck::Struck::new(self)),
+            Self::Guitar | Self::ElectricGuitar | Self::Bass => {
+                Box::new(plucked::Plucked::new(self))
+            }
+            Self::Violin => Box::new(bowed::Bowed::new()),
+            Self::Mallet => Box::new(bars::Bars::new()),
+            Self::Bell => Box::new(bells::Bells::new()),
+            Self::Clarinet => Box::new(reeds::Reeds::new()),
+            Self::TinWhistle => Box::new(flutes::Flutes::new()),
+        }
+    }
+
+    fn descriptors(self) -> Vec<ParamDescriptor> {
+        match self {
+            Self::Piano | Self::HammeredDulcimer => struck::descriptors(self),
+            Self::Guitar | Self::ElectricGuitar | Self::Bass => plucked::descriptors(self),
+            Self::Violin => bowed::descriptors(),
+            Self::Mallet => bars::descriptors(),
+            Self::Bell => bells::descriptors(),
+            Self::Clarinet => reeds::descriptors(),
+            Self::TinWhistle => flutes::descriptors(),
+        }
+    }
+
+    /// Gain that puts each model where a mix expects it at the same level control.
+    ///
+    /// Measured, not derived. What an engine puts out is in whatever units its physics is
+    /// in, and those have nothing to do with one another: a bridge's velocity, the air at a
+    /// tone hole. Each gain here sets a model's ordinary notes at the level the composer's
+    /// presets are balanced against, and none lets a single note at full velocity past
+    /// -6 dBFS with the level at its default. `examples/physical_probe` prints the levels.
+    const fn normalization(self) -> f32 {
+        match self {
+            Self::Piano => 0.311,
+            Self::HammeredDulcimer => 1.35,
+            Self::Guitar => 0.373,
+            Self::ElectricGuitar => 0.498,
+            Self::Bass => 0.531,
+            Self::Violin => 0.626,
+            Self::Mallet => 0.25,
+            Self::Bell => 0.593,
+            Self::Clarinet => 3.29,
+            Self::TinWhistle => 3.80,
         }
     }
 }
 
+/// One note as an engine is asked to start it.
 #[derive(Clone, Copy, Debug)]
-struct Settings {
-    hardness: f32,
-    position: f32,
-    decay: f32,
-    damping: f32,
-    stiffness: f32,
-    release: f32,
-    pickup: f32,
-    electric: bool,
-    pickup_position: f32,
-    tone: f32,
-    pickup_q: f32,
-    decay_ratio: f32,
-    bow_speed: f32,
-    bow_response: f32,
+pub(crate) struct Note {
+    /// MIDI key.
+    pub pitch: u8,
+    /// How hard, above zero and at most one.
+    pub velocity: f32,
+    /// Where it sits at unit width, from -1 on the left to 1 on the right.
+    pub pan: f32,
+    /// Where a frontend touched the body to make it, from zero to one along it.
+    pub touch: Option<f32>,
+    /// Whether the voice was still sounding another note.
+    pub stolen: bool,
+    /// A number that differs from note to note and is the same in every render: what a player
+    /// does not repeat exactly, repeated exactly.
+    pub seed: u32,
 }
 
-#[derive(Clone, Debug)]
-struct Voice {
-    pitch: u8,
-    modal: Modal,
-    string: StringModel,
-    envelope: Adsr,
-    presence: crate::presence::Presence,
-    /// Internal samples per output frame for a delay-line string, fixed at the strike.
-    oversampling: usize,
-    /// Band-limits an oversampled string back to the host rate.
-    decimator: Decimator,
-    held: bool,
-    deferred: bool,
-    age: usize,
-    limit: usize,
-    last: f32,
-    tail: f32,
-    fade: f32,
-    contact: f32,
-    /// Pan at unit width, fixed when the note is struck.
-    position: f32,
-    /// Pan currently applied, chasing `position` times the width control.
-    pan: f32,
+/// What the player is doing besides pressing keys.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Performance {
+    /// Pitch bend in semitones.
+    pub bend: f32,
+    /// Controller 11: how hard the bow is drawn or the breath blown, and how loud the rest are.
+    pub expression: f32,
+    /// Controller 1: the modulation wheel.
+    pub modulation: f32,
+    /// Controller 64: the sustain pedal.
+    pub pedal: bool,
+    /// The stereo width control.
+    pub width: f32,
 }
 
-impl Voice {
-    fn new(model: Model, rate: f32, voicing: PianoVoicing) -> Self {
-        let mut modal = Modal::default();
-        modal.prepare(model, voicing);
-        let mut string = StringModel::default();
-        if model.is_string() {
-            // Sized for the highest quality's internal rate, so a change of quality never
-            // allocates on the audio thread.
-            string.prepare(rate * MAX_OVERSAMPLING as f32);
-        }
-        let mut envelope = Adsr::new();
-        envelope.set_sample_rate(rate);
+impl Default for Performance {
+    fn default() -> Self {
         Self {
-            pitch: 60,
-            modal,
-            string,
-            envelope,
-            presence: crate::presence::Presence::new(
-                rate,
-                match model {
-                    Model::Piano => -3.5,
-                    Model::Guitar => -2.0,
-                    Model::ElectricGuitar | Model::Violin => -3.0,
-                    _ => 0.0,
-                },
-            ),
-            oversampling: 1,
-            decimator: Decimator::default(),
-            held: false,
-            deferred: false,
-            age: 0,
-            limit: 0,
-            last: 0.0,
-            tail: 0.0,
-            fade: 0.0,
-            contact: 0.25,
-            position: 0.0,
-            pan: 0.0,
+            bend: 0.0,
+            expression: 1.0,
+            modulation: 0.0,
+            pedal: false,
+            width: 1.0,
         }
+    }
+}
+
+/// The part of an instrument that is its own: voices that resonate, and what sets them going.
+///
+/// Everything here but [`Engine::prepare`] runs on the audio thread and allocates nothing.
+pub(crate) trait Engine: Send {
+    /// Sizes `voices` voices for `rate`. The only method that allocates.
+    fn prepare(&mut self, rate: f32, voices: usize);
+
+    /// Silences everything at once.
+    fn reset(&mut self);
+
+    /// Reads the instrument's controls, after any of them has changed and before the first note.
+    fn configure(&mut self, params: &ParamBank);
+
+    /// Starts `note` on `voice`.
+    fn start(&mut self, voice: usize, note: &Note, quality: Quality);
+
+    /// Moves a sounding voice to `note` without starting it again: a slur. `false` when this
+    /// instrument cannot, and the note is started afresh instead.
+    fn glide(&mut self, _voice: usize, _note: &Note) -> bool {
+        false
+    }
+
+    /// The key of `voice` was let go.
+    fn stop(&mut self, voice: usize);
+
+    /// The key at `pitch` has come up. Most instruments only care about the note it played,
+    /// which `stop` has already told them of; a piano's key also holds a damper off strings
+    /// that may long since have stopped sounding.
+    fn lift(&mut self, _pitch: u8) {}
+
+    /// Fades `voice` out within a couple of milliseconds, whatever it was doing.
+    fn silence(&mut self, voice: usize);
+
+    /// The player's bend, expression, modulation, pedal or width changed.
+    fn perform(&mut self, performance: &Performance);
+
+    /// Adds every voice to `mid` and `side`, at most [`TICK`] samples of them. `tick` marks a
+    /// block that starts on the control clock.
+    fn render(&mut self, mid: &mut [f32], side: &mut [f32], tick: bool);
+
+    /// How loud `voice` is, for choosing which to steal. Zero once it has died away.
+    fn level(&self, voice: usize) -> f32;
+
+    /// Whether `voice` still answers its key: `false` once it is only ringing out.
+    fn is_held(&self, voice: usize) -> bool;
+
+    /// Fills in the picture of `voice`: where it is excited, how, and the shape it is in.
+    fn observe(&self, voice: usize, picture: &mut MotionVoice);
+
+    /// The bow or breath pressure a frontend shows beside the picture; zero where there is none.
+    fn pressure(&self) -> f32 {
+        0.0
+    }
+
+    /// Fills in where the lowest modes of the instrument's soundboard or box are in their
+    /// swing. An instrument with no such body leaves them at rest.
+    fn observe_body(&self, _body: &mut [f32; MOTION_BODY]) {}
+}
+
+/// Seconds a struck instrument's picture of its blow covers.
+pub(crate) const BLOW_WINDOW: f32 = 0.006;
+
+/// Dials a calibration run turns between renders, so that a search over a voicing does not
+/// rebuild the crate for every candidate. An application build has none: each dial reads as
+/// the default written beside it, and the compiler folds it away.
+#[cfg(feature = "physical-calibration")]
+pub mod calibration {
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    /// Number of dials.
+    pub const DIALS: usize = 128;
+    /// A bit pattern no finite value has.
+    const UNSET: u32 = u32::MAX;
+    static VALUES: [AtomicU32; DIALS] = [const { AtomicU32::new(UNSET) }; DIALS];
+
+    /// Sets dial `index`, or with `None` returns it to its default. A dial is read when an
+    /// instrument is prepared and when a note starts.
+    pub fn set(index: usize, value: Option<f32>) {
+        if let Some(slot) = VALUES.get(index) {
+            slot.store(value.map_or(UNSET, f32::to_bits), Ordering::Relaxed);
+        }
+    }
+
+    /// Returns every dial to its default.
+    pub fn clear() {
+        for slot in &VALUES {
+            slot.store(UNSET, Ordering::Relaxed);
+        }
+    }
+
+    pub(crate) fn dial(index: usize, default: f32) -> f32 {
+        match VALUES.get(index).map(|slot| slot.load(Ordering::Relaxed)) {
+            Some(bits) if bits != UNSET => f32::from_bits(bits),
+            _ => default,
+        }
+    }
+}
+
+#[cfg(not(feature = "physical-calibration"))]
+pub(crate) mod calibration {
+    #[inline(always)]
+    pub(crate) fn dial(_index: usize, default: f32) -> f32 {
+        default
+    }
+}
+
+/// Which dial is which. Those that come in eights hold one value for each C from C1 to C8.
+pub(crate) mod dials {
+    /// Decades by which the hammers' felt is stiffer than the voicing as built.
+    pub(crate) const FELT: usize = 0;
+    /// Added to the exponent of the felt's force law.
+    pub(crate) const EXPONENT: usize = 8;
+    /// Multiplies how far along the string the hammers strike.
+    pub(crate) const STRIKE: usize = 16;
+    /// Decibels added to a register's level.
+    pub(crate) const LEVEL: usize = 24;
+    /// Decibels added to the knock of the blow on the frame.
+    pub(crate) const KNOCK: usize = 32;
+    /// Decibels added to a body's tilt at 50 Hz and at each octave above it: ten of them.
+    pub(crate) const TILT: usize = 40;
+    /// Hammer speed at full velocity, and the power of velocity it follows.
+    pub(crate) const SPEED: usize = 50;
+    pub(crate) const SPEED_LAW: usize = 51;
+    /// The felt's hysteresis.
+    pub(crate) const FELT_LOSS: usize = 52;
+}
+
+/// A dial for each C from C1 to C8, read at a pitch between them along straight lines.
+pub(crate) fn dial_across(first: usize, pitch: f32, default: f32) -> f32 {
+    let position = ((pitch - 24.0) / 12.0).clamp(0.0, 7.0);
+    let index = (position as usize).min(6);
+    let fraction = position - index as f32;
+    let low = calibration::dial(first + index, default);
+    let high = calibration::dial(first + index + 1, default);
+    low + (high - low) * fraction
+}
+/// Scale of a soundboard's or a box's modes in the picture, which brings them to the size
+/// the strings that drive them are drawn at.
+pub(crate) const BODY_DISPLAY: f32 = 0.1;
+
+/// A blow that rises and falls as half a sine over `seconds`, as its picture: what a mallet
+/// does to a bar, whose own motion is too slow to push back within the blow.
+pub(crate) fn blow_scope(seconds: f32, strength: f32, scope: &mut [f32; MOTION_SCOPE]) {
+    for (index, sample) in scope.iter_mut().enumerate() {
+        let at = (index as f32 + 0.5) / MOTION_SCOPE as f32 * BLOW_WINDOW;
+        *sample = if at < seconds {
+            strength * (std::f32::consts::PI * at / seconds.max(1.0e-6)).sin()
+        } else {
+            0.0
+        };
+    }
+}
+
+/// Sizes of the first harmonics of one period of a wave, which `at` gives from zero at the
+/// period's start to one at its end: the spectrum of an instrument that is a wave going
+/// round and not a sum of partials. Sixty-four samples of the period, so harmonics above the
+/// thirty-second fold down among the ones shown; a bowed or blown wave has little up there.
+pub(crate) fn harmonics(mut at: impl FnMut(f32) -> f32, sizes: &mut [f32; MOTION_PARTIALS]) {
+    const POINTS: usize = 64;
+    let mut wave = [0.0_f32; POINTS];
+    let mut turns = [(0.0_f32, 0.0_f32); POINTS];
+    for (index, (sample, turn)) in wave.iter_mut().zip(turns.iter_mut()).enumerate() {
+        let along = index as f32 / POINTS as f32;
+        *sample = at(along);
+        *turn = (std::f32::consts::TAU * along).sin_cos();
+    }
+    for (harmonic, size) in sizes.iter_mut().enumerate() {
+        let (mut re, mut im) = (0.0_f32, 0.0_f32);
+        for (index, sample) in wave.iter().enumerate() {
+            let (sine, cosine) = turns[(harmonic + 1) * index % POINTS];
+            re += sample * cosine;
+            im += sample * sine;
+        }
+        *size = 2.0 * re.hypot(im) / POINTS as f32;
     }
 }
 
 /// A polyphonic physical instrument, registered once for each [`Model`].
 ///
-/// Parameters and MIDI CCs are shared across the family. Velocity changes both excitation
-/// strength and contact hardness; CC1 scales bow pressure, CC7 sets channel volume, CC11 drives
-/// expression/bow speed, and CC64 holds released piano strings. State uses ordinary plugin
-/// parameters, so automation, undo, save/load and model-facing tools need no special format.
-#[derive(Clone, Debug)]
+/// Velocity changes what the exciter does, not just how loud the result is: a harder hammer blow
+/// is shorter and so brighter, a faster bow presses harder. Controller 1 deepens the vibrato of
+/// the bowed and blown models, 7 sets channel volume, 11 is expression — bow speed and breath as
+/// well as level — and 64 lifts the piano's dampers and the vibraphone's. State is ordinary
+/// plugin parameters, so automation, undo, save and load need no special format.
 pub struct Physical {
     model: Model,
     params: ParamBank,
-    voices: Vec<Voice>,
+    engine: Box<dyn Engine>,
     allocator: VoiceAllocator,
-    /// One radiation filter per side. Both are linear, so the downmix of the two is the
-    /// mono instrument's single body.
-    body: [Body; 2],
-    rate: f32,
-    bend: f32,
+    performance: Performance,
+    /// Channel volume, squared from controller 7.
     volume: f32,
+    /// Expression as it is applied, chasing the controller.
     expression: f32,
-    expression_current: f32,
     expression_step: f32,
-    pressure: f32,
-    pedal: bool,
     gain: f32,
-    motion: MotionCapture,
-    motion_frames: usize,
+    rate: f32,
+    /// Samples rendered since the last reset.
+    clock: usize,
+    /// Notes started since the last reset.
+    notes: u32,
     /// Where a frontend touched the body, waiting for the note it excites.
     touch: Option<f32>,
     legato: Legato,
-    voicing: PianoVoicing,
-    /// The piano's soundboard knock for one segment, mixed after radiation.
-    knock: Vec<f32>,
+    motion: MotionCapture,
+    motion_frames: usize,
     /// Stands in for the right channel when the output buffer is mono.
     scratch: Vec<f32>,
-    /// Id of the stereo width parameter, which follows each model's own parameters.
+    level_param: u32,
     width_param: u32,
-    /// One-pole coefficient by which a voice's pan follows the width control.
-    pan_step: f32,
-    /// Id of the live-playback [`Quality`] choice, which follows the width.
     quality_param: u32,
-    /// Id of the offline-render [`Quality`] choice, which follows the live one.
     render_quality_param: u32,
+    legato_param: Option<u32>,
     /// Whether the block being rendered is an offline one, which picks the render quality.
     offline: bool,
+}
+
+impl std::fmt::Debug for Physical {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Physical")
+            .field("model", &self.model)
+            .field("voices", &self.allocator.active_count())
+            .finish_non_exhaustive()
+    }
 }
 
 impl Physical {
     /// Builds an unprepared physical instrument. All voice storage is allocated in `prepare`.
     pub fn new(model: Model) -> Self {
-        let (mut decay, release, mut position, mut hardness) = match model {
-            Model::Piano => (11.498_04, 0.20, 0.244_4, 0.606_004),
-            Model::Guitar => (5.638_205, 0.12, 0.298_280, 0.249_201),
-            Model::ElectricGuitar => (7.493_398, 0.12, 0.069_559, 0.186_606),
-            Model::Bass => (3.5, 0.15, 0.30, 0.40),
-            Model::Bell => (6.0, 1.8, 0.35, 0.65),
-            Model::Mallet => (1.7, 0.35, 0.40, 0.40),
-            Model::Violin => (10.460_195, 1.5, 0.103_416, 0.319_371),
-        };
-        if let Some(profile) = pack::profile(model) {
-            decay = profile.decay;
-            position = profile.position;
-            hardness = profile.hardness;
-        }
-        let mut descriptors = vec![
-            ParamDescriptor::percent(P_HARDNESS, "hardness", "Contact Hardness", hardness),
-            ParamDescriptor::new(
-                P_POSITION,
-                "position",
-                "Excitation Position",
-                0.05,
-                0.45,
-                position,
-            )
-            .with_unit(ParamUnit::Percent),
-            ParamDescriptor::new(
-                P_DECAY,
-                "decay",
-                "Resonance Decay",
-                0.1,
-                if model == Model::ElectricGuitar {
-                    40.0
-                } else {
-                    12.0
-                },
-                decay,
-            )
-            .with_unit(ParamUnit::Seconds),
-            ParamDescriptor::percent(
-                P_DAMPING,
-                "damping",
-                "Damping",
-                match model {
-                    Model::Piano => 0.009_015,
-                    Model::Guitar => 0.0,
-                    Model::ElectricGuitar => 0.021_633,
-                    Model::Violin => 0.359_287,
-                    _ => pack::profile(model).map_or(0.12, |profile| profile.damping),
-                },
-            ),
-            ParamDescriptor::percent(
-                P_BODY,
-                "body",
-                "Body Resonance",
-                if matches!(model, Model::Piano | Model::Guitar | Model::Violin) {
-                    0.65
-                } else {
-                    0.35
-                },
-            ),
-            ParamDescriptor::new(P_RELEASE, "release", "Release", 0.01, 3.0, release)
-                .with_unit(ParamUnit::Seconds),
-            ParamDescriptor::new(P_LEVEL, "level", "Level", -60.0, 6.0, -12.0)
+        let mut descriptors = model.descriptors();
+        let legato_param = descriptors
+            .iter()
+            .find(|descriptor| descriptor.key == "legato")
+            .map(|descriptor| descriptor.id.0);
+        let level_param = descriptors.len() as u32;
+        let width_param = level_param + 1;
+        let quality_param = level_param + 2;
+        let render_quality_param = level_param + 3;
+        descriptors.push(
+            ParamDescriptor::new(level_param, "level", "Level", -60.0, 6.0, -12.0)
                 .with_unit(ParamUnit::Decibels),
-        ];
-        if model == Model::ElectricGuitar {
-            descriptors[P_BODY as usize] = ParamDescriptor::new(
-                P_PICKUP_POSITION,
-                "pickup_position",
-                "Pickup Position",
-                0.02,
-                0.3,
-                0.235_997,
-            )
-            .with_unit(ParamUnit::Percent);
-            descriptors.push(
-                ParamDescriptor::new(
-                    P_TONE,
-                    "tone",
-                    "Pickup Resonance",
-                    800.0,
-                    12_000.0,
-                    2717.688,
-                )
-                .with_unit(ParamUnit::Hertz),
-            );
-            descriptors.push(ParamDescriptor::new(
-                P_PICKUP_Q, "pickup_q", "Pickup Q", 0.5, 2.5, 1.883_881,
-            ));
-            descriptors.push(
-                ParamDescriptor::new(
-                    P_DECAY_RATIO,
-                    "decay_ratio",
-                    "Decay per Octave",
-                    0.2,
-                    1.5,
-                    0.55,
-                )
-                .with_unit(ParamUnit::Ratio),
-            );
-        }
-        if model == Model::Piano {
-            descriptors.push(ParamDescriptor::new(
-                P_STIFFNESS,
-                "stiffness",
-                "String Stiffness",
-                0.0,
-                0.008,
-                0.000_749_371,
-            ));
-        }
-        if model == Model::Violin {
-            descriptors.push(ParamDescriptor::percent(
-                P_PRESSURE,
-                "bow_pressure",
-                "Bow Pressure",
-                0.336_820,
-            ));
-            descriptors.push(ParamDescriptor::percent(
-                P_BOW_SPEED,
-                "bow_speed",
-                "Bow speed",
-                0.203_998,
-            ));
-            descriptors.push(ParamDescriptor::toggle(P_LEGATO, "legato", "Legato", false));
-            descriptors.push(
-                ParamDescriptor::new(
-                    P_BOW_RESPONSE,
-                    "bow_response",
-                    "Bow response",
-                    0.002,
-                    0.12,
-                    0.057_120_9,
-                )
-                .with_unit(ParamUnit::Seconds),
-            );
-        }
-        if model == Model::Guitar {
-            descriptors.push(ParamDescriptor::percent(
-                P_PICKUP,
-                "pickup",
-                "Pickup blend",
-                0.0,
-            ));
-        }
-        let width_param = descriptors.len() as u32;
+        );
         descriptors.push(ParamDescriptor::new(
             width_param,
             "width",
@@ -542,8 +615,6 @@ impl Physical {
             2.0,
             1.0,
         ));
-        let quality_param = width_param + 1;
-        let render_quality_param = width_param + 2;
         descriptors.push(
             ParamDescriptor::new(
                 quality_param,
@@ -567,37 +638,41 @@ impl Physical {
             .with_choices(Quality::CHOICES),
         );
         let params = ParamBank::new(descriptors);
+        let mut engine = model.engine();
+        engine.configure(&params);
         Self {
             model,
+            gain: db_to_gain(params.at(level_param)) * model.normalization(),
             params,
-            voices: Vec::new(),
+            engine,
             allocator: VoiceAllocator::new(),
-            body: Default::default(),
-            rate: 48_000.0,
-            bend: 0.0,
+            performance: Performance::default(),
             volume: 1.0,
             expression: 1.0,
-            expression_current: 1.0,
             expression_step: 1.0,
-            pressure: 1.0,
-            pedal: false,
-            gain: db_to_gain(-12.0) * model.output_normalization(),
-            motion: MotionCapture::default(),
-            motion_frames: 0,
+            rate: 48_000.0,
+            clock: 0,
+            notes: 0,
             touch: None,
             legato: Legato::default(),
-            voicing: VOICING,
-            knock: Vec::new(),
+            motion: MotionCapture::default(),
+            motion_frames: 0,
             scratch: Vec::new(),
+            level_param,
             width_param,
-            pan_step: 1.0,
             quality_param,
             render_quality_param,
+            legato_param,
             offline: false,
         }
     }
 
-    /// The level a note struck now is simulated at: the render quality while rendering
+    /// Which instrument this is.
+    pub fn model(&self) -> Model {
+        self.model
+    }
+
+    /// The level a note started now is simulated at: the render quality while rendering
     /// offline, the live quality otherwise.
     pub fn quality(&self) -> Quality {
         Quality::from_value(self.params.at(if self.offline {
@@ -607,179 +682,36 @@ impl Physical {
         }))
     }
 
-    /// Replaces the piano's register curves and soundboard for offline fitting.
-    ///
-    /// Available only with the development `piano-calibration` feature, and only on
-    /// [`Model::Piano`]. Strikes from the next note on use it. Call off the
-    /// audio thread.
-    #[cfg(feature = "piano-calibration")]
-    pub fn set_piano_voicing(&mut self, voicing: PianoVoicing) {
-        if self.model != Model::Piano {
-            return;
-        }
-        self.voicing = voicing;
-        for voice in &mut self.voices {
-            voice.modal.set_voicing(voicing);
-        }
-        for body in &mut self.body {
-            body.prepare(self.model, self.rate, &self.voicing);
-        }
-    }
-
-    fn settings(&self) -> Settings {
-        Settings {
-            hardness: self.params.at(P_HARDNESS),
-            position: self.params.at(P_POSITION),
-            decay: self.params.at(P_DECAY),
-            damping: self.params.at(P_DAMPING),
-            stiffness: if self.model == Model::Piano {
-                self.params.at(P_STIFFNESS)
-            } else {
-                0.0
-            },
-            release: self.params.at(P_RELEASE),
-            pickup: if self.model == Model::Guitar {
-                self.params.at(P_PICKUP)
-            } else {
-                0.0
-            },
-            electric: self.model == Model::ElectricGuitar,
-            pickup_position: if self.model == Model::ElectricGuitar {
-                self.params.at(P_PICKUP_POSITION)
-            } else {
-                self.params.at(P_POSITION)
-            },
-            tone: if self.model == Model::ElectricGuitar {
-                self.params.at(P_TONE)
-            } else {
-                12_000.0
-            },
-            pickup_q: if self.model == Model::ElectricGuitar {
-                self.params.at(P_PICKUP_Q)
-            } else {
-                0.707
-            },
-            decay_ratio: if self.model == Model::ElectricGuitar {
-                self.params.at(P_DECAY_RATIO)
-            } else {
-                1.0
-            },
-            bow_speed: if self.model == Model::Violin {
-                self.params.at(P_BOW_SPEED)
-            } else {
-                0.0
-            },
-            bow_response: if self.model == Model::Violin {
-                self.params.at(P_BOW_RESPONSE)
-            } else {
-                0.012
-            },
-        }
-    }
-
-    /// Semitones by which a key's string is tuned from equal temperament: the piano's stretch.
-    fn stretch(&self, pitch: u8) -> f32 {
-        if self.model == Model::Piano {
-            calibration::piano_stretch(pitch, self.settings()) / 100.0
-        } else {
-            0.0
-        }
-    }
-
     fn is_legato(&self) -> bool {
-        self.model == Model::Violin && self.params.at(P_LEGATO) >= 0.5
+        self.legato_param
+            .is_some_and(|param| self.params.at(param) >= 0.5)
     }
 
-    fn update_expression_step(&mut self) {
-        self.expression_step = if self.model == Model::Violin {
-            // Output gain responds twice as fast as bow motion. Computing this
-            // coefficient at control rate leaves only a multiply/add per sample.
-            1.0 - (-2.0 / (self.rate * self.params.at(P_BOW_RESPONSE))).exp()
-        } else {
-            1.0
-        };
-    }
-
-    fn publish_motion(&mut self) {
-        let mut frame = MotionFrame {
-            geometry: match self.model {
-                Model::Bell => MotionGeometry::Shell,
-                Model::Mallet => MotionGeometry::Bar,
-                _ => MotionGeometry::String,
-            },
-            active: self.allocator.active_count(),
-            expression: if self.model == Model::Violin {
-                self.expression_current
-            } else {
-                self.expression
-            },
-            pressure: if self.model == Model::Violin {
-                self.pressure * self.params.at(P_PRESSURE)
-            } else {
-                0.0
-            },
-            pedal: self.pedal,
-            ..Default::default()
-        };
-        let mut selected: [Option<usize>; MOTION_VOICES] = [None; MOTION_VOICES];
-        for (index, slot) in self.allocator.slots().iter().enumerate() {
-            if !self.voices[index].envelope.is_active() {
-                continue;
-            }
-            for rank in 0..MOTION_VOICES {
-                if selected[rank]
-                    .is_none_or(|previous| self.allocator.slots()[previous].age < slot.age)
-                {
-                    selected[rank..].rotate_right(1);
-                    selected[rank] = Some(index);
-                    break;
-                }
-            }
+    fn note(&mut self, pitch: u8, velocity: f32, stolen: bool) -> Note {
+        self.notes = self.notes.wrapping_add(1);
+        Note {
+            pitch,
+            velocity,
+            pan: self.model.stereo_image().position(f32::from(pitch)),
+            touch: self.touch.take(),
+            stolen,
+            seed: self
+                .notes
+                .wrapping_mul(0x9E37_79B9)
+                .wrapping_add(u32::from(pitch) << 20),
         }
-        for (observed, index) in frame.voices.iter_mut().zip(selected) {
-            let Some(index) = index else {
-                break;
-            };
-            let voice = &self.voices[index];
-            observed.pitch = f32::from(self.allocator.slots()[index].pitch) + self.bend;
-            observed.level = voice.envelope.level();
-            observed.held = voice.held || voice.deferred;
-            observed.contact = voice.contact;
-            if self.model.is_string() {
-                (observed.contact, observed.excitation) = voice.string.motion(&mut observed.points);
-            } else {
-                observed.excitation =
-                    voice
-                        .modal
-                        .motion(&mut observed.points, &mut observed.modes, self.model);
-            }
-            for point in &mut observed.points {
-                *point *= observed.level;
-            }
-            for mode in &mut observed.modes {
-                *mode *= observed.level;
-            }
-        }
-        self.motion.publish(&frame);
     }
 
-    fn retarget(&mut self, index: usize, pitch: u8, velocity: f32) -> bool {
-        let frequency = pitch_to_hz(f32::from(pitch) + self.bend);
-        let settings = calibration::register(self.model, pitch, self.settings());
-        let Some(voice) = self.voices.get_mut(index) else {
-            return false;
-        };
-        if !voice.held || !voice.envelope.is_active() {
+    /// Moves the legato voice to `pitch`, keeping its string or its air column sounding.
+    fn glide(&mut self, index: usize, pitch: u8, velocity: f32) -> bool {
+        if self.engine.level(index) <= 0.0 || !self.engine.is_held(index) {
             return false;
         }
         if !self.allocator.retarget(index, pitch, velocity) {
             return false;
         }
-        voice.string.glide_to(frequency);
-        voice.string.set_velocity(velocity);
-        voice.pitch = pitch;
-        voice.string.update_loss(settings);
-        true
+        let note = self.note(pitch, velocity, false);
+        self.engine.glide(index, &note)
     }
 
     fn note_on(&mut self, pitch: u8, velocity: f32) {
@@ -792,70 +724,20 @@ impl Physical {
         if self.is_legato() {
             self.legato.note_on(pitch, velocity);
             if let Some(index) = self.legato.voice
-                && self.retarget(index, pitch, velocity)
+                && self.glide(index, pitch, velocity)
             {
                 return;
             }
         }
-        let Some(assignment) = self.allocator.note_on(pitch.min(127), velocity) else {
+        let Some(assignment) = self.allocator.note_on(pitch, velocity) else {
             return;
         };
-        let mut settings = calibration::register(self.model, pitch, self.settings());
-        if let Some(at) = self.touch.take() {
-            // Along the length that sounds, which is the one a person sees and points at.
-            settings.position = touch_position(at);
-        }
-        let stretch = self.stretch(pitch);
+        let note = self.note(pitch, velocity, assignment.stolen);
         let quality = self.quality();
+        self.engine.start(assignment.index, &note, quality);
         if self.is_legato() {
             self.legato.voice = Some(assignment.index);
         }
-        let Some(voice) = self.voices.get_mut(assignment.index) else {
-            return;
-        };
-        voice.tail = if assignment.stolen { voice.last } else { 0.0 };
-        voice.fade = if assignment.stolen { 1.0 } else { 0.0 };
-        voice.envelope.silence();
-        voice.presence.reset();
-        voice.envelope.set_adsr(
-            if self.model == Model::Violin {
-                0.025
-            } else {
-                0.001
-            },
-            0.0,
-            1.0,
-            self.params.at(P_RELEASE),
-        );
-        voice.envelope.trigger();
-        voice.held = true;
-        voice.pitch = pitch;
-        voice.deferred = false;
-        voice.age = 0;
-        voice.contact = settings.position;
-        voice.position = self.model.stereo_image().position(f32::from(pitch));
-        voice.pan = voice.position * self.params.at(self.width_param);
-        let hz = pitch_to_hz(f32::from(pitch) + self.bend + stretch).min(self.rate * 0.2);
-        if self.model.is_string() {
-            voice.oversampling = quality.oversampling();
-            voice.decimator.reset();
-            voice.string.excite(
-                self.model,
-                hz,
-                velocity,
-                self.rate * voice.oversampling as f32,
-                voice.oversampling as f32,
-                settings,
-            );
-        } else {
-            voice
-                .modal
-                .excite(self.model, hz, velocity, self.rate, quality, settings);
-        }
-        voice.limit = voice
-            .modal
-            .lifetime(self.rate, settings)
-            .unwrap_or((settings.decay * 2.0 * self.rate) as usize);
     }
 
     fn note_off(&mut self, pitch: u8) {
@@ -867,48 +749,81 @@ impl Physical {
             if let Some(index) = self.legato.voice
                 && let Some((target, velocity)) = self.legato.last()
             {
-                self.retarget(index, target, velocity);
+                // The key underneath is still down: the line falls back to it.
+                self.glide(index, target, velocity);
                 return;
             }
             self.legato.voice = None;
         }
-        let settings = self.settings();
         for index in self.allocator.note_off(pitch) {
-            if let Some(voice) = self.voices.get_mut(index) {
-                voice.held = false;
-                if self.model != Model::Piano {
-                    voice.envelope.release();
-                } else if self.pedal {
-                    voice.deferred = true;
-                } else {
-                    // The damper stops the strings; the keys above it let them ring.
-                    let settings = calibration::register(self.model, voice.pitch, settings);
-                    voice.modal.damp(self.rate, settings);
+            self.engine.stop(index);
+        }
+    }
+
+    fn release_everything(&mut self, at_once: bool) {
+        self.legato.clear();
+        if self.performance.pedal {
+            self.performance.pedal = false;
+            self.engine.perform(&self.performance);
+        }
+        for index in self.allocator.release_all() {
+            if at_once {
+                self.engine.silence(index);
+            } else {
+                self.engine.stop(index);
+            }
+        }
+        for pitch in 0..=127 {
+            self.engine.lift(pitch);
+        }
+    }
+
+    /// Frees the voices that have died away and tells the allocator how loud the rest are.
+    fn tick(&mut self) {
+        for index in 0..self.allocator.capacity() {
+            if self
+                .allocator
+                .slot(index)
+                .is_none_or(|slot| slot.state == VoiceState::Free)
+            {
+                continue;
+            }
+            let level = self.engine.level(index);
+            if level > 0.0 {
+                self.allocator.set_level(index, level);
+            } else {
+                self.allocator.retire(index);
+                if self.legato.voice == Some(index) {
+                    self.legato.voice = None;
                 }
             }
         }
     }
 
-    fn set_pedal(&mut self, down: bool) {
-        if down == self.pedal {
-            return;
+    fn publish_motion(&mut self) {
+        let mut frame = MotionFrame {
+            geometry: self.model.geometry(),
+            active: self.allocator.active_count(),
+            expression: self.expression,
+            pressure: self.engine.pressure(),
+            pedal: self.performance.pedal,
+            ..MotionFrame::default()
+        };
+        let engine = &self.engine;
+        let selected = recent_voices(&self.allocator, |index| engine.level(index) > 0.0);
+        for (picture, index) in frame.voices.iter_mut().zip(selected) {
+            let Some(index) = index else {
+                break;
+            };
+            let Some(slot) = self.allocator.slot(index) else {
+                break;
+            };
+            picture.pitch = f32::from(slot.pitch) + self.performance.bend;
+            picture.held = self.engine.is_held(index);
+            self.engine.observe(index, picture);
         }
-        self.pedal = down;
-        let settings = self.settings();
-        for voice in &mut self.voices {
-            if !voice.envelope.is_active() || voice.envelope.is_releasing() {
-                continue;
-            }
-            let settings = calibration::register(self.model, voice.pitch, settings);
-            if !down && voice.deferred {
-                voice.deferred = false;
-                voice.modal.damp(self.rate, settings);
-            } else if down && !voice.held && voice.modal.is_damped() {
-                // Pressing the pedal lifts every damper, catching a note already decaying.
-                voice.deferred = true;
-                voice.modal.lift(self.rate, settings);
-            }
-        }
+        self.engine.observe_body(&mut frame.body);
+        self.motion.publish(&frame);
     }
 }
 
@@ -916,69 +831,29 @@ impl Parameterized for Physical {
     fn parameters(&self) -> &[ParamDescriptor] {
         self.params.descriptors()
     }
+
     fn param(&self, id: ParamId) -> f32 {
         self.params.get(id)
     }
+
     fn set_param(&mut self, id: ParamId, value: f32) {
         let was_legato = self.is_legato();
-        if self.params.set(id, value) {
-            if was_legato != self.is_legato() {
-                self.legato.clear();
-                for index in self.allocator.release_all() {
-                    if let Some(voice) = self.voices.get_mut(index) {
-                        voice.held = false;
-                        voice.envelope.release();
-                    }
-                }
-            }
-            self.gain = db_to_gain(self.params.at(P_LEVEL)) * self.model.output_normalization();
-            if id.0 == P_BOW_RESPONSE && self.model == Model::Violin {
-                self.update_expression_step();
-            }
-            let settings = self.settings();
-            let changes_resonance = matches!(id.0, P_DECAY | P_DAMPING | P_HARDNESS)
-                || self.model == Model::Piano && id.0 == P_RELEASE
-                || self.model == Model::Guitar && id.0 == P_PICKUP
-                || self.model == Model::ElectricGuitar
-                    && matches!(
-                        id.0,
-                        P_PICKUP_POSITION | P_TONE | P_PICKUP_Q | P_DECAY_RATIO
-                    )
-                || self.model == Model::Violin
-                    && matches!(id.0, P_BOW_SPEED | P_POSITION | P_BOW_RESPONSE);
-            for voice in &mut self.voices {
-                voice.envelope.set_adsr(
-                    if self.model == Model::Violin {
-                        0.025
-                    } else {
-                        0.001
-                    },
-                    0.0,
-                    1.0,
-                    self.params.at(P_RELEASE),
-                );
-                if voice.envelope.is_active() && changes_resonance {
-                    let settings = calibration::register(self.model, voice.pitch, settings);
-                    if self.model.is_string() {
-                        voice.string.update_loss(settings);
-                    } else {
-                        voice.modal.update_loss(self.model, self.rate, settings);
-                    }
-                    voice.limit = voice
-                        .modal
-                        .lifetime(self.rate, settings)
-                        .unwrap_or((settings.decay * 2.0 * self.rate) as usize);
-                }
-            }
+        if !self.params.set(id, value) {
+            return;
+        }
+        if was_legato != self.is_legato() {
+            // The bookkeeping of which keys are down belongs to one mode or the other.
+            self.release_everything(false);
+        }
+        if id.0 == self.level_param {
+            self.gain = db_to_gain(self.params.at(self.level_param)) * self.model.normalization();
+        } else if id.0 == self.width_param {
+            self.performance.width = self.params.at(self.width_param);
+            self.engine.perform(&self.performance);
+        } else if id.0 < self.level_param {
+            self.engine.configure(&self.params);
         }
     }
-}
-
-/// A touch anywhere along a string, folded onto the half the excitation position measures: a
-/// string fixed at both ends sounds the same struck at a quarter from either end.
-pub(crate) fn touch_position(at: f32) -> f32 {
-    let at = finite_or(at, 0.25).clamp(0.0, 1.0);
-    at.min(1.0 - at).clamp(0.02, 0.5)
 }
 
 impl SegmentRenderer for Physical {
@@ -987,49 +862,39 @@ impl SegmentRenderer for Physical {
             NoteEvent::NoteOn {
                 pitch, velocity, ..
             } => self.note_on(pitch, velocity),
-            NoteEvent::NoteOff { pitch, .. } => self.note_off(pitch),
-            NoteEvent::AllNotesOff { .. } | NoteEvent::AllSoundOff { .. } => {
-                self.legato.clear();
-                self.pedal = false;
-                for index in self.allocator.release_all() {
-                    if let Some(voice) = self.voices.get_mut(index) {
-                        voice.held = false;
-                        voice.deferred = false;
-                        if matches!(event, NoteEvent::AllSoundOff { .. }) {
-                            voice.envelope.kill();
-                        } else {
-                            voice.envelope.release();
-                        }
-                    }
-                }
+            NoteEvent::NoteOff { pitch, .. } => {
+                self.note_off(pitch);
+                self.engine.lift(pitch.min(127));
             }
+            NoteEvent::AllNotesOff { .. } => self.release_everything(false),
+            NoteEvent::AllSoundOff { .. } => self.release_everything(true),
             NoteEvent::PitchBend { semitones, .. } => {
-                let bend = finite_or(semitones, 0.0).clamp(-12.0, 12.0);
-                let ratio = ((bend - self.bend) / 12.0).exp2();
-                for voice in &mut self.voices {
-                    if self.model.is_string() {
-                        voice.string.retune(ratio);
-                    } else {
-                        voice.modal.retune(ratio);
-                    }
-                }
-                self.bend = bend;
+                self.performance.bend = finite_or(semitones, 0.0).clamp(-24.0, 24.0);
+                self.engine.perform(&self.performance);
             }
             NoteEvent::Controller { number, value, .. } => {
                 let value = finite_or(value, 0.0).clamp(0.0, 1.0);
                 match number {
-                    1 => self.pressure = 0.5 + value * 0.5,
-                    7 => self.volume = value.powi(2),
+                    1 => self.performance.modulation = value,
+                    7 => {
+                        self.volume = value * value;
+                        return;
+                    }
                     11 => {
-                        self.expression = calibration::expression(self.model, value);
+                        self.performance.expression = value;
                         if self.allocator.active_count() == 0 {
-                            self.expression_current = self.expression;
+                            // Nothing is sounding to hear the change glide.
+                            self.expression = value;
                         }
                     }
-                    64 if self.model == Model::Piano => self.set_pedal(value >= 0.5),
-                    TOUCH_CONTROLLER => self.touch = Some(value),
-                    _ => {}
+                    64 => self.performance.pedal = value >= 0.5,
+                    TOUCH_CONTROLLER => {
+                        self.touch = Some(value);
+                        return;
+                    }
+                    _ => return,
                 }
+                self.engine.perform(&self.performance);
             }
         }
     }
@@ -1041,98 +906,51 @@ impl SegmentRenderer for Physical {
         let Some(left) = first.get_mut(start..end) else {
             return;
         };
-        left.fill(0.0);
         let stereo = !rest.is_empty();
+        // Taken out for the block so the mono path can borrow it beside the engine.
+        let mut scratch = std::mem::take(&mut self.scratch);
         let right = match rest.first_mut() {
             Some(channel) => channel.get_mut(start..end),
-            None => self.scratch.get_mut(..end - start),
+            None => scratch.get_mut(..end - start),
         };
         let Some(right) = right else {
+            left.fill(0.0);
+            self.scratch = scratch;
             return;
         };
-        right.fill(0.0);
-        let mut empty = [];
-        let knock = self.knock.get_mut(..left.len()).unwrap_or(&mut empty[..]);
-        knock.fill(0.0);
-        let pressure = self.pressure * self.params.at(P_PRESSURE);
-        let width = self.params.at(self.width_param);
-        for (index, voice) in self.voices.iter_mut().enumerate() {
-            if !voice.envelope.is_active() {
-                continue;
+        let mut done = 0;
+        while done < left.len() {
+            let phase = self.clock % TICK;
+            let count = (left.len() - done).min(TICK - phase);
+            if phase == 0 {
+                self.tick();
             }
-            let frequency = pitch_to_hz(f32::from(voice.pitch) + self.bend);
-            let target = voice.position * width;
-            for (frame, (l, r)) in left.iter_mut().zip(right.iter_mut()).enumerate() {
-                let raw = if self.model.is_string() {
-                    let bow = if voice.held { self.expression } else { 0.0 };
-                    if voice.oversampling > 1 {
-                        let first = voice.string.next(bow, pressure);
-                        let second = voice.string.next(bow, pressure);
-                        voice.decimator.process(first, second)
-                    } else {
-                        voice.string.next(bow, pressure)
-                    }
+            let (Some(mid), Some(side)) = (
+                left.get_mut(done..done + count),
+                right.get_mut(done..done + count),
+            ) else {
+                break;
+            };
+            mid.fill(0.0);
+            side.fill(0.0);
+            self.engine.render(mid, side, phase == 0);
+            for (mid, side) in mid.iter_mut().zip(side.iter_mut()) {
+                self.expression +=
+                    (self.performance.expression - self.expression) * self.expression_step;
+                let gain = self.gain * self.volume * self.expression;
+                // Left is `1 - pan` of a note and right `1 + pan`: mid less side, and mid plus.
+                let (to_left, to_right) = ((*mid - *side) * gain, (*mid + *side) * gain);
+                if stereo {
+                    *mid = to_left;
+                    *side = to_right;
                 } else {
-                    voice.modal.next()
-                };
-                let raw = voice.presence.process(raw, frequency, 1.0);
-                let envelope = voice.envelope.process();
-                if let Some(thump) = knock.get_mut(frame) {
-                    *thump += voice.modal.thump() * envelope;
-                }
-                let current = raw * envelope;
-                voice.last = current * (1.0 - voice.fade) + voice.tail * voice.fade;
-                voice.fade = (voice.fade - 1.0 / (0.002 * self.rate)).max(0.0);
-                voice.pan += (target - voice.pan) * self.pan_step;
-                let (to_left, to_right) = pan_gains(voice.pan);
-                *l += voice.last * to_left;
-                *r += voice.last * to_right;
-                voice.age = voice.age.saturating_add(1);
-                if self.model != Model::Violin && voice.age >= voice.limit {
-                    voice.envelope.release();
+                    *mid = (to_left + to_right) * 0.5;
                 }
             }
-            self.allocator.set_level(index, voice.last.abs());
-            if voice.envelope.is_finished()
-                || (!self.model.is_string() && voice.age > 100 && voice.modal.energy() < 1.0e-5)
-            {
-                voice.envelope.silence();
-                self.allocator.retire(index);
-            }
+            self.clock = self.clock.wrapping_add(count);
+            done += count;
         }
-        let body = self.params.at(P_BODY)
-            * if self.model == Model::Guitar {
-                1.0 - self.params.at(P_PICKUP)
-            } else {
-                1.0
-            };
-        let [body_left, body_right] = &mut self.body;
-        let mut thumps = knock.iter();
-        for (l, r) in left.iter_mut().zip(right.iter_mut()) {
-            // The soundboard's knock comes from the whole case, so it sits in the centre.
-            let thump = thumps.next().copied().unwrap_or(0.0);
-            let expression = if self.model == Model::Violin {
-                self.expression_current +=
-                    (self.expression - self.expression_current) * self.expression_step;
-                self.expression_current
-            } else {
-                self.expression
-            };
-            let (signal_left, signal_right) = if self.model == Model::ElectricGuitar {
-                (*l, *r)
-            } else {
-                (
-                    body_left.next(*l, body) + thump,
-                    body_right.next(*r, body) + thump,
-                )
-            };
-            let gain = self.gain * self.volume * expression;
-            *l = signal_left * gain;
-            *r = signal_right * gain;
-            if !stereo {
-                *l = (*l + *r) * 0.5;
-            }
-        }
+        self.scratch = scratch;
         downmix_to_extra_channels(out, start, end);
     }
 }
@@ -1141,6 +959,7 @@ impl Instrument for Physical {
     fn motion_monitor(&self) -> Option<std::sync::Arc<auris_core::motion::MotionMonitor>> {
         Some(self.motion.monitor())
     }
+
     fn descriptor(&self) -> PluginDescriptor {
         PluginDescriptor::instrument(
             self.model.id(),
@@ -1149,48 +968,37 @@ impl Instrument for Physical {
             PluginCategory::Synth,
         )
     }
+
     fn prepare(&mut self, ctx: &PrepareContext) {
         self.rate = crate::sample_rate_f32(ctx.sample_rate).clamp(8_000.0, 192_000.0);
-        self.voices = (0..VOICES)
-            .map(|_| Voice::new(self.model, self.rate, self.voicing))
-            .collect();
-        self.allocator.prepare(VOICES);
-        for body in &mut self.body {
-            body.prepare(self.model, self.rate, &self.voicing);
-        }
-        self.knock = if self.model == Model::Piano {
-            vec![0.0; ctx.max_block_frames]
-        } else {
-            Vec::new()
-        };
+        let voices = self.model.voices();
+        self.allocator.prepare(voices);
+        self.engine.prepare(self.rate, voices);
+        self.engine.configure(&self.params);
         self.scratch = vec![0.0; ctx.max_block_frames];
-        // About ten milliseconds, so turning the width control never clicks.
-        self.pan_step = 1.0 - (-1.0 / (0.010 * self.rate)).exp();
-        self.update_expression_step();
+        // Ten milliseconds: a pedal swept from end to end never zips.
+        self.expression_step = 1.0 - (-1.0 / (0.010 * self.rate)).exp();
         self.reset();
     }
+
     fn reset(&mut self) {
-        for voice in &mut self.voices {
-            voice.envelope.silence();
-            voice.presence.reset();
-            voice.last = 0.0;
-            voice.fade = 0.0;
-        }
-        for body in &mut self.body {
-            body.reset();
-        }
+        self.engine.reset();
         self.allocator.clear();
-        self.bend = 0.0;
+        self.performance = Performance {
+            width: self.params.at(self.width_param),
+            ..Performance::default()
+        };
+        self.engine.perform(&self.performance);
         self.volume = 1.0;
         self.expression = 1.0;
-        self.expression_current = 1.0;
-        self.pressure = 1.0;
-        self.pedal = false;
-        self.legato.clear();
+        self.clock = 0;
+        self.notes = 0;
         self.touch = None;
+        self.legato.clear();
         self.motion_frames = 0;
         self.publish_motion();
     }
+
     fn process(&mut self, events: &[NoteEvent], out: &mut AudioBuffer, ctx: &ProcessContext) {
         let frames = ctx.block_frames.min(out.frame_count());
         self.offline = ctx.is_offline;
@@ -1203,11 +1011,90 @@ impl Instrument for Physical {
             }
         }
     }
+
     fn active_voices(&self) -> usize {
         self.allocator.active_count()
     }
 }
 
-#[cfg(test)]
-#[path = "physical/tests.rs"]
-mod tests;
+/// A touch anywhere along a string, folded onto the half the excitation position measures: a
+/// string fixed at both ends sounds the same excited at a quarter from either end.
+pub(crate) fn touch_position(at: f32) -> f32 {
+    let at = finite_or(at, 0.25).clamp(0.0, 1.0);
+    at.min(1.0 - at).clamp(0.02, 0.5)
+}
+
+/// A voice's last sample, faded out over two milliseconds when the voice is taken for another
+/// note: the difference between a stolen voice and a click.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct Declick {
+    value: f32,
+    step: f32,
+}
+
+impl Declick {
+    /// Starts fading from `value`, which is where the voice's output just was.
+    pub(crate) fn from(value: f32, rate: f32) -> Self {
+        Self {
+            value: finite_or(value, 0.0),
+            step: finite_or(value, 0.0) / (0.002 * rate).max(1.0),
+        }
+    }
+
+    /// The next sample of the fade; zero once it is over.
+    pub(crate) fn next(&mut self) -> f32 {
+        if self.value == 0.0 {
+            return 0.0;
+        }
+        let now = self.value;
+        self.value -= self.step;
+        if self.value * now <= 0.0 {
+            self.value = 0.0;
+        }
+        now
+    }
+}
+
+/// A gain that falls from one to nothing in two milliseconds, for a voice silenced outright.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Mute {
+    gain: f32,
+    step: f32,
+}
+
+impl Default for Mute {
+    fn default() -> Self {
+        Self {
+            gain: 1.0,
+            step: 0.0,
+        }
+    }
+}
+
+impl Mute {
+    /// Starts the fade.
+    pub(crate) fn close(&mut self, rate: f32) {
+        self.step = 1.0 / (0.002 * rate).max(1.0);
+    }
+
+    /// Opens fully again, for the voice's next note.
+    pub(crate) fn open(&mut self) {
+        *self = Self::default();
+    }
+
+    /// The gain for the next sample.
+    pub(crate) fn next(&mut self) -> f32 {
+        self.gain = (self.gain - self.step).max(0.0);
+        self.gain
+    }
+
+    /// Whether the fade has run out.
+    pub(crate) fn is_closed(&self) -> bool {
+        self.gain <= 0.0
+    }
+}
+
+/// The frequency of MIDI `pitch`, which may be fractional, in hertz.
+pub(crate) fn hertz(pitch: f32) -> f32 {
+    auris_core::plugin::pitch_to_hz(pitch)
+}

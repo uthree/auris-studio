@@ -107,6 +107,8 @@ pub(crate) enum PlayerTarget {
     Workshop(usize),
     Attachment,
     InlineAttachment(usize),
+    /// A recording a tool answered with: the conversation row's view key, and the clip.
+    ToolAudio(usize, usize),
 }
 
 fn time_label(seconds: f64) -> String {
@@ -167,6 +169,11 @@ impl AurisApp {
             PlayerTarget::InlineAttachment(index) => {
                 self.inline_attachments.get(index).map(|s| &s.player)
             }
+            PlayerTarget::ToolAudio(key, clip) => self
+                .agent_chat
+                .tool_players
+                .get(&(key, clip))
+                .map(|p| &p.player),
         }
     }
 
@@ -180,6 +187,11 @@ impl AurisApp {
                 .inline_attachments
                 .get_mut(index)
                 .map(|s| &mut s.player),
+            PlayerTarget::ToolAudio(key, clip) => self
+                .agent_chat
+                .tool_players
+                .get_mut(&(key, clip))
+                .map(|p| &mut p.player),
         }
     }
 
@@ -210,6 +222,7 @@ impl AurisApp {
             PlayerTarget::Workshop(i) => format!("song-preview-{i}"),
             PlayerTarget::Attachment => "attachment-player".into(),
             PlayerTarget::InlineAttachment(index) => format!("inline-attachment-player-{index}"),
+            PlayerTarget::ToolAudio(key, clip) => format!("agent-tool-audio-{key}-{clip}"),
         });
         let playing = player.playing();
         let timeline = match target {
@@ -240,7 +253,8 @@ impl AurisApp {
         let native_id = match target {
             PlayerTarget::Workshop(_)
             | PlayerTarget::Attachment
-            | PlayerTarget::InlineAttachment(_) => prefix.clone(),
+            | PlayerTarget::InlineAttachment(_)
+            | PlayerTarget::ToolAudio(..) => prefix.clone(),
         };
         let mut native_player = atelier::AudioPlayer::new(
             SharedString::from(native_id),
@@ -268,6 +282,7 @@ impl AurisApp {
                         PlayerTarget::InlineAttachment(index) => {
                             this.play_inline_attachment(index, cx)
                         }
+                        PlayerTarget::ToolAudio(key, clip) => this.play_tool_audio(key, clip, cx),
                     }
                 }
                 if let PlayerTarget::Workshop(_) = target

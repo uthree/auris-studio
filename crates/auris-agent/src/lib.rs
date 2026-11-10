@@ -538,6 +538,12 @@ fn armed(builder: AgentBuilder, bridge: Option<Bridge>, prompt: &str, hearing: b
                     });
                 let bridge = bridge.clone();
                 let name = tool_name.clone();
+                let call_id = match &origin {
+                    permissions::PermissionOrigin::ToolCall { call_id, .. } => {
+                        Some(call_id.clone())
+                    }
+                    permissions::PermissionOrigin::Independent { .. } => None,
+                };
                 Box::pin(async move {
                     if bridge.is_none()
                         && let Some(result) = toolbox::runtime::call_live_reference_in(
@@ -562,18 +568,33 @@ fn armed(builder: AgentBuilder, bridge: Option<Bridge>, prompt: &str, hearing: b
                     if name == host::LISTEN && reply["ok"] == true {
                         let audition = serde_json::from_value(reply["audition"].clone())
                             .map_err(|e| ToolExecutionError::other(e.to_string()))?;
-                        return bridge
+                        let text = bridge
                             .accept_audition(&audition)
-                            .map(ToolOutput::text)
-                            .map_err(ToolExecutionError::other);
+                            .map_err(ToolExecutionError::other)?;
+                        // What the model heard, for the person to play back from the log.
+                        if let Some(call_id) = &call_id {
+                            bridge.stash_result_media(
+                                call_id,
+                                "audio",
+                                audition
+                                    .clips
+                                    .iter()
+                                    .map(|clip| serde_json::json!(clip))
+                                    .collect(),
+                            );
+                        }
+                        return Ok(ToolOutput::text(text));
                     }
                     if name == "inspect_audio" && reply["ok"] == true {
                         let report = serde_json::from_value(reply["inspection"].clone())
                             .map_err(|e| ToolExecutionError::other(e.to_string()))?;
-                        return bridge
+                        let (text, image) = bridge
                             .accept_inspection(&report)
-                            .map(ToolOutput::text)
-                            .map_err(ToolExecutionError::other);
+                            .map_err(ToolExecutionError::other)?;
+                        if let Some(call_id) = &call_id {
+                            bridge.stash_result_media(call_id, "images", vec![image]);
+                        }
+                        return Ok(ToolOutput::text(text));
                     }
                     edit_reply(reply)
                         .map(ToolOutput::text)
@@ -1083,7 +1104,13 @@ impl AgentHook for Reporter {
         if event.tool_name().is_some()
             && let Some(bridge) = &self.bridge
         {
-            bridge.emit(result_event(&event));
+            let mut result = result_event(&event);
+            if let Some(call_id) = event.call_id {
+                for (field, values) in bridge.take_result_media(&call_id.to_string()) {
+                    result[field] = values;
+                }
+            }
+            bridge.emit(result);
         }
         OutcomeAction::proceed()
     }

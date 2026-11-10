@@ -16,6 +16,16 @@ use atelier::TitleBar;
 /// Height of the application-drawn title bar, including its lower border.
 pub const HEIGHT: Pixels = px(32.0);
 
+/// The asset path of the application's mark in the title bar: Atelier's `title-bar.png`, the
+/// small drawing of the Au cell, served by `ProviderAssets`.
+///
+/// Atelier's rule is that every desktop window starts its bar with the app's mark on Windows and
+/// Linux; [`TitleBar::app_icon`] leaves it out on macOS, where the traffic lights hold the corner.
+pub const APP_ICON: &str = "app/title-bar.png";
+
+/// The PNG behind [`APP_ICON`], copied from Atelier's `assets/app-icons/auris-studio/`.
+pub const APP_ICON_PNG: &[u8] = include_bytes!("../assets/title-bar.png");
+
 const CONTROL_WIDTH: Pixels = px(46.0);
 const GLYPH_SIZE: Pixels = px(10.0);
 
@@ -212,6 +222,7 @@ impl Parts {
 pub fn bar(window: &Window, _theme: &Theme, parts: Parts, controls: Div) -> TitleBar {
     let drag = drag_region(SharedString::from(format!("{}-drag", parts.id))).size_full();
     let mut bar = TitleBar::new()
+        .app_icon(atelier::IconSource::image(APP_ICON))
         .title_id(parts.id)
         .title(parts.title)
         .window_drag(false)
@@ -399,5 +410,27 @@ mod tests {
             );
         });
         release(cx, caption.center());
+    }
+
+    #[gpui::test]
+    fn the_bar_starts_with_the_app_mark_except_on_macos(cx: &mut gpui::TestAppContext) {
+        let (app, cx) = open(cx);
+        paint(&app, cx);
+        let mark = cx.debug_bounds("atelier-app-icon");
+        if cfg!(target_os = "macos") {
+            assert!(
+                mark.is_none(),
+                "the traffic lights hold the corner on macOS"
+            );
+            return;
+        }
+        let mark = mark.expect("the mark is drawn on Windows and Linux");
+        let title = cx.debug_bounds("project-title").expect("caption is drawn");
+        assert!(
+            mark.right() <= title.left(),
+            "the mark comes before the title"
+        );
+        assert!(mark.top() >= gpui::px(0.0) && mark.bottom() <= super::HEIGHT);
+        assert!(super::APP_ICON_PNG.starts_with(b"\x89PNG"));
     }
 }

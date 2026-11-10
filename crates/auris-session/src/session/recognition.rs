@@ -233,7 +233,7 @@ impl Session {
                 || track
                     .kind
                     .as_instrument()
-                    .is_some_and(|t| t.instrument_id == "auris.synth.noisedrum")
+                    .is_some_and(|t| auris_synth::is_drum_kit(&t.instrument_id))
             {
                 continue;
             }

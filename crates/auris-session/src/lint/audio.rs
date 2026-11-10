@@ -161,7 +161,7 @@ impl Session {
                 .project()
                 .track(track)
                 .and_then(|t| t.kind.as_instrument())
-                .is_some_and(|i| i.instrument_id == "auris.synth.noisedrum")
+                .is_some_and(|i| auris_synth::is_drum_kit(&i.instrument_id))
     }
 }
 

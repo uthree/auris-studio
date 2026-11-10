@@ -33,7 +33,7 @@ mod fix;
 mod score;
 
 pub use audio::{AUDIO_LINT_RATE, AudioLintJob, AudioLintResult, AudioSummary};
-pub use score::lint_score;
+pub use score::{TIGHT_STRUM_MS, lint_score};
 
 use auris_core::Project;
 use auris_core::project::{ClipId, TrackId};
@@ -93,6 +93,17 @@ pub enum Rule {
     InaudibleVelocity,
     /// A note outside any instrument's or voice's usable range.
     ExtremePitch,
+    /// A guitar strikes its chords' strings all at once, or nearly: no hand sweeps that fast.
+    TightStrum,
+    /// A drum kit asked for more hands than a drummer has, or an open and closed hi-hat at once.
+    ImpossibleDrumHit,
+    /// A singer asked to sing for longer than a breath lasts without a gap to take one.
+    NoBreath,
+    /// A guitar chord no hand can fret: more notes than strings, or no way to put them on
+    /// separate strings within one hand's stretch.
+    UnfrettableChord,
+    /// A guitar part whose hand must leap along the neck faster than a hand moves.
+    GuitarPositionJump,
     /// The rendered mix reaches full scale.
     Clipping,
     /// The rendered mix is far louder than any delivery target.
@@ -111,7 +122,7 @@ pub enum Rule {
 
 impl Rule {
     /// Every rule, score rules first.
-    pub const ALL: [Rule; 19] = [
+    pub const ALL: [Rule; 24] = [
         Rule::CrowdedOnset,
         Rule::DenseNotes,
         Rule::HarshInterval,
@@ -124,6 +135,11 @@ impl Rule {
         Rule::MissingLyric,
         Rule::InaudibleVelocity,
         Rule::ExtremePitch,
+        Rule::TightStrum,
+        Rule::ImpossibleDrumHit,
+        Rule::NoBreath,
+        Rule::UnfrettableChord,
+        Rule::GuitarPositionJump,
         Rule::Clipping,
         Rule::TooLoud,
         Rule::TooQuiet,
@@ -148,6 +164,11 @@ impl Rule {
             Rule::MissingLyric => "missing_lyric",
             Rule::InaudibleVelocity => "inaudible_velocity",
             Rule::ExtremePitch => "extreme_pitch",
+            Rule::TightStrum => "tight_strum",
+            Rule::ImpossibleDrumHit => "impossible_drum_hit",
+            Rule::NoBreath => "no_breath",
+            Rule::UnfrettableChord => "unfrettable_chord",
+            Rule::GuitarPositionJump => "guitar_position_jump",
             Rule::Clipping => "clipping",
             Rule::TooLoud => "too_loud",
             Rule::TooQuiet => "too_quiet",
@@ -379,6 +400,25 @@ impl Diagnostic {
             Rule::ExtremePitch => {
                 format!("{pitches} lies outside the usable range of instruments or voices")
             }
+            Rule::TightStrum if value <= 0.0 => "this guitar strikes every string of its chords at once, which no hand plays; apply a guitar performance preset or a strum".to_string(),
+            Rule::ImpossibleDrumHit if value <= 0.0 => {
+                "an open and a closed hi-hat sound at the same moment; the pedal makes the hat one or the other".to_string()
+            }
+            Rule::ImpossibleDrumHit => format!(
+                "{value:.0} hand-played drums are struck at the same moment ({pitches}); a drummer has two hands"
+            ),
+            Rule::NoBreath => format!(
+                "the voice sings for {value:.0} s without a gap of {limit:.2} s to breathe; leave a rest inside the phrase"
+            ),
+            Rule::UnfrettableChord => format!(
+                "{value:.0} guitar chords like {pitches} cannot be fretted: no hand puts them on separate strings within {limit:.0} frets; voice them as a guitarist would, or move them to a keyboard"
+            ),
+            Rule::GuitarPositionJump => format!(
+                "the guitarist's hand must leap {value:.0} frets along the neck in under {limit:.0} ms to reach {pitches}; give it time, or voice the chords nearer each other"
+            ),
+            Rule::TightStrum => format!(
+                "this guitar strikes every string of its chords within {value:.0} ms (under {limit:.0} ms), heard as one hit; widen the strum or set string_ms"
+            ),
             Rule::Clipping => {
                 format!("the mix reaches full scale ({value:.1} dBFS sample peak) and distorts")
             }

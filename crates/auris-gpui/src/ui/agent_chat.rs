@@ -8,6 +8,7 @@
 
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
 
@@ -314,6 +315,101 @@ fn log_preview(text: &str) -> String {
     }
 }
 
+/// A picture a tool answered with — the mel-and-score image `inspect_audio` shows the model —
+/// decoded once, when its result arrived, and kept only as long as the conversation is open.
+#[derive(Clone)]
+pub(crate) struct ToolImage(pub(crate) Arc<gpui::RenderImage>);
+
+impl std::fmt::Debug for ToolImage {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let size = self.0.size(0);
+        write!(formatter, "ToolImage({}x{})", size.width.0, size.height.0)
+    }
+}
+
+impl PartialEq for ToolImage {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+/// A recording a tool answered with — what `listen` played the model — kept as the exact WAV
+/// it was sent, and decoded for playback only when the person presses play.
+#[derive(Clone)]
+pub(crate) struct ToolAudio {
+    /// The clip, as the session encoded it.
+    pub(crate) clip: Arc<auris_session::audio_audition::AuditionClip>,
+    /// Its length, read from the WAV header.
+    pub(crate) seconds: f64,
+}
+
+impl std::fmt::Debug for ToolAudio {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "ToolAudio({}, {:.2}s)",
+            self.clip.label, self.seconds
+        )
+    }
+}
+
+impl PartialEq for ToolAudio {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.clip, &other.clip)
+    }
+}
+
+/// The recordings of a `result` event, in the session's own clip form. A `listen` comparison
+/// sends two; one that does not read is left out.
+fn tool_audio(audio: Option<&serde_json::Value>) -> Vec<ToolAudio> {
+    audio
+        .and_then(|audio| audio.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|clip| {
+            let clip: auris_session::audio_audition::AuditionClip =
+                serde_json::from_value(clip.clone()).ok()?;
+            let seconds = clip.seconds().ok().filter(|seconds| *seconds > 0.0)?;
+            Some(ToolAudio {
+                clip: Arc::new(clip),
+                seconds,
+            })
+        })
+        .take(TOOL_IMAGE_LIMIT)
+        .collect()
+}
+
+/// Most pictures one tool row keeps, matching what the worker sends.
+const TOOL_IMAGE_LIMIT: usize = 4;
+
+/// The pictures of a `result` event: `[{"media_type": …, "data": "<base64>"}]`. One that does not
+/// decode is left out rather than failing the row, whose text still stands.
+fn tool_images(images: Option<&serde_json::Value>) -> Vec<ToolImage> {
+    use base64::Engine as _;
+    images
+        .and_then(|images| images.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|image| {
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(image.get("data")?.as_str()?)
+                .ok()?;
+            crate::ui::attachment_preview::decode_picture(bytes)
+                .ok()
+                .map(ToolImage)
+        })
+        .take(TOOL_IMAGE_LIMIT)
+        .collect()
+}
+
+/// The player of one tool recording, and the recording decoded at the window's rate once it has
+/// been played.
+#[derive(Default)]
+pub(crate) struct ToolPlayer {
+    pub(crate) player: crate::ui::audio_player::PlayerState,
+    audio: Option<Arc<auris_session::prelude::AudioBuffer>>,
+}
+
 /// One line of the conversation, as the panel shows it.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum ChatEntry {
@@ -344,6 +440,10 @@ pub(crate) enum ChatEntry {
         line: String,
         /// The whole answer, shown when the row is clicked open.
         detail: String,
+        /// The pictures it answered with, drawn under the row whether or not it is open.
+        images: Vec<ToolImage>,
+        /// The recordings it answered with, each with a player under the row.
+        audio: Vec<ToolAudio>,
     },
     /// Something went wrong — the worker, the provider, the channel.
     Error(String),
@@ -457,6 +557,10 @@ pub(crate) enum AgentEvent {
         line: String,
         /// Everything it said, for the row's opened form.
         detail: String,
+        /// The pictures it answered with.
+        images: Vec<ToolImage>,
+        /// The recordings it answered with.
+        audio: Vec<ToolAudio>,
     },
     /// A project file on disk is no longer what the window last read.
     Changed {
@@ -604,6 +708,8 @@ pub(crate) fn parse_event(line: &str) -> Option<AgentEvent> {
                     .unwrap_or(false),
                 line: detail.lines().next().unwrap_or_default().to_string(),
                 detail,
+                images: tool_images(parsed.get("images")),
+                audio: tool_audio(parsed.get("audio")),
             }
         }
         "changed" => AgentEvent::Changed {
@@ -795,6 +901,7 @@ fn entry_text(entry: &ChatEntry, language: auris_i18n::Language) -> String {
             ok,
             line,
             detail,
+            ..
         } => {
             let mut out = format!(
                 "**{}:** {} {name}  {line}",
@@ -1381,6 +1488,11 @@ pub(crate) struct AgentChat {
     pub(crate) context_window: Option<u64>,
     /// Running tool rows by unique call id, so parallel calls sharing a name remain distinct.
     open_tools: std::collections::BTreeMap<String, usize>,
+    /// Tool rows with pictures that the person has opened, by the view key their row was built
+    /// with; `ChatView` keeps this for every other row, but cannot see inside a custom one.
+    pub(crate) open_pictured_tools: std::collections::HashSet<usize>,
+    /// A player for each recording a tool answered with, by view key and clip.
+    pub(crate) tool_players: std::collections::HashMap<(usize, usize), ToolPlayer>,
     /// The wire a model listing comes back on.
     pub(crate) models_rx: Option<Receiver<Result<String, String>>>,
     discovery_endpoint: Option<auris_session::AgentEndpoint>,
@@ -1494,6 +1606,8 @@ impl Default for AgentChat {
             streamed_answer: false,
             context_window: None,
             open_tools: std::collections::BTreeMap::new(),
+            open_pictured_tools: Default::default(),
+            tool_players: Default::default(),
             models_rx: None,
             discovery_endpoint: None,
             history_clear: None,
@@ -1937,6 +2051,8 @@ impl AgentChat {
                     ok: true,
                     line: String::new(),
                     detail: String::new(),
+                    images: Vec::new(),
+                    audio: Vec::new(),
                 });
                 self.open_tools.insert(call_id, index);
             }
@@ -1946,6 +2062,8 @@ impl AgentChat {
                 ok,
                 line,
                 detail,
+                images,
+                audio,
             } => {
                 // The call pushed a running row; this fills it in. A result with no matching
                 // call — a build mismatch, a dropped line — becomes its own row rather than
@@ -1964,11 +2082,15 @@ impl AgentChat {
                         ok: row_ok,
                         line: row_line,
                         detail: row_detail,
+                        images: row_images,
+                        audio: row_audio,
                         ..
                     }) => {
                         *row_ok = ok;
                         *row_line = line;
                         *row_detail = detail;
+                        *row_images = images;
+                        *row_audio = audio;
                     }
                     _ => {
                         self.push_entry(ChatEntry::Tool {
@@ -1977,6 +2099,8 @@ impl AgentChat {
                             ok,
                             line,
                             detail,
+                            images,
+                            audio,
                         });
                     }
                 }
@@ -4520,6 +4644,31 @@ impl AurisApp {
                         )),
                 )
             })
+            .when_some(
+                match entry {
+                    ChatEntry::Tool { images, .. } if !images.is_empty() => Some(images),
+                    _ => None,
+                },
+                |this, images| {
+                    let bound = crate::ui::attachment_preview::InlinePlace::Message.image_bound();
+                    this.child(
+                        div()
+                            .debug_selector(move || format!("agent-line-images-{index}"))
+                            .mt_0p5()
+                            .flex()
+                            .flex_wrap()
+                            .gap_1()
+                            .min_w_0()
+                            .children(images.iter().map(|image| {
+                                crate::ui::attachment_preview::framed_picture(
+                                    &image.0,
+                                    bound,
+                                    &theme.atelier,
+                                )
+                            })),
+                    )
+                },
+            )
             .into_any_element()
     }
 
@@ -6348,6 +6497,8 @@ mod tests {
                     ok: true,
                     line: "done".into(),
                     detail: "measured".into(),
+                    images: Vec::new(),
+                    audio: Vec::new(),
                 },
             ];
         });
@@ -6427,6 +6578,8 @@ mod tests {
                 ok: true,
                 line: "cutoff = 0.8".into(),
                 detail: "a ``` fence\n".into(),
+                images: Vec::new(),
+                audio: Vec::new(),
             },
             ChatEntry::Agent("Done.".into()),
             ChatEntry::Status("Stopped".into()),
@@ -6602,6 +6755,8 @@ mod tests {
                     ok: true,
                     line: "finished".into(),
                     detail: "Audio preview details".into(),
+                    images: Vec::new(),
+                    audio: Vec::new(),
                 },
             ];
         });
@@ -6686,6 +6841,8 @@ mod tests {
                 ok: true,
                 line: "finished".into(),
                 detail: "Full tool result".into(),
+                images: Vec::new(),
+                audio: Vec::new(),
             }];
         });
         crate::harness::paint(&app, cx);
@@ -7571,7 +7728,9 @@ mod tests {
                 tool: "analyze".to_string(),
                 ok: true,
                 line: "The mix — x".to_string(),
-                detail: "The mix — x\nmore".to_string()
+                detail: "The mix — x\nmore".to_string(),
+                images: Vec::new(),
+                audio: Vec::new(),
             })
         );
         // Token counts ride on the answer; an older agent's answer without them still reads.
@@ -7688,6 +7847,8 @@ mod tests {
                         "finished".into()
                     },
                     detail: "Full tool result\nsecond line".into(),
+                    images: Vec::new(),
+                    audio: Vec::new(),
                 })
                 .collect();
             this.agent_chat
@@ -7711,6 +7872,141 @@ mod tests {
             assert!(!this.agent_chat.chat_row_open(0, cx));
         });
         assert!(cx.debug_bounds(tool).unwrap().size.height >= collapsed);
+    }
+
+    /// A small PNG, base64-encoded as a `result` event carries it.
+    fn png_base64(width: u32, height: u32) -> String {
+        use base64::Engine as _;
+        let mut png = Vec::new();
+        image::DynamicImage::new_rgb8(width, height)
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .unwrap();
+        base64::engine::general_purpose::STANDARD.encode(png)
+    }
+
+    #[gpui::test]
+    fn a_tool_that_answers_with_a_picture_shows_it_under_its_row(cx: &mut gpui::TestAppContext) {
+        let call =
+            parse_event(r#"{"event":"call","call_id":"c1","tool":"inspect_audio","args":"{}"}"#)
+                .unwrap();
+        let result = parse_event(
+            &serde_json::json!({"event":"result","call_id":"c1","tool":"inspect_audio","ok":true,
+                "text":"Mel power, bars 1-4",
+                "images":[{"media_type":"image/png","data":png_base64(8, 6)},
+                          {"media_type":"image/png","data":"not a picture"}]})
+            .to_string(),
+        )
+        .unwrap();
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, _| {
+            this.panels.show(crate::dock::Panel::Agent);
+            this.agent_chat.models_loaded = true;
+            this.agent_chat.absorb(call, None, false);
+            this.agent_chat.absorb(result, None, false);
+            // The picture that decodes is kept; the one that does not is dropped, not the row.
+            assert!(matches!(
+                this.agent_chat.entries.last(),
+                Some(ChatEntry::Tool { line, images, .. })
+                    if line == "Mel power, bars 1-4"
+                        && images.len() == 1
+                        && images[0].0.size(0) == gpui::size(8.into(), 6.into())
+            ));
+            this.agent_chat
+                .entries
+                .push(ChatEntry::Agent("The low end is muddy.".into()));
+        });
+        crate::harness::paint(&app, cx);
+        // Shown without opening the row, between the call and the answer that read it.
+        let pictures = cx.debug_bounds("agent-tool-images-0").unwrap();
+        let row = cx.debug_bounds("agent-chat-pictured-tool-0").unwrap();
+        let answer = chat_view::answer_bounds(&app, cx, 1).unwrap();
+        assert!(row.bottom() <= pictures.origin.y && pictures.bottom() <= answer.origin.y);
+        assert!(pictures.size.height >= gpui::px(6.0));
+
+        // The row still opens to the whole text answer, and closes again.
+        crate::harness::click("agent-chat-pictured-tool-0", cx);
+        crate::harness::paint(&app, cx);
+        app.read_with(cx, |this, _| {
+            assert!(this.agent_chat.open_pictured_tools.contains(&0))
+        });
+        let opened = cx.debug_bounds("agent-tool-images-0").unwrap();
+        assert!(opened.origin.y > pictures.origin.y);
+        crate::harness::click("agent-chat-pictured-tool-0", cx);
+        app.read_with(cx, |this, _| {
+            assert!(!this.agent_chat.open_pictured_tools.contains(&0))
+        });
+    }
+
+    /// `seconds` of 16-bit stereo silence at 48 kHz, as a `listen` clip carries it.
+    fn wav_base64(seconds: f64) -> String {
+        use base64::Engine as _;
+        let frames = (seconds * 48_000.0) as u32;
+        let data = frames * 4;
+        let mut wav = Vec::new();
+        wav.extend_from_slice(b"RIFF");
+        wav.extend_from_slice(&(36 + data).to_le_bytes());
+        wav.extend_from_slice(b"WAVEfmt ");
+        wav.extend_from_slice(&16u32.to_le_bytes());
+        wav.extend_from_slice(&1u16.to_le_bytes());
+        wav.extend_from_slice(&2u16.to_le_bytes());
+        wav.extend_from_slice(&48_000u32.to_le_bytes());
+        wav.extend_from_slice(&(48_000u32 * 4).to_le_bytes());
+        wav.extend_from_slice(&4u16.to_le_bytes());
+        wav.extend_from_slice(&16u16.to_le_bytes());
+        wav.extend_from_slice(b"data");
+        wav.extend_from_slice(&data.to_le_bytes());
+        wav.resize(wav.len() + data as usize, 0);
+        base64::engine::general_purpose::STANDARD.encode(wav)
+    }
+
+    #[gpui::test]
+    fn what_listen_played_the_model_can_be_played_from_its_row(cx: &mut gpui::TestAppContext) {
+        let call =
+            parse_event(r#"{"event":"call","call_id":"l1","tool":"listen","args":"{}"}"#).unwrap();
+        let result = parse_event(
+            &serde_json::json!({"event":"result","call_id":"l1","tool":"listen","ok":true,
+                "text":"{\"range\":{}}",
+                "audio":[{"label":"before","wav_base64":wav_base64(1.0)},
+                         {"label":"after","wav_base64":wav_base64(1.5)},
+                         {"label":"after","wav_base64":"not a recording"}]})
+            .to_string(),
+        )
+        .unwrap();
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, _| {
+            this.panels.show(crate::dock::Panel::Agent);
+            this.agent_chat.models_loaded = true;
+            this.agent_chat.absorb(call, None, false);
+            this.agent_chat.absorb(result, None, false);
+            // Both clips of the comparison are kept, at their own lengths; the broken one is not.
+            let Some(ChatEntry::Tool { audio, .. }) = this.agent_chat.entries.last() else {
+                panic!("no tool row")
+            };
+            let lengths: Vec<_> = audio.iter().map(|clip| clip.seconds).collect();
+            assert_eq!(lengths, vec![1.0, 1.5]);
+        });
+        crate::harness::paint(&app, cx);
+        let row = cx.debug_bounds("agent-chat-pictured-tool-0").unwrap();
+        let players = cx.debug_bounds("agent-tool-audio-0").unwrap();
+        assert!(row.bottom() <= players.origin.y);
+        assert!(cx.debug_bounds("agent-tool-audio-0-0").is_some());
+        assert!(cx.debug_bounds("agent-tool-audio-0-1").is_some());
+
+        // Playing decodes the clip once, at the window's own rate.
+        app.update(cx, |this, cx| {
+            this.play_tool_audio(0, 1, cx);
+            let rate = this.session.sample_rate();
+            let decoded = this.agent_chat.tool_players[&(0, 1)].audio.clone().unwrap();
+            assert_eq!(decoded.sample_rate(), rate);
+            assert!((decoded.duration_seconds() - 1.5).abs() < 0.01);
+            assert!(this.agent_chat.tool_players[&(0, 0)].audio.is_none());
+        });
+        // A new conversation drops the players with the rows.
+        app.update(cx, |this, _| this.agent_chat.entries.clear());
+        crate::harness::paint(&app, cx);
+        app.read_with(cx, |this, _| {
+            assert!(this.agent_chat.tool_players.is_empty())
+        });
     }
 
     #[test]
@@ -7748,6 +8044,8 @@ mod tests {
                 ok: true,
                 line: "Wrote X".to_string(),
                 detail: "Wrote X\nand the summary".to_string(),
+                images: Vec::new(),
+                audio: Vec::new(),
             },
             None,
             false,
@@ -7781,6 +8079,8 @@ mod tests {
                 ok: true,
                 line: "second result".to_string(),
                 detail: "second result".to_string(),
+                images: Vec::new(),
+                audio: Vec::new(),
             },
             None,
             false,
@@ -7792,6 +8092,8 @@ mod tests {
                 ok: false,
                 line: "first result".to_string(),
                 detail: "first result".to_string(),
+                images: Vec::new(),
+                audio: Vec::new(),
             },
             None,
             false,
@@ -7817,6 +8119,8 @@ mod tests {
                 ok: false,
                 line: String::new(),
                 detail: String::new(),
+                images: Vec::new(),
+                audio: Vec::new(),
             },
             None,
             false,
@@ -7850,6 +8154,8 @@ mod tests {
                 ok: true,
                 line: "written".to_string(),
                 detail: "written".to_string(),
+                images: Vec::new(),
+                audio: Vec::new(),
             },
             None,
             false,
@@ -8881,6 +9187,54 @@ mod tests {
     }
 
     #[gpui::test]
+    fn a_drag_selects_from_a_question_through_the_answer_into_the_next_message(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, _| {
+            this.panels.show(crate::dock::Panel::Agent);
+            this.agent_chat.models_loaded = true;
+            this.agent_chat.models_error = Some("offline fixture".into());
+            this.agent_chat.entries = vec![
+                ChatEntry::user("Why is the bass quiet?".into()),
+                ChatEntry::Agent("Its **gain** is low.\n\n- Raise it by 6 dB".into()),
+                ChatEntry::user("Thanks".into()),
+            ];
+        });
+        crate::harness::resize(&app, cx, gpui::size(px(1200.0), px(800.0)));
+        let (question, last) = app.read_with(cx, |this, _| {
+            (
+                this.agent_chat.chat_row_id(0, "user").unwrap(),
+                this.agent_chat.chat_row_id(2, "user").unwrap(),
+            )
+        });
+        let from = cx
+            .debug_bounds(format!("{question}-text").leak())
+            .expect("the question is visible");
+        let to = cx
+            .debug_bounds(format!("{last}-text").leak())
+            .expect("the last message is visible");
+        let start = from.origin + gpui::point(px(1.0), px(4.0));
+        // Past the end of the last line, as a drag that means "all of it" ends.
+        let end = to.bottom_right() + gpui::point(px(20.0), px(-4.0));
+        crate::harness::press(cx, start);
+        crate::harness::paint(&app, cx);
+        crate::harness::drag_to(cx, end);
+        crate::harness::paint(&app, cx);
+        crate::harness::release(cx, end);
+        crate::harness::paint(&app, cx);
+        cx.simulate_keystrokes("secondary-c");
+        cx.update(|_, cx| {
+            assert_eq!(
+                cx.read_from_clipboard()
+                    .and_then(|item| item.text())
+                    .as_deref(),
+                Some("Why is the bass quiet?\n\nIts gain is low.\n\nRaise it by 6 dB\n\nThanks")
+            );
+        });
+    }
+
+    #[gpui::test]
     fn sent_attachments_remain_visible_inside_a_narrow_transcript_at_multiple_scales(
         cx: &mut gpui::TestAppContext,
     ) {
@@ -8916,14 +9270,13 @@ mod tests {
             cx.update(|window, _| window.set_rem_size(px(font_size)));
             crate::harness::resize(&app, cx, gpui::size(px(720.0), px(720.0)));
             let panel = cx.debug_bounds("agent-panel").unwrap();
-            for selector in [
-                "agent-message-attachment-0-0",
-                "agent-message-attachment-0-1",
-            ] {
+            for n in 0..2 {
+                let selector: &'static str = chat_view::attachment_chip(&app, cx, 0, n).leak();
                 let chip = cx.debug_bounds(selector).unwrap();
                 assert!(chip.left() >= panel.left() && chip.right() <= panel.right());
             }
-            assert!(cx.debug_bounds("agent-message-attachment-1-0").is_none());
+            let plain: &'static str = chat_view::attachment_chip(&app, cx, 1, 0).leak();
+            assert!(cx.debug_bounds(plain).is_none());
             assert!(cx.debug_bounds("agent-attachment-remove-0").is_none());
         }
         app.read_with(cx, |this, _| {
@@ -8955,7 +9308,9 @@ mod tests {
         });
         crate::harness::paint(&app, cx);
         assert_eq!(cx.opened_url(), None);
-        crate::harness::click("agent-message-attachment-0-0-open", cx);
+        let first: &'static str =
+            format!("{}-open", chat_view::attachment_chip(&app, cx, 0, 0)).leak();
+        crate::harness::click(first, cx);
         cx.run_until_parked();
         app.read_with(cx, |this, _| {
             assert_eq!(this.attachment_preview.as_ref().unwrap().path, paths[0])
@@ -8997,10 +9352,9 @@ mod tests {
             }];
         });
         crate::harness::paint(&app, cx);
-        for selector in [
-            "agent-message-attachment-0-0-open",
-            "agent-message-attachment-0-1-open",
-        ] {
+        for n in 0..2 {
+            let selector: &'static str =
+                format!("{}-open", chat_view::attachment_chip(&app, cx, 0, n)).leak();
             crate::harness::click(selector, cx);
             cx.run_until_parked();
         }

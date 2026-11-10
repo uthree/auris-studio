@@ -1027,6 +1027,8 @@ mod tests {
             ok,
             line: String::new(),
             detail: detail.into(),
+            images: Vec::new(),
+            audio: Vec::new(),
         };
         let entries = vec![
             entry("cli_command", true, "hash result"),

@@ -204,6 +204,8 @@ fn stroke(
             spread_ms,
             direction,
             clock: super::StrumClock::Attacks,
+            // A rolled keyboard chord is the fingers' order, not a pick's sweep: no wander.
+            variation: 0.0,
             ..super::Strum::default()
         },
         context,

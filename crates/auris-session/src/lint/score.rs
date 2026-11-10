@@ -2,7 +2,9 @@
 
 use std::collections::{BTreeMap, HashSet};
 
-use auris_core::project::{MidiClip, Project, TrackId, TrackKind, loop_passes};
+use auris_core::project::{
+    MidiClip, NoteTransform, PresetFamily, Project, TrackId, TrackKind, loop_passes,
+};
 use auris_core::time::{TICKS_PER_QUARTER, Ticks};
 
 use auris_core::theory::chord::{Chord, Quality};
@@ -42,6 +44,31 @@ pub const INSTRUMENT_RANGE: (u8, u8) = (21, 108);
 /// The range a singing voice can be asked for, from a bass's C2 to a soprano's C6.
 pub const VOICE_RANGE: (u8, u8) = (36, 84);
 
+/// Milliseconds from a chord's first string to its last under which a guitar is heard striking
+/// them at once. Listeners need about 15 to 20 ms to tell which of two sounds came first; this
+/// sits below every shipped guitar preset (the tightest, funk cutting, spreads 10 ms), so only
+/// a strum nobody chose on purpose is reported.
+pub const TIGHT_STRUM_MS: f32 = 10.0;
+/// Chords a clip must strike before its strum is judged: a closing chord alone is not a part.
+pub const STRUMMED_CHORDS: usize = 8;
+/// Notes struck on one tick that make a strummed chord rather than a double stop.
+const STRUM_STRINGS: usize = 3;
+
+/// General MIDI drum notes a drummer plays with a hand: every kit piece but the pedals.
+const HAND_DRUMS: std::ops::RangeInclusive<u8> = 37..=81;
+/// The kick and pedal hi-hat notes, played with the feet.
+const FOOT_DRUMS: [u8; 3] = [35, 36, 44];
+/// The closed hi-hat note, which one hat cannot sound with the open one.
+const CLOSED_HAT: u8 = 42;
+/// The open hi-hat note.
+const OPEN_HAT: u8 = 46;
+/// Hands a drummer has.
+pub const DRUM_HANDS: usize = 2;
+/// The shortest gap between sung notes that a singer can breathe in, in seconds.
+pub const BREATH_GAP_SECONDS: f64 = 0.2;
+/// Seconds of singing without such a gap that no singer sustains.
+pub const BREATHLESS_SECONDS: f64 = 15.0;
+
 /// Distinct pitch classes that must sound at one instant for a bar to count as chordal writing.
 pub const CHORD_TONES: usize = 3;
 /// A pitch class's share of a bar's sounding time below which it is ornament, not harmony.
@@ -78,6 +105,11 @@ pub fn lint_score(project: &Project) -> Vec<Diagnostic> {
     diagnostics.extend(harmony(project, &events));
     diagnostics.extend(limit(missing_chords(project, &events)));
     diagnostics.extend(clip_rules(project));
+    diagnostics.extend(limit(tight_strums(project)));
+    diagnostics.extend(limit(unfrettable_chords(project)));
+    diagnostics.extend(limit(position_jumps(project)));
+    diagnostics.extend(limit(impossible_drum_hits(project)));
+    diagnostics.extend(limit(breathless_phrases(project)));
     diagnostics.extend(singer_rules(project));
     sort(&mut diagnostics);
     diagnostics
@@ -608,6 +640,457 @@ fn clip_rules(project: &Project) -> Vec<Diagnostic> {
     all
 }
 
+/// Drum attacks no drummer can play: more hand-played pieces at one moment than two hands, or
+/// an open and a closed hi-hat together. Read per drum track on the timeline, loops included.
+fn impossible_drum_hits(project: &Project) -> Vec<Diagnostic> {
+    let mut found = Vec::new();
+    for track in project.tracks.iter().filter(|t| !t.mixer.mute) {
+        let TrackKind::Drum(instrument) = &track.kind else {
+            continue;
+        };
+        let mut moments: BTreeMap<Ticks, Vec<u8>> = BTreeMap::new();
+        for clip in instrument.clips.iter().filter(|clip| !clip.muted) {
+            for (offset, span) in loop_passes(clip.length, clip.loop_end) {
+                for note in clip.playable_notes().filter(|note| note.start < span) {
+                    moments
+                        .entry(clip.start + offset + note.start)
+                        .or_default()
+                        .push(note.pitch);
+                }
+            }
+        }
+        for (at, pitches) in moments {
+            let hands = sorted_pitches(
+                pitches
+                    .iter()
+                    .copied()
+                    .filter(|p| HAND_DRUMS.contains(p) && !FOOT_DRUMS.contains(p)),
+            );
+            let hats = pitches.contains(&CLOSED_HAT) && pitches.contains(&OPEN_HAT);
+            if hands.len() <= DRUM_HANDS && !hats {
+                continue;
+            }
+            let mut diagnostic = Diagnostic::new(
+                Rule::ImpossibleDrumHit,
+                Severity::Warning,
+                at,
+                at + Ticks(TICKS_PER_QUARTER / 4),
+            );
+            diagnostic.track = Some(track.id);
+            // Zero names the hi-hat conflict; otherwise the count of hands asked for.
+            diagnostic.value = Some(if hands.len() > DRUM_HANDS {
+                hands.len() as f32
+            } else {
+                0.0
+            });
+            diagnostic.pitches = hands;
+            diagnostic.limit = Some(DRUM_HANDS as f32);
+            found.push(diagnostic);
+        }
+    }
+    found
+}
+
+/// Sung stretches longer than a breath lasts with no gap to take one, per singer track.
+fn breathless_phrases(project: &Project) -> Vec<Diagnostic> {
+    let seconds = |tick: Ticks| project.tempo_map.ticks_to_seconds(tick).0;
+    let mut found = Vec::new();
+    for track in project.tracks.iter().filter(|t| !t.mixer.mute) {
+        let TrackKind::Singer(singer) = &track.kind else {
+            continue;
+        };
+        let mut sung: Vec<(Ticks, Ticks)> = Vec::new();
+        for clip in singer.clips.iter().filter(|clip| !clip.muted) {
+            for (offset, span) in loop_passes(clip.length, clip.loop_end) {
+                for note in clip.playable_notes().filter(|note| note.start < span) {
+                    let at = clip.start + offset + note.start;
+                    sung.push((at, at + note.length.min(span - note.start)));
+                }
+            }
+        }
+        sung.sort();
+        let close = |phrase: (Ticks, Ticks), found: &mut Vec<Diagnostic>| {
+            let length = seconds(phrase.1) - seconds(phrase.0);
+            if length > BREATHLESS_SECONDS {
+                let mut diagnostic =
+                    Diagnostic::new(Rule::NoBreath, Severity::Warning, phrase.0, phrase.1);
+                diagnostic.track = Some(track.id);
+                diagnostic.value = Some(length as f32);
+                diagnostic.limit = Some(BREATH_GAP_SECONDS as f32);
+                found.push(diagnostic);
+            }
+        };
+        let mut phrase: Option<(Ticks, Ticks)> = None;
+        for (start, end) in sung {
+            phrase = match phrase {
+                Some((first, last)) if seconds(start) - seconds(last) < BREATH_GAP_SECONDS => {
+                    Some((first, last.max(end)))
+                }
+                Some(previous) => {
+                    close(previous, &mut found);
+                    Some((start, end))
+                }
+                None => Some((start, end)),
+            };
+        }
+        if let Some(previous) = phrase {
+            close(previous, &mut found);
+        }
+    }
+    found
+}
+
+/// Guitar clips whose chords strike every string at once, or within a few milliseconds.
+///
+/// Read from each clip's stored chords and its strum stage, one report per clip: a pick sweeps
+/// across the strings, so a strummed part with no strum, or one too quick to hear, sounds like
+/// a keyboard playing a guitar sample.
+fn tight_strums(project: &Project) -> Vec<Diagnostic> {
+    let mut found = Vec::new();
+    for track in project.tracks.iter().filter(|t| !t.mixer.mute) {
+        let TrackKind::Instrument(instrument) = &track.kind else {
+            continue;
+        };
+        if crate::performance_presets::family_hint(track) != PresetFamily::Guitar {
+            continue;
+        }
+        for clip in instrument.clips.iter().filter(|clip| !clip.muted) {
+            let mut by_onset: BTreeMap<Ticks, Vec<(usize, auris_core::project::Note)>> =
+                BTreeMap::new();
+            for (index, note) in clip.playable_notes_with_indices() {
+                by_onset.entry(note.start).or_default().push((index, note));
+            }
+            let chords: Vec<_> = by_onset
+                .values()
+                .filter(|notes| notes.len() >= STRUM_STRINGS)
+                .collect();
+            if chords.len() < STRUMMED_CHORDS {
+                continue;
+            }
+            let spread = |strings: usize| {
+                clip.transforms
+                    .iter()
+                    .find_map(|stage| match stage {
+                        NoteTransform::Strum { settings } if settings.string_ms > 0.0 => Some(
+                            settings.string_ms.min(auris_core::MAX_STRING_MS)
+                                * (strings - 1) as f32,
+                        ),
+                        NoteTransform::Strum { settings } => Some(settings.spread_ms),
+                        NoteTransform::Stroke { spread_ms, .. } => Some(*spread_ms),
+                        _ => None,
+                    })
+                    .unwrap_or(0.0)
+                    .clamp(0.0, 100.0)
+            };
+            let tightest = chords
+                .iter()
+                .map(|notes| spread(notes.len()))
+                .fold(f32::INFINITY, f32::min);
+            if tightest >= TIGHT_STRUM_MS {
+                continue;
+            }
+            let first = chords[0];
+            let last = chords[chords.len() - 1];
+            let end = last
+                .iter()
+                .map(|(_, note)| note.end())
+                .max()
+                .unwrap_or(last[0].1.start);
+            let mut diagnostic = Diagnostic::new(
+                Rule::TightStrum,
+                Severity::Warning,
+                clip.start + first[0].1.start,
+                clip.start + end,
+            );
+            diagnostic.track = Some(track.id);
+            diagnostic.notes = first
+                .iter()
+                .map(|(index, _)| NoteRef {
+                    clip: clip.id,
+                    index: *index,
+                })
+                .collect();
+            diagnostic.pitches = sorted_pitches(first.iter().map(|(_, note)| note.pitch));
+            diagnostic.value = Some(tightest);
+            diagnostic.limit = Some(TIGHT_STRUM_MS);
+            found.push(diagnostic);
+        }
+    }
+    found
+}
+
+/// Standard tuning, low string first.
+const GUITAR_STRINGS: [u8; 6] = [40, 45, 50, 55, 59, 64];
+/// The highest fret a guitar chord is looked for on.
+const TOP_FRET: u8 = 22;
+/// Frets one hand spans between its lowest and highest fretted finger, open strings aside.
+pub const FRET_STRETCH: u8 = 4;
+
+/// Whether `pitches` (two or more, at one onset) can be fretted: each on its own string, every
+/// fretted note within [`FRET_STRETCH`] frets of the others. A note below the low string or
+/// above the top fret is left to the range rule and passes here.
+fn frettable(pitches: &[u8]) -> bool {
+    if pitches.len() > GUITAR_STRINGS.len() {
+        return false;
+    }
+    if pitches
+        .iter()
+        .any(|&p| p < GUITAR_STRINGS[0] || p > GUITAR_STRINGS[5] + TOP_FRET)
+    {
+        return true;
+    }
+    fn place(pitches: &[u8], used: &mut [bool; 6], low: u8, high: u8) -> bool {
+        let Some((&pitch, rest)) = pitches.split_first() else {
+            return true;
+        };
+        for (string, &open) in GUITAR_STRINGS.iter().enumerate() {
+            if used[string] || pitch < open || pitch - open > TOP_FRET {
+                continue;
+            }
+            let fret = pitch - open;
+            let (lo, hi) = if fret == 0 {
+                (low, high)
+            } else {
+                (low.min(fret), high.max(fret))
+            };
+            if lo != u8::MAX && hi - lo > FRET_STRETCH {
+                continue;
+            }
+            used[string] = true;
+            if place(rest, used, lo, hi) {
+                return true;
+            }
+            used[string] = false;
+        }
+        false
+    }
+    place(pitches, &mut [false; 6], u8::MAX, 0)
+}
+
+/// Frets a hand moving along the neck may leap between two onsets closer than [`JUMP_MS`].
+pub const JUMP_FRETS: u8 = 9;
+/// Milliseconds under which a leap of [`JUMP_FRETS`] or more cannot be made cleanly.
+pub const JUMP_MS: f32 = 80.0;
+
+/// The hand positions `pitches` can be fretted at: the lowest fretted finger of each fingering,
+/// or 0 for one on open strings alone, which leaves the hand anywhere.
+fn hand_positions(pitches: &[u8]) -> Vec<u8> {
+    fn place(pitches: &[u8], used: &mut [bool; 6], low: u8, high: u8, out: &mut Vec<u8>) {
+        let Some((&pitch, rest)) = pitches.split_first() else {
+            let position = if low == u8::MAX { 0 } else { low };
+            if !out.contains(&position) {
+                out.push(position);
+            }
+            return;
+        };
+        for (string, &open) in GUITAR_STRINGS.iter().enumerate() {
+            if used[string] || pitch < open || pitch - open > TOP_FRET {
+                continue;
+            }
+            let fret = pitch - open;
+            let (lo, hi) = if fret == 0 {
+                (low, high)
+            } else {
+                (low.min(fret), high.max(fret))
+            };
+            if lo != u8::MAX && hi - lo > FRET_STRETCH {
+                continue;
+            }
+            used[string] = true;
+            place(rest, used, lo, hi, out);
+            used[string] = false;
+        }
+    }
+    let mut out = Vec::new();
+    if pitches.len() <= GUITAR_STRINGS.len() {
+        place(pitches, &mut [false; 6], u8::MAX, 0, &mut out);
+    }
+    out
+}
+
+/// The hand position at each onset that moves the hand least over the whole part, found by
+/// dynamic programming over every onset's fingerings; `None` where an onset cannot be fretted.
+fn hand_path(onsets: &[Vec<u8>]) -> Vec<Option<u8>> {
+    let options: Vec<Vec<u8>> = onsets.iter().map(|p| hand_positions(p)).collect();
+    let moved = |a: u8, b: u8| {
+        if a == 0 || b == 0 {
+            0
+        } else {
+            u32::from(a.abs_diff(b))
+        }
+    };
+    // cost[i][k]: least movement to reach option k of onset i; from[i][k]: the option before.
+    let mut cost: Vec<Vec<u32>> = Vec::with_capacity(options.len());
+    let mut from: Vec<Vec<usize>> = Vec::with_capacity(options.len());
+    for (index, here) in options.iter().enumerate() {
+        let before = index.checked_sub(1).map(|i| (&options[i], &cost[i]));
+        let (row, back): (Vec<u32>, Vec<usize>) = here
+            .iter()
+            .map(|&position| match before {
+                Some((previous, costs)) if !previous.is_empty() => previous
+                    .iter()
+                    .zip(costs)
+                    .enumerate()
+                    .map(|(k, (&p, &c))| (c + moved(p, position), k))
+                    .min()
+                    .unwrap(),
+                _ => (0, 0),
+            })
+            .unzip();
+        cost.push(row);
+        from.push(back);
+    }
+    let mut path = vec![None; options.len()];
+    let mut pick = cost
+        .last()
+        .and_then(|row| (0..row.len()).min_by_key(|&k| row[k]));
+    for index in (0..options.len()).rev() {
+        match pick {
+            Some(k) if k < options[index].len() => {
+                path[index] = Some(options[index][k]);
+                pick = (index > 0 && !options[index - 1].is_empty()).then(|| from[index][k]);
+            }
+            _ => {
+                pick = (index > 0)
+                    .then(|| (0..cost[index - 1].len()).min_by_key(|&k| cost[index - 1][k]))
+                    .flatten();
+            }
+        }
+    }
+    path
+}
+
+/// Guitar parts whose hand must leap along the neck faster than a hand moves: one report per
+/// clip, at the first such leap, counting all. The hand's route is the one that moves it least,
+/// so a leap reported is one no fingering avoids.
+fn position_jumps(project: &Project) -> Vec<Diagnostic> {
+    let mut found = Vec::new();
+    for track in project.tracks.iter().filter(|t| !t.mixer.mute) {
+        let TrackKind::Instrument(instrument) = &track.kind else {
+            continue;
+        };
+        if crate::performance_presets::family_hint(track) != PresetFamily::Guitar {
+            continue;
+        }
+        for clip in instrument.clips.iter().filter(|clip| !clip.muted) {
+            let mut by_onset: BTreeMap<Ticks, Vec<(usize, auris_core::project::Note)>> =
+                BTreeMap::new();
+            for (index, note) in clip.playable_notes_with_indices() {
+                by_onset.entry(note.start).or_default().push((index, note));
+            }
+            let groups: Vec<_> = by_onset.into_iter().collect();
+            let pitches: Vec<Vec<u8>> = groups
+                .iter()
+                .map(|(_, notes)| {
+                    let mut p: Vec<u8> = notes.iter().map(|(_, n)| n.pitch).collect();
+                    p.sort_unstable();
+                    p.dedup();
+                    p
+                })
+                .collect();
+            let path = hand_path(&pitches);
+            let mut leaps = Vec::new();
+            for index in 1..groups.len() {
+                let (Some(a), Some(b)) = (path[index - 1], path[index]) else {
+                    continue;
+                };
+                if a == 0 || b == 0 || a.abs_diff(b) < JUMP_FRETS {
+                    continue;
+                }
+                let at = clip.start + groups[index].0;
+                let gap = groups[index].0 - groups[index - 1].0;
+                let bpm = project.tempo_map.bpm_at(at) as f32;
+                let ms = gap.raw() as f32 / Ticks::QUARTER.raw() as f32 * 60_000.0 / bpm;
+                if ms < JUMP_MS {
+                    leaps.push((index, a.abs_diff(b)));
+                }
+            }
+            let Some(&(first, frets)) = leaps.first() else {
+                continue;
+            };
+            let (start, notes) = &groups[first];
+            let end = notes.iter().map(|(_, n)| n.end()).max().unwrap_or(*start);
+            let mut diagnostic = Diagnostic::new(
+                Rule::GuitarPositionJump,
+                Severity::Warning,
+                clip.start + *start,
+                clip.start + end,
+            );
+            diagnostic.track = Some(track.id);
+            diagnostic.notes = notes
+                .iter()
+                .map(|(index, _)| NoteRef {
+                    clip: clip.id,
+                    index: *index,
+                })
+                .collect();
+            diagnostic.pitches = sorted_pitches(notes.iter().map(|(_, n)| n.pitch));
+            diagnostic.value = Some(f32::from(frets));
+            diagnostic.limit = Some(JUMP_MS);
+            found.push(diagnostic);
+        }
+    }
+    found
+}
+
+/// Guitar chords no hand could fret, one report per clip naming the first and counting all.
+///
+/// Read on the written chords, before any strum spreads them: a keyboard voicing pasted onto a
+/// guitar track, three octaves wide or with seconds piled up, sounds like nothing a guitarist
+/// plays even when every note is in the guitar's range.
+fn unfrettable_chords(project: &Project) -> Vec<Diagnostic> {
+    let mut found = Vec::new();
+    for track in project.tracks.iter().filter(|t| !t.mixer.mute) {
+        let TrackKind::Instrument(instrument) = &track.kind else {
+            continue;
+        };
+        if crate::performance_presets::family_hint(track) != PresetFamily::Guitar {
+            continue;
+        }
+        for clip in instrument.clips.iter().filter(|clip| !clip.muted) {
+            let mut by_onset: BTreeMap<Ticks, Vec<(usize, auris_core::project::Note)>> =
+                BTreeMap::new();
+            for (index, note) in clip.playable_notes_with_indices() {
+                by_onset.entry(note.start).or_default().push((index, note));
+            }
+            let mut bad = by_onset.values().filter(|notes| {
+                let mut pitches: Vec<u8> = notes.iter().map(|(_, note)| note.pitch).collect();
+                pitches.sort_unstable();
+                pitches.dedup();
+                pitches.len() >= 2 && !frettable(&pitches)
+            });
+            let Some(first) = bad.next() else {
+                continue;
+            };
+            let count = 1 + bad.count();
+            let end = first
+                .iter()
+                .map(|(_, note)| note.end())
+                .max()
+                .unwrap_or(first[0].1.start);
+            let mut diagnostic = Diagnostic::new(
+                Rule::UnfrettableChord,
+                Severity::Warning,
+                clip.start + first[0].1.start,
+                clip.start + end,
+            );
+            diagnostic.track = Some(track.id);
+            diagnostic.notes = first
+                .iter()
+                .map(|(index, _)| NoteRef {
+                    clip: clip.id,
+                    index: *index,
+                })
+                .collect();
+            diagnostic.pitches = sorted_pitches(first.iter().map(|(_, note)| note.pitch));
+            diagnostic.value = Some(count as f32);
+            diagnostic.limit = Some(f32::from(FRET_STRETCH));
+            found.push(diagnostic);
+        }
+    }
+    found
+}
+
 /// What a voice cannot do: sing two notes at once, or sing a note with no words on it.
 ///
 /// Overlaps are read within a clip, where trimming the earlier note is the obvious repair: a
@@ -953,6 +1436,119 @@ mod tests {
         );
     }
 
+    /// A clip on a track named `name` striking `chords` three-string power chords a bar apart.
+    fn strummed(name: &str, chords: i64, transforms: Vec<NoteTransform>) -> Project {
+        let mut project = Project::new("Lint", 48_000.0);
+        let track = project.add_instrument_track(name, "auris.synth.pulse");
+        let clip = project
+            .add_midi_clip(track, "Chords", Ticks::ZERO, Ticks(3840 * chords))
+            .unwrap();
+        let clip = project.midi_clip_mut(clip).unwrap();
+        clip.notes = (0..chords)
+            .flat_map(|bar| {
+                [40, 47, 52].map(|pitch| Note::new(pitch, Ticks(3840 * bar), Ticks(1920)))
+            })
+            .collect();
+        clip.transforms = transforms;
+        project
+    }
+
+    fn strum(spread_ms: f32, string_ms: f32) -> Vec<NoteTransform> {
+        vec![NoteTransform::Strum {
+            settings: auris_core::Strum {
+                spread_ms,
+                string_ms,
+                ..Default::default()
+            },
+        }]
+    }
+
+    fn tight(project: &Project) -> Vec<f32> {
+        lint_score(project)
+            .iter()
+            .filter(|d| d.rule == Rule::TightStrum)
+            .map(|d| d.value.unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn a_guitar_striking_every_string_at_once_or_nearly_is_reported() {
+        assert_eq!(tight(&strummed("Rhythm guitar", 8, vec![])), [0.0]);
+        assert_eq!(tight(&strummed("Rhythm guitar", 8, strum(7.0, 0.0))), [7.0]);
+        // Four milliseconds a string is eight across a power chord's two gaps.
+        assert_eq!(
+            tight(&strummed("Rhythm guitar", 8, strum(20.0, 4.0))),
+            [8.0]
+        );
+    }
+
+    #[test]
+    fn a_hand_speed_strum_a_closing_chord_and_a_keyboard_pass_the_strum_rule() {
+        assert!(tight(&strummed("Rhythm guitar", 8, strum(14.0, 0.0))).is_empty());
+        assert!(tight(&strummed("Rhythm guitar", 8, strum(5.0, 6.0))).is_empty());
+        assert!(tight(&strummed("Rhythm guitar", 4, vec![])).is_empty());
+        assert!(tight(&strummed("Keys", 8, vec![])).is_empty());
+    }
+
+    fn found(project: &Project, rule: Rule) -> Vec<Diagnostic> {
+        lint_score(project)
+            .into_iter()
+            .filter(|d| d.rule == rule)
+            .collect()
+    }
+
+    #[test]
+    fn three_hands_or_two_hi_hats_at_once_are_impossible_and_a_groove_is_not() {
+        let mut project = Project::new("Lint", 48_000.0);
+        let kit = project.add_drum_track("Kit", "auris.sampler.soundfont");
+        let clip = project
+            .add_midi_clip(kit, "Kit", Ticks::ZERO, Ticks(3840))
+            .unwrap();
+        let hit = |pitch, at| Note::new(pitch, Ticks(at), Ticks(120));
+        project.midi_clip_mut(clip).unwrap().notes = vec![
+            // A kick, snare and closed hat on one beat: two hands and a foot.
+            hit(36, 0),
+            hit(38, 0),
+            hit(42, 0),
+            // Crash, snare and ride together: three hands.
+            hit(49, 960),
+            hit(38, 960),
+            hit(51, 960),
+            // Closed and open hat at once.
+            hit(42, 1920),
+            hit(46, 1920),
+        ];
+        let hits = found(&project, Rule::ImpossibleDrumHit);
+        assert_eq!(hits.len(), 2, "{hits:?}");
+        assert_eq!(hits[0].start, Ticks(960));
+        assert_eq!(hits[0].value, Some(3.0));
+        assert_eq!(hits[1].value, Some(0.0));
+    }
+
+    #[test]
+    fn a_singer_needs_a_gap_to_breathe_within_fifteen_seconds() {
+        let sing = |notes: Vec<Note>| {
+            let mut project = Project::new("Lint", 48_000.0);
+            let voice = project.add_singer_track("Voice", "auris.synth.vocal");
+            let clip = project
+                .add_midi_clip(voice, "Line", Ticks::ZERO, Ticks(3840 * 16))
+                .unwrap();
+            project.midi_clip_mut(clip).unwrap().notes = notes;
+            project
+        };
+        let sung = |i: i64| Note {
+            lyric: "あ".into(),
+            ..Note::new(64, Ticks(960 * i), Ticks(960))
+        };
+        // Forty legato quarters at 120 bpm: twenty seconds with nowhere to breathe.
+        let held = found(&sing((0..40).map(sung).collect()), Rule::NoBreath);
+        assert_eq!(held.len(), 1);
+        assert!((held[0].value.unwrap() - 20.0).abs() < 0.1);
+        // The same line with a quarter rest every four bars breathes fine.
+        let phrased = (0..40).filter(|i| i % 16 != 15).map(sung).collect();
+        assert!(found(&sing(phrased), Rule::NoBreath).is_empty());
+    }
+
     #[test]
     fn muted_tracks_are_not_heard_and_so_not_linted() {
         let (mut project, _) = project_with(vec![
@@ -1096,5 +1692,35 @@ mod tests {
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].value, Some(4.0));
         assert!(found[0].pitches.is_empty());
+    }
+
+    #[test]
+    fn open_and_barre_chords_fret_and_a_keyboard_spread_does_not() {
+        // Open E, a barre A at the fifth fret, a power chord: all playable.
+        assert!(frettable(&[40, 47, 52, 56, 59, 64]));
+        assert!(frettable(&[45, 52, 57, 61, 64, 69]));
+        assert!(frettable(&[40, 47, 52]));
+        // Seven notes, and a cluster of four semitones low on the neck, are not.
+        assert!(!frettable(&[40, 45, 50, 55, 59, 64, 67]));
+        assert!(!frettable(&[41, 42, 43, 44]));
+        // F on the low string under a note fifteen frets up the top string: no hand spans it.
+        assert!(!frettable(&[41, 79]));
+    }
+
+    #[test]
+    fn the_hand_takes_the_route_that_moves_it_least_and_a_forced_leap_is_found() {
+        // B can be fretted at the seventh fret of the low string or the second of the A string;
+        // beside an open E chord, whose B sits at the second fret, the hand stays there.
+        assert_eq!(
+            hand_path(&[vec![47], vec![40, 47, 52], vec![47]]),
+            [Some(2), Some(2), Some(2)]
+        );
+        // E on the top string's 12th fret can only be fretted high up; F on the low string's
+        // first fret only at the nut: the leap between them is eleven frets whatever route.
+        let path = hand_path(&[vec![41, 45], vec![76, 79]]);
+        let (a, b) = (path[0].unwrap(), path[1].unwrap());
+        assert!(a.abs_diff(b) >= JUMP_FRETS, "{path:?}");
+        // An unfrettable onset is skipped, not guessed.
+        assert_eq!(hand_path(&[vec![41, 42, 43, 44]]), [None]);
     }
 }

@@ -16,6 +16,10 @@
 //! | Filter · harmonics | cutoff | resonance | — |
 //! | FM sidebands | ratio | depth (index) | — |
 //! | Chiptune cycle | duty cycle, square only | bit depth | — |
+//! | Kick bass punch | punch time | punch | — |
+//! | Kick bass drive | drive | — | — |
+//! | Electronic kit kick | kick decay | kick punch | — |
+//! | Electronic kit hats | hat tone | metal | — |
 //!
 //! A drag is measured from where it began, as every other drag in the application is, rather
 //! than putting the value under the pointer: the press can land anywhere on the plot, and nothing
@@ -51,10 +55,18 @@ pub(crate) enum SynthPlot {
     Cycle,
     /// The chiptune voice's unison stack.
     ChipStack,
+    /// A kick bass's opening: the punch falling onto the note.
+    Punch,
+    /// A kick bass's soft clipper.
+    Drive,
+    /// An electronic kit's kick pad.
+    Kick,
+    /// An electronic kit's hats: the metal oscillators under their filter.
+    Metal,
 }
 
 /// How many [`SynthPlot`]s there are, for the table of where each was drawn.
-const PLOTS: usize = 5;
+const PLOTS: usize = 9;
 
 /// Where each plot was drawn on the last frame, by [`SynthPlot::index`].
 pub(crate) type PlotBounds = Rc<[Cell<Option<Bounds<Pixels>>>; PLOTS]>;
@@ -68,6 +80,10 @@ impl SynthPlot {
             SynthPlot::Sidebands => 2,
             SynthPlot::Cycle => 3,
             SynthPlot::ChipStack => 4,
+            SynthPlot::Punch => 5,
+            SynthPlot::Drive => 6,
+            SynthPlot::Kick => 7,
+            SynthPlot::Metal => 8,
         }
     }
 
@@ -79,6 +95,10 @@ impl SynthPlot {
             SynthPlot::Sidebands => "ratio",
             SynthPlot::Cycle => "pulse_width",
             SynthPlot::ChipStack => "spread",
+            SynthPlot::Punch => "punch_time",
+            SynthPlot::Drive => "drive",
+            SynthPlot::Kick => "kick_decay",
+            SynthPlot::Metal => "hat_tone",
         }
     }
 
@@ -89,7 +109,10 @@ impl SynthPlot {
             SynthPlot::Filter => Some("resonance"),
             SynthPlot::Sidebands => Some("index"),
             SynthPlot::Cycle => Some("bits"),
-            SynthPlot::ChipStack => None,
+            SynthPlot::ChipStack | SynthPlot::Drive => None,
+            SynthPlot::Punch => Some("punch"),
+            SynthPlot::Kick => Some("kick_punch"),
+            SynthPlot::Metal => Some("metal"),
         }
     }
 

@@ -105,6 +105,24 @@ pub(super) fn velocity(weight: u8, intensity: f32, dynamics: f32) -> f32 {
     (base * (0.7 + 0.35 * intensity)).clamp(0.08, 1.0)
 }
 
+/// A velocity for a drum hit at grid weight `weight` in a section of `intensity`.
+///
+/// [`velocity`] moves a part by a factor of 1.5 across the whole dial, which is right for a
+/// pitched part that also changes register and density with the section. A kit has only how hard
+/// it is struck: at that slope a verse at 0.55 and a chorus at 0.90 came out at mean velocities
+/// of 0.52 and 0.58, about one decibel apart on a drums-only render. This slope puts them near
+/// 0.57 and 0.78, inside what composers wrote when they typed the drums by hand (verses 0.53 to
+/// 0.63, choruses 0.81 to 0.90), and meets [`velocity`] at an intensity of about 0.6.
+pub(super) fn struck(weight: u8, intensity: f32, dynamics: f32) -> f32 {
+    let intensity = intensity.clamp(0.0, 1.0);
+    let lift = (DRUM_FLOOR + intensity) / (0.7 + 0.35 * intensity);
+    (velocity(weight, intensity, dynamics) * lift).clamp(0.08, 1.0)
+}
+
+/// How hard a kit is struck at an intensity of zero, as a fraction of its unit level; the dial
+/// adds its own value to this.
+const DRUM_FLOOR: f32 = 0.43;
+
 /// A multiplier scaled toward 1 by `dynamics`.
 ///
 /// Every other source of variation — an accent, the lean across a phrase — arrives as a factor

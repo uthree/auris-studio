@@ -561,7 +561,7 @@ dependencies = [
 [[package]]
 name = "atelier"
 version = "0.4.0"
-source = "git+https://github.com/uthree/design-language?rev=2220fa14a34bed767e53b2fe165af900192328eb#2220fa14a34bed767e53b2fe165af900192328eb"
+source = "git+https://github.com/uthree/design-language?rev=a3c5f69e1db8d19e7c70bf427250473c77208055#a3c5f69e1db8d19e7c70bf427250473c77208055"
 dependencies = [
  "gpui",
  "image",
@@ -775,6 +775,7 @@ dependencies = [
  "auris-agent",
  "auris-i18n",
  "auris-session",
+ "base64 0.23.1",
  "embed-resource",
  "env_logger",
  "gpui",

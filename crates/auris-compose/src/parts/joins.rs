@@ -16,7 +16,7 @@ use crate::frame::{Frame, SectionPlan};
 use crate::rhythm::DrumVoice;
 use crate::spec::PartSpec;
 
-use super::writer::{dynamic, part_grid, phrase_shape, velocity};
+use super::writer::{dynamic, part_grid, phrase_shape, struck, velocity};
 use super::{Draft, ScoreSettings};
 
 /// How hard a piece has to open before it opens on a cymbal.
@@ -111,7 +111,7 @@ pub(super) fn joins(
                 notes.push(Draft {
                     section: index,
                     pitch,
-                    velocity: (velocity(grid.weight(step), section.intensity, settings.dynamics)
+                    velocity: (struck(grid.weight(step), section.intensity, settings.dynamics)
                         * dynamic(accent.scale(), settings.dynamics)
                         * phrase_shape(grid, section, at, settings.dynamics))
                     .clamp(0.08, 1.0),
@@ -143,7 +143,7 @@ pub(super) fn joins(
         // is its quietest — and the first bar is the only place this writer puts anything. A
         // cymbal marking an arrival at 88 per cent of the level of the bars that follow it would
         // be the arrival being the softest moment of the section it opens.
-        velocity: velocity(grid.weight(0), section.intensity, settings.dynamics).clamp(0.08, 1.0),
+        velocity: struck(grid.weight(0), section.intensity, settings.dynamics),
         start: section.start,
         length: Ticks(CYMBAL_TICKS),
     }]

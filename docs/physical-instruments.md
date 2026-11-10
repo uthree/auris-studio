@@ -2,101 +2,118 @@
 
 [日本語](physical-instruments.ja.md)
 
-Choose **Physical Piano, Guitar, Electric Guitar, Bass, Bell, Mallet, Violin, Clarinet,
-Hammered Dulcimer or Tin Whistle** in the sound library.
-Each is a separate built-in plugin with its own stable ID, such as `auris.physical.guitar`.
-New melodic tracks use Physical Piano. No sample files or network setup are needed.
-**[Physical Choir](physical-choir.md)** adds wordless polyphonic ensemble vowels as another
-ordinary instrument, with its own vocal-tract and ensemble controls.
+Choose **Physical Piano, Hammered Strings, Guitar, Electric Guitar, Bass, Strings, Mallet,
+Bell, Reeds or Whistles** in the sound library. Each is a built-in plugin with its own stable
+ID, such as `auris.physical.guitar`. New melodic tracks use Physical Piano. There are no sample
+files to install. **[Physical Choir](physical-choir.md)** is a separate instrument with its
+own page.
 
-These are compact, reduced physical models with a shared control vocabulary. They aim for
-playable, adjustable instruments rather than reproductions of particular recorded instruments.
+Every one of them is a model of the thing itself, not a recording of it: what you turn is a
+hammer's felt, a bow's pressure, a reed's stiffness, and the sound follows from that.
 
-| Instrument | Model | Useful adjustments |
+## How they are built
+
+Two kinds of thing make sound in these instruments, and each is computed as what it is.
+
+**What rings on its own** — a string's partials, a bar's or a bell's modes, the soundboard or
+box they drive — is a bank of damped oscillators, one per partial, each with its own
+frequency and decay. A piano note is up to ninety-six partials of each of its three strings.
+
+**What only sounds while it is fed** — a string under a bow, the air in a pipe — is the wave
+going round it, and the hammer, the bow's rosin, the reed and the air jet are solved against
+that wave sample by sample.
+
+| Instrument | What is modelled | What to turn |
 | --- | --- | --- |
-| Piano | Felt hammer, bridge-coupled unison stiff strings, dampers and soundboard knock | Contact hardness, strike position, stiffness, release (dampers), pedal |
-| Guitar | Finite-width pluck, allpass-tuned string and bridge-motion output | Pick hardness, pluck position, damping, pickup blend |
-| Electric Guitar | Steel-string pickup DI, without acoustic-body radiation | Independent pick/pickup positions, pickup resonance, decay per octave |
-| Bass | Plucked string with lower body resonances | Finger/pick hardness, pluck position, resonance decay |
-| Bell | Damped, inharmonic shell modes | Beater hardness, excitation position, decay |
-| Mallet | Bar tuned like a marimba's, overtones at four and about ten times the fundamental | Soft/hard beater, damping, short/long resonance |
-| Violin | Travelling-wave string with static/sliding bow friction | Bow speed, pressure, response time, contact position, expression, legato |
-| Clarinet | Nonlinear single reed coupled to a cylindrical-bore waveguide | Breath pressure, reed stiffness, breath noise, attack and release |
-| Hammered Dulcimer | Finite hammer pulse, stiff-string courses and passive bridge coupling | Hammer hardness, strike position, string decay, damping, stiffness and course detune |
-| Tin Whistle | Nonlinear fipple jet coupled to an open-pipe resonator | Breath pressure, jet shape, breath noise, attack and release |
+| Piano | A felt hammer that stiffens as it is driven in, thrown at one, two or three strings that share a bridge; dampers; every other string answering; a soundboard; the knock of the case | Contact hardness, excitation position, unison detune, sympathetic resonance, string stiffness, release (the dampers) |
+| Hammered Strings | A light hammer on courses of thin wire over a shallow box | Hammer hardness, strike position, course detune, bridge damping |
+| Guitar | Plucked strings moving in two directions at once, on a box with an air resonance and a top plate | Pick hardness, pluck position, damping, body, pickup blend (box to saddle) |
+| Electric Guitar | Steel strings under a magnet, before the amplifier | Pick and pickup position, tone, pickup Q, decay per octave |
+| Bass | Plucked bass strings under a pickup, or on an upright's body | Hardness, position, body (zero is electric, one is upright), tone |
+| Strings | Each player a string under a bow whose rosin grips and lets go; a section of one to four players; violin, viola, cello and bass bodies | Bow pressure, speed, position and response, players, instrument, vibrato, legato |
+| Mallet | A bar over a resonator tube: marimba, vibraphone, xylophone, glockenspiel, or a tine held at one end | Bar, mallet hardness, strike position, tubes, tremolo |
+| Bell | Paired modes that beat as they ring: a cast bell, a tubular bell, a handbell, a singing bowl | Bell, hardness, where round the rim it is struck, warble |
+| Reeds | A reed valve on a cylinder of air closed at the reed: a clarinet | Breath pressure, reed stiffness, breath noise, attack, vibrato, legato |
+| Whistles | An air jet across the window of an open pipe | Breath pressure, jet shape, breath noise, attack, vibrato, legato |
 
-Fitted filter cascades colour the piano, guitar and violin; guitar and violin add six causal
-radiation resonances. Parallel body resonances colour bass, bell and mallet. The piano uses one,
-two or three strings by register and up to 96 partials. Its bridge absorbs only the motion a
-unison's strings share, so a note first falls quickly and then rings on with the aftersound, as a
-grand's does; losses, hammer contact and level follow measured register curves from C1 to C8.
-The [whole-keyboard calibration](grand-piano-register.md) is the account. The
-violin models one bowed string, with a bounded friction approximation rather than a full bow,
-bridge and wooden-body simulation. The bell mode ratios describe a designed shell, not a specific
-manufactured bell. These choices keep the instruments small and their controls predictable.
+Every model also has **Level**, **Stereo Width**, **Live Quality** and **Render Quality**.
+
+Some of what these do is worth knowing before you hear it.
+
+- **A piano's registers are as loud as its strings make them, and its hammers are voiced.**
+  A string can only give the bridge the energy it loses, so how far each register moves the
+  soundboard comes from how fast its notes die away — measured on a Steinway B from the
+  University of Iowa Musical Instrument Samples, one value for each C. The hammers' felt is
+  voiced against the same recordings, as a technician needles a grand's: softer than the
+  published hammers everywhere, and softest in the fifth octave. A note falls fast and then
+  slowly, because the bridge takes what a unison's strings share and leaves what they do not.
+- **Every key is as loud as the next.** A soundboard or a box is a crowd of resonances, and a
+  crowd heard carelessly has holes in it: notes that fall between two resonances and all but
+  vanish. Here every resonance is heard in the same sense, over what the bridge radiates by
+  itself, and nothing cancels. What is left is the instrument's own — a guitar's air and top
+  plate, a violin's body — and the notes those favour are plucked or bowed a little more
+  gently, as a player learns to.
+- **A blow knocks the case.** Under every piano note is a third of a second of pitchless knock
+  from the keybed and the case, the same whichever key it is: nothing beside a bass note, and
+  a good part of what is heard of the top octave.
+- **A key pressed very gently makes no sound and lifts its damper.** Take a low C at velocity
+  1, play the C above and let it go: the low strings ring on at the higher note's pitch. The
+  sustain pedal does that for every string at once.
+- **Unison Detune** at twelve cents is a honky-tonk; at its default it is a piano a tuner has
+  just left, whose trebles beat no faster than its tenors.
+- **A bowed string does not have to play a note.** Pressed too lightly it slips twice a
+  period and whistles an octave up; pressed too hard it will not let go. The pressure control
+  runs between those two, measured against the most the string takes at that bow speed and
+  place. Each note is caught firmly and eased to the pressure you set, and a player whose
+  string slips leans in until it stops — which is why a low **Bow Pressure** on a low note is
+  less light than it says. A firm bow also pulls a note flat, and each player moves the finger
+  until it is in tune again, over the first few tenths of a second.
+- **Pressing harder is brighter, not louder.** Bow speed is loudness. Pressure sharpens the
+  corner that travels round the string, and the top of the spectrum comes up by several
+  decibels while the bottom stays where it was.
+- **A section is several players**, each a string of their own, a few cents and a few
+  milliseconds from the next and a seat apart. With **Instrument** on Section, a low note is
+  played on a cello or a bass and sounds through that body.
+- **A clarinet is quiet until it speaks.** Breath is measured from the pressure at which the
+  note begins to sound at all, so the softest breath still plays every note, nearly as a
+  sine; half-way to shutting the reed it is nearly a square wave. A tongued note starts from
+  nearly nothing and is there in a few hundredths of a second, as a recorded clarinet's is.
+- **A bell's warble depends on where you strike it.** Each partial is two shapes a
+  fraction of a hertz apart, and the place round the rim shares the blow between them.
 
 ## Controls and performance
 
-**Contact Hardness** and **Excitation Position** change the initial attack. A soft contact rejects
-upper modes; moving the contact suppresses different modes rather than applying a generic EQ.
-Velocity changes both excitation energy and attack hardness. **Resonance Decay** sets the nominal
-time to lose 60 dB at the fundamental; higher modes decay sooner, and **Damping** adds losses.
-The guitar's allpass tuning separates interpolation from physical loss. Its decay is calibrated
-at the fundamental; damping shortens it by a factor of `1 + 3 × damping` and increases upper-mode
-loss. Guitar and violin additionally apply smooth register-dependent contact/loss curves,
-centered on G3 and A4 respectively, so the decay control is nominal at that center.
-The bass and violin's linear interpolation also contributes frequency-dependent losses.
-The [refinement account](physical-model-refinement.md) explains the radiation profiles and
-their calibration limits.
+Velocity changes what excites the instrument, not only how loud the result is: a harder
+hammer blow is shorter and so brighter, a faster bow presses harder, a harder breath opens
+the reed further.
 
-**Body Resonance**, **Level**, **Release**, **Damping** and **Resonance Decay** affect sounding
-notes. **String Stiffness** on piano and dulcimer spreads upper partials while keeping the
-fundamental tuned. **Bow Pressure** is violin-only and affects the sounding friction junction.
-Position takes effect at the next attack on struck/plucked instruments; on violin it moves
-the sounding bow junction over about 15 ms. Stiffness takes effect at the next piano or dulcimer attack.
-Guitar **Pickup blend** moves from bridge-motion radiation through the acoustic body to a
-position-dependent magnetic pickup approximation, progressively bypassing body coloration.
-**Electric Guitar** is a separate DI instrument: pickup position is independent of pick
-position, the pickup observes motion velocity, and a resonant lowpass approximates its
-electrical response. Positions refer to the open string; standard tuning and the highest
-playable string determine the estimated fret and effective positions. **Decay per Octave**
-multiplies the nominal E4 decay for each octave above E4 (and divides below it). Add the
-**Guitar Amp** effect for clean/crunch/lead saturation and an open or closed speaker cabinet.
-The [electric calibration account](electric-guitar.md) describes reference measurements.
-Violin **Bow speed** controls motion independently of **Bow Pressure**. **Bow response** sets its
-2–120 ms response time (about 57 ms by default), including while a note sounds. Output expression
-changes smoothly with half that time constant. **Legato** uses last-note priority: overlapping
-notes reuse the same vibrating string, and releasing the newest key returns to a previous held
-key. It is off by default for polyphonic playing. Changing legato mode releases held notes.
-As on other instruments, the parameter editor and automation lanes save ordinary plugin state.
+Changes to **Decay**, **Damping**, **Release** and **Unison Detune** reach notes that are
+already sounding. Hardness, position and stiffness belong to the blow or the pluck, and wait
+for the next one. On the strings, **Bow Position** moves the bow at once.
 
-Clarinet **Breath Pressure**, **Reed Stiffness** and **Breath Noise** control its sounding
-reed/bore junction. CC11 smooths breath drive and output expression over 20 ms. It has
-16 voices, and its **Attack** and **Release** use the shared ADSR. The
-[clarinet calibration account](clarinet-calibration.md) gives real-recording comparisons
-and the model's supported measurement range.
+MIDI CC7 is channel volume. CC11 is expression: level, and also bow speed and breath. CC1
+deepens the vibrato of the bowed and blown instruments. CC64 lifts the piano's dampers and the
+vibraphone's; pressing it after a key has come up catches a note that is already fading.
+Pitch bend reaches sounding notes, up to two octaves either way. On the piano **Release** is
+the damper: the time it takes to remove 80 dB, longer in the bass, and the keys above F6 have
+none.
 
-Hammered Dulcimer has 24 voices, with up to 24 partials on each of three strings per course.
-**Course Detune** is measured in cents. Hardness, position, stiffness and detune apply at the
-next strike; string decay and bridge damping also affect sounding courses. Tin Whistle has
-16 voices and 20-ms CC11 smoothing. Both instruments honour live pitch bend and use the shared
-de-click envelope. The [folk-instrument measurements](folk-physical-instruments.md) describe
-their real-recording references and calibration limits.
+With **Legato** on, the strings, reeds and whistles play one line: overlapping notes reuse the
+sounding string or pipe without a new attack, and letting the newest key go returns to the one
+still held.
 
-MIDI CC7 controls channel volume. CC11 controls expression and violin bow speed, with a
-`value^1.18` response on violin before smoothing; CC1 scales bow
-pressure. CC64 lifts every piano damper: released strings ring until the pedal lifts, and pressing
-it lets a note whose damper is already falling ring on. On the piano **Release** is the damper:
-the time it takes to remove 80 dB, longer in the bass, and keys above F6 have no damper, so they
-ring after release as on a grand. The soundboard's knock is never damped. Note-off damps/releases a note,
-all-notes-off releases the whole pool, and all-sound-off uses the shared de-click envelope.
-Pitch bends act on sounding strings/modes, so the existing slide and pitch-performance stages
-can play these instruments. The string/modal pool holds up to 24 voices and steals released/quiet voices first.
-Excitation is deterministic and rendering is independent of block size.
+**Live Quality** is what plays as you work and **Render Quality** what an export, a freeze or
+a bounce uses. Draft keeps about a third of the partials and runs the bowed and blown
+instruments at the project's sample rate; Standard and High run them at twice that. Render
+defaults to High and live to Standard.
+
+Rendering is the same whatever block size the audio device asks for, and the same every time.
+The piano holds thirty-two notes at once and the others twelve to twenty-four; past that the
+quietest released note is taken for the next.
 
 ## Composition
 
-A song can select a native instrument directly:
+A song can name a native instrument directly:
 
 ```toml
 performance = "pop-band"
@@ -108,116 +125,113 @@ role = "chords"
 instrument = "auris.physical.guitar"
 ```
 
-The composer recognises native piano, dulcimer, guitar, bass, violin, clarinet and whistle IDs when choosing editable stroke,
-strum, mute, slide and pitch-performance stages. Existing GM family hints also resolve to these
-models: piano/electric piano, guitar, bass, bells (including glockenspiel and music box),
-tuned bars (vibraphone, marimba, xylophone), strings, clarinet (GM 71),
-dulcimer (GM 15) and whistle (GM 78). A muted-guitar hint starts
-with more damping; picked/slap bass starts with harder contact; string pads start with gentler
-bow pressure and a longer release. These are starting parameters for Auris instruments, not GM
-patch emulation. Drum hints use the built-in Drum Kit.
+General MIDI programs resolve to these instruments, with a patch that makes the model the
+instrument named:
 
-Accompaniment uses the same choices. Native tracks require no SoundFont reference. An explicit
-SoundFont source or imported preset continues to choose that exact font.
-Unsupported musical families use the session's existing reported fallback or an optional installed
-GM library. Melody roles start native violin with legato; pad roles start with slower bow motion
-and polyphony. Explicit parameter choices take precedence. Notes and their seeded recipes remain
-unchanged by instrument selection.
+| Programs | Instrument |
+| --- | --- |
+| 0–3, 6–7 | Piano; 3 is the honky-tonk, 6–7 a hard short attack |
+| 8–13, 108 | Mallet: celesta and glockenspiel on steel bars, music box and kalimba on tines, vibraphone, marimba, xylophone |
+| 14, 112 | Bell: tubular bells, handbell |
+| 15 | Hammered Strings |
+| 24–25, 45 | Guitar: nylon, steel, and pizzicato strings as a short pluck |
+| 26–28, 31 | Electric Guitar; 28 is muted |
+| 32–35 | Bass: 32 is the upright |
+| 40–44, 48–49 | Strings: solo violin, viola, cello and contrabass, and sections of four |
+| 71 | Reeds |
+| 74, 78 | Whistles: recorder, whistle |
 
-## Mechanical editor
+These are starting parameters for Auris's own instruments, not General MIDI patch emulation.
+A program none of them is a model of — a trumpet, a harp, a flute — keeps its SoundFont sound
+or the session's reported fallback. An explicit SoundFont source always chooses that font.
 
-Open a physical instrument's parameter editor from its track's instrument row. The **Model
-motion** region stays beside the ordinary parameter controls: strings for piano/guitar/bass/violin,
-bar bending for mallet, and a shell perimeter for bell. It follows the edited track during
-playback or musical typing, independently of the selected track. **Play C4** holds a test note;
-**Release C4** lets it decay. Octave buttons change that test note while retaining its held state.
-Closing or replacing the editor releases its test note.
+## Looking inside
 
-Up to four recent voices show note/bend, held/releasing state and relative spatial motion. A
-marker locates the excitation contact, a moving bow indicator follows actual bow motion, and
-modal instruments show the first eight resonance magnitudes. Piano/struck/plucked contact
-remains at that voice's excitation position until the next attack; violin contact follows its
-smoothed junction while sounding. The readout includes expression, violin bow pressure and
-piano pedal state.
+Open an instrument's parameter editor from its track's instrument row. Beside the parameters
+are the bodies themselves — up to four sounding notes, each drawn as what it is: a string
+between its ends with the place it was struck, plucked or bowed marked; a bar on its supports;
+a bell's rim; a pipe's air from the mouthpiece to the open end. **Every body can be touched.**
+Pull a guitar string aside and let go to pluck it there; press a piano string to strike it and
+let go to lower its damper; hold on a violin string to bow it at that place for as long as
+you hold.
 
-Guitar and electric guitar use six parallel strings in standard E–A–D–G–B–E tuning;
-bass and violin use four strings in their respective E–A–D–G and G–D–A–E tuning.
-High strings appear above low strings, and guitar/bass frets shorten towards the bridge.
-The body, sound hole or pickups provide a reference for contact and stopping positions.
-String assignment is schematic fingering inferred from pitch: the monitor does not report
-physical string identities. Notes outside the tuning range remain visible on the lowest string.
+Under the audition keyboard is **Inside the instrument**:
 
-Piano uses a persistent 88-key A0–C8 keyboard with vertical string projections aligned to
-white and black key centres. Low strings are longer than high strings; the lengths are
-schematic. Pitch bends move continuously between neighbouring key centres. Sounding keys
-remain highlighted, with note, cents and held/releasing readouts above the strings and a
-sustain-pedal indicator below the keyboard. Notes beyond the keyboard are drawn at its edge
-while their readouts retain the sounding pitch.
+- **Body** is the soundboard or box the strings drive, as a surface: where each of its lowest
+  modes is in its swing, laid out the way a plate's modes lie. Piano, hammered strings, guitar,
+  upright bass and the bowed strings have one.
+- **Decay** is the newest note's first twenty-four partials over the last second and a third,
+  height in decibels. A piano's two decays, a honky-tonk's beating and a bell's warble are
+  seen here rather than heard.
+- **Partials** is the same spectrum now, for every note showing.
+- The last plot is what excites the instrument: a hammer's or a mallet's force through the six
+  milliseconds of its blow; a string's speed under the bow through one period, flat at the
+  bow's own speed while the rosin grips and flying back when it lets go; a reed's opening
+  through one period; where an air jet meets the edge.
 
-Drum Kit uses fixed positions for kick, snare, hi-hat, three tom registers, crash and ride.
-Resting membranes, cymbals and their meshes remain visible through silence and between hits;
-newest-voice order and voice count never rearrange the kit. Closed/open hi-hat articulations
-share one pad. Captured membrane/plate motion and contact markers overlay these resting
-surfaces; recent matching shapes add trails when effects are enabled. The monitor still
-reports at most four recent voices, so the complete resting kit is a layout reference rather
-than a claim that every sounding hit was captured.
+Drag the surface to turn it. It is shaded on the graphics processor where there is one, and
+drawn the same without.
 
-Colours follow the active theme's track palette. Short trails retain captured shapes, and
-motion-driven sparks and excitation halos emphasize energy without changing the spatial data.
-**Effects** disables the trails, halos and sparks for a calmer display. This choice survives
-editor changes. **Freeze** holds both the shape and its effects.
+The pictures are read from the state the instrument is already keeping, about thirty times a
+second, and only while the editor is open. They are relative, not measured in metres, and a
+string's shape is a snapshot, not a slow-motion film. **Freeze** holds a picture while the
+sound goes on. Watching changes nothing that is heard.
 
-The diagram uses live wave histories or a low-mode spatial projection, before body coloration
-and output gain. It is a relative mechanical view, not measured displacement in metres. Delay
-loops expose a fixed-end spatial projection; bell/bar modal bases are illustrative geometric
-projections of their live mode coordinates. The display samples about 30 times per second, so
-it is not a slow-motion integration of the audio-rate model. Fixed 6/24/96× display magnification
-keeps dynamics and decay visible. **Freeze** retains a snapshot and stops observation;
-**Resume display** continues it. Audio keeps running in both states.
+## Measured against recordings
 
-Parameter controls keep their ordinary keyboard adjustment, typed values, reset, automation,
-save/load and one-gesture Undo behavior. The window scrolls at smaller sizes; Tab reaches the
-test-note/display buttons and the parameter knobs, Enter/Space activate a button, and Escape closes it.
+The instruments are checked against recordings of real ones with the tools under `tools/eval`,
+which render through the code the application runs. These are what they read on 2026-11-10;
+smaller is closer.
 
-The Atelier view selector switches between **Instrument**, the mechanical projection, and
-**Voices**, four captured displacement lanes with their eight resonant-mode amplitudes.
-String lanes preserve fixed endpoints and recent observed trails; membrane and plate voices
-show signed displacement fields. Both views share display gain, effects and freeze state.
-The wide editor places sound parameters beside the visualization; narrow windows stack and
-scroll the regions. Test-note controls stay above the visualization.
+| Measure | Recorded | Reads | A model fitted to the same recordings |
+| --- | --- | --- | --- |
+| Piano, mel distance | Steinway B, C3–G4, 12 held-out notes | 0.167 | 0.152 |
+| Piano, partial decay and envelope | Steinway B, C1–C8 | 4.7 dB, 1.5 dB | 5.3 dB, 2.0 dB |
+| Piano, partial balance, register level, knock | the same | 5.2 dB, 1.9 dB, 5.2 dB | 4.3 dB, 1.7 dB, 3.4 dB |
+| Guitar, mel distance | classical guitar, 44 held-out notes | 0.167, and 0.157 as Nylon guitar | 0.144 |
+| Strings, mel distance | solo violin, 39 held-out notes | 0.111 | 0.080 |
+| Reeds, mel distance | B♭ clarinet, held-out pitches | 0.043 | 0.054 |
+| Whistles, mel distance of the settled tone | tin whistle scale | 0.017 | 0.018 |
+| Hammered Strings, mel distance | hammered dulcimer | 0.234 | 0.241 |
+
+The last column is the instruments these replaced, which were fitted to the recordings in the
+second column. It is the mark a fitted model reaches, and the piano, the guitar and the
+strings are still short of it. The mel distance is a spectrogram
+distance over a note's first second, defined in `tools/eval/physical_mel.py`; it says how
+close a note is to one recording, not how it sounds.
+
+Key to key, a piano's notes are within 0.8 dB rms of the keys around them, and a guitar's and
+the strings' within 1.5 dB.
 
 ## Development verification
 
 ```sh
-cargo test -p auris-synth -p auris-compose -p auris-session
-cargo run -p auris-synth --example physical_demo -- target/physical-demo.wav
-cargo run --release -p auris-synth --example physical_bench -- --motion
-cargo test -p auris-gpui --bins physical_model
+cargo test -p auris-synth -p auris-session
+cargo test -p auris-gpui --bins physical
+cargo run --release -p auris-synth --example physical_probe
+cargo run --release -p auris-synth --example physical_bench
+
+cargo build --release -p auris-synth --example physical_fit_render
+uv run tools/eval/fetch_physical_reference.py target/physical-reference
+uv run tools/eval/prepare_physical_reference.py target/physical-reference \
+  --lock tools/eval/references/iowa-notes.json
+uv run tools/eval/evaluate_physical_mel.py target/physical-reference \
+  <a worker frozen earlier> target/release/examples/physical_fit_render target/physical-eval
+uv run tools/eval/piano_register.py target/piano-register prepare
+uv run tools/eval/piano_register.py target/piano-register evaluate \
+  <a worker frozen earlier> target/release/examples/physical_fit_render target/piano-register/evaluation.json
 ```
 
-Tests measure pitch at multiple rates, velocity response, hardness-dependent upper modes,
-decay/sustain, pedal release, pitch bends, extreme settings and callback allocations. The pack's
-shared tests also cover event offsets, mono/multichannel buffers and deterministic rendering.
-The example writes a listening probe and reports each model's peak and RMS; it is dev tooling.
-Mechanical-observation tests compare watched/unwatched PCM bit for bit, assert fixed string
-endpoints and nonzero finite model motion, exercise concurrent coherent readers, retain an
-attacked pluck's contact, disable retired graph readers, and count callback allocations with
-observation enabled. Native-window harness tests cover preview, display magnification by
-keyboard, freeze/resume, scrolling to parameters, Undo, source replacement and Escape.
+The tests assert on numbers: that every model is in tune across its range at three sample
+rates, that a render does not depend on the host's block size, that nothing on the audio thread
+allocates; that a piano is stretched the way a tuner stretches one and falls fast and then
+slowly; that a bowed string moves as Helmholtz said at every pressure; that a clarinet has no
+even harmonics and speaks at the softest breath. `physical_probe` plays single notes and prints
+each one's level, pitch and decay; `physical_bench` prints the share of a processor each model
+takes. `physical_fit_render` is the worker the measuring scripts under `tools/eval` drive:
+freeze a copy of it before changing anything that sounds, and compare the two against the
+recordings afterwards. The recordings are downloaded into `target/` and never committed.
 
-The [radiation/register experiments](physical-extensions.md) compare causal resonances,
-register curves and bow response against real recordings with held-out temporal log-mel loss.
-The [long-note/trajectory calibration](physical-trajectories.md) measures sustained tone,
-played vibrato/glissando, expression following and release against real recordings.
-Factory piano, guitar and violin settings and radiation gains are calibrated against real
-recordings with [temporal mel copy synthesis](physical-copy-synthesis.md). That document records
-the objective, fixed training/validation split, reproducible commands and remaining limits.
-The [bass/bar/drum measurements](physical-pack.md) calibrate the remaining physical models and
-seven kit families against real recordings, with separate attack, body, tail and envelope errors.
-The [before/after measurements](physical-instruments-evaluation.md) record the full-preset
-comparison, including the lower learned scores for sustained-string and ambient arrangements.
-
-The design follows the modal-expansion and travelling-wave principles in Julius O. Smith's
-[Physical Audio Signal Processing](https://www.dsprelated.com/freebooks/pasp/), especially
-[modal expansion](https://www.dsprelated.com/freebooks/pasp/Modal_Expansion.html) and
-[bowed strings](https://www.dsprelated.com/freebooks/pasp/Bowed_Strings.html).
+A search over a voicing turns the dials in `auris_synth::physical::calibration` through the
+worker's `dials` field, without rebuilding for each candidate. That needs
+`--features physical-calibration`; an application build has no dials.

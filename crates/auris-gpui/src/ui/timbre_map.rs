@@ -2313,10 +2313,23 @@ mod tests {
             native_plot = native_plot.scatter(points, None);
         }
         let plot_bounds = utility.debug_bounds("timbre-plot").unwrap();
-        let point = native_plot.project(plot_bounds, positions[index]).0;
-        crate::harness::click_at(&mut utility, point, gpui::Modifiers::none());
+        // Click a point no other one is drawn over: as the catalogue grows, two sounds can
+        // project within a few pixels of each other, and which wins the hit is the plot's call.
+        let projected: Vec<_> = positions
+            .iter()
+            .map(|position| native_plot.project(plot_bounds, *position).0)
+            .collect();
+        let picked = (0..projected.len())
+            .find(|&candidate| {
+                projected.iter().enumerate().all(|(other, point)| {
+                    let gap = *point - projected[candidate];
+                    other == candidate || gap.x.abs() + gap.y.abs() > gpui::px(12.)
+                })
+            })
+            .expect("some point stands clear of the others");
+        crate::harness::click_at(&mut utility, projected[picked], gpui::Modifiers::none());
         app.read_with(&utility, |this, _| {
-            assert_eq!(this.timbre_map.selected, Some(index));
+            assert_eq!(this.timbre_map.selected, Some(picked));
         });
         let center = utility.debug_bounds("timbre-plot").unwrap().center();
         crate::harness::drag(
@@ -2325,7 +2338,7 @@ mod tests {
             center + gpui::point(gpui::px(50.), gpui::px(20.)),
         );
         app.read_with(&utility, |this, _| {
-            assert_eq!(this.timbre_map.selected, Some(index));
+            assert_eq!(this.timbre_map.selected, Some(picked));
             assert_eq!(this.timbre_map.camera.preset, None);
             assert_eq!(this.project(), &before);
         });
