@@ -840,7 +840,8 @@ async fn receive_turn_tracked(
                             };
                             let ok = part["is_error"] != true;
                             recovery.observe(&tool, &args, ok, auris_tool);
-                            bridge.emit(json!({"event":"result","call_id":id,"tool":tool,"ok":ok,"text":text}));
+                            let images = super::result_images(&part["content"]);
+                            bridge.emit(json!({"event":"result","call_id":id,"tool":tool,"ok":ok,"text":text,"images":images}));
                         }
                     }
                 }
@@ -1188,7 +1189,7 @@ mod tests {
             reply(&mut writer, json!({"type":"stream_event","event":{"delta":{"type":"thinking_delta","thinking":"Planning"}}})).await;
             reply(&mut writer, json!({"type":"stream_event","event":{"delta":{"type":"text_delta","text":"Added."}}})).await;
             reply(&mut writer, json!({"type":"assistant","message":{"content":[{"type":"text","text":"Added."},{"type":"tool_use","id":"call","name":"mcp__auris_live__add_track","input":{"name":"Lead"}}]}})).await;
-            reply(&mut writer, json!({"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"call","content":[{"type":"text","text":"Done"},{"type":"image","data":"do not store"}]}]}})).await;
+            reply(&mut writer, json!({"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"call","content":[{"type":"text","text":"Done"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"QQ=="}}]}]}})).await;
             reply(&mut writer, json!({"type":"assistant","parent_tool_use_id":"other","message":{"content":[{"type":"text","text":"Ignore"}]}})).await;
             reply(
                 &mut writer,
@@ -1214,6 +1215,7 @@ mod tests {
         assert!(events.iter().any(|event| event["event"] == "result"
             && event["tool"] == "add_track"
             && event["text"] == "Done"
+            && event["images"] == json!([{"media_type":"image/png","data":"QQ=="}])
             && event["ok"] == true));
     }
 

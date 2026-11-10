@@ -538,6 +538,12 @@ fn armed(builder: AgentBuilder, bridge: Option<Bridge>, prompt: &str, hearing: b
                     });
                 let bridge = bridge.clone();
                 let name = tool_name.clone();
+                let call_id = match &origin {
+                    permissions::PermissionOrigin::ToolCall { call_id, .. } => {
+                        Some(call_id.clone())
+                    }
+                    permissions::PermissionOrigin::Independent { .. } => None,
+                };
                 Box::pin(async move {
                     if bridge.is_none()
                         && let Some(result) = toolbox::runtime::call_live_reference_in(
@@ -570,10 +576,13 @@ fn armed(builder: AgentBuilder, bridge: Option<Bridge>, prompt: &str, hearing: b
                     if name == "inspect_audio" && reply["ok"] == true {
                         let report = serde_json::from_value(reply["inspection"].clone())
                             .map_err(|e| ToolExecutionError::other(e.to_string()))?;
-                        return bridge
+                        let (text, image) = bridge
                             .accept_inspection(&report)
-                            .map(ToolOutput::text)
-                            .map_err(ToolExecutionError::other);
+                            .map_err(ToolExecutionError::other)?;
+                        if let Some(call_id) = &call_id {
+                            bridge.stash_result_images(call_id, vec![image]);
+                        }
+                        return Ok(ToolOutput::text(text));
                     }
                     edit_reply(reply)
                         .map(ToolOutput::text)
@@ -1083,7 +1092,14 @@ impl AgentHook for Reporter {
         if event.tool_name().is_some()
             && let Some(bridge) = &self.bridge
         {
-            bridge.emit(result_event(&event));
+            let mut result = result_event(&event);
+            if let Some(call_id) = event.call_id {
+                let images = bridge.take_result_images(&call_id.to_string());
+                if !images.is_empty() {
+                    result["images"] = images.into();
+                }
+            }
+            bridge.emit(result);
         }
         OutcomeAction::proceed()
     }

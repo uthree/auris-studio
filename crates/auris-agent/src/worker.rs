@@ -181,6 +181,8 @@ struct Channels {
     lyric_repairs: std::sync::Mutex<crate::lyric_repair::Budget>,
     vision: AtomicBool,
     visual: std::sync::Mutex<Option<Message>>,
+    /// Pictures a native tool call produced, by call id, until its `result` event takes them.
+    result_images: std::sync::Mutex<std::collections::HashMap<String, Vec<serde_json::Value>>>,
     /// Whether the model takes audio input, which is what offers it `listen`.
     hearing: AtomicBool,
     /// The latest audition, waiting for the one request that delivers it.
@@ -401,10 +403,34 @@ impl Bridge {
     pub(super) fn visual(&self) -> Option<Message> {
         self.0.visual.lock().unwrap().clone()
     }
+    /// Holds `images` for the `result` event of `call_id`, which the reporter emits after the
+    /// tool has returned its text.
+    pub(super) fn stash_result_images(&self, call_id: &str, images: Vec<serde_json::Value>) {
+        if !images.is_empty() {
+            self.0
+                .result_images
+                .lock()
+                .unwrap()
+                .insert(call_id.to_owned(), images);
+        }
+    }
+
+    /// The pictures stashed for `call_id`, once.
+    pub(super) fn take_result_images(&self, call_id: &str) -> Vec<serde_json::Value> {
+        self.0
+            .result_images
+            .lock()
+            .unwrap()
+            .remove(call_id)
+            .unwrap_or_default()
+    }
+
+    /// The inspection's text for the model, and its picture in the `result` event's form for the
+    /// transcript, which shows it whether or not the model could see it.
     pub(super) fn accept_inspection(
         &self,
         report: &auris_session::audio_inspection::Inspection,
-    ) -> Result<String, String> {
+    ) -> Result<(String, serde_json::Value), String> {
         let presentation = toolbox::audio_inspection::present(report)?;
         self.observe_production(
             "inspect_audio",
@@ -416,6 +442,7 @@ impl Bridge {
             report.measurements.clone(),
         )?;
         let mut text = presentation.text;
+        let shown = crate::backends::result_image("image/png", &presentation.png);
         if self.0.vision.load(Ordering::Relaxed) {
             let image = rig_core::message::UserContent::image_base64(
                 presentation.png,
@@ -438,7 +465,7 @@ impl Bridge {
             self.clear_visual();
             text.push_str("\nImage not sent: this model has no confirmed vision capability. Use measurements and score data only.");
         }
-        Ok(text)
+        Ok((text, shown))
     }
     pub(super) fn history<T>(
         &self,
@@ -630,6 +657,7 @@ impl Worker {
             lyric_repairs: std::sync::Mutex::new(crate::lyric_repair::Budget::default()),
             vision: AtomicBool::new(false),
             visual: std::sync::Mutex::new(None),
+            result_images: Default::default(),
             hearing: AtomicBool::new(false),
             audible: std::sync::Mutex::new(None),
             execution_root,
@@ -743,6 +771,7 @@ pub(crate) fn test_bridge() -> (
             lyric_repairs: std::sync::Mutex::new(crate::lyric_repair::Budget::default()),
             vision: AtomicBool::new(false),
             visual: std::sync::Mutex::new(None),
+            result_images: Default::default(),
             hearing: AtomicBool::new(false),
             audible: std::sync::Mutex::new(None),
             execution_root: None,
@@ -1477,6 +1506,7 @@ mod tests {
             lyric_repairs: std::sync::Mutex::new(crate::lyric_repair::Budget::default()),
             vision: AtomicBool::new(true),
             visual: std::sync::Mutex::new(None),
+            result_images: Default::default(),
             hearing: AtomicBool::new(false),
             audible: std::sync::Mutex::new(None),
             execution_root: None,
@@ -1486,7 +1516,7 @@ mod tests {
         }));
         let scope = VisualTurn::new(Some(bridge.clone()));
         for revision in 1..=3 {
-            bridge
+            let (_, image) = bridge
                 .accept_inspection(&auris_session::audio_inspection::Inspection {
                     revision,
                     measurements: serde_json::json!({"seconds":2.0}),
@@ -1496,6 +1526,19 @@ mod tests {
                     notes: vec![],
                 })
                 .unwrap();
+            // The transcript's copy of the picture, held for the call's result event once.
+            assert_eq!(image["media_type"], "image/png");
+            assert!(!image["data"].as_str().unwrap().is_empty());
+            bridge.stash_result_images(&format!("call-{revision}"), vec![image.clone()]);
+            assert_eq!(
+                bridge.take_result_images(&format!("call-{revision}")),
+                vec![image]
+            );
+            assert!(
+                bridge
+                    .take_result_images(&format!("call-{revision}"))
+                    .is_empty()
+            );
         }
         let Message::User { content } = bridge.visual().unwrap() else {
             panic!()

@@ -8,6 +8,7 @@
 
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
 
@@ -314,6 +315,47 @@ fn log_preview(text: &str) -> String {
     }
 }
 
+/// A picture a tool answered with — the mel-and-score image `inspect_audio` shows the model —
+/// decoded once, when its result arrived, and kept only as long as the conversation is open.
+#[derive(Clone)]
+pub(crate) struct ToolImage(pub(crate) Arc<gpui::RenderImage>);
+
+impl std::fmt::Debug for ToolImage {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let size = self.0.size(0);
+        write!(formatter, "ToolImage({}x{})", size.width.0, size.height.0)
+    }
+}
+
+impl PartialEq for ToolImage {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+/// Most pictures one tool row keeps, matching what the worker sends.
+const TOOL_IMAGE_LIMIT: usize = 4;
+
+/// The pictures of a `result` event: `[{"media_type": …, "data": "<base64>"}]`. One that does not
+/// decode is left out rather than failing the row, whose text still stands.
+fn tool_images(images: Option<&serde_json::Value>) -> Vec<ToolImage> {
+    use base64::Engine as _;
+    images
+        .and_then(|images| images.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|image| {
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(image.get("data")?.as_str()?)
+                .ok()?;
+            crate::ui::attachment_preview::decode_picture(bytes)
+                .ok()
+                .map(ToolImage)
+        })
+        .take(TOOL_IMAGE_LIMIT)
+        .collect()
+}
+
 /// One line of the conversation, as the panel shows it.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum ChatEntry {
@@ -344,6 +386,8 @@ pub(crate) enum ChatEntry {
         line: String,
         /// The whole answer, shown when the row is clicked open.
         detail: String,
+        /// The pictures it answered with, drawn under the row whether or not it is open.
+        images: Vec<ToolImage>,
     },
     /// Something went wrong — the worker, the provider, the channel.
     Error(String),
@@ -457,6 +501,8 @@ pub(crate) enum AgentEvent {
         line: String,
         /// Everything it said, for the row's opened form.
         detail: String,
+        /// The pictures it answered with.
+        images: Vec<ToolImage>,
     },
     /// A project file on disk is no longer what the window last read.
     Changed {
@@ -604,6 +650,7 @@ pub(crate) fn parse_event(line: &str) -> Option<AgentEvent> {
                     .unwrap_or(false),
                 line: detail.lines().next().unwrap_or_default().to_string(),
                 detail,
+                images: tool_images(parsed.get("images")),
             }
         }
         "changed" => AgentEvent::Changed {
@@ -795,6 +842,7 @@ fn entry_text(entry: &ChatEntry, language: auris_i18n::Language) -> String {
             ok,
             line,
             detail,
+            ..
         } => {
             let mut out = format!(
                 "**{}:** {} {name}  {line}",
@@ -1381,6 +1429,9 @@ pub(crate) struct AgentChat {
     pub(crate) context_window: Option<u64>,
     /// Running tool rows by unique call id, so parallel calls sharing a name remain distinct.
     open_tools: std::collections::BTreeMap<String, usize>,
+    /// Tool rows with pictures that the person has opened, by the view key their row was built
+    /// with; `ChatView` keeps this for every other row, but cannot see inside a custom one.
+    pub(crate) open_pictured_tools: std::collections::HashSet<usize>,
     /// The wire a model listing comes back on.
     pub(crate) models_rx: Option<Receiver<Result<String, String>>>,
     discovery_endpoint: Option<auris_session::AgentEndpoint>,
@@ -1494,6 +1545,7 @@ impl Default for AgentChat {
             streamed_answer: false,
             context_window: None,
             open_tools: std::collections::BTreeMap::new(),
+            open_pictured_tools: Default::default(),
             models_rx: None,
             discovery_endpoint: None,
             history_clear: None,
@@ -1937,6 +1989,7 @@ impl AgentChat {
                     ok: true,
                     line: String::new(),
                     detail: String::new(),
+                    images: Vec::new(),
                 });
                 self.open_tools.insert(call_id, index);
             }
@@ -1946,6 +1999,7 @@ impl AgentChat {
                 ok,
                 line,
                 detail,
+                images,
             } => {
                 // The call pushed a running row; this fills it in. A result with no matching
                 // call — a build mismatch, a dropped line — becomes its own row rather than
@@ -1964,11 +2018,13 @@ impl AgentChat {
                         ok: row_ok,
                         line: row_line,
                         detail: row_detail,
+                        images: row_images,
                         ..
                     }) => {
                         *row_ok = ok;
                         *row_line = line;
                         *row_detail = detail;
+                        *row_images = images;
                     }
                     _ => {
                         self.push_entry(ChatEntry::Tool {
@@ -1977,6 +2033,7 @@ impl AgentChat {
                             ok,
                             line,
                             detail,
+                            images,
                         });
                     }
                 }
@@ -4520,6 +4577,31 @@ impl AurisApp {
                         )),
                 )
             })
+            .when_some(
+                match entry {
+                    ChatEntry::Tool { images, .. } if !images.is_empty() => Some(images),
+                    _ => None,
+                },
+                |this, images| {
+                    let bound = crate::ui::attachment_preview::InlinePlace::Message.image_bound();
+                    this.child(
+                        div()
+                            .debug_selector(move || format!("agent-line-images-{index}"))
+                            .mt_0p5()
+                            .flex()
+                            .flex_wrap()
+                            .gap_1()
+                            .min_w_0()
+                            .children(images.iter().map(|image| {
+                                crate::ui::attachment_preview::framed_picture(
+                                    &image.0,
+                                    bound,
+                                    &theme.atelier,
+                                )
+                            })),
+                    )
+                },
+            )
             .into_any_element()
     }
 
@@ -6348,6 +6430,7 @@ mod tests {
                     ok: true,
                     line: "done".into(),
                     detail: "measured".into(),
+                    images: Vec::new(),
                 },
             ];
         });
@@ -6427,6 +6510,7 @@ mod tests {
                 ok: true,
                 line: "cutoff = 0.8".into(),
                 detail: "a ``` fence\n".into(),
+                images: Vec::new(),
             },
             ChatEntry::Agent("Done.".into()),
             ChatEntry::Status("Stopped".into()),
@@ -6602,6 +6686,7 @@ mod tests {
                     ok: true,
                     line: "finished".into(),
                     detail: "Audio preview details".into(),
+                    images: Vec::new(),
                 },
             ];
         });
@@ -6686,6 +6771,7 @@ mod tests {
                 ok: true,
                 line: "finished".into(),
                 detail: "Full tool result".into(),
+                images: Vec::new(),
             }];
         });
         crate::harness::paint(&app, cx);
@@ -7571,7 +7657,8 @@ mod tests {
                 tool: "analyze".to_string(),
                 ok: true,
                 line: "The mix — x".to_string(),
-                detail: "The mix — x\nmore".to_string()
+                detail: "The mix — x\nmore".to_string(),
+                images: Vec::new(),
             })
         );
         // Token counts ride on the answer; an older agent's answer without them still reads.
@@ -7688,6 +7775,7 @@ mod tests {
                         "finished".into()
                     },
                     detail: "Full tool result\nsecond line".into(),
+                    images: Vec::new(),
                 })
                 .collect();
             this.agent_chat
@@ -7711,6 +7799,69 @@ mod tests {
             assert!(!this.agent_chat.chat_row_open(0, cx));
         });
         assert!(cx.debug_bounds(tool).unwrap().size.height >= collapsed);
+    }
+
+    /// A small PNG, base64-encoded as a `result` event carries it.
+    fn png_base64(width: u32, height: u32) -> String {
+        use base64::Engine as _;
+        let mut png = Vec::new();
+        image::DynamicImage::new_rgb8(width, height)
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .unwrap();
+        base64::engine::general_purpose::STANDARD.encode(png)
+    }
+
+    #[gpui::test]
+    fn a_tool_that_answers_with_a_picture_shows_it_under_its_row(cx: &mut gpui::TestAppContext) {
+        let call =
+            parse_event(r#"{"event":"call","call_id":"c1","tool":"inspect_audio","args":"{}"}"#)
+                .unwrap();
+        let result = parse_event(
+            &serde_json::json!({"event":"result","call_id":"c1","tool":"inspect_audio","ok":true,
+                "text":"Mel power, bars 1-4",
+                "images":[{"media_type":"image/png","data":png_base64(8, 6)},
+                          {"media_type":"image/png","data":"not a picture"}]})
+            .to_string(),
+        )
+        .unwrap();
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, _| {
+            this.panels.show(crate::dock::Panel::Agent);
+            this.agent_chat.models_loaded = true;
+            this.agent_chat.absorb(call, None, false);
+            this.agent_chat.absorb(result, None, false);
+            // The picture that decodes is kept; the one that does not is dropped, not the row.
+            assert!(matches!(
+                this.agent_chat.entries.last(),
+                Some(ChatEntry::Tool { line, images, .. })
+                    if line == "Mel power, bars 1-4"
+                        && images.len() == 1
+                        && images[0].0.size(0) == gpui::size(8.into(), 6.into())
+            ));
+            this.agent_chat
+                .entries
+                .push(ChatEntry::Agent("The low end is muddy.".into()));
+        });
+        crate::harness::paint(&app, cx);
+        // Shown without opening the row, between the call and the answer that read it.
+        let pictures = cx.debug_bounds("agent-tool-images-0").unwrap();
+        let row = cx.debug_bounds("agent-chat-pictured-tool-0").unwrap();
+        let answer = chat_view::answer_bounds(&app, cx, 1).unwrap();
+        assert!(row.bottom() <= pictures.origin.y && pictures.bottom() <= answer.origin.y);
+        assert!(pictures.size.height >= gpui::px(6.0));
+
+        // The row still opens to the whole text answer, and closes again.
+        crate::harness::click("agent-chat-pictured-tool-0", cx);
+        crate::harness::paint(&app, cx);
+        app.read_with(cx, |this, _| {
+            assert!(this.agent_chat.open_pictured_tools.contains(&0))
+        });
+        let opened = cx.debug_bounds("agent-tool-images-0").unwrap();
+        assert!(opened.origin.y > pictures.origin.y);
+        crate::harness::click("agent-chat-pictured-tool-0", cx);
+        app.read_with(cx, |this, _| {
+            assert!(!this.agent_chat.open_pictured_tools.contains(&0))
+        });
     }
 
     #[test]
@@ -7748,6 +7899,7 @@ mod tests {
                 ok: true,
                 line: "Wrote X".to_string(),
                 detail: "Wrote X\nand the summary".to_string(),
+                images: Vec::new(),
             },
             None,
             false,
@@ -7781,6 +7933,7 @@ mod tests {
                 ok: true,
                 line: "second result".to_string(),
                 detail: "second result".to_string(),
+                images: Vec::new(),
             },
             None,
             false,
@@ -7792,6 +7945,7 @@ mod tests {
                 ok: false,
                 line: "first result".to_string(),
                 detail: "first result".to_string(),
+                images: Vec::new(),
             },
             None,
             false,
@@ -7817,6 +7971,7 @@ mod tests {
                 ok: false,
                 line: String::new(),
                 detail: String::new(),
+                images: Vec::new(),
             },
             None,
             false,
@@ -7850,6 +8005,7 @@ mod tests {
                 ok: true,
                 line: "written".to_string(),
                 detail: "written".to_string(),
+                images: Vec::new(),
             },
             None,
             false,

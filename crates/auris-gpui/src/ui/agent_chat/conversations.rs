@@ -154,6 +154,8 @@ impl ChatEntry {
                 ok,
                 line,
                 detail,
+                // Pictures are kept for the open conversation only; a saved one holds the text.
+                ..
             } => Content::Tool {
                 name: name.clone(),
                 args: args.clone(),
@@ -200,6 +202,7 @@ impl ChatEntry {
                     line.clone()
                 },
                 detail: detail.clone(),
+                images: Vec::new(),
             },
         }
     }
@@ -1613,6 +1616,7 @@ mod tests {
                     ok: true,
                     line: "4 notes added".into(),
                     detail: "Complete tool result".into(),
+                    images: Vec::new(),
                 },
             ];
             this.agent_chat.input = TextField::new("Try a softer bass");

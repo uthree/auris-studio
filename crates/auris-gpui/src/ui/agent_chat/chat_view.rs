@@ -301,6 +301,7 @@ impl AurisApp {
                 ok,
                 line,
                 detail,
+                images,
             } => {
                 let (summary, state) = if line.is_empty() {
                     (
@@ -319,8 +320,20 @@ impl AurisApp {
                 if !detail.is_empty() {
                     sections.push(format!("{}\n{detail}", Key::AgentToolResult.get(language)));
                 }
-                let entry = ViewEntry::tool(name.clone(), summary, state)
-                    .icon(crate::ui::icons::tool_icon(name).atelier_name());
+                let icon = crate::ui::icons::tool_icon(name).atelier_name();
+                if !images.is_empty() {
+                    return self.pictured_tool_entry(
+                        key,
+                        name.clone().into(),
+                        summary.into(),
+                        state,
+                        icon,
+                        (!sections.is_empty()).then(|| sections.join("\n\n").into()),
+                        images.clone(),
+                        cx,
+                    );
+                }
+                let entry = ViewEntry::tool(name.clone(), summary, state).icon(icon);
                 if sections.is_empty() {
                     entry
                 } else {
@@ -361,6 +374,101 @@ impl AurisApp {
             }
         }
     }
+}
+
+impl AurisApp {
+    /// A tool call that answered with pictures: Atelier's own `ToolCall` row, with the pictures
+    /// under it where the detail would open, so the log shows what the model was shown.
+    ///
+    /// `ChatView` has no pictures on a tool entry, so this row is drawn by the panel, and keeps
+    /// its own open state: a custom row is invisible to the view's toggles. It stands outside
+    /// the view's tool groups for the same reason.
+    #[allow(clippy::too_many_arguments)]
+    fn pictured_tool_entry(
+        &self,
+        key: usize,
+        name: SharedString,
+        summary: SharedString,
+        state: ToolState,
+        icon: atelier::IconName,
+        detail: Option<SharedString>,
+        images: Vec<ToolImage>,
+        cx: &mut gpui::Context<Self>,
+    ) -> ViewEntry {
+        let app = cx.entity().downgrade();
+        let chat = self
+            .agent_chat
+            .chat
+            .as_ref()
+            .map(|sync| sync.view.downgrade());
+        ViewEntry::custom(move |_, cx| {
+            let open = app
+                .upgrade()
+                .is_some_and(|app| app.read(cx).agent_chat.open_pictured_tools.contains(&key));
+            let mut call = atelier::agent::ToolCall::new(
+                SharedString::from(format!("{CHAT_VIEW_ID}-pictured-tool-{key}")),
+                name.clone(),
+                summary.clone(),
+                state,
+            )
+            .icon(icon)
+            .open(open);
+            if let Some(detail) = detail.clone() {
+                let app = app.clone();
+                let chat = chat.clone();
+                call = call.detail(detail).on_toggle(move |_, _, cx| {
+                    app.update(cx, |this, cx| {
+                        let open = &mut this.agent_chat.open_pictured_tools;
+                        if !open.remove(&key) {
+                            open.insert(key);
+                        }
+                        cx.notify();
+                    })
+                    .ok();
+                    if let Some(chat) = chat.as_ref().and_then(|chat| chat.upgrade()) {
+                        chat.update(cx, |_, cx| cx.notify());
+                    }
+                });
+            }
+            let theme = atelier::ActiveTheme::theme(cx).clone();
+            tool_pictures(
+                SharedString::from(format!("agent-tool-images-{key}")),
+                call.into_any_element(),
+                &images,
+                &theme,
+            )
+        })
+    }
+}
+
+/// A tool row with its pictures under it, indented as Atelier indents a tool call's detail.
+pub(super) fn tool_pictures(
+    selector: SharedString,
+    row: gpui::AnyElement,
+    images: &[ToolImage],
+    theme: &atelier::Theme,
+) -> gpui::AnyElement {
+    let bound = crate::ui::attachment_preview::InlinePlace::Message.image_bound();
+    let spacing = &theme.spacing;
+    div()
+        .flex()
+        .flex_col()
+        .min_w_0()
+        .child(row)
+        .child(
+            div()
+                .debug_selector(move || selector.to_string())
+                .mx(spacing.sm)
+                .mb(spacing.xs)
+                .flex()
+                .flex_wrap()
+                .gap(spacing.sm)
+                .min_w_0()
+                .children(images.iter().map(|image| {
+                    crate::ui::attachment_preview::framed_picture(&image.0, bound, theme)
+                })),
+        )
+        .into_any_element()
 }
 
 /// The selector of one part of the row showing `entries[index]`, as a window test clicks it.

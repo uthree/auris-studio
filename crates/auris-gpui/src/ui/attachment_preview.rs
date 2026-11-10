@@ -40,33 +40,7 @@ fn load(path: &std::path::Path, rate: f64) -> Result<Content, String> {
             ))
         }
         auris_agent::AttachmentKind::Image => {
-            let bytes = read_bounded(path, 32 * 1024 * 1024)?;
-            let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes))
-                .with_guessed_format()
-                .map_err(|e| e.to_string())?;
-            let mut limits = image::Limits::default();
-            limits.max_image_width = Some(8192);
-            limits.max_image_height = Some(8192);
-            limits.max_alloc = Some(64 * 1024 * 1024);
-            reader.limits(limits);
-            use image::ImageDecoder;
-            let mut decoder = reader.into_decoder().map_err(|e| e.to_string())?;
-            let orientation = decoder.orientation().map_err(|e| e.to_string())?;
-            let mut image =
-                image::DynamicImage::from_decoder(decoder).map_err(|e| e.to_string())?;
-            image.apply_orientation(orientation);
-            // `thumbnail` fits to the box in both directions, so a small picture would come
-            // back enlarged to 1024 px; only a larger one is brought down.
-            if image.width() > 1024 || image.height() > 1024 {
-                image = image.thumbnail(1024, 1024);
-            }
-            let mut decoded = image.into_rgba8();
-            for pixel in decoded.pixels_mut() {
-                pixel.0.swap(0, 2);
-            }
-            Ok(Content::Image(Arc::new(gpui::RenderImage::new(vec![
-                image::Frame::new(decoded),
-            ]))))
+            decode_picture(read_bounded(path, 32 * 1024 * 1024)?).map(Content::Image)
         }
         auris_agent::AttachmentKind::Audio => {
             if std::fs::metadata(path).map_err(|e| e.to_string())?.len() > 512 * 1024 * 1024 {
@@ -77,6 +51,61 @@ fn load(path: &std::path::Path, rate: f64) -> Result<Content, String> {
                 .map_err(|e| e.to_string())
         }
     }
+}
+
+/// Decodes a PNG, JPEG, WebP or GIF into the form gpui draws, upright and at most 1024 px on its
+/// longer side, refusing a picture whose header claims more than a preview could ever need.
+pub(crate) fn decode_picture(bytes: Vec<u8>) -> Result<Arc<gpui::RenderImage>, String> {
+    let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format()
+        .map_err(|e| e.to_string())?;
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(8192);
+    limits.max_image_height = Some(8192);
+    limits.max_alloc = Some(64 * 1024 * 1024);
+    reader.limits(limits);
+    use image::ImageDecoder;
+    let mut decoder = reader.into_decoder().map_err(|e| e.to_string())?;
+    let orientation = decoder.orientation().map_err(|e| e.to_string())?;
+    let mut image = image::DynamicImage::from_decoder(decoder).map_err(|e| e.to_string())?;
+    image.apply_orientation(orientation);
+    // `thumbnail` fits to the box in both directions, so a small picture would come back
+    // enlarged to 1024 px; only a larger one is brought down.
+    if image.width() > 1024 || image.height() > 1024 {
+        image = image.thumbnail(1024, 1024);
+    }
+    let mut decoded = image.into_rgba8();
+    for pixel in decoded.pixels_mut() {
+        pixel.0.swap(0, 2);
+    }
+    Ok(Arc::new(gpui::RenderImage::new(vec![image::Frame::new(
+        decoded,
+    )])))
+}
+
+/// A picture in the frame every picture in a conversation sits in — rounded, bordered, on the
+/// sunken surface — fitted into `bound` without ever being enlarged.
+pub(crate) fn framed_picture(
+    image: &Arc<gpui::RenderImage>,
+    bound: gpui::Size<gpui::Pixels>,
+    theme: &atelier::Theme,
+) -> gpui::Div {
+    let size = image_size(image, bound);
+    div()
+        .flex_none()
+        .max_w_full()
+        .overflow_hidden()
+        .rounded(theme.shape.radius_md)
+        .border_1()
+        .border_color(theme.colors.border)
+        .bg(theme.colors.sunken)
+        .child(
+            gpui::img(Arc::clone(image))
+                .w(size.width)
+                .h(size.height)
+                .max_w_full()
+                .object_fit(gpui::ObjectFit::Contain),
+        )
 }
 
 fn read_bounded(path: &std::path::Path, limit: u64) -> Result<Vec<u8>, String> {
@@ -103,7 +132,7 @@ pub(crate) enum InlinePlace {
 
 impl InlinePlace {
     /// The box a picture is fitted into.
-    fn image_bound(self) -> gpui::Size<gpui::Pixels> {
+    pub(crate) fn image_bound(self) -> gpui::Size<gpui::Pixels> {
         match self {
             Self::Message => gpui::size(gpui::px(320.0), gpui::px(240.0)),
             Self::Composer => gpui::size(gpui::px(120.0), gpui::px(80.0)),
@@ -246,29 +275,12 @@ impl AurisApp {
         let image_kind =
             auris_agent::attachment_kind(path) == Some(auris_agent::AttachmentKind::Image);
         let content = match &preview.content {
-            Some(Content::Image(image)) => {
-                let size = image_size(image, bound);
-                div()
-                    .debug_selector({
-                        let id = id.clone();
-                        move || format!("{id}-image")
-                    })
-                    .flex_none()
-                    .max_w_full()
-                    .overflow_hidden()
-                    .rounded(theme.atelier.shape.radius_md)
-                    .border_1()
-                    .border_color(theme.atelier.colors.border)
-                    .bg(theme.atelier.colors.sunken)
-                    .child(
-                        gpui::img(Arc::clone(image))
-                            .w(size.width)
-                            .h(size.height)
-                            .max_w_full()
-                            .object_fit(gpui::ObjectFit::Contain),
-                    )
-                    .into_any_element()
-            }
+            Some(Content::Image(image)) => framed_picture(image, bound, &theme.atelier)
+                .debug_selector({
+                    let id = id.clone();
+                    move || format!("{id}-image")
+                })
+                .into_any_element(),
             Some(Content::Text(text)) => div()
                 .id(gpui::SharedString::from(format!("{id}-text")))
                 .w_full()
