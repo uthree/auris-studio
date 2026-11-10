@@ -102,6 +102,7 @@ impl AurisApp {
         thinking: Option<SharedString>,
         cx: &mut gpui::Context<Self>,
     ) -> Entity<ChatView> {
+        self.sync_tool_players();
         let language = self.language();
         let mut sync = match self.agent_chat.chat.take() {
             Some(sync) => sync,
@@ -301,6 +302,8 @@ impl AurisApp {
                 ok,
                 line,
                 detail,
+                images,
+                audio,
             } => {
                 let (summary, state) = if line.is_empty() {
                     (
@@ -319,8 +322,23 @@ impl AurisApp {
                 if !detail.is_empty() {
                     sections.push(format!("{}\n{detail}", Key::AgentToolResult.get(language)));
                 }
-                let entry = ViewEntry::tool(name.clone(), summary, state)
-                    .icon(crate::ui::icons::tool_icon(name).atelier_name());
+                let icon = crate::ui::icons::tool_icon(name).atelier_name();
+                if !images.is_empty() || !audio.is_empty() {
+                    return self.media_tool_entry(
+                        key,
+                        ToolRow {
+                            name: name.clone().into(),
+                            summary: summary.into(),
+                            state,
+                            icon,
+                            detail: (!sections.is_empty()).then(|| sections.join("\n\n").into()),
+                        },
+                        images.clone(),
+                        audio.clone(),
+                        cx,
+                    );
+                }
+                let entry = ViewEntry::tool(name.clone(), summary, state).icon(icon);
                 if sections.is_empty() {
                     entry
                 } else {
@@ -361,6 +379,230 @@ impl AurisApp {
             }
         }
     }
+}
+
+/// What Atelier's `ToolCall` row needs, for a row the panel draws itself.
+struct ToolRow {
+    name: SharedString,
+    summary: SharedString,
+    state: ToolState,
+    icon: atelier::IconName,
+    detail: Option<SharedString>,
+}
+
+impl AurisApp {
+    /// A player for every recording a tool row holds, and none for one no longer shown.
+    pub(super) fn sync_tool_players(&mut self) {
+        let chat = &mut self.agent_chat;
+        let trimmed = chat.trimmed;
+        let wanted: std::collections::HashSet<(usize, usize)> = chat
+            .entries
+            .iter()
+            .enumerate()
+            .flat_map(|(index, entry)| match entry {
+                ChatEntry::Tool { audio, .. } => (0..audio.len())
+                    .map(|clip| (trimmed + index, clip))
+                    .collect::<Vec<_>>(),
+                _ => Vec::new(),
+            })
+            .collect();
+        chat.tool_players.retain(|key, _| wanted.contains(key));
+        for key in wanted {
+            chat.tool_players.entry(key).or_default();
+        }
+    }
+
+    /// Plays one recording a tool answered with, decoding it at the window's rate the first time.
+    pub(crate) fn play_tool_audio(
+        &mut self,
+        key: usize,
+        clip: usize,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if !self.acquire_audio(cx) {
+            return;
+        }
+        let rate = self.session.sample_rate();
+        let source = key
+            .checked_sub(self.agent_chat.trimmed)
+            .and_then(|index| self.agent_chat.entries.get(index))
+            .and_then(|entry| match entry {
+                ChatEntry::Tool { audio, .. } => audio.get(clip).cloned(),
+                _ => None,
+            });
+        let Some(source) = source else {
+            return;
+        };
+        let Some(player) = self.agent_chat.tool_players.get_mut(&(key, clip)) else {
+            return;
+        };
+        let audio = match &player.audio {
+            Some(audio) if audio.sample_rate() == rate => Arc::clone(audio),
+            _ => match source.clip.audio(rate) {
+                Ok(audio) => {
+                    let audio = Arc::new(audio);
+                    player.audio = Some(Arc::clone(&audio));
+                    audio
+                }
+                Err(error) => {
+                    self.set_failed_status(error);
+                    return;
+                }
+            },
+        };
+        let options = player.player.options(audio.duration_seconds());
+        match self.session.play_output_preview_with(audio, options) {
+            Ok(status) => player.player.start(status),
+            Err(error) => {
+                let message = crate::i18n::error_text(&error, self.language());
+                self.set_failed_status(message);
+            }
+        }
+        cx.notify();
+    }
+
+    /// A tool call that answered with pictures or recordings: Atelier's own `ToolCall` row,
+    /// with them under it where the detail would open, so the log shows what the model was
+    /// shown and lets the person hear what it heard.
+    ///
+    /// `ChatView` has neither on a tool entry, so this row is drawn by the panel, and keeps
+    /// its own open state: a custom row is invisible to the view's toggles. It stands outside
+    /// the view's tool groups for the same reason.
+    fn media_tool_entry(
+        &self,
+        key: usize,
+        row: ToolRow,
+        images: Vec<ToolImage>,
+        audio: Vec<ToolAudio>,
+        cx: &mut gpui::Context<Self>,
+    ) -> ViewEntry {
+        let app = cx.entity().downgrade();
+        let chat = self
+            .agent_chat
+            .chat
+            .as_ref()
+            .map(|sync| sync.view.downgrade());
+        let language = self.language();
+        ViewEntry::custom(move |_, cx| {
+            let open = app
+                .upgrade()
+                .is_some_and(|app| app.read(cx).agent_chat.open_pictured_tools.contains(&key));
+            let mut call = atelier::agent::ToolCall::new(
+                SharedString::from(format!("{CHAT_VIEW_ID}-pictured-tool-{key}")),
+                row.name.clone(),
+                row.summary.clone(),
+                row.state,
+            )
+            .icon(row.icon)
+            .open(open);
+            if let Some(detail) = row.detail.clone() {
+                let app = app.clone();
+                let chat = chat.clone();
+                call = call.detail(detail).on_toggle(move |_, _, cx| {
+                    app.update(cx, |this, cx| {
+                        let open = &mut this.agent_chat.open_pictured_tools;
+                        if !open.remove(&key) {
+                            open.insert(key);
+                        }
+                        cx.notify();
+                    })
+                    .ok();
+                    if let Some(chat) = chat.as_ref().and_then(|chat| chat.upgrade()) {
+                        chat.update(cx, |_, cx| cx.notify());
+                    }
+                });
+            }
+            let players: Vec<gpui::AnyElement> = audio
+                .iter()
+                .enumerate()
+                .filter_map(|(clip, recording)| {
+                    let label = match recording.clip.label.as_str() {
+                        "before" => Some(Key::AgentHeardBefore.get(language)),
+                        "after" => Some(Key::AgentHeardAfter.get(language)),
+                        _ => None,
+                    };
+                    let player = app
+                        .update(cx, |this, cx| {
+                            this.render_audio_player(
+                                crate::ui::audio_player::PlayerTarget::ToolAudio(key, clip),
+                                recording.seconds,
+                                true,
+                                false,
+                                None,
+                                cx,
+                            )
+                        })
+                        .ok()?;
+                    Some(
+                        div()
+                            .debug_selector(move || format!("agent-tool-audio-{key}-{clip}"))
+                            .flex()
+                            .flex_col()
+                            .gap_0p5()
+                            .min_w_0()
+                            .when_some(label, |this, label| {
+                                this.child(
+                                    atelier::Label::new(label)
+                                        .size(atelier::TextSize::Small)
+                                        .color(atelier::TextColor::Muted),
+                                )
+                            })
+                            .child(player)
+                            .into_any_element(),
+                    )
+                })
+                .collect();
+            let theme = atelier::ActiveTheme::theme(cx).clone();
+            tool_media(key, call.into_any_element(), &images, players, &theme)
+        })
+    }
+}
+
+/// A tool row with its pictures and players under it, indented as Atelier indents a tool
+/// call's detail.
+pub(super) fn tool_media(
+    key: usize,
+    row: gpui::AnyElement,
+    images: &[ToolImage],
+    players: Vec<gpui::AnyElement>,
+    theme: &atelier::Theme,
+) -> gpui::AnyElement {
+    let bound = crate::ui::attachment_preview::InlinePlace::Message.image_bound();
+    let spacing = &theme.spacing;
+    div()
+        .flex()
+        .flex_col()
+        .min_w_0()
+        .child(row)
+        .when(!images.is_empty(), |this| {
+            this.child(
+                div()
+                    .debug_selector(move || format!("agent-tool-images-{key}"))
+                    .mx(spacing.sm)
+                    .mb(spacing.xs)
+                    .flex()
+                    .flex_wrap()
+                    .gap(spacing.sm)
+                    .min_w_0()
+                    .children(images.iter().map(|image| {
+                        crate::ui::attachment_preview::framed_picture(&image.0, bound, theme)
+                    })),
+            )
+        })
+        .when(!players.is_empty(), |this| {
+            this.child(
+                div()
+                    .debug_selector(move || format!("agent-tool-audio-{key}"))
+                    .mx(spacing.sm)
+                    .mb(spacing.xs)
+                    .flex()
+                    .flex_col()
+                    .gap(spacing.sm)
+                    .min_w_0()
+                    .children(players),
+            )
+        })
+        .into_any_element()
 }
 
 /// The selector of one part of the row showing `entries[index]`, as a window test clicks it.

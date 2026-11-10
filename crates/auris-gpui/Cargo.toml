@@ -36,6 +36,8 @@ gpui-flow = { path = "../../vendor/gpui-flow" }
 # Markdown is Atelier's now. It shares gpui's version and stays wholly inside this crate.
 # Later component releases require GPUI snapshots; 0.5.1 is the latest compatible release.
 gpui-component = "=0.5.1"
+# A tool answers with its pictures base64-encoded on the agent wire.
+base64.workspace = true
 # Decode voice artwork on a worker, with bounded dimensions before GPUI sees the pixels.
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
 rfd = "0.17"
