@@ -33,7 +33,6 @@ use crate::theme::{Metrics, Theme};
 use crate::ui::icons::Icon;
 use crate::ui::inspector::{audio_name, panel_header};
 use crate::ui::scrollbars::ScrollPanel;
-use crate::ui::text_field::TextField;
 use crate::ui::widgets::{ButtonStyle, button, divider};
 
 /// How far one level of the tree is indented.
@@ -584,7 +583,7 @@ impl AurisApp {
         }
     }
 
-    fn library_query(&self) -> &TextField {
+    fn library_query(&self) -> &str {
         &self.library_search
     }
 
@@ -642,7 +641,7 @@ impl AurisApp {
     /// filtered list with nothing on screen saying why, and a focus left behind a cleared query
     /// is a panel that has quietly taken the space bar.
     pub(crate) fn leave_library_search(&mut self) {
-        self.library_search = crate::ui::text_field::TextField::new(String::new());
+        self.library_search.clear();
         self.library_search_focused = false;
     }
 
@@ -658,109 +657,55 @@ impl AurisApp {
     /// them back on Escape, on Enter, and as soon as a result is chosen.
     fn library_search_field(&mut self, cx: &mut gpui::Context<Self>) -> AnyElement {
         let theme = self.theme.clone();
-        let focused = self.library_search_focused;
-        let text = self.library_query().content().to_string();
-        let empty = text.is_empty();
-        let selection = self.library_query().selection();
-        let marked = self.library_query().marked();
-        let view = cx.entity();
-        // The window's own handle, the one the palette and the prompt type through: the input
-        // handler is registered against whatever holds the keyboard, and while this field has it
-        // there is nothing else it could be.
-        let handle = self.focus.clone();
+        let empty = self.library_search.is_empty();
+        let input = self.library_search_input.sync(&self.library_search, cx);
 
         div()
-            .id("library-search")
-            .debug_selector(move || "library-search".to_string())
-            .flex()
-            .items_center()
-            // No gap after the icon: the text carries its own left inset, because the field
-            // paints its caret at one. A gap on top of it would put the words a third of the
-            // way across a box this narrow.
+            .id("library-search-box")
             .mx_1()
             .mb_1()
-            .h(Metrics::CONTROL_HEIGHT)
-            .px_1p5()
-            .rounded(Metrics::RADIUS_SM)
-            .bg(theme.surface_sunken)
-            .border_1()
-            .border_color(match focused {
-                true => theme.accent,
-                false => theme.border_subtle,
-            })
-            .cursor_text()
             .child(
-                atelier::Icon::new(atelier::IconName::Search)
-                    .size(px(13.0))
-                    .color(theme.text_muted),
-            )
-            .child(
-                div()
-                    .relative()
-                    .flex_1()
-                    .min_w_0()
-                    .h_full()
-                    .child(match focused {
-                        true => crate::ui::prompt::editable_text(
-                            text.clone().into(),
-                            selection,
-                            marked,
-                            handle,
-                            view,
-                            theme.clone(),
+                atelier::TextField::new()
+                    .id("library-search")
+                    .debug_selector(move || "library-search".to_string())
+                    .icon(atelier::IconName::Search)
+                    .placeholder(self.t(Key::BrowserSearch))
+                    .empty(empty)
+                    .focused(self.library_search_focused)
+                    // Only once there is something to clear, because a cross on an empty field
+                    // is a button that does nothing sitting where the eye keeps going.
+                    .when(!empty, |field| {
+                        field.trailing(
+                            div()
+                                .id("library-search-clear")
+                                .debug_selector(move || "library-search-clear".to_string())
+                                .size(px(18.0))
+                                .flex_shrink_0()
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .child(icon(Icon::Cross, px(10.0), theme.text_muted))
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(move |this, _: &MouseDownEvent, _, cx| {
+                                        this.clear_library_query();
+                                        cx.stop_propagation();
+                                        cx.notify();
+                                    }),
+                                ),
                         )
-                        .into_any_element(),
-                        false => crate::ui::prompt::field_text(text.clone(), theme.text)
-                            .into_any_element(),
                     })
-                    // The placeholder under the field rather than in it, so the real text is
-                    // never something the field has to decide whether to keep. Laid out by the
-                    // same helper as the value, so the caret lands on the first letter of it
-                    // rather than a character in.
-                    .when(empty, |this| {
-                        this.child(
-                            crate::ui::prompt::field_text(
-                                self.t(Key::BrowserSearch),
-                                theme.text_muted,
-                            )
-                            .absolute()
-                            .inset_0(),
-                        )
-                    }),
+                    .child(input),
             )
-            // Only once there is something to clear, because a cross on an empty field is a
-            // button that does nothing sitting where the eye keeps going.
-            .when(!empty, |this| {
-                this.child(
-                    div()
-                        .id("library-search-clear")
-                        .debug_selector(move || "library-search-clear".to_string())
-                        .size(px(18.0))
-                        .flex_shrink_0()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .child(icon(Icon::Cross, px(10.0), theme.text_muted))
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(move |this, _: &MouseDownEvent, _, cx| {
-                                this.clear_library_query();
-                                cx.stop_propagation();
-                                cx.notify();
-                            }),
-                        ),
-                )
-            })
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |this, _: &MouseDownEvent, _, cx| {
-                    // One field in the window types at a time; the agent panel's is the other
-                    // one that lives in a panel rather than a sheet.
-                    this.agent_chat.focused = None;
-                    this.library_search_focused = true;
-                    cx.notify();
-                }),
-            )
+            // On the way down, before the input under the pointer takes the press for itself.
+            .capture_any_mouse_down(cx.listener(move |this, _: &MouseDownEvent, window, cx| {
+                // One field in the window types at a time; the agent panel's is the other one
+                // that lives in a panel rather than a sheet.
+                this.agent_chat.focused = None;
+                this.library_search_focused = true;
+                window.focus(this.library_search_input.focus_handle());
+                cx.notify();
+            }))
             .into_any_element()
     }
 
@@ -769,7 +714,7 @@ impl AurisApp {
     /// A shut branch contributes its own row and nothing else, so the cost of a font with a
     /// hundred and twenty-eight sounds is not paid until somebody opens it.
     fn library_rows(&mut self, cx: &mut gpui::Context<Self>) -> Vec<AnyElement> {
-        let query = self.library_query().content().trim().to_string();
+        let query = self.library_query().trim().to_string();
         if !query.is_empty() {
             return self.search_rows(&query, cx);
         }
@@ -1034,8 +979,7 @@ impl AurisApp {
                     .size(atelier::ControlSize::Small)
                     .full_width()
                     .on_click(cx.listener(move |this, _, _, cx| {
-                        this.timbre_map.search =
-                            crate::ui::text_field::TextField::new(query.clone());
+                        this.timbre_map.search = query.clone();
                         this.leave_library_search();
                         this.open_timbre_map(cx);
                         cx.notify();
@@ -1124,7 +1068,7 @@ impl AurisApp {
             .flex_col()
             .flex_shrink_0()
             .min_w_0()
-            .pl(if self.library_search.content().trim().is_empty() {
+            .pl(if self.library_search.trim().is_empty() {
                 indent(1) + DISCLOSURE_SPACE
             } else {
                 indent(0)
@@ -2074,7 +2018,7 @@ impl AurisApp {
         .debug_selector(move || format!("lib-{id}"))
         .flex_1()
         .justify_start();
-        let searching = !self.library_search.content().trim().is_empty();
+        let searching = !self.library_search.trim().is_empty();
         div()
             .flex()
             .w_full()
@@ -2541,7 +2485,7 @@ impl AurisApp {
             }
             .color(&theme)
         });
-        let searching = !self.library_query().content().trim().is_empty();
+        let searching = !self.library_query().trim().is_empty();
         let enabled = role != LibraryRole::Instrument || self.library_takes_instrument();
         let selected = role == LibraryRole::Instrument
             && self
@@ -2667,7 +2611,7 @@ impl AurisApp {
             }
             .color(&theme)
         });
-        let searching = !self.library_query().content().trim().is_empty();
+        let searching = !self.library_query().trim().is_empty();
         let enabled = self.library_takes_instrument();
         let selected = {
             self.selected_track

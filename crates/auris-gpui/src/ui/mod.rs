@@ -73,6 +73,7 @@ pub(crate) mod synth_edit;
 pub(crate) mod synth_view;
 pub mod text_area;
 pub mod text_field;
+pub(crate) mod text_input;
 pub(crate) mod timbre_map;
 pub mod timeline;
 pub mod title_bar;

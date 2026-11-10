@@ -61,7 +61,7 @@ pub(crate) struct TimbreMapState {
     /// Envelope ranges the list is ranked by.
     pub(crate) envelope: EnvelopeFilter,
     envelope_open: bool,
-    pub(crate) search: super::text_field::TextField,
+    pub(crate) search: String,
     pub(crate) search_focused: bool,
     pub(crate) map: Option<Arc<TimbreMap>>,
     pub(crate) control: Option<TimbreMapControl>,
@@ -175,35 +175,8 @@ impl AurisApp {
     fn render_timbre_search(&self, cx: &mut Context<Self>) -> AnyElement {
         let state = &self.timbre_map;
         let theme = self.theme.clone();
-        let field = div()
-            .relative()
-            .flex_1()
-            .min_w_0()
-            .h_full()
-            .child(if state.search_focused {
-                super::prompt::editable_text(
-                    state.search.content().to_owned().into(),
-                    state.search.selection(),
-                    state.search.marked(),
-                    self.focus.clone(),
-                    cx.entity(),
-                    theme.clone(),
-                )
-                .into_any_element()
-            } else {
-                super::prompt::field_text(state.search.content().to_owned(), theme.text)
-                    .into_any_element()
-            })
-            .when(state.search.content().is_empty(), |field| {
-                field.child(
-                    super::prompt::field_text(
-                        self.t(Key::TimbreSearchPlaceholder),
-                        theme.text_muted,
-                    )
-                    .absolute()
-                    .inset_0(),
-                )
-            });
+        let empty = state.search.is_empty();
+        let input = self.timbre_search_input.sync(&state.search, cx);
         div()
             .flex()
             .items_center()
@@ -214,49 +187,37 @@ impl AurisApp {
                     .size(ControlSize::Small)
                     .tooltip(self.t(Key::TimbreSearch))
                     .on_click(cx.listener(|this, _, window, cx| {
-                        this.agent_chat.focused = None;
-                        this.library_search_focused = false;
-                        this.timbre_map.search_focused = true;
-                        window.focus(&this.focus);
+                        this.focus_timbre_search(window);
                         cx.notify();
                     })),
             )
             .child(
                 div()
-                    .id("timbre-search-field")
-                    .debug_selector(|| "timbre-search-field".into())
-                    .flex()
                     .flex_1()
                     .min_w_0()
-                    .h_6()
-                    .rounded(theme.atelier.shape.radius_sm)
-                    .bg(theme.atelier.colors.sunken)
-                    .border_1()
-                    .border_color(if state.search_focused {
-                        theme.atelier.colors.accent
-                    } else {
-                        theme.border_subtle
-                    })
-                    .cursor_text()
-                    .child(field)
-                    .on_mouse_down(
-                        gpui::MouseButton::Left,
-                        cx.listener(|this, _, window, cx| {
-                            this.agent_chat.focused = None;
-                            this.library_search_focused = false;
-                            this.timbre_map.search_focused = true;
-                            window.focus(&this.focus);
-                            cx.notify();
-                        }),
+                    // On the way down, before the input under the pointer takes the press.
+                    .capture_any_mouse_down(cx.listener(|this, _, window, cx| {
+                        this.focus_timbre_search(window);
+                        cx.notify();
+                    }))
+                    .child(
+                        atelier::TextField::new()
+                            .id("timbre-search-field")
+                            .debug_selector(|| "timbre-search-field".into())
+                            .size(ControlSize::Small)
+                            .placeholder(self.t(Key::TimbreSearchPlaceholder))
+                            .empty(empty)
+                            .focused(state.search_focused)
+                            .child(input),
                     ),
             )
-            .when(!state.search.content().is_empty(), |row| {
+            .when(!empty, |row| {
                 row.child(
                     Button::new("timbre-search-clear", self.t(Key::TimbreSearchClear))
                         .ghost()
                         .size(ControlSize::Small)
                         .on_click(cx.listener(|this, _, _, cx| {
-                            this.timbre_map.search = Default::default();
+                            this.timbre_map.search.clear();
                             this.timbre_map.search_focused = false;
                             cx.notify();
                         })),
@@ -265,24 +226,25 @@ impl AurisApp {
             .into_any_element()
     }
 
+    /// Gives the keyboard to the map's search box, and takes it from the window's other fields.
+    fn focus_timbre_search(&mut self, window: &mut gpui::Window) {
+        self.agent_chat.focused = None;
+        self.library_search_focused = false;
+        self.timbre_map.search_focused = true;
+        window.focus(self.timbre_search_input.focus_handle());
+    }
+
+    /// Tab leaves the map's search box: Atelier's input takes its other keys itself.
     pub(crate) fn timbre_search_key(
         &mut self,
         event: &gpui::KeyDownEvent,
         cx: &mut Context<Self>,
     ) -> bool {
-        let key = event.keystroke.key.as_str();
-        if self.timbre_map.search.marked().is_none() && matches!(key, "escape" | "enter" | "tab") {
+        if event.keystroke.key == "tab" && !self.timbre_search_input.is_composing(cx) {
             self.timbre_map.search_focused = false;
             cx.notify();
-            return key != "tab";
         }
-        self.timbre_map.search.apply_key_with_clipboard(
-            key,
-            event.keystroke.modifiers.shift,
-            event.keystroke.modifiers.secondary(),
-            false,
-            cx,
-        ) != super::text_field::KeyEffect::Ignored
+        false
     }
 
     /// Manual corrections win over name hints, then cluster suggestions fill unknown families.
@@ -834,7 +796,7 @@ impl AurisApp {
     /// other word must occur in the sound's name. That is the same split the agent's
     /// `search_instruments` makes between its `query` and `name`.
     fn timbre_results(&self, map: &TimbreMap) -> (Option<Vec<(usize, f64)>>, String) {
-        let query = self.timbre_map.search.content().trim();
+        let query = self.timbre_map.search.trim();
         let envelope = self.timbre_map.envelope.targets();
         let candidates: Vec<usize> = match self.timbre_map.similar_to {
             Some(anchor) if anchor < map.sounds.len() => map
@@ -1773,7 +1735,7 @@ mod tests {
         click("timbre-search-focus", &mut utility);
         utility.simulate_input("ふんわり");
         app.read_with(&utility, |this, _| {
-            assert_eq!(this.timbre_map.search.content(), "ふんわり");
+            assert_eq!(this.timbre_map.search.as_str(), "ふんわり");
             assert!(this.taking_text_input());
             assert_eq!(this.project(), &before);
         });
@@ -1782,7 +1744,7 @@ mod tests {
             assert!(!this.timbre_map.search_focused);
             let map = this.timbre_map.map.as_ref().unwrap();
             let (targets, _) = TimbreTargets::interpret(
-                this.timbre_map.search.content(),
+                this.timbre_map.search.as_str(),
                 &TimbreTargets::default(),
             )
             .unwrap();
@@ -1799,7 +1761,7 @@ mod tests {
         assert!(utility.debug_bounds("timbre-plot").is_some());
         click("timbre-search-clear", &mut utility);
         app.read_with(&utility, |this, _| {
-            assert!(this.timbre_map.search.content().is_empty());
+            assert!(this.timbre_map.search.as_str().is_empty());
             assert_eq!(this.project(), &before);
         });
     }
@@ -1827,8 +1789,8 @@ mod tests {
         click("library-find-by-sound", cx);
         let before = app.read_with(cx, |this, _| {
             assert!(this.timbre_map.open);
-            assert_eq!(this.timbre_map.search.content(), "strings");
-            assert!(this.library_search.content().is_empty());
+            assert_eq!(this.timbre_map.search.as_str(), "strings");
+            assert!(this.library_search.as_str().is_empty());
             this.project().clone()
         });
         paint(&app, cx);

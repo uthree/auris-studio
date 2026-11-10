@@ -595,7 +595,7 @@ mod tests {
             let piano = this.session.add_default_instrument_track("Piano").unwrap();
             this.select_track(piano);
             this.voices = Some(vec![("Test Voice".into(), path.clone())]);
-            this.library_search = crate::ui::text_field::TextField::new("Test Voice");
+            this.library_search = "Test Voice".into();
         });
         paint(&app, cx);
         click(selector, cx);

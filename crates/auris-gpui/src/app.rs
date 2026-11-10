@@ -1750,9 +1750,13 @@ pub struct AurisApp {
     /// Always present rather than opened: a browser with twenty rows of plugins and a hundred
     /// and twenty-eight sounds in one font is a list nobody scrolls twice, and a search that has
     /// to be summoned first is one people forget is there.
-    pub(crate) library_search: crate::ui::text_field::TextField,
+    pub(crate) library_search: String,
+    /// The input the library's query is typed into.
+    pub(crate) library_search_input: crate::ui::text_input::MirroredInput,
     /// Whether that field is taking the keyboard.
     pub(crate) library_search_focused: bool,
+    /// The input the timbre map's query is typed into.
+    pub(crate) timbre_search_input: crate::ui::text_input::MirroredInput,
     /// The agent panel: its transcript, its fields, and the child process behind them.
     pub(crate) agent_chat: crate::ui::agent_chat::AgentChat,
     /// Whether [`Self::status`] is reporting a failure, so it can be shown as one.
@@ -2243,8 +2247,31 @@ impl AurisApp {
             input_levels: Vec::new(),
             input_clips: Vec::new(),
             input_peaks: Vec::new(),
-            library_search: crate::ui::text_field::TextField::new(String::new()),
+            library_search: String::new(),
+            library_search_input: crate::ui::text_input::MirroredInput::new(
+                cx,
+                |this, event, text, cx| {
+                    match event {
+                        atelier::TextInputEvent::Changed => this.library_search = text,
+                        // Return keeps the query and gives the keyboard back; Escape throws it
+                        // away too.
+                        atelier::TextInputEvent::Submit => this.library_search_focused = false,
+                        atelier::TextInputEvent::Cancel => this.leave_library_search(),
+                    }
+                    cx.notify();
+                },
+            ),
             library_search_focused: false,
+            timbre_search_input: crate::ui::text_input::MirroredInput::new(
+                cx,
+                |this, event, text, cx| {
+                    match event {
+                        atelier::TextInputEvent::Changed => this.timbre_map.search = text,
+                        _ => this.timbre_map.search_focused = false,
+                    }
+                    cx.notify();
+                },
+            ),
             agent_chat: crate::ui::agent_chat::AgentChat::default(),
             automation_lanes: BTreeMap::new(),
             spectrogram_tracks: Default::default(),
@@ -2308,11 +2335,23 @@ impl AurisApp {
             || self.menu_bar.is_some()
     }
 
-    /// The focus handle of the input the open text prompt is typed into, when it takes text.
-    pub(crate) fn prompt_text_focus(&self) -> Option<&FocusHandle> {
-        let prompt = self.prompt.as_ref()?;
-        prompt.field()?;
-        Some(self.prompt_input.focus_for(prompt.target()?))
+    /// The focus handle of the Atelier input that should hold the keyboard: the open text
+    /// prompt's, or a search box's while it is being typed into.
+    pub(crate) fn text_input_focus(&self) -> Option<&FocusHandle> {
+        if let Some(prompt) = self.prompt.as_ref() {
+            prompt.field()?;
+            return Some(self.prompt_input.focus_for(prompt.target()?));
+        }
+        if self.palette.is_some() {
+            return None;
+        }
+        if self.timbre_map.open && self.timbre_map.search_focused {
+            return Some(self.timbre_search_input.focus_handle());
+        }
+        if self.library_search_focused {
+            return Some(self.library_search_input.focus_handle());
+        }
+        None
     }
 
     /// Whether text is being typed into something in this window.
@@ -2408,7 +2447,6 @@ impl AurisApp {
         // claim on the keyboard while preserving the draft for the next visit.
         if pane != Pane::Library && self.library_search_focused {
             self.library_search_focused = false;
-            self.library_search.unmark();
         }
         if pane != Pane::Agent {
             if let Some(field) = self.agent_chat.field_mut() {
@@ -2424,7 +2462,7 @@ impl AurisApp {
         {
             window.focus(focus);
         } else if self.taking_text_input() && !self.inline_prompt_open(window) {
-            match self.prompt_text_focus() {
+            match self.text_input_focus() {
                 Some(input) => window.focus(input),
                 None => window.focus(&self.focus),
             }
@@ -2484,7 +2522,6 @@ impl AurisApp {
         // keep taking input, and a hidden pane is no longer a place to restore the keyboard to.
         if !self.panels.is_open(Panel::Library) {
             self.library_search_focused = false;
-            self.library_search.unmark();
             if self.last_pane == Pane::Library {
                 self.last_pane = Pane::Arrangement;
             }
@@ -2525,8 +2562,14 @@ impl AurisApp {
         } else if self.inline_prompt_open(window) {
             // Atelier's inline field focuses its own input when it opens, and gives the keyboard
             // back when it closes.
-        } else if let Some(input) = self.prompt_text_focus() {
-            // The sheet's field is Atelier's input, which owns its own focus handle.
+        } else if (self.menu.is_some() || self.menu_bar.is_some())
+            && self.text_input_focus().is_some()
+        {
+            // A menu opened over a search box holds the keyboard until it closes: an Atelier
+            // input would take its arrows and Return before the menu saw them.
+        } else if let Some(input) = self.text_input_focus() {
+            // The sheet's field and the search boxes are Atelier's inputs, each with its own
+            // focus handle.
             if !input.is_focused(window) {
                 window.focus(input);
             }
@@ -2537,6 +2580,8 @@ impl AurisApp {
         } else if self.focus.is_focused(window)
             || self.modal_focus.contains_focused(window, cx)
             || self.prompt_input.is_focused(window, cx)
+            || self.library_search_input.is_focused(window)
+            || self.timbre_search_input.is_focused(window)
         {
             // Back where it came from, so the panel bindings work again the moment the sheet is
             // gone rather than after the next click.
@@ -3821,12 +3866,12 @@ mod panel_input_tests {
             cx.simulate_input("draft");
             app.read_with(cx, |this, _| {
                 assert!(this.taking_text_input());
-                let field = if panel == Panel::Agent {
-                    &this.agent_chat.input
+                let field: &str = if panel == Panel::Agent {
+                    this.agent_chat.input.content()
                 } else {
                     &this.library_search
                 };
-                assert_eq!(field.content(), "draft");
+                assert_eq!(field, "draft");
             });
 
             let at = lane_point(&app, cx, track, Ticks(2 * TICKS_PER_QUARTER));
@@ -3840,16 +3885,12 @@ mod panel_input_tests {
                     "Backspace deletes the selected clip"
                 );
                 assert!(!this.taking_text_input());
-                let field = if panel == Panel::Agent {
-                    &this.agent_chat.input
+                let field: &str = if panel == Panel::Agent {
+                    this.agent_chat.input.content()
                 } else {
                     &this.library_search
                 };
-                assert_eq!(
-                    field.content(),
-                    "draft",
-                    "leaving a pane preserves its draft"
-                );
+                assert_eq!(field, "draft", "leaving a pane preserves its draft");
             });
         }
     }
@@ -3968,12 +4009,12 @@ mod hidden_panel_input_tests {
                 assert!(!this.taking_text_input());
                 assert_eq!(this.last_pane, Pane::Arrangement);
                 assert!(this.session.midi_clip(clip).is_none());
-                let field = if panel == Panel::Agent {
-                    &this.agent_chat.input
+                let field: &str = if panel == Panel::Agent {
+                    this.agent_chat.input.content()
                 } else {
                     &this.library_search
                 };
-                assert_eq!(field.content(), "draft");
+                assert_eq!(field, "draft");
             });
         }
     }
