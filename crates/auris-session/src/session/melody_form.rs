@@ -18,9 +18,9 @@ pub const IDENTICAL_SECTION_LINES: usize = 3;
 /// Lines a song must hold before a property shared by all of them is reported.
 pub const UNIFORM_LINES: usize = 8;
 /// Share of onset spacings one value may take before the rhythm is reported as one value: the
-/// 95th percentile of the corpus in `docs/evaluation.md`. Seven spacings in ten, the threshold
-/// before it, is reached by one corpus song in eight.
-pub const UNIFORM_SPACING_SHARE: f64 = 0.82;
+/// 90th percentile of the corpus in `docs/evaluation.md`. At the 95th percentile, 0.82, four
+/// songs composed in a row all finished between 0.76 and 0.78, above nine corpus songs in ten.
+pub const UNIFORM_SPACING_SHARE: f64 = 0.75;
 /// Onset spacings needed before that share is judged.
 pub const UNIFORM_SPACING_COUNT: usize = 50;
 /// Bits a note under which a line counts as predictable from the song so far.

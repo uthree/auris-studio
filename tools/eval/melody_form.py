@@ -53,7 +53,7 @@ PARAMETERS = {
     "identical_section_min_lines": 3,
     "uniform_min_lines": 8,
     "uniform_entry_share": 0.9,
-    "uniform_ioi_share": 0.82,
+    "uniform_ioi_share": 0.75,
     "uniform_ioi_min_count": 50,
     "plateau_bits": 1.0,
     "plateau_min_lines": 4,
