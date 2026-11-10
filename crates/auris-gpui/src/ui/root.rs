@@ -178,12 +178,17 @@ impl Render for AurisApp {
             .map_or(window.viewport_size().width, |bounds| bounds.size.width);
 
         // Keep the playhead on screen while the transport rolls, until a hand scrolls it out
-        // of view — see `PlayheadFollow` for when following comes back.
+        // of view — see `follow_playhead` for when following comes back.
         let playing = self.is_playing();
         let playhead = self.playhead_ticks();
         let width = self.arrangement_width;
-        self.playhead_follow
-            .update(&mut self.timeline, playhead, width, playing);
+        crate::ui::timeline::follow_playhead(
+            &mut self.playhead_follow,
+            &mut self.timeline,
+            playhead,
+            width,
+            playing,
+        );
 
         // The taskbar and the Alt-Tab list are where a user looks to tell one project's window
         // from another's, and they were both showing a constant. Only on a change: setting it is

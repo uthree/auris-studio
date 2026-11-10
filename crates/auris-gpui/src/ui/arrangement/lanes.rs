@@ -410,45 +410,23 @@ impl AurisApp {
         playhead: Ticks,
         cx: &mut gpui::Context<Self>,
     ) -> Option<gpui::AnyElement> {
-        if !self.is_playing() || !self.playhead_follow.is_released() {
+        if !self.is_playing() {
             return None;
         }
-        let behind = playhead < self.timeline.scroll_ticks;
-        let label = self.t(Key::CmdRevealPlayhead);
-        let label = match behind {
-            true => format!("← {label}"),
-            false => format!("{label} →"),
-        };
-        let chip = crate::ui::widgets::button(
-            "return-to-playhead",
-            label,
-            crate::ui::widgets::ButtonStyle::Primary,
-            false,
-            self.theme.accent,
-            &self.theme,
-            cx.listener(|this, _, _, cx| {
+        let side = crate::ui::timeline::playhead_side(
+            &self.playhead_follow,
+            &self.timeline,
+            playhead,
+            self.arrangement_width,
+        )?;
+        let back = atelier::BackToPlayhead::new("return-to-playhead", side)
+            .label(self.t(Key::CmdRevealPlayhead))
+            .on_click(cx.listener(|this, _, _, cx| {
                 this.reveal_playhead();
                 cx.notify();
-            }),
-        )
-        .debug_selector(|| "return-to-playhead".into())
-        // The lanes under it would take the press for a rubber band otherwise.
-        .on_mouse_down(
-            MouseButton::Left,
-            cx.listener(|this, _: &MouseDownEvent, _, cx| {
-                cx.stop_propagation();
-                this.reveal_playhead();
-                cx.notify();
-            }),
-        );
-        let placed = div().absolute().bottom(px(12.0)).child(chip);
-        Some(
-            match behind {
-                true => placed.left(px(12.0)),
-                false => placed.right(px(12.0)),
-            }
-            .into_any_element(),
-        )
+            }));
+        // It keeps its own press, so the lanes under it do not start a rubber band.
+        Some(back.into_any_element())
     }
 
     /// Removes open rows whose parameter disappeared with a plugin or track edit.
