@@ -561,7 +561,7 @@ dependencies = [
 [[package]]
 name = "atelier"
 version = "0.4.0"
-source = "git+https://github.com/uthree/design-language?rev=bb373ecf175cb68ae0b0e1c89e01cf5887ca152f#bb373ecf175cb68ae0b0e1c89e01cf5887ca152f"
+source = "git+https://github.com/uthree/design-language?rev=a3c5f69e1db8d19e7c70bf427250473c77208055#a3c5f69e1db8d19e7c70bf427250473c77208055"
 dependencies = [
  "gpui",
  "image",

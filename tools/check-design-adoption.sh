@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Derived from uthree/design-language, revision bb373ecf175cb68ae0b0e1c89e01cf5887ca152f (main after #55).
-# Source: https://github.com/uthree/design-language/blob/bb373ecf175cb68ae0b0e1c89e01cf5887ca152f/skills/atelier-gpui/tools/check-adoption.sh
+# SPDX-License-Identifier: Apache-2.0
+# Derived from uthree/design-language, revision a3c5f69e1db8d19e7c70bf427250473c77208055 (#57).
+# Source: https://github.com/uthree/design-language/blob/a3c5f69e1db8d19e7c70bf427250473c77208055/skills/atelier-gpui/tools/check-adoption.sh
 # Find workarounds an application no longer needs once it builds on Atelier, so new code does
 # not copy old code that predates a feature. Run it from the application's repository, or in
 # its CI:
@@ -54,6 +55,10 @@ check() {
         fi
     done <<<"$hits"
 }
+
+# The app's mark in the title bar.
+check warn 'Avatar::logo\(\s*IconSource::image' \
+    "if this is the app's own icon in the title bar, use TitleBar::app_icon(IconSource::image(..)) with its title-bar.png: it takes the top-left corner at the bar's icon size. Avatar::logo is for a provider's mark."
 
 # Wrapping and copying components.
 check warn '\.debug_selector\(' \
