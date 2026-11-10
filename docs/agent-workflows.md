@@ -41,7 +41,9 @@ The proposal's revision and harmony object can be passed to selective backing re
 It is read-only and available in the same two tool groups.
 
 Add a track with an explicit kind and name, then `add_clip` with its numeric track,
-intended clip name, one-based `start_bar` and duration `bars`. Read the clip with
+intended clip name, one-based `start_bar` and duration `bars`. An optional
+`pickup_beats` opens the clip that many beats before `start_bar`, for a line that
+enters with a pickup; it may overlap the end of the clip before. Read the clip with
 the returned `clip` address, not the owning `track`. `inspect_project` uses
 `tracks[].track` and `tracks[].clips[].clip`, matching creation results and tool
 arguments. These are distinct numeric addresses; no positional track numbering

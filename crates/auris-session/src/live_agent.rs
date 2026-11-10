@@ -66,6 +66,32 @@ fn sound_search_limit() -> usize {
 ///
 /// Left off an unlooped clip so the common case costs a model nothing to read; present, it is the
 /// absolute tick where the repeats stop, which is the value `edit_clip`'s `loop` takes back.
+/// How far before `start_bar` a clip opened with `pickup_beats` begins.
+///
+/// The beat is that of the bar before, the bar the pickup is sung in, and the pickup is at most
+/// that whole bar: a longer lead-in is a clip that starts a bar earlier.
+fn clip_pickup(
+    signatures: &SignatureMap,
+    start_bar: u32,
+    pickup_beats: Option<f64>,
+) -> Result<Ticks, String> {
+    let Some(beats) = pickup_beats else {
+        return Ok(Ticks::ZERO);
+    };
+    if start_bar < 2 {
+        return Err("pickup_beats needs a bar before start_bar, and bar 1 has none".into());
+    }
+    let before = signatures.signature_at(signatures.bar_start(start_bar - 1));
+    let pickup = Ticks((beats * before.ticks_per_beat().raw() as f64).round() as i64);
+    if !(beats > 0.0 && pickup <= before.ticks_per_bar()) {
+        return Err(format!(
+            "Use pickup_beats above 0 and at most {}, one bar of the meter before start_bar",
+            before.numerator
+        ));
+    }
+    Ok(pickup)
+}
+
 fn with_loop_end(
     mut summary: serde_json::Value,
     start: Ticks,
@@ -648,7 +674,7 @@ pub enum Command {
         ceiling_db: Option<f32>,
     },
 
-    /// Add an empty MIDI clip to an instrument, drum or singer track and return its numeric clip ID. start_bar is 1-based in the project's meter; bars is a duration. Audio and bus tracks cannot hold MIDI clips.
+    /// Add an empty MIDI clip to an instrument, drum or singer track and return its numeric clip ID. start_bar is 1-based in the project's meter; bars is a duration. A line that enters before its barline (a pickup, 弱起) needs a clip that starts before it: pickup_beats opens the clip that many beats before start_bar, and it may overlap the end of the clip before as long as their notes do not sound together. Audio and bus tracks cannot hold MIDI clips.
     AddClip {
         /// Stable track ID.
         track: u64,
@@ -661,6 +687,9 @@ pub enum Command {
         /// Duration in bars, 1 through 1024.
         #[schemars(range(min = 1, max = 1024))]
         bars: u32,
+        /// Beats before start_bar at which the clip begins instead, in the meter's beat (quarter in 4/4, eighth in 6/8) and at most one bar: 1 opens the clip on the last beat of the bar before, 0.5 on its last offbeat. The clip still ends where start_bar + bars ends. Write the pickup notes at their own song positions, in bar start_bar - 1. Omit for a clip that starts on the barline.
+        #[serde(default)]
+        pickup_beats: Option<f64>,
     },
     /// Generate a new MIDI phrase on an existing instrument or drum track using the project's key, chords and meter. Write melodic harmony with edit_harmony first; drum parts use the track's sound assignments. part is lead, chords, pad, arp, bass, drums, kick, snare or hat. Returns clip ID, note count and seed; zero notes is an empty clip, not a finished phrase. Existing clips are preserved. One Undo removes the new clip; persistence follows the host.
     GeneratePhrase {
@@ -1426,13 +1455,16 @@ impl Session {
                 name,
                 start_bar,
                 bars,
+                pickup_beats,
             } => {
                 if name.trim().is_empty() || start_bar == 0 || !(1..=1024).contains(&bars) {
                     return Err("Use a name, start_bar >= 1 and bars 1..1024".into());
                 }
                 let end = start_bar.checked_add(bars).ok_or("Bar range overflow")?;
-                let start = self.project().signatures.bar_start(start_bar);
-                let length = self.project().signatures.bar_start(end) - start;
+                let signatures = &self.project().signatures;
+                let pickup = clip_pickup(signatures, start_bar, pickup_beats)?;
+                let start = signatures.bar_start(start_bar) - pickup;
+                let length = signatures.bar_start(end) - start;
                 let id = self
                     .add_midi_clip(TrackId(track), name, start, length)
                     .map_err(error)?;
@@ -1530,6 +1562,95 @@ mod tests {
             )
             .is_ok_and(|op| op.name == "edit_project.report_status" && !op.mutating)
         );
+    }
+
+    #[test]
+    fn a_clip_opened_with_a_pickup_starts_before_its_bar_and_ends_where_it_would() {
+        let mut session = session();
+        let track = session.add_singer_track("Lead");
+        let add = |session: &mut Session, start_bar, pickup_beats| {
+            session
+                .agent_command(Command::AddClip {
+                    track: track.0,
+                    name: "Line".into(),
+                    start_bar,
+                    bars: 2,
+                    pickup_beats,
+                })
+                .map(|text| serde_json::from_str::<serde_json::Value>(&text).unwrap())
+        };
+        let bar = Ticks::QUARTER.raw() * 4;
+        let verse = add(&mut session, 1, None).unwrap();
+        assert_eq!(verse["start_tick"], 0);
+        // A beat and a half before bar 3: the clip overlaps the verse's last beats and ends
+        // with bar 4, as a clip without a pickup would.
+        let chorus = add(&mut session, 3, Some(1.5)).unwrap();
+        assert_eq!(chorus["start_tick"], bar * 2 - 1440);
+        assert_eq!(chorus["length_ticks"], bar * 2 + 1440);
+        // Bar 1 has no bar before it, and a pickup is at most one bar.
+        assert!(add(&mut session, 1, Some(1.0)).is_err());
+        assert!(add(&mut session, 3, Some(0.0)).is_err());
+        assert!(add(&mut session, 3, Some(4.5)).is_err());
+        assert!(add(&mut session, 3, Some(4.0)).is_ok());
+        // The beat is the eighth of 6/8, as edit_notes counts it.
+        session.set_signature_at(Ticks::ZERO, TimeSignature::new(6, 8));
+        let compound = add(&mut session, 2, Some(2.0)).unwrap();
+        assert_eq!(compound["start_tick"], 2880 - 960);
+    }
+
+    #[test]
+    fn a_pickup_clip_over_the_end_of_the_clip_before_is_sung_in_its_place() {
+        let mut session = session();
+        let track = session.add_singer_track("Lead");
+        let verse = session
+            .add_midi_clip(track, "Verse", Ticks::ZERO, Ticks::QUARTER * 8)
+            .unwrap();
+        // The verse stops after beat 2 of its second bar; the chorus enters on beat 4 of it.
+        for beat in 0..6 {
+            session
+                .add_note(verse, Note::new(60, Ticks::QUARTER * beat, Ticks::QUARTER))
+                .unwrap();
+        }
+        let chorus: serde_json::Value = serde_json::from_str(
+            &session
+                .agent_command(Command::AddClip {
+                    track: track.0,
+                    name: "Chorus".into(),
+                    start_bar: 3,
+                    bars: 1,
+                    pickup_beats: Some(1.0),
+                })
+                .unwrap(),
+        )
+        .unwrap();
+        let chorus = ClipId(chorus["clip"].as_u64().unwrap());
+        for beat in 0..4 {
+            session
+                .add_note(chorus, Note::new(72, Ticks::QUARTER * beat, Ticks::QUARTER))
+                .unwrap();
+        }
+        session
+            .write_lyrics(verse, &[0, 1, 2, 3, 4, 5], "あいうえおか")
+            .unwrap();
+        session
+            .write_lyrics(chorus, &[0, 1, 2, 3], "さしすせ")
+            .unwrap();
+        // At 120 BPM a beat is half a second: the verse's C4 at beat 5.5, silence at 6.5, and
+        // the chorus's C5 from beat 7, a beat before the barline.
+        let frames = session.singer_frames(track).unwrap();
+        let pitch_at = |seconds: f64| frames.f0_hz[(seconds / frames.hop_seconds) as usize];
+        assert!((pitch_at(2.75) - 261.6).abs() < 15.0, "{}", pitch_at(2.75));
+        assert_eq!(pitch_at(3.25), 0.0);
+        assert!((pitch_at(3.75) - 523.3).abs() < 30.0, "{}", pitch_at(3.75));
+        assert!((pitch_at(5.25) - 523.3).abs() < 30.0, "{}", pitch_at(5.25));
+        // Two clips sharing a beat of the timeline ask the voice for nothing it cannot do.
+        let warnings: Vec<_> = session
+            .lint_score()
+            .diagnostics
+            .into_iter()
+            .filter(|diagnostic| diagnostic.severity != crate::lint::Severity::Info)
+            .collect();
+        assert!(warnings.is_empty(), "{warnings:?}");
     }
 
     #[test]
