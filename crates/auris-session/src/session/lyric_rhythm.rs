@@ -164,6 +164,8 @@ pub struct SectionRhythm {
 pub struct LyricRhythmReport {
     /// How to read each line's grid.
     pub legend: &'static str,
+    /// What to read after acting on this report.
+    pub then: &'static str,
     /// Section by section.
     pub sections: Vec<SectionRhythm>,
     /// Line by line.
@@ -175,6 +177,12 @@ pub struct LyricRhythmReport {
 }
 
 const LEGEND: &str = "Each line is drawn bar by bar from the bar it starts in: ‖ divides bars, | divides beats, and each token is one grid slot (grid_unit). A kana token is a note starting there with the moras it sings, - the note still sounding, _ silence, ~ a melisma carrying the vowel on, っ a closure. Two moras a beat in eighths is the usual pop pace: each two-mora foot (analyze_lyrics feet) then fills one beat.";
+
+/// The accent is the other half of a lyric's fit, and a rhythm edit changes it: a mora moved
+/// to another note is sung at that note's pitch. In the 2026-11-12 trial batch, a composer that
+/// had both tools read only this one, or read the accent once and never after its edits, and
+/// both songs ended further from their words' accent than the songs composed without it.
+const THEN: &str = "This report measures timing only. After editing the lead's notes for it, read lyric_accent again before sing: a mora moved to another note is sung at that note's pitch, so a rhythm fix can set a word against its spoken accent.";
 
 /// Second halves of a heavy syllable that can take a note of their own.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -654,6 +662,7 @@ fn report(lines: Vec<LineRhythm>) -> LyricRhythmReport {
         .collect();
     LyricRhythmReport {
         legend: LEGEND,
+        then: THEN,
         sections,
         lines,
         warnings,
