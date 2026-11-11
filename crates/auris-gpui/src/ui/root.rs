@@ -1550,6 +1550,11 @@ impl AurisApp {
                 let tick = self.snap_unless_held(self.timeline.x_to_tick(x), event.modifiers);
                 self.seek(tick);
             }
+            Drag::RollPlayhead => {
+                let x = event.position.x - self.roll_origin().x;
+                let tick = self.snap_unless_held(self.timeline.x_to_tick(x), event.modifiers);
+                self.seek(tick);
+            }
             Drag::AuditionHarmony => {
                 let x = event.position.x - self.timeline_origin().x;
                 self.audition_chord(self.timeline.x_to_tick(x).max_zero());
