@@ -1282,11 +1282,7 @@ impl AurisApp {
                     );
                 if let Some(track) = owner {
                     let index = self.project().track_index(track).unwrap_or(0);
-                    let outputs: Vec<Output> = self
-                        .project()
-                        .track(track)
-                        .map(|track| track.outputs.clone())
-                        .unwrap_or_default();
+                    let outputs: Vec<Output> = self.project().outputs(track);
                     let level_rows = if output_levels_shown(&outputs) {
                         outputs
                     } else {
@@ -1445,17 +1441,14 @@ mod tests {
         paint(&app, cx);
         app.read_with(cx, |this, _| {
             assert_eq!(
-                this.project().track(a).unwrap().outputs,
+                this.project().outputs(a),
                 vec![Output::master(), Output::to_bus(b)]
             )
         });
         cx.dispatch_action(crate::actions::Undo);
         paint(&app, cx);
         app.read_with(cx, |this, _| {
-            assert_eq!(
-                this.project().track(a).unwrap().outputs,
-                vec![Output::master()]
-            );
+            assert_eq!(this.project().outputs(a), vec![Output::master()]);
             assert_eq!(
                 this.mixer_canvas.as_ref().unwrap().document,
                 this.session.mixer_graph()
@@ -1652,26 +1645,20 @@ mod tests {
         cx.simulate_keystrokes("delete");
         paint(&app, cx);
         app.read_with(cx, |this, _| {
-            assert_eq!(
-                this.project().track(a).unwrap().outputs,
-                vec![Output::master()]
-            )
+            assert_eq!(this.project().outputs(a), vec![Output::master()])
         });
         cx.dispatch_action(crate::actions::Undo);
         paint(&app, cx);
         app.read_with(cx, |this, _| {
             assert_eq!(
-                this.project().track(a).unwrap().outputs,
+                this.project().outputs(a),
                 vec![Output::master(), Output::to_bus(b)]
             )
         });
         cx.dispatch_action(crate::actions::Redo);
         paint(&app, cx);
         app.read_with(cx, |this, _| {
-            assert_eq!(
-                this.project().track(a).unwrap().outputs,
-                vec![Output::master()]
-            )
+            assert_eq!(this.project().outputs(a), vec![Output::master()])
         });
         cx.dispatch_action(crate::actions::Undo);
         paint(&app, cx);
@@ -1681,10 +1668,7 @@ mod tests {
         click("menu-item-0", cx);
         paint(&app, cx);
         app.read_with(cx, |this, _| {
-            assert_eq!(
-                this.project().track(a).unwrap().outputs,
-                vec![Output::master()]
-            )
+            assert_eq!(this.project().outputs(a), vec![Output::master()])
         });
         cx.dispatch_action(crate::actions::Undo);
         paint(&app, cx);
@@ -1692,10 +1676,7 @@ mod tests {
         cx.simulate_keystrokes("backspace");
         paint(&app, cx);
         app.read_with(cx, |this, _| {
-            assert_eq!(
-                this.project().track(a).unwrap().outputs,
-                vec![Output::master()]
-            )
+            assert_eq!(this.project().outputs(a), vec![Output::master()])
         });
     }
 
@@ -1804,16 +1785,13 @@ mod tests {
         cx.simulate_keystrokes("delete");
         paint(&app, cx);
         app.read_with(cx, |this, _| {
-            assert_eq!(
-                this.project().track(a).unwrap().outputs,
-                vec![Output::master()]
-            )
+            assert_eq!(this.project().outputs(a), vec![Output::master()])
         });
         cx.dispatch_action(crate::actions::Undo);
         paint(&app, cx);
         app.read_with(cx, |this, _| {
             assert_eq!(
-                this.project().track(a).unwrap().outputs,
+                this.project().outputs(a),
                 vec![Output::master(), Output::to_bus(b), Output::to_bus(c)]
             )
         });
@@ -1843,8 +1821,10 @@ mod tests {
         );
         paint(&app, cx);
         app.read_with(cx, |this, _| {
-            let track = this.project().track(a).unwrap();
-            assert_eq!(track.outputs, vec![Output::master(), Output::to_bus(b)]);
+            assert_eq!(
+                this.project().outputs(a),
+                vec![Output::master(), Output::to_bus(b)]
+            );
         });
         expose_pair(
             &app,

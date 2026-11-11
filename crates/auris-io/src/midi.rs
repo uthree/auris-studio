@@ -2734,13 +2734,7 @@ mod tests {
         );
         let lead = project.tracks[0].id;
         let layer = project.add_layer_track(lead, "Bass", "synth").unwrap();
-        project
-            .track_mut(layer)
-            .unwrap()
-            .kind
-            .layer_mut()
-            .unwrap()
-            .shape = auris_core::LayerShape {
+        *project.routing.shape_mut(layer).unwrap() = auris_core::LayerShape {
             voice: auris_core::LayerVoice::Bottom,
             transpose: -12,
             length: 0.5,

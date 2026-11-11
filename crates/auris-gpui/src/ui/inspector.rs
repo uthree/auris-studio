@@ -466,7 +466,7 @@ impl AurisApp {
         };
         let is_drum = track.kind.is_drum();
         let is_singer = track.kind.is_singer();
-        let is_layer = track.kind.layer().is_some();
+        let is_layer = self.project().routing.is_layer(track.id);
         let instrument_id = track
             .kind
             .as_instrument()

@@ -92,7 +92,8 @@ and `effect:N` IDs, independent of names and effect positions. Read pages are
 in processing order; `next_offset` continues the node list and each page includes
 its nodes' outgoing edges. A track's `output_node` identifies its terminal insert
 or the track itself. Both the track ID and its terminal effect ID can address an
-outgoing connection. Output edges include their `gain_db` and `pre_fader` tap. An output is
+outgoing connection. Every edge says what it carries in `signal` (`audio` or `notes`). Output
+edges include their `gain_db` and `pre_fader` tap. An output is
 named by its source, its target and its tap; a track holds at most one per pair.
 
 For example, after reading the actual IDs:

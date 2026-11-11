@@ -170,8 +170,8 @@ fn revoice_moves_only_selected_section_and_preserves_score_curves_and_source_aut
         before.automation.lane(target)
     );
     assert_eq!(
-        session.project().track(destination).unwrap().outputs,
-        before.track(track).unwrap().outputs
+        session.project().outputs(destination),
+        before.outputs(track)
     );
     session.undo().unwrap();
     assert_eq!(session.project(), &before);

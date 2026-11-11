@@ -553,7 +553,7 @@ impl AurisApp {
                 let color = self.theme.track_color(track.color.0);
                 // A layer has no clips of its own; its lane shows its source's, shaped the way
                 // the layer plays them, as a ghost nothing can grab.
-                let borrowed = track.kind.layer().is_some();
+                let borrowed = self.project().routing.is_layer(track.id);
                 let clips = match &track.kind {
                     TrackKind::Instrument(_) if borrowed => self
                         .project()

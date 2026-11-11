@@ -148,7 +148,7 @@ impl Session {
                     target: node,
                     kind: MixerEdgeKind::Chain,
                 });
-                if let Some(source) = slot.sidechain {
+                if let Some(source) = self.project().sidechain(slot.id) {
                     graph.edges.push(MixerEdge {
                         source: self.mixer_graph_output(Some(source)),
                         target: node,
@@ -158,7 +158,7 @@ impl Session {
                 previous = node;
             }
             if let Some(track) = owner.and_then(|id| self.project().track(id)) {
-                if let Some(source) = track.kind.layer()
+                if let Some(source) = self.project().follows(track.id)
                     && self.project().track(source.track).is_some()
                 {
                     graph.edges.push(MixerEdge {
@@ -167,7 +167,7 @@ impl Session {
                         kind: MixerEdgeKind::Notes,
                     });
                 }
-                for output in &track.outputs {
+                for output in self.project().routing.outputs(track.id) {
                     graph.edges.push(MixerEdge {
                         source: previous,
                         target: MixerNode::Strip(output.bus()),
@@ -188,9 +188,9 @@ impl Session {
     /// An input receives a new unity output after the fader. An effect receives a sidechain.
     /// Self connections, duplicates, stale identities and all cycles are rejected.
     pub fn can_connect_mixer(&mut self, source: TrackId, target: MixerNode) -> bool {
-        let Some(track) = self.project().track(source) else {
+        if self.project().track(source).is_none() {
             return false;
-        };
+        }
         match target {
             MixerNode::Strip(owner) => {
                 if let Some(bus) = owner
@@ -200,7 +200,11 @@ impl Session {
                     return false;
                 }
                 let key = (destination(owner), Tap::PostFader);
-                !track.outputs.iter().any(|output| output.key() == key)
+                !self
+                    .project()
+                    .routing
+                    .outputs(source)
+                    .any(|output| output.key() == key)
             }
             MixerNode::Effect(owner, slot) => {
                 self.effect_enabled(owner, slot).is_some()
@@ -259,7 +263,7 @@ mod tests {
         assert_eq!(session.mixer_graph(), before);
         session.undo();
         assert_eq!(
-            session.project().track(a).unwrap().outputs,
+            session.project().outputs(a),
             vec![Output::master(), Output::to_bus(b)]
         );
         assert!(
@@ -302,13 +306,13 @@ mod tests {
             .collect();
         let before = serde_json::to_value(session.project()).unwrap();
         assert!(session.disconnect_mixer_edges(&edges).unwrap());
-        assert!(session.project().track(a).unwrap().outputs.is_empty());
+        assert!(session.project().outputs(a).is_empty());
         assert_eq!(session.effect_sidechain(Some(c), slot), None);
         assert!(!session.disconnect_mixer_edges(&edges).unwrap());
         session.undo();
         assert_eq!(serde_json::to_value(session.project()).unwrap(), before);
         session.redo();
-        assert!(session.project().track(a).unwrap().outputs.is_empty());
+        assert!(session.project().outputs(a).is_empty());
     }
 
     #[test]
@@ -324,10 +328,7 @@ mod tests {
         assert!(!session.connect_mixer(a, MixerNode::Strip(Some(a))).unwrap());
         assert_eq!(session.mixer_graph(), before);
         session.undo();
-        assert_eq!(
-            session.project().track(b).unwrap().outputs,
-            vec![Output::master()]
-        );
+        assert_eq!(session.project().outputs(b), vec![Output::master()]);
         session.redo();
         assert_eq!(session.mixer_graph(), before);
     }
@@ -431,7 +432,7 @@ mod tests {
                 .connect_mixer(track, MixerNode::Strip(Some(bus)))
                 .unwrap()
         );
-        assert_eq!(session.project().track(track).unwrap().outputs.len(), 2);
+        assert_eq!(session.project().outputs(track).len(), 2);
     }
 
     #[test]

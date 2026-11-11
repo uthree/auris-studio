@@ -666,11 +666,7 @@ impl Session {
         if targets.is_empty() {
             // A track that holds notes records what the typing keyboard plays onto it, which
             // needs no device and no folder. See `note_take`.
-            if let Some(track) = selected.filter(|track| {
-                self.project
-                    .track(*track)
-                    .is_some_and(|found| found.kind.holds_notes())
-            }) {
+            if let Some(track) = selected.filter(|track| self.project.holds_notes(*track)) {
                 return self.start_note_take(track);
             }
             return Err(SessionError::NothingToRecordOnto);

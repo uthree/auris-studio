@@ -1038,13 +1038,7 @@ mod tests {
             false => (hold(&mut project, "Kick"), hold(&mut project, "Bass")),
         };
         let slot = project.add_effect(Some(bass), testkit::KEYED_ID).unwrap();
-        let strip = &mut project.track_mut(bass).unwrap().mixer;
-        strip
-            .effects
-            .iter_mut()
-            .find(|effect| effect.id == slot)
-            .unwrap()
-            .sidechain = Some(kick);
+        project.routing.set_key(slot, Some(kick));
         (project, kick, bass)
     }
 
@@ -2600,8 +2594,12 @@ mod tests {
             ));
         }
         let bus = project.add_bus_track("Drums");
-        project.tracks[0].outputs = vec![Output::to_bus(bus)];
-        project.tracks[1].outputs = vec![Output::to_bus(bus)];
+        project
+            .routing
+            .set_outputs(project.tracks[0].id, &[Output::to_bus(bus)]);
+        project
+            .routing
+            .set_outputs(project.tracks[1].id, &[Output::to_bus(bus)]);
         project
     }
 
@@ -2621,15 +2619,18 @@ mod tests {
             Ticks::ZERO,
             Ticks::from_beats(8.0),
         ));
-        project.track_mut(track).unwrap().outputs.push(Output {
-            to: Destination::Bus(bus),
-            gain_db: level_db,
-            tap: if pre_fader {
-                Tap::PreFader
-            } else {
-                Tap::PostFader
+        project.routing.push(auris_core::Edge::output(
+            track,
+            Output {
+                to: Destination::Bus(bus),
+                gain_db: level_db,
+                tap: if pre_fader {
+                    Tap::PreFader
+                } else {
+                    Tap::PostFader
+                },
             },
-        });
+        ));
         project
     }
 
@@ -2695,8 +2696,11 @@ mod tests {
             project.track_mut(a).unwrap().mixer.gain_db = -6.020_6;
             project.track_mut(b).unwrap().mixer.gain_db = -12.041_2;
             project.add_effect(Some(b), testkit::LOOKAHEAD_ID);
-            project.tracks[0].outputs =
-                vec![Output::master(), Output::to_bus(a), Output::to_bus(b)];
+            let first = project.tracks[0].id;
+            project.routing.set_outputs(
+                first,
+                &[Output::master(), Output::to_bus(a), Output::to_bus(b)],
+            );
             let mut graph = build(&project, block);
             let out = render_range(&mut graph, &mut Transport::playing_from(0), 2048, block);
             assert_eq!(out.slice(0, testkit::LOOKAHEAD_FRAMES).peak(), 0.0);
@@ -2706,7 +2710,7 @@ mod tests {
                     "block {block}, frame {frame}"
                 );
             }
-            project.tracks[0].outputs.clear();
+            project.routing.set_outputs(first, &[]);
             let mut graph = build(&project, block);
             let silent = render_range(&mut graph, &mut Transport::playing_from(0), 2048, block);
             assert_eq!(silent.peak(), 0.0);
@@ -2769,7 +2773,9 @@ mod tests {
             ));
         }
         let bus = project.add_bus_track("Late");
-        project.tracks[0].outputs = vec![Output::to_bus(bus)];
+        project
+            .routing
+            .set_outputs(project.tracks[0].id, &[Output::to_bus(bus)]);
         project.add_effect(Some(bus), testkit::LOOKAHEAD_ID);
 
         let mut graph = build(&project, 512);
@@ -2840,11 +2846,15 @@ mod tests {
         let bus = project.tracks[2].id;
         project.tracks[2].mixer.pan = 0.3;
         project.add_effect(Some(bus), testkit::TAIL_ID);
-        project.tracks[0].outputs.push(Output {
-            to: Destination::Bus(bus),
-            gain_db: -4.0,
-            tap: Tap::PreFader,
-        });
+        let first = project.tracks[0].id;
+        project.routing.push(auris_core::Edge::output(
+            first,
+            Output {
+                to: Destination::Bus(bus),
+                gain_db: -4.0,
+                tap: Tap::PreFader,
+            },
+        ));
 
         let render = |block: usize| {
             let mut graph = build(&project, block);
@@ -2864,12 +2874,16 @@ mod tests {
         project.add_effect(Some(bus), testkit::LOOKAHEAD_ID);
         // The render graph does not ask whether two outputs share a destination and tap — the
         // document does — so a second post-fader copy into the same bus is fair game here.
+        let second = project.tracks[1].id;
         for (gain_db, tap) in [(-3.0, Tap::PreFader), (-9.0, Tap::PostFader)] {
-            project.tracks[1].outputs.push(Output {
-                to: Destination::Bus(bus),
-                gain_db,
-                tap,
-            });
+            project.routing.push(auris_core::Edge::output(
+                second,
+                Output {
+                    to: Destination::Bus(bus),
+                    gain_db,
+                    tap,
+                },
+            ));
         }
 
         let mut graph = build(&project, 512);

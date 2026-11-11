@@ -135,7 +135,6 @@ impl SoundPreparation {
             instrument_state: state,
             clips: Vec::new(),
             file,
-            follows: None,
         })
     }
 }

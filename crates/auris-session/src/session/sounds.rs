@@ -58,7 +58,7 @@ impl Session {
                     slot.effect_id == effect.effect_id
                         && slot.state == effect.state
                         && slot.enabled == effect.enabled
-                        && slot.sidechain.is_none()
+                        && self.project.sidechain(slot.id).is_none()
                         && path_matches(slot.file.as_ref(), effect.file.as_deref())
                 })
     }

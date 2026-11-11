@@ -42,14 +42,14 @@ impl SignalMeters {
             for effect in &mixer.effects {
                 let index = routes.len();
                 routes.insert(SignalRoute::InsertInput(owner, effect.id), index);
-                if effect.sidechain.is_some() {
+                if project.sidechain(effect.id).is_some() {
                     let index = routes.len();
                     routes.insert(SignalRoute::Sidechain(owner, effect.id), index);
                 }
             }
         }
         for track in &project.tracks {
-            for output in &track.outputs {
+            for output in project.routing.outputs(track.id) {
                 let index = routes.len();
                 routes
                     .entry(SignalRoute::Output(track.id, output.to, output.tap))

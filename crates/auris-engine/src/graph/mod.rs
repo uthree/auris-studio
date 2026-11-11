@@ -533,9 +533,9 @@ impl RenderGraph {
             // A route to a bus that is not there was already repaired when the document was
             // loaded; dropping it to the master here is the second lock on that door, and it is
             // what keeps the render loop free of a check on every block.
-            let outputs = track
-                .outputs
-                .iter()
+            let outputs = project
+                .routing
+                .outputs(track.id)
                 .map(|output| track::RenderOutput {
                     meter: signal_meters
                         .slot(crate::SignalRoute::Output(track.id, output.to, output.tap)),
@@ -589,7 +589,7 @@ impl RenderGraph {
                     .iter()
                     .enumerate()
                     .map(|(slot, entry)| {
-                        let source = project.track_index(entry.sidechain?)?;
+                        let source = project.track_index(project.sidechain(entry.id)?)?;
                         if !effects.get(slot)?.wants_sidechain() {
                             return None;
                         }

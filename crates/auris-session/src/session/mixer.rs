@@ -278,11 +278,8 @@ impl Session {
 
     /// Which track keys an effect slot, or `None` when nothing does.
     pub fn effect_sidechain(&self, track: Option<TrackId>, slot: EffectSlotId) -> Option<TrackId> {
-        self.strip(track)?
-            .effects
-            .iter()
-            .find(|s| s.id == slot)?
-            .sidechain
+        self.strip(track)?.effects.iter().find(|s| s.id == slot)?;
+        self.project.sidechain(slot)
     }
 
     /// Points an effect slot at a track to key from, or clears it with `None`.
@@ -312,11 +309,7 @@ impl Session {
             return Ok(());
         }
         self.record(Edit::SetEffectSidechain);
-        if let Some(strip) = self.strip_mut(track)
-            && let Some(effect) = strip.effects.iter_mut().find(|s| s.id == slot)
-        {
-            effect.sidechain = source;
-        }
+        self.project.routing.set_key(slot, source);
         // A structural change, not a parameter: which track feeds which chain decides the order
         // the graph is rendered in and which taps it carries.
         self.invalidate_graph();
@@ -486,13 +479,9 @@ impl Session {
             ParamTarget::MasterPan => self.project.master.pan,
             ParamTarget::Output { track, to, tap } => self
                 .project
-                .track(track)
-                .and_then(|track| {
-                    track
-                        .outputs
-                        .iter()
-                        .find(|existing| existing.key() == (to, tap))
-                })
+                .routing
+                .outputs(track)
+                .find(|existing| existing.key() == (to, tap))
                 .map_or(descriptor.default, |output| output.gain_db),
             ParamTarget::Instrument { track, param } => self
                 .project
@@ -951,14 +940,11 @@ impl Session {
             ParamTarget::TrackGain(id) | ParamTarget::TrackPan(id) => {
                 self.project.track(id).is_some()
             }
-            ParamTarget::Output { track, to, tap } => {
-                self.project.track(track).is_some_and(|track| {
-                    track
-                        .outputs
-                        .iter()
-                        .any(|existing| existing.key() == (to, tap))
-                })
-            }
+            ParamTarget::Output { track, to, tap } => self
+                .project
+                .routing
+                .outputs(track)
+                .any(|existing| existing.key() == (to, tap)),
             ParamTarget::Instrument { track, .. } => self.project.track(track).is_some(),
             ParamTarget::Effect { track, slot, .. } => self
                 .strip(track)

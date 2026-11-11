@@ -161,13 +161,11 @@ impl Session {
                 unique.push(*output);
             }
         }
-        if self.project.track(id).is_some_and(|t| t.outputs == unique) {
+        if self.project.outputs(id) == unique {
             return Ok(());
         }
         self.record(Edit::SetTrackOutput);
-        if let Some(track) = self.project.track_mut(id) {
-            track.outputs = unique;
-        }
+        self.project.routing.set_outputs(id, &unique);
         self.project.prune_output_automation();
         self.invalidate_graph();
         Ok(())
@@ -179,12 +177,8 @@ impl Session {
     /// the first thing every user does be to undo the default. Asking for one the track already
     /// has changes nothing.
     pub fn add_track_output(&mut self, id: TrackId, to: Destination) -> Result<(), SessionError> {
-        let mut outputs = self
-            .project
-            .track(id)
-            .ok_or(SessionError::UnknownTrack(id.0))?
-            .outputs
-            .clone();
+        self.require_track(id)?;
+        let mut outputs = self.project.outputs(id);
         outputs.push(Output::new(to));
         self.set_track_outputs(id, &outputs)
     }
@@ -197,9 +191,10 @@ impl Session {
         tap: Tap,
     ) -> Result<(), SessionError> {
         self.require_output(id, to, tap)?;
-        let outputs: Vec<_> = self.project.tracks[self.require_track(id)?]
-            .outputs
-            .iter()
+        let outputs: Vec<_> = self
+            .project
+            .routing
+            .outputs(id)
             .copied()
             .filter(|existing| existing.key() != (to, tap))
             .collect();
@@ -229,7 +224,9 @@ impl Session {
             to,
             tap,
         }));
-        self.project.tracks[index].outputs[position].gain_db = gain_db;
+        if let Some(output) = self.project.routing.output_mut(id, (to, tap)) {
+            output.gain_db = gain_db;
+        }
         self.send(EngineCommand::SetOutputGain {
             track: index,
             output: position,
@@ -250,13 +247,14 @@ impl Session {
         from: Tap,
         tap: Tap,
     ) -> Result<(), SessionError> {
-        let (index, position) = self.require_output(id, to, from)?;
+        self.require_output(id, to, from)?;
         if from == tap {
             return Ok(());
         }
-        if self.project.tracks[index]
-            .outputs
-            .iter()
+        if self
+            .project
+            .routing
+            .outputs(id)
             .any(|output| output.key() == (to, tap))
         {
             return Err(SessionError::DuplicateOutput {
@@ -266,7 +264,9 @@ impl Session {
             });
         }
         self.record(Edit::SetOutputTap);
-        self.project.tracks[index].outputs[position].tap = tap;
+        if let Some(output) = self.project.routing.output_mut(id, (to, from)) {
+            output.tap = tap;
+        }
         self.project.automation.retarget(
             ParamTarget::Output {
                 track: id,
@@ -719,9 +719,10 @@ impl Session {
         tap: Tap,
     ) -> Result<(usize, usize), SessionError> {
         let index = self.require_track(id)?;
-        let position = self.project.tracks[index]
-            .outputs
-            .iter()
+        let position = self
+            .project
+            .routing
+            .outputs(id)
             .position(|existing| existing.key() == (to, tap))
             .ok_or(SessionError::UnknownOutput {
                 track: id.0,
@@ -803,10 +804,7 @@ mod tests {
 
         session.move_track(bus, 0).expect("the bus goes first");
         assert_eq!(session.project.tracks[0].id, bus);
-        assert_eq!(
-            session.project.track(kick).unwrap().outputs,
-            vec![Output::to_bus(bus)]
-        );
+        assert_eq!(session.project.outputs(kick), vec![Output::to_bus(bus)]);
         assert_eq!(session.project.track(bus).unwrap().mixer.gain_db, -6.0);
         // A bus above its feeders is still rendered after them.
         let order = session.project.routing_order();
@@ -823,17 +821,11 @@ mod tests {
         session
             .set_track_output(track, Destination::Bus(bus))
             .expect("a bus is a legal destination");
-        assert_eq!(
-            session.project.track(track).unwrap().outputs,
-            vec![Output::to_bus(bus)]
-        );
+        assert_eq!(session.project.outputs(track), vec![Output::to_bus(bus)]);
 
         // And it is one undo step, which puts the track back on the master.
         session.undo().expect("a step");
-        assert_eq!(
-            session.project.track(track).unwrap().outputs,
-            vec![Output::master()]
-        );
+        assert_eq!(session.project.outputs(track), vec![Output::master()]);
     }
 
     #[test]
@@ -865,16 +857,10 @@ mod tests {
         let _ = session.add_track_output(track, Destination::Bus(TrackId(9_999)));
 
         assert!(session.redo().is_some(), "the redo branch was thrown away");
-        assert_eq!(
-            session.project.track(track).unwrap().outputs,
-            vec![Output::to_bus(bus)]
-        );
+        assert_eq!(session.project.outputs(track), vec![Output::to_bus(bus)]);
         // And nothing was pushed: one undo is back at the master, with no phantom rung between.
         session.undo().expect("a step");
-        assert_eq!(
-            session.project.track(track).unwrap().outputs,
-            vec![Output::master()]
-        );
+        assert_eq!(session.project.outputs(track), vec![Output::master()]);
     }
 
     #[test]
@@ -963,7 +949,7 @@ mod tests {
         session
             .add_track_output(track, Destination::Bus(bus))
             .expect("an output");
-        let outputs = &session.project.track(track).unwrap().outputs;
+        let outputs = &session.project.outputs(track);
         assert_eq!(outputs, &vec![Output::master(), Output::to_bus(bus)]);
     }
 
@@ -1037,8 +1023,7 @@ mod tests {
             .unwrap();
 
         session.remove_track(bus).expect("the bus goes");
-        let track = session.project.track(track).unwrap();
-        assert_eq!(track.outputs, vec![Output::master()]);
+        assert_eq!(session.project.outputs(track), vec![Output::master()]);
     }
 
     #[test]
@@ -1063,7 +1048,7 @@ mod tests {
             Err(SessionError::NotFinite(_))
         ));
         assert_eq!(
-            session.project.track(track).unwrap().outputs[0].gain_db,
+            session.project.outputs(track)[0].gain_db,
             0.0,
             "the refused value must not have landed"
         );

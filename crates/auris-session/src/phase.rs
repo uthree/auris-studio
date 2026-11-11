@@ -115,10 +115,10 @@ fn placed(clip: &MidiClip, performance: &str, out: &mut Vec<Placed>) {
     }
 }
 
-fn sound(kind: &TrackKind) -> String {
+fn sound(project: &Project, id: auris_core::TrackId, kind: &TrackKind) -> String {
     let value = match kind {
         TrackKind::Instrument(track) | TrackKind::Drum(track) => {
-            serde_json::json!([track.instrument_id, track.file, track.follows])
+            serde_json::json!([track.instrument_id, track.file, project.follows(id)])
         }
         TrackKind::Singer(track) => {
             serde_json::json!([track.instrument_id, track.voice.as_ref().map(|v| &v.path)])
@@ -150,7 +150,7 @@ pub fn print(project: &Project, lock: &Lock) -> Print {
             }
             notes.sort();
             let sound = if mix {
-                sound(&track.kind)
+                sound(project, track.id, &track.kind)
             } else {
                 String::new()
             };

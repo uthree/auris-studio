@@ -38,6 +38,7 @@ pub use comment::{Comment, CommentId, Comments};
 mod curve;
 /// Stored drum sound assignments, separate from acoustic measurements.
 pub mod drum;
+mod edges;
 mod expression;
 mod ghost;
 mod groove;
@@ -77,6 +78,7 @@ pub use curve::{
     BEND_LIMIT, CONTROLLER_LIMIT, CURVE_STEP, ClipCurve, CurvePoint, curve_at, curve_events,
 };
 pub use drum::{DrumLane, DrumMap, DrumRole};
+pub use edges::{Edge, Port, Routing, Signal};
 pub use ornament::{Fall, Scoop, Vibrato};
 pub use performance::{PerformanceContext, performed_note_slots, performed_notes};
 pub use performance_preset::{
@@ -232,6 +234,12 @@ pub struct Project {
     pub tracks: Vec<Track>,
     /// Master bus strip.
     pub master: MixerStrip,
+    /// Every connection between tracks: outputs, sidechain keys and layers.
+    ///
+    /// Kept beside the tracks rather than on them, so that adding, removing, copying, repairing
+    /// and walking connections is one set of rules over one list. See [`Routing`].
+    #[serde(default)]
+    pub routing: Routing,
     /// Mixer graph node positions and camera, restored independently of the audio graph.
     #[serde(default)]
     pub mixer_graph_view: MixerGraphView,
@@ -304,6 +312,8 @@ impl Default for Project {
 
 impl Project {
     /// Schema version written into saved files and required when opening them.
+    /// Version 37 moves every connection — outputs, sidechain keys and layers — off the tracks and
+    /// effect slots and into one list on the project.
     /// Version 36 folds sends into outputs, which now carry a level and a tap point of their own.
     /// Version 35 stores the audio sampler's samples as a map of zones rather than one sample.
     /// Version 34 adds the sustain transform, which holds every release on like a pedal.
@@ -312,7 +322,7 @@ impl Project {
     /// Version 31 adds power, added-tone, 6/9 and thirteenth chord qualities to stored harmony.
     /// Version 30 adds eleventh chord qualities to stored harmony.
     /// Version 29 adds ordered, named manual drum lanes beside generation-role assignments.
-    pub const FORMAT_VERSION: u32 = 36;
+    pub const FORMAT_VERSION: u32 = 37;
 
     /// The name a document carries until somebody — a person or the agent — gives it one.
     pub const UNTITLED: &'static str = "Untitled";
@@ -341,6 +351,7 @@ impl Project {
             automation: crate::automation::Automation::new(),
             tracks: Vec::new(),
             master: MixerStrip::default(),
+            routing: Routing::new(),
             mixer_graph_view: MixerGraphView::default(),
             audio_sources: BTreeMap::new(),
             soundfonts: BTreeMap::new(),

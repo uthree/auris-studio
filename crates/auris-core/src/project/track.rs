@@ -20,6 +20,7 @@ use crate::plugin::PluginState;
 use crate::time::{TempoMap, Ticks};
 
 use super::clip::{AudioClip, MidiClip, audio_clip_ticks};
+use super::edges::Edge;
 use super::routing::{Destination, MixerStrip, Output};
 use super::{ClipId, EffectSlotId, Project, TrackId};
 
@@ -81,12 +82,6 @@ pub struct InstrumentTrack {
     /// library shared by every project on the machine rather than one song's asset.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub file: Option<AssetPath>,
-    /// The track whose notes this one plays instead of its own, when it is a layer.
-    ///
-    /// Only ever set on a melodic track, and `clips` stays empty while it is: see
-    /// [`NoteSource`](super::NoteSource) for what a layer is and why a layer is never a source.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub follows: Option<super::layer::NoteSource>,
 }
 
 impl InstrumentTrack {
@@ -302,7 +297,7 @@ impl TrackKind {
     /// editors and generation presets. A singer track also *has* an instrument, but only as a
     /// preview: what the track is for is
     /// chosen by its kind, not by a picker. Code that is about notes rather than about the
-    /// instrument wants [`Self::holds_notes`] instead.
+    /// instrument wants [`Project::holds_notes`] instead.
     pub fn is_instrument(&self) -> bool {
         matches!(self, TrackKind::Instrument(_) | TrackKind::Drum(_))
     }
@@ -310,22 +305,6 @@ impl TrackKind {
     /// `true` when this track holds percussion rather than a pitched instrument part.
     pub fn is_drum(&self) -> bool {
         matches!(self, TrackKind::Drum(_))
-    }
-
-    /// `true` when this track holds note clips — melodic, drum or singer material.
-    ///
-    /// Shared editing and playback use this accessor. Clip transfers also check [`Self::is_drum`]
-    /// so percussion remains on drum tracks; a melody can move between a melodic instrument and
-    /// a singer track to be given words.
-    ///
-    /// A layer answers `false`: it plays its source's clips and keeps none of its own, so nothing
-    /// may be written, pasted or moved onto it.
-    pub fn holds_notes(&self) -> bool {
-        match self {
-            TrackKind::Instrument(track) => track.follows.is_none(),
-            TrackKind::Drum(_) | TrackKind::Singer(_) => true,
-            _ => false,
-        }
     }
 
     /// `true` when this track is a singer track.
@@ -425,50 +404,11 @@ pub struct Track {
     pub kind: TrackKind,
     /// Volume, pan and effects.
     pub mixer: MixerStrip,
-    /// Where the track's signal goes, each at its own level and tap point. Empty disconnects the
-    /// track; no destination appears twice.
-    #[serde(default = "default_outputs")]
-    pub outputs: Vec<Output>,
     /// Notes for the reader pinned along the track's lane, in song time; nothing plays them.
     ///
     /// See [`Comment`](super::Comment).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub comments: Vec<super::Comment>,
-}
-
-fn default_outputs() -> Vec<Output> {
-    vec![Output::master()]
-}
-
-#[cfg(test)]
-mod output_format_tests {
-    use super::*;
-    use crate::project::{Destination, Tap};
-
-    #[test]
-    fn outputs_round_trip_and_default_to_the_master() {
-        let mut project = Project::new("Routes", 48_000.0);
-        let id = project.add_bus_track("Bus");
-        let mut old = serde_json::to_value(project.track(id).unwrap()).unwrap();
-        old.as_object_mut().unwrap().remove("outputs");
-        assert_eq!(
-            serde_json::from_value::<Track>(old).unwrap().outputs,
-            vec![Output::master()]
-        );
-        let level = Output {
-            to: Destination::Bus(TrackId(123)),
-            gain_db: -9.0,
-            tap: Tap::PreFader,
-        };
-        for outputs in [vec![], vec![Output::master(), level]] {
-            project.track_mut(id).unwrap().outputs = outputs.clone();
-            let saved = serde_json::to_value(project.track(id).unwrap()).unwrap();
-            assert_eq!(
-                serde_json::from_value::<Track>(saved).unwrap().outputs,
-                outputs
-            );
-        }
-    }
 }
 
 fn default_track_height() -> f32 {
@@ -508,15 +448,6 @@ impl Track {
             TrackKind::Bus => Ticks::ZERO,
         }
     }
-
-    /// Every bus this track feeds: its output when that is one, then each send's target.
-    ///
-    /// The routing graph's out-edges for one node, in one place, because every question about the
-    /// routing — the order to render in, whether an edit would make a loop, how far behind a chain
-    /// runs — is a walk over exactly these.
-    pub fn feeds(&self) -> impl Iterator<Item = TrackId> + '_ {
-        self.outputs.iter().copied().filter_map(Output::bus)
-    }
 }
 
 impl Project {
@@ -531,10 +462,29 @@ impl Project {
             height: default_track_height(),
             kind,
             mixer: MixerStrip::default(),
-            outputs: default_outputs(),
             comments: Vec::new(),
         });
+        self.routing.push(Edge::Output {
+            from: id,
+            output: Output::master(),
+        });
         id
+    }
+
+    /// `true` when `track` holds note clips of its own — melodic, drum or singer material.
+    ///
+    /// Shared editing and playback use this. Clip transfers also check
+    /// [`TrackKind::is_drum`] so percussion remains on drum tracks; a melody can move between a
+    /// melodic instrument and a singer track to be given words.
+    ///
+    /// A layer answers `false`: it plays its source's clips and keeps none of its own, so nothing
+    /// may be written, pasted or moved onto it.
+    pub fn holds_notes(&self, track: TrackId) -> bool {
+        match self.track(track).map(|entry| &entry.kind) {
+            Some(TrackKind::Instrument(_)) => !self.routing.is_layer(track),
+            Some(TrackKind::Drum(_) | TrackKind::Singer(_)) => true,
+            _ => false,
+        }
     }
 
     /// Appends an instrument track playing `instrument_id`.
@@ -550,7 +500,6 @@ impl Project {
                 instrument_state: PluginState::empty(),
                 clips: Vec::new(),
                 file: None,
-                follows: None,
             }),
         )
     }
@@ -570,7 +519,6 @@ impl Project {
                 instrument_state: PluginState::empty(),
                 clips: Vec::new(),
                 file: None,
-                follows: None,
             }),
         )
     }
@@ -670,6 +618,39 @@ impl Project {
         let new_id = copy.id;
         self.tracks.insert(index + 1, copy);
         self.automation.duplicate_track(id, new_id, &effect_ids);
+        // The copy sends where the original sends, keys what the original's effects were keyed
+        // from, and follows what the original follows. What fed the original — the tracks routed
+        // into a bus, the layers on a source — is left alone: copying a bus does not double the
+        // drums.
+        let copies: Vec<Edge> = self
+            .routing
+            .edges()
+            .iter()
+            .filter_map(|edge| match edge {
+                Edge::Output { from, output } if *from == id => Some(Edge::Output {
+                    from: new_id,
+                    output: *output,
+                }),
+                Edge::Key { from, to } => {
+                    effect_ids
+                        .iter()
+                        .find(|(old, _)| old == to)
+                        .map(|(_, new)| Edge::Key {
+                            from: *from,
+                            to: *new,
+                        })
+                }
+                Edge::Notes { from, to, shape } if *to == id => Some(Edge::Notes {
+                    from: *from,
+                    to: new_id,
+                    shape: shape.clone(),
+                }),
+                _ => None,
+            })
+            .collect();
+        for edge in copies {
+            self.routing.push(edge);
+        }
         Some(new_id)
     }
 
@@ -687,19 +668,38 @@ impl Project {
             // the tracks: what was going through it goes straight to the master instead, which is
             // where it would have been had the bus never existed.
             let gone = Destination::Bus(id);
-            for track in &mut self.tracks {
-                let had_route = track.outputs.iter().any(|output| output.to == gone);
-                track.outputs.retain(|output| output.to != gone);
-                if had_route && track.outputs.is_empty() {
-                    track.outputs.push(Output::master());
+            let lost_a_route: Vec<TrackId> = self
+                .routing
+                .edges()
+                .iter()
+                .filter_map(|edge| match edge {
+                    Edge::Output { from, output } if output.to == gone => Some(*from),
+                    _ => None,
+                })
+                .collect();
+            // Every connection touching it goes: its outputs, what it keyed (see
+            // `clear_sidechains_from` for why a slot must not be left holding the id), the keys
+            // into its own effects, its layers' source and the notes it lent them.
+            let slots: Vec<EffectSlotId> = self
+                .routing
+                .keys()
+                .filter(|(_, slot)| self.slot_owner(*slot).is_none())
+                .map(|(_, slot)| slot)
+                .collect();
+            self.routing.retain(|edge| {
+                !edge.touches(id) && !matches!(edge, Edge::Key { to, .. } if slots.contains(to))
+            });
+            for track in lost_a_route {
+                if track != id && self.routing.outputs(track).next().is_none() {
+                    self.routing.push(Edge::Output {
+                        from: track,
+                        output: Output::master(),
+                    });
                 }
             }
             self.automation.remove_lanes_where(|target| {
                 matches!(target, crate::param::ParamTarget::Output { to, .. } if to == gone)
             });
-            // Including what it was keying. See `clear_sidechains_from` for why a slot must not
-            // be left holding the id.
-            self.clear_sidechains_from(id);
         }
         removed
     }
@@ -879,15 +879,11 @@ mod tests {
     #[test]
     fn a_duplicated_track_keeps_its_routing() {
         let (mut project, kick, _, bus) = bussed_project();
-        project
-            .track_mut(kick)
-            .unwrap()
-            .outputs
-            .push(Output::master());
+        project.routing.push(Edge::output(kick, Output::master()));
 
         let copy = project.duplicate_track(kick).unwrap();
         assert_eq!(
-            project.track(copy).unwrap().outputs,
+            project.outputs(copy),
             vec![Output::to_bus(bus), Output::master()]
         );
     }
@@ -981,12 +977,13 @@ mod tests {
     fn a_singer_track_holds_notes_without_being_an_instrument_track() {
         let mut project = Project::new("Song", 48_000.0);
         let track = project.add_singer_track("Melody", "auris.synth.voice");
+        let holds_notes = project.holds_notes(track);
         let kind = &project.track(track).unwrap().kind;
 
         // The distinction every call site leans on: the registry and the plugin editor ask
         // `is_instrument` and must not offer to swap a singer's preview voice; the clip
         // machinery asks `holds_notes` and must treat the two alike.
-        assert!(kind.holds_notes() && kind.is_singer());
+        assert!(holds_notes && kind.is_singer());
         assert!(!kind.is_instrument());
         assert_eq!(kind.label(), "Singer");
 

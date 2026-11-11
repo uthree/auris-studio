@@ -13,10 +13,7 @@ fn replacement_routes_and_configured_outputs_are_atomic_and_undoable() {
         json!({"action":"set_outputs","source":from,"targets":[destination]}),
     )
     .unwrap();
-    assert_eq!(
-        session.project().track(source).unwrap().outputs,
-        vec![Output::to_bus(bus)]
-    );
+    assert_eq!(session.project().outputs(source), vec![Output::to_bus(bus)]);
     session.undo();
     assert_eq!(session.project(), &before);
     apply(
@@ -24,7 +21,7 @@ fn replacement_routes_and_configured_outputs_are_atomic_and_undoable() {
         json!({"action":"add_output","source":from,"target":destination,"gain_db":-17.5,"pre_fader":true}),
     )
     .unwrap();
-    let added = session.project().track(source).unwrap().outputs[1];
+    let added = session.project().outputs(source)[1];
     assert_eq!(
         added,
         Output {
@@ -237,7 +234,7 @@ fn output_controls_undo_as_one_and_duplicate_connects_are_unchanged() {
     )
     .unwrap();
     assert_eq!(
-        session.project().track(a).unwrap().outputs[1],
+        session.project().outputs(a)[1],
         Output {
             to: Destination::Bus(b),
             gain_db: -12.0,
@@ -261,7 +258,7 @@ fn output_controls_undo_as_one_and_duplicate_connects_are_unchanged() {
     )
     .unwrap();
     assert_eq!(
-        session.project().track(a).unwrap().outputs,
+        session.project().outputs(a),
         vec![Output::master(), Output::to_bus(b)]
     );
 }
@@ -287,7 +284,7 @@ fn disconnect_removes_only_the_named_output_and_allows_no_outputs() {
         .is_err()
     );
     assert_eq!(
-        session.project().track(a).unwrap().outputs,
+        session.project().outputs(a),
         vec![Output::master(), Output::to_bus(b)]
     );
     apply(
@@ -295,19 +292,34 @@ fn disconnect_removes_only_the_named_output_and_allows_no_outputs() {
         json!({"action":"disconnect","source":source,"target":target,"kind":"output"}),
     )
     .unwrap();
-    assert_eq!(
-        session.project().track(a).unwrap().outputs,
-        vec![Output::master()]
-    );
+    assert_eq!(session.project().outputs(a), vec![Output::master()]);
     apply(
         &mut session,
         json!({"action":"disconnect","source":source,"target":"track:master","kind":"output"}),
     )
     .unwrap();
-    assert!(session.project().track(a).unwrap().outputs.is_empty());
+    assert!(session.project().outputs(a).is_empty());
     session.undo();
-    assert_eq!(
-        session.project().track(a).unwrap().outputs,
-        vec![Output::master()]
+    assert_eq!(session.project().outputs(a), vec![Output::master()]);
+}
+
+#[test]
+fn every_reported_edge_says_what_it_carries() {
+    let mut session = session();
+    let lead = session.add_default_instrument_track("Lead").unwrap();
+    let layer = session.add_default_layer_track(lead, "Pad").unwrap();
+    let graph = session.mixer_graph_report(0, Some(64)).unwrap();
+    let edges = graph["edges"].as_array().unwrap();
+    let notes = edges
+        .iter()
+        .find(|edge| edge["kind"] == "notes")
+        .expect("the layer's notes edge is reported");
+    assert_eq!(notes["signal"], "notes");
+    assert_eq!(notes["target"], MixerNode::Strip(Some(layer)).key());
+    assert!(
+        edges
+            .iter()
+            .filter(|edge| edge["kind"] != "notes")
+            .all(|edge| edge["signal"] == "audio")
     );
 }

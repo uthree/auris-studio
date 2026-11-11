@@ -186,7 +186,7 @@ impl Session {
         length: Ticks,
     ) -> Result<ClipId, SessionError> {
         let index = self.require_track(track)?;
-        if !self.project.tracks[index].kind.holds_notes() {
+        if !self.project.holds_notes(self.project.tracks[index].id) {
             return Err(SessionError::WrongTrackKind {
                 id: track.0,
                 // The track's own word for itself, rather than "an audio track" — which was true
@@ -233,7 +233,10 @@ impl Session {
         // track as neither of the kinds its own clips are.
         let kind_of = |id: TrackId| -> Option<(bool, bool)> {
             let track = self.project.track(id)?;
-            match (track.kind.holds_notes(), track.kind.as_audio().is_some()) {
+            match (
+                self.project.holds_notes(id),
+                track.kind.as_audio().is_some(),
+            ) {
                 (true, _) => Some((true, track.kind.is_drum())),
                 (_, true) => Some((false, false)),
                 _ => None,

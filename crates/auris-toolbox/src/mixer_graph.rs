@@ -76,25 +76,12 @@ mod tests {
         );
         request(json!({"action":"connect","source":format!("track:{}",a.0),"target":format!("track:{}",b.0),"kind":"output"})).unwrap();
         assert_eq!(
-            opened(&project)
-                .unwrap()
-                .project()
-                .track(a)
-                .unwrap()
-                .outputs,
+            opened(&project).unwrap().project().outputs(a),
             vec![Output::master(), Output::to_bus(b)]
         );
         for target in ["track:master".to_string(), format!("track:{}", b.0)] {
             request(json!({"action":"disconnect","source":format!("track:{}",a.0),"target":target,"kind":"output"})).unwrap();
         }
-        assert!(
-            opened(&project)
-                .unwrap()
-                .project()
-                .track(a)
-                .unwrap()
-                .outputs
-                .is_empty()
-        );
+        assert!(opened(&project).unwrap().project().outputs(a).is_empty());
     }
 }

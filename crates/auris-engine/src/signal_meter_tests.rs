@@ -33,29 +33,31 @@ fn fixture() -> Fixture {
     let first = project.add_effect(Some(source), testkit::GAIN_ID).unwrap();
     let second = project.add_effect(Some(source), testkit::GAIN_ID).unwrap();
     let keyed = project.add_effect(Some(bus), testkit::KEYED_ID).unwrap();
-    project.track_mut(bus).unwrap().mixer.effects[0].sidechain = Some(source);
+    project.routing.set_key(keyed, Some(source));
     let master = project.add_effect(None, testkit::GAIN_ID).unwrap();
-    let track = project.track_mut(source).unwrap();
-    track.mixer.gain_db = -12.;
-    track.outputs = vec![
-        Output::master(),
-        Output::to_bus(bus),
-        Output {
-            to: Destination::Bus(bus),
-            gain_db: -6.,
-            tap: Tap::PreFader,
-        },
-        Output {
-            to: Destination::Bus(aux),
-            gain_db: -12.,
-            tap: Tap::PostFader,
-        },
-        Output {
-            to: Destination::Bus(aux),
-            gain_db: f32::NEG_INFINITY,
-            tap: Tap::PreFader,
-        },
-    ];
+    project.track_mut(source).unwrap().mixer.gain_db = -12.;
+    project.routing.set_outputs(
+        source,
+        &[
+            Output::master(),
+            Output::to_bus(bus),
+            Output {
+                to: Destination::Bus(bus),
+                gain_db: -6.,
+                tap: Tap::PreFader,
+            },
+            Output {
+                to: Destination::Bus(aux),
+                gain_db: -12.,
+                tap: Tap::PostFader,
+            },
+            Output {
+                to: Destination::Bus(aux),
+                gain_db: f32::NEG_INFINITY,
+                tap: Tap::PreFader,
+            },
+        ],
+    );
     Fixture {
         project,
         source,
@@ -277,7 +279,8 @@ fn mute_bypass_and_insert_processing_change_only_the_connections_they_affect() {
 fn compensated_output_peaks_wait_for_the_signal_to_reach_the_destination() {
     let mut f = fixture();
     f.project.track_mut(f.source).unwrap().mixer.gain_db = 0.;
-    f.project.track_mut(f.source).unwrap().outputs.truncate(2);
+    let kept = f.project.outputs(f.source)[..2].to_vec();
+    f.project.routing.set_outputs(f.source, &kept);
     f.project.track_mut(f.bus).unwrap().mixer.effects.clear();
     f.project
         .add_effect(Some(f.bus), testkit::LOOKAHEAD_ID)
@@ -323,7 +326,7 @@ fn callback_segments_hold_short_peaks_and_offline_rendering_publishes_nothing() 
     let track = f.project.track_mut(f.source).unwrap();
     track.mixer.gain_db = 0.;
     track.mixer.effects.clear();
-    track.outputs = vec![Output::master()];
+    f.project.routing.set_outputs(f.source, &[Output::master()]);
     f.project.tracks[0].kind.note_clips_mut().unwrap()[0].notes[0].length = Ticks(1);
     let mut graph = build(&f.project, 256);
     let meters = graph.signal_meters();

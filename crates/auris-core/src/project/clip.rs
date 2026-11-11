@@ -1739,8 +1739,8 @@ impl Project {
         // track and a singer track: the notes are the same material, and any lyrics on them
         // simply travel along.
         match (
-            self.tracks[origin].kind.holds_notes(),
-            self.tracks[destination].kind.holds_notes(),
+            self.holds_notes(self.tracks[origin].id),
+            self.holds_notes(self.tracks[destination].id),
         ) {
             (true, true) => {
                 let Some(clips) = self.tracks[origin].kind.note_clips_mut() else {

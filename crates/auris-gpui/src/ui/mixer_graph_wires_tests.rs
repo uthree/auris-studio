@@ -677,7 +677,7 @@ fn overlapping_outputs_and_sidechain_are_individually_selected_deleted_and_undon
         this.session
             .set_effect_sidechain(Some(b), slot, Some(a))
             .unwrap();
-        let outputs = this.project().track(a).unwrap().outputs.clone();
+        let outputs = this.project().outputs(a).clone();
         (a, b, slot, outputs)
     });
     paint(&app, cx);
@@ -815,7 +815,5 @@ fn overlapping_outputs_and_sidechain_are_individually_selected_deleted_and_undon
             );
         });
     }
-    app.read_with(cx, |this, _| {
-        assert_eq!(this.project().track(a).unwrap().outputs, outputs)
-    });
+    app.read_with(cx, |this, _| assert_eq!(this.project().outputs(a), outputs));
 }

@@ -134,7 +134,7 @@ impl AurisApp {
         let meter = self.track_meter(index);
         let clipped = self.session.meters().track_clipped(index);
         let selected = self.selected_track == Some(track_id);
-        let outputs = track.outputs.clone();
+        let outputs = self.project().outputs(track_id);
         let level_rows = if output_levels_shown(&outputs) {
             outputs.clone()
         } else {

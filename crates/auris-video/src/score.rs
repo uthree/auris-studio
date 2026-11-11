@@ -394,13 +394,7 @@ mod tests {
             .transforms
             .push(NoteTransform::Transpose { semitones: 12 });
         let layer = project.add_layer_track(source, "Octave", "test").unwrap();
-        let shape = &mut project
-            .track_mut(layer)
-            .unwrap()
-            .kind
-            .layer_mut()
-            .unwrap()
-            .shape;
+        let shape = project.routing.shape_mut(layer).unwrap();
         shape.lowest = 72;
         shape.transpose = 12;
         shape.offset = Ticks::QUARTER;
@@ -448,7 +442,7 @@ mod tests {
         add_part(&mut project, "Unrelated", 90);
         let bus = project.add_bus_track("Music");
         for track in [lead, backing] {
-            project.track_mut(track).unwrap().outputs = vec![Output::to_bus(bus)];
+            project.routing.set_outputs(track, &[Output::to_bus(bus)]);
         }
         project.track_mut(bus).unwrap().mixer.solo = true;
         let score = NoteScore::from_project(&project);
@@ -486,11 +480,14 @@ mod tests {
         let sibling = add_part(&mut project, "Sibling", 65);
         let bus = project.add_bus_track("Aux");
         for track in [sent, sibling] {
-            project.track_mut(track).unwrap().outputs.push(Output {
-                to: Destination::Bus(bus),
-                gain_db: 0.0,
-                tap: Tap::PreFader,
-            });
+            project.routing.push(auris_core::Edge::output(
+                track,
+                Output {
+                    to: Destination::Bus(bus),
+                    gain_db: 0.0,
+                    tap: Tap::PreFader,
+                },
+            ));
         }
         project.track_mut(bus).unwrap().mixer.solo = true;
         assert_eq!(NoteScore::from_project(&project).notes.len(), 2);

@@ -204,18 +204,23 @@ fn fixture_with_filters(
             let bus = buses[index % buses.len()];
             // A unity output to the bus and a second, quieter copy of the same signal beside it,
             // the way a send used to sit beside a track's output.
-            project.track_mut(track).expect("fixture track").outputs = vec![
-                Output::to_bus(bus),
-                Output {
-                    to: Destination::Bus(bus),
-                    gain_db: -6.0,
-                    tap: Tap::PreFader,
-                },
-            ];
+            project.routing.set_outputs(
+                track,
+                &[
+                    Output::to_bus(bus),
+                    Output {
+                        to: Destination::Bus(bus),
+                        gain_db: -6.0,
+                        tap: Tap::PreFader,
+                    },
+                ],
+            );
         }
     }
     for pair in buses.windows(2) {
-        project.track_mut(pair[0]).expect("fixture bus").outputs = vec![Output::to_bus(pair[1])];
+        project
+            .routing
+            .set_outputs(pair[0], &[Output::to_bus(pair[1])]);
     }
     if with_filters && let (Some(&source_id), Some(&last)) = (first_source.as_ref(), buses.last()) {
         project
@@ -228,7 +233,9 @@ fn fixture_with_filters(
                 FILTER_ID,
             ));
         // The first source keys the final bus effect, forcing an explicit dependency edge.
-        project.track_mut(last).unwrap().mixer.effects[0].sidechain = Some(source_id);
+        project
+            .routing
+            .set_key(auris_core::project::EffectSlotId(9_000), Some(source_id));
     }
     if with_filters {
         project.add_effect(None, FILTER_ID);
@@ -349,20 +356,28 @@ fn parallel_routed_mix_is_deterministic_and_numerically_close() {
     let (mut project, registry) = fixture(32, 4);
     // Independent bus branches interleave leaves and buses in DFS order. Grouping them by
     // generation deliberately changes the summation order, unlike a single shared bus chain.
-    for bus in &mut project.tracks[..4] {
-        bus.outputs = vec![Output::master()];
+    for bus in project.tracks[..4]
+        .iter()
+        .map(|bus| bus.id)
+        .collect::<Vec<_>>()
+    {
+        project.routing.set_outputs(bus, &[Output::master()]);
     }
-    for (index, track) in project.tracks[4..].iter_mut().enumerate() {
-        track.mixer.gain_db = -((index % 7) as f32) * 1.3;
-        track.mixer.pan = (index % 11) as f32 / 5.0 - 1.0;
-        track.outputs[1].tap = if index % 2 == 0 {
+    let sources: Vec<_> = project.tracks[4..].iter().map(|track| track.id).collect();
+    for (index, track) in sources.into_iter().enumerate() {
+        let strip = &mut project.track_mut(track).unwrap().mixer;
+        strip.gain_db = -((index % 7) as f32) * 1.3;
+        strip.pan = (index % 11) as f32 / 5.0 - 1.0;
+        let mut outputs = project.outputs(track);
+        outputs[1].tap = if index % 2 == 0 {
             Tap::PreFader
         } else {
             Tap::PostFader
         };
         if index % 3 == 0 {
-            track.outputs.push(Output::master());
+            outputs.push(Output::master());
         }
+        project.routing.set_outputs(track, &outputs);
     }
     project.tracks.rotate_left(4);
     let graph = RenderGraph::build(&project, &AudioSourceBank::new(), &registry, BLOCK);
@@ -444,9 +459,11 @@ fn parallel_render_covers_mute_latency_loop_and_partial_block() {
     let track = project.tracks[3].id;
     project.add_effect(Some(track), testkit::LOOKAHEAD_ID);
     project.add_effect(Some(project.tracks[0].id), testkit::LOOKAHEAD_ID);
-    project.tracks[3].outputs[1].tap = Tap::PreFader;
-    project.tracks[3].outputs.push(Output::master());
-    let quieter = project.tracks[3].outputs[1];
+    let mut outputs = project.outputs(track);
+    outputs[1].tap = Tap::PreFader;
+    outputs.push(Output::master());
+    project.routing.set_outputs(track, &outputs);
+    let quieter = outputs[1];
     let targets = [
         auris_core::param::ParamTarget::TrackGain(track),
         auris_core::param::ParamTarget::Output {

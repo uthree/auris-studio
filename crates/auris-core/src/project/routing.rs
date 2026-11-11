@@ -4,8 +4,8 @@
 //! of the fader — and its [`Output`]s are where that lands. The two are one
 //! file because every question worth asking is about the pair: the order tracks have to be mixed
 //! in, whether an edit would leave a bus waiting for itself, and which tracks a solo leaves
-//! audible. All three are walks over [`Track::feeds`](super::Track::feeds), and not one of them
-//! is about a clip.
+//! audible. All three are walks over the project's [`Routing`], and not one of them is about a
+//! clip.
 //!
 //! [`Project::repair_routing`] is here for the same reason: an edge that names something which
 //! is not a bus, and an edge that closes a loop, are both faults in this graph and nothing else.
@@ -18,7 +18,8 @@ use crate::asset::AssetPath;
 use crate::plugin::PluginState;
 
 use super::comment::Comment;
-use super::track::Track;
+use super::edges::{Edge, Routing};
+use super::track::{Track, TrackKind};
 use super::{EffectSlotId, Project, TrackId};
 
 /// One effect in a chain.
@@ -44,19 +45,6 @@ pub struct EffectSlot {
     /// only if they are installed there — which is the same bargain every DAW makes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub file: Option<AssetPath>,
-    /// The track whose signal keys this effect, for one that listens to a second input.
-    ///
-    /// A compressor keyed from the kick drum ducks the bass when the kick lands; a hosted plugin
-    /// that declares a second audio input reads it there. `None` — which is every slot until
-    /// somebody says otherwise — means the effect hears only the track it sits on.
-    ///
-    /// Named on the slot rather than on the source, because it is the *effect* that wants one:
-    /// a track has no idea how many chains are keyed from it, and would not want to keep a list.
-    /// That makes it the only edge in the routing that runs backwards from where it is written
-    /// down, which is why [`Project::routing_order`] turns it round rather than reading it as it
-    /// stands.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub sidechain: Option<TrackId>,
     /// Comments pinned to this effect's node in the mixer graph; see [`Comment`].
     ///
     /// On the slot, so that they go where the effect goes — moved along the chain, copied with
@@ -75,7 +63,6 @@ impl EffectSlot {
             enabled: true,
             state: PluginState::empty(),
             file: None,
-            sidechain: None,
             comments: Vec::new(),
         }
     }
@@ -225,17 +212,6 @@ pub struct MixerStrip {
     pub comments: Vec<Comment>,
 }
 
-impl MixerStrip {
-    /// Every track keying an effect in this chain, one per slot that names one.
-    ///
-    /// Duplicates are left in: two effects keyed from the same drum are two edges as far as the
-    /// routing is concerned, and the walk that reads them does not care how often it is told the
-    /// same thing.
-    pub fn sidechain_sources(&self) -> impl Iterator<Item = TrackId> + '_ {
-        self.effects.iter().filter_map(|slot| slot.sidechain)
-    }
-}
-
 impl Default for MixerStrip {
     fn default() -> Self {
         Self {
@@ -284,7 +260,7 @@ impl Project {
         Some(slot_id)
     }
 
-    /// Removes an effect slot from anywhere in the project.
+    /// Removes an effect slot from anywhere in the project, with its key and its automation.
     pub fn remove_effect(&mut self, slot_id: EffectSlotId) -> bool {
         let mut removed = false;
         for strip in self
@@ -304,8 +280,31 @@ impl Project {
             self.automation.remove_lanes_where(|target| {
                 matches!(target, crate::param::ParamTarget::Effect { slot, .. } if slot == slot_id)
             });
+            self.routing.set_key(slot_id, None);
         }
         removed
+    }
+
+    /// The strip holding effect slot `slot`: `Some(Some(track))` on a track, `Some(None)` on the
+    /// master, `None` when no strip holds it.
+    pub fn slot_owner(&self, slot: EffectSlotId) -> Option<Option<TrackId>> {
+        if self.master.effects.iter().any(|effect| effect.id == slot) {
+            return Some(None);
+        }
+        self.tracks
+            .iter()
+            .find(|track| track.mixer.effects.iter().any(|effect| effect.id == slot))
+            .map(|track| Some(track.id))
+    }
+
+    /// The track keying effect slot `slot`, if any.
+    pub fn sidechain(&self, slot: EffectSlotId) -> Option<TrackId> {
+        self.routing.key(slot)
+    }
+
+    /// The outputs of `track`, in order.
+    pub fn outputs(&self, track: TrackId) -> Vec<Output> {
+        self.routing.outputs_of(track)
     }
 
     /// Removes the output from `track` to `to` taken at `tap`, returning `true` when it was there.
@@ -314,12 +313,9 @@ impl Project {
     /// do: a lane addressed to an output that no longer exists would come back to life driving
     /// the next output somebody routes to the same place.
     pub fn remove_output(&mut self, track: TrackId, to: Destination, tap: Tap) -> bool {
-        let Some(entry) = self.track_mut(track) else {
-            return false;
-        };
-        let before = entry.outputs.len();
-        entry.outputs.retain(|existing| existing.key() != (to, tap));
-        let removed = entry.outputs.len() != before;
+        let removed = self.routing.retain(|edge| {
+            !matches!(edge, Edge::Output { from, output } if *from == track && output.key() == (to, tap))
+        });
         if removed {
             self.automation.remove_lanes_where(|target| {
                 target == crate::param::ParamTarget::Output { track, to, tap }
@@ -347,79 +343,105 @@ impl Project {
 
     /// Out-edges by track index: for each track, everything that cannot be mixed until it has.
     ///
-    /// Two kinds of edge, and they are written down facing opposite ways. An [`Output`] is
-    /// recorded on the track the audio leaves, so it is read straight off. A
-    /// sidechain is recorded on the slot that *listens*, because that is the end that wants one —
-    /// so it is turned round here, and the track it names gains an edge to the track it keys.
+    /// An output orders its track before the bus it lands in. A key orders its track before the
+    /// track whose strip holds the keyed effect, because the effect reads what that track has
+    /// already put into the mix. Notes order nothing here: a layer's notes are resolved before
+    /// playback, so the layer does not wait for its source to be mixed.
     ///
-    /// The master's own chain is left out on purpose: it runs after every track, so a sidechain
-    /// keyed from anywhere is already waiting for it and there is nothing to order.
+    /// The master's own chain is left out on purpose: it runs after every track, so a key from
+    /// anywhere is already waiting for it and there is nothing to order.
     fn routing_edges(&self) -> Vec<Vec<usize>> {
-        let indices: HashMap<TrackId, usize> = self
+        let indices = self.track_indices();
+        let owners: HashMap<EffectSlotId, usize> = self
             .tracks
             .iter()
             .enumerate()
-            .map(|(index, track)| (track.id, index))
+            .flat_map(|(index, track)| track.mixer.effects.iter().map(move |slot| (slot.id, index)))
             .collect();
         let mut edges: Vec<Vec<usize>> = vec![Vec::new(); self.tracks.len()];
-        for (index, track) in self.tracks.iter().enumerate() {
-            for target in track.feeds() {
-                if let Some(&next) = indices.get(&target) {
-                    edges[index].push(next);
-                }
-            }
-            for source in track.mixer.sidechain_sources() {
-                if let Some(&from) = indices.get(&source)
-                    && from != index
-                {
-                    edges[from].push(index);
-                }
+        for edge in self.routing.edges() {
+            let Some(&from) = indices.get(&edge.from()) else {
+                continue;
+            };
+            let to = match edge {
+                Edge::Output { output, .. } => output.bus().and_then(|bus| indices.get(&bus)),
+                Edge::Key { to, .. } => owners.get(to),
+                Edge::Notes { .. } => None,
+            };
+            if let Some(&to) = to
+                && to != from
+            {
+                edges[from].push(to);
             }
         }
         edges
     }
 
-    /// Whether every routing reference is usable and the complete graph is acyclic.
-    fn routing_is_valid(&self) -> bool {
-        let indices: HashMap<TrackId, usize> = self
-            .tracks
+    /// Track indices by id.
+    fn track_indices(&self) -> HashMap<TrackId, usize> {
+        self.tracks
             .iter()
             .enumerate()
             .map(|(index, track)| (track.id, index))
-            .collect();
-        let usable_bus = |target: TrackId, owner: TrackId| {
-            target != owner
-                && indices
-                    .get(&target)
-                    .is_some_and(|&index| self.tracks[index].kind.is_bus())
+            .collect()
+    }
+
+    /// `true` when `track` may be followed by a layer: a melodic track that is not itself a
+    /// layer, or a singer track. Drum tracks are left out, because a note number names a
+    /// different sound on every kit.
+    pub fn can_be_followed(&self, track: TrackId) -> bool {
+        match self.track(track).map(|entry| &entry.kind) {
+            Some(TrackKind::Instrument(_)) => !self.routing.is_layer(track),
+            Some(TrackKind::Singer(_)) => true,
+            _ => false,
+        }
+    }
+
+    /// Whether `edge` names things that exist and may be joined that way, ignoring loops and the
+    /// uniqueness rules.
+    fn edge_is_usable(&self, edge: &Edge) -> bool {
+        let Some(from) = self.track(edge.from()) else {
+            return false;
         };
-        for track in &self.tracks {
-            if track.outputs.iter().any(|output| {
-                !output.gain_db.is_finite()
-                    || output
-                        .bus()
-                        .is_some_and(|target| !usable_bus(target, track.id))
-            }) || track
-                .outputs
-                .iter()
-                .map(|output| output.key())
-                .collect::<HashSet<_>>()
-                .len()
-                != track.outputs.len()
-                || track
-                    .mixer
-                    .sidechain_sources()
-                    .any(|source| source == track.id || !indices.contains_key(&source))
-            {
-                return false;
+        match edge {
+            Edge::Output { output, .. } => {
+                output.gain_db.is_finite()
+                    && output.bus().is_none_or(|bus| {
+                        bus != from.id && self.track(bus).is_some_and(|bus| bus.kind.is_bus())
+                    })
+            }
+            Edge::Key { to, .. } => self
+                .slot_owner(*to)
+                .is_some_and(|owner| owner != Some(from.id)),
+            Edge::Notes { to, .. } => {
+                *to != from.id
+                    && matches!(
+                        self.track(*to).map(|layer| &layer.kind),
+                        Some(TrackKind::Instrument(_))
+                    )
+                    && match &from.kind {
+                        TrackKind::Singer(_) => true,
+                        TrackKind::Instrument(_) => !self.routing.is_layer(from.id),
+                        _ => false,
+                    }
             }
         }
-        if self
-            .master
-            .sidechain_sources()
-            .any(|source| !indices.contains_key(&source))
-        {
-            return false;
+    }
+
+    /// Whether every connection is usable, unique where it must be, and the graph acyclic.
+    fn routing_is_valid(&self) -> bool {
+        let mut outputs = HashSet::new();
+        let mut keys = HashSet::new();
+        let mut layers = HashSet::new();
+        for edge in self.routing.edges() {
+            let unique = match edge {
+                Edge::Output { from, output } => outputs.insert((*from, output.key())),
+                Edge::Key { to, .. } => keys.insert(*to),
+                Edge::Notes { to, .. } => layers.insert(*to),
+            };
+            if !unique || !self.edge_is_usable(edge) {
+                return false;
+            }
         }
 
         let edges = self.routing_edges();
@@ -501,10 +523,10 @@ impl Project {
     /// Asked before an output is added or re-pointed, because a loop is not a strange mix —
     /// it is a bus waiting for itself, and there is no order to render it in.
     ///
-    /// Every edge already in the routing counts, sidechains included: a compressor keyed from a
-    /// bus is the bus arriving early, and a track feeding that bus can no longer be rendered after
-    /// it. Keying is asked about through [`Self::sidechain_would_cycle`], which is the same
-    /// question with the ends the other way round.
+    /// Every edge already in the routing counts, keys included: a compressor keyed from a bus is
+    /// the bus arriving early, and a track feeding that bus can no longer be rendered after it.
+    /// Keying is asked about through [`Self::sidechain_would_cycle`], which is the same question
+    /// with the ends the other way round.
     pub fn routing_would_cycle(&self, from: TrackId, to: TrackId) -> bool {
         if from == to {
             return true;
@@ -533,7 +555,7 @@ impl Project {
     /// `true` when keying an effect on `owner` from `source` would make a signal loop back on
     /// itself.
     ///
-    /// A sidechain is an edge from the source to the track it keys, so this is
+    /// A key is an edge from the source to the track whose strip holds the effect, so this is
     /// [`Self::routing_would_cycle`] with the ends swapped — and the swap is the whole reason it
     /// has a name of its own. Writing it out at each call site is writing down the one thing about
     /// sidechains that is easy to get backwards.
@@ -546,12 +568,12 @@ impl Project {
         }
     }
 
-    /// Points every output at a bus that exists, breaking any loop it finds.
+    /// Drops every connection that cannot stand, breaking any loop it finds.
     ///
     /// Called when a document is loaded, for the same reason [`Self::repair_id_counter`] is: the
-    /// editing commands refuse to create either fault, so a file carrying one was either written
-    /// by another tool or edited by hand, and the alternative to repairing it is a project that
-    /// cannot be rendered at all. Returns `true` when anything had to be changed.
+    /// editing commands refuse to create any of these faults, so a file carrying one was either
+    /// written by another tool or edited by hand, and the alternative to repairing it is a project
+    /// that cannot be rendered at all. Returns `true` when anything had to be changed.
     ///
     /// An output that cannot stand is dropped rather than re-pointed, because it carries a level
     /// and a tap chosen for where it went: a reverb feed at -12 dB before the fader means nothing
@@ -562,71 +584,77 @@ impl Project {
         if self.routing_is_valid() {
             return repaired;
         }
-        let is_bus: Vec<(TrackId, bool)> = self
-            .tracks
+        let had_outputs: HashSet<TrackId> = self
+            .routing
+            .edges()
             .iter()
-            .map(|track| (track.id, track.kind.is_bus()))
+            .filter(|edge| matches!(edge, Edge::Output { .. }))
+            .map(Edge::from)
             .collect();
-        let usable = |id: TrackId, owner: TrackId| {
-            id != owner && is_bus.iter().any(|(bus, yes)| *bus == id && *yes)
-        };
 
-        for index in 0..self.tracks.len() {
-            let owner = self.tracks[index].id;
-            let had_any = !self.tracks[index].outputs.is_empty();
-            let mut seen = HashSet::new();
-            self.tracks[index].outputs.retain_mut(|output| {
-                if !output.gain_db.is_finite() {
-                    output.gain_db = 0.0;
-                    repaired = true;
-                }
-                let keep = output.bus().is_none_or(|target| usable(target, owner))
-                    && seen.insert(output.key());
-                repaired |= !keep;
-                keep
-            });
-            if had_any && self.tracks[index].outputs.is_empty() {
-                self.tracks[index].outputs.push(Output::master());
+        // Everything that names something unusable, or repeats what an earlier edge already says,
+        // goes first. A non-finite level is mended rather than dropped: the route is fine.
+        let mut edges: Vec<Edge> = self.routing.edges().to_vec();
+        for edge in &mut edges {
+            if let Edge::Output { output, .. } = edge
+                && !output.gain_db.is_finite()
+            {
+                output.gain_db = 0.0;
+                repaired = true;
+            }
+        }
+        let (mut outputs, mut keys, mut layers) = (HashSet::new(), HashSet::new(), HashSet::new());
+        let usable: Vec<bool> = edges.iter().map(|edge| self.edge_is_usable(edge)).collect();
+        let mut kept = Vec::with_capacity(edges.len());
+        for (edge, usable) in edges.into_iter().zip(usable) {
+            let unique = match &edge {
+                Edge::Output { from, output } => outputs.insert((*from, output.key())),
+                Edge::Key { to, .. } => keys.insert(*to),
+                Edge::Notes { to, .. } => layers.insert(*to),
+            };
+            if usable && unique {
+                kept.push(edge);
+            } else {
+                repaired = true;
             }
         }
 
-        // Now every edge points at a real bus, so what is left is loops. Each edge is put back one
-        // at a time and dropped if it closes one, which terminates and does not depend on where in
-        // the document the loop happened to start.
-        let edges: Vec<(usize, Vec<Output>)> = self
-            .tracks
+        // Now every edge points at something real, so what is left is loops. Each audio edge is
+        // put back one at a time and dropped if it closes one, which terminates and does not
+        // depend on where in the document the loop happened to start. Notes cannot loop — a
+        // layer is never a source — so they go straight back.
+        self.routing = Routing::new();
+        for edge in kept
             .iter()
-            .enumerate()
-            .map(|(index, track)| (index, track.outputs.clone()))
-            .collect();
-        for track in &mut self.tracks {
-            track.outputs.clear();
+            .filter(|edge| matches!(edge, Edge::Notes { .. }))
+        {
+            self.routing.push(edge.clone());
         }
-        for (index, outputs) in edges {
-            let owner = self.tracks[index].id;
-            let had_any = !outputs.is_empty();
-            for output in outputs {
-                if output
+        for edge in kept {
+            let closes_loop = match &edge {
+                Edge::Output { from, output } => output
                     .bus()
-                    .is_some_and(|target| self.routing_would_cycle(owner, target))
-                {
-                    repaired = true;
-                } else {
-                    self.tracks[index].outputs.push(output);
-                }
+                    .is_some_and(|bus| self.routing_would_cycle(*from, bus)),
+                Edge::Key { from, to } => self
+                    .slot_owner(*to)
+                    .is_some_and(|owner| self.sidechain_would_cycle(owner, *from)),
+                Edge::Notes { .. } => continue,
+            };
+            if closes_loop {
+                repaired = true;
+            } else {
+                self.routing.push(edge);
             }
-            let outputs = &mut self.tracks[index].outputs;
-            if had_any && outputs.is_empty() {
-                outputs.push(Output::master());
+        }
+        for track in had_outputs {
+            if self.track(track).is_some() && self.routing.outputs(track).next().is_none() {
+                self.routing.push(Edge::Output {
+                    from: track,
+                    output: Output::master(),
+                });
             }
         }
         repaired |= self.prune_output_automation();
-
-        // Sidechains last, and taken off before they are put back for the reason the edges above
-        // are: a loop among them would otherwise be judged against itself. They are not held to
-        // the bus rule — anything with a signal can key an effect — only to naming a track that
-        // exists and not closing a loop.
-        repaired |= self.repair_sidechains();
         repaired
     }
 
@@ -636,13 +664,12 @@ impl Project {
     /// outputs wholesale, which is the one edit that can leave a lane behind.
     pub fn prune_output_automation(&mut self) -> bool {
         let live: HashSet<(TrackId, Destination, Tap)> = self
-            .tracks
+            .routing
+            .edges()
             .iter()
-            .flat_map(|track| {
-                track
-                    .outputs
-                    .iter()
-                    .map(|output| (track.id, output.to, output.tap))
+            .filter_map(|edge| match edge {
+                Edge::Output { from, output } => Some((*from, output.to, output.tap)),
+                _ => None,
             })
             .collect();
         self.automation.remove_lanes_where(|target| {
@@ -654,74 +681,14 @@ impl Project {
         })
     }
 
-    /// Drops every sidechain that names a track which is not there, or which would leave a strip
-    /// waiting for itself. Returns `true` when anything had to be changed.
-    fn repair_sidechains(&mut self) -> bool {
-        let mut repaired = false;
-        let owners: Vec<Option<TrackId>> = std::iter::once(None)
-            .chain(self.tracks.iter().map(|track| Some(track.id)))
-            .collect();
-        for owner in owners {
-            let Some(strip) = self.strip(owner) else {
-                continue;
-            };
-            let named: Vec<(usize, TrackId)> = strip
-                .effects
-                .iter()
-                .enumerate()
-                .filter_map(|(slot, effect)| effect.sidechain.map(|source| (slot, source)))
-                .collect();
-            for (slot, source) in named {
-                let keep =
-                    self.track(source).is_some() && !self.sidechain_would_cycle(owner, source);
-                if keep {
-                    continue;
-                }
-                if let Some(strip) = self.strip_mut(owner)
-                    && let Some(effect) = strip.effects.get_mut(slot)
-                {
-                    effect.sidechain = None;
-                    repaired = true;
-                }
-            }
-        }
-        repaired
-    }
-
-    /// The chain on a track, or the master's when `track` is `None`.
-    fn strip(&self, track: Option<TrackId>) -> Option<&MixerStrip> {
-        match track {
-            Some(id) => self.track(id).map(|entry| &entry.mixer),
-            None => Some(&self.master),
-        }
-    }
-
-    /// The same, to be written to.
-    fn strip_mut(&mut self, track: Option<TrackId>) -> Option<&mut MixerStrip> {
-        match track {
-            Some(id) => self.track_mut(id).map(|entry| &mut entry.mixer),
-            None => Some(&mut self.master),
-        }
-    }
-
     /// Clears every sidechain keyed from `source`, wherever in the project it is.
     ///
     /// Called when a track is deleted. A slot left naming a track that is gone would key from
     /// silence, which is a compressor that has quietly stopped working — and would come back to
     /// life pointed at whichever track was created next, since ids are handed out in order.
     pub fn clear_sidechains_from(&mut self, source: TrackId) {
-        for strip in self
-            .tracks
-            .iter_mut()
-            .map(|track| &mut track.mixer)
-            .chain(std::iter::once(&mut self.master))
-        {
-            for effect in &mut strip.effects {
-                if effect.sidechain == Some(source) {
-                    effect.sidechain = None;
-                }
-            }
-        }
+        self.routing
+            .retain(|edge| !matches!(edge, Edge::Key { from, .. } if *from == source));
     }
 
     /// Which tracks the solo switches leave audible, in project order.
@@ -778,7 +745,7 @@ impl Project {
         // Backward: `reaches[t]` is true when something soloed sits downstream of `t`.
         let mut reaches = vec![false; self.tracks.len()];
         for &index in order.iter().rev() {
-            reaches[index] = self.tracks[index].feeds().any(|target| {
+            reaches[index] = self.routing.feeds(self.tracks[index].id).any(|target| {
                 index_of(target).is_some_and(|target| soloed(target) || reaches[target])
             });
         }
@@ -788,7 +755,8 @@ impl Project {
         for &index in &order {
             let id = self.tracks[index].id;
             fed[index] = self.tracks.iter().enumerate().any(|(feeder, other)| {
-                (soloed(feeder) || fed[feeder]) && other.feeds().any(|target| target == id)
+                (soloed(feeder) || fed[feeder])
+                    && self.routing.feeds(other.id).any(|target| target == id)
             });
         }
 
@@ -834,10 +802,8 @@ mod tests {
         let (mut project, kick, snare, bus) = bussed_project();
         let reverb = project.add_bus_track("Reverb");
         project
-            .track_mut(bus)
-            .unwrap()
-            .outputs
-            .push(Output::to_bus(reverb));
+            .routing
+            .push(Edge::output(bus, Output::to_bus(reverb)));
 
         let order = project.routing_order();
         assert_eq!(order.len(), project.tracks.len());
@@ -858,10 +824,8 @@ mod tests {
         let (mut project, kick, _, bus) = bussed_project();
         let reverb = project.add_bus_track("Reverb");
         project
-            .track_mut(bus)
-            .unwrap()
-            .outputs
-            .push(Output::to_bus(reverb));
+            .routing
+            .push(Edge::output(bus, Output::to_bus(reverb)));
 
         // A bus into itself, and the two ways round the existing chain.
         assert!(project.routing_would_cycle(bus, bus));
@@ -883,14 +847,14 @@ mod tests {
         // The alternative to repairing it is a project that can never be rendered at all.
         let (mut project, _, _, bus) = bussed_project();
         let reverb = project.add_bus_track("Reverb");
-        project.track_mut(bus).unwrap().outputs = vec![Output::to_bus(reverb)];
-        project.track_mut(reverb).unwrap().outputs = vec![Output::to_bus(bus)];
+        project.routing.set_outputs(bus, &[Output::to_bus(reverb)]);
+        project.routing.set_outputs(reverb, &[Output::to_bus(bus)]);
 
         assert!(project.repair_routing());
         // One of the two edges survives — which one does not matter, only that no track can now
         // reach itself, which is what makes an order to render in exist.
         for track in &project.tracks {
-            for target in track.feeds() {
+            for target in project.routing.feeds(track.id) {
                 assert!(
                     !project.routing_would_cycle(track.id, target),
                     "{} still lies on a loop",
@@ -900,26 +864,24 @@ mod tests {
         }
         assert!(!project.repair_routing(), "the repair is idempotent");
         // And the bus is still reachable at all: repairing must not detach the whole chain.
-        assert!(project.track(bus).unwrap().feeds().count() <= 1);
+        assert!(project.routing.feeds(bus).count() <= 1);
     }
 
     #[test]
     fn a_route_to_something_that_is_not_a_bus_is_dropped_on_load() {
         let (mut project, kick, snare, _) = bussed_project();
         // An instrument track is not a mixing point, and neither is a track that is not there.
-        project.track_mut(kick).unwrap().outputs = vec![Output::to_bus(snare)];
-        let snare_outputs = project.track(snare).unwrap().outputs.clone();
+        project.routing.set_outputs(kick, &[Output::to_bus(snare)]);
+        let snare_outputs = project.outputs(snare);
         project
-            .track_mut(snare)
-            .unwrap()
-            .outputs
-            .push(Output::to_bus(TrackId(9_999)));
+            .routing
+            .push(Edge::output(snare, Output::to_bus(TrackId(9_999))));
 
         assert!(project.repair_routing());
         // A track whose only route was dropped falls back to the master, so the part is still
         // heard; one that has another route simply loses the broken one.
-        assert_eq!(project.track(kick).unwrap().outputs, vec![Output::master()]);
-        assert_eq!(project.track(snare).unwrap().outputs, snare_outputs);
+        assert_eq!(project.outputs(kick), vec![Output::master()]);
+        assert_eq!(project.outputs(snare), snare_outputs);
     }
 
     #[test]
@@ -955,14 +917,13 @@ mod tests {
         // The routing goes, not the tracks: what was going through the bus goes where it would
         // have gone had the bus never existed.
         let (mut project, kick, snare, bus) = bussed_project();
-        project.track_mut(snare).unwrap().outputs = vec![Output::master(), Output::to_bus(bus)];
+        project
+            .routing
+            .set_outputs(snare, &[Output::master(), Output::to_bus(bus)]);
 
         assert!(project.remove_track(bus));
-        assert_eq!(project.track(kick).unwrap().outputs, vec![Output::master()]);
-        assert_eq!(
-            project.track(snare).unwrap().outputs,
-            vec![Output::master()]
-        );
+        assert_eq!(project.outputs(kick), vec![Output::master()]);
+        assert_eq!(project.outputs(snare), vec![Output::master()]);
     }
 
     #[test]
@@ -987,10 +948,8 @@ mod tests {
 
         let missing = Destination::Bus(TrackId(99_999));
         project
-            .track_mut(snare)
-            .unwrap()
-            .outputs
-            .push(Output::new(missing));
+            .routing
+            .push(Edge::output(snare, Output::new(missing)));
         let target = crate::param::ParamTarget::Output {
             track: snare,
             to: missing,
@@ -1011,14 +970,17 @@ mod tests {
     #[test]
     fn routing_survives_a_round_trip_through_json() {
         let (mut project, kick, _, bus) = bussed_project();
-        project.track_mut(kick).unwrap().outputs = vec![
-            Output::master(),
-            Output {
-                to: Destination::Bus(bus),
-                gain_db: -7.5,
-                tap: Tap::PreFader,
-            },
-        ];
+        project.routing.set_outputs(
+            kick,
+            &[
+                Output::master(),
+                Output {
+                    to: Destination::Bus(bus),
+                    gain_db: -7.5,
+                    tap: Tap::PreFader,
+                },
+            ],
+        );
 
         let json = serde_json::to_string(&project).expect("serialises");
         let back: Project = serde_json::from_str(&json).expect("deserialises");
@@ -1028,11 +990,7 @@ mod tests {
     /// Keys the first effect on `owner` from `source`, and hands back the slot.
     fn key_from(project: &mut Project, owner: Option<TrackId>, source: TrackId) -> EffectSlotId {
         let slot = project.add_effect(owner, "auris.fx.compressor").unwrap();
-        let strip = match owner {
-            Some(id) => &mut project.track_mut(id).unwrap().mixer,
-            None => &mut project.master,
-        };
-        strip.effects.last_mut().unwrap().sidechain = Some(source);
+        project.routing.set_key(slot, Some(source));
         slot
     }
 
@@ -1082,7 +1040,7 @@ mod tests {
         let kick = project.add_instrument_track("Kick", "x");
         let bass = project.add_instrument_track("Bass", "x");
         let bus = project.add_bus_track("Sub");
-        project.track_mut(bass).unwrap().outputs = vec![Output::to_bus(bus)];
+        project.routing.set_outputs(bass, &[Output::to_bus(bus)]);
         assert!(!project.sidechain_would_cycle(Some(kick), bus));
 
         key_from(&mut project, Some(bass), kick);
@@ -1110,7 +1068,7 @@ mod tests {
                 .iter()
                 .flat_map(|track| &track.mixer.effects)
                 .find(|effect| effect.id == slot)
-                .and_then(|effect| effect.sidechain)
+                .and_then(|effect| project.sidechain(effect.id))
         };
         assert_eq!(keyed(gone), None);
         assert_eq!(keyed(itself), None);
@@ -1141,7 +1099,7 @@ mod tests {
                 .chain(std::iter::once(&project.master))
                 .flat_map(|strip| &strip.effects)
                 .find(|effect| effect.id == slot)
-                .and_then(|effect| effect.sidechain)
+                .and_then(|effect| project.sidechain(effect.id))
         };
         assert_eq!(keyed(from_kick), None);
         assert_eq!(keyed(on_master), None, "the master's chain is cleared too");

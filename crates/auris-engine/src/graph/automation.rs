@@ -87,9 +87,8 @@ fn resolve_slot(project: &Project, target: ParamTarget) -> Option<AutomationSlot
         ParamTarget::Output { track, to, tap } => Some(AutomationSlot::Output {
             track: project.track_index(track)?,
             output: project
-                .track(track)?
-                .outputs
-                .iter()
+                .routing
+                .outputs(track)
                 .position(|existing| existing.key() == (to, tap))?,
         }),
         ParamTarget::Instrument { track, param } => Some(AutomationSlot::Instrument {

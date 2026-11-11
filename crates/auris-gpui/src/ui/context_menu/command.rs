@@ -1208,11 +1208,7 @@ impl AurisApp {
             MenuCommand::NewMixerTrack { kind, at } => self.add_mixer_track(kind, at, cx),
             MenuCommand::ArrangeMixerGraph => self.arrange_mixer_nodes(cx),
             MenuCommand::ToggleTrackOutput(track, to) => {
-                let outputs = self
-                    .project()
-                    .track(track)
-                    .map(|track| track.outputs.clone())
-                    .unwrap_or_default();
+                let outputs = self.project().outputs(track);
                 // Every output to that destination goes, whichever point it is taken from: the
                 // row stands for the destination, and a check that stayed ticked after it was
                 // cleared would read as a click that did nothing.

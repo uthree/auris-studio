@@ -41,9 +41,11 @@ impl AurisApp {
         // Only an audio track has an input to be recorded from; an instrument track's comes from
         // whatever is playing it.
         let records = entry.kind.as_audio().is_some();
+        let holds_notes = self.project().holds_notes(track);
+        let is_layer = self.project().routing.is_layer(track);
         let menu = ContextMenu::new(anchor, entry.name.clone())
             .item_if(
-                entry.kind.holds_notes() && !entry.kind.is_drum(),
+                holds_notes && !entry.kind.is_drum(),
                 self.t(Key::MenuAnalyzeChords),
                 MenuCommand::AnalyzeChords(Some(track)),
             )
@@ -52,18 +54,18 @@ impl AurisApp {
                 MenuCommand::DuplicateTrack(track),
             )
             .item_if(
-                entry.kind.can_be_followed(),
+                self.project().can_be_followed(track),
                 self.t(Key::MenuAddLayer),
                 MenuCommand::AddLayer(track),
             )
             .item_if(
-                entry.kind.layer().is_some(),
+                is_layer,
                 self.t(Key::MenuDetachLayer),
                 MenuCommand::DetachLayer(track),
             )
             .item(self.t(Key::MenuRename), MenuCommand::RenameTrack(track))
             .item_if(
-                entry.kind.holds_notes()
+                holds_notes
                     && entry.end_tick(&self.project().tempo_map, self.project().sample_rate)
                         > Ticks::ZERO,
                 self.t(Key::MenuConvertTrackToAudio),
@@ -242,7 +244,7 @@ impl AurisApp {
         let start = self.snap(start).max_zero();
         // A new clip goes wherever notes can sit; the composer only writes for instruments,
         // because a generated part arrives with no words to sing.
-        let holds_notes = entry.kind.holds_notes();
+        let holds_notes = self.project().holds_notes(entry.id);
         let is_instrument = entry.kind.as_instrument().is_some();
         ContextMenu::new(anchor, entry.name.clone())
             .item_if(
@@ -636,9 +638,10 @@ impl AurisApp {
     pub(crate) fn output_menu(&self, anchor: Point<Pixels>, track: TrackId) -> ContextMenu {
         let current: Vec<Destination> = self
             .project()
-            .track(track)
-            .map(|track| track.outputs.iter().map(|output| output.to).collect())
-            .unwrap_or_default();
+            .routing
+            .outputs(track)
+            .map(|output| output.to)
+            .collect();
         let mut menu = ContextMenu::new(anchor, self.t(Key::MenuRouteTo)).toggle(
             self.t(Key::Master),
             MenuCommand::ToggleTrackOutput(track, Destination::Master),

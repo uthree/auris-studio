@@ -342,12 +342,14 @@ pub fn stage_file_bytes(path: &Path, bytes: &[u8]) -> Result<StagedFile> {
 ///
 /// Every version bump must decide whether the version it replaces joins this range. Version 32
 /// forgot to, and a project saved the day before would not open at all.
-const READABLE_OLDER: std::ops::RangeInclusive<u32> = 27..=35;
+const READABLE_OLDER: std::ops::RangeInclusive<u32> = 27..=36;
 
 /// Reads a project from `path`.
 ///
 /// The format version must match this build, or be one of the older versions it still reads:
-/// 35 and earlier with sends beside the outputs (see `fold_sends_into_outputs`), 31 with each
+/// 36 and earlier with connections kept on the tracks and slots they touch (see
+/// `hoist_connections`), 35 and earlier with sends beside the outputs (see
+/// `fold_sends_into_outputs`), 31 with each
 /// track's single output, 30 without the latest extended chords, 29 without eleventh chords, 28
 /// without named drum lanes, or 27, whose volume contour is defaulted.
 /// After parsing, the
@@ -367,9 +369,12 @@ pub fn load_project(path: &Path) -> Result<Project> {
         });
     }
 
-    let mut project: Project = if probe.format_version < SENDS_FOLDED {
+    let mut project: Project = if probe.format_version < CONNECTIONS_HOISTED {
         let mut document: serde_json::Value = serde_json::from_slice(&bytes)?;
-        fold_sends_into_outputs(&mut document);
+        if probe.format_version < SENDS_FOLDED {
+            fold_sends_into_outputs(&mut document);
+        }
+        hoist_connections(&mut document);
         serde_json::from_value(document)?
     } else {
         serde_json::from_slice(&bytes)?
@@ -400,6 +405,94 @@ pub fn load_project(path: &Path) -> Result<Project> {
 
 /// The first format version in which a track's sends are outputs like any other.
 const SENDS_FOLDED: u32 = 36;
+
+/// The first format version in which every connection lives in the project's own list.
+const CONNECTIONS_HOISTED: u32 = 37;
+
+/// Moves every connection off the tracks and effect slots it was written on and into the
+/// project's `routing` list, in place.
+///
+/// Before [`CONNECTIONS_HOISTED`] a track carried its `outputs` (a missing list meant the master
+/// alone), an instrument track that was a layer carried `follows`, and an effect slot keyed from a
+/// track carried `sidechain`. Each becomes one edge, in that order: every track's outputs in track
+/// order, then the keys, then the layers. A document that already has a `routing` list is
+/// today's shape stamped with an older number and is left alone.
+fn hoist_connections(document: &mut serde_json::Value) {
+    use serde_json::{Map, Value, json};
+
+    if document.get("routing").is_some() {
+        return;
+    }
+    let mut outputs = Vec::new();
+    let mut keys = Vec::new();
+    let mut layers = Vec::new();
+    let take_keys = |effects: Option<&mut Value>, keys: &mut Vec<Value>| {
+        for slot in effects.and_then(Value::as_array_mut).into_iter().flatten() {
+            let Some(slot) = slot.as_object_mut() else {
+                continue;
+            };
+            if let Some(source) = slot.remove("sidechain")
+                && !source.is_null()
+            {
+                keys.push(json!({"kind": "key", "from": source, "to": slot.get("id")}));
+            }
+        }
+    };
+    if let Some(tracks) = document.get_mut("tracks").and_then(Value::as_array_mut) {
+        for track in tracks {
+            let Some(track) = track.as_object_mut() else {
+                continue;
+            };
+            let id = track.get("id").cloned().unwrap_or(Value::Null);
+            let stored = track
+                .remove("outputs")
+                .unwrap_or_else(|| json!([{"to": "master"}]));
+            for output in stored.as_array().into_iter().flatten() {
+                let mut edge = Map::new();
+                edge.insert("kind".into(), json!("output"));
+                edge.insert("from".into(), id.clone());
+                if let Some(fields) = output.as_object() {
+                    edge.extend(fields.clone());
+                }
+                outputs.push(Value::Object(edge));
+            }
+            take_keys(
+                track
+                    .get_mut("mixer")
+                    .and_then(|mixer| mixer.get_mut("effects")),
+                &mut keys,
+            );
+            let follows = track
+                .get_mut("kind")
+                .and_then(Value::as_object_mut)
+                .and_then(|kind| kind.remove("follows"));
+            if let Some(Value::Object(source)) = follows {
+                let mut edge = Map::new();
+                edge.insert("kind".into(), json!("notes"));
+                edge.insert(
+                    "from".into(),
+                    source.get("track").cloned().unwrap_or(Value::Null),
+                );
+                edge.insert("to".into(), id.clone());
+                if let Some(shape) = source.get("shape") {
+                    edge.insert("shape".into(), shape.clone());
+                }
+                layers.push(Value::Object(edge));
+            }
+        }
+    }
+    take_keys(
+        document
+            .get_mut("master")
+            .and_then(|master| master.get_mut("effects")),
+        &mut keys,
+    );
+    if let Some(document) = document.as_object_mut() {
+        outputs.extend(keys);
+        outputs.extend(layers);
+        document.insert("routing".into(), Value::Array(outputs));
+    }
+}
 
 /// Rewrites a document older than [`SENDS_FOLDED`] into today's shape, in place.
 ///
@@ -1067,27 +1160,83 @@ mod tests {
     }
 
     #[test]
+    fn version_36_moves_outputs_keys_and_layers_into_the_routing() {
+        let file = TempFile::new("version-36.auris");
+        let mut expected = demo_project();
+        let bus = expected.add_bus_track("Bus");
+        let lead = expected.add_instrument_track("Lead", "auris.synth.pulse");
+        let layer = expected
+            .add_layer_track(lead, "Pad", "auris.synth.pulse")
+            .unwrap();
+        expected.routing.shape_mut(layer).unwrap().transpose = 12;
+        expected.routing.set_outputs(
+            lead,
+            &[
+                auris_core::Output::master(),
+                auris_core::Output {
+                    to: auris_core::Destination::Bus(bus),
+                    gain_db: -9.0,
+                    tap: auris_core::Tap::PreFader,
+                },
+            ],
+        );
+        let slot = expected
+            .add_effect(Some(bus), "auris.fx.compressor")
+            .unwrap();
+        expected.routing.set_key(slot, Some(lead));
+
+        // Written the way version 36 wrote it: every connection on the track or slot it touches.
+        let mut value = serde_json::to_value(&expected).unwrap();
+        value["format_version"] = serde_json::json!(36);
+        value.as_object_mut().unwrap().remove("routing");
+        for stored in value["tracks"].as_array_mut().unwrap() {
+            let id = auris_core::TrackId(stored["id"].as_u64().unwrap());
+            stored["outputs"] = serde_json::to_value(expected.outputs(id)).unwrap();
+            if let Some(source) = expected.follows(id) {
+                stored["kind"]["follows"] = serde_json::to_value(source).unwrap();
+            }
+            for effect in stored["mixer"]["effects"].as_array_mut().unwrap() {
+                let slot = auris_core::EffectSlotId(effect["id"].as_u64().unwrap());
+                if let Some(source) = expected.sidechain(slot) {
+                    effect["sidechain"] = serde_json::json!(source.0);
+                }
+            }
+        }
+        std::fs::write(file.path(), serde_json::to_vec(&value).unwrap()).unwrap();
+
+        let loaded = load_project(file.path()).unwrap();
+        for track in &expected.tracks {
+            assert_eq!(loaded.outputs(track.id), expected.outputs(track.id));
+            assert_eq!(loaded.follows(track.id), expected.follows(track.id));
+        }
+        assert_eq!(loaded.sidechain(slot), Some(lead));
+        assert_eq!(loaded.routing.edges().len(), expected.routing.edges().len());
+    }
+
+    #[test]
     fn version_31_loads_each_tracks_single_output_as_one_route() {
         let file = TempFile::new("version-31.auris");
         let mut expected = demo_project();
         let bus = expected.add_bus_track("Bus");
         let track = expected.add_instrument_track("Lead", "auris.synth.pulse");
-        expected.track_mut(track).unwrap().outputs = vec![auris_core::Output::to_bus(bus)];
+        expected
+            .routing
+            .set_outputs(track, &[auris_core::Output::to_bus(bus)]);
         let mut value = serde_json::to_value(&expected).unwrap();
         value["format_version"] = serde_json::json!(31);
+        // Version 31 kept each track's one route on the track, as a bare destination, before
+        // outputs had a level of their own or lived in a list of the project's.
+        value.as_object_mut().unwrap().remove("routing");
         for stored in value["tracks"].as_array_mut().unwrap() {
+            let id = auris_core::TrackId(stored["id"].as_u64().unwrap());
+            let to = expected.outputs(id)[0].to;
             let fields = stored.as_object_mut().unwrap();
-            let outputs = fields.remove("outputs").unwrap();
-            // Version 31 wrote one bare destination, before outputs had a level of their own.
-            fields.insert("output".into(), outputs[0]["to"].clone());
+            fields.insert("output".into(), serde_json::to_value(to).unwrap());
         }
         std::fs::write(file.path(), serde_json::to_vec(&value).unwrap()).unwrap();
 
         let loaded = load_project(file.path()).unwrap();
-        assert_eq!(
-            loaded.track(track).unwrap().outputs,
-            vec![auris_core::Output::to_bus(bus)]
-        );
+        assert_eq!(loaded.outputs(track), vec![auris_core::Output::to_bus(bus)]);
     }
 
     #[test]

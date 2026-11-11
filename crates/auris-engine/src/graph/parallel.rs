@@ -176,7 +176,7 @@ mod tests {
         let mut project = Project::new("Cycle", 48_000.0);
         let source = project.add_instrument_track("Source", testkit::TONE_ID);
         let bus = project.add_bus_track("Bus");
-        project.track_mut(source).unwrap().outputs = vec![Output::to_bus(bus)];
+        project.routing.set_outputs(source, &[Output::to_bus(bus)]);
         let graph = crate::graph::RenderGraph::build(
             &project,
             &AudioSourceBank::new(),
@@ -196,25 +196,22 @@ mod tests {
         let source = project.add_instrument_track("Source", testkit::TONE_ID);
         let listener = project.add_instrument_track("Listener", testkit::TONE_ID);
         let bus = project.add_bus_track("Bus");
-        project.track_mut(source).unwrap().outputs = vec![Output::to_bus(bus)];
-        project.track_mut(listener).unwrap().outputs = vec![Output::to_bus(bus)];
-        project.track_mut(source).unwrap().outputs.push(Output {
-            to: Destination::Bus(bus),
-            gain_db: 0.0,
-            tap: Tap::PreFader,
-        });
+        project.routing.set_outputs(source, &[Output::to_bus(bus)]);
+        project
+            .routing
+            .set_outputs(listener, &[Output::to_bus(bus)]);
+        project.routing.push(auris_core::Edge::output(
+            source,
+            Output {
+                to: Destination::Bus(bus),
+                gain_db: 0.0,
+                tap: Tap::PreFader,
+            },
+        ));
         let effect = project
             .add_effect(Some(listener), testkit::KEYED_ID)
             .unwrap();
-        project
-            .track_mut(listener)
-            .unwrap()
-            .mixer
-            .effects
-            .iter_mut()
-            .find(|slot| slot.id == effect)
-            .unwrap()
-            .sidechain = Some(source);
+        project.routing.set_key(effect, Some(source));
         let graph = crate::graph::RenderGraph::build(
             &project,
             &AudioSourceBank::new(),

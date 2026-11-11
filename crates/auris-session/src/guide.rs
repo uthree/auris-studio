@@ -1215,21 +1215,30 @@ pub mod architecture {
     //! [`Project::repair_routing`](auris_core::Project::repair_routing) breaks any that arrives in
     //! a file. What routing does to plugin delay compensation is in [`super::realtime`].
     //!
+    //! # One list of connections
+    //!
+    //! Every connection between tracks lives in one list on the project,
+    //! [`Project::routing`](auris_core::Project::routing): a track's outputs, a track keying an
+    //! effect, a layer playing another track's notes. Each is an [`Edge`](auris_core::Edge) of the
+    //! kind it is, and each joins two [`Port`](auris_core::Port)s that carry the same
+    //! [`Signal`](auris_core::Signal) — notes or audio. The nodes are still the document's own:
+    //! tracks, the master and effect slots. Keeping the connections apart from the nodes is what
+    //! lets adding, removing, copying, repairing and walking them be one set of rules: deleting a
+    //! track drops every edge touching it, duplicating one copies the edges it owns, and
+    //! [`Project::repair_routing`](auris_core::Project::repair_routing) checks one list.
+    //!
     //! # A key is an edge too, and it faces the other way
     //!
-    //! An effect slot may name a track to be **keyed** from: a compressor on the bass listening to
-    //! the kick drum, or a hosted plugin with a sidechain port. That is
-    //! [`EffectSlot::sidechain`](auris_core::project::EffectSlot::sidechain), and three things
-    //! follow from where it is written down.
+    //! An effect slot may be **keyed** from a track: a compressor on the bass listening to the
+    //! kick drum, or a hosted plugin with a sidechain port. That is a key edge from the track to
+    //! the slot, and three things follow from it.
     //!
-    //! **It is recorded on the listener, not the source.** The effect is the end that wants one; a
-    //! track has no idea how many chains are keyed from it. So it is the one edge in the routing
-    //! stored facing backwards, and
-    //! [`Project::routing_order`](auris_core::Project::routing_order) turns it round rather than
-    //! every walk doing so again. The question "would this loop?" therefore has two names —
-    //! [`routing_would_cycle`](auris_core::Project::routing_would_cycle) for an output or a send,
-    //! and [`sidechain_would_cycle`](auris_core::Project::sidechain_would_cycle) for a key, whose
-    //! whole content is the swap.
+    //! **It points at the listener.** The effect is the end that wants one, and its strip is the
+    //! one that has to wait, so [`Project::routing_order`](auris_core::Project::routing_order)
+    //! orders the source before the track holding the slot. The question "would this loop?"
+    //! therefore has two names — [`routing_would_cycle`](auris_core::Project::routing_would_cycle)
+    //! for an output, and [`sidechain_would_cycle`](auris_core::Project::sidechain_would_cycle)
+    //! for a key, whose whole content is the swap.
     //!
     //! **The key is what the source puts into the mix.** The engine taps it after that track's
     //! chain, fader, pan and mute — so turning a kick down ducks less, and muting it stops the
@@ -1243,16 +1252,17 @@ pub mod architecture {
     //!
     //! # Notes are an edge too: layers
     //!
-    //! A **layer** is an instrument track that plays another track's clips instead of its own —
-    //! [`NoteSource`](auris_core::NoteSource) on the track, made by
+    //! A **layer** is an instrument track that plays another track's clips instead of its own — a
+    //! notes edge from its source, made by
     //! [`Session::add_layer_track`](crate::Session::add_layer_track). It is the cheapest way to put
     //! one part through several instruments: each layer is a whole track, so its own fader,
-    //! chain, outputs, sends and automation are the ones every track already has, and a filter
-    //! shared by the source and its layers is a bus they all feed. Nothing about routing changed.
+    //! chain, outputs and automation are the ones every track already has, and a filter shared by
+    //! the source and its layers is a bus they all feed.
     //!
     //! **The source is always a track with notes of its own.** A layer is never followed and a drum
     //! track never is either, so there is no chain to walk and no cycle to refuse; a file that says
-    //! otherwise opens with that one layer silent.
+    //! otherwise opens with that one connection dropped and the layer silent. Notes are resolved
+    //! before playback, so a notes edge orders nothing on the audio thread.
     //!
     //! **The shape applies to what the source sounds.** A [`LayerShape`](auris_core::LayerShape)
     //! — key range, top or bottom voice, transpose, velocity, length, offset — runs after the
@@ -1260,7 +1270,7 @@ pub mod architecture {
     //! [`Project::played_clips`](auris_core::Project::played_clips) is the one answer the renderer
     //! and the MIDI writer share.
     //!
-    //! **A layer holds no clips.** [`TrackKind::holds_notes`](auris_core::TrackKind::holds_notes)
+    //! **A layer holds no clips.** [`Project::holds_notes`](auris_core::Project::holds_notes)
     //! is `false` for one, which is what keeps every command that writes, pastes or moves notes off
     //! it. Removing the source detaches its layers in the same step:
     //! [`Session::detach_layer`](crate::Session::detach_layer) preserves the sound in ordinary

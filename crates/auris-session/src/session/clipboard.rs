@@ -269,12 +269,14 @@ impl Session {
             .into_iter()
             .filter_map(|copied| {
                 let row = base + copied.lane;
-                let kind = &self.project.tracks.get(row)?.kind;
+                let target = self.project.tracks.get(row)?;
+                let holds_notes = self.project.holds_notes(target.id);
+                let kind = &target.kind;
                 let fits = match (&copied.content, kind) {
                     // "Holds notes" rather than "is an instrument track", the same test every
                     // other clip command asks: a melody pastes onto a singer track as freely as
                     // it moves there, lyrics and all.
-                    (CopiedContent::Midi(_), kind) => kind.holds_notes() && !kind.is_drum(),
+                    (CopiedContent::Midi(_), kind) => holds_notes && !kind.is_drum(),
                     (CopiedContent::Drum(_), kind) => kind.is_drum(),
                     (CopiedContent::Audio(audio), TrackKind::Audio(_)) => {
                         self.project.audio_sources.contains_key(&audio.source)

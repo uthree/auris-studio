@@ -962,12 +962,12 @@ fn info(path: &Path) -> Result<(), String> {
             // The ordinary case — the master alone, at unity after the fader — says nothing;
             // anything else lists every output, each with its level and tap once those differ
             // from the default.
-            let ordinary = matches!(track.outputs.as_slice(), [only] if *only == Output::master());
+            let outputs = project.outputs(track.id);
+            let ordinary = matches!(outputs.as_slice(), [only] if *only == Output::master());
             let mut routing: Vec<String> = if ordinary {
                 Vec::new()
             } else {
-                track
-                    .outputs
+                outputs
                     .iter()
                     .map(|output| {
                         let to = match output.to {
@@ -988,7 +988,7 @@ fn info(path: &Path) -> Result<(), String> {
                     })
                     .collect()
             };
-            if track.outputs.is_empty() {
+            if outputs.is_empty() {
                 routing.push(format!("-> {}", field(Key::MixerNoOutput)));
             }
             if !routing.is_empty() {

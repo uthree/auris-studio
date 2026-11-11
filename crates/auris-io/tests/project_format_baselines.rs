@@ -176,8 +176,9 @@ fn routing_preserves_parallel_outputs_empty_outputs_and_send_taps() {
                 tap: Tap::PreFader,
             },
         ]);
-        assert_eq!(lead.outputs.len(), expected.len(), "format {version}");
-        for (output, expected) in lead.outputs.iter().zip(&expected) {
+        let outputs = project.outputs(TrackId(1));
+        assert_eq!(outputs.len(), expected.len(), "format {version}");
+        for (output, expected) in outputs.iter().zip(&expected) {
             assert_eq!(output.key(), expected.key(), "format {version}");
             assert!(
                 (output.gain_db - expected.gain_db).abs() < 1e-4,
@@ -185,9 +186,8 @@ fn routing_preserves_parallel_outputs_empty_outputs_and_send_taps() {
                 output.gain_db
             );
         }
-        let audio = project.track(TrackId(5)).unwrap();
         assert_eq!(
-            audio.outputs,
+            project.outputs(TrackId(5)),
             if version < 32 {
                 vec![Output::master()]
             } else {
@@ -199,7 +199,7 @@ fn routing_preserves_parallel_outputs_empty_outputs_and_send_taps() {
             .mixer
             .effects
             .iter()
-            .map(|slot| (slot.id, slot.enabled, slot.sidechain))
+            .map(|slot| (slot.id, slot.enabled, project.sidechain(slot.id)))
             .collect();
         assert_eq!(
             effects,

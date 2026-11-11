@@ -27,10 +27,10 @@ impl Session {
     ) -> Result<TrackId, SessionError> {
         let index = self.require_track(source)?;
         let kind = &self.project.tracks[index].kind;
-        if !kind.can_be_followed() {
+        if !self.project.can_be_followed(source) {
             return Err(SessionError::WrongTrackKind {
                 id: source.0,
-                actual: if kind.layer().is_some() {
+                actual: if self.project.routing.is_layer(source) {
                     "a layer"
                 } else {
                     kind.label()
@@ -66,18 +66,12 @@ impl Session {
 
     /// The shape a layer plays its source's notes through, or `None` when `track` is no layer.
     pub fn layer_shape(&self, track: TrackId) -> Option<&LayerShape> {
-        self.project
-            .track(track)
-            .and_then(|track| track.kind.layer())
-            .map(|source| &source.shape)
+        self.project.routing.shape(track)
     }
 
     /// The track a layer follows, or `None` when `track` is no layer.
     pub fn layer_source(&self, track: TrackId) -> Option<TrackId> {
-        self.project
-            .track(track)
-            .and_then(|track| track.kind.layer())
-            .map(|source| source.track)
+        self.project.follows(track).map(|source| source.track)
     }
 
     /// Replaces how a layer shapes the notes it borrows.
@@ -91,12 +85,8 @@ impl Session {
             return Ok(());
         }
         self.record(Edit::SetLayerShape);
-        if let Some(source) = self
-            .project
-            .track_mut(track)
-            .and_then(|track| track.kind.layer_mut())
-        {
-            source.shape = shape;
+        if let Some(current) = self.project.routing.shape_mut(track) {
+            *current = shape;
         }
         self.invalidate_graph();
         Ok(())
@@ -121,14 +111,14 @@ impl Session {
 
     fn require_layer(&self, track: TrackId) -> Result<usize, SessionError> {
         let index = self.require_track(track)?;
-        let kind = &self.project.tracks[index].kind;
-        match kind.layer() {
-            Some(_) => Ok(index),
-            None => Err(SessionError::WrongTrackKind {
+        if self.project.routing.is_layer(track) {
+            Ok(index)
+        } else {
+            Err(SessionError::WrongTrackKind {
                 id: track.0,
-                actual: kind.label(),
+                actual: self.project.tracks[index].kind.label(),
                 expected: "a layer",
-            }),
+            })
         }
     }
 }

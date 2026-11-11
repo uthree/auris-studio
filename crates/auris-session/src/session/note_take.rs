@@ -74,7 +74,7 @@ impl Session {
     /// the way an audio take does.
     pub(super) fn start_note_take(&mut self, track: TrackId) -> Result<(), SessionError> {
         let index = self.require_track(track)?;
-        if !self.project.tracks[index].kind.holds_notes() {
+        if !self.project.holds_notes(self.project.tracks[index].id) {
             return Err(SessionError::NothingToRecordOnto);
         }
         let count = self.count_in();

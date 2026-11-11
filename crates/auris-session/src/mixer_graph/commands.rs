@@ -294,12 +294,7 @@ impl Session {
                 }
                 let (track, to) = self.graph_output_target(source, target)?;
                 let tap = tap_of(*pre_fader);
-                let mut outputs = self
-                    .project()
-                    .track(track)
-                    .ok_or("Unknown source track")?
-                    .outputs
-                    .clone();
+                let mut outputs = self.project().outputs(track);
                 if outputs.iter().any(|output| output.key() == (to, tap)) {
                     return Err(
                         "This output already exists; use set_output to change its level".into(),
@@ -417,13 +412,16 @@ impl Session {
             } => {
                 let (from, to) = self.graph_connection(source, target, *kind)?;
                 let exists = match kind {
-                    ConnectionKind::Output => self.project().track(from).is_some_and(|track| {
+                    ConnectionKind::Output => {
                         let key = match to {
                             MixerNode::Strip(owner) => (destination(owner), Tap::PostFader),
                             _ => (Destination::Master, Tap::PostFader),
                         };
-                        track.outputs.iter().any(|output| output.key() == key)
-                    }),
+                        self.project()
+                            .routing
+                            .outputs(from)
+                            .any(|output| output.key() == key)
+                    }
                     ConnectionKind::Sidechain => match to {
                         MixerNode::Effect(owner, slot) => {
                             self.effect_sidechain(owner, slot) == Some(from)
@@ -456,9 +454,8 @@ impl Session {
                         };
                         let matching: Vec<Tap> = self
                             .project()
-                            .track(from)
-                            .into_iter()
-                            .flat_map(|track| &track.outputs)
+                            .routing
+                            .outputs(from)
                             .filter(|output| {
                                 output.to == to
                                     && pre_fader.is_none_or(|pre| output.tap == tap_of(pre))
@@ -551,13 +548,9 @@ impl Session {
                 let tap = tap_of(*pre_fader);
                 let output = self
                     .project()
-                    .track(track)
-                    .and_then(|entry| {
-                        entry
-                            .outputs
-                            .iter()
-                            .find(|output| output.key() == (to, tap))
-                    })
+                    .routing
+                    .outputs(track)
+                    .find(|output| output.key() == (to, tap))
                     .copied()
                     .ok_or("This output does not exist; mixer_graph read again")?;
                 let moved = move_pre_fader.map_or(tap, tap_of);
@@ -743,7 +736,14 @@ impl Session {
             .iter()
             .filter(|edge| page.contains(&edge.source))
             .map(|edge| {
-                let mut row = json!({"source":edge.source.key(),"target":edge.target.key()});
+                // What the edge carries, so a reader can tell notes from audio without knowing
+                // which kinds carry which.
+                let signal = match edge.kind {
+                    MixerEdgeKind::Notes => "notes",
+                    _ => "audio",
+                };
+                let mut row =
+                    json!({"source":edge.source.key(),"target":edge.target.key(),"signal":signal});
                 match edge.kind {
                     MixerEdgeKind::Chain => row["kind"] = "chain".into(),
                     MixerEdgeKind::Sidechain => row["kind"] = "sidechain".into(),

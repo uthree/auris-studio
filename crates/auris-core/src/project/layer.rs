@@ -21,6 +21,7 @@ use serde::{Deserialize, Serialize};
 use crate::time::{TICKS_PER_QUARTER, Ticks};
 
 use super::clip::{MidiClip, Note};
+use super::edges::Edge;
 use super::track::{Track, TrackKind};
 use super::{ClipId, Project, TrackId};
 
@@ -29,10 +30,10 @@ pub const MAX_LAYER_OFFSET: Ticks = Ticks(TICKS_PER_QUARTER * 4);
 
 /// Where a layer's notes come from, and how they are shaped on the way.
 ///
-/// A layer is an instrument track carrying one of these: it owns its instrument, strip, outputs
-/// and automation like any track, and borrows only the notes. The source is always a track
-/// with notes of its own — never a layer, never a drum track — so a layer pointing anywhere else
-/// plays nothing rather than anything surprising.
+/// A layer is an instrument track with a notes [`Edge`] into it, which this is the reading of: it
+/// owns its instrument, strip, outputs and automation like any track, and borrows only the notes.
+/// The source is always a track with notes of its own — never a layer, never a drum track — so a
+/// layer pointing anywhere else plays nothing rather than anything surprising.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct NoteSource {
     /// The track whose clips are played. Never a layer itself.
@@ -178,34 +179,6 @@ fn outer_voice(notes: Vec<Note>, beats: impl Fn(u8, u8) -> bool) -> Vec<Note> {
         .collect()
 }
 
-impl TrackKind {
-    /// What this track follows, when it is a layer.
-    pub fn layer(&self) -> Option<&NoteSource> {
-        match self {
-            TrackKind::Instrument(track) => track.follows.as_ref(),
-            _ => None,
-        }
-    }
-
-    /// What this track follows, mutably, when it is a layer.
-    pub fn layer_mut(&mut self) -> Option<&mut NoteSource> {
-        match self {
-            TrackKind::Instrument(track) => track.follows.as_mut(),
-            _ => None,
-        }
-    }
-
-    /// `true` when other tracks may follow this one: a melodic or singer track with notes of its
-    /// own. Drum tracks are left out, because a note number names a different sound on every kit.
-    pub fn can_be_followed(&self) -> bool {
-        match self {
-            TrackKind::Instrument(track) => track.follows.is_none(),
-            TrackKind::Singer(_) => true,
-            _ => false,
-        }
-    }
-}
-
 /// The clips a track plays and the shape they pass through on the way.
 #[derive(Copy, Clone, Debug)]
 pub struct PlayedClips<'a> {
@@ -240,17 +213,21 @@ impl Project {
     /// A layer plays its source's clips through its shape, and nothing at all when its source is
     /// missing or cannot be followed. Every other note track plays its own.
     pub fn played_clips<'a>(&'a self, track: &'a Track) -> Option<PlayedClips<'a>> {
-        match track.kind.layer() {
-            Some(source) => {
+        let source = self.routing.edges().iter().find_map(|edge| match edge {
+            Edge::Notes { from, to, shape } if *to == track.id => Some((*from, shape)),
+            _ => None,
+        });
+        match source {
+            Some((source, shape)) => {
                 let clips = self
-                    .track(source.track)
-                    .filter(|source| source.kind.can_be_followed())
+                    .track(source)
+                    .filter(|_| self.can_be_followed(source))
                     .and_then(|source| source.kind.note_clips())
                     .map(Vec::as_slice)
                     .unwrap_or_default();
                 Some(PlayedClips {
                     clips,
-                    shape: Some(&source.shape),
+                    shape: Some(shape),
                 })
             }
             None => track.kind.note_clips().map(|clips| PlayedClips {
@@ -260,17 +237,18 @@ impl Project {
         }
     }
 
+    /// What `track` follows, when it is a layer.
+    pub fn follows(&self, track: TrackId) -> Option<NoteSource> {
+        self.routing.follows(track)
+    }
+
     /// The layers following `source`, in track order.
     pub fn layers_of(&self, source: TrackId) -> Vec<TrackId> {
+        let layers: Vec<TrackId> = self.routing.layers_of(source).collect();
         self.tracks
             .iter()
-            .filter(|track| {
-                track
-                    .kind
-                    .layer()
-                    .is_some_and(|layer| layer.track == source)
-            })
             .map(|track| track.id)
+            .filter(|track| layers.contains(track))
             .collect()
     }
 
@@ -284,16 +262,13 @@ impl Project {
         name: impl Into<String>,
         instrument_id: impl Into<String>,
     ) -> Option<TrackId> {
-        if !self.track(source)?.kind.can_be_followed() {
+        if !self.can_be_followed(source) {
             return None;
         }
         let below = self.layers_of(source).last().copied().unwrap_or(source);
         let at = self.track_index(below)? + 1;
         let id = self.add_instrument_track(name, instrument_id);
-        if let Some(TrackKind::Instrument(inner)) = self.track_mut(id).map(|track| &mut track.kind)
-        {
-            inner.follows = Some(NoteSource::new(source));
-        }
+        self.routing.set_follows(id, Some(NoteSource::new(source)));
         self.move_track(id, at);
         Some(id)
     }
@@ -307,12 +282,12 @@ impl Project {
     /// clips, independently of moved attacks and releases. `false` when `id` is not a layer.
     /// A missing source leaves no clips.
     pub fn detach_layer(&mut self, id: TrackId) -> bool {
-        let Some(source) = self.track(id).and_then(|track| track.kind.layer()).cloned() else {
+        let Some(source) = self.follows(id) else {
             return false;
         };
         let originals: Vec<MidiClip> = self
             .track(source.track)
-            .filter(|track| track.kind.can_be_followed())
+            .filter(|_| self.can_be_followed(source.track))
             .and_then(|track| track.kind.note_clips())
             .cloned()
             .unwrap_or_default();
@@ -336,8 +311,8 @@ impl Project {
         else {
             return false;
         };
-        inner.follows = None;
         inner.clips = copies;
+        self.routing.set_follows(id, None);
         true
     }
 }
@@ -539,11 +514,11 @@ mod tests {
         let order: Vec<_> = project.tracks.iter().map(|track| track.id).collect();
         assert_eq!(&order[..3], &[lead, first, second]);
 
-        let layer = project.track(first).unwrap();
         assert!(
-            !layer.kind.holds_notes(),
+            !project.holds_notes(first),
             "a layer takes no clips of its own"
         );
+        let layer = project.track(first).unwrap();
         let played = project.played_clips(layer).unwrap();
         assert_eq!(played.clips.len(), 1);
         assert_eq!(project.layers_of(lead), vec![first, second]);
@@ -564,12 +539,8 @@ mod tests {
 
         // A document that says otherwise opens and plays nothing on that track.
         project
-            .track_mut(layer)
-            .unwrap()
-            .kind
-            .layer_mut()
-            .unwrap()
-            .track = drums;
+            .routing
+            .set_follows(layer, Some(NoteSource::new(drums)));
         let track = project.track(layer).unwrap();
         assert!(project.played_clips(track).unwrap().clips.is_empty());
     }
@@ -578,19 +549,12 @@ mod tests {
     fn detaching_writes_the_shape_into_copied_clips() {
         let (mut project, lead) = project_with_lead();
         let layer = project.add_layer_track(lead, "Fifth", "pad").unwrap();
-        project
-            .track_mut(layer)
-            .unwrap()
-            .kind
-            .layer_mut()
-            .unwrap()
-            .shape
-            .transpose = 7;
+        project.routing.shape_mut(layer).unwrap().transpose = 7;
         assert!(project.detach_layer(layer));
 
         let source_clip = project.track(lead).unwrap().kind.note_clips().unwrap()[0].id;
         let detached = project.track(layer).unwrap();
-        assert!(detached.kind.layer().is_none());
+        assert!(project.follows(layer).is_none());
         let clips = detached.kind.note_clips().unwrap();
         assert_eq!(clips.len(), 1);
         assert_ne!(
@@ -683,13 +647,7 @@ mod tests {
                 }],
             );
             let layer = project.add_layer_track(lead, "Layer", "pad").unwrap();
-            let shape = &mut project
-                .track_mut(layer)
-                .unwrap()
-                .kind
-                .layer_mut()
-                .unwrap()
-                .shape;
+            let shape = project.routing.shape_mut(layer).unwrap();
             shape.lowest = 72;
             shape.highest = 84;
             shape.velocity = 0.7;
@@ -758,11 +716,17 @@ mod tests {
     fn a_layer_round_trips_and_an_unshaped_one_stores_no_shape() {
         let (mut project, lead) = project_with_lead();
         let layer = project.add_layer_track(lead, "Pad", "pad").unwrap();
-        let stored = serde_json::to_value(project.track(layer).unwrap()).unwrap();
-        let follows = &stored["kind"]["follows"];
-        assert_eq!(follows["track"], serde_json::json!(lead.0));
-        assert!(follows.get("shape").is_none());
-        let back: Track = serde_json::from_value(stored).unwrap();
-        assert_eq!(back.kind.layer(), Some(&NoteSource::new(lead)));
+        let stored = serde_json::to_value(&project.routing).unwrap();
+        let notes = stored
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|edge| edge["kind"] == "notes")
+            .unwrap();
+        assert_eq!(notes["from"], serde_json::json!(lead.0));
+        assert_eq!(notes["to"], serde_json::json!(layer.0));
+        assert!(notes.get("shape").is_none());
+        let back: super::super::Routing = serde_json::from_value(stored).unwrap();
+        assert_eq!(back.follows(layer), Some(NoteSource::new(lead)));
     }
 }

@@ -139,8 +139,9 @@ impl Session {
                     auris_core::Tap::PostFader
                 };
                 self.project()
-                    .track(track)
-                    .is_some_and(|entry| entry.outputs.iter().any(|o| o.key() == (to, tap)))
+                    .routing
+                    .outputs(track)
+                    .any(|o| o.key() == (to, tap))
                     .then_some(ParamTarget::Output { track, to, tap })
                     .ok_or("Unknown output; mixer_graph read again".into())
             }

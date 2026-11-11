@@ -1313,7 +1313,7 @@ impl Session {
                         serde_json::json!({"track":track.id.0, "name":track.name,
                         "kind":track.kind.label(), "mixer":mixer_summary(&track.mixer), "clips":clips,"drum_assignments":self.drum_assignments(track.id),
                         "instrument":track.kind.as_instrument().map(|inner| &inner.instrument_id),
-                        "layer":track.kind.layer().map(|source| serde_json::json!({"follows":source.track.0,"shape":layers::shape_json(&source.shape)})),
+                        "layer":project.follows(track.id).map(|source| serde_json::json!({"follows":source.track.0,"shape":layers::shape_json(&source.shape)})),
                         "soundfont_preset":self.track_preset(track.id)})
                     })
                     .collect();
