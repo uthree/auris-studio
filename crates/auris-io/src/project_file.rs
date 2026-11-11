@@ -342,12 +342,13 @@ pub fn stage_file_bytes(path: &Path, bytes: &[u8]) -> Result<StagedFile> {
 ///
 /// Every version bump must decide whether the version it replaces joins this range. Version 32
 /// forgot to, and a project saved the day before would not open at all.
-const READABLE_OLDER: std::ops::RangeInclusive<u32> = 27..=36;
+const READABLE_OLDER: std::ops::RangeInclusive<u32> = 27..=37;
 
 /// Reads a project from `path`.
 ///
 /// The format version must match this build, or be one of the older versions it still reads:
-/// 36 and earlier with connections kept on the tracks and slots they touch (see
+/// 37 and earlier with a shape on each layer's connection (see `perform_layer_shapes`), 36 and
+/// earlier with connections kept on the tracks and slots they touch (see
 /// `hoist_connections`), 35 and earlier with sends beside the outputs (see
 /// `fold_sends_into_outputs`), 31 with each
 /// track's single output, 30 without the latest extended chords, 29 without eleventh chords, 28
@@ -369,12 +370,15 @@ pub fn load_project(path: &Path) -> Result<Project> {
         });
     }
 
-    let mut project: Project = if probe.format_version < CONNECTIONS_HOISTED {
+    let mut project: Project = if probe.format_version < SHAPES_PERFORMED {
         let mut document: serde_json::Value = serde_json::from_slice(&bytes)?;
         if probe.format_version < SENDS_FOLDED {
             fold_sends_into_outputs(&mut document);
         }
-        hoist_connections(&mut document);
+        if probe.format_version < CONNECTIONS_HOISTED {
+            hoist_connections(&mut document);
+        }
+        perform_layer_shapes(&mut document);
         serde_json::from_value(document)?
     } else {
         serde_json::from_slice(&bytes)?
@@ -409,14 +413,102 @@ const SENDS_FOLDED: u32 = 36;
 /// The first format version in which every connection lives in the project's own list.
 const CONNECTIONS_HOISTED: u32 = 37;
 
+/// The first format version in which a layer's shape is a performance node on its notes path.
+const SHAPES_PERFORMED: u32 = 38;
+
+/// Furthest a version-37 layer shape moved its notes either way: one 4/4 bar. Kept so a document
+/// sounds as it did; a delay written today has no such limit.
+const OLD_LAYER_OFFSET_LIMIT: i64 = 4 * 960;
+
+/// Rewrites a version-37 routing list into today's routing, in place.
+///
+/// Version 37 stored the routing as a bare list of edges, and a notes edge joined two track ids
+/// and carried the layer's shape. Today the routing is an object of `edges` and `performances`,
+/// a notes edge joins two nodes, and a shape is a performance standing between the source and the
+/// layer, made of the transforms the shape stood for, in the order it applied them: the key
+/// range, the voice, the transpose, the velocity, the length and the offset. Each new performance
+/// takes the next id from the document's counter. A shape that changed nothing leaves the source
+/// connected straight to the layer. A routing that is already an object is today's shape stamped
+/// with an older number and is left alone.
+fn perform_layer_shapes(document: &mut serde_json::Value) {
+    use serde_json::{Value, json};
+
+    let Some(Value::Array(edges)) = document.get("routing").cloned() else {
+        return;
+    };
+    let mut next_id = document.get("next_id").and_then(Value::as_u64).unwrap_or(1);
+    let mut rewritten = Vec::new();
+    let mut performances = Vec::new();
+    for edge in edges {
+        if edge.get("kind").and_then(Value::as_str) != Some("notes") {
+            rewritten.push(edge);
+            continue;
+        }
+        let from = json!({ "track": edge.get("from").cloned().unwrap_or(Value::Null) });
+        let to = json!({ "track": edge.get("to").cloned().unwrap_or(Value::Null) });
+        let transforms = edge.get("shape").map(shape_transforms).unwrap_or_default();
+        if transforms.is_empty() {
+            rewritten.push(json!({ "kind": "notes", "from": from, "to": to }));
+            continue;
+        }
+        let id = next_id;
+        next_id += 1;
+        performances.push(json!({ "id": id, "transforms": transforms }));
+        let node = json!({ "performance": id });
+        rewritten.push(json!({ "kind": "notes", "from": from, "to": node }));
+        rewritten.push(json!({ "kind": "notes", "from": node, "to": to }));
+    }
+    if let Some(document) = document.as_object_mut() {
+        document.insert(
+            "routing".into(),
+            json!({ "performances": performances, "edges": rewritten }),
+        );
+        document.insert("next_id".into(), json!(next_id));
+    }
+}
+
+/// The transforms a version-37 layer shape stood for, leaving out every field at its identity.
+fn shape_transforms(shape: &serde_json::Value) -> Vec<serde_json::Value> {
+    use serde_json::{Value, json};
+
+    let number = |field: &str| shape.get(field).and_then(Value::as_f64);
+    let mut transforms = Vec::new();
+    let lowest = number("lowest").unwrap_or(0.0).clamp(0.0, 127.0) as u8;
+    let highest = number("highest").unwrap_or(127.0).clamp(0.0, 127.0) as u8;
+    if (lowest.min(highest), lowest.max(highest)) != (0, 127) {
+        transforms.push(json!({"kind": "key_range", "lowest": lowest, "highest": highest}));
+    }
+    if let Some(voice @ ("top" | "bottom")) = shape.get("voice").and_then(Value::as_str) {
+        transforms.push(json!({"kind": "voice", "voice": voice}));
+    }
+    let transpose = number("transpose").unwrap_or(0.0) as i64;
+    if transpose != 0 {
+        transforms.push(json!({"kind": "transpose", "semitones": transpose}));
+    }
+    let velocity = number("velocity").unwrap_or(1.0);
+    if velocity != 1.0 {
+        transforms.push(json!({"kind": "velocity", "scale": velocity}));
+    }
+    let length = number("length").unwrap_or(1.0);
+    if length != 1.0 {
+        transforms.push(json!({"kind": "length", "factor": length}));
+    }
+    let offset = (number("offset").unwrap_or(0.0) as i64)
+        .clamp(-OLD_LAYER_OFFSET_LIMIT, OLD_LAYER_OFFSET_LIMIT);
+    if offset != 0 {
+        transforms.push(json!({"kind": "delay", "ticks": offset}));
+    }
+    transforms
+}
+
 /// Moves every connection off the tracks and effect slots it was written on and into the
 /// project's `routing` list, in place.
 ///
 /// Before [`CONNECTIONS_HOISTED`] a track carried its `outputs` (a missing list meant the master
 /// alone), an instrument track that was a layer carried `follows`, and an effect slot keyed from a
 /// track carried `sidechain`. Each becomes one edge, in that order: every track's outputs in track
-/// order, then the keys, then the layers. A document that already has a `routing` list is
-/// today's shape stamped with an older number and is left alone.
+/// order, then the keys, then the layers, each layer's still carrying the shape version 37 kept
+/// on it. A document that already has a `routing` is left alone.
 fn hoist_connections(document: &mut serde_json::Value) {
     use serde_json::{Map, Value, json};
 
@@ -1160,7 +1252,7 @@ mod tests {
     }
 
     #[test]
-    fn version_36_moves_outputs_keys_and_layers_into_the_routing() {
+    fn version_36_moves_outputs_keys_and_layers_into_the_routing_and_shapes_into_performances() {
         let file = TempFile::new("version-36.auris");
         let mut expected = demo_project();
         let bus = expected.add_bus_track("Bus");
@@ -1168,7 +1260,12 @@ mod tests {
         let layer = expected
             .add_layer_track(lead, "Pad", "auris.synth.pulse")
             .unwrap();
-        expected.routing.shape_mut(layer).unwrap().transpose = 12;
+        let performance = expected.add_performance(layer).unwrap();
+        expected
+            .routing
+            .performance_mut(performance)
+            .unwrap()
+            .transforms = vec![auris_core::NoteTransform::Transpose { semitones: 12 }];
         expected.routing.set_outputs(
             lead,
             &[
@@ -1192,8 +1289,11 @@ mod tests {
         for stored in value["tracks"].as_array_mut().unwrap() {
             let id = auris_core::TrackId(stored["id"].as_u64().unwrap());
             stored["outputs"] = serde_json::to_value(expected.outputs(id)).unwrap();
-            if let Some(source) = expected.follows(id) {
-                stored["kind"]["follows"] = serde_json::to_value(source).unwrap();
+            // A layer named its source and carried its shape, which version 38 turns into a
+            // performance standing between the two.
+            if let Some(source) = expected.layer_source(id) {
+                stored["kind"]["follows"] =
+                    serde_json::json!({"track": source.0, "shape": {"transpose": 12}});
             }
             for effect in stored["mixer"]["effects"].as_array_mut().unwrap() {
                 let slot = auris_core::EffectSlotId(effect["id"].as_u64().unwrap());
@@ -1207,8 +1307,25 @@ mod tests {
         let loaded = load_project(file.path()).unwrap();
         for track in &expected.tracks {
             assert_eq!(loaded.outputs(track.id), expected.outputs(track.id));
-            assert_eq!(loaded.follows(track.id), expected.follows(track.id));
+            assert_eq!(
+                loaded.layer_source(track.id),
+                expected.layer_source(track.id)
+            );
         }
+        let path = loaded.routing.path_into(layer).unwrap();
+        assert_eq!(path.performances.len(), 1);
+        assert_eq!(
+            loaded
+                .routing
+                .performance(path.performances[0])
+                .unwrap()
+                .transforms,
+            [auris_core::NoteTransform::Transpose { semitones: 12 }]
+        );
+        assert!(
+            loaded.conflicting_object_id().is_none(),
+            "the new performance took an id of its own"
+        );
         assert_eq!(loaded.sidechain(slot), Some(lead));
         assert_eq!(loaded.routing.edges().len(), expected.routing.edges().len());
     }

@@ -60,7 +60,7 @@ pub use volume_contour::{VolumeContour, VolumeContourPreset};
 mod mixer_view;
 mod recipe;
 mod routing;
-pub use layer::{LayerShape, LayerVoice, MAX_LAYER_OFFSET, NoteSource, PlayedClips};
+pub use layer::PlayedClips;
 pub use mixer_view::{MixerGraphView, MixerNodePosition};
 mod track;
 mod transform;
@@ -78,7 +78,7 @@ pub use curve::{
     BEND_LIMIT, CONTROLLER_LIMIT, CURVE_STEP, ClipCurve, CurvePoint, curve_at, curve_events,
 };
 pub use drum::{DrumLane, DrumMap, DrumRole};
-pub use edges::{Edge, Port, Routing, Signal};
+pub use edges::{Edge, NotesNode, NotesPath, Performance, Port, Routing, Signal};
 pub use ornament::{Fall, Scoop, Vibrato};
 pub use performance::{PerformanceContext, performed_note_slots, performed_notes};
 pub use performance_preset::{
@@ -93,7 +93,9 @@ pub use track::{
     AudioTrack, Color, ConsonantLevels, ConsonantWidths, InstrumentTrack, SingerPitch, SingerTake,
     SingerTrack, SingerVoice, Track, TrackKind, default_frame_hop,
 };
-pub use transform::{NoteTransform, SUSTAIN_MAX_TICKS, StrokeDirection, performed, swing_position};
+pub use transform::{
+    ChordVoice, NoteTransform, SUSTAIN_MAX_TICKS, StrokeDirection, performed, swing_position,
+};
 
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -123,6 +125,13 @@ pub struct ClipId(pub u64);
 )]
 #[serde(transparent)]
 pub struct SourceId(pub u64);
+
+/// Identifies one performance node on a notes path.
+#[derive(
+    Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
+#[serde(transparent)]
+pub struct PerformanceId(pub u64);
 
 /// Identifies one slot in an effect chain.
 #[derive(
@@ -312,6 +321,8 @@ impl Default for Project {
 
 impl Project {
     /// Schema version written into saved files and required when opening them.
+    /// Version 38 replaces a layer's shape with a performance node on its notes path, and adds
+    /// the key range, voice, velocity, length and delay transforms that shape was made of.
     /// Version 37 moves every connection — outputs, sidechain keys and layers — off the tracks and
     /// effect slots and into one list on the project.
     /// Version 36 folds sends into outputs, which now carry a level and a tap point of their own.
@@ -322,7 +333,7 @@ impl Project {
     /// Version 31 adds power, added-tone, 6/9 and thirteenth chord qualities to stored harmony.
     /// Version 30 adds eleventh chord qualities to stored harmony.
     /// Version 29 adds ordered, named manual drum lanes beside generation-role assignments.
-    pub const FORMAT_VERSION: u32 = 37;
+    pub const FORMAT_VERSION: u32 = 38;
 
     /// The name a document carries until somebody — a person or the agent — gives it one.
     pub const UNTITLED: &'static str = "Untitled";

@@ -20,7 +20,7 @@ use crate::plugin::PluginState;
 use crate::time::{TempoMap, Ticks};
 
 use super::clip::{AudioClip, MidiClip, audio_clip_ticks};
-use super::edges::Edge;
+use super::edges::{Edge, NotesNode};
 use super::routing::{Destination, MixerStrip, Output};
 use super::{ClipId, EffectSlotId, Project, TrackId};
 
@@ -640,11 +640,9 @@ impl Project {
                             to: *new,
                         })
                 }
-                Edge::Notes { from, to, shape } if *to == id => Some(Edge::Notes {
-                    from: *from,
-                    to: new_id,
-                    shape: shape.clone(),
-                }),
+                Edge::Notes { from, to } if *to == NotesNode::Track(id) => {
+                    Some(Edge::notes(*from, NotesNode::Track(new_id)))
+                }
                 _ => None,
             })
             .collect();
@@ -689,6 +687,7 @@ impl Project {
             self.routing.retain(|edge| {
                 !edge.touches(id) && !matches!(edge, Edge::Key { to, .. } if slots.contains(to))
             });
+            self.routing.prune_performances();
             for track in lost_a_route {
                 if track != id && self.routing.outputs(track).next().is_none() {
                     self.routing.push(Edge::Output {

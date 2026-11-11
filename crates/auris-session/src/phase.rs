@@ -118,7 +118,18 @@ fn placed(clip: &MidiClip, performance: &str, out: &mut Vec<Placed>) {
 fn sound(project: &Project, id: auris_core::TrackId, kind: &TrackKind) -> String {
     let value = match kind {
         TrackKind::Instrument(track) | TrackKind::Drum(track) => {
-            serde_json::json!([track.instrument_id, track.file, project.follows(id)])
+            // What a layer plays is part of how it sounds: its source and every performance on the
+            // way.
+            let path = project.routing.path_into(id).map(|path| {
+                let stages: Vec<_> = path
+                    .performances
+                    .iter()
+                    .filter_map(|performance| project.routing.performance(*performance))
+                    .map(|performance| &performance.transforms)
+                    .collect();
+                serde_json::json!([path.source.0, stages])
+            });
+            serde_json::json!([track.instrument_id, track.file, path])
         }
         TrackKind::Singer(track) => {
             serde_json::json!([track.instrument_id, track.voice.as_ref().map(|v| &v.path)])

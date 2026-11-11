@@ -3,7 +3,7 @@
 //! Nodes are stable document identities, not plugin instances. Internal edges describe the
 //! insert order; editable edges use the same session commands as the console and the toolbox.
 
-use auris_core::{Destination, EffectSlotId, Tap, TrackId};
+use auris_core::{Destination, EffectSlotId, PerformanceId, Tap, TrackId};
 
 use crate::{Session, SessionError};
 
@@ -17,6 +17,19 @@ pub enum MixerNode {
     Strip(Option<TrackId>),
     /// An insert before its strip's fader.
     Effect(Option<TrackId>, EffectSlotId),
+    /// A performance standing on a notes path, between a track's notes and a layer.
+    Performance(PerformanceId),
+}
+
+impl MixerNode {
+    /// The strip this node belongs to: `Some(None)` for the master's, `None` for a node that
+    /// belongs to no strip.
+    pub fn owner(self) -> Option<Option<TrackId>> {
+        match self {
+            MixerNode::Strip(owner) | MixerNode::Effect(owner, _) => Some(owner),
+            MixerNode::Performance(_) => None,
+        }
+    }
 }
 
 /// The operation represented by an edge.
@@ -38,10 +51,11 @@ pub enum MixerEdgeKind {
     },
     /// A key signal arriving at an effect's second input.
     Sidechain,
-    /// A layer playing its source's notes: from the source's strip to the layer's.
+    /// Notes on a layer's path: from the source's strip, through any performances, to the
+    /// layer's.
     ///
     /// Notes rather than audio, so it carries no level and no meter; disconnecting it detaches
-    /// the layer.
+    /// every layer the path fed.
     Notes,
 }
 
@@ -98,7 +112,27 @@ impl Session {
                         }
                     }
                     MixerEdgeKind::Notes => {
-                        if let MixerNode::Strip(Some(layer)) = edge.target {
+                        // Cutting a notes wire anywhere on a path detaches every layer it fed, so
+                        // each keeps the part it was playing as notes of its own.
+                        let fed: Vec<TrackId> = self
+                            .project()
+                            .tracks
+                            .iter()
+                            .map(|track| track.id)
+                            .filter(|layer| {
+                                MixerNode::Strip(Some(*layer)) == edge.target
+                                    || matches!(
+                                        edge.target,
+                                        MixerNode::Performance(id)
+                                            if self
+                                                .project()
+                                                .routing
+                                                .path_into(*layer)
+                                                .is_some_and(|path| path.performances.contains(&id))
+                                    )
+                            })
+                            .collect();
+                        for layer in fed {
                             self.detach_layer(layer)?;
                         }
                     }
@@ -158,15 +192,6 @@ impl Session {
                 previous = node;
             }
             if let Some(track) = owner.and_then(|id| self.project().track(id)) {
-                if let Some(source) = self.project().follows(track.id)
-                    && self.project().track(source.track).is_some()
-                {
-                    graph.edges.push(MixerEdge {
-                        source: MixerNode::Strip(Some(source.track)),
-                        target: input,
-                        kind: MixerEdgeKind::Notes,
-                    });
-                }
                 for output in self.project().routing.outputs(track.id) {
                     graph.edges.push(MixerEdge {
                         source: previous,
@@ -178,6 +203,34 @@ impl Session {
                         },
                     });
                 }
+            }
+        }
+        // The performances, after every strip, and every notes connection between the two
+        // kinds of node. A notes wire into a track that is not there is not drawn.
+        let routing = &self.project().routing;
+        graph.nodes.extend(
+            routing
+                .performances()
+                .iter()
+                .map(|performance| MixerNode::Performance(performance.id)),
+        );
+        let node = |end: auris_core::NotesNode| match end {
+            auris_core::NotesNode::Track(id) => {
+                self.project().track(id).map(|_| MixerNode::Strip(Some(id)))
+            }
+            auris_core::NotesNode::Performance(id) => {
+                routing.performance(id).map(|_| MixerNode::Performance(id))
+            }
+        };
+        for edge in routing.edges() {
+            if let auris_core::Edge::Notes { from, to } = edge
+                && let (Some(source), Some(target)) = (node(*from), node(*to))
+            {
+                graph.edges.push(MixerEdge {
+                    source,
+                    target,
+                    kind: MixerEdgeKind::Notes,
+                });
             }
         }
         graph
@@ -212,6 +265,8 @@ impl Session {
                     && !self.project().sidechain_would_cycle(owner, source)
                     && self.effect_wants_sidechain(owner, slot)
             }
+            // A performance takes notes, not audio; a strip's output port never reaches one.
+            MixerNode::Performance(_) => false,
         }
     }
 
@@ -232,6 +287,7 @@ impl Session {
             MixerNode::Effect(owner, slot) => {
                 self.set_effect_sidechain(owner, slot, Some(source))?
             }
+            MixerNode::Performance(_) => unreachable!("refused by can_connect_mixer"),
         }
         Ok(true)
     }
@@ -300,9 +356,7 @@ mod tests {
             .mixer_graph()
             .edges
             .into_iter()
-            .filter(|edge| match edge.source {
-                MixerNode::Strip(owner) | MixerNode::Effect(owner, _) => owner == Some(a),
-            })
+            .filter(|edge| edge.source.owner() == Some(Some(a)))
             .collect();
         let before = serde_json::to_value(session.project()).unwrap();
         assert!(session.disconnect_mixer_edges(&edges).unwrap());

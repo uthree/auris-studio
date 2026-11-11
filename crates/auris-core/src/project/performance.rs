@@ -109,6 +109,33 @@ pub fn performed_note_slots(
             NoteTransform::Brush { amount } => brush(&mut notes, *amount, context),
             NoteTransform::Slide { amount } => slide(&mut notes, *amount, context),
             NoteTransform::Sustain { ticks } => sustain(&mut notes, *ticks),
+            NoteTransform::KeyRange { lowest, highest } => {
+                let (lowest, highest) = ((*lowest).min(*highest), (*lowest).max(*highest));
+                for (i, note) in notes.iter().enumerate() {
+                    if !(lowest..=highest).contains(&note.pitch) {
+                        suppressed.insert(i);
+                    }
+                }
+            }
+            NoteTransform::Voice { voice } => {
+                let beats = |other: u8, note: u8| match voice {
+                    super::ChordVoice::Top => other > note,
+                    super::ChordVoice::Bottom => other < note,
+                };
+                let hidden: Vec<usize> = (0..notes.len())
+                    .filter(|&i| {
+                        !suppressed.contains(&i)
+                            && (0..notes.len()).any(|j| {
+                                j != i
+                                    && !suppressed.contains(&j)
+                                    && notes[j].start <= notes[i].start
+                                    && notes[i].start < notes[j].end()
+                                    && beats(notes[j].pitch, notes[i].pitch)
+                            })
+                    })
+                    .collect();
+                suppressed.extend(hidden);
+            }
             local => {
                 notes = notes
                     .into_iter()

@@ -1,4 +1,4 @@
-//! Every connection between tracks, in one list.
+//! Every connection between tracks, in one list, and the nodes that only exist between them.
 //!
 //! A track's audio reaching a bus, a track keying an effect's detector, a layer playing another
 //! track's notes: each of these used to be written down on one end of the connection — the
@@ -7,16 +7,22 @@
 //! three walks for every question about the graph as a whole. [`Routing`] is the one store, and
 //! an [`Edge`] says which kind of connection it is.
 //!
-//! The nodes are still the document's own: tracks, the master and effect slots. What an edge
-//! connects is a pair of [`Port`]s, and every port carries one kind of [`Signal`], so a
-//! connection between ports that carry different things can be refused by asking them rather
+//! Most nodes are still the document's own: tracks, the master and effect slots. The one kind
+//! that lives here is the [`Performance`]: a stack of [`NoteTransform`]s standing on a notes path,
+//! between a track whose notes are played and a layer that plays them. It is a node rather than a
+//! property of the connection so that one performance can feed several instruments.
+//!
+//! What an edge connects is a pair of [`Port`]s, and every port carries one kind of [`Signal`],
+//! so a connection between ports that carry different things can be refused by asking them rather
 //! than by remembering which combinations make sense.
+
+use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};
 
-use super::layer::{LayerShape, NoteSource};
 use super::routing::{Destination, Output, Tap};
-use super::{EffectSlotId, TrackId};
+use super::transform::NoteTransform;
+use super::{EffectSlotId, PerformanceId, TrackId};
 
 /// What travels along a connection.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
@@ -27,13 +33,23 @@ pub enum Signal {
     Audio,
 }
 
+/// A node notes can leave or arrive at.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NotesNode {
+    /// A track: the source of its own clips' notes, or a layer playing someone else's.
+    Track(TrackId),
+    /// A performance standing on the path.
+    Performance(PerformanceId),
+}
+
 /// One end of a connection: a place a signal leaves or arrives.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Port {
-    /// A track's notes, as its clips perform them.
-    NotesOut(TrackId),
-    /// The notes a layer plays instead of its own.
-    NotesIn(TrackId),
+    /// Notes leaving a track or a performance.
+    NotesOut(NotesNode),
+    /// Notes arriving at a layer or a performance.
+    NotesIn(NotesNode),
     /// A track's audio, taken after the fader or before it.
     AudioOut(TrackId, Tap),
     /// The summing input of a bus or the master.
@@ -57,10 +73,39 @@ impl Port {
     }
 }
 
+/// A stack of note transforms standing on a notes path.
+///
+/// What arrives is the source's notes as its clips perform them, clip by clip; what leaves is
+/// those notes through every transform here in order. The clip's own stack has already run, so a
+/// performance is a second stage over the whole part — a delay, a key split, a top voice, a swing
+/// for every clip at once — and freezing a layer writes both stages in.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Performance {
+    /// Unique within the project, from the same counter as every other id.
+    pub id: PerformanceId,
+    /// What the node is called on screen; empty for one nobody has named.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub name: String,
+    /// The stages, applied in order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub transforms: Vec<NoteTransform>,
+}
+
+impl Performance {
+    /// An empty, unnamed performance: the identity.
+    pub fn new(id: PerformanceId) -> Self {
+        Self {
+            id,
+            name: String::new(),
+            transforms: Vec::new(),
+        }
+    }
+}
+
 /// One connection.
 ///
 /// Each variant is one kind of connection rather than a pair of ports with optional extras, so a
-/// level can only sit on audio into a mix and a shape only on notes into a layer.
+/// level can only sit on audio into a mix.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Edge {
@@ -82,15 +127,12 @@ pub enum Edge {
         /// The effect slot listening to it.
         to: EffectSlotId,
     },
-    /// A track's notes into a layer, shaped on the way.
+    /// Notes from a track or a performance into a layer or a performance.
     Notes {
-        /// The track whose notes are played. Never a layer itself.
-        from: TrackId,
-        /// The layer that plays them.
-        to: TrackId,
-        /// What is done to the notes.
-        #[serde(default, skip_serializing_if = "LayerShape::is_identity")]
-        shape: LayerShape,
+        /// Where the notes come from.
+        from: NotesNode,
+        /// Where they go.
+        to: NotesNode,
     },
 }
 
@@ -98,6 +140,11 @@ impl Edge {
     /// An output from `from`.
     pub fn output(from: TrackId, output: Output) -> Self {
         Edge::Output { from, output }
+    }
+
+    /// Notes from `from` to `to`.
+    pub fn notes(from: NotesNode, to: NotesNode) -> Self {
+        Edge::Notes { from, to }
     }
 
     /// Where this connection leaves.
@@ -123,42 +170,74 @@ impl Edge {
         self.source().signal()
     }
 
-    /// The track this connection leaves.
-    pub fn from(&self) -> TrackId {
+    /// The track this connection leaves, when it leaves a track.
+    pub fn from_track(&self) -> Option<TrackId> {
         match self {
-            Edge::Output { from, .. } | Edge::Key { from, .. } | Edge::Notes { from, .. } => *from,
+            Edge::Output { from, .. } | Edge::Key { from, .. } => Some(*from),
+            Edge::Notes {
+                from: NotesNode::Track(from),
+                ..
+            } => Some(*from),
+            Edge::Notes { .. } => None,
         }
     }
 
     /// The track this connection arrives at, when it arrives at a track.
     ///
-    /// A bus for an output into one, the layer for notes; `None` for the master and for a key,
-    /// whose effect slot is owned by a strip this enum does not know.
+    /// A bus for an output into one, the layer for notes; `None` for the master, for a key,
+    /// whose effect slot is owned by a strip this enum does not know, and for a performance.
     pub fn to_track(&self) -> Option<TrackId> {
         match self {
             Edge::Output { output, .. } => output.bus(),
-            Edge::Notes { to, .. } => Some(*to),
-            Edge::Key { .. } => None,
+            Edge::Notes {
+                to: NotesNode::Track(to),
+                ..
+            } => Some(*to),
+            Edge::Notes { .. } | Edge::Key { .. } => None,
         }
     }
 
     /// `true` when this connection touches `track` at either end.
     pub fn touches(&self, track: TrackId) -> bool {
-        self.from() == track || self.to_track() == Some(track)
+        self.from_track() == Some(track) || self.to_track() == Some(track)
+    }
+
+    /// `true` when this connection touches performance `id` at either end.
+    pub fn touches_performance(&self, id: PerformanceId) -> bool {
+        matches!(
+            self,
+            Edge::Notes { from, to }
+                if *from == NotesNode::Performance(id) || *to == NotesNode::Performance(id)
+        )
     }
 }
 
-/// Every connection in a project.
+/// What a layer plays: the track whose clips it borrows and the performances on the way.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NotesPath {
+    /// The track whose notes are played.
+    pub source: TrackId,
+    /// The performances between it and the layer, nearest the source first.
+    pub performances: Vec<PerformanceId>,
+}
+
+/// Every connection in a project, and the performances standing on notes paths.
 ///
-/// A list rather than per-node maps, because the order is meaningful: a track's outputs keep the
-/// order they were added in, and that order is how the engine and the meters address them.
+/// The edges are a list rather than per-node maps, because the order is meaningful: a track's
+/// outputs keep the order they were added in, and that order is how the engine and the meters
+/// address them.
 ///
 /// The invariants the session upholds, and `Project::repair_routing` restores on load: no two
 /// outputs of one track share a destination and tap; an effect slot has at most one key; a layer
-/// follows at most one source.
+/// or a performance has at most one notes input; every performance lies on a path that ends at a
+/// layer.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-#[serde(transparent)]
 pub struct Routing {
+    /// The performances, in the order they were made.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    performances: Vec<Performance>,
+    /// Every connection, in order.
+    #[serde(default)]
     edges: Vec<Edge>,
 }
 
@@ -188,6 +267,11 @@ impl Routing {
     /// Every connection, to be changed in place.
     pub fn edges_mut(&mut self) -> impl Iterator<Item = &mut Edge> {
         self.edges.iter_mut()
+    }
+
+    /// Replaces every connection, keeping the performances.
+    pub fn set_edges(&mut self, edges: Vec<Edge>) {
+        self.edges = edges;
     }
 
     /// The outputs of `track`, in order.
@@ -259,59 +343,190 @@ impl Routing {
         })
     }
 
-    /// What `track` follows, when it is a layer.
-    pub fn follows(&self, track: TrackId) -> Option<NoteSource> {
+    /// Every performance, in the order they were made.
+    pub fn performances(&self) -> &[Performance] {
+        &self.performances
+    }
+
+    /// One performance.
+    pub fn performance(&self, id: PerformanceId) -> Option<&Performance> {
+        self.performances
+            .iter()
+            .find(|performance| performance.id == id)
+    }
+
+    /// One performance, to be changed in place.
+    pub fn performance_mut(&mut self, id: PerformanceId) -> Option<&mut Performance> {
+        self.performances
+            .iter_mut()
+            .find(|performance| performance.id == id)
+    }
+
+    /// Adds a performance standing on no path yet.
+    pub fn add_performance(&mut self, performance: Performance) {
+        self.performances.push(performance);
+    }
+
+    /// What feeds notes into `node`, if anything.
+    pub fn notes_input(&self, node: NotesNode) -> Option<NotesNode> {
         self.edges.iter().find_map(|edge| match edge {
-            Edge::Notes { from, to, shape } if *to == track => Some(NoteSource {
-                track: *from,
-                shape: shape.clone(),
-            }),
+            Edge::Notes { from, to } if *to == node => Some(*from),
             _ => None,
         })
     }
 
-    /// The shape layer `track` plays its source through.
-    pub fn shape(&self, track: TrackId) -> Option<&LayerShape> {
-        self.edges.iter().find_map(|edge| match edge {
-            Edge::Notes { to, shape, .. } if *to == track => Some(shape),
-            _ => None,
-        })
-    }
-
-    /// The shape layer `track` plays its source through, to be changed in place.
-    pub fn shape_mut(&mut self, track: TrackId) -> Option<&mut LayerShape> {
-        self.edges.iter_mut().find_map(|edge| match edge {
-            Edge::Notes { to, shape, .. } if *to == track => Some(shape),
-            _ => None,
-        })
-    }
-
-    /// Makes `layer` follow `source`, or stop following anything when `source` is `None`.
-    pub fn set_follows(&mut self, layer: TrackId, source: Option<NoteSource>) {
-        self.edges
-            .retain(|edge| !matches!(edge, Edge::Notes { to, .. } if *to == layer));
-        if let Some(source) = source {
-            self.edges.push(Edge::Notes {
-                from: source.track,
-                to: layer,
-                shape: source.shape,
-            });
+    /// The path into layer `track`: its source and the performances on the way, or `None` when
+    /// `track` is no layer, or its path loops or ends somewhere other than a track.
+    pub fn path_into(&self, track: TrackId) -> Option<NotesPath> {
+        let mut at = self.notes_input(NotesNode::Track(track))?;
+        let mut performances = Vec::new();
+        let mut seen = HashSet::new();
+        loop {
+            match at {
+                NotesNode::Track(source) => {
+                    performances.reverse();
+                    return Some(NotesPath {
+                        source,
+                        performances,
+                    });
+                }
+                NotesNode::Performance(id) => {
+                    if !seen.insert(id) {
+                        return None;
+                    }
+                    performances.push(id);
+                    at = self.notes_input(at)?;
+                }
+            }
         }
     }
 
-    /// `true` when `track` is a layer.
-    pub fn is_layer(&self, track: TrackId) -> bool {
-        self.edges
-            .iter()
-            .any(|edge| matches!(edge, Edge::Notes { to, .. } if *to == track))
+    /// The track layer `track` plays the notes of.
+    pub fn source_of(&self, track: TrackId) -> Option<TrackId> {
+        self.path_into(track).map(|path| path.source)
     }
 
-    /// The layers following `source`, in the order they were made.
-    pub fn layers_of(&self, source: TrackId) -> impl Iterator<Item = TrackId> + '_ {
-        self.edges.iter().filter_map(move |edge| match edge {
-            Edge::Notes { from, to, .. } if *from == source => Some(*to),
-            _ => None,
-        })
+    /// `true` when `track` is a layer: something feeds it notes.
+    pub fn is_layer(&self, track: TrackId) -> bool {
+        self.notes_input(NotesNode::Track(track)).is_some()
+    }
+
+    /// The performance feeding layer `track` directly, if one does.
+    pub fn performance_into(&self, track: TrackId) -> Option<PerformanceId> {
+        match self.notes_input(NotesNode::Track(track))? {
+            NotesNode::Performance(id) => Some(id),
+            NotesNode::Track(_) => None,
+        }
+    }
+
+    /// Makes `layer` play `source`'s notes directly, or stop playing anyone's when `source` is
+    /// `None`. Performances that fed only it go with the connection.
+    pub fn set_follows(&mut self, layer: TrackId, source: Option<TrackId>) {
+        let target = NotesNode::Track(layer);
+        self.edges
+            .retain(|edge| !matches!(edge, Edge::Notes { to, .. } if *to == target));
+        if let Some(source) = source {
+            self.edges
+                .push(Edge::notes(NotesNode::Track(source), target));
+        }
+        self.prune_performances();
+    }
+
+    /// Stands `performance` on the path into layer `layer`, directly in front of it.
+    ///
+    /// Returns `false`, changing nothing, when `layer` is no layer.
+    pub fn insert_performance(&mut self, layer: TrackId, performance: Performance) -> bool {
+        let target = NotesNode::Track(layer);
+        if self.notes_input(target).is_none() {
+            return false;
+        }
+        let node = NotesNode::Performance(performance.id);
+        self.performances.push(performance);
+        for edge in &mut self.edges {
+            if let Edge::Notes { to, .. } = edge
+                && *to == target
+            {
+                *to = node;
+            }
+        }
+        self.edges.push(Edge::notes(node, target));
+        true
+    }
+
+    /// Takes performance `id` off its path, joining what fed it straight to everything it fed.
+    /// Returns `false`, changing nothing, when there is no such performance.
+    pub fn bypass_performance(&mut self, id: PerformanceId) -> bool {
+        let node = NotesNode::Performance(id);
+        if self.performance(id).is_none() {
+            return false;
+        }
+        let input = self.notes_input(node);
+        self.edges
+            .retain(|edge| !matches!(edge, Edge::Notes { to, .. } if *to == node));
+        match input {
+            Some(input) => {
+                for edge in &mut self.edges {
+                    if let Edge::Notes { from, .. } = edge
+                        && *from == node
+                    {
+                        *from = input;
+                    }
+                }
+            }
+            None => {
+                self.edges
+                    .retain(|edge| !matches!(edge, Edge::Notes { from, .. } if *from == node));
+            }
+        }
+        self.performances.retain(|performance| performance.id != id);
+        true
+    }
+
+    /// The layers whose notes come from `source`, in the order their connections were made.
+    pub fn layers_of(&self, source: TrackId) -> Vec<TrackId> {
+        self.edges
+            .iter()
+            .filter_map(|edge| match edge {
+                Edge::Notes {
+                    to: NotesNode::Track(layer),
+                    ..
+                } if self.source_of(*layer) == Some(source) => Some(*layer),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Removes every performance that no longer lies on a path from a track to a layer, with its
+    /// connections. Returns `true` when any went.
+    ///
+    /// A performance nothing feeds has nothing to perform, and one that feeds nothing is heard by
+    /// nobody; both are what is left when a layer is detached or deleted.
+    pub fn prune_performances(&mut self) -> bool {
+        let mut removed = false;
+        loop {
+            let dead: Vec<PerformanceId> = self
+                .performances
+                .iter()
+                .map(|performance| performance.id)
+                .filter(|&id| {
+                    let node = NotesNode::Performance(id);
+                    let fed = self.notes_input(node).is_some();
+                    let feeds = self
+                        .edges
+                        .iter()
+                        .any(|edge| matches!(edge, Edge::Notes { from, .. } if *from == node));
+                    !fed || !feeds
+                })
+                .collect();
+            if dead.is_empty() {
+                return removed;
+            }
+            removed = true;
+            self.performances
+                .retain(|performance| !dead.contains(&performance.id));
+            self.edges
+                .retain(|edge| !dead.iter().any(|&id| edge.touches_performance(id)));
+        }
     }
 }
 
@@ -330,11 +545,7 @@ mod tests {
                 from: TrackId(1),
                 to: EffectSlotId(9),
             },
-            Edge::Notes {
-                from: TrackId(1),
-                to: TrackId(3),
-                shape: LayerShape::default(),
-            },
+            Edge::notes(NotesNode::Track(TrackId(1)), NotesNode::Track(TrackId(3))),
         ];
         for edge in &edges {
             assert!(edge.source().is_source());
@@ -347,16 +558,14 @@ mod tests {
     #[test]
     fn replacing_a_tracks_outputs_keeps_them_where_they_were() {
         let mut routing = Routing::new();
-        routing.push(Edge::Output {
-            from: TrackId(1),
-            output: Output::master(),
-        });
-        routing.push(Edge::Output {
-            from: TrackId(2),
-            output: Output::master(),
-        });
+        routing.push(Edge::output(TrackId(1), Output::master()));
+        routing.push(Edge::output(TrackId(2), Output::master()));
         routing.set_outputs(TrackId(1), &[Output::to_bus(TrackId(5)), Output::master()]);
-        let order: Vec<_> = routing.edges().iter().map(Edge::from).collect();
+        let order: Vec<_> = routing
+            .edges()
+            .iter()
+            .filter_map(Edge::from_track)
+            .collect();
         assert_eq!(order, [TrackId(1), TrackId(1), TrackId(2)]);
         assert_eq!(
             routing.outputs_of(TrackId(1)),
@@ -367,7 +576,61 @@ mod tests {
     }
 
     #[test]
-    fn edges_round_trip_through_json_tagged_by_kind() {
+    fn a_layer_reads_its_source_through_every_performance_on_the_way() {
+        let mut routing = Routing::new();
+        let (source, layer) = (TrackId(1), TrackId(2));
+        routing.set_follows(layer, Some(source));
+        assert_eq!(routing.source_of(layer), Some(source));
+        assert!(routing.insert_performance(layer, Performance::new(PerformanceId(7))));
+        assert!(routing.insert_performance(layer, Performance::new(PerformanceId(8))));
+        assert_eq!(
+            routing.path_into(layer),
+            Some(NotesPath {
+                source,
+                performances: vec![PerformanceId(7), PerformanceId(8)],
+            })
+        );
+        assert_eq!(routing.performance_into(layer), Some(PerformanceId(8)));
+        assert_eq!(routing.layers_of(source), [layer]);
+
+        // Detaching the layer leaves both performances feeding nobody, so they go too.
+        routing.set_follows(layer, None);
+        assert!(routing.performances().is_empty());
+        assert!(routing.edges().is_empty());
+    }
+
+    #[test]
+    fn bypassing_a_performance_joins_what_fed_it_to_what_it_fed() {
+        let mut routing = Routing::new();
+        routing.set_follows(TrackId(2), Some(TrackId(1)));
+        routing.insert_performance(TrackId(2), Performance::new(PerformanceId(5)));
+        routing.insert_performance(TrackId(2), Performance::new(PerformanceId(6)));
+        assert!(routing.bypass_performance(PerformanceId(5)));
+        assert_eq!(
+            routing.path_into(TrackId(2)).unwrap().performances,
+            [PerformanceId(6)]
+        );
+        assert!(!routing.bypass_performance(PerformanceId(5)));
+    }
+
+    #[test]
+    fn a_performance_may_feed_several_layers() {
+        let mut routing = Routing::new();
+        let source = TrackId(1);
+        routing.set_follows(TrackId(2), Some(source));
+        routing.insert_performance(TrackId(2), Performance::new(PerformanceId(9)));
+        routing.push(Edge::notes(
+            NotesNode::Performance(PerformanceId(9)),
+            NotesNode::Track(TrackId(3)),
+        ));
+        assert_eq!(routing.layers_of(source), [TrackId(2), TrackId(3)]);
+        routing.set_follows(TrackId(2), None);
+        assert_eq!(routing.source_of(TrackId(3)), Some(source), "still fed");
+        assert_eq!(routing.performances().len(), 1);
+    }
+
+    #[test]
+    fn routing_round_trips_through_json_tagged_by_kind() {
         let mut routing = Routing::new();
         routing.push(Edge::Output {
             from: TrackId(1),
@@ -378,12 +641,19 @@ mod tests {
             },
         });
         routing.set_key(EffectSlotId(4), Some(TrackId(1)));
-        routing.set_follows(TrackId(3), Some(NoteSource::new(TrackId(1))));
+        routing.set_follows(TrackId(3), Some(TrackId(1)));
+        let mut performance = Performance::new(PerformanceId(5));
+        performance
+            .transforms
+            .push(NoteTransform::Delay { ticks: 240 });
+        routing.insert_performance(TrackId(3), performance);
         let json = serde_json::to_value(&routing).unwrap();
-        assert_eq!(json[0]["kind"], "output");
-        assert_eq!(json[0]["to"]["bus"], 2);
-        assert_eq!(json[1]["kind"], "key");
-        assert_eq!(json[2]["kind"], "notes");
+        assert_eq!(json["edges"][0]["kind"], "output");
+        assert_eq!(json["edges"][0]["to"]["bus"], 2);
+        assert_eq!(json["edges"][1]["kind"], "key");
+        assert_eq!(json["edges"][2]["kind"], "notes");
+        assert_eq!(json["edges"][2]["from"]["track"], 1);
+        assert_eq!(json["performances"][0]["transforms"][0]["kind"], "delay");
         assert_eq!(serde_json::from_value::<Routing>(json).unwrap(), routing);
     }
 }

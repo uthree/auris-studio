@@ -332,7 +332,7 @@ impl RenderGraph {
             // until a voice model exists, its `instrument_id` names the preview voice — so the
             // two kinds meet the same arm below, differing only in where the id, the state and
             // the clips are kept.
-            // A layer plays its source's clips through its own shape, which is the project's
+            // A layer plays its source's clips through its performances, which is the project's
             // answer rather than this file's: the MIDI writer asks the same question.
             let instrument_parts = match &track.kind {
                 TrackKind::Instrument(inner) | TrackKind::Drum(inner) => {
@@ -419,7 +419,7 @@ impl RenderGraph {
                             let schedule_error = played.clips.iter().find_map(|clip| {
                                 schedule_clip(
                                     clip,
-                                    played.shape,
+                                    &played,
                                     &project.tempo_map,
                                     &project.signatures,
                                     sample_rate,

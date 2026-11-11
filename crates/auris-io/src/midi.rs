@@ -2723,7 +2723,7 @@ mod tests {
     }
 
     #[test]
-    fn a_layer_exports_its_source_notes_through_its_shape() {
+    fn a_layer_exports_its_source_notes_through_its_performance() {
         let mut project = project_with(
             vec![
                 Note::new(48, Ticks::ZERO, Ticks(960)),
@@ -2734,13 +2734,19 @@ mod tests {
         );
         let lead = project.tracks[0].id;
         let layer = project.add_layer_track(lead, "Bass", "synth").unwrap();
-        *project.routing.shape_mut(layer).unwrap() = auris_core::LayerShape {
-            voice: auris_core::LayerVoice::Bottom,
-            transpose: -12,
-            length: 0.5,
-            offset: Ticks(240),
-            ..auris_core::LayerShape::default()
-        };
+        let performance = project.add_performance(layer).unwrap();
+        project
+            .routing
+            .performance_mut(performance)
+            .unwrap()
+            .transforms = vec![
+            auris_core::NoteTransform::Voice {
+                voice: auris_core::ChordVoice::Bottom,
+            },
+            auris_core::NoteTransform::Transpose { semitones: -12 },
+            auris_core::NoteTransform::Length { factor: 0.5 },
+            auris_core::NoteTransform::Delay { ticks: 240 },
+        ];
         let imported = round_trip(&project);
         assert_eq!(imported.tracks.len(), 2);
         let notes: Vec<_> = imported.tracks[1]

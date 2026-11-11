@@ -81,7 +81,12 @@ fn family(stage: &NoteTransform) -> Option<ResetStage> {
         NoteTransform::Groove { .. } => ResetStage::Groove,
         NoteTransform::Transpose { .. } => ResetStage::Transpose,
         NoteTransform::Lean { .. } => ResetStage::Lean,
-        NoteTransform::ForDrumVoice { .. } => return None,
+        NoteTransform::ForDrumVoice { .. }
+        | NoteTransform::KeyRange { .. }
+        | NoteTransform::Voice { .. }
+        | NoteTransform::Velocity { .. }
+        | NoteTransform::Length { .. }
+        | NoteTransform::Delay { .. } => return None,
     })
 }
 
@@ -94,7 +99,13 @@ fn rank(stage: &NoteTransform) -> usize {
         NoteTransform::Slide { .. } => 4,
         NoteTransform::Mute { .. } => 5,
         NoteTransform::Strum { .. } | NoteTransform::Stroke { .. } => 6,
-        NoteTransform::Lean { .. } | NoteTransform::ForDrumVoice { .. } => 7,
+        NoteTransform::Lean { .. }
+        | NoteTransform::ForDrumVoice { .. }
+        | NoteTransform::KeyRange { .. }
+        | NoteTransform::Voice { .. }
+        | NoteTransform::Velocity { .. }
+        | NoteTransform::Length { .. }
+        | NoteTransform::Delay { .. } => 7,
         NoteTransform::Humanize { .. } | NoteTransform::Expression { .. } => 8,
         NoteTransform::Sustain { .. } => 9,
         NoteTransform::Pitch { .. } => 10,

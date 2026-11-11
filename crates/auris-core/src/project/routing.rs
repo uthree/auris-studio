@@ -18,7 +18,7 @@ use crate::asset::AssetPath;
 use crate::plugin::PluginState;
 
 use super::comment::Comment;
-use super::edges::{Edge, Routing};
+use super::edges::{Edge, NotesNode};
 use super::track::{Track, TrackKind};
 use super::{EffectSlotId, Project, TrackId};
 
@@ -360,7 +360,7 @@ impl Project {
             .collect();
         let mut edges: Vec<Vec<usize>> = vec![Vec::new(); self.tracks.len()];
         for edge in self.routing.edges() {
-            let Some(&from) = indices.get(&edge.from()) else {
+            let Some(&from) = edge.from_track().and_then(|from| indices.get(&from)) else {
                 continue;
             };
             let to = match edge {
@@ -400,32 +400,54 @@ impl Project {
     /// Whether `edge` names things that exist and may be joined that way, ignoring loops and the
     /// uniqueness rules.
     fn edge_is_usable(&self, edge: &Edge) -> bool {
-        let Some(from) = self.track(edge.from()) else {
-            return false;
-        };
         match edge {
-            Edge::Output { output, .. } => {
-                output.gain_db.is_finite()
+            Edge::Output { from, output } => {
+                self.track(*from).is_some()
+                    && output.gain_db.is_finite()
                     && output.bus().is_none_or(|bus| {
-                        bus != from.id && self.track(bus).is_some_and(|bus| bus.kind.is_bus())
+                        bus != *from && self.track(bus).is_some_and(|bus| bus.kind.is_bus())
                     })
             }
-            Edge::Key { to, .. } => self
-                .slot_owner(*to)
-                .is_some_and(|owner| owner != Some(from.id)),
-            Edge::Notes { to, .. } => {
-                *to != from.id
-                    && matches!(
-                        self.track(*to).map(|layer| &layer.kind),
-                        Some(TrackKind::Instrument(_))
-                    )
-                    && match &from.kind {
-                        TrackKind::Singer(_) => true,
-                        TrackKind::Instrument(_) => !self.routing.is_layer(from.id),
-                        _ => false,
+            Edge::Key { from, to } => {
+                self.track(*from).is_some()
+                    && self
+                        .slot_owner(*to)
+                        .is_some_and(|owner| owner != Some(*from))
+            }
+            Edge::Notes { from, to } => {
+                let from_usable = match from {
+                    NotesNode::Track(source) => self.can_be_followed(*source),
+                    NotesNode::Performance(id) => self.routing.performance(*id).is_some(),
+                };
+                let to_usable = match to {
+                    NotesNode::Track(layer) => {
+                        *from != *to
+                            && matches!(
+                                self.track(*layer).map(|layer| &layer.kind),
+                                Some(TrackKind::Instrument(_))
+                            )
                     }
+                    NotesNode::Performance(id) => {
+                        *from != *to && self.routing.performance(*id).is_some()
+                    }
+                };
+                from_usable && to_usable
             }
         }
+    }
+
+    /// `true` when every notes path ends at a track whose notes are its own and every
+    /// performance stands on one.
+    fn notes_paths_are_whole(&self) -> bool {
+        let layers_resolve = self.routing.edges().iter().all(|edge| match edge {
+            Edge::Notes {
+                to: NotesNode::Track(layer),
+                ..
+            } => self.routing.path_into(*layer).is_some(),
+            _ => true,
+        });
+        let mut pruned = self.routing.clone();
+        layers_resolve && !pruned.prune_performances()
     }
 
     /// Whether every connection is usable, unique where it must be, and the graph acyclic.
@@ -442,6 +464,9 @@ impl Project {
             if !unique || !self.edge_is_usable(edge) {
                 return false;
             }
+        }
+        if !self.notes_paths_are_whole() {
+            return false;
         }
 
         let edges = self.routing_edges();
@@ -588,8 +613,10 @@ impl Project {
             .routing
             .edges()
             .iter()
-            .filter(|edge| matches!(edge, Edge::Output { .. }))
-            .map(Edge::from)
+            .filter_map(|edge| match edge {
+                Edge::Output { from, .. } => Some(*from),
+                _ => None,
+            })
             .collect();
 
         // Everything that names something unusable, or repeats what an earlier edge already says,
@@ -621,9 +648,9 @@ impl Project {
 
         // Now every edge points at something real, so what is left is loops. Each audio edge is
         // put back one at a time and dropped if it closes one, which terminates and does not
-        // depend on where in the document the loop happened to start. Notes cannot loop — a
-        // layer is never a source — so they go straight back.
-        self.routing = Routing::new();
+        // depend on where in the document the loop happened to start. Notes go straight back and
+        // are checked as whole paths below.
+        self.routing.set_edges(Vec::new());
         for edge in kept
             .iter()
             .filter(|edge| matches!(edge, Edge::Notes { .. }))
@@ -646,6 +673,25 @@ impl Project {
                 self.routing.push(edge);
             }
         }
+        // A layer whose path loops among performances, or ends anywhere but a track with notes of
+        // its own, loses its input; the performances that then stand on nothing go with it.
+        let broken: Vec<TrackId> = self
+            .routing
+            .edges()
+            .iter()
+            .filter_map(|edge| match edge {
+                Edge::Notes {
+                    to: NotesNode::Track(layer),
+                    ..
+                } if self.routing.path_into(*layer).is_none() => Some(*layer),
+                _ => None,
+            })
+            .collect();
+        for layer in broken {
+            self.routing.set_follows(layer, None);
+            repaired = true;
+        }
+        repaired |= self.routing.prune_performances();
         for track in had_outputs {
             if self.track(track).is_some() && self.routing.outputs(track).next().is_none() {
                 self.routing.push(Edge::Output {

@@ -571,10 +571,12 @@ impl AurisApp {
                                     muted: true,
                                     generated: false,
                                     follows: None,
-                                    content: ClipContent::Notes(match played.shape {
-                                        Some(shape) => shape.apply(clip.notes.clone()),
-                                        None => clip.notes.clone(),
-                                    }),
+                                    content: ClipContent::Notes(played.through_stages(
+                                        clip.notes.clone(),
+                                        clip,
+                                        self.project().tempo_map.bpm_at(clip.start),
+                                        self.project().signatures.clone(),
+                                    )),
                                 })
                                 .collect()
                         })

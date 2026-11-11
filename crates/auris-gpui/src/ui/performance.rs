@@ -172,6 +172,12 @@ pub(super) fn rank(transform: &NoteTransform) -> usize {
         NoteTransform::Slide { .. } => 4,
         NoteTransform::Mute { .. } => 5,
         NoteTransform::Stroke { .. } | NoteTransform::Strum { .. } => 6,
+        // The layer stages keep or move what the stages before them made.
+        NoteTransform::KeyRange { .. }
+        | NoteTransform::Voice { .. }
+        | NoteTransform::Velocity { .. }
+        | NoteTransform::Length { .. }
+        | NoteTransform::Delay { .. } => 7,
     }
 }
 

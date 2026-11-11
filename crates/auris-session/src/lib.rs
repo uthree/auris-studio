@@ -267,6 +267,7 @@ pub fn midi_extensions() -> &'static [&'static str] {
 /// know that rule to tell which `Key` a line means, and one of the two would be wrong silently.
 pub mod prelude {
     pub use crate::session::CommentHost;
+    pub use crate::session::LayerDials;
     pub use crate::session::PartSource;
     pub use crate::session::{PlaybackReadiness, PlaybackState};
     pub use crate::session::{RhythmGrid, RhythmRow};
@@ -304,13 +305,13 @@ pub mod prelude {
     pub use auris_core::{
         AudioBuffer, AudioClip, AudioSource, ClipId, ClipPreset, ClipRecipe, Color,
         ConsonantWidths, Destination, DrumMap, DrumRole, DrumVoiceRecipe, EffectSlot, EffectSlotId,
-        FadeCurve, Fall, GhostNotes, GhostPattern, LayerShape, LayerVoice, MAX_LAYER_OFFSET,
-        MAX_STRING_MS, MidiClip, MixerStrip, Note, NoteTransform, Output, PluginRegistry,
-        PresetRef, Project, STRUM_VALUES, SUSTAIN_MAX_TICKS, Scoop, SectionMap, SectionPoint,
-        SectionSpan, SingerPitch, SingerTrack, SoundFontId, SoundFontRef, SourceId,
-        StrokeDirection, Subdivision, Tap, Track, TrackId, TrackKind, Vibrato, default_frame_hop,
-        default_loop_end, loop_passes, sounding_length,
+        FadeCurve, Fall, GhostNotes, GhostPattern, MAX_STRING_MS, MidiClip, MixerStrip, Note,
+        NoteTransform, Output, PluginRegistry, PresetRef, Project, STRUM_VALUES, SUSTAIN_MAX_TICKS,
+        Scoop, SectionMap, SectionPoint, SectionSpan, SingerPitch, SingerTrack, SoundFontId,
+        SoundFontRef, SourceId, StrokeDirection, Subdivision, Tap, Track, TrackId, TrackKind,
+        Vibrato, default_frame_hop, default_loop_end, loop_passes, sounding_length,
     };
+    pub use auris_core::{ChordVoice, Performance, PerformanceId};
     pub use auris_core::{Comment, CommentId, JoinRefusal};
     pub use auris_core::{
         Expression, GroovePoint, GrooveTemplate, PitchPerformance, Strum, StrumClock,

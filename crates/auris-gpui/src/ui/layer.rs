@@ -1,8 +1,9 @@
 //! The inspector's layer section: what a layer follows, and how it shapes the notes it borrows.
 //!
 //! A layer is a whole track — instrument, strip, routing — so everything else about it is the
-//! ordinary track inspector. What is its own is the [`LayerShape`], and every slider here writes
-//! one field of it through [`Session::set_layer_shape`](auris_session::Session::set_layer_shape).
+//! ordinary track inspector. What is its own is how it shapes the notes it borrows: the
+//! [`LayerDials`] of the performance standing in front of it, and every slider here writes one of
+//! them through [`Session::set_layer_dials`](auris_session::Session::set_layer_dials).
 //! The mapping between a slider's travel and a field is the free functions at the top, so the
 //! arithmetic is tested without a window.
 
@@ -23,6 +24,10 @@ pub const TRANSPOSE_RANGE: i32 = 24;
 
 /// Grid the timing slider lands on, in ticks: a sixty-fourth note.
 const OFFSET_STEP: i64 = TICKS_PER_QUARTER / 16;
+
+/// How far the timing slider reaches either way, in ticks: one bar of 4/4. A performance can
+/// delay further; the slider covers what a layer is usually moved by.
+const OFFSET_RANGE: i64 = 4 * TICKS_PER_QUARTER;
 
 /// One slider of the layer section.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -82,13 +87,13 @@ impl LayerDial {
             Self::Transpose => 1.0 / (2 * TRANSPOSE_RANGE) as f32,
             Self::Velocity => 0.005,
             Self::Length => 1.0 / 48.0,
-            Self::Offset => OFFSET_STEP as f32 / (2 * MAX_LAYER_OFFSET.raw()) as f32,
+            Self::Offset => OFFSET_STEP as f32 / (2 * OFFSET_RANGE) as f32,
         }
     }
 }
 
 /// Where the slider for `dial` sits for `shape`, from 0 to 1.
-pub fn layer_fraction(shape: &LayerShape, dial: LayerDial) -> f32 {
+pub fn layer_fraction(shape: &LayerDials, dial: LayerDial) -> f32 {
     let fraction = match dial {
         LayerDial::Lowest => f32::from(shape.lowest) / 127.0,
         LayerDial::Highest => f32::from(shape.highest) / 127.0,
@@ -101,7 +106,7 @@ pub fn layer_fraction(shape: &LayerShape, dial: LayerDial) -> f32 {
         // quarter of the length at the left, four times it at the right, as written in the middle.
         LayerDial::Length => (shape.length.max(0.25).log2() + 2.0) / 4.0,
         LayerDial::Offset => {
-            let range = MAX_LAYER_OFFSET.raw();
+            let range = OFFSET_RANGE;
             (shape.offset.raw() + range) as f32 / (2 * range) as f32
         }
     };
@@ -112,7 +117,7 @@ pub fn layer_fraction(shape: &LayerShape, dial: LayerDial) -> f32 {
 ///
 /// The two ends of the key range push each other rather than crossing, so dragging the lowest
 /// note past the highest carries the highest along — a range is never left empty by accident.
-pub fn with_layer_dial(shape: &LayerShape, dial: LayerDial, fraction: f32) -> LayerShape {
+pub fn with_layer_dial(shape: &LayerDials, dial: LayerDial, fraction: f32) -> LayerDials {
     let fraction = fraction.clamp(0.0, 1.0);
     let mut next = shape.clone();
     match dial {
@@ -135,7 +140,7 @@ pub fn with_layer_dial(shape: &LayerShape, dial: LayerDial, fraction: f32) -> La
             next.length = (length * 100.0).round() / 100.0;
         }
         LayerDial::Offset => {
-            let range = MAX_LAYER_OFFSET.raw();
+            let range = OFFSET_RANGE;
             let ticks = (fraction as f64 * (2 * range) as f64).round() as i64 - range;
             next.offset = Ticks((ticks as f64 / OFFSET_STEP as f64).round() as i64 * OFFSET_STEP);
         }
@@ -144,7 +149,7 @@ pub fn with_layer_dial(shape: &LayerShape, dial: LayerDial, fraction: f32) -> La
 }
 
 /// What the slider for `dial` reads.
-pub fn layer_text(shape: &LayerShape, dial: LayerDial) -> String {
+pub fn layer_text(shape: &LayerDials, dial: LayerDial) -> String {
     match dial {
         LayerDial::Lowest => format!("{} ({})", pitch_name(shape.lowest), shape.lowest),
         LayerDial::Highest => format!("{} ({})", pitch_name(shape.highest), shape.highest),
@@ -171,11 +176,11 @@ fn signed(value: i32) -> String {
     }
 }
 
-fn voice_key(voice: LayerVoice) -> Key {
+fn voice_key(voice: Option<ChordVoice>) -> Key {
     match voice {
-        LayerVoice::All => Key::LayerVoiceAll,
-        LayerVoice::Top => Key::LayerVoiceTop,
-        LayerVoice::Bottom => Key::LayerVoiceBottom,
+        None => Key::LayerVoiceAll,
+        Some(ChordVoice::Top) => Key::LayerVoiceTop,
+        Some(ChordVoice::Bottom) => Key::LayerVoiceBottom,
     }
 }
 
@@ -188,7 +193,7 @@ impl AurisApp {
             .and_then(|source| self.project().track(source))
             .map(|source| source.name.clone())
             .unwrap_or_else(|| self.t(Key::LayerSourceMissing).to_string());
-        let shaped = match self.session.layer_shape(track) {
+        let shaped = match self.session.layer_dials(track) {
             Some(shape) if !shape.is_identity() => self.t(Key::LayerShaped),
             _ => self.t(Key::LayerUnshaped),
         };
@@ -201,7 +206,7 @@ impl AurisApp {
         track: TrackId,
         cx: &mut gpui::Context<Self>,
     ) -> Vec<AnyElement> {
-        let Some(shape) = self.session.layer_shape(track).cloned() else {
+        let Some(shape) = self.session.layer_dials(track) else {
             return Vec::new();
         };
         let theme = self.theme.clone();
@@ -285,7 +290,7 @@ impl AurisApp {
                     theme.accent,
                     &theme,
                     cx.listener(move |this, _, _, cx| {
-                        this.run_menu_command(MenuCommand::ResetLayerShape(track), cx);
+                        this.run_menu_command(MenuCommand::ResetLayerDials(track), cx);
                     }),
                 )))
                 .child(div().flex_1().child(button(
@@ -308,11 +313,11 @@ impl AurisApp {
     fn layer_voice_menu(&self, anchor: Point<Pixels>, track: TrackId) -> ContextMenu {
         let current = self
             .session
-            .layer_shape(track)
+            .layer_dials(track)
             .map(|shape| shape.voice)
             .unwrap_or_default();
         let mut menu = ContextMenu::new(anchor, self.t(Key::LayerVoice));
-        for voice in [LayerVoice::All, LayerVoice::Top, LayerVoice::Bottom] {
+        for voice in [None, Some(ChordVoice::Top), Some(ChordVoice::Bottom)] {
             menu = menu.toggle(
                 self.t(voice_key(voice)),
                 MenuCommand::SetLayerVoice { track, voice },
@@ -324,11 +329,11 @@ impl AurisApp {
 
     /// Moves one of a layer's sliders to `fraction` of its travel.
     pub(crate) fn set_layer_dial(&mut self, track: TrackId, dial: LayerDial, fraction: f32) {
-        let Some(shape) = self.session.layer_shape(track) else {
+        let Some(shape) = self.session.layer_dials(track) else {
             return;
         };
-        let next = with_layer_dial(shape, dial, fraction);
-        let _ = self.session.set_layer_shape(track, next);
+        let next = with_layer_dial(&shape, dial, fraction);
+        let _ = self.session.set_layer_dials(track, next);
     }
 
     /// Applies a layer slider drag, measured in pixels from where it began.
@@ -347,15 +352,15 @@ impl AurisApp {
     }
 
     /// Changes which voice of a chord a layer keeps, and nothing else about its shape.
-    pub(crate) fn set_layer_voice(&mut self, track: TrackId, voice: LayerVoice) {
-        let Some(shape) = self.session.layer_shape(track) else {
+    pub(crate) fn set_layer_voice(&mut self, track: TrackId, voice: Option<ChordVoice>) {
+        let Some(shape) = self.session.layer_dials(track) else {
             return;
         };
-        let next = LayerShape {
+        let next = LayerDials {
             voice,
             ..shape.clone()
         };
-        let _ = self.session.set_layer_shape(track, next);
+        let _ = self.session.set_layer_dials(track, next);
     }
 
     /// Adds a layer on `source` with the default instrument, and selects it.
@@ -384,7 +389,7 @@ mod tests {
 
     #[test]
     fn every_slider_reads_the_default_shape_where_its_value_is() {
-        let shape = LayerShape::default();
+        let shape = LayerDials::default();
         assert_eq!(layer_fraction(&shape, LayerDial::Lowest), 0.0);
         assert_eq!(layer_fraction(&shape, LayerDial::Highest), 1.0);
         assert_eq!(layer_fraction(&shape, LayerDial::Transpose), 0.5);
@@ -399,7 +404,7 @@ mod tests {
 
     #[test]
     fn sliders_land_on_whole_semitones_percents_and_grid_steps() {
-        let shape = LayerShape::default();
+        let shape = LayerDials::default();
         let up = with_layer_dial(&shape, LayerDial::Transpose, 0.5 + 7.2 / 48.0);
         assert_eq!(up.transpose, 7);
         let soft = with_layer_dial(&shape, LayerDial::Velocity, 0.3333);
@@ -420,9 +425,9 @@ mod tests {
     #[test]
     fn the_inspector_can_read_transposes_beyond_its_slider_range() {
         for (transpose, expected) in [(i32::MIN, 0.0), (i32::MAX, 1.0)] {
-            let shape = LayerShape {
+            let shape = LayerDials {
                 transpose,
-                ..LayerShape::default()
+                ..LayerDials::default()
             };
             assert_eq!(layer_fraction(&shape, LayerDial::Transpose), expected);
             assert_eq!(layer_text(&shape, LayerDial::Transpose), signed(transpose));
@@ -431,10 +436,10 @@ mod tests {
 
     #[test]
     fn the_ends_of_the_key_range_push_each_other_instead_of_crossing() {
-        let shape = LayerShape {
+        let shape = LayerDials {
             lowest: 40,
             highest: 60,
-            ..LayerShape::default()
+            ..LayerDials::default()
         };
         let raised = with_layer_dial(&shape, LayerDial::Lowest, 72.0 / 127.0);
         assert_eq!((raised.lowest, raised.highest), (72, 72));
@@ -444,18 +449,18 @@ mod tests {
 
     #[test]
     fn slider_text_names_pitches_signs_and_beats() {
-        let shape = LayerShape {
+        let shape = LayerDials {
             lowest: 60,
             transpose: -12,
             velocity: 0.5,
             offset: Ticks(TICKS_PER_QUARTER / 2),
-            ..LayerShape::default()
+            ..LayerDials::default()
         };
         assert_eq!(layer_text(&shape, LayerDial::Lowest), "C4 (60)");
         assert_eq!(layer_text(&shape, LayerDial::Transpose), "-12");
         assert_eq!(layer_text(&shape, LayerDial::Velocity), "50%");
         assert_eq!(layer_text(&shape, LayerDial::Offset), "+0.5♩");
-        assert_eq!(layer_text(&LayerShape::default(), LayerDial::Offset), "0♩");
+        assert_eq!(layer_text(&LayerDials::default(), LayerDial::Offset), "0♩");
     }
 
     mod window {
@@ -504,10 +509,10 @@ mod tests {
             release(cx, point(at.x + px(travel), at.y));
             paint(&app, cx);
             app.update(cx, |this, _| {
-                assert_eq!(this.session.layer_shape(layer).unwrap().transpose, 12);
+                assert_eq!(this.session.layer_dials(layer).unwrap().transpose, 12);
                 assert_eq!(this.session.midi_clip(clip).unwrap().notes[0].pitch, 60);
                 this.undo();
-                assert!(this.session.layer_shape(layer).unwrap().is_identity());
+                assert!(this.session.layer_dials(layer).unwrap().is_identity());
                 this.undo();
                 assert_eq!(
                     this.session.layer_source(layer),
@@ -553,12 +558,12 @@ mod tests {
                 this.add_layer_on(source);
                 let layer = this.selected_track.unwrap();
                 this.session
-                    .set_layer_shape(
+                    .set_layer_dials(
                         layer,
-                        LayerShape {
+                        LayerDials {
                             lowest: 72,
                             highest: 84,
-                            ..LayerShape::default()
+                            ..LayerDials::default()
                         },
                     )
                     .unwrap();
@@ -587,7 +592,7 @@ mod tests {
             paint(&app, cx);
             app.read_with(cx, |this, _| {
                 assert_eq!(this.session.layer_source(layer), Some(source));
-                assert_eq!(this.session.layer_shape(layer).unwrap().lowest, 72);
+                assert_eq!(this.session.layer_dials(layer).unwrap().lowest, 72);
                 assert!(
                     this.project()
                         .track(layer)

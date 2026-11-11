@@ -53,12 +53,12 @@ pub use plugin::{
     TailContext,
 };
 pub use project::{
-    AudioClip, AudioSource, AudioSourceBank, AudioTrack, ClipId, ClipPreset, ClipRecipe, Color,
-    Comment, CommentId, Comments, ConsonantLevels, ConsonantWidths, Destination, DrumMap, DrumRole,
-    DrumVoiceRecipe, Edge, EffectSlot, EffectSlotId, Expression, FadeCurve, Fall, GhostNotes,
-    GhostPattern, GroovePoint, GrooveTemplate, InstrumentTrack, JoinRefusal, LayerShape,
-    LayerVoice, MAX_LAYER_OFFSET, MAX_STRING_MS, MidiClip, MixerStrip, Note, NoteSource,
-    NoteTransform, Output, PerformanceContext, PerformancePreset, PerformanceStyle,
+    AudioClip, AudioSource, AudioSourceBank, AudioTrack, ChordVoice, ClipId, ClipPreset,
+    ClipRecipe, Color, Comment, CommentId, Comments, ConsonantLevels, ConsonantWidths, Destination,
+    DrumMap, DrumRole, DrumVoiceRecipe, Edge, EffectSlot, EffectSlotId, Expression, FadeCurve,
+    Fall, GhostNotes, GhostPattern, GroovePoint, GrooveTemplate, InstrumentTrack, JoinRefusal,
+    MAX_STRING_MS, MidiClip, MixerStrip, Note, NoteTransform, NotesNode, NotesPath, Output,
+    Performance, PerformanceContext, PerformanceId, PerformancePreset, PerformanceStyle,
     PitchPerformance, PlayedClips, Port, PresetFamily, PresetRef, Project, Routing, STRUM_VALUES,
     SUSTAIN_MAX_TICKS, Scoop, Signal, SingerPitch, SingerTake, SingerTrack, SingerVoice,
     SoundFontId, SoundFontRef, SourceId, StrokeDirection, Strum, StrumClock, Subdivision, Tap,

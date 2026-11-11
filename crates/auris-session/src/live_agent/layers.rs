@@ -43,7 +43,8 @@ impl Operation {
     }
 }
 
-/// A partial [`LayerShape`]: every field left out keeps its current value.
+/// A partial [`LayerDials`]: every field left out keeps its current value. The dials are written
+/// into the performance in front of the layer, one transform each.
 #[derive(Debug, Default, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ShapePatch {
@@ -68,16 +69,16 @@ pub struct ShapePatch {
     /// Length multiplier, 0.05..4.
     #[schemars(range(min = 0.05, max = 4))]
     pub length: Option<f32>,
-    /// Quarter notes late (positive) or early (negative), -4..4.
-    #[schemars(range(min = -4, max = 4))]
+    /// Quarter notes late (positive) or early (negative), -16..16.
+    #[schemars(range(min = -16, max = 16))]
     pub offset_quarters: Option<f64>,
 }
 
 impl ShapePatch {
     /// `current` with this patch applied, or why the patch cannot be.
-    fn apply(&self, current: &LayerShape) -> Result<LayerShape, String> {
+    fn apply(&self, current: &LayerDials) -> Result<LayerDials, String> {
         let mut shape = if self.reset {
-            LayerShape::default()
+            LayerDials::default()
         } else {
             current.clone()
         };
@@ -95,9 +96,9 @@ impl ShapePatch {
         }
         if let Some(voice) = &self.voice {
             shape.voice = match voice.as_str() {
-                "all" => LayerVoice::All,
-                "top" => LayerVoice::Top,
-                "bottom" => LayerVoice::Bottom,
+                "all" => None,
+                "top" => Some(ChordVoice::Top),
+                "bottom" => Some(ChordVoice::Bottom),
                 other => return Err(format!("voice must be all, top or bottom, not {other}")),
             };
         }
@@ -114,7 +115,7 @@ impl ShapePatch {
             shape.length = within(length, 0.05, 4.0, "length")?;
         }
         if let Some(quarters) = self.offset_quarters {
-            let limit = MAX_LAYER_OFFSET.raw() as f64 / Ticks::QUARTER.raw() as f64;
+            let limit = OFFSET_LIMIT_QUARTERS;
             if !quarters.is_finite() || quarters.abs() > limit {
                 return Err(format!("offset_quarters must be -{limit}..{limit}"));
             }
@@ -123,6 +124,9 @@ impl ShapePatch {
         Ok(shape)
     }
 }
+
+/// Furthest the agent may move a layer's notes either way, in quarter notes: four bars of 4/4.
+const OFFSET_LIMIT_QUARTERS: f64 = 16.0;
 
 fn key(value: u8, field: &str) -> Result<u8, String> {
     if value > 127 {
@@ -139,14 +143,14 @@ fn within(value: f32, min: f32, max: f32, field: &str) -> Result<f32, String> {
 }
 
 /// A shape as the agent reads it: the same units the patch writes.
-pub(super) fn shape_json(shape: &LayerShape) -> serde_json::Value {
+pub(super) fn shape_json(shape: &LayerDials) -> serde_json::Value {
     serde_json::json!({
         "lowest": shape.lowest,
         "highest": shape.highest,
         "voice": match shape.voice {
-            LayerVoice::All => "all",
-            LayerVoice::Top => "top",
-            LayerVoice::Bottom => "bottom",
+            None => "all",
+            Some(ChordVoice::Top) => "top",
+            Some(ChordVoice::Bottom) => "bottom",
         },
         "transpose": shape.transpose,
         "velocity": shape.velocity,
@@ -188,23 +192,23 @@ impl Session {
                 let id = TrackId(track);
                 let (source, shape) = self
                     .layer_source(id)
-                    .zip(self.layer_shape(id))
+                    .zip(self.layer_dials(id))
                     .ok_or_else(|| format!("Track {track} is not a layer"))?;
                 Ok(serde_json::json!({
                     "track": track,
                     "follows": source.0,
                     "source_exists": self.project().track(source).is_some(),
-                    "shape": shape_json(shape),
+                    "shape": shape_json(&shape),
                 })
                 .to_string())
             }
             Operation::Shape { track, shape } => {
                 let id = TrackId(track);
                 let current = self
-                    .layer_shape(id)
+                    .layer_dials(id)
                     .ok_or_else(|| format!("Track {track} is not a layer"))?;
-                let next = shape.apply(current)?;
-                self.set_layer_shape(id, next.clone()).map_err(error)?;
+                let next = shape.apply(&current)?;
+                self.set_layer_dials(id, next.clone()).map_err(error)?;
                 Ok(serde_json::json!({"track": track, "shape": shape_json(&next), "unsaved": true})
                     .to_string())
             }
@@ -267,9 +271,9 @@ mod tests {
         .unwrap();
         assert_eq!(shaped["shape"]["transpose"], -12);
         assert_eq!(shaped["shape"]["offset_quarters"], 0.5);
-        let shape = session.layer_shape(TrackId(layer)).unwrap();
+        let shape = session.layer_dials(TrackId(layer)).unwrap();
         assert_eq!(shape.offset, Ticks(Ticks::QUARTER.raw() / 2));
-        assert_eq!(shape.voice, LayerVoice::Bottom);
+        assert_eq!(shape.voice, Some(ChordVoice::Bottom));
 
         // A second patch leaves the fields it does not name alone.
         run(
@@ -332,7 +336,7 @@ mod tests {
             serde_json::json!({"lowest":80,"highest":40}),
             serde_json::json!({"transpose":60}),
             serde_json::json!({"velocity":3.0}),
-            serde_json::json!({"offset_quarters":8.0}),
+            serde_json::json!({"offset_quarters":20.0}),
             serde_json::json!({"voice":"middle"}),
         ] {
             assert!(

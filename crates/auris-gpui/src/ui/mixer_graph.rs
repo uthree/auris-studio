@@ -37,6 +37,94 @@ mod wire_tooltip;
 mod menu;
 pub use menu::NewMixerTrack;
 
+impl AurisApp {
+    /// A performance's card: its name and the stages it runs, in order.
+    ///
+    /// Clicking it selects the layer it feeds, whose inspector is where the stages are dialled.
+    fn render_performance_node(
+        &mut self,
+        id: &SharedString,
+        performance: PerformanceId,
+        cx: &mut gpui::Context<Self>,
+    ) -> AnyElement {
+        let theme = self.theme.clone();
+        let (zoom, selected) = self.mixer_canvas.as_ref().map_or((1.0, false), |canvas| {
+            let state = canvas.state.read(cx);
+            (
+                state.viewport.zoom,
+                state.get_node(id).is_some_and(|node| node.selected),
+            )
+        });
+        let Some(stages) = self
+            .project()
+            .routing
+            .performance(performance)
+            .map(|performance| performance.transforms.clone())
+        else {
+            return div().into_any_element();
+        };
+        let layer = self
+            .project()
+            .tracks
+            .iter()
+            .map(|track| track.id)
+            .find(|track| self.session.layer_performance(*track) == Some(performance));
+        let node = MixerNode::Performance(performance);
+        let selector = format!("graph-name-{id}");
+        div()
+            .w(px(NODE_WIDTH * zoom))
+            .p_2()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .bg(theme.surface)
+            .border_1()
+            .border_color(if selected { theme.accent } else { theme.border })
+            .rounded(Metrics::RADIUS_MD)
+            .text_xs()
+            .text_color(theme.text)
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _, _, cx| {
+                    if let Some(layer) = layer {
+                        this.select_track(layer);
+                    }
+                    cx.notify();
+                }),
+            )
+            .on_mouse_down(
+                MouseButton::Right,
+                Self::opens_menu(cx, move |this, at| this.mixer_node_menu(at, node)),
+            )
+            .child(
+                div()
+                    .debug_selector(move || selector.clone())
+                    .truncate()
+                    .text_color(theme.text_muted)
+                    .child(self.t(Key::MixerPerformance)),
+            )
+            .children(
+                stages
+                    .iter()
+                    .map(|stage| div().truncate().child(stage_name(stage)).into_any_element()),
+            )
+            .into_any_element()
+    }
+}
+
+/// The name a stage is stored under, which is also what the agent reads.
+fn stage_name(stage: &NoteTransform) -> String {
+    serde_json::to_value(stage)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("kind")
+                .and_then(|kind| kind.as_str())
+                .map(String::from)
+        })
+        .unwrap_or_default()
+}
+
 #[cfg(test)]
 #[path = "mixer_graph_wires_tests.rs"]
 mod wire_tests;
@@ -251,15 +339,16 @@ fn node_id(node: MixerNode) -> SharedString {
         MixerNode::Strip(owner) => format!("mix-track-{}", owner.map_or(0, |id| id.0)),
 
         MixerNode::Effect(_, slot) => format!("mix-effect-{}", slot.0),
+        MixerNode::Performance(id) => format!("mix-performance-{}", id.0),
     }
     .into()
 }
 
 fn edge_id(edge: &MixerEdge) -> SharedString {
-    let owner = match edge.source {
-        MixerNode::Strip(owner) | MixerNode::Effect(owner, _) => owner,
+    let source = match edge.source.owner() {
+        Some(owner) => MixerNode::Strip(owner).key(),
+        None => edge.source.key(),
     };
-    let source = MixerNode::Strip(owner).key();
     match edge.kind {
         MixerEdgeKind::Output { tap, .. } => format!(
             "mix-output-{source}-{}{}",
@@ -357,12 +446,29 @@ fn positions(graph: &MixerGraph) -> HashMap<MixerNode, FlowPoint> {
         .iter()
         .enumerate()
         .map(|(i, node)| {
-            let owner = match node {
-                MixerNode::Strip(t) | MixerNode::Effect(t, _) => t,
+            // A performance sits on the row of the first strip downstream of it.
+            let row = match node.owner() {
+                Some(owner) => rows[&owner],
+                None => {
+                    let mut at = *node;
+                    let mut seen = HashSet::new();
+                    loop {
+                        if !seen.insert(at) {
+                            break y;
+                        }
+                        match graph.edges.iter().find(|edge| edge.source == at) {
+                            Some(edge) => match edge.target.owner() {
+                                Some(owner) => break rows.get(&owner).copied().unwrap_or(y),
+                                None => at = edge.target,
+                            },
+                            None => break y,
+                        }
+                    }
+                }
             };
             (
                 *node,
-                FlowPoint::new(24.0 + columns[i] as f32 * COLUMN, rows[owner]),
+                FlowPoint::new(24.0 + columns[i] as f32 * COLUMN, row),
             )
         })
         .collect()
@@ -930,6 +1036,9 @@ impl AurisApp {
                             }
                             handles
                         }
+                        // Notes are connected from the layer's inspector, not by dragging audio
+                        // ports, so a performance offers no port to drag.
+                        MixerNode::Performance(_) => Vec::new(),
                     };
                     let mut flow = FlowNode::new(id, position.x, position.y)
                         .size(NODE_WIDTH, 136.0)
@@ -1135,9 +1244,10 @@ impl AurisApp {
         else {
             return div().into_any_element();
         };
-        let owner = match node {
-            MixerNode::Strip(t) | MixerNode::Effect(t, _) => t,
-        };
+        if let MixerNode::Performance(performance) = node {
+            return self.render_performance_node(id, performance, cx);
+        }
+        let owner = node.owner().flatten();
         let theme = self.theme.clone();
         let (zoom, selected) = self.mixer_canvas.as_ref().map_or((1.0, false), |canvas| {
             let state = canvas.state.read(cx);
@@ -1244,7 +1354,7 @@ impl AurisApp {
                         ));
                 }
             }
-            MixerNode::Strip(_) => {
+            MixerNode::Strip(_) | MixerNode::Performance(_) => {
                 let strip = owner
                     .and_then(|id| self.project().track(id))
                     .map_or(&self.project().master, |t| &t.mixer);

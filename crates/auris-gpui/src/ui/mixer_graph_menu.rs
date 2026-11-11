@@ -55,6 +55,13 @@ impl AurisApp {
                     None => return ContextMenu::new(at, self.t(Key::MixerGraph)),
                 }
             }
+            // A performance holds no comments, so its menu is this one item.
+            MixerNode::Performance(id) => {
+                return ContextMenu::new(at, self.t(Key::MixerPerformance)).item(
+                    self.t(Key::MenuRemovePerformance),
+                    MenuCommand::RemovePerformance(id),
+                );
+            }
         };
         // Every node can carry a note about how it sits in the mix.
         menu.separator().item(

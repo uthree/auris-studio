@@ -1264,19 +1264,25 @@ pub mod architecture {
     //! otherwise opens with that one connection dropped and the layer silent. Notes are resolved
     //! before playback, so a notes edge orders nothing on the audio thread.
     //!
-    //! **The shape applies to what the source sounds.** A [`LayerShape`](auris_core::LayerShape)
-    //! — key range, top or bottom voice, transpose, velocity, length, offset — runs after the
-    //! source clip's own performance stack, and
-    //! [`Project::played_clips`](auris_core::Project::played_clips) is the one answer the renderer
-    //! and the MIDI writer share.
+    //! **Performance applies at two levels.** The source clip's own stack runs first, as it does
+    //! for the source itself; then each [`Performance`](auris_core::Performance) node on the notes
+    //! path runs its own [`NoteTransform`](auris_core::NoteTransform)s in order. A performance is
+    //! a node of its own in the routing — source, performances, layer —
+    //! and the stages a layer is usually shaped with are transforms like any other: a key range,
+    //! the top or bottom voice, a transpose, a velocity and a length scale, and a delay. The layer
+    //! panel's dials are a view over the performance directly in front of the layer
+    //! ([`LayerDials`](crate::session::LayerDials)), made when a dial first moves and taken off the path
+    //! when every dial is back at its identity.
+    //! [`Project::played_clips`](auris_core::Project::played_clips) resolves the path once, and
+    //! its answer is the one the renderer, the MIDI writer and the video share.
     //!
     //! **A layer holds no clips.** [`Project::holds_notes`](auris_core::Project::holds_notes)
     //! is `false` for one, which is what keeps every command that writes, pastes or moves notes off
     //! it. Removing the source detaches its layers in the same step:
     //! [`Session::detach_layer`](crate::Session::detach_layer) preserves the sound in ordinary
-    //! clips. An identity shape retains the source's editable loops, performance stack and recipe.
-    //! A shaped layer freezes every performed pass before applying its shape, then removes the
-    //! baked stack and recipe. Its curves keep their original reset boundaries; when those differ
+    //! clips. A layer with no performance on its path retains the source's editable loops,
+    //! performance stack and recipe. Any other freezes every performed pass through every stage,
+    //! then removes the baked stack and recipe. Its curves keep their original reset boundaries; when those differ
     //! from the frozen note clip's boundaries, separate control clips preserve their timing.
 }
 

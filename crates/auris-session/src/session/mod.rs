@@ -74,6 +74,7 @@ mod groove;
 mod harmony;
 mod hosted;
 mod layers;
+pub use layers::LayerDials;
 mod levels;
 pub mod lyric_accent;
 pub mod lyric_harness;

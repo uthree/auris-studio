@@ -205,6 +205,7 @@ impl MixerNode {
             ),
 
             Self::Effect(_, slot) => format!("effect:{}", slot.0),
+            Self::Performance(id) => format!("performance:{}", id.0),
         }
     }
 }
@@ -664,16 +665,23 @@ impl Session {
             .into_iter()
             .map(|index| Some(self.project().tracks[index].id))
             .chain(std::iter::once(None));
+        // Strips and their inserts in processing order, then the performances, which belong to no
+        // strip and are resolved before playback.
         let ordered: Vec<_> = owners
             .flat_map(|owner| {
                 graph
                     .nodes
                     .iter()
-                    .filter(move |node| match node {
-                        MixerNode::Strip(id) | MixerNode::Effect(id, _) => *id == owner,
-                    })
+                    .filter(move |node| node.owner() == Some(owner))
                     .copied()
             })
+            .chain(
+                graph
+                    .nodes
+                    .iter()
+                    .filter(|node| node.owner().is_none())
+                    .copied(),
+            )
             .collect();
         if offset > ordered.len() {
             return Err("offset exceeds mixer node count".into());
@@ -686,9 +694,16 @@ impl Session {
             .collect();
         let mut nodes = Vec::new();
         for node in &page {
-            let owner = match node {
-                MixerNode::Strip(id) | MixerNode::Effect(id, _) => *id,
-            };
+            if let MixerNode::Performance(id) = node {
+                let performance = self
+                    .project()
+                    .routing
+                    .performance(*id)
+                    .ok_or("Unknown performance")?;
+                nodes.push(json!({"id":node.key(),"kind":"performance","name":performance.name,"transforms":performance.transforms}));
+                continue;
+            }
+            let owner = node.owner().flatten();
             let track = owner.and_then(|id| self.project().track(id));
             let strip = track.map_or(&self.project().master, |track| &track.mixer);
             let mut row = json!({"id":node.key(),"track_id":owner.map(|id| id.0),"name":track.map_or("master",|track| track.name.as_str())});
@@ -719,6 +734,7 @@ impl Session {
                     row["enabled"] = strip.effects[index].enabled.into();
                     row["accepts_sidechain"] = self.effect_wants_sidechain(owner, *slot).into();
                 }
+                MixerNode::Performance(_) => unreachable!("reported above"),
             }
             // People's notes about this node; edit_comments with mixer_node changes them.
             let comments = self.comments(crate::session::CommentHost::Mixer(*node));
@@ -759,7 +775,9 @@ impl Session {
                         row["control_source"] = MixerNode::Strip(Some(track)).key().into();
                         let to = match edge.target {
                             MixerNode::Strip(owner) => destination(owner),
-                            MixerNode::Effect(..) => Destination::Master,
+                            MixerNode::Effect(..) | MixerNode::Performance(_) => {
+                                Destination::Master
+                            }
                         };
                         row["automated"] = self
                             .is_automated(ParamTarget::Output { track, to, tap })

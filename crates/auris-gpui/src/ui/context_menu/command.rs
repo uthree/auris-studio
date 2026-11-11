@@ -222,14 +222,16 @@ pub enum MenuCommand {
     AddLayer(TrackId),
     /// Give a layer notes of its own, written as it sounds.
     DetachLayer(TrackId),
+    /// Take a performance off its notes path.
+    RemovePerformance(PerformanceId),
     /// Put a layer's shape back to playing its source as written.
-    ResetLayerShape(TrackId),
+    ResetLayerDials(TrackId),
     /// Choose which voice of a chord a layer keeps.
     SetLayerVoice {
         /// The layer.
         track: TrackId,
         /// The voice it keeps.
-        voice: LayerVoice,
+        voice: Option<ChordVoice>,
     },
     /// Render the source and replace this track with audio in one undo step.
     ConvertTrackToAudio(TrackId),
@@ -1048,12 +1050,17 @@ impl AurisApp {
                 Ok(()) => self.set_status(self.t(Key::DetachedLayer)),
                 Err(error) => self.set_failed_status(self.failure(Key::MenuDetachLayer, &error)),
             },
-            MenuCommand::ResetLayerShape(track) => {
-                if let Err(error) = self.session.set_layer_shape(track, LayerShape::default()) {
+            MenuCommand::ResetLayerDials(track) => {
+                if let Err(error) = self.session.set_layer_dials(track, LayerDials::default()) {
                     self.set_failed_status(self.failure(Key::LayerReset, &error));
                 }
             }
             MenuCommand::SetLayerVoice { track, voice } => self.set_layer_voice(track, voice),
+            MenuCommand::RemovePerformance(id) => {
+                if let Err(error) = self.session.remove_performance(id) {
+                    self.set_failed_status(self.failure(Key::MenuRemovePerformance, &error));
+                }
+            }
             MenuCommand::RenameTrack(track) => self.prompt_to_rename_track(track),
             MenuCommand::OverwriteSound { sound, track } => {
                 if let Some(track) = track {

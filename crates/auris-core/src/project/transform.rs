@@ -176,6 +176,60 @@ pub enum NoteTransform {
         /// bar, so it scales with the music's grid rather than with the clock.
         ticks: i64,
     },
+    /// Keeps only the notes whose pitch lies in a range, as the pitches stand when this stage
+    /// reads them; the rest are dropped.
+    ///
+    /// The split a layer makes to take the left hand of a part, or to put a pad only over the
+    /// upper octave. Placed before a [`Transpose`](Self::Transpose), it chooses by the pitch as
+    /// written.
+    KeyRange {
+        /// Lowest pitch kept, inclusive.
+        lowest: u8,
+        /// Highest pitch kept, inclusive. Read swapped with `lowest` if the two have crossed.
+        highest: u8,
+    },
+    /// Keeps only the top or the bottom voice of the part: a note is dropped when another note
+    /// already sounding at its start is higher (or lower).
+    ///
+    /// "Sounding at its start" rather than "starting together", so a melody over a held chord is
+    /// still the top voice and a bass note under a sustained pad is still the bottom one.
+    Voice {
+        /// Which voice is kept.
+        voice: ChordVoice,
+    },
+    /// Scales every velocity.
+    Velocity {
+        /// Multiplier, read clamped to 0..=2; the result is clamped to 0..=1.
+        scale: f32,
+    },
+    /// Scales every note's length, longer or shorter.
+    ///
+    /// [`Gate`](Self::Gate) only shortens, which is what detaching legato wants; a part doubled
+    /// an octave down as a pad wants its notes held longer too.
+    Length {
+        /// Multiplier, read clamped to 0.05..=4. A note never shrinks below one tick.
+        factor: f32,
+    },
+    /// Moves every note later, or earlier with a negative value.
+    ///
+    /// Not a [`Lean`](Self::Lean): a lean is how a player sits against the beat and is held to a
+    /// quarter note, where a delay is an echo of the part and may be a bar or more. A note moved
+    /// before the start of what is being performed is held at it.
+    Delay {
+        /// Ticks late (positive) or early (negative). In ticks so an eighth-note delay stays an
+        /// eighth note at every tempo.
+        ticks: i64,
+    },
+}
+
+/// Which outer voice of a part a [`NoteTransform::Voice`] keeps.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChordVoice {
+    /// The highest sounding note: the melody of a voiced part.
+    Top,
+    /// The lowest sounding note: the bass of a voiced part.
+    Bottom,
 }
 
 /// The longest [`NoteTransform::Sustain`] is read as: a whole note, four quarters.
@@ -218,7 +272,9 @@ pub fn performed(mut note: Note, transforms: &[NoteTransform], pass: u64, bpm: f
             | NoteTransform::Mute { .. }
             | NoteTransform::Brush { .. }
             | NoteTransform::Slide { .. }
-            | NoteTransform::Sustain { .. } => note,
+            | NoteTransform::Sustain { .. }
+            | NoteTransform::KeyRange { .. }
+            | NoteTransform::Voice { .. } => note,
             NoteTransform::ForDrumVoice { voice, transforms } => {
                 if note.drum_voice == *voice {
                     performed(note, transforms, pass, bpm)
@@ -242,6 +298,13 @@ pub fn performed(mut note: Note, transforms: &[NoteTransform], pass: u64, bpm: f
             } => swung(note, *percent, *subdivision),
             NoteTransform::Transpose { semitones } => transposed(note, *semitones),
             NoteTransform::Gate { amount } => gated(note, *amount),
+            NoteTransform::Velocity { scale } => scaled_velocity(note, *scale),
+            NoteTransform::Length { factor } => stretched(note, *factor),
+            NoteTransform::Delay { ticks } => {
+                let mut note = note;
+                note.start = (note.start + Ticks(*ticks)).max_zero();
+                note
+            }
         };
     }
     note
@@ -365,7 +428,31 @@ pub fn swing_position(position: Ticks, percent: u8, subdivision: Subdivision) ->
 
 /// The interval, clamped at the ends of the MIDI range.
 fn transposed(mut note: Note, semitones: i32) -> Note {
-    note.pitch = (i32::from(note.pitch) + semitones).clamp(0, 127) as u8;
+    note.pitch = i32::from(note.pitch)
+        .saturating_add(semitones)
+        .clamp(0, 127) as u8;
+    note
+}
+
+/// The velocity, scaled and kept in range. A scale that is not a number leaves it alone.
+fn scaled_velocity(mut note: Note, scale: f32) -> Note {
+    let scale = if scale.is_finite() {
+        scale.clamp(0.0, 2.0)
+    } else {
+        1.0
+    };
+    note.velocity = (note.velocity * scale).clamp(0.0, 1.0);
+    note
+}
+
+/// The length, scaled either way and floored at one tick.
+fn stretched(mut note: Note, factor: f32) -> Note {
+    let factor = if factor.is_finite() {
+        factor.clamp(0.05, 4.0)
+    } else {
+        1.0
+    };
+    note.length = Ticks(((note.length.raw() as f32 * factor).round() as i64).max(1));
     note
 }
 

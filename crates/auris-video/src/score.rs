@@ -394,12 +394,23 @@ mod tests {
             .transforms
             .push(NoteTransform::Transpose { semitones: 12 });
         let layer = project.add_layer_track(source, "Octave", "test").unwrap();
-        let shape = project.routing.shape_mut(layer).unwrap();
-        shape.lowest = 72;
-        shape.transpose = 12;
-        shape.offset = Ticks::QUARTER;
-        shape.length = 0.5;
-        shape.velocity = 0.5;
+        let performance = project.add_performance(layer).unwrap();
+        project
+            .routing
+            .performance_mut(performance)
+            .unwrap()
+            .transforms = vec![
+            NoteTransform::KeyRange {
+                lowest: 72,
+                highest: 127,
+            },
+            NoteTransform::Transpose { semitones: 12 },
+            NoteTransform::Velocity { scale: 0.5 },
+            NoteTransform::Length { factor: 0.5 },
+            NoteTransform::Delay {
+                ticks: Ticks::QUARTER.raw(),
+            },
+        ];
         project.track_mut(source).unwrap().mixer.mute = true;
         project.track_mut(layer).unwrap().mixer.solo = true;
 
@@ -409,7 +420,7 @@ mod tests {
         assert_eq!(score.notes.len(), 1);
         assert_eq!(
             score.notes[0].pitch, 84,
-            "source performance precedes layer shape"
+            "the clip's own stack precedes the layer's performance"
         );
         assert_eq!(score.notes[0].track, 0);
         assert!((score.notes[0].velocity - 0.4).abs() < 1e-6);

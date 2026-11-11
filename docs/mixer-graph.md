@@ -21,6 +21,14 @@ connections both participate in cycle validation. A connection that
 would lead back to its source is refused before the document or undo history
 changes.
 
+A layer plays another track's notes, and the notes wire runs from its source to it. When the
+layer's dials shape those notes, a **Performance** node stands on that wire. It lists its stages
+in order: key range, voice, transpose, velocity, length and delay. They run after the source
+clip's own performance. Click the node to select the layer, and set the stages from the layer
+panel. Choose **Remove Performance** from the node's menu to take it off the wire, so the layer
+plays its source as written. Deleting a notes wire detaches the layers it fed. Each layer keeps
+the notes it was playing as clips of its own.
+
 Wire roles use themed colors, labels and distinct line styles:
 
 | Connection | Line | Label |
@@ -88,7 +96,8 @@ automatic layout at 100%. The system's architecture is documented in
 
 MCP exposes `mixer_graph` with a project handle/path and an `operation` object.
 Start with `{"action":"read"}`. Nodes use stable `track:N`, `track:master`
-and `effect:N` IDs, independent of names and effect positions. Read pages are
+and `effect:N` IDs, independent of names and effect positions. A performance is
+`performance:N`, listed last, with its `name` and `transforms`. Read pages are
 in processing order; `next_offset` continues the node list and each page includes
 its nodes' outgoing edges. A track's `output_node` identifies its terminal insert
 or the track itself. Both the track ID and its terminal effect ID can address an
