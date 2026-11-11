@@ -28,6 +28,9 @@ with a rest. `analyze_lyrics` returns each phrase's `feet` (ふる / いけ / �
   Group the pair on one note, or give ん its own note. Inside a line, songs hold that note
   longer than its head about half as often as other moras. Where it falls in the beat is
   free.
+- Put rests between words, not inside one: マフ・ラー cuts the word apart. Human songs do it
+  about a quarter as often inside words as between them. When the melody wants a breath
+  there, move the line break, re-line the words or lengthen the note before the gap.
 - Close a line by lengthening its last mora or resting after it. Koizumi (1977) describes
   Japanese songs lengthening a line's first and last moras.
 - Japanese spends a note on every mora, so it needs more notes than English for the same
@@ -36,7 +39,7 @@ with a rest. `analyze_lyrics` returns each phrase's `feet` (ふる / いけ / �
 
 Where the host offers `lyric_rhythm`, read it for the lead after the lyrics are written. It
 draws every line on its beat grid (`さ く | ら が | さ い | た -`), and reports moras per
-second, held endings, ん held long inside a line, and moras under 90 ms that may lose their
+second, held endings, ん held long inside a line, rests inside a word, and moras under 90 ms that may lose their
 vowel in synthesis. Otherwise, draw the same grid yourself from `read_notes` onsets and
 lengths before synthesis. These are tendencies from studies of Japanese text setting, not
 proof that a line sounds natural. A liked rhythm the user chose overrides them.

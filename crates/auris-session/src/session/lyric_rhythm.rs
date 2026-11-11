@@ -31,11 +31,17 @@
 //! * **Very short notes lose their vowel in synthesis.** The singing backends borrow the next
 //!   consonant's time from the end of the note before it, so a mora shorter than
 //!   [`SHORT_MORA_SECONDS`] may be left with almost no vowel.
+//! * **A rest does not cut a word.** Silence of at least [`WORD_REST`] between two moras of one
+//!   dictionary word (マフ・ラー) is reported. Words are the dictionary's, so this needs it. In
+//!   the 28 PJS songs whose kana a morphological analyser read to their notes, 6 of 414
+//!   note-to-note steps inside a word had such a rest (1 in 70), against 39 of 693 between
+//!   words (1 in 18). Songs avoid it, but not absolutely, so one in a section is a note and
+//!   [`WORD_REST_HABIT`] of them are a warning.
 
 use super::Session;
 use super::lyric_accent::{SungNote, sung_lines};
 use super::singer::LYRIC_CONTINUATION;
-use auris_core::time::Ticks;
+use auris_core::time::{TICKS_PER_QUARTER, Ticks};
 use auris_core::{Project, TrackId};
 use auris_vocal::kana::phonemes_to_kana;
 use auris_vocal::phoneme_moras;
@@ -57,6 +63,12 @@ pub const HELD_ENDING_RATIO: f64 = 1.5;
 /// A section slower than this, in moras per second, carries little text per bar.
 pub const SLOW_MORAS_PER_SECOND: f64 = 2.0;
 
+/// Silence between two moras of one word that counts as a rest inside it: a sixteenth.
+pub const WORD_REST: Ticks = Ticks(TICKS_PER_QUARTER / 4);
+
+/// Rests inside words in one section before they are a habit worth a warning.
+pub const WORD_REST_HABIT: usize = 2;
+
 /// Spots listed per section.
 const SPOTS_PER_SECTION: usize = 6;
 
@@ -71,6 +83,8 @@ pub enum RhythmIssue {
     OutlastingSyllable,
     /// A mora shorter than [`SHORT_MORA_SECONDS`].
     ShortMora,
+    /// Silence of at least [`WORD_REST`] between two moras of one word (マフ・ラー).
+    RestInWord,
 }
 
 /// One place to look at, located for edit_notes.
@@ -138,6 +152,8 @@ pub struct SectionRhythm {
     pub outlasting_syllables: usize,
     /// Moras shorter than [`SHORT_MORA_SECONDS`].
     pub short_moras: usize,
+    /// Rests of at least [`WORD_REST`] inside one word.
+    pub rests_in_words: usize,
     /// Where they are.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub spots: Vec<RhythmSpot>,
@@ -392,7 +408,7 @@ impl Session {
             .unwrap_or_default()
             + Ticks(1);
         let spans = self.project.sections.spans_in(Ticks::ZERO, end);
-        let measured: Vec<LineRhythm> = lines
+        let mut measured: Vec<LineRhythm> = lines
             .iter()
             .enumerate()
             .map(|(index, notes)| {
@@ -405,8 +421,134 @@ impl Session {
                 line
             })
             .collect();
-        Ok(report(measured))
+        // Word boundaries come from the dictionary; without one, say the check did not run.
+        let unchecked = match self.japanese.as_ref() {
+            Some(dictionary) => {
+                let (spots, unread) = rests_in_words(dictionary, &self.project, &lines);
+                for (line, spot) in spots {
+                    measured[line].spots.push(spot);
+                }
+                (unread > 0).then(|| format!(
+                    "Rests inside words were not checked in {unread} clip(s) whose written words do not read to the moras their notes sing"
+                ))
+            }
+            None => Some(
+                "Rests inside words were not checked: word boundaries come from the Japanese dictionary, and none is loaded".into(),
+            ),
+        };
+        let mut report = report(measured);
+        report.notes.extend(unchecked);
+        Ok(report)
     }
+}
+
+/// Rests of at least [`WORD_REST`] between two moras of one dictionary word, each paired with
+/// the index of the line holding the note after the rest; and how many clips could not be read.
+///
+/// Words are read a clip at a time, not a line at a time, because a line ends at a rest of a
+/// beat: a word split by one (か・える) spans two lines, and each line read alone would hide it.
+fn rests_in_words(
+    dictionary: &auris_vocal::JapaneseDictionary,
+    project: &Project,
+    lines: &[Vec<SungNote>],
+) -> (Vec<(usize, RhythmSpot)>, usize) {
+    let mut clips: Vec<(u64, Vec<(usize, &SungNote)>)> = Vec::new();
+    for (line, notes) in lines.iter().enumerate() {
+        let clip = notes[0].clip;
+        let index = match clips.iter().position(|(id, _)| *id == clip) {
+            Some(index) => index,
+            None => {
+                clips.push((clip, Vec::new()));
+                clips.len() - 1
+            }
+        };
+        clips[index].1.extend(notes.iter().map(|note| (line, note)));
+    }
+    let mut spots = Vec::new();
+    let mut unread = 0;
+    for (_, notes) in clips {
+        let mut text = String::new();
+        let mut kana = String::new();
+        let mut owner = Vec::new();
+        for (index, (_, note)) in notes.iter().enumerate() {
+            if note.lyric != LYRIC_CONTINUATION {
+                super::lyric_lines::join_word(&mut text, &note.lyric);
+            }
+            if let Some(spelled) = phonemes_to_kana(&note.phonemes) {
+                kana.push_str(&spelled);
+            }
+            owner.extend(std::iter::repeat_n(index, mora_count(note)));
+        }
+        // The written words where they read to the sung moras, else the kana the notes sing.
+        let words = [text.as_str(), kana.as_str()]
+            .into_iter()
+            .filter(|text| !text.is_empty())
+            .find_map(|text| {
+                let phrases = dictionary.accent_phrases(text).ok()?;
+                let mut word = Vec::new();
+                let mut texts = Vec::new();
+                let mut count = 0;
+                for phrase in &phrases {
+                    for (at, mora) in phrase.moras.iter().enumerate() {
+                        if at == 0 || phrase.words.contains(&at) {
+                            count += 1;
+                        }
+                        word.push(count);
+                        texts.push(mora.text.clone());
+                    }
+                }
+                (word.len() == owner.len()).then_some((word, texts))
+            });
+        let Some((word, texts)) = words else {
+            unread += 1;
+            continue;
+        };
+        for mora in 1..owner.len() {
+            let (before, after) = (owner[mora - 1], owner[mora]);
+            if before == after || word[mora] != word[mora - 1] || texts[mora - 1] == "っ" {
+                continue;
+            }
+            let previous = notes[after - 1].1;
+            let note = notes[after].1;
+            let gap = note.at - (previous.at + previous.length);
+            if previous.phonemes == ["ʔ"] || gap < WORD_REST {
+                continue;
+            }
+            let start = (0..mora)
+                .rev()
+                .take_while(|m| word[*m] == word[mora])
+                .last()
+                .unwrap_or(mora);
+            let end = (mora..owner.len())
+                .take_while(|m| word[*m] == word[mora])
+                .last()
+                .unwrap_or(mora);
+            // A reduplicated word (ひとつひとつ, いろいろ) is read as one, but a breath between
+            // its two halves keeps both whole.
+            if texts[start..mora] == texts[mora..=end] {
+                continue;
+            }
+            let (bar, beat, _) = project.signatures.bar_beat_at(note.at);
+            let seconds = |tick: Ticks| project.tempo_map.ticks_to_seconds(tick).0;
+            spots.push((
+                notes[after].0,
+                RhythmSpot {
+                    issue: RhythmIssue::RestInWord,
+                    bar,
+                    beat,
+                    clip: note.clip,
+                    note: note.index,
+                    moras: format!(
+                        "{}・{}",
+                        texts[start..mora].concat(),
+                        texts[mora..=end].concat()
+                    ),
+                    ms: ((seconds(note.at) - seconds(note.at - gap)) * 1000.0).round() as u32,
+                },
+            ));
+        }
+    }
+    (spots, unread)
 }
 
 fn report(lines: Vec<LineRhythm>) -> LyricRhythmReport {
@@ -429,6 +571,7 @@ fn report(lines: Vec<LineRhythm>) -> LyricRhythmReport {
                         held_endings: 0,
                         outlasting_syllables: 0,
                         short_moras: 0,
+                        rests_in_words: 0,
                         spots: Vec::new(),
                     },
                     0.0,
@@ -450,6 +593,7 @@ fn report(lines: Vec<LineRhythm>) -> LyricRhythmReport {
             match spot.issue {
                 RhythmIssue::OutlastingSyllable => section.outlasting_syllables += 1,
                 RhythmIssue::ShortMora => section.short_moras += 1,
+                RhythmIssue::RestInWord => section.rests_in_words += 1,
             }
             section.spots.push(spot.clone());
         }
@@ -473,6 +617,17 @@ fn report(lines: Vec<LineRhythm>) -> LyricRhythmReport {
                     "{name}: {} ん or diphthong い note(s) last at least twice as long as their head inside a line, which gives the second half of the syllable the weight of one of its own. Songs do this about half as often as with other moras; if it is not deliberate, give the length to the head or hold it at the line end",
                     section.outlasting_syllables
                 ));
+            }
+            if section.rests_in_words > 0 {
+                let message = format!(
+                    "{name}: {} rest(s) fall inside a word (listed as マフ・ラー), which cuts the word apart; songs by people do this on about 1 in 70 steps inside a word, against 1 in 18 between words. Close the gap by lengthening the note before it, move the rest to a word boundary, or re-line the words so the break falls between them",
+                    section.rests_in_words
+                );
+                if section.rests_in_words >= WORD_REST_HABIT {
+                    warnings.push(message);
+                } else {
+                    notes.push(message);
+                }
             }
             if section.short_moras > 0 {
                 warnings.push(format!(
@@ -515,7 +670,25 @@ mod tests {
     /// A session with one singer clip singing kana `text` on notes given as (start, length)
     /// in eighths, with `reading` grouping notes when given.
     fn singing(text: &str, reading: Option<&str>, eighths: &[(i64, i64)]) -> (Session, TrackId) {
+        singing_in(session(), text, reading, eighths)
+    }
+
+    /// [`singing`] with the dictionary named by `AURIS_JAPANESE_DICTIONARY`; `None` without it.
+    fn singing_with_words(text: &str, eighths: &[(i64, i64)]) -> Option<(Session, TrackId)> {
+        let folder = std::env::var_os("AURIS_JAPANESE_DICTIONARY")?;
         let mut session = session();
+        session
+            .set_japanese_dictionary(Some(std::path::Path::new(&folder)))
+            .unwrap();
+        Some(singing_in(session, text, None, eighths))
+    }
+
+    fn singing_in(
+        mut session: Session,
+        text: &str,
+        reading: Option<&str>,
+        eighths: &[(i64, i64)],
+    ) -> (Session, TrackId) {
         let track = session.add_singer_track("Lead");
         let end = eighths.iter().map(|(at, len)| at + len).max().unwrap();
         let clip = session
@@ -616,5 +789,89 @@ mod tests {
                 .any(|w| w.contains("lose their vowel"))
         );
         assert_eq!(report.lines[0].shortest_mora_ms, 83);
+    }
+
+    #[test]
+    fn a_rest_inside_a_word_is_found_and_one_between_words_is_not() {
+        // マフ, an eighth rest, ラー: the word マフラー is cut in two.
+        let Some((session, track)) = singing_with_words(
+            "マフラーをしまう",
+            &[
+                (0, 1),
+                (1, 1),
+                (3, 1),
+                (4, 1),
+                (5, 1),
+                (6, 1),
+                (7, 1),
+                (8, 2),
+            ],
+        ) else {
+            return;
+        };
+        let report = session.lyric_rhythm(track).unwrap();
+        let spots: Vec<_> = report.sections[0]
+            .spots
+            .iter()
+            .filter(|s| s.issue == RhythmIssue::RestInWord)
+            .collect();
+        assert_eq!(spots.len(), 1, "{:?}", report.sections[0].spots);
+        assert_eq!(spots[0].moras, "まふ・らー");
+        assert_eq!(spots[0].ms, 250);
+        assert_eq!(spots[0].note, 2);
+        // Once is a note, not yet a habit.
+        assert!(report.notes.iter().any(|n| n.contains("inside a word")));
+
+        // The same rest after を falls between words.
+        let (session, track) = singing_with_words(
+            "マフラーをしまう",
+            &[
+                (0, 1),
+                (1, 1),
+                (2, 1),
+                (3, 1),
+                (4, 1),
+                (6, 1),
+                (7, 1),
+                (8, 2),
+            ],
+        )
+        .unwrap();
+        let report = session.lyric_rhythm(track).unwrap();
+        assert_eq!(report.sections[0].rests_in_words, 0);
+    }
+
+    #[test]
+    fn a_word_split_by_a_whole_beat_is_found_across_two_lines() {
+        // かえる with a beat of silence after か: two lines to the grid, one word to the ear.
+        let Some((session, track)) = singing_with_words("かえる", &[(0, 2), (4, 1), (5, 2)])
+        else {
+            return;
+        };
+        let report = session.lyric_rhythm(track).unwrap();
+        assert_eq!(report.lines.len(), 2);
+        assert_eq!(report.sections[0].rests_in_words, 1);
+    }
+
+    #[test]
+    fn a_breath_between_the_halves_of_a_reduplicated_word_is_not_a_split() {
+        // ひとつ, a rest, ひとつ: the dictionary reads one word, a listener hears two.
+        let Some((session, track)) = singing_with_words(
+            "ひとつひとつ",
+            &[(0, 1), (1, 1), (2, 1), (4, 1), (5, 1), (6, 2)],
+        ) else {
+            return;
+        };
+        let report = session.lyric_rhythm(track).unwrap();
+        assert_eq!(report.sections[0].rests_in_words, 0);
+    }
+
+    #[test]
+    fn without_a_dictionary_rests_inside_words_are_said_to_be_unchecked() {
+        let (session, track) = singing("さくら", None, &[(0, 1), (1, 1), (2, 2)]);
+        if session.japanese_dictionary().is_none() {
+            let report = session.lyric_rhythm(track).unwrap();
+            assert!(report.notes.iter().any(|n| n.contains("were not checked")));
+        }
     }
 }

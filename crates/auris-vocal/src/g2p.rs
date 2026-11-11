@@ -184,10 +184,14 @@ impl JapaneseDictionary {
                 .filter(|phoneme| VOWELS.contains(&phoneme.as_str()))
                 .cloned();
             match (node.get_chain_flag(), phrases.last_mut()) {
-                (Some(true), Some(last)) => last.moras.extend(moras),
+                (Some(true), Some(last)) => {
+                    last.words.push(last.moras.len());
+                    last.moras.extend(moras);
+                }
                 _ => phrases.push(AccentPhrase {
                     moras,
                     accent: Some(pron.accent()),
+                    words: vec![0],
                 }),
             }
         }

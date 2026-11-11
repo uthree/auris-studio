@@ -61,7 +61,12 @@ rhythm from them before choosing pitches:
    note longer than its head about half as often as they do other moras, and `lyric_rhythm`
    notes each place it happens. Where the second half falls in the beat is free: in the PJS
    songs ん arrives on a stronger position than its head as often as any mora does.
-5. **Close the line.** Lengthen the line's last mora, or rest after it, so the line ends.
+5. **Rest between words.** A rest inside a word (マフ・ラー, か・える) cuts it apart. In the PJS
+   songs it happens on about 1 in 70 steps inside a word, against 1 in 18 between words. When
+   the melody wants a breath where the words do not, move the line break, re-line the words or
+   lengthen the note before the gap. `lyric_rhythm` lists each one, reading words a clip at a
+   time so a word split across two lines is still found.
+6. **Close the line.** Lengthen the line's last mora, or rest after it, so the line ends.
    Koizumi's account of Japanese song (1977) has the line's first and last moras lengthened
    to mark its start and close; the middle runs evenly.
 
