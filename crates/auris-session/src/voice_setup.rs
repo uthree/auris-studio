@@ -129,6 +129,13 @@ pub struct VoicevoxConnection {
     styles: Vec<VoicevoxSpeakerChoice>,
 }
 
+impl VoicevoxConnection {
+    /// Every named pair of styles the connection file holds, in its order.
+    pub fn styles(&self) -> &[VoicevoxSpeakerChoice] {
+        &self.styles
+    }
+}
+
 impl VoicevoxStyle {
     /// The singer and style together, so identically named styles remain distinguishable.
     pub fn label(&self) -> String {

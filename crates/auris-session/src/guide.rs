@@ -2374,14 +2374,22 @@ pub mod singing {
     //! portrait or its character fallback. The frontend bounds decoded image dimensions, caches
     //! missing artwork and failures too, and only displays results for the current saved source
     //! and view generation. Neither an absent image nor a disconnected Engine changes a singer's take.
-    //! The library lists one row per voice — a VOICEVOX connection's styles are the
-    //! inspector's speaker choice, not shelf entries — and its rows take the smaller image
-    //! the same way, for the first style:
+    //! The library lists one row per VOICEVOX singing style, so a singer is picked the way a
+    //! sound is; a DiffSinger or LeapSinger bank stays one row and its speakers are the
+    //! inspector's choice. [`library::voice_shelf`](crate::library::voice_shelf) builds the
+    //! rows from the styles a connection file has saved and, once
+    //! [`library::fetch_shelf_catalog`](crate::library::fetch_shelf_catalog) has asked the
+    //! Engine, every style it advertises — one row per pair of Engine styles, however many
+    //! saved names share it. Choosing a style the file does not name yet writes it in first
+    //! ([`Session::save_voicevox_shelf_style`](crate::Session::save_voicevox_shelf_style)),
+    //! exactly as the inspector's speaker menu would, because a track names its style by the
+    //! name the file holds. Each row takes the smaller image the same way:
     //! [`load_singer_icon`](crate::load_singer_icon) downloads the decoding style's square
     //! `icon` — never the standing figure cropped — for a
-    //! [`SingerPortraitSource::for_library_voice`](crate::SingerPortraitSource::for_library_voice),
-    //! which is automatic, so only a loopback Engine is contacted merely because a connection
-    //! file is on the shelf. A row without a face keeps the singer mark.
+    //! [`SingerPortraitSource::for_library_voice`](crate::SingerPortraitSource::for_library_voice)
+    //! or [`for_library_style`](crate::SingerPortraitSource::for_library_style). Listing is
+    //! automatic, so only a loopback Engine is contacted, for its singers or its faces, merely
+    //! because a connection file is on the shelf. A row without a face keeps the singer mark.
     //!
     //! Where a model runs its inference is the settings' choice, applied through
     //! [`Session::set_singer_acceleration`](crate::Session::set_singer_acceleration) — a

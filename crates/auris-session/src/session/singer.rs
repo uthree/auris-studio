@@ -1196,6 +1196,45 @@ impl Session {
         Ok(())
     }
 
+    /// Writes a shelf row's Engine style into its connection file, and returns its saved name.
+    ///
+    /// The shelf lists every style the Engine advertises, but a track names a style by the name
+    /// the file holds. The file is read again here rather than trusted from when the shelf was
+    /// drawn, and the style is looked up by its pair of Engine IDs: a pair already saved under
+    /// any name is that name, with nothing written; otherwise the catalogue's choice is appended
+    /// exactly as the inspector's speaker menu would append it. No project edit occurs.
+    pub fn save_voicevox_shelf_style(
+        &mut self,
+        file: &Path,
+        catalog: &crate::VoicevoxCatalog,
+        query_style_id: u32,
+        decode_style_id: u32,
+    ) -> Result<String, SessionError> {
+        let metadata =
+            |message: String| SessionError::from(auris_singer::SingError::Metadata(message));
+        let connection = self.voicevox_connection_at(file, None)?;
+        let same_pair = |style: &VoicevoxSpeakerChoice| {
+            style.query_style_id == query_style_id && style.decode_style_id == decode_style_id
+        };
+        if let Some(saved) = connection.styles().iter().find(|style| same_pair(style)) {
+            return Ok(saved.name.clone());
+        }
+        let choice = catalog
+            .speaker_choices(&connection)
+            .into_iter()
+            .find(same_pair)
+            .ok_or_else(|| {
+                metadata(
+                    "The VOICEVOX Engine no longer offers this style; refresh the library".into(),
+                )
+            })?;
+        self.loaded_voice_at(file)?;
+        append_voicevox_speaker(&connection, &choice)
+            .map_err(|error| metadata(error.to_string()))?;
+        self.voices.remove(file);
+        Ok(choice.name)
+    }
+
     /// The voice a singer track is sung by, when one has been chosen.
     pub fn singer_voice(&self, track: TrackId) -> Result<Option<&SingerVoice>, SessionError> {
         Ok(self.require_singer(track)?.voice.as_ref())
@@ -1280,6 +1319,7 @@ impl Session {
             path,
             speaker: voice.speaker.clone(),
             automatic: true,
+            decode_style: None,
         }))
     }
 

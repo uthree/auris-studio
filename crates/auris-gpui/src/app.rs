@@ -1718,9 +1718,14 @@ pub struct AurisApp {
     pub(crate) plugin_discovery_truncated: bool,
     /// Last discovery failure, kept so rendering does not retry a failing scan every frame.
     pub(crate) plugin_discovery_error: Option<String>,
-    /// The singer voices found on this machine, scanned once and kept — the
-    /// [`Self::clap_files`] arrangement, cleared when a voice folder is added or forgotten.
-    pub(crate) voices: Option<Vec<(String, std::path::PathBuf)>>,
+    /// The voice shelf's rows, scanned once and kept — the [`Self::clap_files`] arrangement,
+    /// cleared when a voice folder is added or forgotten or an Engine's singers change.
+    pub(crate) voices: Option<Vec<auris_session::ShelfVoice>>,
+    /// The singers each shelf VOICEVOX connection's Engine advertised, by connection file.
+    pub(crate) voicevox_shelf_catalogs:
+        std::collections::HashMap<std::path::PathBuf, crate::ui::voice_shelf::ShelfCatalog>,
+    /// Whether a shelf catalogue request is in flight; they go one at a time.
+    pub(crate) voicevox_shelf_pending: bool,
     /// Bounded metadata returned after an opened `.clap` file is inspected in a child process.
     /// Empty results are cached too, so a broken plugin is not retried on every repaint.
     pub(crate) clap_contents:
@@ -2085,6 +2090,7 @@ impl AurisApp {
                         this.finish_input_calibration();
                         this.finish_typing_calibration();
                         this.poll_singer_portrait(cx);
+                        this.poll_voicevox_shelf(cx);
                         this.poll_singer_icons(cx);
                         this.poll_spectrograms(cx);
                         this.report_graph_resource_error();
@@ -2231,6 +2237,8 @@ impl AurisApp {
             plugin_discovery_truncated: false,
             plugin_discovery_error: None,
             voices: None,
+            voicevox_shelf_catalogs: std::collections::HashMap::new(),
+            voicevox_shelf_pending: false,
             clap_contents: std::collections::HashMap::new(),
             vst3_contents: std::collections::HashMap::new(),
             plugin_probe_cancel: std::collections::HashMap::new(),

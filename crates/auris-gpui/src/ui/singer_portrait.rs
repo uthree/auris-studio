@@ -147,8 +147,8 @@ impl AurisApp {
         }
         let Some(source) = self
             .voice_list()
-            .into_iter()
-            .map(|(_, path)| SingerPortraitSource::for_library_voice(path, None))
+            .iter()
+            .map(crate::ui::voice_shelf::shelf_icon_source)
             .filter(|source| source.backend() == Some(auris_session::BackendKind::Voicevox))
             .find(|source| self.singer_icons.get(source).is_none())
         else {
@@ -177,9 +177,9 @@ impl AurisApp {
         .detach();
     }
 
-    /// A library row's face, its first style's icon, when its Engine supplied one.
-    pub(crate) fn singer_icon(&self, path: &std::path::Path) -> Option<Arc<RenderImage>> {
-        let source = SingerPortraitSource::for_library_voice(path.to_path_buf(), None);
+    /// A library row's face, its own style's icon, when its Engine supplied one.
+    pub(crate) fn singer_icon(&self, row: &auris_session::ShelfVoice) -> Option<Arc<RenderImage>> {
+        let source = crate::ui::voice_shelf::shelf_icon_source(row);
         match self.singer_icons.get(&source)? {
             Ok(Some(image)) => Some(Arc::clone(image)),
             _ => None,
@@ -453,8 +453,8 @@ mod tests {
         app.update(cx, |this, _| {
             this.panels = Default::default();
             this.voices = Some(vec![
-                ("Artwork test A".into(), faced.0.clone()),
-                ("Artwork test B".into(), offline.0.clone()),
+                auris_session::ShelfVoice::voice("Artwork test A", faced.0.clone()),
+                auris_session::ShelfVoice::voice("Artwork test B", offline.0.clone()),
             ]);
             supply_icon(this, &faced.0, Ok(Some(image())));
             supply_icon(this, &offline.0, Err("Engine is offline".into()));
@@ -505,11 +505,15 @@ mod tests {
                 this.singer_portraits.get(&source),
                 Some(Ok(Some(_)))
             ));
-            assert!(this.singer_icon(&file.0).is_some());
+            assert!(
+                this.singer_icon(&auris_session::ShelfVoice::voice("", file.0.clone()))
+                    .is_some()
+            );
             this.forget_voice_shelf();
             assert!(this.singer_portraits.get(&source).is_none());
             assert!(
-                this.singer_icon(&file.0).is_none(),
+                this.singer_icon(&auris_session::ShelfVoice::voice("", file.0.clone()))
+                    .is_none(),
                 "a rescan may find changed files"
             );
         });

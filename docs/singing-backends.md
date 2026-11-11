@@ -339,4 +339,7 @@ of the project's audio output rate.
 The settings' **Set Up VOICEVOX…** button opens a connection editor for the Engine URL and the query
 and frame-decode style IDs. The same screen can choose and start a local Engine executable, check
 `/version` and `/singers`, and save a `*.voicevox.json` entry into Auris Studio's managed Voices
-folder. The saved entry appears on the shelf with a **VOICEVOX** badge.
+folder. Each singing style the Engine offers then appears on the shelf as a voice of its own,
+with a **VOICEVOX** badge and the style's face; choosing one saves that style into the entry.
+Only an Engine on this machine (loopback) is asked for its singers automatically; a
+connection to another machine lists the styles it has saved.

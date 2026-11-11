@@ -1669,12 +1669,16 @@ impl AurisApp {
     ///
     /// The browser interface a voice shares with the instruments: one row, one click. Like the
     /// picker, this prepares the model on a cancellable worker before the short document edit.
-    pub(crate) fn set_track_voice(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+    pub(crate) fn set_track_voice(
+        &mut self,
+        row: auris_session::ShelfVoice,
+        cx: &mut Context<Self>,
+    ) {
         let Some(track) = self.singer_target() else {
             self.set_failed_status(self.t(Key::ErrorNoSingerTrack).to_string());
             return;
         };
-        self.apply_singer_voice_selection(track, path, None, cx);
+        self.choose_shelf_voice(track, row, cx);
     }
 
     /// Drops cached and pending auditions when the voice behind them changes.

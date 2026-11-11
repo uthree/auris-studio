@@ -300,6 +300,167 @@ pub fn voice_source_kind(path: &Path) -> Option<VoiceSourceKind> {
     }
 }
 
+/// One row on the voice shelf: a voice, or one singing style of a VOICEVOX connection.
+///
+/// A VOICEVOX Engine is one connection file but many singers, and a person picks a singer the
+/// way they pick a sound, so each style is a row of its own. DiffSinger and LeapSinger banks
+/// stay one row each; their speakers are the inspector's choice.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ShelfVoice {
+    /// What the row says.
+    pub name: String,
+    /// The voice entry file.
+    pub path: PathBuf,
+    /// The VOICEVOX style this row sings with; `None` for every other backend.
+    pub style: Option<ShelfStyle>,
+}
+
+/// The VOICEVOX singing style behind a shelf row.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ShelfStyle {
+    /// The Engine's pair of styles, and the name the connection file knows (or will know) it by.
+    pub choice: crate::VoicevoxSpeakerChoice,
+    /// Whether the connection file already holds this pair. A row the Engine advertised but the
+    /// file does not yet name is written into it by the click that chooses it.
+    pub saved: bool,
+    /// Every saved name for this pair. A track whose speaker is any of them is on this row.
+    pub aliases: Vec<String>,
+    /// Whether this is the connection's first saved style, which a track with no saved speaker
+    /// sings with.
+    pub default: bool,
+}
+
+impl ShelfVoice {
+    /// A row for a whole voice.
+    pub fn voice(name: impl Into<String>, path: PathBuf) -> Self {
+        Self {
+            name: name.into(),
+            path,
+            style: None,
+        }
+    }
+
+    /// Whether a track singing `path` with `speaker` is on this row.
+    pub fn is_selected(&self, path: &Path, speaker: Option<&str>) -> bool {
+        if self.path != path {
+            return false;
+        }
+        match (&self.style, speaker) {
+            (None, _) => true,
+            (Some(style), Some(speaker)) => style.aliases.iter().any(|name| name == speaker),
+            (Some(style), None) => style.default,
+        }
+    }
+}
+
+/// The shelf's rows for the scanned `voices`, one per VOICEVOX singing style.
+///
+/// `catalog` answers with the styles a connection's Engine advertised, when they have been
+/// fetched; without them the rows are the styles the connection file has saved. The Engine's
+/// order is kept within a connection, so a singer's styles sit together. Saved names that share
+/// one pair of Engine styles are one row, since they sing identically. A connection that cannot
+/// be read stays one row under its file name, so it can still be found and repaired.
+///
+/// Reads each connection's small JSON file; contacts no Engine and loads no model.
+pub fn voice_shelf<'a>(
+    voices: &[(String, PathBuf)],
+    catalog: impl Fn(&Path) -> Option<&'a crate::VoicevoxCatalog>,
+) -> Vec<ShelfVoice> {
+    let mut rows = Vec::new();
+    for (name, path) in voices {
+        let connection = (voice_source_kind(path) == Some(VoiceSourceKind::Voicevox))
+            .then(|| {
+                crate::voice_setup::read_voicevox_connection(path, None, auris_core::TrackId(0))
+            })
+            .and_then(Result::ok);
+        let Some(connection) = connection else {
+            rows.push(ShelfVoice::voice(name.clone(), path.clone()));
+            continue;
+        };
+        rows.extend(
+            voicevox_shelf_styles(
+                connection.styles(),
+                catalog(path).map(|catalog| catalog.speaker_choices(&connection)),
+            )
+            .into_iter()
+            .map(|style| ShelfVoice {
+                name: style.choice.name.clone(),
+                path: path.clone(),
+                style: Some(style),
+            }),
+        );
+    }
+    // The same singer behind two connections would be two identical labels; name the
+    // connection on those rows only, so the usual row stays short enough for a narrow library.
+    let labels: Vec<String> = rows.iter().map(|row| row.name.clone()).collect();
+    for row in &mut rows {
+        if row.style.is_some() && labels.iter().filter(|name| **name == row.name).count() > 1 {
+            let connection = voices
+                .iter()
+                .find(|(_, path)| *path == row.path)
+                .map_or("", |(name, _)| name.as_str());
+            row.name = format!("{} · {connection}", row.name);
+        }
+    }
+    rows
+}
+
+/// Asks a shelf connection's Engine for the styles it offers, for [`voice_shelf`].
+///
+/// Listing is automatic — nobody clicked anything — so, like the shelf's artwork, only an
+/// Engine on the loopback host is contacted; a connection to another machine keeps its saved
+/// styles. Blocking HTTP with the catalogue's short timeout: call it from a worker thread.
+pub fn fetch_shelf_catalog(path: &Path) -> Result<crate::VoicevoxCatalog, String> {
+    let connection =
+        crate::voice_setup::read_voicevox_connection(path, None, auris_core::TrackId(0))
+            .map_err(|error| error.to_string())?;
+    if !auris_singer::automatic_voicevox_url_safe(&connection.url) {
+        return Err("automatic VOICEVOX access is limited to the loopback host".into());
+    }
+    crate::voice_setup::fetch_voicevox_catalog(&connection.url).map_err(|error| error.to_string())
+}
+
+/// A connection's rows: the Engine's styles in its order when known, then saved pairs the
+/// Engine no longer advertises (or all of them, offline), one row per pair.
+fn voicevox_shelf_styles(
+    saved: &[crate::VoicevoxSpeakerChoice],
+    advertised: Option<Vec<crate::VoicevoxSpeakerChoice>>,
+) -> Vec<ShelfStyle> {
+    let same_pair = |a: &crate::VoicevoxSpeakerChoice, b: &crate::VoicevoxSpeakerChoice| {
+        a.query_style_id == b.query_style_id && a.decode_style_id == b.decode_style_id
+    };
+    let mut styles: Vec<ShelfStyle> = Vec::new();
+    for choice in advertised
+        .into_iter()
+        .flatten()
+        .chain(saved.iter().cloned())
+    {
+        if styles.iter().any(|style| same_pair(&style.choice, &choice)) {
+            continue;
+        }
+        let aliases: Vec<String> = saved
+            .iter()
+            .filter(|style| same_pair(style, &choice))
+            .map(|style| style.name.clone())
+            .collect();
+        // Prefer the saved name the Engine would give it, then any saved name: a click on a
+        // saved row must name a style the file already has, or it would write a duplicate.
+        let name = aliases
+            .iter()
+            .find(|name| **name == choice.name)
+            .or_else(|| aliases.first())
+            .cloned()
+            .unwrap_or_else(|| choice.name.clone());
+        styles.push(ShelfStyle {
+            default: saved.first().is_some_and(|first| same_pair(first, &choice)),
+            saved: !aliases.is_empty(),
+            aliases,
+            choice: crate::VoicevoxSpeakerChoice { name, ..choice },
+        });
+    }
+    styles
+}
+
 /// Directories the shipped SoundFonts are looked for in, best first.
 pub fn library_roots() -> Vec<PathBuf> {
     roots_from(
@@ -388,6 +549,128 @@ pub fn installed_fonts() -> Vec<(&'static ShippedFont, PathBuf)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn connection(folder: &Path, file: &str, name: &str, styles: serde_json::Value) -> PathBuf {
+        let path = folder.join(file);
+        std::fs::write(
+            &path,
+            serde_json::json!({"format_version":1,"name":name,"styles":styles}).to_string(),
+        )
+        .unwrap();
+        path
+    }
+
+    fn catalog(decode: &[(u32, &str, &str)]) -> crate::VoicevoxCatalog {
+        let style = |id, singer: &str, name: &str| crate::VoicevoxStyle {
+            id,
+            singer: singer.into(),
+            name: name.into(),
+        };
+        crate::VoicevoxCatalog {
+            version: "test".into(),
+            query: vec![style(6000, "Teacher", "Normal")],
+            decode: decode
+                .iter()
+                .map(|(id, singer, name)| style(*id, singer, name))
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn a_voicevox_connection_is_one_shelf_row_per_engine_style() {
+        let folder = tempfile::tempdir().unwrap();
+        // Two saved names for one pair sing identically, so they are one row.
+        let path = connection(
+            folder.path(),
+            "Engine.voicevox.json",
+            "Engine",
+            serde_json::json!([
+                {"name":"Singer / normal","query_style_id":6000,"decode_style_id":3001},
+                {"name":"B / Soft","query_style_id":6000,"decode_style_id":3002},
+                {"name":"B / Sweet","query_style_id":6000,"decode_style_id":3001}
+            ]),
+        );
+        let bank = folder.path().join("Bank").join("dsconfig.yaml");
+        let voices = vec![
+            ("Bank".to_string(), bank.clone()),
+            ("Engine".to_string(), path.clone()),
+        ];
+
+        let offline = voice_shelf(&voices, |_| None);
+        let names: Vec<_> = offline.iter().map(|row| row.name.as_str()).collect();
+        assert_eq!(names, ["Bank", "Singer / normal", "B / Soft"]);
+        assert_eq!(offline[0], ShelfVoice::voice("Bank", bank.clone()));
+        let normal = offline[1].style.as_ref().unwrap();
+        assert!(normal.saved && normal.default);
+        assert_eq!(normal.aliases, ["Singer / normal", "B / Sweet"]);
+        assert!(offline[1].is_selected(&path, Some("B / Sweet")));
+        assert!(offline[1].is_selected(&path, None));
+        assert!(!offline[2].is_selected(&path, None));
+
+        let engine = catalog(&[
+            (3002, "B", "Soft"),
+            (3001, "B", "Sweet"),
+            (3003, "C", "Bright"),
+        ]);
+        let online = voice_shelf(&voices, |file| (file == path).then_some(&engine));
+        let rows: Vec<_> = online
+            .iter()
+            .skip(1)
+            .map(|row| {
+                let style = row.style.as_ref().unwrap();
+                (row.name.as_str(), style.saved, style.choice.decode_style_id)
+            })
+            .collect();
+        assert_eq!(
+            rows,
+            [
+                ("B / Soft", true, 3002),
+                // The saved name the Engine would give the pair wins over the older one.
+                ("B / Sweet", true, 3001),
+                ("C / Bright", false, 3003),
+            ],
+            "the Engine's order, then nothing left over"
+        );
+    }
+
+    #[test]
+    fn the_same_singer_on_two_connections_names_its_connection() {
+        let folder = tempfile::tempdir().unwrap();
+        let home = connection(
+            folder.path(),
+            "Home.voicevox.json",
+            "Home",
+            serde_json::json!([
+                {"name":"A / Normal","query_style_id":6000,"decode_style_id":3001},
+                {"name":"B / Normal","query_style_id":6000,"decode_style_id":3002}
+            ]),
+        );
+        let studio = connection(
+            folder.path(),
+            "Studio.voicevox.json",
+            "Studio",
+            serde_json::json!([
+                {"name":"A / Normal","query_style_id":6000,"decode_style_id":3001}
+            ]),
+        );
+        let rows = voice_shelf(&[("Home".into(), home), ("Studio".into(), studio)], |_| {
+            None
+        });
+        let names: Vec<_> = rows.iter().map(|row| row.name.as_str()).collect();
+        assert_eq!(
+            names,
+            ["A / Normal · Home", "B / Normal", "A / Normal · Studio"]
+        );
+    }
+
+    #[test]
+    fn an_unreadable_connection_stays_on_the_shelf_under_its_file_name() {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("Broken.voicevox.json");
+        std::fs::write(&path, b"{").unwrap();
+        let rows = voice_shelf(&[("Broken".into(), path.clone())], |_| None);
+        assert_eq!(rows, [ShelfVoice::voice("Broken", path)]);
+    }
 
     #[test]
     fn portable_leapsinger_banks_share_an_entry_filename_without_hiding_each_other() {

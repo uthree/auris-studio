@@ -214,10 +214,16 @@ impl AurisApp {
             .singer_voice_info(track)
             .ok()
             .flatten()
-            .map(|info| info.path);
-        for (name, path) in self.voice_list() {
-            let selected = current.as_ref() == Some(&path);
-            menu = menu.toggle(name, MenuCommand::SingerVoice { track, path }, selected);
+            .map(|info| (info.path, info.speaker));
+        for voice in self.voice_list() {
+            let selected = current
+                .as_ref()
+                .is_some_and(|(path, speaker)| voice.is_selected(path, speaker.as_deref()));
+            menu = menu.toggle(
+                voice.name.clone(),
+                MenuCommand::SingerVoice { track, voice },
+                selected,
+            );
         }
         menu.separator().item(
             self.t(Key::CmdChooseVoice),
@@ -499,7 +505,10 @@ mod tests {
             this.session
                 .set_singer_speaker(track, Some("Warm"))
                 .unwrap();
-            this.voices = Some(vec![("Test Voice".into(), path.clone())]);
+            this.voices = Some(vec![auris_session::ShelfVoice::voice(
+                "Test Voice",
+                path.clone(),
+            )]);
             this.set_status("Unrelated status");
         });
         paint(&app, cx);
@@ -594,7 +603,10 @@ mod tests {
             this.panels = crate::dock::PanelLayout::default();
             let piano = this.session.add_default_instrument_track("Piano").unwrap();
             this.select_track(piano);
-            this.voices = Some(vec![("Test Voice".into(), path.clone())]);
+            this.voices = Some(vec![auris_session::ShelfVoice::voice(
+                "Test Voice",
+                path.clone(),
+            )]);
             this.library_search = "Test Voice".into();
         });
         paint(&app, cx);
