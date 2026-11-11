@@ -52,9 +52,8 @@ something to interpret in context. Record a concrete musical problem before
 changing it. No minimum rest percentage, required number of transformations,
 maximum leap rate or corpus-average range is a pass condition.
 
-The [MIDI reference study](midi-reference-research-2026-10-25.md) supplies
-descriptive observations and measurement limitations. Its gap/interval metrics
-are not preference labels. Research-informed guidance is in the skill's
+Gap and interval metrics from reference MIDI are descriptive
+observations, not preference labels. Research-informed guidance is in the skill's
 [melody reference](../skills/auris-composition/references/melody-design.md) and
 [arrangement reference](../skills/auris-composition/references/arrangement-design.md).
 
@@ -63,7 +62,7 @@ preference result is implied by adding them or passing their software tests.
 
 ## Listener-informed revisions
 
-The [2026-10-26 unblinding report](melody-feedback-calibration-2026-10-26.ja.md)
+A 2026-10-26 unblinding
 separates overall, melody/vocal and backing preferences from four human comments.
 Do not add those different components into one win rate. Naturalness, recall and
 breathing remain unscored unless a listener explicitly evaluates them.

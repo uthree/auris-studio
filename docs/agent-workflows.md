@@ -330,8 +330,6 @@ Later strength edits preserve that snapshot; changing the source does not recapt
 
 These tools share the canonical catalog across saved MCP and live native model APIs,
 Codex and Claude Code. Read-only and Plan modes permit inspection and refuse edits.
-See the [real backend validation](agent-performance-validation.md) for completed
-Codex and Claude trials, including actual rendering and Undo/Redo checks.
 
 ## Live harmony and vocals
 

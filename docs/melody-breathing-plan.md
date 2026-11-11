@@ -162,7 +162,7 @@ phrase endings are inspected without regeneration.
 The ignored window test
 `installed_agent_repairs_lead_breathing_and_preserves_generated_phrases` uses the
 `AURIS_TOOL_SURFACE_EVAL` configuration described in
-[agent tool validation](agent-tool-validation.md). A real agent diagnoses manual and
+[development](development.md#real-agent-window-tests). A real agent diagnoses manual and
 generated leads plus an intentional texture, repairs only two named lead endings in one
 proposal, independently rereads the result, and numerically inspects the same foreground
 stem and mix before and after. Exact state, recipe preservation and one Undo/Redo are

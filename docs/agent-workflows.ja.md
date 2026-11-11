@@ -112,7 +112,7 @@
 
 検査官から正確な`drum_voice`の名前を渡すと、ドラムキット内の1つのライター（例：`{"clip":3,"drum_voice":"Hat","settings":{"expression":{"velocity":0.2}}}`）を編集できます。グローバルパフォーマンスおよびその他のドラムのライターは保持されます。`drum_voice`を省略すると、クリップのグローバルスタックが編集されます。参照グルーブの場合、まず`{"groove":{"reference_clip":4,"timing":0.8,"velocity":0.3}}`を`settings`内に設定します。キャプチャでは、参照クリップの16分音符グリッド上の最初の実行パスが使用されます。後の強度編集はそのスナップショットを保持しますが、ソースを変更すると再キャプチャされません。
 
-これらのツールは、保存されたMCPおよびライブネイティブモデルAPI、Codex、Claude Code間で標準的なカタログを共有しています。読み取り専用モードとプランモードでは、検査を行い、編集を拒否できます。[real backend validation](agent-performance-validation.ja.md) を参照すると、実際のレンダリングやUndo/Redoチェックを含む、完了したCodexおよびClaudeのトライアルを確認できます。
+これらのツールは、保存されたMCPおよびライブネイティブモデルAPI、Codex、Claude Code間で標準的なカタログを共有しています。読み取り専用モードとプランモードでは、検査を行い、編集を拒否できます。
 
 <a id="live-harmony-and-vocals"></a>
 ## ライブハーモニーとボーカル
