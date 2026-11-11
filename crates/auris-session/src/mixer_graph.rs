@@ -3,7 +3,7 @@
 //! Nodes are stable document identities, not plugin instances. Internal edges describe the
 //! insert order; editable edges use the same session commands as the console and the toolbox.
 
-use auris_core::{EffectSlotId, Output, SendId, TrackId};
+use auris_core::{Destination, EffectSlotId, Tap, TrackId};
 
 use crate::{Session, SessionError};
 
@@ -24,18 +24,17 @@ pub enum MixerNode {
 pub enum MixerEdgeKind {
     /// Consecutive points inside one strip.
     Chain,
-    /// The strip's main output.
-    Output,
-    /// An auxiliary tap; its identity and level belong to the document.
-    Send {
-        /// Owner of the send.
+    /// One of a track's outputs; its level and tap point belong to the document.
+    ///
+    /// The destination is the edge's target. Together with `tap` it is what names the output,
+    /// so two edges between the same nodes are told apart by where they are taken.
+    Output {
+        /// Owner of the output.
         track: TrackId,
-        /// Stable send identity.
-        send: SendId,
-        /// Tap gain in decibels.
-        level_db: f32,
-        /// Whether the tap precedes the fader.
-        pre_fader: bool,
+        /// Level in decibels.
+        gain_db: f32,
+        /// Where on the strip the copy is taken.
+        tap: Tap,
     },
     /// A key signal arriving at an effect's second input.
     Sidechain,
@@ -62,7 +61,7 @@ pub struct MixerEdge {
 pub struct MixerGraph {
     /// Track strips in document order, followed by the master strip.
     pub nodes: Vec<MixerNode>,
-    /// All insert, output, send and sidechain connections.
+    /// All insert, output and sidechain connections.
     pub edges: Vec<MixerEdge>,
 }
 
@@ -88,18 +87,11 @@ impl Session {
         let result = (|| {
             for edge in unique {
                 match edge.kind {
-                    MixerEdgeKind::Output => {
-                        let source = match edge.source {
-                            MixerNode::Strip(owner) | MixerNode::Effect(owner, _) => owner,
-                        };
-                        if let (Some(source), MixerNode::Strip(target)) = (source, edge.target) {
-                            self.remove_track_output(
-                                source,
-                                target.map_or(Output::Master, Output::Bus),
-                            )?;
+                    MixerEdgeKind::Output { track, tap, .. } => {
+                        if let MixerNode::Strip(target) = edge.target {
+                            self.remove_track_output(track, destination(target), tap)?;
                         }
                     }
-                    MixerEdgeKind::Send { track, send, .. } => self.remove_send(track, send)?,
                     MixerEdgeKind::Sidechain => {
                         if let MixerNode::Effect(owner, slot) = edge.target {
                             self.set_effect_sidechain(owner, slot, None)?;
@@ -119,8 +111,8 @@ impl Session {
         result
     }
 
-    /// The terminal node of a strip's inserts, where its post-fader signal leaves.
-    /// A pre-fader send uses the same node with its tap identified by `pre_fader`.
+    /// The terminal node of a strip's inserts, where its signal leaves.
+    /// A pre-fader output leaves the same node, told apart by its [`Tap`].
     pub fn mixer_graph_output(&self, owner: Option<TrackId>) -> MixerNode {
         owner
             .and_then(|id| self.project().track(id))
@@ -132,7 +124,7 @@ impl Session {
             })
     }
 
-    /// Describes the complete mixer signal path, including bypassed inserts and silent sends.
+    /// Describes the complete mixer signal path, including bypassed inserts and silent outputs.
     pub fn mixer_graph(&self) -> MixerGraph {
         let mut graph = MixerGraph {
             nodes: Vec::new(),
@@ -179,18 +171,10 @@ impl Session {
                     graph.edges.push(MixerEdge {
                         source: previous,
                         target: MixerNode::Strip(output.bus()),
-                        kind: MixerEdgeKind::Output,
-                    });
-                }
-                for send in &track.sends {
-                    graph.edges.push(MixerEdge {
-                        source: previous,
-                        target: MixerNode::Strip(Some(send.target)),
-                        kind: MixerEdgeKind::Send {
+                        kind: MixerEdgeKind::Output {
                             track: track.id,
-                            send: send.id,
-                            level_db: send.level_db,
-                            pre_fader: send.pre_fader,
+                            gain_db: output.gain_db,
+                            tap: output.tap,
                         },
                     });
                 }
@@ -199,11 +183,11 @@ impl Session {
         graph
     }
 
-    /// Whether a graph gesture can connect a track's post-fader output to this node.
+    /// Whether a graph gesture can connect a track's signal to this node.
     ///
-    /// An input receives an output, or a send when `send` is true. An effect receives a
-    /// sidechain. Self connections, duplicates, stale identities and all cycles are rejected.
-    pub fn can_connect_mixer(&mut self, source: TrackId, target: MixerNode, send: bool) -> bool {
+    /// An input receives a new unity output after the fader. An effect receives a sidechain.
+    /// Self connections, duplicates, stale identities and all cycles are rejected.
+    pub fn can_connect_mixer(&mut self, source: TrackId, target: MixerNode) -> bool {
         let Some(track) = self.project().track(source) else {
             return false;
         };
@@ -215,13 +199,8 @@ impl Session {
                 {
                     return false;
                 }
-                if send {
-                    owner.is_some_and(|bus| !track.sends.iter().any(|s| s.target == bus))
-                } else {
-                    !track
-                        .outputs
-                        .contains(&owner.map_or(Output::Master, Output::Bus))
-                }
+                let key = (destination(owner), Tap::PostFader);
+                !track.outputs.iter().any(|output| output.key() == key)
             }
             MixerNode::Effect(owner, slot) => {
                 self.effect_enabled(owner, slot).is_some()
@@ -240,18 +219,12 @@ impl Session {
         &mut self,
         source: TrackId,
         target: MixerNode,
-        send: bool,
     ) -> Result<bool, SessionError> {
-        if !self.can_connect_mixer(source, target, send) {
+        if !self.can_connect_mixer(source, target) {
             return Ok(false);
         }
         match target {
-            MixerNode::Strip(Some(bus)) if send => {
-                self.add_send(source, bus)?;
-            }
-            MixerNode::Strip(owner) => {
-                self.add_track_output(source, owner.map_or(Output::Master, Output::Bus))?
-            }
+            MixerNode::Strip(owner) => self.add_track_output(source, destination(owner))?,
             MixerNode::Effect(owner, slot) => {
                 self.set_effect_sidechain(owner, slot, Some(source))?
             }
@@ -260,10 +233,16 @@ impl Session {
     }
 }
 
+/// The destination a strip node stands for as a routing target: `None` is the master.
+pub fn destination(owner: Option<TrackId>) -> Destination {
+    owner.map_or(Destination::Master, Destination::Bus)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::SessionOptions;
+    use auris_core::Output;
 
     #[test]
     fn extra_outputs_participate_in_cycle_validation_and_invalid_edits_keep_redo() {
@@ -271,22 +250,21 @@ mod tests {
         let a = session.add_bus_track("A");
         let b = session.add_bus_track("B");
         let c = session.add_bus_track("C");
-        session.add_track_output(a, Output::Bus(b)).unwrap();
-        session.add_track_output(a, Output::Bus(c)).unwrap();
+        session.add_track_output(a, Destination::Bus(b)).unwrap();
+        session.add_track_output(a, Destination::Bus(c)).unwrap();
         let before = session.mixer_graph();
         for bus in [b, c] {
-            assert!(session.add_track_output(bus, Output::Bus(a)).is_err());
-            assert!(session.add_send(bus, a).is_err());
+            assert!(session.add_track_output(bus, Destination::Bus(a)).is_err());
         }
         assert_eq!(session.mixer_graph(), before);
         session.undo();
         assert_eq!(
             session.project().track(a).unwrap().outputs,
-            vec![Output::Master, Output::Bus(b)]
+            vec![Output::master(), Output::to_bus(b)]
         );
         assert!(
             session
-                .set_track_outputs(a, &[Output::Master, Output::Bus(TrackId(9999))])
+                .set_track_outputs(a, &[Output::master(), Output::to_bus(TrackId(9999))])
                 .is_err()
         );
         session.redo();
@@ -294,19 +272,23 @@ mod tests {
     }
 
     #[test]
-    fn deleting_mixed_branches_is_atomic_and_undo_restores_send_automation() {
+    fn deleting_mixed_branches_is_atomic_and_undo_restores_output_automation() {
         let mut session = Session::new(SessionOptions::headless()).unwrap();
         let a = session.add_bus_track("A");
         let b = session.add_bus_track("B");
         let c = session.add_bus_track("C");
-        session.add_track_output(a, Output::Bus(b)).unwrap();
-        let send = session.add_send(a, c).unwrap();
+        session.add_track_output(a, Destination::Bus(b)).unwrap();
+        session.add_track_output(a, Destination::Bus(c)).unwrap();
         let slot = session.add_effect(Some(c), "auris.fx.compressor").unwrap();
         session
             .set_effect_sidechain(Some(c), slot, Some(a))
             .unwrap();
         session.set_automation_point(
-            crate::prelude::ParamTarget::Send { track: a, send },
+            crate::prelude::ParamTarget::Output {
+                track: a,
+                to: Destination::Bus(c),
+                tap: Tap::PostFader,
+            },
             crate::prelude::Ticks::ZERO,
             -6.0,
         );
@@ -321,7 +303,6 @@ mod tests {
         let before = serde_json::to_value(session.project()).unwrap();
         assert!(session.disconnect_mixer_edges(&edges).unwrap());
         assert!(session.project().track(a).unwrap().outputs.is_empty());
-        assert!(session.project().track(a).unwrap().sends.is_empty());
         assert_eq!(session.effect_sidechain(Some(c), slot), None);
         assert!(!session.disconnect_mixer_edges(&edges).unwrap());
         session.undo();
@@ -331,64 +312,60 @@ mod tests {
     }
 
     #[test]
-    fn graph_connections_reject_feedback_through_outputs_sends_and_sidechains() {
+    fn graph_connections_reject_feedback_through_outputs_and_sidechains() {
         let mut session = Session::new(SessionOptions::headless()).unwrap();
         let a = session.add_bus_track("A");
         let b = session.add_bus_track("B");
         let c = session.add_bus_track("C");
-        assert!(
-            session
-                .connect_mixer(a, MixerNode::Strip(Some(b)), false)
-                .unwrap()
-        );
-        assert!(
-            session
-                .connect_mixer(b, MixerNode::Strip(Some(c)), true)
-                .unwrap()
-        );
+        assert!(session.connect_mixer(a, MixerNode::Strip(Some(b))).unwrap());
+        assert!(session.connect_mixer(b, MixerNode::Strip(Some(c))).unwrap());
         let before = session.mixer_graph();
-        for send in [false, true] {
-            assert!(
-                !session
-                    .connect_mixer(c, MixerNode::Strip(Some(a)), send)
-                    .unwrap()
-            );
-            assert!(
-                !session
-                    .connect_mixer(a, MixerNode::Strip(Some(a)), send)
-                    .unwrap()
-            );
-        }
+        assert!(!session.connect_mixer(c, MixerNode::Strip(Some(a))).unwrap());
+        assert!(!session.connect_mixer(a, MixerNode::Strip(Some(a))).unwrap());
         assert_eq!(session.mixer_graph(), before);
         session.undo();
-        assert!(session.project().track(b).unwrap().sends.is_empty());
+        assert_eq!(
+            session.project().track(b).unwrap().outputs,
+            vec![Output::master()]
+        );
         session.redo();
         assert_eq!(session.mixer_graph(), before);
     }
 
     #[test]
-    fn graph_keeps_send_taps_after_inserts_with_explicit_fader_modes() {
+    fn graph_keeps_output_taps_after_inserts_with_explicit_fader_modes() {
         let mut session = Session::new(SessionOptions::headless()).unwrap();
         let track = session.add_bus_track("Source");
         let bus = session.add_bus_track("Return");
+        let to = Destination::Bus(bus);
         let slot = session.add_effect(Some(track), "auris.fx.reverb").unwrap();
-        let send = session.add_send(track, bus).unwrap();
-        session.set_send_pre_fader(track, send, true).unwrap();
+        session.add_track_output(track, to).unwrap();
+        session
+            .set_output_tap(track, to, Tap::PostFader, Tap::PreFader)
+            .unwrap();
         let graph = session.mixer_graph();
         let edge = graph
             .edges
             .iter()
-            .find(|e| matches!(e.kind, MixerEdgeKind::Send { .. }))
+            .find(|e| e.target == MixerNode::Strip(Some(bus)))
             .unwrap();
         assert_eq!(edge.source, MixerNode::Effect(Some(track), slot));
-        assert_eq!(edge.target, MixerNode::Strip(Some(bus)));
-        session.set_send_pre_fader(track, send, false).unwrap();
+        assert!(matches!(
+            edge.kind,
+            MixerEdgeKind::Output {
+                tap: Tap::PreFader,
+                ..
+            }
+        ));
+        session
+            .set_output_tap(track, to, Tap::PreFader, Tap::PostFader)
+            .unwrap();
         assert!(session.mixer_graph().edges.iter().any(|e| e.source
             == MixerNode::Effect(Some(track), slot)
             && matches!(
                 e.kind,
-                MixerEdgeKind::Send {
-                    pre_fader: false,
+                MixerEdgeKind::Output {
+                    tap: Tap::PostFader,
                     ..
                 }
             )));
@@ -404,18 +381,13 @@ mod tests {
             .unwrap();
         let target = MixerNode::Effect(Some(listener), slot);
         let before = session.mixer_graph();
-        assert!(session.connect_mixer(source, target, false).unwrap());
+        assert!(session.connect_mixer(source, target).unwrap());
         assert!(
             !session
-                .connect_mixer(listener, MixerNode::Strip(Some(source)), false)
+                .connect_mixer(listener, MixerNode::Strip(Some(source)))
                 .unwrap()
         );
-        assert!(
-            !session
-                .connect_mixer(listener, MixerNode::Strip(Some(source)), true)
-                .unwrap()
-        );
-        assert!(!session.connect_mixer(listener, target, false).unwrap());
+        assert!(!session.connect_mixer(listener, target).unwrap());
         assert!(
             session
                 .mixer_graph()
@@ -430,40 +402,36 @@ mod tests {
     }
 
     #[test]
-    fn graph_refuses_stale_nodes_non_bus_inputs_and_duplicate_sends() {
+    fn graph_refuses_stale_nodes_non_bus_inputs_and_duplicate_outputs() {
         let mut session = Session::new(SessionOptions::headless()).unwrap();
         let track = session.add_audio_track("Audio");
         let bus = session.add_bus_track("Bus");
         assert!(
             !session
-                .connect_mixer(bus, MixerNode::Strip(Some(track)), false)
+                .connect_mixer(bus, MixerNode::Strip(Some(track)))
                 .unwrap()
         );
         assert!(
             !session
-                .connect_mixer(track, MixerNode::Strip(Some(TrackId(u64::MAX))), false)
+                .connect_mixer(track, MixerNode::Strip(Some(TrackId(u64::MAX))))
                 .unwrap()
         );
         assert!(
             !session
-                .connect_mixer(
-                    track,
-                    MixerNode::Effect(None, EffectSlotId(u64::MAX)),
-                    false
-                )
+                .connect_mixer(track, MixerNode::Effect(None, EffectSlotId(u64::MAX)))
                 .unwrap()
         );
         assert!(
             session
-                .connect_mixer(track, MixerNode::Strip(Some(bus)), true)
+                .connect_mixer(track, MixerNode::Strip(Some(bus)))
                 .unwrap()
         );
         assert!(
             !session
-                .connect_mixer(track, MixerNode::Strip(Some(bus)), true)
+                .connect_mixer(track, MixerNode::Strip(Some(bus)))
                 .unwrap()
         );
-        assert_eq!(session.project().track(track).unwrap().sends.len(), 1);
+        assert_eq!(session.project().track(track).unwrap().outputs.len(), 2);
     }
 
     #[test]
@@ -478,7 +446,7 @@ mod tests {
         session.add_effect(Some(bus), "auris.fx.reverb").unwrap();
         session.move_effect(Some(bus), first, 1);
         session
-            .connect_mixer(source, MixerNode::Strip(Some(bus)), true)
+            .connect_mixer(source, MixerNode::Strip(Some(bus)))
             .unwrap();
         let master_slot = session.add_effect(None, "auris.fx.compressor").unwrap();
         session

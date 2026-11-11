@@ -31,8 +31,8 @@ enum AutomationSlot {
     MasterGain,
     /// The master pan.
     MasterPan,
-    /// One of a track's send levels, by track index and position in its send list.
-    Send { track: usize, send: usize },
+    /// One of a track's output levels, by track index and position in its output list.
+    Output { track: usize, output: usize },
     /// A parameter on a track's instrument.
     Instrument { track: usize, param: ParamId },
     /// A parameter on an effect, on a track or on the master bus.
@@ -84,13 +84,13 @@ fn resolve_slot(project: &Project, target: ParamTarget) -> Option<AutomationSlot
         ParamTarget::TrackPan(id) => project.track_index(id).map(AutomationSlot::TrackPan),
         ParamTarget::MasterGain => Some(AutomationSlot::MasterGain),
         ParamTarget::MasterPan => Some(AutomationSlot::MasterPan),
-        ParamTarget::Send { track, send } => Some(AutomationSlot::Send {
+        ParamTarget::Output { track, to, tap } => Some(AutomationSlot::Output {
             track: project.track_index(track)?,
-            send: project
+            output: project
                 .track(track)?
-                .sends
+                .outputs
                 .iter()
-                .position(|existing| existing.id == send)?,
+                .position(|existing| existing.key() == (to, tap))?,
         }),
         ParamTarget::Instrument { track, param } => Some(AutomationSlot::Instrument {
             track: project.track_index(track)?,
@@ -154,14 +154,14 @@ pub(super) fn drive_automation(
                 true => master.set_pan(value),
                 false => master.jump_pan(value),
             },
-            AutomationSlot::Send { track, send } => {
-                if let Some(send) = tracks
+            AutomationSlot::Output { track, output } => {
+                if let Some(output) = tracks
                     .get_mut(track)
-                    .and_then(|track| track.sends.get_mut(send))
+                    .and_then(|track| track.outputs.get_mut(output))
                 {
                     match continuing {
-                        true => send.gain.set_target(db_to_gain(value)),
-                        false => send.gain.jump_to(db_to_gain(value)),
+                        true => output.gain.set_target(db_to_gain(value)),
+                        false => output.gain.jump_to(db_to_gain(value)),
                     }
                 }
             }

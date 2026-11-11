@@ -2,7 +2,7 @@
 
 use serde_json::{Value, json};
 
-use super::{MixerEdgeKind, MixerNode};
+use super::{MixerEdgeKind, MixerNode, destination};
 use crate::{Edit, ParamTarget, Session, prelude::*};
 
 #[cfg(test)]
@@ -14,10 +14,8 @@ mod tests;
 )]
 #[serde(rename_all = "snake_case")]
 pub enum ConnectionKind {
-    /// Add a unity post-fader output without replacing existing destinations.
+    /// A copy of the track's signal into a bus or the master, at a level and tap of its own.
     Output,
-    /// Add an independent post-fader copy feeding a bus.
-    Send,
     /// Feed an effect's detector input.
     Sidechain,
 }
@@ -26,7 +24,7 @@ pub enum ConnectionKind {
 #[derive(Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 pub enum GraphAction {
-    /// Replace all output destinations atomically. Empty targets explicitly disconnects the source.
+    /// Replace all outputs atomically with unity post-fader outputs to these targets. Empty targets explicitly disconnects the source; levels and pre-fader outputs are not kept.
     SetOutputs {
         /// Stable source track node.
         source: String,
@@ -34,16 +32,16 @@ pub enum GraphAction {
         #[schemars(length(max = 64))]
         targets: Vec<String>,
     },
-    /// Create a send with its level and tap in one Undo step. Returns the stable send ID.
-    AddSend {
+    /// Add one output with its level and tap in one Undo step, keeping every existing output. A track holds at most one output per target and tap; refused if this one exists (use set_output).
+    AddOutput {
         /// Stable source track node.
         source: String,
-        /// Stable destination bus node.
+        /// Stable destination bus node or track:master.
         target: String,
         /// Initial level, -60..0 dB.
         #[schemars(range(min = -60, max = 0))]
-        level_db: f32,
-        /// True taps after inserts before the fader.
+        gain_db: f32,
+        /// True taps after inserts before the fader; false (the usual) after the fader.
         pre_fader: bool,
     },
     /// Replace or clear an effect's sidechain atomically.
@@ -76,25 +74,25 @@ pub enum GraphAction {
         /// Node page size, default 32, clamped to 1..64.
         limit: Option<usize>,
     },
-    /// Connect two nodes from mixer_graph read. source must be a track output; output/send target a bus track node (output also accepts master), sidechain targets an effect. All cycles are refused, including mixed output/send/sidechain paths. Duplicate connections are unchanged. Changes are undoable.
+    /// Connect two nodes from mixer_graph read. source must be a track output; output targets a bus track node or master and adds a unity post-fader output; sidechain targets an effect. All cycles are refused, including mixed output/sidechain paths. Duplicate connections are unchanged. Changes are undoable.
     Connect {
         /// Exact track node ID or its output_node from mixer_graph read.
         source: String,
         /// Exact track or effect node ID from mixer_graph read.
         target: String,
-        /// output, send, or sidechain; must match the target port.
+        /// output or sidechain; must match the target port.
         kind: ConnectionKind,
     },
-    /// Disconnect an existing graph edge. Only the named output, send or sidechain is removed; an empty output list remains disconnected. Internal chain edges cannot be disconnected. Supply send_id when several sends share the same source/target. A stale or mismatched edge is refused.
+    /// Disconnect an existing graph edge. Only the named output or sidechain is removed; an empty output list remains disconnected. Internal chain edges cannot be disconnected. Supply pre_fader when a pre- and a post-fader output share the same source/target. A stale or mismatched edge is refused.
     Disconnect {
-        /// Exact source track node ID, including for a pre-fader send.
+        /// Exact source track node ID, including for a pre-fader output.
         source: String,
         /// Exact destination track or effect node ID.
         target: String,
         /// Role of the edge to remove.
         kind: ConnectionKind,
-        /// Existing send ID; only accepted for kind send.
-        send_id: Option<u64>,
+        /// Which output to remove by its tap; only accepted for kind output.
+        pre_fader: Option<bool>,
     },
     /// Add an effect before a strip's fader. input is the strip's track node ID; effect is an exact available_effects ID. Returns the new effect node ID. Use a bus branch for parallel effects.
     AddEffect {
@@ -123,15 +121,20 @@ pub enum GraphAction {
         /// Whether the effect processes audio.
         enabled: bool,
     },
-    /// Set an existing send's static level and/or pre-fader tap. At least one value is required. Automation can override the static level; inspect the returned state.
-    SetSend {
-        /// Stable send ID from a graph edge.
-        send_id: u64,
-        /// Static send level in decibels, -60..0.
+    /// Set an existing output's static level and/or move its tap. The output is named by source, target and pre_fader. At least one of gain_db and move_pre_fader is required. Automation can override the static level; inspect the returned state.
+    SetOutput {
+        /// Stable source track node.
+        source: String,
+        /// Stable destination bus node or track:master.
+        target: String,
+        /// Which output: true for the one taken before the fader. Default false.
+        #[serde(default)]
+        pre_fader: bool,
+        /// Static level in decibels, -60..0.
         #[schemars(range(min = -60, max = 0))]
-        level_db: Option<f32>,
-        /// True taps after inserts but before the fader; false taps after the fader.
-        pre_fader: Option<bool>,
+        gain_db: Option<f32>,
+        /// Move the output: true takes it after inserts but before the fader, false after it.
+        move_pre_fader: Option<bool>,
     },
     /// Read an effect node's parameter keys, value_domain, units, ranges, steps, read_only flags, static values and automation flags. VST3 values are normalized 0..1, not display units such as Hz/dB. Follow next_offset for more parameters. Choice labels are previews of at most 16.
     Parameters {
@@ -159,7 +162,7 @@ impl GraphAction {
     pub fn operation_name(&self) -> &'static str {
         match self {
             Self::SetOutputs { .. } => "set_outputs",
-            Self::AddSend { .. } => "add_send",
+            Self::AddOutput { .. } => "add_output",
             Self::SetSidechain { .. } => "set_sidechain",
             Self::Read { .. } => "read",
             Self::Connect { .. } => "connect",
@@ -168,7 +171,7 @@ impl GraphAction {
             Self::RemoveEffect { .. } => "remove_effect",
             Self::MoveEffect { .. } => "move_effect",
             Self::EnableEffect { .. } => "enable_effect",
-            Self::SetSend { .. } => "set_send",
+            Self::SetOutput { .. } => "set_output",
             Self::Parameters { .. } => "parameters",
             Self::SetParameter { .. } => "set_parameter",
             Self::SetStrip { .. } => "set_strip",
@@ -271,9 +274,7 @@ impl Session {
                         let (_, destination) =
                             self.graph_connection(source, target, ConnectionKind::Output)?;
                         match destination {
-                            MixerNode::Strip(owner) => {
-                                Ok(owner.map_or(Output::Master, Output::Bus))
-                            }
+                            MixerNode::Strip(owner) => Ok(Output::new(super::destination(owner))),
                             _ => Err("Expected bus or master track node".to_string()),
                         }
                     })
@@ -282,38 +283,36 @@ impl Session {
                 self.set_track_outputs(track, &outputs).map_err(error)?;
                 changed = self.revision() != revision;
             }
-            GraphAction::AddSend {
+            GraphAction::AddOutput {
                 source,
                 target,
-                level_db,
+                gain_db,
                 pre_fader,
             } => {
-                if !(-60.0..=0.0).contains(level_db) {
-                    return Err("level_db must be finite and within -60..0".into());
+                if !(-60.0..=0.0).contains(gain_db) {
+                    return Err("gain_db must be finite and within -60..0".into());
                 }
-                let (track, destination) =
-                    self.graph_connection(source, target, ConnectionKind::Send)?;
-                let MixerNode::Strip(Some(bus)) = destination else {
-                    return Err("Expected destination bus node".into());
-                };
-                self.begin_transaction(Edit::ExternalChanges);
-                let applied = self.add_send(track, bus).and_then(|send| {
-                    self.set_send_level(track, send, *level_db)?;
-                    self.set_send_pre_fader(track, send, *pre_fader)?;
-                    Ok(send)
+                let (track, to) = self.graph_output_target(source, target)?;
+                let tap = tap_of(*pre_fader);
+                let mut outputs = self
+                    .project()
+                    .track(track)
+                    .ok_or("Unknown source track")?
+                    .outputs
+                    .clone();
+                if outputs.iter().any(|output| output.key() == (to, tap)) {
+                    return Err(
+                        "This output already exists; use set_output to change its level".into(),
+                    );
+                }
+                outputs.push(Output {
+                    to,
+                    gain_db: *gain_db,
+                    tap,
                 });
-                let send = match applied {
-                    Ok(send) => {
-                        self.end_transaction();
-                        send
-                    }
-                    Err(failure) => {
-                        self.revert_transaction();
-                        return Err(error(failure));
-                    }
-                };
+                self.set_track_outputs(track, &outputs).map_err(error)?;
                 changed = true;
-                result = json!({"send_id":send.0,"level_db":level_db,"pre_fader":pre_fader});
+                result = json!({"source":source,"target":target,"gain_db":gain_db,"pre_fader":pre_fader});
             }
             GraphAction::SetSidechain { node, source } => {
                 let (owner, slot) = self.graph_effect(node)?;
@@ -419,16 +418,11 @@ impl Session {
                 let (from, to) = self.graph_connection(source, target, *kind)?;
                 let exists = match kind {
                     ConnectionKind::Output => self.project().track(from).is_some_and(|track| {
-                        track.outputs.contains(&match to {
-                            MixerNode::Strip(owner) => owner.map_or(Output::Master, Output::Bus),
-                            _ => Output::Master,
-                        })
-                    }),
-                    ConnectionKind::Send => self.project().track(from).is_some_and(|track| {
-                        track
-                            .sends
-                            .iter()
-                            .any(|send| MixerNode::Strip(Some(send.target)) == to)
+                        let key = match to {
+                            MixerNode::Strip(owner) => (destination(owner), Tap::PostFader),
+                            _ => (Destination::Master, Tap::PostFader),
+                        };
+                        track.outputs.iter().any(|output| output.key() == key)
                     }),
                     ConnectionKind::Sidechain => match to {
                         MixerNode::Effect(owner, slot) => {
@@ -438,60 +432,54 @@ impl Session {
                     },
                 };
                 if !exists {
-                    if !self.can_connect_mixer(from, to, *kind == ConnectionKind::Send) {
-                        return Err("Connection refused: incompatible port or a cycle through outputs, sends or sidechains".into());
+                    if !self.can_connect_mixer(from, to) {
+                        return Err("Connection refused: incompatible port or a cycle through outputs or sidechains".into());
                     }
-                    changed = self
-                        .connect_mixer(from, to, *kind == ConnectionKind::Send)
-                        .map_err(error)?;
+                    changed = self.connect_mixer(from, to).map_err(error)?;
                 }
             }
             GraphAction::Disconnect {
                 source,
                 target,
                 kind,
-                send_id,
+                pre_fader,
             } => {
                 let (from, to) = self.graph_connection(source, target, *kind)?;
-                if *kind != ConnectionKind::Send && send_id.is_some() {
-                    return Err("send_id is only accepted for a send edge".into());
+                if *kind != ConnectionKind::Output && pre_fader.is_some() {
+                    return Err("pre_fader is only accepted for an output edge".into());
                 }
                 match kind {
                     ConnectionKind::Output => {
-                        let target = match to {
-                            MixerNode::Strip(owner) => owner,
+                        let to = match to {
+                            MixerNode::Strip(owner) => destination(owner),
                             _ => return Err("Expected an input".into()),
                         };
-                        if self.project().track(from).is_none_or(|track| {
-                            !track
-                                .outputs
-                                .contains(&target.map_or(Output::Master, Output::Bus))
-                        }) {
-                            return Err(
-                                "This output edge no longer exists; mixer_graph read again".into(),
-                            );
-                        }
-                        changed = true;
-                        self.remove_track_output(from, target.map_or(Output::Master, Output::Bus))
-                            .map_err(error)?;
-                    }
-                    ConnectionKind::Send => {
-                        let sends: Vec<_> = self
+                        let matching: Vec<Tap> = self
                             .project()
                             .track(from)
                             .into_iter()
-                            .flat_map(|track| &track.sends)
-                            .filter(|send| {
-                                MixerNode::Strip(Some(send.target)) == to
-                                    && send_id.is_none_or(|id| send.id.0 == id)
+                            .flat_map(|track| &track.outputs)
+                            .filter(|output| {
+                                output.to == to
+                                    && pre_fader.is_none_or(|pre| output.tap == tap_of(pre))
                             })
-                            .map(|send| send.id)
+                            .map(|output| output.tap)
                             .collect();
-                        if sends.len() != 1 {
-                            return Err("Expected exactly one matching send edge; use send_id from mixer_graph read".into());
+                        match matching.as_slice() {
+                            [] => {
+                                return Err(
+                                    "This output edge no longer exists; mixer_graph read again"
+                                        .into(),
+                                );
+                            }
+                            [tap] => {
+                                self.remove_track_output(from, to, *tap).map_err(error)?;
+                                changed = true;
+                            }
+                            _ => {
+                                return Err("A pre- and a post-fader output share this source and target; supply pre_fader".into());
+                            }
                         }
-                        self.remove_send(from, sends[0]).map_err(error)?;
-                        changed = true;
                     }
                     ConnectionKind::Sidechain => {
                         let (owner, slot) = self.graph_effect(target)?;
@@ -546,39 +534,39 @@ impl Session {
                 }
                 result = json!({"node":node,"enabled":enabled});
             }
-            GraphAction::SetSend {
-                send_id,
-                level_db,
+            GraphAction::SetOutput {
+                source,
+                target,
                 pre_fader,
+                gain_db,
+                move_pre_fader,
             } => {
-                if level_db.is_none() && pre_fader.is_none() {
-                    return Err("Supply level_db and/or pre_fader".into());
+                if gain_db.is_none() && move_pre_fader.is_none() {
+                    return Err("Supply gain_db and/or move_pre_fader".into());
                 }
-                if level_db.is_some_and(|level| !(-60.0..=0.0).contains(&level)) {
-                    return Err("level_db must be finite and within -60..0".into());
+                if gain_db.is_some_and(|gain| !(-60.0..=0.0).contains(&gain)) {
+                    return Err("gain_db must be finite and within -60..0".into());
                 }
-                let (owner, send) = self
+                let (track, to) = self.graph_output_target(source, target)?;
+                let tap = tap_of(*pre_fader);
+                let output = self
                     .project()
-                    .tracks
-                    .iter()
-                    .find_map(|track| {
-                        track
-                            .sends
+                    .track(track)
+                    .and_then(|entry| {
+                        entry
+                            .outputs
                             .iter()
-                            .find(|send| send.id.0 == *send_id)
-                            .map(|send| (track.id, send.clone()))
+                            .find(|output| output.key() == (to, tap))
                     })
-                    .ok_or("Unknown send_id; mixer_graph read again")?;
-                changed = level_db.is_some_and(|value| value != send.level_db)
-                    || pre_fader.is_some_and(|value| value != send.pre_fader);
+                    .copied()
+                    .ok_or("This output does not exist; mixer_graph read again")?;
+                let moved = move_pre_fader.map_or(tap, tap_of);
+                changed = gain_db.is_some_and(|value| value != output.gain_db) || moved != tap;
                 if changed {
                     self.begin_transaction(Edit::ExternalChanges);
-                    let applied = level_db
-                        .map_or(Ok(()), |level| self.set_send_level(owner, send.id, level))
-                        .and_then(|()| {
-                            pre_fader
-                                .map_or(Ok(()), |pre| self.set_send_pre_fader(owner, send.id, pre))
-                        });
+                    let applied = gain_db
+                        .map_or(Ok(()), |gain| self.set_output_gain(track, to, tap, gain))
+                        .and_then(|()| self.set_output_tap(track, to, tap, moved));
                     // Closed either way: an open transaction disables Undo and autosave.
                     match applied {
                         Ok(()) => {
@@ -590,7 +578,7 @@ impl Session {
                         }
                     }
                 }
-                result = json!({"send_id":send_id,"level_db":level_db.unwrap_or(send.level_db),"pre_fader":pre_fader.unwrap_or(send.pre_fader),"automated":self.is_automated(ParamTarget::Send {track:owner,send:send.id})});
+                result = json!({"source":source,"target":target,"gain_db":gain_db.unwrap_or(output.gain_db),"pre_fader":moved == Tap::PreFader,"automated":self.is_automated(ParamTarget::Output {track, to, tap: moved})});
             }
             GraphAction::SetParameter { node, param, value } => {
                 let parameters = self.graph_parameter_targets(node)?;
@@ -643,11 +631,7 @@ impl Session {
         };
         let to = self.graph_node(target)?;
         match (kind, to) {
-            (ConnectionKind::Output, MixerNode::Strip(owner))
-            | (ConnectionKind::Send, MixerNode::Strip(owner)) => {
-                if owner.is_none() && kind == ConnectionKind::Send {
-                    return Err("A send must feed a bus track node".into());
-                }
+            (ConnectionKind::Output, MixerNode::Strip(owner)) => {
                 if owner.is_some_and(|id| {
                     self.project()
                         .track(id)
@@ -660,6 +644,18 @@ impl Session {
             _ => return Err("Connection kind does not match the target port".into()),
         }
         Ok((from, to))
+    }
+
+    /// The source track and destination of an output named by graph node IDs.
+    fn graph_output_target(
+        &self,
+        source: &str,
+        target: &str,
+    ) -> Result<(TrackId, Destination), String> {
+        match self.graph_connection(source, target, ConnectionKind::Output)? {
+            (track, MixerNode::Strip(owner)) => Ok((track, destination(owner))),
+            _ => Err("Expected bus or master track node".into()),
+        }
     }
 
     /// A bounded JSON graph page, in processing order, with each page node's outgoing edges.
@@ -750,22 +746,24 @@ impl Session {
                 let mut row = json!({"source":edge.source.key(),"target":edge.target.key()});
                 match edge.kind {
                     MixerEdgeKind::Chain => row["kind"] = "chain".into(),
-                    MixerEdgeKind::Output => row["kind"] = "output".into(),
                     MixerEdgeKind::Sidechain => row["kind"] = "sidechain".into(),
                     MixerEdgeKind::Notes => row["kind"] = "notes".into(),
-                    MixerEdgeKind::Send {
+                    MixerEdgeKind::Output {
                         track,
-                        send,
-                        level_db,
-                        pre_fader,
+                        gain_db,
+                        tap,
                     } => {
-                        row["kind"] = "send".into();
-                        row["send_id"] = send.0.into();
-                        row["level_db"] = level_db.into();
-                        row["pre_fader"] = pre_fader.into();
+                        row["kind"] = "output".into();
+                        row["gain_db"] = gain_db.into();
+                        row["pre_fader"] = (tap == Tap::PreFader).into();
                         row["control_source"] = MixerNode::Strip(Some(track)).key().into();
-                        row["automated"] =
-                            self.is_automated(ParamTarget::Send { track, send }).into();
+                        let to = match edge.target {
+                            MixerNode::Strip(owner) => destination(owner),
+                            MixerNode::Effect(..) => Destination::Master,
+                        };
+                        row["automated"] = self
+                            .is_automated(ParamTarget::Output { track, to, tap })
+                            .into();
                     }
                 }
                 row
@@ -780,5 +778,14 @@ impl Session {
         Ok(
             json!({"acyclic":true,"order":"processing","nodes":nodes,"edges":edges,"total_nodes":ordered.len(),"next_offset":(next < ordered.len()).then_some(next),"available_effects":effects}),
         )
+    }
+}
+
+/// The tap a model-facing `pre_fader` flag names.
+fn tap_of(pre_fader: bool) -> Tap {
+    if pre_fader {
+        Tap::PreFader
+    } else {
+        Tap::PostFader
     }
 }

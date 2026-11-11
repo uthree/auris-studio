@@ -29,7 +29,7 @@ pub(super) fn bussed_project() -> (Project, TrackId, TrackId, TrackId) {
     let kick = project.add_instrument_track("Kick", "auris.synth.pulse");
     let snare = project.add_instrument_track("Snare", "auris.synth.pulse");
     let bus = project.add_bus_track("Drums");
-    project.track_mut(kick).unwrap().outputs = vec![Output::Bus(bus)];
-    project.track_mut(snare).unwrap().outputs = vec![Output::Bus(bus)];
+    project.track_mut(kick).unwrap().outputs = vec![Output::to_bus(bus)];
+    project.track_mut(snare).unwrap().outputs = vec![Output::to_bus(bus)];
     (project, kick, snare, bus)
 }

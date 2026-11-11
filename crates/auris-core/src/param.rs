@@ -11,7 +11,7 @@
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 
-use crate::project::{EffectSlotId, SendId, TrackId};
+use crate::project::{Destination, EffectSlotId, Tap, TrackId};
 
 /// Identifies a parameter within one plugin instance.
 #[derive(
@@ -408,12 +408,18 @@ pub enum ParamTarget {
     MasterGain,
     /// The master bus stereo position.
     MasterPan,
-    /// How much of a track one of its sends carries, in decibels.
-    Send {
-        /// Track the send is taken from.
+    /// The level of one of a track's outputs, in decibels.
+    ///
+    /// Named by where it lands and where it is taken rather than by an id of its own, because a
+    /// track holds at most one output per pair: re-pointing an output is removing one and adding
+    /// another, and the lane goes with the one removed.
+    Output {
+        /// Track the output leaves.
         track: TrackId,
-        /// Which send on that track.
-        send: SendId,
+        /// Where that output lands.
+        to: Destination,
+        /// Where on the strip it is taken.
+        tap: Tap,
     },
     /// A parameter of a track's instrument.
     Instrument {
@@ -440,7 +446,7 @@ impl ParamTarget {
     pub fn track(self) -> Option<TrackId> {
         match self {
             ParamTarget::TrackGain(id) | ParamTarget::TrackPan(id) => Some(id),
-            ParamTarget::Send { track, .. } => Some(track),
+            ParamTarget::Output { track, .. } => Some(track),
             ParamTarget::Instrument { track, .. } => Some(track),
             ParamTarget::Effect { track, .. } => track,
             ParamTarget::MasterGain | ParamTarget::MasterPan => None,
@@ -458,7 +464,7 @@ impl ParamTarget {
                 | ParamTarget::TrackPan(_)
                 | ParamTarget::MasterGain
                 | ParamTarget::MasterPan
-                | ParamTarget::Send { .. }
+                | ParamTarget::Output { .. }
         )
     }
 
@@ -661,9 +667,15 @@ mod tests {
                 slot: EffectSlotId(2),
                 param: ParamId(0),
             },
-            ParamTarget::Send {
+            ParamTarget::Output {
                 track: TrackId(3),
-                send: SendId(8),
+                to: Destination::Bus(TrackId(8)),
+                tap: Tap::PreFader,
+            },
+            ParamTarget::Output {
+                track: TrackId(3),
+                to: Destination::Master,
+                tap: Tap::PostFader,
             },
         ] {
             let json = serde_json::to_string(&target).expect("serialises");

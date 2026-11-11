@@ -342,13 +342,14 @@ pub fn stage_file_bytes(path: &Path, bytes: &[u8]) -> Result<StagedFile> {
 ///
 /// Every version bump must decide whether the version it replaces joins this range. Version 32
 /// forgot to, and a project saved the day before would not open at all.
-const READABLE_OLDER: std::ops::RangeInclusive<u32> = 27..=34;
+const READABLE_OLDER: std::ops::RangeInclusive<u32> = 27..=35;
 
 /// Reads a project from `path`.
 ///
 /// The format version must match this build, or be one of the older versions it still reads:
-/// 31 with each track's single output, 30 without the latest extended chords, 29 without
-/// eleventh chords, 28 without named drum lanes, or 27, whose volume contour is defaulted.
+/// 35 and earlier with sends beside the outputs (see `fold_sends_into_outputs`), 31 with each
+/// track's single output, 30 without the latest extended chords, 29 without eleventh chords, 28
+/// without named drum lanes, or 27, whose volume contour is defaulted.
 /// After parsing, the
 /// id counter is repaired, which is what stops freshly created tracks and clips from colliding
 /// with ids already in the document, and so is the routing — a file whose buses feed each other
@@ -366,7 +367,13 @@ pub fn load_project(path: &Path) -> Result<Project> {
         });
     }
 
-    let mut project: Project = serde_json::from_slice(&bytes)?;
+    let mut project: Project = if probe.format_version < SENDS_FOLDED {
+        let mut document: serde_json::Value = serde_json::from_slice(&bytes)?;
+        fold_sends_into_outputs(&mut document);
+        serde_json::from_value(document)?
+    } else {
+        serde_json::from_slice(&bytes)?
+    };
     project.format_version = Project::FORMAT_VERSION;
     if let Some(id) = project.conflicting_object_id() {
         return Err(IoError::ProjectIdConflict(id));
@@ -389,6 +396,124 @@ pub fn load_project(path: &Path) -> Result<Project> {
         );
     }
     Ok(project)
+}
+
+/// The first format version in which a track's sends are outputs like any other.
+const SENDS_FOLDED: u32 = 36;
+
+/// Rewrites a document older than [`SENDS_FOLDED`] into today's shape, in place.
+///
+/// Older documents kept two lists on a track: `output` or `outputs`, unity copies after the
+/// fader, written as a bare destination (`"master"`, `{"bus": 12}`) or a list of them; and
+/// `sends`, each with an id, a target bus, a level and a tap point. Today both are one list of
+/// outputs, each naming its destination, level and tap, at most one per destination and tap.
+///
+/// A send that lands where an output already lands at the same tap is the same signal arriving
+/// twice, so the two are summed into one output at the combined level, which is what was heard.
+/// A send's automation lane follows it to its output, unless the send was merged that way: one
+/// curve cannot stand for the sum of two levels, so that lane is dropped.
+///
+/// Done on the JSON rather than in `serde` so that today's types carry no trace of the old shape.
+fn fold_sends_into_outputs(document: &mut serde_json::Value) {
+    use serde_json::{Map, Value, json};
+
+    let decibels = |value: &Value| value.as_f64().unwrap_or(0.0);
+    let mut followed: Vec<(Value, Option<Value>)> = Vec::new();
+    let Some(tracks) = document.get_mut("tracks").and_then(Value::as_array_mut) else {
+        return;
+    };
+    for track in tracks {
+        let Some(track) = track.as_object_mut() else {
+            continue;
+        };
+        let track_id = track.get("id").cloned().unwrap_or(Value::Null);
+        let stored = track
+            .remove("outputs")
+            .or_else(|| track.remove("output"))
+            .unwrap_or_else(|| json!(["master"]));
+        let stored = match stored {
+            Value::Array(list) => list,
+            single => vec![single],
+        };
+        let mut outputs: Vec<Map<String, Value>> = stored
+            .into_iter()
+            .map(|stored| match stored {
+                // Already today's shape, as a document stamped with an older number can be.
+                Value::Object(output) if output.contains_key("to") => output,
+                to => {
+                    let mut output = Map::new();
+                    output.insert("to".into(), to);
+                    output
+                }
+            })
+            .collect();
+        let sends = match track.remove("sends") {
+            Some(Value::Array(sends)) => sends,
+            _ => Vec::new(),
+        };
+        for send in sends {
+            let Some(bus) = send.get("target").cloned() else {
+                continue;
+            };
+            let to = json!({ "bus": bus });
+            let tap = if send.get("pre_fader").and_then(Value::as_bool) == Some(true) {
+                "pre_fader"
+            } else {
+                "post_fader"
+            };
+            let level = send.get("level_db").map(decibels).unwrap_or(0.0);
+            let id = send.get("id").cloned().unwrap_or(Value::Null);
+            let same = outputs.iter_mut().find(|output| {
+                output.get("to") == Some(&to)
+                    && output
+                        .get("tap")
+                        .and_then(Value::as_str)
+                        .unwrap_or("post_fader")
+                        == tap
+            });
+            match same {
+                Some(output) => {
+                    let existing = output.get("gain_db").map(decibels).unwrap_or(0.0);
+                    let sum = 10f64.powf(existing / 20.0) + 10f64.powf(level / 20.0);
+                    output.insert("gain_db".into(), json!(20.0 * sum.log10()));
+                    followed.push((id, None));
+                }
+                None => {
+                    let mut output = Map::new();
+                    output.insert("to".into(), to.clone());
+                    output.insert("gain_db".into(), json!(level));
+                    output.insert("tap".into(), json!(tap));
+                    outputs.push(output);
+                    let target = json!({ "Output": { "track": track_id, "to": to, "tap": tap } });
+                    followed.push((id, Some(target)));
+                }
+            }
+        }
+        track.insert(
+            "outputs".into(),
+            Value::Array(outputs.into_iter().map(Value::Object).collect()),
+        );
+    }
+
+    let Some(lanes) = document.get_mut("automation").and_then(Value::as_array_mut) else {
+        return;
+    };
+    lanes.retain_mut(|lane| {
+        let Some(send) = lane.pointer("/target/Send/send").cloned() else {
+            return true;
+        };
+        let target = followed
+            .iter()
+            .find(|(id, _)| *id == send)
+            .and_then(|(_, target)| target.clone());
+        match target {
+            Some(target) => {
+                lane["target"] = target;
+                true
+            }
+            None => false,
+        }
+    });
 }
 
 fn read_project_source(path: &Path, limit: usize) -> Result<Vec<u8>> {
@@ -731,7 +856,6 @@ mod tests {
             if let Some(inner) = track.kind.as_audio() {
                 used.extend(inner.clips.iter().map(|clip| clip.id.0));
             }
-            used.extend(track.sends.iter().map(|send| send.id.0));
         }
         used.extend(loaded.master.effects.iter().map(|slot| slot.id.0));
         used.extend(loaded.audio_sources.keys().map(|id| id.0));
@@ -948,20 +1072,21 @@ mod tests {
         let mut expected = demo_project();
         let bus = expected.add_bus_track("Bus");
         let track = expected.add_instrument_track("Lead", "auris.synth.pulse");
-        expected.track_mut(track).unwrap().outputs = vec![auris_core::Output::Bus(bus)];
+        expected.track_mut(track).unwrap().outputs = vec![auris_core::Output::to_bus(bus)];
         let mut value = serde_json::to_value(&expected).unwrap();
         value["format_version"] = serde_json::json!(31);
         for stored in value["tracks"].as_array_mut().unwrap() {
             let fields = stored.as_object_mut().unwrap();
             let outputs = fields.remove("outputs").unwrap();
-            fields.insert("output".into(), outputs[0].clone());
+            // Version 31 wrote one bare destination, before outputs had a level of their own.
+            fields.insert("output".into(), outputs[0]["to"].clone());
         }
         std::fs::write(file.path(), serde_json::to_vec(&value).unwrap()).unwrap();
 
         let loaded = load_project(file.path()).unwrap();
         assert_eq!(
             loaded.track(track).unwrap().outputs,
-            vec![auris_core::Output::Bus(bus)]
+            vec![auris_core::Output::to_bus(bus)]
         );
     }
 

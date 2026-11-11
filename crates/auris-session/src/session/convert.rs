@@ -221,8 +221,7 @@ impl Session {
             project.tracks.retain(|entry| entry.id == track);
             let entry = &mut project.tracks[0];
             entry.mixer = MixerStrip::default();
-            entry.outputs = vec![Output::Master];
-            entry.sends.clear();
+            entry.outputs = vec![Output::master()];
             project.master = MixerStrip::default();
             project.automation.remove_lanes_where(|target| !matches!(target, ParamTarget::Instrument { track: id, .. } if id == track));
             // Keep the complete document in the hosted-plugin manager: a subset would retire
@@ -356,7 +355,7 @@ mod tests {
         let (mut session, track) = instrument();
         let bus = session.project.add_bus_track("Bus");
         let entry = session.project.track_mut(track).unwrap();
-        entry.outputs = vec![Output::Bus(bus)];
+        entry.outputs = vec![Output::to_bus(bus)];
         entry.mixer.gain_db = -9.0;
         entry.mixer.pan = 0.4;
         session.project.master.gain_db = -3.0;
@@ -399,7 +398,7 @@ mod tests {
         let converted = session.project.clone();
         let entry = converted.track(track).unwrap();
         assert_eq!(entry.mixer, before.track(track).unwrap().mixer);
-        assert_eq!(entry.outputs, vec![Output::Bus(bus)]);
+        assert_eq!(entry.outputs, vec![Output::to_bus(bus)]);
         assert_eq!(converted.tracks.len(), before.tracks.len());
         assert_eq!(entry.kind.as_audio().unwrap().clips[0].id, clip);
         assert_eq!(entry.kind.as_audio().unwrap().clips[0].start, Ticks::ZERO);

@@ -84,10 +84,23 @@ fn fit_button_frames_all_nodes_curves_and_labels_without_rearranging_or_editing_
         this.panels.show(Panel::Mixer);
         let a = this.session.add_bus_track("Source");
         let b = this.session.add_bus_track("Bus");
-        this.session.add_track_output(a, Output::Bus(b)).unwrap();
-        for _ in 0..20 {
-            this.session.add_send(a, b).unwrap();
-        }
+        // Every output drawn with a level row, so the source card is as tall as a card gets.
+        let level = |to, tap| Output {
+            to,
+            gain_db: -6.,
+            tap,
+        };
+        this.session
+            .set_track_outputs(
+                a,
+                &[
+                    level(Destination::Master, Tap::PostFader),
+                    level(Destination::Master, Tap::PreFader),
+                    level(Destination::Bus(b), Tap::PostFader),
+                    level(Destination::Bus(b), Tap::PreFader),
+                ],
+            )
+            .unwrap();
         let slot = this
             .session
             .add_effect(Some(b), "auris.fx.compressor")

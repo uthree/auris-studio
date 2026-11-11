@@ -73,18 +73,31 @@ fn wire_tooltip_tracks_parallel_routes_live_names_and_dismissal(cx: &mut TestApp
                 .cloned()
         })
     };
-    let (a, b, sends) = app.update(cx, |this, _| {
+    let (a, b, wires) = app.update(cx, |this, _| {
         this.panels.set_detached(Panel::Mixer, false);
         this.panels.move_to(Panel::Mixer, Dock::Bottom);
         this.panels.set_size(Dock::Bottom, px(520.));
         this.panels.show(Panel::Mixer);
         let a = this.session.add_bus_track("Source");
         let b = this.session.add_bus_track("Destination");
-        let sends = [
-            this.session.add_send(a, b).unwrap(),
-            this.session.add_send(a, b).unwrap(),
-        ];
-        (a, b, sends)
+        let to = Destination::Bus(b);
+        let taps = [Tap::PostFader, Tap::PreFader];
+        let outputs: Vec<Output> = taps
+            .iter()
+            .map(|&tap| Output {
+                to,
+                gain_db: -6.,
+                tap,
+            })
+            .collect();
+        this.session.set_track_outputs(a, &outputs).unwrap();
+        let source = MixerNode::Strip(Some(a)).key();
+        let target = MixerNode::Strip(Some(b)).key();
+        let wires = taps.map(|tap| {
+            let suffix = if tap == Tap::PreFader { "-pre" } else { "" };
+            (format!("mix-output-{source}-{target}{suffix}"), tap)
+        });
+        (a, b, wires)
     });
     paint(&app, cx);
     app.update(cx, |this, cx| {
@@ -103,10 +116,10 @@ fn wire_tooltip_tracks_parallel_routes_live_names_and_dismissal(cx: &mut TestApp
         canvas.view.update(cx, |_, cx| cx.notify());
     });
     paint(&app, cx);
-    for (index, send) in sends.into_iter().enumerate() {
+    for (index, (wire, tap)) in wires.into_iter().enumerate() {
         let at = app.read_with(cx, |this, cx| {
             let state = this.mixer_canvas.as_ref().unwrap().state.read(cx);
-            let id: SharedString = format!("mix-send-{}", send.0).into();
+            let id: SharedString = wire.clone().into();
             if index == 0 {
                 // Hover the actual curve, away from its label.
                 let edge = state.edges.iter().find(|edge| edge.id == id).unwrap();
@@ -141,16 +154,21 @@ fn wire_tooltip_tracks_parallel_routes_live_names_and_dismissal(cx: &mut TestApp
             .advance_clock(Duration::from_millis(550));
         cx.run_until_parked();
         assert!(cx.debug_bounds("mixer-wire-tooltip").is_some());
-        assert_eq!(
-            tooltip_target(cx),
-            Some(format!("mix-send-{}", send.0).into())
-        );
-        let send_label = app.read_with(cx, |this, _| {
-            format!("mixer-wire-tooltip-kind:{} #{}", this.t(Key::Sends), send.0)
+        assert_eq!(tooltip_target(cx), Some(wire.clone().into()));
+        let kind_label = app.read_with(cx, |this, _| {
+            format!(
+                "mixer-wire-tooltip-kind:{}",
+                output_wire_label(
+                    this.t(Key::OutputShort),
+                    this.t(Key::OutputPreFaderMark),
+                    -6.,
+                    tap
+                )
+            )
         });
         // GPUI's test selector API requires static strings, as do the harness's dynamic rows.
         assert!(
-            cx.debug_bounds(Box::leak(send_label.into_boxed_str()))
+            cx.debug_bounds(Box::leak(kind_label.into_boxed_str()))
                 .is_some()
         );
         for selector in [
@@ -200,7 +218,7 @@ fn wire_tooltip_tracks_parallel_routes_live_names_and_dismissal(cx: &mut TestApp
                 .mixer_graph()
                 .edges
                 .iter()
-                .any(|edge| edge_id(edge).as_ref() == format!("mix-send-{}", send.0))
+                .any(|edge| edge_id(edge).as_ref() == wire)
         }));
         cx.simulate_keystrokes("secondary-z");
         app.update(cx, |this, _| {
@@ -332,14 +350,20 @@ fn live_wire_updates_preserve_individual_selection_and_pointer_geometry(cx: &mut
         measured_node("b", 640., 100., HandleDef::target(HandlePosition::Left)).size(100., 80.),
     ];
     let roles = [
-        ("out", MixerEdgeKind::Output),
         (
-            "send",
-            MixerEdgeKind::Send {
+            "out",
+            MixerEdgeKind::Output {
                 track: TrackId(1),
-                send: SendId(1),
-                level_db: -6.,
-                pre_fader: true,
+                gain_db: 0.,
+                tap: Tap::PostFader,
+            },
+        ),
+        (
+            "pre",
+            MixerEdgeKind::Output {
+                track: TrackId(1),
+                gain_db: -6.,
+                tap: Tap::PreFader,
             },
         ),
         ("key", MixerEdgeKind::Sidechain),
@@ -551,13 +575,26 @@ fn lane_order_and_wire_vocabulary_survive_parameter_changes_and_all_schemes() {
         auris_session::Session::new(auris_session::SessionOptions::headless()).unwrap();
     let a = session.add_bus_track("A");
     let b = session.add_bus_track("B");
-    session.add_track_output(a, Output::Bus(b)).unwrap();
-    let one = session.add_send(a, b).unwrap();
-    session.add_send(a, b).unwrap();
+    let to = Destination::Bus(b);
+    session.add_track_output(a, to).unwrap();
+    session
+        .set_track_outputs(
+            a,
+            &[
+                Output::master(),
+                Output::new(to),
+                Output {
+                    to,
+                    gain_db: 0.,
+                    tap: Tap::PreFader,
+                },
+            ],
+        )
+        .unwrap();
     let graph = session.mixer_graph();
     let lanes = wire_lanes(&graph);
-    session.set_send_level(a, one, -12.).unwrap();
-    session.set_send_pre_fader(a, one, true).unwrap();
+    session.set_output_gain(a, to, Tap::PreFader, -12.).unwrap();
+    session.set_output_gain(a, to, Tap::PostFader, -3.).unwrap();
     assert_eq!(wire_lanes(&session.mixer_graph()), lanes);
     let mut reordered = graph.clone();
     reordered.edges.reverse();
@@ -565,12 +602,15 @@ fn lane_order_and_wire_vocabulary_survive_parameter_changes_and_all_schemes() {
     for scheme in crate::theme::SCHEMES {
         let theme = Theme::from_scheme(scheme);
         let kinds = [
-            MixerEdgeKind::Output,
-            MixerEdgeKind::Send {
+            MixerEdgeKind::Output {
                 track: a,
-                send: one,
-                level_db: 0.,
-                pre_fader: false,
+                gain_db: 0.,
+                tap: Tap::PostFader,
+            },
+            MixerEdgeKind::Output {
+                track: a,
+                gain_db: 0.,
+                tap: Tap::PreFader,
             },
             MixerEdgeKind::Sidechain,
         ];
@@ -593,7 +633,7 @@ fn lane_order_and_wire_vocabulary_survive_parameter_changes_and_all_schemes() {
         custom.track_palette = [theme.surface_sunken; 8];
         for color in [
             custom.mixer_output_color(),
-            custom.mixer_send_color(),
+            custom.mixer_pre_fader_color(),
             custom.mixer_sidechain_color(),
         ] {
             assert!(crate::theme::contrast_ratio(color, custom.surface_sunken) >= 4.5);
@@ -602,22 +642,34 @@ fn lane_order_and_wire_vocabulary_survive_parameter_changes_and_all_schemes() {
 }
 
 #[gpui::test]
-fn overlapping_output_sends_and_sidechain_are_individually_selected_deleted_and_undone(
+fn overlapping_outputs_and_sidechain_are_individually_selected_deleted_and_undone(
     cx: &mut TestAppContext,
 ) {
     let (app, cx) = open(cx);
-    let (a, b, slot, sends) = app.update(cx, |this, _| {
+    let (a, b, slot, outputs) = app.update(cx, |this, _| {
         this.panels.set_detached(Panel::Mixer, false);
         this.panels.move_to(Panel::Mixer, Dock::Bottom);
         this.panels.set_size(Dock::Bottom, px(520.));
         this.panels.show(Panel::Mixer);
         let a = this.session.add_bus_track("A");
         let b = this.session.add_bus_track("B");
-        this.session.add_track_output(a, Output::Bus(b)).unwrap();
-        let one = this.session.add_send(a, b).unwrap();
-        let two = this.session.add_send(a, b).unwrap();
-        this.session.set_send_level(a, one, -6.).unwrap();
-        this.session.set_send_level(a, two, -12.).unwrap();
+        this.session
+            .add_track_output(a, Destination::Bus(b))
+            .unwrap();
+        this.session
+            .set_track_outputs(
+                a,
+                &[
+                    Output::master(),
+                    Output::to_bus(b),
+                    Output {
+                        to: Destination::Bus(b),
+                        gain_db: -6.,
+                        tap: Tap::PreFader,
+                    },
+                ],
+            )
+            .unwrap();
         let slot = this
             .session
             .add_effect(Some(b), "auris.fx.compressor")
@@ -625,7 +677,8 @@ fn overlapping_output_sends_and_sidechain_are_individually_selected_deleted_and_
         this.session
             .set_effect_sidechain(Some(b), slot, Some(a))
             .unwrap();
-        (a, b, slot, [one, two])
+        let outputs = this.project().track(a).unwrap().outputs.clone();
+        (a, b, slot, outputs)
     });
     paint(&app, cx);
     app.update(cx, |this, cx| {
@@ -650,20 +703,13 @@ fn overlapping_output_sends_and_sidechain_are_individually_selected_deleted_and_
     paint(&app, cx);
     app.read_with(cx, |this, cx| {
         let state = this.mixer_canvas.as_ref().unwrap().state.read(cx);
-        for send in sends {
-            let edge = state
-                .edges
-                .iter()
-                .find(|edge| edge.id.as_ref() == format!("mix-send-{}", send.0))
-                .unwrap();
-            assert_eq!(edge.stroke, EdgeStroke::Dashed);
-            assert!(
-                edge.label
-                    .as_ref()
-                    .unwrap()
-                    .contains(&format!("#{}", send.0))
-            );
-        }
+        let pre = state
+            .edges
+            .iter()
+            .find(|edge| edge.id.ends_with("-pre"))
+            .unwrap();
+        assert_eq!(pre.stroke, EdgeStroke::Dashed);
+        assert!(pre.label.as_ref().unwrap().contains("-6.0 dB"));
         let sidechain = state
             .edges
             .iter()
@@ -676,6 +722,7 @@ fn overlapping_output_sends_and_sidechain_are_individually_selected_deleted_and_
             .find(|edge| {
                 edge.target == node_id(MixerNode::Strip(Some(b)))
                     && edge.id.starts_with("mix-output-")
+                    && !edge.id.ends_with("-pre")
             })
             .unwrap();
         assert_eq!(output.stroke, EdgeStroke::Solid);
@@ -689,16 +736,14 @@ fn overlapping_output_sends_and_sidechain_are_individually_selected_deleted_and_
             .edges
             .into_iter()
             .filter(|edge| {
-                matches!(
-                    edge.kind,
-                    MixerEdgeKind::Send { .. } | MixerEdgeKind::Sidechain
-                ) || (edge.kind == MixerEdgeKind::Output
-                    && edge.target == MixerNode::Strip(Some(b)))
+                matches!(edge.kind, MixerEdgeKind::Sidechain)
+                    || (matches!(edge.kind, MixerEdgeKind::Output { .. })
+                        && edge.target == MixerNode::Strip(Some(b)))
             })
             .map(|edge| edge_id(&edge))
             .collect()
     });
-    assert_eq!(wires.len(), 4);
+    assert_eq!(wires.len(), 3);
     for (index, id) in wires.iter().enumerate() {
         app.update(cx, |this, cx| {
             let canvas = this.mixer_canvas.as_ref().unwrap();
@@ -771,15 +816,6 @@ fn overlapping_output_sends_and_sidechain_are_individually_selected_deleted_and_
         });
     }
     app.read_with(cx, |this, _| {
-        assert_eq!(
-            this.project()
-                .track(a)
-                .unwrap()
-                .sends
-                .iter()
-                .map(|send| send.id)
-                .collect::<Vec<_>>(),
-            sends
-        )
+        assert_eq!(this.project().track(a).unwrap().outputs, outputs)
     });
 }

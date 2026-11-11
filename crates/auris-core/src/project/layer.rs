@@ -1,6 +1,6 @@
 //! Layers: an instrument track that plays another track's notes.
 //!
-//! A layer owns everything a track owns — its instrument, its strip, its outputs and sends, its
+//! A layer owns everything a track owns — its instrument, its strip, its outputs, its
 //! automation — except the notes. Those it borrows from the track it [follows](NoteSource), so
 //! editing the part once is heard on every instrument stacked on it, and each instrument keeps its
 //! own settings. That is the whole of "one source, several performers": the bus a layer and its
@@ -29,8 +29,8 @@ pub const MAX_LAYER_OFFSET: Ticks = Ticks(TICKS_PER_QUARTER * 4);
 
 /// Where a layer's notes come from, and how they are shaped on the way.
 ///
-/// A layer is an instrument track carrying one of these: it owns its instrument, strip, outputs,
-/// sends and automation like any track, and borrows only the notes. The source is always a track
+/// A layer is an instrument track carrying one of these: it owns its instrument, strip, outputs
+/// and automation like any track, and borrows only the notes. The source is always a track
 /// with notes of its own — never a layer, never a drum track — so a layer pointing anywhere else
 /// plays nothing rather than anything surprising.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

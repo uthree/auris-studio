@@ -196,10 +196,11 @@ their lowest octave — pads, guitars, keys, the voice — so the bass and kick 
 Duck the bass or pads by a few decibels on every kick with `auris.fx.compressor` and
 `set_sidechain` from the kick track, so the kick cuts through without being louder.
 
-### Reverb and delay sends for the voice
+### Reverb and delay returns for the voice
 
-Put `auris.fx.reverb` and `auris.fx.delay` on a bus, send the voice to it with `add_send`, and
-keep the bus quieter than it sounds right in solo. Shared sends make parts sit in one room;
+Put `auris.fx.reverb` and `auris.fx.delay` on a bus, give the voice a second output into it with
+`add_output`, and keep the bus quieter than it sounds right in solo. Shared returns make parts sit
+in one room;
 an insert reverb on each track makes many rooms.
 
 ### Bus processing
@@ -209,7 +210,7 @@ them together: one compressor glues a drum kit better than one on each drum.
 
 ### Section automation
 
-Automate faders and sends section by section with `automation`: the chorus a decibel up, the
+Automate faders and output levels section by section with `automation`: the chorus a decibel up, the
 drop chorus's reverb longer, the last chorus wider. A mix that is the same everywhere makes the
 arrangement do all the work.
 

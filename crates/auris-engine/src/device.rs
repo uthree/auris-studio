@@ -1364,13 +1364,13 @@ impl AudioEngine {
                 }
                 self.retire(Retired::SoloResolution(audible));
             }
-            EngineCommand::SetSendLevel {
+            EngineCommand::SetOutputGain {
                 track,
-                send,
-                level_db,
+                output,
+                gain_db,
             } => {
                 if let Some(graph) = &mut self.graph {
-                    graph.set_send_level_db(track, send, level_db);
+                    graph.set_output_gain_db(track, output, gain_db);
                 }
             }
             EngineCommand::SetMasterGain(gain_db) => {

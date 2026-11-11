@@ -95,17 +95,14 @@ pub enum Edit {
     MuteTrack,
     /// A track was soloed or unsoloed.
     SoloTrack,
-    /// A track's output was pointed somewhere else.
-    SetTrackOutput,
-    /// A send was added to a track.
-    AddSend,
-    /// A send was removed from a track.
+    /// A track's outputs were added, removed or pointed somewhere else.
     ///
-    /// A send's *level* has no variant of its own: it is a mixer control like a fader, so turning
-    /// one records [`Edit::AdjustParameter`] over [`ParamTarget::Send`] and coalesces the same way.
-    RemoveSend,
-    /// A send was moved before or after the fader.
-    SetSendPreFader,
+    /// An output's *level* has no variant of its own: it is a mixer control like a fader, so
+    /// turning one records [`Edit::AdjustParameter`] over [`ParamTarget::Output`] and coalesces
+    /// the same way.
+    SetTrackOutput,
+    /// An output was moved before or after the fader.
+    SetOutputTap,
     /// A track's instrument was replaced.
     ChangeInstrument,
     /// A key, a progression and a set of parts were written around a melody.

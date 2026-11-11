@@ -229,7 +229,7 @@ mod tests {
 
     #[test]
     fn track_bus_and_project_spectra_follow_the_rendered_mix() {
-        use auris_core::{Output, Ticks};
+        use auris_core::Ticks;
         let mut session = Session::new(SessionOptions::headless()).unwrap();
         let rate = session.project().sample_rate;
         let samples: Vec<f32> = (0..8_192)
@@ -250,7 +250,7 @@ mod tests {
         }
         let bus = session.add_bus_track("Bus");
         session
-            .set_track_output(tracks[0], Output::Bus(bus))
+            .set_track_output(tracks[0], auris_core::Destination::Bus(bus))
             .unwrap();
         let single = peak(&analyse(&mut session, Some(tracks[0])));
         let bussed = peak(&analyse(&mut session, Some(bus)));

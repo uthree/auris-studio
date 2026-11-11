@@ -15,7 +15,8 @@ pub struct Args {
     /// Project handle or absolute .auris document path.
     pub project: String,
     /// Object with action read, connect, disconnect, add_effect, remove_effect, move_effect,
-    /// enable_effect, set_strip, set_send, parameters or set_parameter.
+    /// enable_effect, set_strip, set_outputs, add_output, set_output, set_sidechain, parameters
+    /// or set_parameter.
     pub operation: GraphAction,
 }
 
@@ -52,7 +53,7 @@ mod tests {
         request(json!({"action":"read"})).unwrap();
         assert_eq!(std::fs::read(&path).unwrap(), before);
         assert!(opened(&project).unwrap().checkpoints().unwrap().is_empty());
-        let operation = json!({"action":"connect","source":format!("track:{}",a.0),"target":format!("track:{}",b.0),"kind":"send"});
+        let operation = json!({"action":"connect","source":format!("track:{}",a.0),"target":format!("track:{}",b.0),"kind":"output"});
         let live = session
             .agent_command(auris_session::live_agent::Command::MixerGraph {
                 operation: serde_json::from_value(operation.clone()).unwrap(),
@@ -81,7 +82,7 @@ mod tests {
                 .track(a)
                 .unwrap()
                 .outputs,
-            vec![Output::Master, Output::Bus(b)]
+            vec![Output::master(), Output::to_bus(b)]
         );
         for target in ["track:master".to_string(), format!("track:{}", b.0)] {
             request(json!({"action":"disconnect","source":format!("track:{}",a.0),"target":target,"kind":"output"})).unwrap();

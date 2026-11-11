@@ -338,7 +338,7 @@ fn beats(project: &Project, until: Ticks) -> Vec<ScoreBeat> {
 mod tests {
     use super::*;
     use auris_core::{
-        AuxSend, ClipId, MidiClip, Note, NoteTransform, Output, SendId, TICKS_PER_QUARTER, Ticks,
+        ClipId, Destination, MidiClip, Note, NoteTransform, Output, TICKS_PER_QUARTER, Tap, Ticks,
         TrackId,
     };
 
@@ -448,7 +448,7 @@ mod tests {
         add_part(&mut project, "Unrelated", 90);
         let bus = project.add_bus_track("Music");
         for track in [lead, backing] {
-            project.track_mut(track).unwrap().outputs = vec![Output::Bus(bus)];
+            project.track_mut(track).unwrap().outputs = vec![Output::to_bus(bus)];
         }
         project.track_mut(bus).unwrap().mixer.solo = true;
         let score = NoteScore::from_project(&project);
@@ -480,15 +480,17 @@ mod tests {
     }
 
     #[test]
-    fn send_routes_share_audio_solo_resolution_and_keep_muted_senders_out() {
+    fn extra_outputs_share_audio_solo_resolution_and_keep_muted_sources_out() {
         let mut project = Project::default();
         let sent = add_part(&mut project, "Sent", 60);
         let sibling = add_part(&mut project, "Sibling", 65);
         let bus = project.add_bus_track("Aux");
-        for (index, track) in [sent, sibling].into_iter().enumerate() {
-            let mut send = AuxSend::new(SendId(index as u64 + 100), bus);
-            send.pre_fader = true;
-            project.track_mut(track).unwrap().sends.push(send);
+        for track in [sent, sibling] {
+            project.track_mut(track).unwrap().outputs.push(Output {
+                to: Destination::Bus(bus),
+                gain_db: 0.0,
+                tap: Tap::PreFader,
+            });
         }
         project.track_mut(bus).unwrap().mixer.solo = true;
         assert_eq!(NoteScore::from_project(&project).notes.len(), 2);

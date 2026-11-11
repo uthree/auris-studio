@@ -82,7 +82,7 @@ const RETIRED_OPERATIONS: &[(&str, &[&str])] = &[
         &[
             "edit_project.mixer_graph.connect",
             "edit_project.mixer_graph.set_outputs",
-            "edit_project.mixer_graph.add_send",
+            "edit_project.mixer_graph.add_output",
             "edit_project.mixer_graph.set_sidechain",
         ],
     ),
@@ -111,8 +111,8 @@ const RETIRED_OPERATIONS: &[(&str, &[&str])] = &[
         &["edit_project.mixer_graph.enable_effect"],
     ),
     (
-        "edit_project.set_mixer_send",
-        &["edit_project.mixer_graph.set_send"],
+        "edit_project.set_mixer_output",
+        &["edit_project.mixer_graph.set_output"],
     ),
     (
         "edit_project.mixer_effect_parameters",
@@ -217,7 +217,7 @@ pub const OPERATIONS: &[&str] = &[
     "export_audio_attachment",
     "edit_project.mixer_graph.read",
     "edit_project.mixer_graph.set_outputs",
-    "edit_project.mixer_graph.add_send",
+    "edit_project.mixer_graph.add_output",
     "edit_project.mixer_graph.set_sidechain",
     "edit_project.mixer_graph.connect",
     "edit_project.mixer_graph.disconnect",
@@ -225,7 +225,7 @@ pub const OPERATIONS: &[&str] = &[
     "edit_project.mixer_graph.remove_effect",
     "edit_project.mixer_graph.move_effect",
     "edit_project.mixer_graph.enable_effect",
-    "edit_project.mixer_graph.set_send",
+    "edit_project.mixer_graph.set_output",
     "edit_project.mixer_graph.parameters",
     "edit_project.mixer_graph.set_parameter",
     "edit_project.mixer_graph.set_strip",
@@ -819,12 +819,12 @@ mod tests {
                 false,
             ),
             (
-                serde_json::json!({"action":"connect","source":"track:1","target":"track:2","kind":"send"}),
+                serde_json::json!({"action":"connect","source":"track:1","target":"track:2","kind":"output"}),
                 false,
                 false,
             ),
             (
-                serde_json::json!({"action":"disconnect","source":"track:1","target":"track:2","kind":"send"}),
+                serde_json::json!({"action":"disconnect","source":"track:1","target":"track:2","kind":"output"}),
                 false,
                 true,
             ),

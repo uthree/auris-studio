@@ -530,7 +530,7 @@ mod tests {
                 .unwrap();
         });
         let client = ().serve(client_transport).await.unwrap();
-        let forward = serde_json::json!({"project":path,"operation":{"action":"connect","source":format!("track:{}",a.0),"target":format!("track:{}",b.0),"kind":"send"}});
+        let forward = serde_json::json!({"project":path,"operation":{"action":"connect","source":format!("track:{}",a.0),"target":format!("track:{}",b.0),"kind":"output"}});
         let accepted = client
             .call_tool(
                 rmcp::model::CallToolRequestParams::new("mixer_graph")

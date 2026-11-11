@@ -125,17 +125,10 @@ impl Session {
         if !self.engine.is_running() {
             return 0.0;
         }
-        let owner = match edge.source {
-            MixerNode::Strip(owner) | MixerNode::Effect(owner, _) => owner,
-        };
         let route = match (edge.kind, edge.target) {
-            (MixerEdgeKind::Output, MixerNode::Strip(target)) => owner.map(|source| {
-                SignalRoute::Output(
-                    source,
-                    target.map_or(auris_core::Output::Master, auris_core::Output::Bus),
-                )
-            }),
-            (MixerEdgeKind::Send { track, send, .. }, _) => Some(SignalRoute::Send(track, send)),
+            (MixerEdgeKind::Output { track, tap, .. }, MixerNode::Strip(target)) => Some(
+                SignalRoute::Output(track, crate::mixer_graph::destination(target), tap),
+            ),
             (MixerEdgeKind::Chain, MixerNode::Effect(owner, slot)) => {
                 Some(SignalRoute::InsertInput(owner, slot))
             }
@@ -452,10 +445,10 @@ impl Session {
             ParamTarget::TrackGain(_) | ParamTarget::MasterGain => Some(ParamDescriptor::decibels(
                 0u32, "gain", "Volume", -60.0, 12.0, 0.0,
             )),
-            // A send has no headroom above unity: it is how much of a track goes somewhere, and
-            // more of it than there is would be a gain stage wearing a send's name.
-            ParamTarget::Send { .. } => Some(ParamDescriptor::decibels(
-                0u32, "send", "Send", -60.0, 0.0, 0.0,
+            // An output has no headroom above unity: it is how much of a track goes somewhere,
+            // and more of it than there is would be a gain stage wearing an output's name.
+            ParamTarget::Output { .. } => Some(ParamDescriptor::decibels(
+                0u32, "output", "Output", -60.0, 0.0, 0.0,
             )),
             _ => None,
         }
@@ -491,11 +484,16 @@ impl Session {
             ParamTarget::TrackPan(id) => self.project.track(id).map_or(0.0, |t| t.mixer.pan),
             ParamTarget::MasterGain => self.project.master.gain_db,
             ParamTarget::MasterPan => self.project.master.pan,
-            ParamTarget::Send { track, send } => self
+            ParamTarget::Output { track, to, tap } => self
                 .project
                 .track(track)
-                .and_then(|track| track.sends.iter().find(|existing| existing.id == send))
-                .map_or(descriptor.default, |send| send.level_db),
+                .and_then(|track| {
+                    track
+                        .outputs
+                        .iter()
+                        .find(|existing| existing.key() == (to, tap))
+                })
+                .map_or(descriptor.default, |output| output.gain_db),
             ParamTarget::Instrument { track, param } => self
                 .project
                 .track(track)
@@ -563,11 +561,11 @@ impl Session {
                 self.project.master.pan = value;
                 self.send(EngineCommand::SetMasterPan(value));
             }
-            // Through the typed command rather than repeating its body: a send that has gone is
-            // an error there and a silent no-op here, and only one of the two knows how to write
-            // the value.
-            ParamTarget::Send { track, send } => {
-                let _ = self.set_send_level(track, send, value);
+            // Through the typed command rather than repeating its body: an output that has gone
+            // is an error there and a silent no-op here, and only one of the two knows how to
+            // write the value.
+            ParamTarget::Output { track, to, tap } => {
+                let _ = self.set_output_gain(track, to, tap, value);
             }
             ParamTarget::Instrument { track, param } => {
                 if self.needs_rebuild {
@@ -953,10 +951,14 @@ impl Session {
             ParamTarget::TrackGain(id) | ParamTarget::TrackPan(id) => {
                 self.project.track(id).is_some()
             }
-            ParamTarget::Send { track, send } => self
-                .project
-                .track(track)
-                .is_some_and(|track| track.sends.iter().any(|existing| existing.id == send)),
+            ParamTarget::Output { track, to, tap } => {
+                self.project.track(track).is_some_and(|track| {
+                    track
+                        .outputs
+                        .iter()
+                        .any(|existing| existing.key() == (to, tap))
+                })
+            }
             ParamTarget::Instrument { track, .. } => self.project.track(track).is_some(),
             ParamTarget::Effect { track, slot, .. } => self
                 .strip(track)
@@ -1265,7 +1267,9 @@ mod tests {
         let mut session = session();
         let track = session.add_bus_track("Source");
         let bus = session.add_bus_track("Return");
-        session.add_send(track, bus).unwrap();
+        session
+            .add_track_output(track, auris_core::Destination::Bus(bus))
+            .unwrap();
         session.forget_history();
         let before = session.project().clone();
         let dirty = session.is_dirty();
@@ -1470,7 +1474,7 @@ mod tests {
         let kick = session.add_default_instrument_track("Kick").unwrap();
         let bus = session.add_bus_track("Drums");
         session
-            .set_track_output(kick, auris_core::project::Output::Bus(bus))
+            .set_track_output(kick, auris_core::project::Destination::Bus(bus))
             .expect("a bus is a bus");
         let bass = session.add_default_instrument_track("Bass").unwrap();
         let slot = session.add_effect(Some(kick), COMPRESSOR).unwrap();
@@ -1507,7 +1511,7 @@ mod tests {
         let bass = session.add_default_instrument_track("Bass").unwrap();
         let bus = session.add_bus_track("Drums");
         session
-            .set_track_output(kick, auris_core::project::Output::Bus(bus))
+            .set_track_output(kick, auris_core::project::Destination::Bus(bus))
             .expect("a bus is a bus");
 
         // On the bass: everything but itself, since nothing is downstream of it.

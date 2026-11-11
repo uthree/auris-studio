@@ -15,6 +15,7 @@ use gpui_flow::{
 use crate::app::AurisApp;
 use crate::theme::{Metrics, Theme};
 use crate::ui::context_menu::{ContextMenu, MenuCommand};
+use crate::ui::mixer::output_levels_shown;
 use crate::ui::plugin_window::PluginSubject;
 use crate::ui::widgets::{ButtonState, ButtonStyle, button, button_enabled, channel_meter};
 
@@ -58,7 +59,6 @@ pub(crate) struct MixerCanvas {
     view: Entity<FlowGraph>,
     document: MixerGraph,
     by_id: HashMap<SharedString, MixerNode>,
-    send: bool,
     palette: [u32; 4],
     animation_started: Instant,
     last_view: MixerGraphView,
@@ -95,12 +95,30 @@ impl MixerCanvas {
 
 fn wire_style(kind: MixerEdgeKind, theme: &Theme) -> (gpui::Hsla, EdgeStroke) {
     match kind {
-        MixerEdgeKind::Output => (theme.mixer_output_color(), EdgeStroke::Solid),
-        MixerEdgeKind::Send { .. } => (theme.mixer_send_color(), EdgeStroke::Dashed),
+        MixerEdgeKind::Output {
+            tap: Tap::PostFader,
+            ..
+        } => (theme.mixer_output_color(), EdgeStroke::Solid),
+        MixerEdgeKind::Output {
+            tap: Tap::PreFader, ..
+        } => (theme.mixer_pre_fader_color(), EdgeStroke::Dashed),
         MixerEdgeKind::Sidechain => (theme.mixer_sidechain_color(), EdgeStroke::Dotted),
         MixerEdgeKind::Notes => (theme.mixer_notes_color(), EdgeStroke::Dashed),
         MixerEdgeKind::Chain => (theme.text_faint, EdgeStroke::Solid),
     }
+}
+
+/// The words on an output wire: what it is, its level once it is not unity, and its tap once it
+/// is taken before the fader. A plain unity output says only that it is one.
+pub(crate) fn output_wire_label(output: &str, pre_mark: &str, gain_db: f32, tap: Tap) -> String {
+    let mut label = output.to_string();
+    if gain_db != 0.0 {
+        label.push_str(&format!(" {gain_db:.1} dB"));
+    }
+    if tap == Tap::PreFader {
+        label.push_str(&format!(" · {pre_mark}"));
+    }
+    label
 }
 
 fn wire_activity(peak: f32) -> f32 {
@@ -121,7 +139,7 @@ fn signal_flow_phase(elapsed: Duration) -> f32 {
 fn wire_palette(theme: &Theme) -> [u32; 4] {
     [
         theme.mixer_output_color(),
-        theme.mixer_send_color(),
+        theme.mixer_pre_fader_color(),
         theme.mixer_sidechain_color(),
         theme.accent,
     ]
@@ -142,8 +160,13 @@ fn wire_lanes(graph: &MixerGraph) -> HashMap<SharedString, f32> {
         .into_values()
         .flat_map(|mut edges| {
             edges.sort_by_key(|edge| match edge.kind {
-                MixerEdgeKind::Output => (0, 0),
-                MixerEdgeKind::Send { send, .. } => (1, send.0),
+                MixerEdgeKind::Output {
+                    tap: Tap::PostFader,
+                    ..
+                } => (0, 0),
+                MixerEdgeKind::Output {
+                    tap: Tap::PreFader, ..
+                } => (1, 0),
                 MixerEdgeKind::Sidechain => (2, 0),
                 MixerEdgeKind::Chain => (3, 0),
                 MixerEdgeKind::Notes => (4, 0),
@@ -238,8 +261,11 @@ fn edge_id(edge: &MixerEdge) -> SharedString {
     };
     let source = MixerNode::Strip(owner).key();
     match edge.kind {
-        MixerEdgeKind::Send { send, .. } => format!("mix-send-{}", send.0),
-        MixerEdgeKind::Output => format!("mix-output-{source}-{}", edge.target.key()),
+        MixerEdgeKind::Output { tap, .. } => format!(
+            "mix-output-{source}-{}{}",
+            edge.target.key(),
+            if tap == Tap::PreFader { "-pre" } else { "" }
+        ),
         MixerEdgeKind::Sidechain => format!("mix-key-{source}-{}", edge.target.key()),
         MixerEdgeKind::Notes => format!("mix-notes-{source}-{}", edge.target.key()),
         MixerEdgeKind::Chain => format!("mix-chain-{}-{}", edge.source.key(), edge.target.key()),
@@ -299,8 +325,31 @@ fn positions(graph: &MixerGraph) -> HashMap<MixerNode, FlowPoint> {
     for node in &graph.nodes {
         if let MixerNode::Strip(owner) = node {
             rows.insert(*owner, y);
-            let sends = graph.edges.iter().filter(|edge| matches!(edge.kind, MixerEdgeKind::Send { track, .. } if Some(track) == *owner)).count();
-            y += ROW + sends as f32 * 64.0;
+            let outputs: Vec<Output> = graph
+                .edges
+                .iter()
+                .filter_map(|edge| match (edge.kind, edge.target) {
+                    (
+                        MixerEdgeKind::Output {
+                            track,
+                            gain_db,
+                            tap,
+                        },
+                        MixerNode::Strip(target),
+                    ) if Some(track) == *owner => Some(Output {
+                        to: auris_session::mixer_graph::destination(target),
+                        gain_db,
+                        tap,
+                    }),
+                    _ => None,
+                })
+                .collect();
+            let rows = if output_levels_shown(&outputs) {
+                outputs.len()
+            } else {
+                0
+            };
+            y += ROW + rows as f32 * 64.0;
         }
     }
     graph
@@ -439,7 +488,6 @@ impl AurisApp {
                     edges: Vec::new(),
                 },
                 by_id: HashMap::new(),
-                send: !self.mixer_connect_send,
                 palette: [0; 4],
                 animation_started: Instant::now(),
                 last_view: MixerGraphView::default(),
@@ -505,30 +553,6 @@ impl AurisApp {
                             .text_color(theme.text)
                             .child(self.t(Key::MixerGraph)),
                     )
-                    .child(button(
-                        "mixer-connect-output",
-                        self.t(Key::OutputShort),
-                        ButtonStyle::Ghost,
-                        !self.mixer_connect_send,
-                        theme.accent_soft,
-                        &theme,
-                        cx.listener(|this, _, _, cx| {
-                            this.mixer_connect_send = false;
-                            cx.notify();
-                        }),
-                    ))
-                    .child(button(
-                        "mixer-connect-send",
-                        self.t(Key::Sends),
-                        ButtonStyle::Ghost,
-                        self.mixer_connect_send,
-                        theme.accent_soft,
-                        &theme,
-                        cx.listener(|this, _, _, cx| {
-                            this.mixer_connect_send = true;
-                            cx.notify();
-                        }),
-                    ))
                     .child(button(
                         "mixer-add-bus",
                         self.t(Key::MenuNewBusTrack),
@@ -660,8 +684,8 @@ impl AurisApp {
                                 EdgeStroke::Solid,
                             ))
                             .child(wire_legend(
-                                self.t(Key::Sends),
-                                theme.mixer_send_color(),
+                                self.t(Key::MixerPreFaderWire),
+                                theme.mixer_pre_fader_color(),
                                 EdgeStroke::Dashed,
                             ))
                             .child(wire_legend(
@@ -728,10 +752,8 @@ impl AurisApp {
         }
         for connection in pending {
             let document = self.session.mixer_graph();
-            let result = gesture(&document, &connection).map(|(from, to)| {
-                self.session
-                    .connect_mixer(from, to, self.mixer_connect_send)
-            });
+            let result = gesture(&document, &connection)
+                .map(|(from, to)| self.session.connect_mixer(from, to));
             match result {
                 Some(Ok(true)) => {}
                 Some(Err(error)) => self.set_failed_status(self.failure(Key::MixerGraph, &error)),
@@ -779,14 +801,12 @@ impl AurisApp {
 
     fn sync_mixer_graph(&mut self, document: &MixerGraph, cx: &mut gpui::Context<Self>) {
         let palette = wire_palette(&self.theme);
-        let changed = self.mixer_canvas.as_ref().is_some_and(|canvas| {
-            canvas.document != *document
-                || canvas.send != self.mixer_connect_send
-                || canvas.palette != palette
-        });
+        let changed = self
+            .mixer_canvas
+            .as_ref()
+            .is_some_and(|canvas| canvas.document != *document || canvas.palette != palette);
         let routing_changed = self.mixer_canvas.as_ref().is_some_and(|canvas| {
-            canvas.send != self.mixer_connect_send
-                || canvas.document.nodes != document.nodes
+            canvas.document.nodes != document.nodes
                 || canvas.document.edges.len() != document.edges.len()
                 || canvas
                     .document
@@ -810,10 +830,7 @@ impl AurisApp {
                     && self.session.mixer_graph_output(Some(source)) == *node
                 {
                     for target in &document.nodes {
-                        if self
-                            .session
-                            .can_connect_mixer(source, *target, self.mixer_connect_send)
-                        {
+                        if self.session.can_connect_mixer(source, *target) {
                             allowed.insert((node_id(*node), node_id(*target)));
                         }
                     }
@@ -948,21 +965,12 @@ impl AurisApp {
                         flow.stroke_width = Some(1.0);
                     }
                     match edge.kind {
-                        MixerEdgeKind::Send {
-                            send,
-                            level_db,
-                            pre_fader,
-                            ..
-                        } => {
-                            flow = flow.label(format!(
-                                "{} #{} {level_db:.1} dB{}",
-                                self.t(Key::Sends),
-                                send.0,
-                                if pre_fader {
-                                    format!(" · {}", self.t(Key::SendPreFaderMark))
-                                } else {
-                                    String::new()
-                                }
+                        MixerEdgeKind::Output { gain_db, tap, .. } => {
+                            flow = flow.label(output_wire_label(
+                                self.t(Key::OutputShort),
+                                self.t(Key::OutputPreFaderMark),
+                                gain_db,
+                                tap,
                             ));
                         }
                         MixerEdgeKind::Sidechain => {
@@ -970,7 +978,6 @@ impl AurisApp {
                                 .label(self.t(Key::MenuSidechain))
                                 .target_handle("sidechain");
                         }
-                        MixerEdgeKind::Output => flow = flow.label(self.t(Key::OutputShort)),
                         MixerEdgeKind::Notes => flow = flow.label(self.t(Key::MixerNotesWire)),
                         _ => {}
                     }
@@ -994,7 +1001,6 @@ impl AurisApp {
             .iter()
             .map(|node| (node_id(*node), *node))
             .collect();
-        canvas.send = self.mixer_connect_send;
         canvas.palette = palette;
         // Opening a canvas must not turn a clean project into an unsaved document.
         if initial {
@@ -1276,13 +1282,16 @@ impl AurisApp {
                     );
                 if let Some(track) = owner {
                     let index = self.project().track_index(track).unwrap_or(0);
-                    let sends: Vec<_> = self
+                    let outputs: Vec<Output> = self
                         .project()
                         .track(track)
-                        .into_iter()
-                        .flat_map(|track| &track.sends)
-                        .cloned()
-                        .collect();
+                        .map(|track| track.outputs.clone())
+                        .unwrap_or_default();
+                    let level_rows = if output_levels_shown(&outputs) {
+                        outputs
+                    } else {
+                        Vec::new()
+                    };
                     let meter = self.track_meter(index);
                     card = card
                         .child(
@@ -1338,30 +1347,9 @@ impl AurisApp {
                             &theme,
                             Self::opens_menu(cx, move |this, at| this.output_menu(at, track)),
                         ));
-                    if self.session.buses().next().is_some() {
-                        card = card.child(node_button(
-                            zoom,
-                            SharedString::from(format!("graph-send-menu-{id}")),
-                            self.t(Key::Sends),
-                            ButtonStyle::Ghost,
-                            false,
-                            theme.accent_soft,
-                            &theme,
-                            Self::opens_menu(cx, move |this, at| this.send_picker_menu(at, track)),
-                        ));
-                    }
-                    for (position, send) in sends.iter().enumerate() {
-                        card = card.child(self.send_row(
-                            index,
-                            position,
-                            track,
-                            send.id,
-                            send.target,
-                            send.level_db,
-                            send.pre_fader,
-                            zoom,
-                            cx,
-                        ));
+                    for (position, output) in level_rows.into_iter().enumerate() {
+                        card = card
+                            .child(self.output_level_row(index, position, track, output, zoom, cx));
                     }
                 } else {
                     let meter = self.master_meter();
@@ -1458,7 +1446,7 @@ mod tests {
         app.read_with(cx, |this, _| {
             assert_eq!(
                 this.project().track(a).unwrap().outputs,
-                vec![Output::Master, Output::Bus(b)]
+                vec![Output::master(), Output::to_bus(b)]
             )
         });
         cx.dispatch_action(crate::actions::Undo);
@@ -1466,7 +1454,7 @@ mod tests {
         app.read_with(cx, |this, _| {
             assert_eq!(
                 this.project().track(a).unwrap().outputs,
-                vec![Output::Master]
+                vec![Output::master()]
             );
             assert_eq!(
                 this.mixer_canvas.as_ref().unwrap().document,
@@ -1628,7 +1616,9 @@ mod tests {
             show(this);
             let a = this.session.add_bus_track("A");
             let b = this.session.add_bus_track("B");
-            this.session.add_track_output(a, Output::Bus(b)).unwrap();
+            this.session
+                .add_track_output(a, Destination::Bus(b))
+                .unwrap();
             (a, b)
         });
         paint(&app, cx);
@@ -1664,7 +1654,7 @@ mod tests {
         app.read_with(cx, |this, _| {
             assert_eq!(
                 this.project().track(a).unwrap().outputs,
-                vec![Output::Master]
+                vec![Output::master()]
             )
         });
         cx.dispatch_action(crate::actions::Undo);
@@ -1672,7 +1662,7 @@ mod tests {
         app.read_with(cx, |this, _| {
             assert_eq!(
                 this.project().track(a).unwrap().outputs,
-                vec![Output::Master, Output::Bus(b)]
+                vec![Output::master(), Output::to_bus(b)]
             )
         });
         cx.dispatch_action(crate::actions::Redo);
@@ -1680,7 +1670,7 @@ mod tests {
         app.read_with(cx, |this, _| {
             assert_eq!(
                 this.project().track(a).unwrap().outputs,
-                vec![Output::Master]
+                vec![Output::master()]
             )
         });
         cx.dispatch_action(crate::actions::Undo);
@@ -1693,7 +1683,7 @@ mod tests {
         app.read_with(cx, |this, _| {
             assert_eq!(
                 this.project().track(a).unwrap().outputs,
-                vec![Output::Master]
+                vec![Output::master()]
             )
         });
         cx.dispatch_action(crate::actions::Undo);
@@ -1704,7 +1694,7 @@ mod tests {
         app.read_with(cx, |this, _| {
             assert_eq!(
                 this.project().track(a).unwrap().outputs,
-                vec![Output::Master]
+                vec![Output::master()]
             )
         });
     }
@@ -1716,7 +1706,9 @@ mod tests {
             show(this);
             let a = this.session.add_bus_track("A");
             let b = this.session.add_bus_track("B");
-            this.session.set_track_output(a, Output::Bus(b)).unwrap();
+            this.session
+                .set_track_output(a, Destination::Bus(b))
+                .unwrap();
             (a, b)
         });
         paint(&app, cx);
@@ -1744,8 +1736,12 @@ mod tests {
             let a = this.session.add_bus_track("A");
             let b = this.session.add_bus_track("B");
             let c = this.session.add_bus_track("C");
-            this.session.add_track_output(a, Output::Bus(b)).unwrap();
-            this.session.add_track_output(a, Output::Bus(c)).unwrap();
+            this.session
+                .add_track_output(a, Destination::Bus(b))
+                .unwrap();
+            this.session
+                .add_track_output(a, Destination::Bus(c))
+                .unwrap();
             (a, b, c)
         });
         paint(&app, cx);
@@ -1810,7 +1806,7 @@ mod tests {
         app.read_with(cx, |this, _| {
             assert_eq!(
                 this.project().track(a).unwrap().outputs,
-                vec![Output::Master]
+                vec![Output::master()]
             )
         });
         cx.dispatch_action(crate::actions::Undo);
@@ -1818,13 +1814,13 @@ mod tests {
         app.read_with(cx, |this, _| {
             assert_eq!(
                 this.project().track(a).unwrap().outputs,
-                vec![Output::Master, Output::Bus(b), Output::Bus(c)]
+                vec![Output::master(), Output::to_bus(b), Output::to_bus(c)]
             )
         });
     }
 
     #[gpui::test]
-    fn send_mode_adds_a_branch_and_effect_nodes_control_the_real_insert(cx: &mut TestAppContext) {
+    fn connecting_adds_a_branch_and_effect_nodes_control_the_real_insert(cx: &mut TestAppContext) {
         let (app, cx) = open(cx);
         let (a, b, slot) = app.update(cx, |this, _| {
             show(this);
@@ -1833,8 +1829,6 @@ mod tests {
             let slot = this.session.add_effect(Some(a), "auris.fx.reverb").unwrap();
             (a, b, slot)
         });
-        paint(&app, cx);
-        click("mixer-connect-send", cx);
         paint(&app, cx);
         expose_pair(
             &app,
@@ -1850,8 +1844,7 @@ mod tests {
         paint(&app, cx);
         app.read_with(cx, |this, _| {
             let track = this.project().track(a).unwrap();
-            assert_eq!(track.outputs, vec![Output::Master]);
-            assert_eq!(track.sends[0].target, b);
+            assert_eq!(track.outputs, vec![Output::master(), Output::to_bus(b)]);
         });
         expose_pair(
             &app,

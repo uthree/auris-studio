@@ -1,6 +1,8 @@
 use super::*;
 use crate::{RENDER_CHANNELS, RenderGraph, Transport, render_block, testkit};
-use auris_core::{AudioBuffer, AudioSourceBank, AuxSend, Note, ParamId, Ticks, param::db_to_gain};
+use auris_core::{
+    AudioBuffer, AudioSourceBank, Destination, Note, Output, ParamId, Tap, Ticks, param::db_to_gain,
+};
 
 const RATE: f64 = 48_000.0;
 
@@ -8,6 +10,7 @@ struct Fixture {
     project: Project,
     source: TrackId,
     bus: TrackId,
+    aux: TrackId,
     first: EffectSlotId,
     second: EffectSlotId,
     keyed: EffectSlotId,
@@ -26,6 +29,7 @@ fn fixture() -> Fixture {
         Ticks::from_beats(8.),
     ));
     let bus = project.add_bus_track("Bus");
+    let aux = project.add_bus_track("Aux");
     let first = project.add_effect(Some(source), testkit::GAIN_ID).unwrap();
     let second = project.add_effect(Some(source), testkit::GAIN_ID).unwrap();
     let keyed = project.add_effect(Some(bus), testkit::KEYED_ID).unwrap();
@@ -33,31 +37,30 @@ fn fixture() -> Fixture {
     let master = project.add_effect(None, testkit::GAIN_ID).unwrap();
     let track = project.track_mut(source).unwrap();
     track.mixer.gain_db = -12.;
-    track.outputs = vec![Output::Master, Output::Bus(bus)];
-    track.sends = vec![
-        AuxSend {
-            id: SendId(9001),
-            target: bus,
-            level_db: -6.,
-            pre_fader: true,
+    track.outputs = vec![
+        Output::master(),
+        Output::to_bus(bus),
+        Output {
+            to: Destination::Bus(bus),
+            gain_db: -6.,
+            tap: Tap::PreFader,
         },
-        AuxSend {
-            id: SendId(9002),
-            target: bus,
-            level_db: -12.,
-            pre_fader: false,
+        Output {
+            to: Destination::Bus(aux),
+            gain_db: -12.,
+            tap: Tap::PostFader,
         },
-        AuxSend {
-            id: SendId(9003),
-            target: bus,
-            level_db: f32::NEG_INFINITY,
-            pre_fader: false,
+        Output {
+            to: Destination::Bus(aux),
+            gain_db: f32::NEG_INFINITY,
+            tap: Tap::PreFader,
         },
     ];
     Fixture {
         project,
         source,
         bus,
+        aux,
         first,
         second,
         keyed,
@@ -116,41 +119,64 @@ fn every_connection_reads_its_actual_tap_without_allocating_or_changing_audio() 
         0.25,
     );
     near(
-        meters.peak(SignalRoute::Output(f.source, Output::Master)),
+        meters.peak(SignalRoute::Output(
+            f.source,
+            Destination::Master,
+            Tap::PostFader,
+        )),
         post,
     );
     near(
-        meters.peak(SignalRoute::Output(f.source, Output::Bus(f.bus))),
+        meters.peak(SignalRoute::Output(
+            f.source,
+            Destination::Bus(f.bus),
+            Tap::PostFader,
+        )),
         post,
     );
     near(
-        meters.peak(SignalRoute::Send(f.source, SendId(9001))),
+        meters.peak(SignalRoute::Output(
+            f.source,
+            Destination::Bus(f.bus),
+            Tap::PreFader,
+        )),
         pre_send,
     );
     near(
-        meters.peak(SignalRoute::Send(f.source, SendId(9002))),
+        meters.peak(SignalRoute::Output(
+            f.source,
+            Destination::Bus(f.aux),
+            Tap::PostFader,
+        )),
         post_send,
     );
-    assert_eq!(meters.peak(SignalRoute::Send(f.source, SendId(9003))), 0.);
+    assert_eq!(
+        meters.peak(SignalRoute::Output(
+            f.source,
+            Destination::Bus(f.aux),
+            Tap::PreFader
+        )),
+        0.
+    );
     near(
         meters.peak(SignalRoute::Sidechain(Some(f.bus), f.keyed)),
         post,
     );
-    let bus_input = post + pre_send + post_send;
+    let bus_input = post + pre_send;
     near(
         meters.peak(SignalRoute::InsertInput(Some(f.bus), f.keyed)),
         bus_input,
     );
     near(
         meters.peak(SignalRoute::InsertInput(None, f.master)),
-        post + bus_input * post,
+        post + bus_input * post + post_send,
     );
 
     // Exercise moving gains as well as the flat path. Metering must preserve every sample.
     for block in 0..8 {
         if block == 1 {
             for graph in [&mut observed, &mut baseline] {
-                graph.set_send_level_db(0, 1, -3.);
+                graph.set_output_gain_db(0, 3, -3.);
                 graph.tracks_mut()[0].strip_mut().set_gain_db(-24.);
             }
         }
@@ -187,15 +213,31 @@ fn mute_bypass_and_insert_processing_change_only_the_connections_they_affect() {
     meters.reset();
     render_block(&mut graph, &mut transport, &mut out, false);
     near(
-        meters.peak(SignalRoute::Send(f.source, SendId(9001))),
+        meters.peak(SignalRoute::Output(
+            f.source,
+            Destination::Bus(f.bus),
+            Tap::PreFader,
+        )),
         0.5 * db_to_gain(-6.),
     );
-    assert!(meters.peak(SignalRoute::Send(f.source, SendId(9002))) < 1e-6);
+    assert!(
+        meters.peak(SignalRoute::Output(
+            f.source,
+            Destination::Bus(f.aux),
+            Tap::PostFader
+        )) < 1e-6
+    );
     assert_eq!(
         meters.peak(SignalRoute::Sidechain(Some(f.bus), f.keyed)),
         0.
     );
-    assert!(meters.peak(SignalRoute::Output(f.bus, Output::Master)) > 0.2);
+    assert!(
+        meters.peak(SignalRoute::Output(
+            f.bus,
+            Destination::Master,
+            Tap::PostFader
+        )) > 0.2
+    );
 
     graph.tracks_mut()[0]
         .strip_mut()
@@ -210,7 +252,14 @@ fn mute_bypass_and_insert_processing_change_only_the_connections_they_affect() {
         meters.peak(SignalRoute::InsertInput(Some(f.source), f.second)),
         0.
     );
-    assert_eq!(meters.peak(SignalRoute::Send(f.source, SendId(9001))), 0.);
+    assert_eq!(
+        meters.peak(SignalRoute::Output(
+            f.source,
+            Destination::Bus(f.bus),
+            Tap::PreFader
+        )),
+        0.
+    );
 
     graph.tracks_mut()[0].strip_mut().set_mute(true);
     render_block(&mut graph, &mut transport, &mut out, false);
@@ -228,7 +277,7 @@ fn mute_bypass_and_insert_processing_change_only_the_connections_they_affect() {
 fn compensated_output_peaks_wait_for_the_signal_to_reach_the_destination() {
     let mut f = fixture();
     f.project.track_mut(f.source).unwrap().mixer.gain_db = 0.;
-    f.project.track_mut(f.source).unwrap().sends.clear();
+    f.project.track_mut(f.source).unwrap().outputs.truncate(2);
     f.project.track_mut(f.bus).unwrap().mixer.effects.clear();
     f.project
         .add_effect(Some(f.bus), testkit::LOOKAHEAD_ID)
@@ -241,17 +290,29 @@ fn compensated_output_peaks_wait_for_the_signal_to_reach_the_destination() {
     for _ in 0..testkit::LOOKAHEAD_FRAMES / 16 {
         render_block(&mut graph, &mut transport, &mut out, false);
         assert_eq!(
-            meters.peak(SignalRoute::Output(f.source, Output::Master)),
+            meters.peak(SignalRoute::Output(
+                f.source,
+                Destination::Master,
+                Tap::PostFader
+            )),
             0.
         );
         near(
-            meters.peak(SignalRoute::Output(f.source, Output::Bus(f.bus))),
+            meters.peak(SignalRoute::Output(
+                f.source,
+                Destination::Bus(f.bus),
+                Tap::PostFader,
+            )),
             0.5,
         );
     }
     render_block(&mut graph, &mut transport, &mut out, false);
     near(
-        meters.peak(SignalRoute::Output(f.source, Output::Master)),
+        meters.peak(SignalRoute::Output(
+            f.source,
+            Destination::Master,
+            Tap::PostFader,
+        )),
         0.5,
     );
 }
@@ -262,8 +323,7 @@ fn callback_segments_hold_short_peaks_and_offline_rendering_publishes_nothing() 
     let track = f.project.track_mut(f.source).unwrap();
     track.mixer.gain_db = 0.;
     track.mixer.effects.clear();
-    track.outputs = vec![Output::Master];
-    track.sends.clear();
+    track.outputs = vec![Output::master()];
     f.project.tracks[0].kind.note_clips_mut().unwrap()[0].notes[0].length = Ticks(1);
     let mut graph = build(&f.project, 256);
     let meters = graph.signal_meters();
@@ -275,20 +335,32 @@ fn callback_segments_hold_short_peaks_and_offline_rendering_publishes_nothing() 
     let mut out = AudioBuffer::new(RENDER_CHANNELS, 512, RATE);
     render_block(&mut graph, &mut transport, &mut out, false);
     near(
-        meters.peak(SignalRoute::Output(f.source, Output::Master)),
+        meters.peak(SignalRoute::Output(
+            f.source,
+            Destination::Master,
+            Tap::PostFader,
+        )),
         0.5,
     );
     assert!(out.channel(0)[144..].iter().all(|sample| *sample == 0.));
     graph.panic();
     assert_eq!(
-        meters.peak(SignalRoute::Output(f.source, Output::Master)),
+        meters.peak(SignalRoute::Output(
+            f.source,
+            Destination::Master,
+            Tap::PostFader
+        )),
         0.
     );
     transport = Transport::playing_from(0);
     render_block(&mut graph, &mut transport, &mut out, true);
     assert!(out.peak() > 0.);
     assert_eq!(
-        meters.peak(SignalRoute::Output(f.source, Output::Master)),
+        meters.peak(SignalRoute::Output(
+            f.source,
+            Destination::Master,
+            Tap::PostFader
+        )),
         0.
     );
 }
@@ -297,7 +369,7 @@ fn callback_segments_hold_short_peaks_and_offline_rendering_publishes_nothing() 
 fn connection_ballistics_reset_and_new_graphs_do_not_reuse_readings() {
     let f = fixture();
     let meters = SignalMeters::for_project(&f.project);
-    let route = SignalRoute::Send(f.source, SendId(9001));
+    let route = SignalRoute::Output(f.source, Destination::Bus(f.bus), Tap::PreFader);
     meters.watch(true);
     meters.observe(meters.slot(route), 0.5);
     meters.observe(meters.slot(route), f32::NAN);
@@ -317,7 +389,11 @@ fn connection_ballistics_reset_and_new_graphs_do_not_reuse_readings() {
     fresh.watch(true);
     assert_eq!(fresh.peak(route), 0.);
     assert_eq!(
-        fresh.peak(SignalRoute::Send(f.source, SendId(u64::MAX))),
+        fresh.peak(SignalRoute::Output(
+            f.source,
+            Destination::Master,
+            Tap::PreFader
+        )),
         0.
     );
 }

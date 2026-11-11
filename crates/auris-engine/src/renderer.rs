@@ -19,7 +19,7 @@ use rayon::prelude::*;
 mod parallel_tests;
 
 use crate::graph::{
-    MonitorTap, PITCH_COUNT, RenderAudioClip, RenderGraph, RenderSend, RenderSource, RenderTrack,
+    MonitorTap, PITCH_COUNT, RenderAudioClip, RenderGraph, RenderSource, RenderTrack,
     ScheduledEvent,
 };
 use crate::transport::Transport;
@@ -165,7 +165,7 @@ fn render_segment(
         (!offline && graph.signal_meters.is_watched()).then_some(graph.signal_meters.as_ref());
 
     // Realtime never enters Rayon. Offline workers only transform track-local buffers; the
-    // caller commits sends, taps and outputs after each generation's barrier. Contributions
+    // caller commits taps and outputs after each generation's barrier. Contributions
     // within a generation retain the original order, independently of worker completion order.
     let tracks = &mut graph.tracks;
     let serial_order = std::slice::from_ref(&graph.order);
@@ -252,7 +252,7 @@ fn render_segment(
 
             let RenderTrack {
                 scratch,
-                sends,
+                outputs,
                 strip,
                 ..
             } = track;
@@ -269,17 +269,17 @@ fn render_segment(
                     ctx.sample_rate,
                 );
             }
-            deliver_sends(sends, scratch, bus_inputs, true, ramp_frames, signal_meters);
-            strip.apply_gain_and_pan(scratch, ramp_frames);
-            strip.apply_mute(scratch);
-            deliver_sends(
-                sends,
+            deliver_outputs(
+                outputs,
                 scratch,
                 bus_inputs,
-                false,
+                master_scratch,
+                true,
                 ramp_frames,
                 signal_meters,
             );
+            strip.apply_gain_and_pan(scratch, ramp_frames);
+            strip.apply_mute(scratch);
 
             // `apply_mute` is what moves the fade, so this is the block it closed on and the last one
             // this track renders until the mute opens again. Anything the instrument is still holding
@@ -338,25 +338,18 @@ fn render_segment(
                     ctx.sample_rate,
                 );
             }
-            // The output edge's own delay, after both taps so that each copy carries its own: zero in
-            // any graph where nothing looks ahead, which is why this is normally a return on the
-            // first line.
-            for output in &mut track.outputs {
-                let signal = if output.delay.frames() == 0 {
-                    &track.scratch
-                } else {
-                    output.scratch.copy_from(&track.scratch);
-                    output.delay.process(&mut output.scratch);
-                    &output.scratch
-                };
-                match output.target.and_then(|slot| bus_inputs.get_mut(slot)) {
-                    Some(input) => input.mix_from(signal, 1.0),
-                    None => master_scratch.mix_from(signal, 1.0),
-                }
-                if let Some(meters) = signal_meters {
-                    meters.observe(output.meter, signal.peak());
-                }
-            }
+            // Every output taken after the fader, each through its own level and its own delay:
+            // zero delay in any graph where nothing looks ahead, which is why the copy is
+            // normally skipped.
+            deliver_outputs(
+                &mut track.outputs,
+                &track.scratch,
+                bus_inputs,
+                master_scratch,
+                false,
+                ramp_frames,
+                signal_meters,
+            );
         }
     }
 
@@ -451,39 +444,45 @@ fn prepare_track(
     }
 }
 
-/// Feeds one tap of a track into the buses its sends name.
+/// Feeds one tap of a track to wherever its outputs taken there land.
 ///
-/// Called twice per track — once before the fader and once after — and each send is only touched
-/// by the pass matching its own tap point, so every send's ramp advances exactly once per segment.
-fn deliver_sends(
-    sends: &mut [RenderSend],
+/// Called twice per track — once before the fader and once after — and each output is only
+/// touched by the pass matching its own tap point, so every output's ramp advances exactly once
+/// per segment.
+fn deliver_outputs(
+    outputs: &mut [crate::graph::RenderOutput],
     source: &AudioBuffer,
     bus_inputs: &mut [AudioBuffer],
+    master: &mut AudioBuffer,
     pre_fader: bool,
     ramp_frames: usize,
     meters: Option<&crate::SignalMeters>,
 ) {
-    for send in sends.iter_mut() {
-        if send.pre_fader != pre_fader {
+    for output in outputs.iter_mut() {
+        if output.pre_fader != pre_fader {
             continue;
         }
-        let Some(input) = bus_inputs.get_mut(send.target) else {
-            continue;
+        let input = match output.target {
+            Some(slot) => match bus_inputs.get_mut(slot) {
+                Some(input) => input,
+                None => continue,
+            },
+            None => &mut *master,
         };
-        let (from, to) = send.gain.advance(source.frame_count(), ramp_frames);
-        // A send with no delay to apply is mixed straight from the tap. Only one that is actually
-        // held back — because the bus it feeds looks ahead — needs a copy to hold.
-        let signal = if send.delay.frames() == 0 {
+        let (from, to) = output.gain.advance(source.frame_count(), ramp_frames);
+        // An output with no delay to apply is mixed straight from the tap. Only one that is
+        // actually held back — because what it feeds looks ahead — needs a copy to hold.
+        let signal = if output.delay.frames() == 0 {
             source
         } else {
-            send.scratch.set_frame_count(source.frame_count());
-            send.scratch.copy_from(source);
-            send.delay.process(&mut send.scratch);
-            &send.scratch
+            output.scratch.set_frame_count(source.frame_count());
+            output.scratch.copy_from(source);
+            output.delay.process(&mut output.scratch);
+            &output.scratch
         };
         if let Some(meters) = meters {
             let peak = mix_ramped::<true>(input, signal, from, to);
-            meters.observe(send.meter, peak);
+            meters.observe(output.meter, peak);
         } else {
             mix_ramped::<false>(input, signal, from, to);
         }
@@ -804,7 +803,7 @@ mod tests {
     use auris_core::automation::AutomationCurve;
     use auris_core::param::{ParamTarget, db_to_gain};
     use auris_core::project::{
-        AudioSourceBank, AuxSend, FadeCurve, Note, Output, Project, TrackId,
+        AudioSourceBank, Destination, FadeCurve, Note, Output, Project, Tap, TrackId,
     };
     use auris_core::time::Ticks;
     use std::sync::Arc;
@@ -2601,8 +2600,8 @@ mod tests {
             ));
         }
         let bus = project.add_bus_track("Drums");
-        project.tracks[0].outputs = vec![Output::Bus(bus)];
-        project.tracks[1].outputs = vec![Output::Bus(bus)];
+        project.tracks[0].outputs = vec![Output::to_bus(bus)];
+        project.tracks[1].outputs = vec![Output::to_bus(bus)];
         project
     }
 
@@ -2622,12 +2621,14 @@ mod tests {
             Ticks::ZERO,
             Ticks::from_beats(8.0),
         ));
-        let id = project.next_send_id();
-        project.track_mut(track).unwrap().sends.push(AuxSend {
-            id,
-            target: bus,
-            level_db,
-            pre_fader,
+        project.track_mut(track).unwrap().outputs.push(Output {
+            to: Destination::Bus(bus),
+            gain_db: level_db,
+            tap: if pre_fader {
+                Tap::PreFader
+            } else {
+                Tap::PostFader
+            },
         });
         project
     }
@@ -2694,7 +2695,8 @@ mod tests {
             project.track_mut(a).unwrap().mixer.gain_db = -6.020_6;
             project.track_mut(b).unwrap().mixer.gain_db = -12.041_2;
             project.add_effect(Some(b), testkit::LOOKAHEAD_ID);
-            project.tracks[0].outputs = vec![Output::Master, Output::Bus(a), Output::Bus(b)];
+            project.tracks[0].outputs =
+                vec![Output::master(), Output::to_bus(a), Output::to_bus(b)];
             let mut graph = build(&project, block);
             let out = render_range(&mut graph, &mut Transport::playing_from(0), 2048, block);
             assert_eq!(out.slice(0, testkit::LOOKAHEAD_FRAMES).peak(), 0.0);
@@ -2767,7 +2769,7 @@ mod tests {
             ));
         }
         let bus = project.add_bus_track("Late");
-        project.tracks[0].outputs = vec![Output::Bus(bus)];
+        project.tracks[0].outputs = vec![Output::to_bus(bus)];
         project.add_effect(Some(bus), testkit::LOOKAHEAD_ID);
 
         let mut graph = build(&project, 512);
@@ -2838,12 +2840,10 @@ mod tests {
         let bus = project.tracks[2].id;
         project.tracks[2].mixer.pan = 0.3;
         project.add_effect(Some(bus), testkit::TAIL_ID);
-        let id = project.next_send_id();
-        project.tracks[0].sends.push(AuxSend {
-            id,
-            target: bus,
-            level_db: -4.0,
-            pre_fader: true,
+        project.tracks[0].outputs.push(Output {
+            to: Destination::Bus(bus),
+            gain_db: -4.0,
+            tap: Tap::PreFader,
         });
 
         let render = |block: usize| {
@@ -2862,13 +2862,13 @@ mod tests {
         let mut project = bussed_project();
         let bus = project.tracks[2].id;
         project.add_effect(Some(bus), testkit::LOOKAHEAD_ID);
-        for (level_db, pre_fader) in [(-3.0, true), (-9.0, false)] {
-            let id = project.next_send_id();
-            project.tracks[1].sends.push(AuxSend {
-                id,
-                target: bus,
-                level_db,
-                pre_fader,
+        // The render graph does not ask whether two outputs share a destination and tap — the
+        // document does — so a second post-fader copy into the same bus is fair game here.
+        for (gain_db, tap) in [(-3.0, Tap::PreFader), (-9.0, Tap::PostFader)] {
+            project.tracks[1].outputs.push(Output {
+                to: Destination::Bus(bus),
+                gain_db,
+                tap,
             });
         }
 
@@ -2880,7 +2880,7 @@ mod tests {
 
         let allocations = testkit::count_allocations(|| {
             for step in 0..100 {
-                graph.set_send_level_db(1, 0, -3.0 - step as f32 * 0.1);
+                graph.set_output_gain_db(1, 1, -3.0 - step as f32 * 0.1);
                 render_block(&mut graph, &mut transport, &mut out, false);
             }
         });

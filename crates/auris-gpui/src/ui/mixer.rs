@@ -135,22 +135,18 @@ impl AurisApp {
         let clipped = self.session.meters().track_clipped(index);
         let selected = self.selected_track == Some(track_id);
         let outputs = track.outputs.clone();
-        let sends: Vec<(SendId, TrackId, f32, bool)> = track
-            .sends
-            .iter()
-            .map(|send| (send.id, send.target, send.level_db, send.pre_fader))
-            .collect();
-        let destinations: Vec<_> = outputs
-            .iter()
-            .map(|output| match *output {
-                Output::Master => self.t(Key::Master).to_string(),
-                Output::Bus(bus) => self
-                    .project()
-                    .track(bus)
-                    .map(|bus| bus.name.clone())
-                    .unwrap_or_else(|| self.t(Key::Master).to_string()),
-            })
-            .collect();
+        let level_rows = if output_levels_shown(&outputs) {
+            outputs.clone()
+        } else {
+            Vec::new()
+        };
+        let mut destinations: Vec<String> = Vec::new();
+        for output in &outputs {
+            let name = self.destination_name(output.to);
+            if !destinations.contains(&name) {
+                destinations.push(name);
+            }
+        }
         let destination = if destinations.is_empty() {
             self.t(Key::MixerNoOutput).to_string()
         } else {
@@ -318,13 +314,14 @@ impl AurisApp {
             ))
             .children(instrument_controls)
             .child(self.output_row(index, track_id, destination, cx))
-            .children(sends.into_iter().enumerate().map(
-                |(position, (send, bus, level_db, pre_fader))| {
-                    self.send_row(
-                        index, position, track_id, send, bus, level_db, pre_fader, 1.0, cx,
-                    )
-                },
-            ))
+            .children(
+                level_rows
+                    .into_iter()
+                    .enumerate()
+                    .map(|(position, output)| {
+                        self.output_level_row(index, position, track_id, output, 1.0, cx)
+                    }),
+            )
             .child(
                 div()
                     .flex()
@@ -363,7 +360,6 @@ impl AurisApp {
         cx: &mut gpui::Context<Self>,
     ) -> AnyElement {
         let theme = self.theme.clone();
-        let has_send_destination = self.session.buses().next().is_some();
         div()
             .flex()
             .items_center()
@@ -383,46 +379,38 @@ impl AurisApp {
                 &theme,
                 Self::opens_menu(cx, move |this, at| this.output_menu(at, track_id)),
             )))
-            // No inert plus: until a bus exists there is nowhere a send can go, and an empty
-            // picker is deliberately not opened by `open_menu`.
-            .children(has_send_destination.then(|| {
-                button(
-                    ("mixer-add-send", index),
-                    "+",
-                    ButtonStyle::Ghost,
-                    false,
-                    theme.accent_soft,
-                    &theme,
-                    Self::opens_menu(cx, move |this, at| this.send_picker_menu(at, track_id)),
-                )
-            }))
             .into_any_element()
     }
 
-    /// One send: where it goes, and how much of the track goes there.
+    /// What a destination is called in a strip: the master, or the bus's own name.
+    pub(super) fn destination_name(&self, to: Destination) -> String {
+        match to {
+            Destination::Master => self.t(Key::Master).to_string(),
+            Destination::Bus(bus) => self
+                .project()
+                .track(bus)
+                .map(|bus| bus.name.clone())
+                .unwrap_or_else(|| self.t(Key::Master).to_string()),
+        }
+    }
+
+    /// One output: where it goes, and how much of the track goes there.
     ///
     /// The level is a [`ParamTarget`] like a fader, so it drags, takes the wheel, resets on a
     /// double click and can be automated — all of that comes from being a mixer control rather
     /// than a number with a slider drawn next to it.
-    #[allow(clippy::too_many_arguments)]
-    pub(super) fn send_row(
+    pub(super) fn output_level_row(
         &self,
         index: usize,
         position: usize,
         track_id: TrackId,
-        send: SendId,
-        bus: TrackId,
-        level_db: f32,
-        pre_fader: bool,
+        output: Output,
         scale: f32,
         cx: &mut gpui::Context<Self>,
     ) -> AnyElement {
         let theme = self.theme.clone();
-        let name = self
-            .project()
-            .track(bus)
-            .map(|bus| bus.name.clone())
-            .unwrap_or_default();
+        let name = self.destination_name(output.to);
+        let Output { to, gain_db, tap } = output;
         div()
             .flex()
             .flex_col()
@@ -440,27 +428,28 @@ impl AurisApp {
                             .truncate()
                             .child(name),
                     )
-                    // The tap point, in the one character there is room for. A send taken before
-                    // the fader behaves differently enough from one taken after it that a strip
-                    // which did not say which is which would be lying by omission.
-                    .when(pre_fader, |row| {
+                    // The tap point, in the one character there is room for. An output taken
+                    // before the fader behaves differently enough from one taken after it that a
+                    // strip which did not say which is which would be lying by omission.
+                    .when(tap == Tap::PreFader, |row| {
                         row.child(
                             div()
                                 .text_xs()
                                 .text_color(theme.accent_text)
-                                .child(self.t(Key::SendPreFaderMark)),
+                                .child(self.t(Key::OutputPreFaderMark)),
                         )
                     }),
             )
             .child(
                 self.fader_control(
-                    ("mixer-send", index * 64 + position),
-                    self.t(Key::Sends),
-                    ParamTarget::Send {
+                    ("mixer-output", index * 64 + position),
+                    self.t(Key::OutputLevel),
+                    ParamTarget::Output {
                         track: track_id,
-                        send,
+                        to,
+                        tap,
                     },
-                    level_db,
+                    gain_db,
                     cx,
                 )
                 .h(Metrics::CONTROL_HEIGHT * scale),
@@ -468,7 +457,7 @@ impl AurisApp {
             .on_mouse_down(
                 gpui::MouseButton::Right,
                 cx.listener(move |this, event: &gpui::MouseDownEvent, _, cx| {
-                    let menu = this.send_menu(event.position, track_id, send);
+                    let menu = this.output_level_menu(event.position, track_id, to, tap);
                     this.open_menu(menu);
                     cx.stop_propagation();
                     cx.notify();
@@ -657,33 +646,44 @@ impl AurisApp {
     }
 }
 
+/// Whether a strip shows a level row for each of its outputs.
+///
+/// Every track has at least one output, and nearly every track has exactly one: to the master or
+/// a bus, at unity after the fader. A level row for that one would repeat the fader beside it on
+/// every strip, so it is drawn only once there is something it could say — a second output, a
+/// level that is not unity, or a copy taken before the fader.
+pub(crate) fn output_levels_shown(outputs: &[Output]) -> bool {
+    match outputs {
+        [] => false,
+        [only] => only.gain_db != 0.0 || only.tap == Tap::PreFader,
+        _ => true,
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use gpui::TestAppContext;
+    #[test]
+    fn a_lone_unity_output_gets_no_level_row_and_anything_else_does() {
+        use super::output_levels_shown;
+        use auris_session::prelude::{Destination, Output, Tap, TrackId};
 
-    use crate::dock::Panel;
-    use crate::harness::{open, paint};
-
-    #[gpui::test]
-    fn add_send_is_only_shown_when_a_bus_can_receive_it(cx: &mut TestAppContext) {
-        let (app, cx) = open(cx);
-        app.update(cx, |this, _| {
-            this.mixer_graph_visible = false;
-            this.session
-                .add_default_instrument_track("Test")
-                .expect("the registry nominates an instrument");
-            this.panels.set_detached(Panel::Mixer, false);
-        });
-        paint(&app, cx);
-        assert!(
-            cx.debug_bounds("mixer-add-send-0").is_none(),
-            "an add-send control with no possible destination would look broken"
-        );
-
-        app.update(cx, |this, _| {
-            this.session.add_bus_track("Bus");
-        });
-        paint(&app, cx);
-        assert!(cx.debug_bounds("mixer-add-send-0").is_some());
+        assert!(!output_levels_shown(&[]));
+        assert!(!output_levels_shown(&[Output::master()]));
+        assert!(!output_levels_shown(&[Output::to_bus(TrackId(3))]));
+        let quieter = Output {
+            gain_db: -6.0,
+            ..Output::master()
+        };
+        assert!(output_levels_shown(&[quieter]));
+        let pre = Output {
+            to: Destination::Bus(TrackId(3)),
+            gain_db: 0.0,
+            tap: Tap::PreFader,
+        };
+        assert!(output_levels_shown(&[pre]));
+        assert!(output_levels_shown(&[
+            Output::master(),
+            Output::to_bus(TrackId(3))
+        ]));
     }
 }

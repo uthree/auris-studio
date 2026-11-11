@@ -544,9 +544,10 @@ mod tests {
         for target in [
             ParamTarget::TrackGain(track),
             ParamTarget::TrackPan(track),
-            ParamTarget::Send {
+            ParamTarget::Output {
                 track,
-                send: SendId(7),
+                to: Destination::Bus(TrackId(7)),
+                tap: Tap::PreFader,
             },
             ParamTarget::Instrument {
                 track,

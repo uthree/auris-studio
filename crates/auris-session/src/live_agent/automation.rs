@@ -22,10 +22,15 @@ pub enum ControlTarget {
     MasterGain,
     /// Master pan in normalized native units.
     MasterPan,
-    /// A send's native level.
-    Send {
-        /// Stable send ID from mixer_graph.
-        send: u64,
+    /// The level of one of a track's outputs, in decibels.
+    Output {
+        /// Stable source track node from mixer_graph, such as track:12.
+        source: String,
+        /// Stable destination bus node or track:master.
+        target: String,
+        /// Which output: true for the one taken before the fader. Default false.
+        #[serde(default)]
+        pre_fader: bool,
     },
     /// Instrument parameter discovered with inspect_instrument.
     Instrument {
@@ -113,21 +118,32 @@ impl Session {
             ControlTarget::TrackPan { track } => Ok(ParamTarget::TrackPan(track_exists(*track)?)),
             ControlTarget::MasterGain => Ok(ParamTarget::MasterGain),
             ControlTarget::MasterPan => Ok(ParamTarget::MasterPan),
-            ControlTarget::Send { send } => self
-                .project()
-                .tracks
-                .iter()
-                .find_map(|track| {
-                    track
-                        .sends
-                        .iter()
-                        .find(|s| s.id.0 == *send)
-                        .map(|s| ParamTarget::Send {
-                            track: track.id,
-                            send: s.id,
-                        })
-                })
-                .ok_or("Unknown send ID".into()),
+            ControlTarget::Output {
+                source,
+                target,
+                pre_fader,
+            } => {
+                let track = match self.graph_node(source)? {
+                    crate::mixer_graph::MixerNode::Strip(Some(track)) => track,
+                    _ => return Err("source must be a track node from mixer_graph".into()),
+                };
+                let to = match self.graph_node(target)? {
+                    crate::mixer_graph::MixerNode::Strip(owner) => {
+                        crate::mixer_graph::destination(owner)
+                    }
+                    _ => return Err("target must be a bus node or track:master".into()),
+                };
+                let tap = if *pre_fader {
+                    auris_core::Tap::PreFader
+                } else {
+                    auris_core::Tap::PostFader
+                };
+                self.project()
+                    .track(track)
+                    .is_some_and(|entry| entry.outputs.iter().any(|o| o.key() == (to, tap)))
+                    .then_some(ParamTarget::Output { track, to, tap })
+                    .ok_or("Unknown output; mixer_graph read again".into())
+            }
             ControlTarget::Instrument { track, param } => {
                 let track = track_exists(*track)?;
                 let descriptor = self
