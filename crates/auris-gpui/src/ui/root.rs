@@ -558,6 +558,10 @@ impl AurisApp {
                             this.open_issue_report(None, cx);
                         },
                     ))
+                    .on_action(Self::window_listener(
+                        cx,
+                        |this, _: &actions::OpenLogFolder, _, cx| this.open_log_folder(cx),
+                    ))
                     .on_action(Self::window_listener(cx, Self::on_toggle_agent))
                     .on_action(Self::window_listener(cx, Self::on_toggle_structure_lane))
                     .on_action(Self::window_listener(cx, Self::on_toggle_key_lane))

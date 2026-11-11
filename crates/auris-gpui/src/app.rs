@@ -1820,6 +1820,9 @@ pub struct AurisApp {
     pub(crate) settings_window: Option<WindowHandle<SettingsWindow>>,
     pub(crate) issue_report_window:
         Option<WindowHandle<crate::issue_report_window::IssueReportWindow>>,
+    /// A crash report written since the last one offered, shown on the start screen until it is
+    /// reported or dismissed.
+    pub(crate) crash_offer: Option<auris_session::diagnostics::CrashReport>,
     /// The rhythm editor; invalidated when the document is replaced.
     pub(crate) rhythm_window: Option<WindowHandle<crate::ui::rhythm_grid::RhythmWindow>>,
     /// The external singing-backend setup window, while it is open.
@@ -2292,6 +2295,11 @@ impl AurisApp {
             keymap,
             settings_window: None,
             issue_report_window: None,
+            crash_offer: if reference || cfg!(test) {
+                None
+            } else {
+                crate::issue_report_window::take_crash_offer()
+            },
             rhythm_window: None,
             clicked_key: None,
             _repaint: repaint,

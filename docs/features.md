@@ -830,6 +830,19 @@ A **release build has no console at all** — `windows_subsystem = "windows"`, s
 `auris-studio.exe` opens the window and nothing else. A debug build keeps its terminal, because
 `cargo run` and `RUST_LOG=debug` are how this is worked on, and the records go to both.
 
+**The records are also written to disk**, one file per launch, because the panel is memory and a
+crash takes memory with it. **Help → Open Log Folder** (or the button on the log panel) opens the
+folder: `~/Library/Logs/Auris Studio` on macOS, where Console.app lists it too,
+`%LOCALAPPDATA%\Auris Studio\Logs` on Windows and `~/.local/state/auris-studio/logs` elsewhere;
+`AURIS_LOG_DIR` moves it. The newest ten launches are kept, and one launch's file stops at 8 MiB.
+
+**A panic writes a crash report** into `crashes/` in the same folder: the build, the platform,
+what panicked and where, a backtrace, and the two hundred records before it. The next launch's
+start screen offers to turn it into an Issue draft, once; dismissed, it stays on disk, and
+**Help → Report a problem…** lists the newest report as an excerpt to review and allow like the
+others. A native crash inside a hosted plugin does not unwind and leaves no report — the launch's
+log file, which is written line by line, is what is left of it.
+
 The library panel is a tree: instruments, SoundFonts, singer voices and effects, each opening into
 groups rather than a flat list — the plugins by category, a font by the banks it declares. Every
 branch remembers whether it was left open. Clicking an instrument sets it on the selected track,

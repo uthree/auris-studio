@@ -51,6 +51,7 @@ pub use audio_attachment::{AudioAttachmentCopy, copy_audio_attachment, prepare_a
 pub mod audio_input;
 pub mod conversation_attachments;
 pub mod conversations;
+pub mod diagnostics;
 pub mod execution_trace;
 mod export_inspection;
 pub mod issue_report;
