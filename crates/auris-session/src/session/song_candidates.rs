@@ -2,7 +2,6 @@
 
 use super::{SaveReport, Session, SessionOptions};
 use crate::{Edit, SessionError};
-use auris_compose::{SongSpec, compose, preset};
 use auris_core::{AssetPath, AudioBuffer, Project};
 use auris_engine::RenderProgress;
 use std::sync::{
@@ -18,8 +17,6 @@ pub struct SongIdea {
     pub title: String,
     /// Audible differences, in the user's language.
     pub description: String,
-    /// Built-in whole-song preset name.
-    pub preset: String,
     /// Quarter-note tempo, 50..180 BPM.
     pub tempo: f64,
     /// Tonal centre, such as C major or A minor.
@@ -37,7 +34,6 @@ impl SongIdea {
             || self.title.chars().count() > 80
             || self.description.trim().is_empty()
             || self.description.chars().count() > 400
-            || preset(&self.preset).is_none()
             || !self.tempo.is_finite()
             || !(50.0..=180.0).contains(&self.tempo)
             || !self.density.is_finite()
@@ -51,47 +47,6 @@ impl SongIdea {
             return Err("Invalid song direction returned by the model".into());
         }
         Ok(())
-    }
-
-    fn specification(&self, seconds: u32, seed: u64) -> Result<SongSpec, String> {
-        self.validate()?;
-        if !(30..=300).contains(&seconds) {
-            return Err("Choose a duration between 30 and 300 seconds".into());
-        }
-        let mut spec = preset(&self.preset).ok_or("Unknown preset")?.spec();
-        spec.title = self.title.clone();
-        spec.tempo = self.tempo;
-        spec.key = auris_core::theory::key::Key::parse(&self.key).ok_or("Invalid key")?;
-        spec.seed = seed;
-        spec.singer = None;
-        spec.singer_speaker = None;
-        let bars = ((f64::from(seconds) * self.tempo
-            / 60.0
-            / spec.meter.ticks_per_bar().as_beats()
-            / spec.form.len().max(1) as f64)
-            .round() as usize)
-            .clamp(2, 64);
-        for section in spec.sections.values_mut() {
-            section.bars = bars;
-            section.lyrics.clear();
-        }
-        for part in &mut spec.parts {
-            part.source = None;
-            part.program = None;
-            if part.name == "melody" || part.name == "lead" {
-                part.instrument = match self.lead.as_str() {
-                    "piano" => "auris.physical.piano",
-                    "guitar" => "auris.physical.guitar",
-                    "flute" => "auris.physical.tin_whistle",
-                    "strings" => "auris.physical.violin",
-                    _ => "auris.synth.fm2",
-                }
-                .into();
-                part.params.clear();
-            }
-            part.density = Some(self.density);
-        }
-        Ok(spec)
     }
 }
 
@@ -138,13 +93,13 @@ pub struct SongSourceChoice {
     /// Built-in instrument identifier when no external source is selected.
     pub instrument: String,
     /// Exact library source, if selected.
-    pub source: Option<auris_compose::spec::PartSource>,
+    pub source: Option<super::PartSource>,
 }
 
 /// Immutable controls captured before planning or generating a candidate batch.
 #[derive(Clone, Debug, Default)]
 pub struct SongRequest {
-    /// Approximate seconds; absence lets the preset and lyric capacity decide.
+    /// Approximate seconds; absence lets the lyrics and the agent decide.
     pub seconds: Option<u32>,
     /// Authored lyrics; line breaks separate phrases and blank lines separate sections.
     pub lyrics: String,
@@ -166,85 +121,10 @@ impl SongRequest {
     pub fn authoring_session(&self, idea: &SongIdea) -> Result<Session, String> {
         self.validate()?;
         idea.validate()?;
-        let mut session = Session::new(
-            SessionOptions::headless()
-                .with_balance(false)
-                .with_plugin_paths(self.plugin_paths.clone()),
-        )
-        .map_err(|e| e.to_string())?;
-        let mut project = Project::new(&idea.title, session.project.sample_rate);
-        let mut hosted = Vec::new();
-        for choice in &self.sources {
-            let source = session
-                .prepare_composed_source(choice.source.as_ref())
+        let mut session =
+            Session::new(SessionOptions::headless().with_plugin_paths(self.plugin_paths.clone()))
                 .map_err(|e| e.to_string())?;
-            let instrument = source.as_ref().map_or_else(
-                || choice.instrument.clone(),
-                |source| source.instrument_id(),
-            );
-            if source.is_none() && !session.registry.has_instrument(&instrument) {
-                return Err(format!("Unavailable instrument: {instrument}"));
-            }
-            let track = if choice.role == "drums" {
-                project.add_drum_track(&choice.role, &instrument)
-            } else {
-                project.add_instrument_track(&choice.role, &instrument)
-            };
-            if let Some(source) = source
-                && let Some(source) = session.install_composed_source(&mut project, track, source)
-            {
-                hosted.push((track, source));
-            }
-        }
-        for (track, source) in hosted {
-            session.install_composed_hosted_source(track, source);
-        }
-        // The agent writes the notes and the mix here, but a master it can lean on is the
-        // document's, not the agent's to remember: without one, normalising stops at the first
-        // drum hit that reaches the ceiling. After the parts, so their ids are the ones the
-        // sources were placed on.
-        super::levels::install_master_limiter(
-            &session.registry,
-            &mut project,
-            super::levels::NEW_DOCUMENT_CEILING_DB,
-        );
-        session.replace_project(project);
-        session.install_library_fonts();
-        let drums: Vec<_> = session
-            .project
-            .tracks
-            .iter()
-            .filter(|track| track.kind.is_drum())
-            .map(|track| track.id)
-            .collect();
-        for track in drums {
-            if let Some(map) = session.suggested_drum_map(track) {
-                session
-                    .set_drum_map(track, map)
-                    .map_err(|e| e.to_string())?;
-            }
-        }
-        session.set_tempo_at(auris_core::Ticks::ZERO, idea.tempo);
-        session.set_key(
-            auris_core::Ticks::ZERO,
-            auris_core::theory::key::Key::parse(&idea.key).ok_or("Invalid key")?,
-        );
-        if !self.singers.is_empty()
-            && let Some(dictionary) = &self.japanese_dictionary
-        {
-            session
-                .set_japanese_dictionary(Some(dictionary))
-                .map_err(|e| e.to_string())?;
-        }
-        for singer in &self.singers {
-            let track = session.add_singer_track(singer.track_name());
-            session
-                .set_singer_voice(track, Some(&singer.path))
-                .map_err(|e| e.to_string())?;
-            session
-                .set_singer_speaker(track, singer.speaker.as_deref())
-                .map_err(|e| e.to_string())?;
-        }
+        session.begin_song(self, idea)?;
         Ok(session)
     }
 
@@ -266,121 +146,6 @@ impl SongRequest {
         }
         Ok(())
     }
-
-    fn specification(
-        &self,
-        idea: &SongIdea,
-        seed: u64,
-        session: &Session,
-    ) -> Result<SongSpec, String> {
-        self.validate()?;
-        let mut spec = idea.specification(self.seconds.unwrap_or(120), seed)?;
-        if self.seconds.is_none() {
-            let original = preset(&idea.preset).ok_or("Unknown preset")?.spec();
-            for (name, section) in &mut spec.sections {
-                section.bars = original.sections[name].bars;
-            }
-        }
-        for choice in &self.sources {
-            let mut matched = false;
-            for part in &mut spec.parts {
-                let role = part.role.name();
-                if role == choice.role
-                    || (choice.role == "drums"
-                        && matches!(role, "kick" | "snare" | "hat" | "crash"))
-                {
-                    part.source = choice.source.clone();
-                    part.instrument.clone_from(&choice.instrument);
-                    part.params.clear();
-                    part.program = None;
-                    matched = true;
-                }
-            }
-            if !matched {
-                let role = auris_compose::spec::Role::parse(&choice.role)
-                    .ok_or_else(|| format!("The arrangement has no {} part", choice.role))?;
-                let mut part = auris_compose::spec::PartSpec::of_role(choice.role.clone(), role);
-                part.instrument.clone_from(&choice.instrument);
-                part.source = choice.source.clone();
-                spec.parts.push(part);
-                for section in spec.sections.values_mut() {
-                    if !section.parts.is_empty() {
-                        section.parts.push(choice.role.clone());
-                    }
-                }
-            }
-        }
-        if self.singers.is_empty() {
-            return Ok(spec);
-        }
-        // Give every occurrence its own lyric identity; repeated choruses must not
-        // accidentally repeat or discard an authored verse.
-        let old = spec.sections.clone();
-        spec.sections.clear();
-        for (index, name) in spec.form.iter_mut().enumerate() {
-            let mut section = old.get(name).ok_or("Unknown song section")?.clone();
-            *name = format!("section{}", index + 1);
-            section.name.clone_from(name);
-            section.melody_from = None;
-            spec.sections.insert(name.clone(), section);
-        }
-        let normalized = self.lyrics.replace("\r\n", "\n");
-        let stanzas: Vec<_> = normalized
-            .split("\n\n")
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .collect();
-        let phrases: Vec<_> = normalized
-            .lines()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .collect();
-        let sections: Vec<String> = if stanzas.len() > 1 {
-            let count = stanzas.len().min(spec.form.len());
-            (0..count)
-                .map(|index| {
-                    stanzas[index * stanzas.len() / count..(index + 1) * stanzas.len() / count]
-                        .join("\n\n")
-                })
-                .collect()
-        } else {
-            let count = spec.form.len().min(phrases.len());
-            (0..count)
-                .map(|index| {
-                    phrases[index * phrases.len() / count..(index + 1) * phrases.len() / count]
-                        .join("\n")
-                })
-                .collect()
-        };
-        let slots = sections.len();
-        if slots < self.singers.len() && self.singing != SongSinging::Harmony {
-            return Err("Add more lyric phrases for alternating singers, or choose harmony".into());
-        }
-        for (index, lyrics) in sections.into_iter().enumerate() {
-            let section = spec
-                .sections
-                .get_mut(&spec.form[index])
-                .ok_or("Unknown section")?;
-            section.lyrics = lyrics;
-            if self.seconds.is_none() {
-                let measured = session.measure_lyrics(&section.lyrics, spec.meter);
-                while measured.fits_in_bars(spec.meter, section.bars) != Some(true)
-                    && section.bars < 64
-                {
-                    section.bars += 1;
-                }
-            }
-        }
-        if spec.total_bars() as f64 * spec.meter.ticks_per_bar().as_beats() * 60.0 / spec.tempo
-            > 330.0
-        {
-            return Err("The lyrics need more than five minutes; shorten them or choose a shorter arrangement".into());
-        }
-        session
-            .validate_song_lyrics(&spec)
-            .map_err(|e| e.to_string())?;
-        Ok(spec)
-    }
 }
 
 /// Finished editable document and its full rendered audition, including retained vocal assets.
@@ -396,27 +161,9 @@ pub struct SongCandidate {
 }
 
 impl SongCandidate {
-    /// Authored lyrics in song order, preserving section breaks and repeated sections.
-    /// Manually authored drafts without section lyrics use their singer clips' note text.
+    /// Authored lyrics in song order, read from the singer clips' note text: one phrase per
+    /// clip, in the order the clips start.
     pub fn lyrics(&self) -> String {
-        if let Some(spec) = self
-            .project
-            .song_spec
-            .as_deref()
-            .and_then(|text| SongSpec::parse(text).ok())
-        {
-            let lyrics = spec
-                .form
-                .iter()
-                .filter_map(|name| spec.sections.get(name))
-                .map(|section| section.lyrics.trim())
-                .filter(|text| !text.is_empty())
-                .collect::<Vec<_>>()
-                .join("\n\n");
-            if !lyrics.is_empty() {
-                return lyrics;
-            }
-        }
         let mut phrases = std::collections::BTreeSet::new();
         for singer in self
             .project
@@ -543,116 +290,6 @@ impl SongCandidate {
         })
     }
 
-    /// Compose and render on a worker without opening any realtime device.
-    pub fn generate(
-        idea: SongIdea,
-        brief: &str,
-        seconds: u32,
-        seed: u64,
-        cancel: &AtomicBool,
-    ) -> Result<Self, String> {
-        Self::generate_with(
-            idea,
-            brief,
-            &SongRequest {
-                seconds: Some(seconds),
-                ..Default::default()
-            },
-            seed,
-            cancel,
-            &mut |_| {},
-        )
-    }
-
-    /// Generate a complete candidate on its own session thread, including selected voices.
-    pub fn generate_with(
-        idea: SongIdea,
-        brief: &str,
-        request: &SongRequest,
-        seed: u64,
-        cancel: &AtomicBool,
-        progress: &mut dyn FnMut(&str),
-    ) -> Result<Self, String> {
-        let mut session = Session::new(
-            SessionOptions::headless()
-                .with_balance(false)
-                .with_plugin_paths(request.plugin_paths.clone()),
-        )
-        .map_err(|e| e.to_string())?;
-        if !request.singers.is_empty()
-            && let Some(dictionary) = &request.japanese_dictionary
-        {
-            session
-                .set_japanese_dictionary(Some(dictionary))
-                .map_err(|e| e.to_string())?;
-        }
-        let spec = request.specification(&idea, seed, &session)?;
-        progress("compose");
-        if cancel.load(Ordering::Acquire) {
-            return Err("Cancelled".into());
-        }
-        let composition = compose(&spec);
-        if cancel.load(Ordering::Acquire) {
-            return Err("Cancelled".into());
-        }
-        let report = session
-            .compose_without_balance(&composition)
-            .map_err(|e| e.to_string())?;
-        if !report.substituted.is_empty() {
-            return Err(format!(
-                "Unavailable built-in instruments: {:?}",
-                report.substituted
-            ));
-        }
-        if !report.unsung.is_empty() {
-            return Err(format!("Could not fit lyrics: {:?}", report.unsung));
-        }
-        if !request.singers.is_empty() {
-            session.arrange_candidate_singers(request, &spec)?;
-            let tracks: Vec<_> = session
-                .project
-                .tracks
-                .iter()
-                .filter(|t| t.kind.as_singer().is_some())
-                .map(|t| t.id)
-                .collect();
-            for track in tracks {
-                if cancel.load(Ordering::Acquire) {
-                    return Err("Cancelled".into());
-                }
-                progress("sing");
-                let plan = session
-                    .sing_plan(track, Some(seed))
-                    .map_err(|e| e.to_string())?;
-                let voice = session
-                    .voice_model_at(&plan.voice)
-                    .map_err(|e| e.to_string())?;
-                let render = voice
-                    .lock()
-                    .map_err(|_| "Voice worker stopped")?
-                    .sing_render_with(
-                        &plan.frames,
-                        &plan.score,
-                        plan.speaker,
-                        plan.seed,
-                        |_, _| !cancel.load(Ordering::Acquire),
-                    )
-                    .map_err(|e| e.to_string())?;
-                let landed = session
-                    .begin_singer_landing(&plan)
-                    .map_err(|e| e.to_string())?
-                    .run(render, cancel)
-                    .map_err(|e| e.to_string())?
-                    .ok_or("Cancelled")?;
-                session
-                    .continue_singer_landing(landed)
-                    .map_err(|e| e.to_string())?
-                    .ok_or("Stale vocal render")?;
-            }
-        }
-        Self::from_authored_session(idea, brief, &mut session, cancel, progress)
-    }
-
     /// Retain and render the exact authored document for audition and later adoption.
     /// Does not generate notes, substitute instruments or rebalance the mix.
     pub fn from_authored_session(
@@ -711,6 +348,85 @@ impl SongCandidate {
 }
 
 impl Session {
+    /// Replaces the document with a note-free song: the request's exact sounds and voices, the
+    /// idea's tempo and key, and a master limiter. Every source is prepared before the document
+    /// is touched, so a refused one leaves it as it was.
+    pub(super) fn begin_song(
+        &mut self,
+        request: &SongRequest,
+        idea: &SongIdea,
+    ) -> Result<(), String> {
+        let mut project = Project::new(&idea.title, self.project.sample_rate);
+        let mut hosted = Vec::new();
+        for choice in &request.sources {
+            let source = self
+                .prepare_composed_source(choice.source.as_ref())
+                .map_err(|e| e.to_string())?;
+            let instrument = source.as_ref().map_or_else(
+                || choice.instrument.clone(),
+                |source| source.instrument_id(),
+            );
+            if source.is_none() && !self.registry.has_instrument(&instrument) {
+                return Err(format!("Unavailable instrument: {instrument}"));
+            }
+            let track = if choice.role == "drums" {
+                project.add_drum_track(&choice.role, &instrument)
+            } else {
+                project.add_instrument_track(&choice.role, &instrument)
+            };
+            if let Some(source) = source
+                && let Some(source) = self.install_composed_source(&mut project, track, source)
+            {
+                hosted.push((track, source));
+            }
+        }
+        for (track, source) in hosted {
+            self.install_composed_hosted_source(track, source);
+        }
+        // The agent writes the notes and the mix here, but a master it can lean on is the
+        // document's, not the agent's to remember: without one, normalising stops at the first
+        // drum hit that reaches the ceiling. After the parts, so their ids are the ones the
+        // sources were placed on.
+        super::levels::install_master_limiter(
+            &self.registry,
+            &mut project,
+            super::levels::NEW_DOCUMENT_CEILING_DB,
+        );
+        self.replace_project(project);
+        self.install_library_fonts();
+        let drums: Vec<_> = self
+            .project
+            .tracks
+            .iter()
+            .filter(|track| track.kind.is_drum())
+            .map(|track| track.id)
+            .collect();
+        for track in drums {
+            if let Some(map) = self.suggested_drum_map(track) {
+                self.set_drum_map(track, map).map_err(|e| e.to_string())?;
+            }
+        }
+        self.set_tempo_at(auris_core::Ticks::ZERO, idea.tempo);
+        self.set_key(
+            auris_core::Ticks::ZERO,
+            auris_core::theory::key::Key::parse(&idea.key).ok_or("Invalid key")?,
+        );
+        if !request.singers.is_empty()
+            && let Some(dictionary) = &request.japanese_dictionary
+        {
+            self.set_japanese_dictionary(Some(dictionary))
+                .map_err(|e| e.to_string())?;
+        }
+        for singer in &request.singers {
+            let track = self.add_singer_track(singer.track_name());
+            self.set_singer_voice(track, Some(&singer.path))
+                .map_err(|e| e.to_string())?;
+            self.set_singer_speaker(track, singer.speaker.as_deref())
+                .map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
+
     /// Save an isolated workshop document and its exact audition before publication.
     pub fn finish_workshop_candidate(
         &mut self,
@@ -775,59 +491,6 @@ impl Session {
         SongCandidate::load_workshop(folder, idea)
     }
 
-    fn arrange_candidate_singers(
-        &mut self,
-        request: &SongRequest,
-        spec: &SongSpec,
-    ) -> Result<(), String> {
-        let original = self
-            .project
-            .tracks
-            .iter()
-            .find(|t| t.kind.as_singer().is_some())
-            .cloned()
-            .ok_or("No vocal notes were generated")?;
-        let clips = original.kind.note_clips().ok_or("No vocal clips")?.to_vec();
-        self.project.remove_track(original.id);
-        for (index, voice) in request.singers.iter().enumerate() {
-            let name = voice.track_name();
-            let track = self.project.add_singer_track(&name, auris_synth::Vocal::ID);
-            for (position, clip) in clips.iter().enumerate() {
-                let together = request.singing == SongSinging::Harmony
-                    || (request.singing == SongSinging::Auto && position + 1 == clips.len());
-                if !together && position % request.singers.len() != index {
-                    continue;
-                }
-                let id = self
-                    .project
-                    .add_midi_clip(track, &clip.name, clip.start, clip.length)
-                    .ok_or("Could not create vocal clip")?;
-                let target = self.project.midi_clip_mut(id).ok_or("Missing vocal clip")?;
-                target.notes = clip.notes.clone();
-                target.length_is_explicit = true;
-                if together && index > 0 {
-                    for note in &mut target.notes {
-                        let degree = (-35..70)
-                            .min_by_key(|&degree| {
-                                (spec.key.midi(degree, 0) - i32::from(note.pitch)).abs()
-                            })
-                            .unwrap_or(0);
-                        note.pitch =
-                            spec.key.midi(degree + (index * 2) as i32, 0).clamp(0, 127) as u8;
-                    }
-                }
-            }
-            self.set_singer_voice(track, Some(&voice.path))
-                .map_err(|e| e.to_string())?;
-            if let Some(speaker) = &voice.speaker {
-                self.set_singer_speaker(track, Some(speaker))
-                    .map_err(|e| e.to_string())?;
-            }
-        }
-        self.invalidate_graph();
-        Ok(())
-    }
-
     /// Adopt the exact document that produced an audition, as one undoable edit.
     pub fn adopt_song_candidate(&mut self, candidate: &SongCandidate) -> Result<(), SessionError> {
         if self.is_recording() {
@@ -890,14 +553,14 @@ impl Session {
                 let source = if let Some(id) =
                     instrument.instrument_id.strip_prefix(auris_clap::ID_PREFIX)
                 {
-                    auris_compose::spec::PartSource::Clap {
+                    super::PartSource::Clap {
                         path,
                         plugin_id: id.into(),
                     }
                 } else if let Some(id) =
                     instrument.instrument_id.strip_prefix(auris_vst3::ID_PREFIX)
                 {
-                    auris_compose::spec::PartSource::Vst3 {
+                    super::PartSource::Vst3 {
                         path,
                         class_id: id.into(),
                     }
@@ -907,7 +570,7 @@ impl Session {
                         instrument.instrument_id
                     )));
                 };
-                self.validate_candidate_source(&source)?;
+                self.prepare_composed_source(Some(&source))?;
             }
         }
         // Copy the audio last, once nothing else can refuse the candidate, and take the copies
@@ -978,14 +641,11 @@ mod tests {
     #[test]
     fn workshop_descendants_keep_parent_notes_and_do_not_modify_parent_files() {
         let root = tempfile::tempdir().unwrap();
-        let mut session = Session::new(SessionOptions::headless().with_balance(false)).unwrap();
-        session
-            .compose_without_balance(&compose(&preset("chiptune").unwrap().spec()))
-            .unwrap();
+        let mut session = Session::new(SessionOptions::headless()).unwrap();
+        crate::session::fixtures::song(&mut session, 4);
         let idea = SongIdea {
             title: "Original".into(),
             description: "Chiptune".into(),
-            preset: "chiptune".into(),
             tempo: 120.0,
             key: "C major".into(),
             density: 0.5,
@@ -997,7 +657,7 @@ mod tests {
             .unwrap();
         let parent = root.path().join("1/song/song.auris");
         let bytes = std::fs::read(&parent).unwrap();
-        let mut child = Session::new(SessionOptions::headless().with_balance(false)).unwrap();
+        let mut child = Session::new(SessionOptions::headless()).unwrap();
         assert!(child.open(&parent).unwrap().is_empty());
         child.set_tempo_at(auris_core::time::Ticks::ZERO, 90.0);
         let derived = child
@@ -1039,7 +699,6 @@ mod tests {
                 .unwrap()
                 .is_empty())
         );
-        assert!(session.project().song_spec.is_none());
         assert!(session.project().audio_sources.is_empty());
         for track in &session.project().tracks[1..] {
             assert!(track.kind.as_singer().unwrap().voice.is_some());
@@ -1063,85 +722,6 @@ mod tests {
                 .collect(),
             ..Default::default()
         }
-    }
-
-    #[test]
-    fn vocal_arrangements_preserve_lyrics_and_independent_singers() {
-        let folder = tempfile::tempdir().unwrap();
-        for mode in [
-            SongSinging::Alternate,
-            SongSinging::Harmony,
-            SongSinging::Auto,
-        ] {
-            let mut session = Session::new(SessionOptions::headless()).unwrap();
-            let request = vocal_request(folder.path(), mode);
-            let spec = request.specification(&idea(), 42, &session).unwrap();
-            let lyrics = spec
-                .form
-                .iter()
-                .filter_map(|name| {
-                    let text = &spec.sections[name].lyrics;
-                    (!text.is_empty()).then_some(text.as_str())
-                })
-                .collect::<Vec<_>>()
-                .join("\n\n");
-            assert_eq!(lyrics, request.lyrics);
-            session.compose_without_balance(&compose(&spec)).unwrap();
-            session.arrange_candidate_singers(&request, &spec).unwrap();
-            let voices: Vec<_> = session
-                .project
-                .tracks
-                .iter()
-                .filter(|t| t.kind.as_singer().is_some())
-                .collect();
-            assert_eq!(voices.len(), 2);
-            assert_eq!(voices[0].name, "First");
-            assert_eq!(voices[1].name, "Second");
-            let first = voices[0].kind.note_clips().unwrap();
-            let second = voices[1].kind.note_clips().unwrap();
-            assert!(!first.is_empty() && !second.is_empty());
-            if mode == SongSinging::Alternate {
-                assert!(
-                    first
-                        .iter()
-                        .all(|a| second.iter().all(|b| a.start != b.start))
-                );
-            }
-            if mode == SongSinging::Harmony {
-                assert_eq!(first.len(), second.len());
-                assert_eq!(first[0].notes[0].lyric, second[0].notes[0].lyric);
-                assert_ne!(first[0].notes[0].pitch, second[0].notes[0].pitch);
-            }
-        }
-    }
-
-    #[test]
-    fn duration_and_explicit_sources_are_preserved_without_erasing_other_parts() {
-        let session = Session::new(SessionOptions::headless()).unwrap();
-        for seconds in [30, 40, 110, 240, 300] {
-            assert!(idea().specification(seconds, 1).is_ok());
-        }
-        let request = SongRequest {
-            sources: vec![SongSourceChoice {
-                role: "melody".into(),
-                instrument: "auris.physical.violin".into(),
-                source: None,
-            }],
-            ..Default::default()
-        };
-        let spec = request.specification(&idea(), 42, &session).unwrap();
-        assert_eq!(
-            spec.parts
-                .iter()
-                .find(|p| p.role == auris_compose::spec::Role::Melody)
-                .unwrap()
-                .instrument,
-            "auris.physical.violin"
-        );
-        assert_eq!(
-            spec.total_bars(),
-            preset("chiptune").unwrap().spec().total_bars()
-        );
     }
 
     #[test]
@@ -1382,7 +962,7 @@ mod tests {
     }
 
     #[test]
-    fn candidate_lyrics_preserve_sections_repeats_and_manual_vocal_text() {
+    fn candidate_lyrics_are_read_from_the_vocal_text() {
         use auris_core::{Note, time::Ticks};
         let mut candidate = SongCandidate {
             idea: idea(),
@@ -1392,21 +972,6 @@ mod tests {
             _assets: None,
         };
         assert!(candidate.lyrics().is_empty());
-        let spec = SongSpec::parse(
-            r#"
-            form = ['verse', 'chorus', 'verse']
-            [section.verse]
-            lyrics = "夜の雨\n光る街"
-            [section.chorus]
-            lyrics = 'また会おう'
-        "#,
-        )
-        .unwrap();
-        candidate.project.song_spec = Some(spec.to_toml());
-        assert_eq!(
-            candidate.lyrics(),
-            "夜の雨\n光る街\n\nまた会おう\n\n夜の雨\n光る街"
-        );
 
         let mut session = Session::new(SessionOptions::headless()).unwrap();
         for name in ["Lead", "Harmony"] {
@@ -1431,7 +996,6 @@ mod tests {
         SongIdea {
             title: "Draft".into(),
             description: "Bright keys".into(),
-            preset: "chiptune".into(),
             tempo: 120.0,
             key: "C major".into(),
             density: 0.5,
@@ -1446,16 +1010,17 @@ mod tests {
         let mut bad = idea();
         bad.lead = "external.vst".into();
         assert!(bad.validate().is_err());
-        assert!(idea().specification(600, 0).is_err());
     }
     #[test]
-    fn generated_audio_and_adopted_score_share_one_candidate() {
-        let candidate = SongCandidate::generate(
+    fn rendered_audio_and_adopted_score_share_one_candidate() {
+        let mut session = Session::new(SessionOptions::headless()).unwrap();
+        crate::session::fixtures::song(&mut session, 4);
+        let candidate = SongCandidate::from_authored_session(
             idea(),
             "Bright instrumental",
-            30,
-            42,
+            &mut session,
             &AtomicBool::new(false),
+            &mut |_| {},
         )
         .unwrap();
         assert!(candidate.audio.peak().is_finite() && candidate.audio.peak() > 0.001);
@@ -1467,40 +1032,10 @@ mod tests {
                 .unwrap()
                 .contains("Bright instrumental")
         );
-        let mut target = Session::new(SessionOptions::headless().with_balance(false)).unwrap();
+        let mut target = Session::new(SessionOptions::headless()).unwrap();
         target.adopt_song_candidate(&candidate).unwrap();
         assert_eq!(target.project(), &candidate.project);
         assert!(target.is_dirty());
-    }
-
-    #[test]
-    fn every_catalog_direction_has_only_builtin_instrumental_parts() {
-        for preset in auris_compose::PRESETS {
-            for lead in ["piano", "guitar", "flute", "strings", "synth"] {
-                let mut direction = idea();
-                direction.preset = preset.name.into();
-                direction.lead = lead.into();
-                let spec = direction.specification(30, 42).unwrap();
-                assert!(spec.singer.is_none());
-                assert!(spec.sections.values().all(|s| s.lyrics.is_empty()));
-                assert!(
-                    spec.parts
-                        .iter()
-                        .all(|p| p.source.is_none() && p.program.is_none())
-                );
-                let mut session =
-                    Session::new(SessionOptions::headless().with_balance(false)).unwrap();
-                let report = session.compose_without_balance(&compose(&spec)).unwrap();
-                assert!(
-                    report.substituted.is_empty(),
-                    "{} / {}: {:?}",
-                    preset.name,
-                    lead,
-                    report.substituted
-                );
-            }
-        }
-        assert!(SongCandidate::generate(idea(), "", 30, 42, &AtomicBool::new(true)).is_err());
     }
 
     #[test]

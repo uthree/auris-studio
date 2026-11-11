@@ -275,7 +275,7 @@ pub(super) fn comp(
     // How the part sits, decided once for the section. A pad has no rhythm to vary, so this is
     // the whole of what makes one take of it differ from another: which octave it sits in, and
     // which notes of the chord it chooses to sound.
-    let mut choose = bar_stream(settings, frame, part, section, "register", 0);
+    let mut choose = bar_stream(frame, part, section, "register", 0);
     let register = (choose.below(3) as i32 - 1) * OCTAVE;
     // How many notes of the chord sound, weighted by how busy the part was asked to be. This is
     // the whole of what the density dial can reach on a pad, which holds one chord and has no
@@ -331,7 +331,7 @@ pub(super) fn comp(
         &mut invent,
     );
     if drive > 0.0 {
-        let mut fill = bar_stream(settings, frame, part, section, "comp-density", 0);
+        let mut fill = bar_stream(frame, part, section, "comp-density", 0);
         for step in 0..grid.steps_per_bar() {
             // Draw on every step so raising density only opens more opportunities in this
             // stream, instead of rescrambling the following decisions.
@@ -386,11 +386,10 @@ pub(super) fn comp(
         // that could not do anything.
         let bar = grid.step_of(event.start) / grid.steps_per_bar().max(1);
         // The shared phrase plan supplies the turn, including unequal phrase lengths.
-        // `variation` reaches this through `bar_stream`, so a repeat can turn around differently.
         let figure = if pad || written || drive > 0.0 || !section.closes_phrase(bar) {
             chosen_figure
         } else {
-            let mut rng = bar_stream(settings, frame, part, section, "comp", bar);
+            let mut rng = bar_stream(frame, part, section, "comp", bar);
             if rng.chance(TURNAROUND) {
                 pick_figure(&mut rng, busy, settings.style)
             } else {
@@ -566,7 +565,20 @@ pub(super) fn comp(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parts::fixture::{bar_steps, draft, part};
+    use crate::fixture::{Song, bar_steps, part};
+    use crate::spec::{PartSpec, Role};
+
+    /// The chords alone over `chart` for `bars` bars at `seed`, with the syncopation dial set.
+    fn chords(chart: &str, bars: usize, seed: u64, syncopation: f32) -> Song {
+        let mut song = Song {
+            chords: chart.to_string(),
+            bars,
+            seed,
+            ..Song::with_parts([PartSpec::of_role("chords", Role::Chords)])
+        };
+        song.settings.mood.syncopation = syncopation;
+        song
+    }
 
     #[test]
     fn inversions_reduce_voice_motion_and_preserve_common_tones() {
@@ -635,25 +647,16 @@ mod tests {
 
     #[test]
     fn a_comp_at_full_density_strikes_every_sixteenth() {
-        let full = |seed: u64| {
-            format!(
-                r#"
-                    form = "verse"
-                    chords = "@axis"
-                    humanize = 0
-                    seed = {seed}
-                    [section.verse]
-                    bars = 4
-                    intensity = 1.0
-                    [[part]]
-                    name = "chords"
-                    density = 1.0
-                    "#
-            )
+        let full = |seed: u64| Song {
+            seed,
+            intensity: 1.0,
+            ..Song::with_parts([Song::part(Role::Chords, |chords| {
+                chords.density = Some(1.0)
+            })])
         };
         let mut counts = Vec::new();
         for seed in 1..=8 {
-            let (_, frame, parts) = draft(&full(seed));
+            let (frame, parts) = full(seed).draft();
             let chords = part(&parts, "chords");
             counts.extend((0..4).map(|bar| bar_steps(&frame, chords, bar).len()));
         }
@@ -672,21 +675,9 @@ mod tests {
         // the *style* holding, not the figure drifting — and it is asserted where it lives.
         let mut steady = 0;
         for seed in 1..=8u64 {
-            let (_, frame, parts) = draft(&format!(
-                r#"
-                    form = "verse"
-                    chords = "@axis"
-                    humanize = 0
-                    variation = 0
-                    syncopation = 0
-                    seed = {seed}
-                    [section.verse]
-                    bars = 8
-                    [[part]]
-                    name = "chords"
-                    density = 0.8
-                    "#
-            ));
+            let mut song = chords("@axis", 8, seed, 0.0);
+            song.parts[0].density = Some(0.8);
+            let (frame, parts) = song.draft();
             let chords = part(&parts, "chords");
             // Bars 0, 1 and 2 of each four-bar phrase are never allowed to differ from each
             // other. The chords move underneath them, but the steps struck do not.
@@ -715,23 +706,7 @@ mod tests {
 
     #[test]
     fn a_syncopated_comp_pushes_the_change_and_a_straight_one_never_does() {
-        let take = |syncopation: f32, seed: u64| {
-            draft(&format!(
-                r#"
-                    form = "verse"
-                    chords = "@axis"
-                    humanize = 0
-                    swing = 50
-                    syncopation = {syncopation}
-                    ending = "none"
-                    seed = {seed}
-                    [section.verse]
-                    bars = 8
-                    [[part]]
-                    name = "chords"
-                    "#
-            ))
-        };
+        let take = |syncopation: f32, seed: u64| chords("@axis", 8, seed, syncopation).draft();
 
         // At the top of the dial, some section pushes: a strike half a beat before a chord
         // change whose pitch the outgoing chord does not own and the arriving one does. It rings
@@ -739,7 +714,7 @@ mod tests {
         // is not struck again — an anticipation restruck on the line is a stutter.
         let mut pushed_anywhere = false;
         for seed in 1..=8u64 {
-            let (_, frame, parts) = take(1.0, seed);
+            let (frame, parts) = take(1.0, seed);
             let chords = part(&parts, "chords");
             let section = &frame.sections[0];
             let half = frame.grid.step_ticks() * 2;
@@ -789,7 +764,7 @@ mod tests {
         // And square playing never anticipates: every strike belongs to the chord sounding
         // where it starts.
         for seed in 1..=8u64 {
-            let (_, frame, parts) = take(0.0, seed);
+            let (frame, parts) = take(0.0, seed);
             let chords = part(&parts, "chords");
             let section = &frame.sections[0];
             for note in &chords.notes {
@@ -811,20 +786,7 @@ mod tests {
     fn a_dense_chart_keeps_each_chord_audible_when_the_next_one_pushes() {
         let mut exercised = false;
         for seed in 1..=8u64 {
-            let (_, frame, parts) = draft(&format!(
-                r#"
-                    form = "verse"
-                    chords = "| I ii iii IV V vi vii I bII |"
-                    humanize = 0
-                    syncopation = 1
-                    ending = "none"
-                    seed = {seed}
-                    [section.verse]
-                    bars = 1
-                    [[part]]
-                    name = "chords"
-                    "#
-            ));
+            let (frame, parts) = chords("| I ii iii IV V vi vii I bII |", 1, seed, 1.0).draft();
             let section = &frame.sections[0];
             let chords = part(&parts, "chords");
             let [first, second, third, ..] = section.events.as_slice() else {
@@ -865,21 +827,9 @@ mod tests {
         // section moves strikes across bar lines, and this test reads bars back step for step.
         let mut departed = 0;
         for seed in 1..=8u64 {
-            let (_, frame, parts) = draft(&format!(
-                r#"
-                    form = "verse"
-                    chords = "@axis"
-                    humanize = 0
-                    variation = 0
-                    syncopation = 0
-                    seed = {seed}
-                    [section.verse]
-                    bars = 6
-                    [[part]]
-                    name = "chords"
-                    density = 0.7
-                    "#
-            ));
+            let mut song = chords("@axis", 6, seed, 0.0);
+            song.parts[0].density = Some(0.7);
+            let (frame, parts) = song.draft();
             let chords = part(&parts, "chords");
             let first = bar_steps(&frame, chords, 0);
             for bar in (1..6).filter(|bar| !frame.sections[0].closes_phrase(*bar)) {
@@ -904,24 +854,14 @@ mod tests {
         // The difference the two parts existed to have and did not. Both read the same harmony
         // through the same writer, so without this a pad was a comp that happened to have drawn
         // the held figure — which the comp could draw too, and did, four times in ten.
-        // The ending is off because this test walks every pad note against the verse's own
-        // chord changes, and the held final bar is a landing rather than a change.
-        let roster = r#"
-            form = "verse"
-            chords = "@axis"
-            humanize = 0
-            ending = "none"
-            seed = 3
-            [section.verse]
-            bars = 4
-            [[part]]
-            name = "pad"
-            role = "pad"
-            [[part]]
-            name = "comp"
-            role = "chords"
-            "#;
-        let (_, frame, parts) = draft(roster);
+        let (frame, parts) = Song {
+            seed: 3,
+            ..Song::with_parts([
+                PartSpec::of_role("pad", Role::Pad),
+                PartSpec::of_role("comp", Role::Chords),
+            ])
+        }
+        .draft();
         let section = &frame.sections[0];
         assert!(section.events.len() >= 4, "a chord per bar to tie across");
 
@@ -954,28 +894,16 @@ mod tests {
         // The document stores `| I | I |` as one I lasting two bars, and the accompaniment must
         // not hear the difference: every part keeps its figure going in the second bar.
         for seed in 1..=6u64 {
-            let (spec, frame, parts) = draft(&format!(
-                r#"
-                    form = "verse"
-                    chords = "| I | I | V | V |"
-                    humanize = 0
-                    syncopation = 0.8
-                    ending = "none"
-                    seed = {seed}
-                    [section.verse]
-                    bars = 4
-                    [[part]]
-                    name = "chords"
-                    [[part]]
-                    name = "pad"
-                    [[part]]
-                    name = "bass"
-                    [[part]]
-                    name = "arp"
-                    [[part]]
-                    name = "kick"
-                    "#
-            ));
+            let mut song = Song {
+                chords: "| I | I | V | V |".into(),
+                seed,
+                ..Song::with_parts(
+                    [Role::Chords, Role::Pad, Role::Bass, Role::Arp, Role::Kick]
+                        .map(|role| PartSpec::of_role(role.name(), role)),
+                )
+            };
+            song.settings.mood.syncopation = 0.8;
+            let (frame, parts) = song.draft();
             let mut merged = frame.clone();
             let events = &mut merged.sections[0].events;
             assert_eq!(events.len(), 4, "the chart spells each bar");
@@ -983,11 +911,7 @@ mod tests {
             events[2].length = events[2].length + events[3].length;
             events.remove(3);
             events.remove(1);
-            let again = crate::parts::write_parts(
-                &crate::parts::ScoreSettings::from(&spec),
-                &spec.parts,
-                &merged,
-            );
+            let again = crate::parts::write_parts(&song.settings, &song.parts, &merged);
             for name in ["chords", "pad", "bass", "arp"] {
                 let notes = |drafts: &[crate::parts::PartDraft]| {
                     part(drafts, name)
@@ -1004,20 +928,7 @@ mod tests {
     #[test]
     fn a_comp_never_pushes_a_chord_that_is_already_sounding() {
         for seed in 1..=12u64 {
-            let (_, frame, parts) = draft(&format!(
-                r#"
-                    form = "verse"
-                    chords = "| I | I | I | I |"
-                    humanize = 0
-                    syncopation = 1
-                    ending = "none"
-                    seed = {seed}
-                    [section.verse]
-                    bars = 4
-                    [[part]]
-                    name = "chords"
-                    "#
-            ));
+            let (frame, parts) = chords("| I | I | I | I |", 4, seed, 1.0).draft();
             let bar = frame.grid.bar_ticks();
             let chords = part(&parts, "chords");
             for line in 1..4 {

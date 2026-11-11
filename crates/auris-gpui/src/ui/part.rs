@@ -1090,6 +1090,28 @@ mod tests {
     use crate::harness::{click, drag, open, paint};
     use gpui::TestAppContext;
 
+    /// A kit of independently written voices, one per `(name, role, preset, note)`.
+    fn kit(voices: &[(&str, DrumRole, ClipPreset, u8)]) -> ClipRecipe {
+        let mut recipe = ClipRecipe::new(ClipPreset::Drums, 3);
+        for (name, role, preset, note) in voices {
+            recipe.drum_voices.push(DrumVoiceRecipe {
+                name: (*name).into(),
+                role: *role,
+                note: *note,
+                recipe: Some(Box::new(ClipRecipe::new(*preset, 3))),
+                fixed_notes: Vec::new(),
+            });
+        }
+        recipe
+    }
+
+    /// The three voices of a basic kit at their General MIDI notes.
+    const KIT: [(&str, DrumRole, ClipPreset, u8); 3] = [
+        ("kick", DrumRole::Kick, ClipPreset::Kick, 36),
+        ("snare", DrumRole::Snare, ClipPreset::Snare, 38),
+        ("hat", DrumRole::ClosedHat, ClipPreset::Hat, 42),
+    ];
+
     fn recipe(preset: ClipPreset) -> ClipRecipe {
         ClipRecipe::new(preset, 1)
     }
@@ -1134,19 +1156,7 @@ mod tests {
         assert!(!drum_control_applies(&authored, Dial::Density));
         assert!(!drum_control_applies(&authored, Dial::Fill));
         assert!(drum_control_applies(&authored, Dial::Intensity));
-        let piece = compose(&SongSpec::default());
-        let mut kit = piece
-            .tracks
-            .iter()
-            .find_map(|track| {
-                track.clips.iter().find_map(|clip| {
-                    clip.recipe
-                        .as_ref()
-                        .filter(|recipe| !recipe.drum_voices.is_empty())
-                        .cloned()
-                })
-            })
-            .unwrap();
+        let mut kit = kit(&KIT);
         assert!(drum_control_applies(&kit, Dial::Density));
         kit.drum_map = Some(DrumMap::default());
         assert!(!drum_control_applies(&kit, Dial::Density));
@@ -1479,22 +1489,13 @@ mod tests {
         let (app, cx) = open(cx);
         let (clip, voice, original) = app.update(cx, |this, _| {
             this.panels = crate::dock::PanelLayout::default();
-            let spec = SongSpec::parse(
-                r#"
-                form = "verse"
-                ending = "none"
-                [section.verse]
-                bars = 2
-                [[part]]
-                name = "kick"
-                role = "kick"
-                [[part]]
-                name = "snare"
-                role = "snare"
-            "#,
-            )
-            .unwrap();
-            this.session.compose(&compose(&spec)).unwrap();
+            let drums = this
+                .session
+                .add_drum_track("Drums", "auris.synth.drumkit")
+                .unwrap();
+            this.session
+                .generate_clip(drums, Ticks::ZERO, Ticks(3840 * 2), kit(&KIT[..2]))
+                .unwrap();
             let track = this
                 .project()
                 .tracks

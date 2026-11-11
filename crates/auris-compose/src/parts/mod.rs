@@ -1,8 +1,8 @@
 //! Writing the parts.
 //!
 //! Each draft is a pure function of the frozen [`Frame`] and its own name. They share harmony,
-//! phrase boundaries and groove. After drafting, `crate::arrangement` coordinates the support
-//! parts with the foreground before ordinary notes are installed in clips.
+//! phrase boundaries and groove. Making room for a foreground line already in the document is
+//! the caller's next step, through `crate::arrangement`, before the notes are installed in a clip.
 //!
 //! # Where things are
 //!
@@ -19,33 +19,26 @@
 //! One file per role — `melody`, `comp`, `arp`, `bass` and `drums` — because not one of them
 //! calls another. They are spokes, and somebody reading how a bass line is built should not have
 //! to read the drummer to do it. What they do all read is `writer`, the seven helpers they share
-//! and nothing else, and `fixture`, which is the same arrangement for what their tests are
+//! and nothing else, and `crate::fixture`, which is the same arrangement for what their tests are
 //! written against.
 
 mod arp;
 mod bass;
-mod coda;
 mod comp;
 mod drums;
-mod joins;
 mod melody;
 mod writer;
-
-#[cfg(test)]
-mod fixture;
 
 use auris_core::time::Ticks;
 
 use crate::frame::Frame;
 use crate::rhythm::{SwingFeel, swing_offset};
-use crate::spec::{Mood, PartSpec, Role, SongSpec};
+use crate::spec::{Mood, PartSpec, Role};
 
 use arp::arp;
 use bass::bass;
-use coda::coda;
 use comp::comp;
 use drums::drums;
-use joins::{joins, riser};
 use melody::melody;
 use writer::part_grid;
 
@@ -67,26 +60,17 @@ pub struct Draft {
 /// Everything one part plays.
 #[derive(Clone, Debug)]
 pub struct PartDraft {
-    /// The part's name, which becomes its track name.
+    /// The part's name, which a drum kit keeps as each note's voice.
     pub name: String,
-    /// The plugin that plays it, when no [`Self::sound`] names a SoundFont one.
-    pub instrument: String,
-    /// The General MIDI sound it asked for, if it asked for one.
-    pub sound: Option<crate::gm::Sound>,
-    /// Level trim.
-    pub gain_db: f32,
-    /// Stereo position.
-    pub pan: f32,
     /// The notes, in time order.
     pub notes: Vec<Draft>,
 }
 
 /// How a part is played, as opposed to what it plays.
 ///
-/// The dials the writers read that are neither the harmony, the form, nor the part itself.
-/// They arrive separately from a [`SongSpec`] so that a caller who has no specification — one
-/// regenerating a single clip against the harmony already in a document — can still ask for a
-/// part without inventing a whole song around it.
+/// The dials the writers read that are neither the harmony nor the part itself.
+/// They arrive separately from the part so that one recipe's dials reach every part a clip
+/// preset writes — the three voices of a kit play one groove at one swing.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ScoreSettings {
     /// Musical vocabulary, independent of the clip's performance transforms.
@@ -108,30 +92,12 @@ pub struct ScoreSettings {
     pub dynamics: f32,
     /// How much of a section's last bar the snare runs as a fill, from 0 to 1.
     pub fill: f32,
-    /// How much a repeat departs from what the section played the first time.
-    pub variation: f32,
     /// Which drum groove the rhythm section plays.
     pub groove: String,
     /// The tune's contour, when it was given rather than left to the seed.
     ///
-    /// Scale steps around the figure's anchor; empty means the melody draws its own germ. See
-    /// [`SongSpec::motif`] for what a given motif is and is not.
+    /// Scale steps around the figure's anchor; empty means the melody draws its own germ.
     pub motif: Vec<i32>,
-}
-
-impl From<&SongSpec> for ScoreSettings {
-    fn from(spec: &SongSpec) -> Self {
-        Self {
-            style: spec.writing_style,
-            mood: spec.mood,
-            swing: spec.swing,
-            dynamics: spec.dynamics,
-            fill: spec.fill,
-            variation: spec.variation,
-            groove: spec.groove.clone(),
-            motif: spec.motif.clone(),
-        }
-    }
 }
 
 /// Writes every part of a roster against a frame.
@@ -141,62 +107,26 @@ pub fn write_parts(settings: &ScoreSettings, roster: &[PartSpec], frame: &Frame)
         .map(|part| {
             let mut draft = PartDraft {
                 name: part.name.clone(),
-                instrument: part.instrument.clone(),
-                sound: part.sound(),
-                gain_db: part.gain_db,
-                pan: part.pan,
                 notes: Vec::new(),
             };
-            // The part as each section plays it, resolved once for the whole part. A section may
-            // patch how it plays — busier, an octave up, on sixteenths — and *every* pass below
-            // has to read the same answer: a writer taking the chorus's subdivision while the
-            // gate and the swing afterwards took the roster's would be one part played two ways
-            // at once, and the seam would show as notes that do not line up with themselves.
-            let played: Vec<PartSpec> = frame
-                .sections
-                .iter()
-                .map(|plan| plan.played(part))
-                .collect();
-
             for (index, section) in frame.sections.iter().enumerate() {
-                if !section.parts.is_empty() && !section.parts.contains(&part.name) {
-                    continue;
-                }
-                let part = &played[index];
-                // The held final bar has a writer of its own: an ending is not one more bar of
-                // figures and grooves, it is the piece landing. The crash still goes through
-                // `joins`, because the ending is an arrival and that writer's whole question is
-                // whether one has happened.
-                if section.coda && !matches!(part.role, Role::Crash | Role::Riser) {
-                    draft.notes.extend(coda(settings, section, index, part));
-                    continue;
-                }
                 // The accompaniment plays its own figure in every bar, not once per chord: a
                 // chord held over a bar line is one chord in the chart, and still two bars of
                 // comping. See `SectionPlan::bar_by_bar`.
                 let barred = || section.bar_by_bar(frame.grid.bar_ticks());
                 let notes = match part.role {
                     Role::Melody => melody(settings, frame, section, index, part),
-                    Role::Chords | Role::Pad | Role::Stab => {
-                        comp(settings, frame, &barred(), index, part)
-                    }
+                    Role::Chords | Role::Pad => comp(settings, frame, &barred(), index, part),
                     Role::Arp => arp(settings, frame, &barred(), index, part),
                     Role::Bass => bass(settings, frame, &barred(), index, part),
-                    // Written against the joins of the form rather than against a groove: each is
-                    // handed a section and asks whether an arrival is worth marking, which is a
-                    // question no bar-long pattern can answer. The crash marks the arrival
-                    // itself; the riser announces the one coming, from the bar before it.
-                    Role::Crash => joins(settings, frame, section, index, part),
-                    Role::Riser => riser(settings, frame, section, index, part),
                     Role::Kick | Role::Snare | Role::Hat => {
                         drums(settings, frame, section, index, part)
                     }
                 };
                 draft.notes.extend(notes);
             }
-            let coda: Vec<bool> = frame.sections.iter().map(|section| section.coda).collect();
-            shorten(&played, &coda, &mut draft.notes);
-            swing(settings, frame, &played, &mut draft.notes);
+            shorten(part, &mut draft.notes);
+            swing(settings, frame, part, &mut draft.notes);
             draft
                 .notes
                 .sort_by_key(|note| (note.start.raw(), note.pitch));
@@ -221,22 +151,12 @@ const MIN_GATE: f32 = 0.05;
 ///
 /// A drum is left alone. A one-shot ignores its note-off, so shortening one would change nothing
 /// anybody can hear and only make the piano roll harder to read.
-///
-/// `played` is the part as each section plays it, so a gate a section patches reaches the notes of
-/// that section and no others.
-fn shorten(played: &[PartSpec], coda: &[bool], notes: &mut [Draft]) {
+fn shorten(part: &PartSpec, notes: &mut [Draft]) {
+    let gate = part.gate.clamp(MIN_GATE, 1.0);
+    if part.role.is_drum() || gate >= 1.0 {
+        return;
+    }
     for note in notes.iter_mut() {
-        let Some(part) = played.get(note.section) else {
-            continue;
-        };
-        if part.role.is_drum() || part.role == Role::Riser || coda.get(note.section) == Some(&true)
-        {
-            continue;
-        }
-        let gate = part.gate.clamp(MIN_GATE, 1.0);
-        if gate >= 1.0 {
-            continue;
-        }
         // The floor never lengthens a note: a chord shorter than the floor to begin with is a
         // chord the harmony asked for, and the gate is not the place to argue with it.
         let floor = MIN_NOTE_TICKS.min(note.length.raw()).max(1);
@@ -257,26 +177,15 @@ fn shorten(played: &[PartSpec], coda: &[bool], notes: &mut [Draft]) {
 ///
 /// `swing: 50` is exactly the identity, which is what lets every timing test assert on an exact
 /// tick rather than on a tolerance.
-fn swing(settings: &ScoreSettings, frame: &Frame, played: &[PartSpec], notes: &mut [Draft]) {
-    let Some(part) = played.first() else {
-        return;
-    };
-    // A swell does not swing. The riser's start is measured back from the join in seconds, and
-    // wherever that lands is where the sample has to begin for its peak to arrive on time — a
-    // start that happened to fall on an offbeat step would otherwise be delayed like one.
-    if part.role == Role::Riser {
-        return;
-    }
+fn swing(settings: &ScoreSettings, frame: &Frame, part: &PartSpec, notes: &mut [Draft]) {
     // The whole band reads the groove's one answer — a comp swinging pairs the kit does not
     // would be two feels at once.
     let feel = crate::rhythm::groove(&settings.groove)
         .map_or(SwingFeel::Eighth, crate::rhythm::Groove::swing_feel);
 
+    // The grid the notes were written on: a part on triplets has its offbeats on other steps.
+    let grid = part_grid(frame, part);
     for note in notes.iter_mut() {
-        // The grid this note was written on, which is the section's and not the roster's: a part
-        // put onto triplets for one section would otherwise have its swing looked up on a
-        // sixteenth grid, and the offbeat it delayed would be the wrong step of the bar.
-        let grid = part_grid(frame, played.get(note.section).unwrap_or(part));
         let bar_position = note.start.raw().rem_euclid(grid.bar_ticks().raw().max(1));
         let step = grid.step_of(Ticks(bar_position));
         note.start = (note.start + swing_offset(grid, step, settings.swing, feel)).max_zero();
@@ -329,167 +238,67 @@ fn untangle(notes: &mut [Draft]) {
 
 #[cfg(test)]
 mod tests {
-    use super::fixture::{BASE, draft, part, roster, section_body, section_notes};
     use super::*;
+    use crate::fixture::{Song, part};
+    use crate::rhythm::Pattern;
     use crate::theory::pitch::PitchClass;
+    use auris_core::Subdivision;
+
+    /// A one-bar kick playing every sixteenth, at a swing of 66 over `groove`.
+    fn swung_kick(groove: &str) -> Vec<i64> {
+        let mut song = Song::with_parts([Song::part(Role::Kick, |kick| {
+            kick.rhythm = Pattern::parse("x x x x x x x x x x x x x x x x");
+        })]);
+        song.bars = 1;
+        song.settings.swing = 66;
+        song.settings.groove = groove.to_string();
+        let (_, parts) = song.draft();
+        part(&parts, "kick")
+            .notes
+            .iter()
+            .map(|note| note.start.raw())
+            .collect()
+    }
 
     #[test]
     fn a_sixteen_beat_groove_swings_its_sixteenth_pairs() {
         // The swing dial under a groove that runs sixteenths. Felt at the eighth it moved the
         // third and fourth sixteenth of every beat together, so the gap into the next beat gave
-        // up the whole shift — measured at the city-pop preset's own dial, hat gaps of
-        // 142/176/142/107 ms where a sixteen-beat drummer plays long-short pairs. The groove now
+        // up the whole shift, where a sixteen-beat drummer plays long-short pairs. The groove
         // answers which pairs swing, and every odd sixteenth is late by the same 77 ticks:
         // long-short, the gap into each beat the short one.
-        let (_, _, parts) = draft(
-            r#"
-            form = "verse"
-            swing = 66
-            groove = "sixteen-beat"
-            ending = "none"
-            [section.verse]
-            bars = 1
-            [[part]]
-            name = "kick"
-            rhythm = "x x x x x x x x x x x x x x x x"
-            "#,
-        );
-        let starts: Vec<i64> = part(&parts, "kick")
-            .notes
-            .iter()
-            .map(|note| note.start.raw())
-            .collect();
         let expected: Vec<i64> = (0..16)
             .map(|step| step * 240 + if step % 2 == 1 { 77 } else { 0 })
             .collect();
-        assert_eq!(starts, expected);
+        assert_eq!(swung_kick("sixteen-beat"), expected);
 
         // And the same dial over a groove in eighths still swings the eighth, sixteenths riding
         // with it — which is what swing has always meant there.
-        let (_, _, parts) = draft(
-            r#"
-            form = "verse"
-            swing = 66
-            groove = "eight-beat"
-            ending = "none"
-            [section.verse]
-            bars = 1
-            [[part]]
-            name = "kick"
-            rhythm = "x x x x x x x x x x x x x x x x"
-            "#,
-        );
-        let starts: Vec<i64> = part(&parts, "kick")
-            .notes
-            .iter()
-            .map(|note| note.start.raw())
-            .collect();
         let expected: Vec<i64> = (0..16)
             .map(|step| step * 240 + if step % 4 >= 2 { 154 } else { 0 })
             .collect();
-        assert_eq!(starts, expected);
-    }
-
-    /// The default roster over a two-section form, with `lead` patched in the chorus.
-    fn tweaked(lines: &str) -> (Frame, Vec<PartDraft>) {
-        let (_, frame, parts) = draft(&format!(
-            r#"
-            form     = "verse chorus"
-            chords   = "@axis"
-            seed     = 5
-
-            [section.verse]
-            bars = 4
-            [section.chorus]
-            bars = 4
-
-            [section.chorus.part.lead]
-            {lines}
-            "#
-        ));
-        (frame, parts)
-    }
-
-    /// One part's notes in one section.
-    fn in_section(draft: &PartDraft, section: usize) -> Vec<Draft> {
-        draft
-            .notes
-            .iter()
-            .filter(|note| note.section == section)
-            .copied()
-            .collect()
+        assert_eq!(swung_kick("eight-beat"), expected);
     }
 
     #[test]
-    fn a_section_can_send_a_part_an_octave_up_without_moving_it_anywhere_else() {
-        let (_, parts) = tweaked("octave = 6");
-        let lead = part(&parts, "lead");
-        let low = in_section(lead, 0).iter().map(|n| n.pitch).min().unwrap();
-        let high = in_section(lead, 1).iter().map(|n| n.pitch).min().unwrap();
-        assert!(
-            high > low,
-            "the chorus sits at {high} against the verse's {low}"
-        );
-        // The verse is what it was without the tweak, which is the half that says this is a patch
-        // on one section rather than a change to the part.
-        let (_, plain) = tweaked("density = 0.5");
-        assert_eq!(
-            in_section(lead, 0),
-            in_section(part(&plain, "lead"), 0),
-            "the tweak reached back into the verse"
-        );
-    }
-
-    #[test]
-    fn a_gate_a_section_patches_reaches_that_sections_notes_and_no_others() {
-        // The trap the whole resolution exists for. `shorten` runs once over the finished part,
-        // after every section has been written, so a gate read off the roster there would apply
-        // the verse's value to the chorus's notes — the one place a per-section field silently
-        // does nothing.
-        let (_, parts) = tweaked("gate = 0.25");
-        let lead = part(&parts, "lead");
-        let mean = |notes: &[Draft]| {
-            notes.iter().map(|n| n.length.raw()).sum::<i64>() / notes.len().max(1) as i64
-        };
-        let verse = mean(&in_section(lead, 0));
-        let chorus = mean(&in_section(lead, 1));
-        assert!(
-            chorus * 2 < verse,
-            "a quarter of the gap should be well under half: {chorus} against {verse}"
-        );
-    }
-
-    #[test]
-    fn a_subdivision_a_section_patches_is_swung_on_its_own_grid() {
-        // The other half of the same trap, and the subtler one: `swing` looks a note's step up
-        // on a grid to decide whether it is an offbeat worth delaying. Read off the roster, a
-        // section put onto triplets would have its swing measured against sixteenths and the
-        // wrong steps of the bar would move.
-        let (_, _, parts) = draft(
-            r#"
-            form     = "verse chorus"
-            chords   = "@axis"
-            swing    = 66
-            seed     = 5
-
-            [section.verse]
-            bars = 4
-            [section.chorus]
-            bars = 4
-
-            [section.chorus.part.lead]
-            subdivision = "8t"
-            density     = 0.9
-            "#,
-        );
-        let lead = part(&parts, "lead");
+    fn a_triplet_part_is_swung_on_its_own_grid() {
+        // `swing` looks a note's step up on a grid to decide whether it is an offbeat worth
+        // delaying. Read off a sixteenth grid, a part on triplets would have the wrong steps of
+        // the bar moved.
+        let mut song = Song::with_parts([Song::part(Role::Melody, |lead| {
+            lead.subdivision = Subdivision::EighthTriplet;
+            lead.density = Some(0.9);
+        })]);
+        song.settings.swing = 66;
+        song.seed = 5;
+        let (_, parts) = song.draft();
         // A triplet grid has nothing for swing to do — the offbeat is already where the dial
-        // would push it — so every note of that section lands exactly on a third of a beat.
-        for note in in_section(lead, 1) {
+        // would push it — so every note lands exactly on a third of a beat.
+        for note in &part(&parts, "melody").notes {
             assert_eq!(
                 note.start.raw() % 320,
                 0,
-                "a chorus note at {} is not on a triplet",
+                "a note at {} is not on a triplet",
                 note.start.raw()
             );
         }
@@ -497,7 +306,7 @@ mod tests {
 
     #[test]
     fn every_default_part_writes_notes() {
-        let (_, _, parts) = draft(BASE);
+        let (_, parts) = Song::default().draft();
         assert_eq!(parts.len(), 6);
         for part in &parts {
             assert!(!part.notes.is_empty(), "`{}` wrote nothing", part.name);
@@ -506,8 +315,9 @@ mod tests {
 
     #[test]
     fn notes_stay_inside_their_parts_range() {
-        let (spec, _, parts) = draft(BASE);
-        for (draft, declared) in parts.iter().zip(&spec.parts) {
+        let song = Song::default();
+        let (_, parts) = song.draft();
+        for (draft, declared) in parts.iter().zip(&song.parts) {
             if declared.role.is_drum() {
                 continue;
             }
@@ -523,38 +333,44 @@ mod tests {
         }
     }
 
-    #[test]
-    fn every_pitched_note_belongs_to_the_key() {
-        // Not every note has to be a chord tone, but a note outside the scale is a wrong note.
-        let (spec, frame, parts) = draft(BASE);
+    /// Every pitched note of `song` is in the scale, its chord, or the chord it anticipates.
+    fn assert_in_scale_or_chord(song: &Song) {
+        let (frame, parts) = song.draft();
         let section = &frame.sections[0];
-        for (draft, declared) in parts.iter().zip(&spec.parts) {
+        for (draft, declared) in parts.iter().zip(&song.parts) {
             if declared.role.is_drum() {
                 continue;
             }
             for note in &draft.notes {
                 let class = PitchClass::new(i32::from(note.pitch));
+                let chord = section.chord_at(note.start);
                 let in_scale = section.key.scale.contains(section.key.tonic, class);
-                let in_chord = section
-                    .chord_at(note.start - section.start)
-                    .is_some_and(|event| event.chord.contains(class));
+                let in_chord = chord.is_some_and(|event| event.chord.contains(class));
                 // A pushed chord is struck before its own start and judged by the chord it
                 // anticipates, which is the one sounding where the note *ends*.
                 let anticipates = section
-                    .chord_at(note.start + note.length - section.start - Ticks(1))
+                    .chord_at(note.start + note.length - Ticks(1))
                     .is_some_and(|event| event.chord.contains(class));
                 assert!(
                     in_scale || in_chord || anticipates,
-                    "`{}` played {class} which is in neither the scale nor the chord",
-                    draft.name
+                    "`{}` played {class} over {} in `{}`",
+                    draft.name,
+                    chord.map(|e| e.chord.to_string()).unwrap_or_default(),
+                    song.chords
                 );
             }
         }
     }
 
     #[test]
-    fn no_note_starts_before_the_song_or_runs_past_it() {
-        let (_, frame, parts) = draft(BASE);
+    fn every_pitched_note_belongs_to_the_key() {
+        // Not every note has to be a chord tone, but a note outside the scale is a wrong note.
+        assert_in_scale_or_chord(&Song::default());
+    }
+
+    #[test]
+    fn no_note_starts_before_the_stretch_or_runs_past_it() {
+        let (frame, parts) = Song::default().draft();
         for draft in &parts {
             for note in &draft.notes {
                 assert!(note.start >= Ticks::ZERO, "`{}` started early", draft.name);
@@ -575,8 +391,8 @@ mod tests {
     #[test]
     fn unswung_every_note_lands_exactly_on_the_grid() {
         // The text is the score: nothing the writers place sits off the grid unless the swing
-        // put it there. The wander that used to blur this lives on the performance stack now.
-        let (_, frame, parts) = draft(BASE);
+        // put it there. The wander lives on the performance stack.
+        let (frame, parts) = Song::default().draft();
         let step = frame.grid.step_ticks().raw();
         for draft in &parts {
             for note in &draft.notes {
@@ -593,8 +409,10 @@ mod tests {
 
     #[test]
     fn swing_delays_the_offbeats_of_a_busy_part() {
-        let straight = draft(BASE).2;
-        let swung = draft(&BASE.replace("swing = 50", "swing = 66")).2;
+        let straight = Song::default().draft().1;
+        let mut swung = Song::default();
+        swung.settings.swing = 66;
+        let swung = swung.draft().1;
         let hat_straight = part(&straight, "hat");
         let hat_swung = part(&swung, "hat");
         let delayed = hat_straight
@@ -620,41 +438,30 @@ mod tests {
         // on playing the unraised one, and both versions sound at once. That is not colour, it is
         // the one dissonance an ear calls a mistake — the melody answered the G7 of a minor-key
         // 丸サ進行 with a B flat, a semitone under the chord's own third.
-        //
-        // Measured as a rate rather than by ear: over these four charts it was twenty-one notes
-        // in eight hundred, all of them in the melody, and it is none.
-        for (key_text, chart) in [
+        for (key, chart) in [
             ("C minor", "@marusa"),
             ("C major", "@marusa"),
             ("A minor", "@royal-road"),
             ("Eb major", "@naki"),
             ("F# minor", "@junjo"),
         ] {
-            let text = format!(
-                r#"
-                key    = "{key_text}"
-                chords = "{chart}"
-                form   = "verse chorus"
-                seed   = 3
-                # Straight, so a note struck on a chord change is heard where it was chosen.
-                # This is about which note a part picks, not about when it arrives.
-                swing = 50
-
-                [section.verse]
-                bars = 8
-
-                [section.chorus]
-                bars = 8
-                "#
-            );
-            let (spec, frame, parts) = draft(&text);
-            for (part_draft, declared) in parts.iter().zip(&spec.parts) {
+            // Straight, so a note struck on a chord change is heard where it was chosen. This
+            // is about which note a part picks, not about when it arrives.
+            let song = Song {
+                key,
+                chords: chart.to_string(),
+                bars: 8,
+                seed: 3,
+                ..Song::default()
+            };
+            let (frame, parts) = song.draft();
+            let section = &frame.sections[0];
+            for (part_draft, declared) in parts.iter().zip(&song.parts) {
                 if declared.role.is_drum() {
                     continue;
                 }
                 for note in &part_draft.notes {
-                    let section = &frame.sections[note.section];
-                    let Some(event) = section.chord_at(note.start - section.start) else {
+                    let Some(event) = section.chord_at(note.start) else {
                         continue;
                     };
                     let class = PitchClass::new(i32::from(note.pitch));
@@ -662,10 +469,9 @@ mod tests {
                         continue;
                     }
                     // A pushed chord belongs to the change it anticipates, not to the chord it
-                    // is struck over — judging it against the outgoing chord would flag the very
-                    // note the anticipation exists to place.
+                    // is struck over.
                     if section
-                        .chord_at(note.start + note.length - section.start - Ticks(1))
+                        .chord_at(note.start + note.length - Ticks(1))
                         .is_some_and(|arriving| arriving.chord.contains(class))
                     {
                         continue;
@@ -679,7 +485,7 @@ mod tests {
                         let apart = class.distance_up_to(tone).min(tone.distance_up_to(class));
                         assert_ne!(
                             apart, 1,
-                            "`{}` played {class} a semitone from the {tone} of {} in {key_text} \
+                            "`{}` played {class} a semitone from the {tone} of {} in {key} \
                              {chart}",
                             part_draft.name, event.chord
                         );
@@ -688,9 +494,10 @@ mod tests {
             }
         }
     }
+
     #[test]
     fn no_part_plays_a_note_outside_the_scale_or_the_chord() {
-        // The fixture deliberately contains a diminished triad and a slash chord, which is where
+        // The charts deliberately contain a diminished triad and a slash chord, which is where
         // a bass line that assumed a perfect fifth above the sounding bass went wrong.
         for chart in [
             "| I | vii | I | V |",
@@ -699,39 +506,10 @@ mod tests {
             "@junjo",
             "@blues",
         ] {
-            let text = format!(
-                r#"
-                    key = "C major"
-                    form = "verse"
-                    chords = "{chart}"
-                    [section.verse]
-                    bars = 4
-                    "#
-            );
-            let (spec, frame, parts) = draft(&text);
-            let section = &frame.sections[0];
-            for (part_draft, declared) in parts.iter().zip(&spec.parts) {
-                if declared.role.is_drum() {
-                    continue;
-                }
-                for note in &part_draft.notes {
-                    let class = PitchClass::new(i32::from(note.pitch));
-                    let chord = section.chord_at(note.start - section.start);
-                    let in_chord = chord.is_some_and(|event| event.chord.contains(class));
-                    // A pushed chord anticipates the one sounding where the note ends.
-                    let anticipates = section
-                        .chord_at(note.start + note.length - section.start - Ticks(1))
-                        .is_some_and(|event| event.chord.contains(class));
-                    assert!(
-                        section.key.scale.contains(section.key.tonic, class)
-                            || in_chord
-                            || anticipates,
-                        "`{}` played {class} over {} in `{chart}`",
-                        part_draft.name,
-                        chord.map(|e| e.chord.to_string()).unwrap_or_default()
-                    );
-                }
-            }
+            assert_in_scale_or_chord(&Song {
+                chords: chart.to_string(),
+                ..Song::default()
+            });
         }
     }
 
@@ -739,26 +517,18 @@ mod tests {
     fn adding_a_part_leaves_the_other_parts_alone() {
         // Every part hangs off the same skeleton, so taking that skeleton from whichever melody
         // part happened to be in the roster meant adding a part rewrote the whole arrangement.
-        let base = r#"
-            form = "verse"
-            chords = "@axis"
-            [section.verse]
-            bars = 4
-            [[part]]
-            name = "bass"
-            [[part]]
-            name = "kick"
-            "#;
-        let before = draft(base).2;
-        let after = draft(&format!(
-            r#"
-            {base}
-            [[part]]
-            name = "extra"
-            role = "pad"
-            "#
-        ))
-        .2;
+        let roster = [
+            PartSpec::of_role("bass", Role::Bass),
+            PartSpec::of_role("kick", Role::Kick),
+        ];
+        let before = Song::with_parts(roster.clone()).draft().1;
+        let after = Song::with_parts(
+            roster
+                .into_iter()
+                .chain([PartSpec::of_role("extra", Role::Pad)]),
+        )
+        .draft()
+        .1;
         for name in ["bass", "kick"] {
             assert_eq!(
                 part(&before, name).notes,
@@ -769,117 +539,54 @@ mod tests {
     }
 
     #[test]
-    fn editing_one_section_leaves_the_others_alone() {
-        let base = r#"
-            form     = "verse chorus"
-            chords   = "@axis"
-            seed     = 3
-
-            [section.verse]
-            bars = 2
-
-            [section.chorus]
-            bars      = 2
-            intensity = {}
-        "#;
-        let quiet = draft(&base.replace("{}", "0.9")).2;
-        let loud = draft(&base.replace("{}", "0.4")).2;
-        for (a, b) in quiet.iter().zip(&loud) {
-            let verse_a: Vec<&Draft> = a.notes.iter().filter(|n| n.section == 0).collect();
-            let verse_b: Vec<&Draft> = b.notes.iter().filter(|n| n.section == 0).collect();
-            assert_eq!(
-                verse_a, verse_b,
-                "changing the chorus rewrote the verse of `{}`",
-                a.name
-            );
-        }
-    }
-
-    #[test]
-    fn a_section_can_leave_a_part_out() {
-        let (_, _, parts) = draft(
-            r#"
-            form = "intro chorus"
-
-            [section.intro]
-            parts = "bass"
-            "#,
-        );
-        let hat = part(&parts, "hat");
-        // Nothing in the intro, which is section zero.
-        assert!(
-            hat.notes.iter().all(|note| note.section == 1),
-            "the hat played in a section it was left out of"
-        );
-        assert!(!part(&parts, "bass").notes.is_empty());
-    }
-
-    #[test]
-    fn a_repeated_section_plays_the_same_music() {
-        // The section instance used to be part of every stream name, so a second chorus shared
-        // nothing with the first and the piece had no chorus, only two sections with one name.
-        let (_, frame, parts) = draft(
-            r#"
-                form = "verse verse"
-                chords = "@axis"
-                variation = 0
-                [section.verse]
-                bars = 4
-                "#,
-        );
-        assert_eq!(frame.sections.len(), 3, "two verses and the ending");
-        for draft in &parts {
-            assert_eq!(
-                section_body(&frame, draft, 0),
-                section_body(&frame, draft, 1),
-                "`{}` played a different second verse",
-                draft.name
-            );
-        }
-    }
-
-    #[test]
     fn a_written_rhythm_reaches_every_pitched_part() {
-        // The field's contract is that it overrides the generated rhythm, and the format
-        // promises that nothing it accepts is quietly ignored. The melody and the drums kept
-        // that promise; the chords, the pad, the stab, the arp and the bass read the field,
-        // round-tripped it through the document, and played their own rhythm anyway.
-        for role in ["chords", "pad", "stab", "arp", "bass"] {
-            let text = format!(
-                r#"
-                form     = "verse"
-                chords   = "@axis"
-                swing    = 50
-
-                [section.verse]
-                bars = 2
-
-                [[part]]
-                name   = "{role}"
-                rhythm = "x ~ ~ ~ x ~ ~ ~ x ~ ~ ~ x ~ ~ ~"
-                "#
+        // The field's contract is that it overrides the generated rhythm. The melody and the
+        // drums kept that promise; the chords, the pad, the arp and the bass read the field and
+        // played their own rhythm anyway.
+        for role in [Role::Chords, Role::Pad, Role::Arp, Role::Bass] {
+            let mut song = Song::with_parts([Song::part(role, |part| {
+                part.rhythm = Pattern::parse("x ~ ~ ~ x ~ ~ ~ x ~ ~ ~ x ~ ~ ~");
+            })]);
+            song.bars = 2;
+            let (frame, parts) = song.draft();
+            let played = part(&parts, role.name());
+            assert!(
+                !played.notes.is_empty(),
+                "{} wrote nothing at all",
+                role.name()
             );
-            let (_, frame, parts) = draft(&text);
-            let played = part(&parts, role);
-            let notes = section_notes(&frame, played, 0);
-            assert!(!notes.is_empty(), "{role} wrote nothing at all");
             let beat = frame.grid.bar_ticks().raw() / 4;
-            for (start, ..) in &notes {
+            for note in &played.notes {
                 assert!(
-                    start % beat == 0,
-                    "{role} struck tick {start}, off the written rhythm"
+                    note.start.raw() % beat == 0,
+                    "{} struck tick {}, off the written rhythm",
+                    role.name(),
+                    note.start.raw()
                 );
             }
         }
     }
 
+    /// The lead, the chords, the bass and the kick at seed 5, with `patch` applied to the chords.
+    fn roster(patch: impl FnOnce(&mut PartSpec)) -> Vec<PartDraft> {
+        let mut song = Song::with_parts([
+            PartSpec::of_role("lead", Role::Melody),
+            Song::part(Role::Chords, patch),
+            PartSpec::of_role("bass", Role::Bass),
+            PartSpec::of_role("kick", Role::Kick),
+        ]);
+        song.seed = 5;
+        song.draft().1
+    }
+
     #[test]
     fn a_subdivision_and_a_gate_reach_only_the_part_that_asked_for_them() {
         // Both live on the part, so turning them up must leave every other part where it was.
-        // This is also what makes the fixture in `render` readable: when it moves, the part that
-        // moved it is the part that was changed.
-        let before = draft(&roster(5, "")).2;
-        let after = draft(&roster(5, "subdivision = \"16t\"\n            gate = 0.25")).2;
+        let before = roster(|_| {});
+        let after = roster(|chords| {
+            chords.subdivision = Subdivision::SixteenthTriplet;
+            chords.gate = 0.25;
+        });
         for name in ["lead", "bass", "kick"] {
             assert_eq!(
                 part(&before, name).notes,
@@ -897,9 +604,9 @@ mod tests {
     #[test]
     fn the_gate_shortens_a_note_without_moving_it() {
         // Articulation, not rhythm. A gate that shifted a note would be a second timing control
-        // fighting the swing and the humanising for the same tick.
-        let long = draft(&roster(5, "")).2;
-        let short = draft(&roster(5, "gate = 0.25")).2;
+        // fighting the swing for the same tick.
+        let long = roster(|_| {});
+        let short = roster(|chords| chords.gate = 0.25);
         let (long, short) = (part(&long, "chords"), part(&short, "chords"));
         assert_eq!(long.notes.len(), short.notes.len());
 
@@ -917,52 +624,30 @@ mod tests {
     }
 
     #[test]
-    fn a_risers_gate_cannot_move_its_note_off_before_the_join() {
-        let part = PartSpec {
-            gate: 0.25,
-            ..PartSpec::of_role("riser", Role::Riser)
-        };
-        let mut notes = [Draft {
-            section: 0,
-            pitch: 60,
-            velocity: 1.0,
-            start: Ticks::ZERO,
-            length: Ticks(1_920),
-        }];
-
-        shorten(&[part], &[false], &mut notes);
-
-        assert_eq!(notes[0].start + notes[0].length, Ticks(1_920));
-    }
-
-    #[test]
-    fn the_same_spec_writes_the_same_notes_every_time() {
-        let first = draft(BASE).2;
-        let second = draft(BASE).2;
+    fn the_same_song_writes_the_same_notes_every_time() {
+        let first = Song::default().draft().1;
+        let second = Song::default().draft().1;
         for (a, b) in first.iter().zip(&second) {
             assert_eq!(a.notes, b.notes, "`{}` is not deterministic", a.name);
         }
     }
 
     #[test]
-    fn a_different_seed_writes_a_different_piece() {
-        let a = draft(&format!(
-            r#"
-            seed = 1
-            {BASE}
-            "#
-        ))
-        .2;
-        let b = draft(&format!(
-            r#"
-            seed = 2
-            {BASE}
-            "#
-        ))
-        .2;
-        let melody_a = &part(&a, "lead").notes;
-        let melody_b = &part(&b, "lead").notes;
-        assert_ne!(melody_a, melody_b, "the seed did not reach the melody");
+    fn a_different_seed_writes_a_different_take() {
+        let seeded = |seed| {
+            Song {
+                seed,
+                ..Song::default()
+            }
+            .draft()
+            .1
+        };
+        let (a, b) = (seeded(1), seeded(2));
+        assert_ne!(
+            part(&a, "lead").notes,
+            part(&b, "lead").notes,
+            "the seed did not reach the melody"
+        );
     }
 
     #[test]
@@ -1010,36 +695,34 @@ mod tests {
     #[test]
     fn nothing_is_left_sounding_when_its_own_pitch_is_struck_again() {
         // A note-off names a pitch and not a note, so two notes of one pitch overlapping is a
-        // question the composer is asking the instrument rather than answering — and most of the
-        // instruments a composed piece reaches are a SoundFont library or somebody else's plugin,
-        // neither of which can be asked. Both of the composer's own timing passes used to write
-        // them, the swing on its own and the wander on top of it, and at the default humanisation
-        // it was thirteen notes in every hundred.
-        //
-        // Over the presets rather than a fixture, because two of them are the ones that swing.
-        for preset in crate::preset::PRESETS {
+        // question the writer is asking the instrument rather than answering — and most of the
+        // instruments a clip reaches are a SoundFont library or somebody else's plugin, neither
+        // of which can be asked. The swing used to write them on its own.
+        for groove in ["eight-beat", "sixteen-beat", "basic-rock"] {
             for seed in 0..4u64 {
-                let mut spec = preset.spec();
-                spec.seed = seed;
-                let piece = crate::render::compose(&spec);
-                for track in &piece.tracks {
-                    for clip in &track.clips {
-                        let mut sounding: std::collections::BTreeMap<u8, Ticks> =
-                            std::collections::BTreeMap::new();
-                        for note in &clip.notes {
-                            let Some(ends) = sounding.insert(note.pitch, note.end()) else {
-                                continue;
-                            };
-                            assert!(
-                                ends <= note.start,
-                                "{} seed {seed}: in `{}` a {} sounding to {} is struck again at {}",
-                                preset.name,
-                                clip.name,
-                                note.pitch,
-                                ends.raw(),
-                                note.start.raw(),
-                            );
-                        }
+                let mut song = Song {
+                    seed,
+                    bars: 8,
+                    ..Song::default()
+                };
+                song.settings.swing = 66;
+                song.settings.groove = groove.to_string();
+                for draft in song.draft().1 {
+                    let mut sounding = std::collections::BTreeMap::new();
+                    for note in &draft.notes {
+                        let Some(ends) = sounding.insert(note.pitch, note.start + note.length)
+                        else {
+                            continue;
+                        };
+                        assert!(
+                            ends <= note.start,
+                            "{groove} seed {seed}: in `{}` a {} sounding to {} is struck again \
+                             at {}",
+                            draft.name,
+                            note.pitch,
+                            ends.raw(),
+                            note.start.raw(),
+                        );
                     }
                 }
             }

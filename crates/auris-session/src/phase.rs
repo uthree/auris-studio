@@ -565,8 +565,7 @@ mod tests {
     #[test]
     fn a_withdrawn_edit_leaves_the_requests_earlier_edits_and_its_single_undo_step() {
         use crate::live_agent::Command;
-        let mut session =
-            crate::Session::new(crate::SessionOptions::headless().with_balance(false)).unwrap();
+        let mut session = crate::Session::new(crate::SessionOptions::headless()).unwrap();
         let lead = session.add_default_instrument_track("Lead").unwrap();
         session
             .add_midi_clip(lead, "Phrase", Ticks::ZERO, Ticks::QUARTER * 4)
@@ -630,8 +629,7 @@ mod tests {
 
     #[test]
     fn a_withdrawn_job_or_step_is_undone_like_a_command() {
-        let mut session =
-            crate::Session::new(crate::SessionOptions::headless().with_balance(false)).unwrap();
+        let mut session = crate::Session::new(crate::SessionOptions::headless()).unwrap();
         let lead = session.add_default_instrument_track("Lead").unwrap();
         session
             .agent_command(crate::live_agent::Command::EditHarmony {

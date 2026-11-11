@@ -1506,7 +1506,7 @@ mod tests {
     use super::*;
 
     fn session() -> Session {
-        Session::new(crate::SessionOptions::headless().with_balance(false)).unwrap()
+        Session::new(crate::SessionOptions::headless()).unwrap()
     }
 
     #[test]

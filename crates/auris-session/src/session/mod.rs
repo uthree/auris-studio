@@ -7,7 +7,7 @@
 //! # Where things are
 //!
 //! Here: [`Session`] itself, everything it hands back — [`SessionOptions`], [`AudioStatus`],
-//! [`SaveReport`], [`MidiReport`], [`ComposeReport`] — and the spine the rest of the module leans
+//! [`SaveReport`], [`MidiReport`] — and the spine the rest of the module leans
 //! on. The spine is four groups and nothing more: opening a session, reading the document,
 //! recording an undo step, and rebuilding the render graph. Nearly every command in the files
 //! beside this one ends by calling into two of them, which is what keeps the document, the
@@ -19,8 +19,7 @@
 //! `generated` is the half of those that write themselves; `notes` is what is inside one;
 //! `mixer` is the strip, its parameters and the lanes that drive them; `files` is everything that
 //! reaches the disk and `assets` is how a saved document finds the files it only names;
-//! `compose` replaces the whole document with a written piece and `accompany` writes parts around
-//! one clip of the document there already; `clipboard` is cut, copy and paste over both of the
+//! `accompany` writes parts around one clip of the document; `clipboard` is cut, copy and paste over both of the
 //! things a user can select. `record` and `monitor` are the two halves of the input device — what
 //! is kept, and what is merely heard — and share it rather than each opening one. `typing` is the
 //! computer keyboard played as an instrument, for a desk with no MIDI keyboard on it.
@@ -37,9 +36,7 @@ pub mod arrangement;
 pub mod audio_assets;
 pub mod candidates;
 mod composition_inspection;
-mod composition_preview;
 mod song_candidates;
-pub use composition_preview::{CompositionPreview, CompositionTrackPreview};
 pub use song_candidates::{
     SongCandidate, SongIdea, SongRequest, SongSinger, SongSinging, SongSourceChoice,
 };
@@ -62,11 +59,11 @@ mod clipboard;
 mod clips;
 mod comments;
 pub use comments::CommentHost;
-mod compose;
 mod convert;
 mod drum_analysis;
 mod envelope;
 mod event_list;
+mod song_sources;
 pub use envelope::{ENVELOPE_PITCHES, SoundEnvelope};
 pub use event_list::{ClipEvent, ClipEventKind, EventEdit, EventRef, clip_events};
 pub mod arrangement_shape;
@@ -138,7 +135,6 @@ pub use autosave::{
 };
 pub use checkpoints::{CheckpointJob, CheckpointOperation, CheckpointResult};
 pub use clipboard::{Clipboard, CopiedClip, CopiedContent};
-pub use compose::{composed_gain_db, kit_trim_db};
 pub use convert::{TrackConversion, TrackConversionJob};
 pub use drum_analysis::{
     DrumKitAnalysis, DrumProbeFont, DrumProbeRequest, DrumProbeSample, DrumScanOptions,
@@ -176,6 +172,7 @@ pub use singer::{
     SingerFramesExportResult, SingerLandingJob, SingerLandingResult, SingerTakeState,
     SingerVoiceInfo, SingerVoiceLoadJob, SingerVoiceLoadResult, SungFrames, take_fingerprint,
 };
+pub use song_sources::PartSource;
 pub use spectrogram::{RenderedSpectrogramJob, SpectrogramJob};
 
 pub use record::{
@@ -237,13 +234,6 @@ pub struct SessionOptions {
     /// Defaults to `soundfonts.json` in the application configuration directory. Headless
     /// tests opt out so they neither read nor change the user's library.
     pub soundfont_library: Option<PathBuf>,
-    /// Set a composed piece's levels by rendering it and measuring what came out.
-    ///
-    /// On, because a level the composer guessed is a guess about an instrument nobody had heard
-    /// yet — see [`Session::balance_levels`]. Off is for a caller that wants the numbers the
-    /// composer wrote and nothing else: the tests that are *about* those numbers, and anything
-    /// that cannot afford a render per part.
-    pub balance_composed: bool,
     /// Start every new document with a limiter last on its master.
     ///
     /// On, because a mix with nothing on its master can only be made as loud as its single
@@ -289,7 +279,6 @@ impl Default for SessionOptions {
             sample_rate: 48_000.0,
             shipped_fonts: true,
             soundfont_library: Some(crate::settings::config_dir().join("soundfonts.json")),
-            balance_composed: true,
             master_limiter: true,
             autosave: true,
             shipped_dictionary: true,
@@ -352,12 +341,6 @@ impl SessionOptions {
     /// Whether new documents start with a limiter last on their master.
     pub fn with_master_limiter(mut self, master_limiter: bool) -> Self {
         self.master_limiter = master_limiter;
-        self
-    }
-
-    /// Whether composing ends by measuring the piece and setting its levels from what it heard.
-    pub fn with_balance(mut self, balance_composed: bool) -> Self {
-        self.balance_composed = balance_composed;
         self
     }
 
@@ -451,8 +434,6 @@ pub struct Session {
     soundfont_library: Option<PathBuf>,
     /// Performance presets kept by this installation.
     performance_presets: crate::performance_presets::PresetLibrary,
-    /// Whether composing ends by measuring the piece — see [`SessionOptions::balance_composed`].
-    balance_composed: bool,
     /// Whether a new document starts with a master limiter — see [`SessionOptions::master_limiter`].
     master_limiter: bool,
     registry: Arc<PluginRegistry>,
@@ -693,36 +674,6 @@ pub struct MidiReport {
     pub length: Ticks,
 }
 
-/// What composing produced.
-#[derive(Clone, Debug, PartialEq)]
-pub struct ComposeReport {
-    /// How many tracks of *music* were created.
-    ///
-    /// The buses the mix routes through are not counted. They are plumbing rather than parts, and
-    /// a report saying eight over a piece with six things playing in it would be answering a
-    /// question nobody asked.
-    pub tracks: usize,
-    /// How many clips.
-    pub clips: usize,
-    /// How many notes.
-    pub notes: usize,
-    /// How long the piece is.
-    pub length: Ticks,
-    /// Instruments a part asked for that this build does not have.
-    pub substituted: Vec<String>,
-    /// What setting the mix by measurement did, or `None` if the piece could not be rendered.
-    ///
-    /// Composing ends by listening to what it wrote — see [`Session::balance_levels`] — because
-    /// the level a part wants depends on the instrument that answered, and the composer chooses
-    /// the part while the session finds the instrument.
-    pub balance: Option<BalanceReport>,
-    /// How many sung notes the sections' lyrics became — zero for an instrumental piece.
-    pub sung: usize,
-    /// Sections whose lyrics could not be read — kanji with no Japanese dictionary anywhere —
-    /// and so play instrumentally. Their words cost themselves, never the piece.
-    pub unsung: Vec<String>,
-}
-
 struct Transaction {
     edit: Edit,
     before: Project,
@@ -817,7 +768,6 @@ impl Session {
             performance_presets: crate::performance_presets::PresetLibrary::new(
                 options.performance_presets,
             ),
-            balance_composed: options.balance_composed,
             master_limiter: options.master_limiter,
             registry,
             device: Some(device),

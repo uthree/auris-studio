@@ -223,7 +223,7 @@ mod tests {
 
     #[test]
     fn harmony_event_limit_counts_changes_without_rounding_or_duplicates() {
-        let session = Session::new(crate::SessionOptions::headless().with_balance(false)).unwrap();
+        let session = Session::new(crate::SessionOptions::headless()).unwrap();
         let mut project = session.project().clone();
         // Alternating, because a chord restating the one before it is not a change.
         let numerals = [Numeral::parse("I").unwrap(), Numeral::parse("IV").unwrap()];
@@ -251,8 +251,7 @@ mod tests {
 
     #[test]
     fn inspection_includes_within_bar_harmony_and_carries_the_starting_chord() {
-        let mut session =
-            Session::new(crate::SessionOptions::headless().with_balance(false)).unwrap();
+        let mut session = Session::new(crate::SessionOptions::headless()).unwrap();
         let track = session.add_default_instrument_track("Harmony").unwrap();
         session
             .add_midi_clip(track, "Range", Ticks::ZERO, Ticks::QUARTER * 16)
@@ -293,8 +292,7 @@ mod tests {
 
     #[test]
     fn inspection_is_a_read_only_snapshot_and_measures_real_gain_and_mute() {
-        let mut session =
-            Session::new(crate::SessionOptions::headless().with_balance(false)).unwrap();
+        let mut session = Session::new(crate::SessionOptions::headless()).unwrap();
         let track = session.add_default_instrument_track("Lead").unwrap();
         session
             .set_track_instrument(track, "auris.synth.fm2")

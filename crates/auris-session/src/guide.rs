@@ -129,7 +129,7 @@
 //! and inspection of the current full mix. The `SongRequest` authoring API also provides a
 //! source-and-singer setup without notes and validates authored-note, mix and vocal evidence
 //! before rendering standalone candidates. A failed agent never silently falls back to a
-//! preset-generated song. These checks establish completion evidence, not musical quality.
+//! generated song. These checks establish completion evidence, not musical quality.
 //!
 //! A conversation also retains a bounded `memory.production.json` beside model memory.
 //! The session defines attributed intent/role/motif/decision notes and revision-bound evidence;
@@ -417,7 +417,7 @@
 //! * [`architecture`] — the crates, the direction they depend in, and the two threads.
 //! * [`realtime`] — what may and may not happen on the audio callback thread.
 //! * [`plugins`] — writing an instrument or an effect, with a worked example.
-//! * [`composition`] — the song specification and how a piece is written from it.
+//! * [`composition`] — writing one part over the harmony a document already holds.
 //! * [`timelines`] — the four maps laid along the song, and what the meter has that they lack.
 //! * [`harmony`] — the key and the chords, and why they belong to the timeline.
 //! * [`documents`] — what a project is on disk, and how it refers to files it does not contain.
@@ -444,7 +444,7 @@ pub mod architecture {
     //!   auris-video     note-roll videos: frames in software, encoded by an installed ffmpeg
     //!                   → auris-core only
     //!   auris-gpu       optional wgpu compute for offline analysis
-    //!   auris-compose   score-based automatic composition
+    //!   auris-compose   phrase-level automatic composition: one clip over the harmony
     //!   auris-vocal     lyrics to phonemes, notes to voice-model frames → auris-core only
     //!   auris-singer    offline neural voice synthesis             → auris-core, auris-vocal
     //!   auris-i18n      interface text in every language
@@ -639,7 +639,7 @@ pub mod architecture {
     //! the identical session with no window and no audio device, so anything that leaks into the
     //! UI stops compiling there. `auris-mcp` is the same wager made a third time — the identical
     //! session behind the Model Context Protocol, over stdio, so a language model's harness can
-    //! compose, render and inspect projects as tools. The `auris-agent` library approaches it from the
+    //! write, render and inspect projects as tools. The `auris-agent` library approaches it from the
     //! other direction: Auris itself dials a model — a local Ollama server or any
     //! OpenAI-compatible API — offers read-only toolbox references and live session commands.
     //! Antigravity CLI is a separate signed-in transport. Its text-only headless stream has no
@@ -897,17 +897,13 @@ pub mod architecture {
     //! Training and held-out singers are disjoint. Only calibrated constants enter the
     //! application; the fitting overrides require the development `choir-calibration` feature.
     //!
-    //! Composition interprets supported GM family hints as native instruments before looking
+    //! Accompaniment interprets supported GM family hints as native instruments before looking
     //! for an optional installed font. The hint describes musical intent, not a promise to
     //! reproduce a GM patch: slap bass, muted guitar and string pads become editable starting
-    //! parameters. The composer's existing strum, mute, expression and pitch-performance stages
-    //! still perform the notes. Explicit SoundFont and hosted sources take precedence and are
-    //! validated before editing. Accompaniment uses the same mapping.
-    //! Unknown families retain the ordinary reported fallback. Selection never rewrites notes.
-    //! Shipped song presets name native physical instruments directly for their melodic parts;
-    //! chiptune and game-loop retain their melodic oscillator voices. Drum parts use the native
-    //! physical kit directly; risers use the bowed-string model. The preset's instrument
-    //! IDs remain explicit when its specification is edited, saved or composed again.
+    //! parameters. The existing strum, mute, expression and pitch-performance stages still
+    //! perform the notes. Explicit SoundFont and hosted sources take precedence and are
+    //! validated before editing. Unknown families retain the ordinary reported fallback.
+    //! Selection never rewrites notes.
     //!
     //! What the split buys costs one thing back: the document can move while a file is being read.
     //! The placing half is where that is caught — audio decoded against a sample rate the project
@@ -1821,50 +1817,19 @@ pub mod plugins {
 }
 
 pub mod composition {
-    //! The song specification, and how a piece is written from one.
+    //! Writing parts: one clip at a time, over the harmony a document already holds.
     //!
-    //! Genre presets select native physical instruments directly: piano, bowed and plucked
-    //! strings, electric guitar, bass, woodwinds, mallets, bells and choir. Percussion uses the
-    //! membrane and metal-plate drum kit. Chiptune presets retain their oscillator voices.
-    //! All preset parts, including risers, play without external sound assets, and their
-    //! instrument selections survive specification edits, saving and regeneration.
-    //!
-    //! A part's `params` supplies initial controls for its named native instrument; `effects`
-    //! supplies an ordered insert chain of plugin `id` and `params` tables. An omitted chain
-    //! retains the legacy role/GM insert rules, while `effects = []` explicitly keeps it dry.
-    //! These settings belong to the specification and become ordinary editable plugin state
-    //! in the project before loudness balancing. Native instrument controls are not applied
-    //! to a substituted SoundFont or hosted source. Drum writers share a kit only when their
-    //! source, initial controls and insert chains agree.
-    //! [`Session::composition_preview`](crate::Session::composition_preview) reports the actual
-    //! form length, added ending bars, authored-part mapping and merged drum tracks from the
-    //! same generated draft, including vocal preparation.
-    //! Newly composed projects also keep an optional comparison baseline: effective static
-    //! controls, instrument selections, timeline maps and authored-note digests with recipes.
-    //! [`Session::inspect_composition_state`](crate::Session::inspect_composition_state) reads
-    //! current values and identifies later edits without regenerating notes or rewriting
-    //! `song_spec`. Older projects retain their current state and report comparison unavailable.
-    //! Mixer/effect settings, automation, audio takes and opaque plugin state remain in the
-    //! `.auris` document; the comparison report explicitly lists its narrower scope.
-    //! Electric guitars are DI sources: Rock presets supply driven closed-cabinet amplifiers
-    //! for lead/rhythm and clean amplification for contrasting parts. Pop and city-pop use
-    //! lighter amplification and restrained chorus; synthwave's guitar arpeggio adds synced delay.
-    //!
-    //! Section lengths belong to the preset or song specification. Vocal rhythms distribute
-    //! the lyrics across those fixed bars, weighting phrases by mora count and leaving time
-    //! for held endings and breaths. Dense phrases use shorter notes, down to sixteenths;
-    //! words that cannot fit at that density are rejected before the document changes.
-    //!
-    //! A sokuon keeps its own lyric-bearing closure slot, capped at an eighth note. It is
-    //! excluded from pitch search and ornaments; its pitch follows a neighbouring sung note.
-    //! Shared melodies require closures in the same positions as well as matching mora counts.
+    //! There is no whole-song writer. A song is written by a person or an agent — a form in the
+    //! section lane, a progression in the harmony lane, sounds on tracks — and [`auris_compose`]
+    //! writes *one part over one stretch* of it when asked:
+    //! [`write_phrase`](auris_compose::write_phrase) takes a
+    //! [`ClipRecipe`](auris_core::ClipRecipe), a range and the chords under that range, and
+    //! answers with the notes of one clip. Generation is a pure function of the recipe, its seed
+    //! and the harmony within a build, so the same clip writes the same notes.
     //!
     //! [`Session::analyze_lyrics`](crate::Session::analyze_lyrics) exposes source-located musical
     //! phrases, established readings, moras and pronunciation provenance without changing the
     //! document. Explicit kana readings are request-local diagnostics, not saved pronunciations.
-    //! [`Session::diagnose_song_lyrics`](crate::Session::diagnose_song_lyrics) reports independent
-    //! phrase-count, mora-count, closure and fixed-bar capacity violations together. Composition
-    //! uses this same check before adoption; unreadable lyrics are incomplete, never a pass.
     //! Source offsets count Unicode scalars in the original lyric. Dictionary output does not
     //! establish character-to-mora alignment, so no such alignment is guessed.
     //!
@@ -1884,7 +1849,7 @@ pub mod composition {
     //! free of 字余り and 字足らず. It never merges or splits to force a fit. Its reading cut
     //! into notes with `|` is what `write_lyrics_with_reading` accepts; a grouped っ sings no
     //! closure, so the write is refused unless a rest follows that note. A reading without
-    //! `|`, and the composer, keep one mora to a note.
+    //! `|` keeps one mora to a note.
     //!
     //! [`Session::lyric_accent`](crate::Session::lyric_accent) is the other half of fitting
     //! words to a tune: not how many notes, but which way they move. It measures a singer
@@ -1919,121 +1884,12 @@ pub mod composition {
     //! The live agent's per-user-turn budget retains the template and keywords across previews
     //! and application, allowing at most three distinct alternatives for a target and revision.
     //!
-    //! Presets give later verses their own section names (`verse2`, `chorus2`) and lyrics.
-    //! `melody_from = "verse"` shares the original vocal's pitches, onsets, durations and
-    //! ornaments. The session validates mora counts phrase by phrase before replacing a
-    //! document: line breaks and sentence punctuation delimit the phrases, and both sections
-    //! share a rhythm fitted to the shortest participating section. New words replace only
-    //! the lyrics and phonemes.
-    //! An empty later lyric leaves that section instrumental. A shared melody names an original
-    //! section in the form; it cannot refer to itself or another shared melody.
-    //!
-    //! The top-level `singer` field selects a voice model path, and `singer_speaker` optionally
-    //! names its speaker. The session validates both before replacing the document and assigns
-    //! the voice and speaker's timing tables to the generated vocal track in the same undo step.
-    //!
-    //! A part's optional `source` names an exact SoundFont file, bank and patch, or a CLAP/VST3
-    //! instrument and its stable plugin id. The session validates these sources before replacing
-    //! the document, including hosted instrument activation, and never substitutes another sound.
-    //! Chosen sources use the existing sampler and hosted track representation for playback and
-    //! saving. Collect Assets and asset recovery also update the stored song specification, so
-    //! subsequent composition follows the same file as the saved arrangement.
-    //!
-    //! [`auris_compose`] turns a text document into notes on a timeline through
-    //! [`compose`](auris_compose::compose). Generation is a pure function of the specification
-    //! and its seed within a build, so the same document writes the same piece.
-    //!
-    //! # The document
-    //!
-    //! TOML, with the extension `.asong` — the syntax rather than the identity, exactly as a
-    //! project file is JSON inside `.auris`. Serde reads and writes it, which is the point: a
-    //! format that can only be read makes a dialog that saves its settings a second
-    //! implementation of the same grammar, free to disagree with the first.
-    //!
-    //! A beginner can describe an intention without naming a chord or a tonic:
-    //!
-    //! ```text
-    //! style = "pop-band"
-    //! mood = "dark"
-    //! tonality = "minor"
-    //! pace = "slow"
-    //! ```
-    //!
-    //! `style` supplies the instruments and form with generated harmony. `tonality` accepts
-    //! `auto`, `major`, or `minor`; `pace` accepts `auto`, `slow`, `moderate`, or `fast`.
-    //! Optional `sound` accepts `auto`, `major`, `minor`, `dorian`, `lydian`, `mixolydian`, or
-    //! `phrygian`. An explicit sound takes precedence over tonality. With both automatic,
-    //! dreamy moods choose Lydian, epic moods Dorian, funky moods Mixolydian, and tense moods
-    //! Phrygian; ordinary bright and dark moods keep major and minor. These are expressive
-    //! defaults, not promises about how a scale must feel. The generator shares modal phrase
-    //! shapes, building chords from the selected scale and retaining its characteristic tones
-    //! through chord colouring and section arrivals. Explicit `key`/`scale` and `tempo` win.
-    //! A detailed specification can name every musical choice:
-    //!
-    //! ```text
-    //! title  = "Neon Drive"
-    //! key    = "C minor"
-    //! tempo  = 128
-    //! mood   = "driving"
-    //! chords = "@marusa"
-    //! form   = ["intro", "verse", "chorus", "verse", "chorus", "outro"]
-    //!
-    //! [section.chorus]
-    //! bars      = 8
-    //! intensity = 0.95
-    //!
-    //! [[part]]
-    //! name       = "lead"
-    //! instrument = "auris.synth.chiptune"
-    //! ```
-    //!
-    //! Sections are a table keyed by name because their order means nothing — `form` decides what
-    //! plays when. Parts are an array of tables because theirs does: it is the order the tracks
-    //! are created in.
-    //!
-    //! It is deliberately a *specification* rather than a notation — it says what to write, not
-    //! what was written — because that is the layer at which "make the chorus busier" is one word
-    //! rather than four hundred edited notes. Read one with
-    //! [`SongSpec::parse`](auris_compose::SongSpec::parse) and write one back with
-    //! [`SongSpec::to_toml`](auris_compose::SongSpec::to_toml). A syntax error stops at the first
-    //! and says which line it is on; every complaint about *meaning* is reported at once.
-    //!
-    //! ```
-    //! use auris_compose::{SongSpec, compose};
-    //!
-    //! let spec = SongSpec::parse(
-    //!     r#"
-    //!     title  = "Neon Drive"
-    //!     key    = "C minor"
-    //!     tempo  = 128
-    //!     mood   = "driving"
-    //!     chords = "@marusa"
-    //!     form   = ["intro", "verse", "chorus", "verse", "chorus", "outro"]
-    //!
-    //!     [section.chorus]
-    //!     bars      = 8
-    //!     intensity = 0.95
-    //!     tempo     = 132
-    //!     "#,
-    //! )
-    //! .expect("the specification above parses");
-    //!
-    //! let piece = compose(&spec);
-    //! assert!(piece.note_count() > 0);
-    //!
-    //! // The tempo arrives as the map a document holds, because a section may lift away from the
-    //! // song's own tempo — and this chorus does.
-    //! assert_eq!(piece.tempo_map.initial_bpm(), 128.0);
-    //! assert_eq!(piece.tempo_map.points().len(), 5);
-    //!
-    //! // Everything is a pure function of the document and its seed, so this holds however many
-    //! // times it is asked.
-    //! assert_eq!(compose(&spec), piece);
-    //!
-    //! // And the document it writes is the document it read: the dialog and the file are two
-    //! // faces of one type, so neither can drift from the other.
-    //! assert_eq!(SongSpec::parse(&spec.to_toml()).unwrap(), spec);
-    //! ```
+    //! A song workshop request names exact sounds for its parts:
+    //! [`PartSource`](crate::session::PartSource) is a SoundFont file, bank and patch, or a
+    //! CLAP/VST3 instrument and its stable plugin id. The session validates these sources before
+    //! building the song's document, including hosted instrument activation, and never
+    //! substitutes another sound. Chosen sources use the existing sampler and hosted track
+    //! representation for playback and saving.
     //!
     //! # Auditioning rendered audio
     //!
@@ -2070,11 +1926,10 @@ pub mod composition {
     //!
     //! # Two stages
     //!
-    //! **The frame is planned first and then frozen.** Harmony, form, shared phrase boundaries
-    //! and a melodic skeleton are
-    //! decided before any part exists. That is what makes the parts agree without knowing about
-    //! each other: the bass and the melody both read the same chord at the same tick, so they
-    //! cannot drift.
+    //! **The frame is planned first and then frozen.** The chords under the range, shared phrase
+    //! boundaries and a melodic skeleton are decided before any part exists. That is what makes
+    //! the parts agree without knowing about each other: the bass and the melody both read the
+    //! same chord at the same tick, so they cannot drift.
     //!
     //! The skeleton — one structural pitch per chord — is chosen by a dynamic program over the
     //! whole phrase rather than note by note. Picking each note from its predecessor gives a line
@@ -2085,21 +1940,12 @@ pub mod composition {
     //! read the same harmony, and the rhythm section all reads the same groove — the bass follows
     //! the kick *pattern*, not the kick *part*.
     //!
-    //! A final score pass lets generated chords, stabs and arpeggios leave space around the
-    //! foreground and answer in its planned breaths. It reads the union of all playing melody
-    //! parts, including overlapping leads and instrument handoffs; reordering the roster cannot
-    //! change it. Bass, drums, sustained ambient textures and
-    //! authored rhythm patterns retain their own attacks. Lyric sections use the actual sung
-    //! notes after the session has written them. Local generation and regeneration read the
-    //! overlapping foreground already in the document, changing only the requested clip.
-    //! Every result is ordinary editable note data; playback never runs this planning pass.
-    //!
-    //! Presets choose participating parts explicitly for each section. Additional instruments
-    //! enter as alternate leads and supporting textures rather than a continuously enlarged
-    //! ensemble. Reduced verses, drum-free passages and sparse outros leave room for later
-    //! arrivals. A held ending inherits the final section's participating parts, so instruments
-    //! that have left do not return solely for the last chord. An unrestricted final section
-    //! still lets the whole roster land.
+    //! Generated chords and arpeggios leave space around the foreground and answer in its planned
+    //! breaths: local generation and regeneration read the overlapping foreground already in the
+    //! document through [`accompany_foreground`](auris_compose::arrangement::accompany_foreground),
+    //! changing only the requested clip. Bass, drums, sustained ambient textures and authored
+    //! rhythm patterns retain their own attacks. Every result is ordinary editable note data;
+    //! playback never runs this planning pass.
     //!
     //! Reading the same harmony has to mean reading the same *notes*, which is why a part steps
     //! through [`ChordScale`](auris_core::theory::chord_scale::ChordScale) rather than through
@@ -2111,7 +1957,7 @@ pub mod composition {
     //!
     //! # Figures, and why a section repeats
     //!
-    //! Each part invents one short figure per section and restates it, because a passage built of
+    //! Each part invents one short figure per stretch and restates it, because a passage built of
     //! something recognisable is a passage and one built of continuous novelty is not. The figure
     //! is written in scale steps from whatever pitch the skeleton puts under it rather than in
     //! absolute notes, so restating it over the next chord keeps its shape and still belongs to
@@ -2119,16 +1965,16 @@ pub mod composition {
     //!
     //! Shared phrases assign statement, continuation, answer and release functions over several
     //! bars. The melodic head returns while its tail develops; bass approaches and comping
-    //! closures use those same boundaries. Generated harmony uses the same planner, while an
-    //! authored chart stays exact. Voicings compare individual noncrossing voices, and a melodic
-    //! suspension must be prepared before the chord change and resolve by step afterward.
+    //! closures use those same boundaries. Voicings compare individual noncrossing voices, and a
+    //! melodic suspension must be prepared before the chord change and resolve by step afterward.
     //!
-    //! A section played twice is the same section both times. `variation` buys the departures
-    //! back: at 0 a repeat is note for note, at 1 every playing is written afresh.
+    //! The streams a clip draws from are keyed by the label of the section it sits in, so two
+    //! clips in stretches both called サビ draw the same figures: a section played twice is the
+    //! same section both times.
     //!
     //! # Named random streams
     //!
-    //! A composer drawing from one sequential generator is impossible to edit: adding a roll
+    //! A writer drawing from one sequential generator is impossible to edit: adding a roll
     //! anywhere shifts every later draw, so changing the drum density silently rewrites the
     //! melody. Here every decision names its own stream — `["part", "lead", "surface", "chorus",
     //! 2]` — and a stream's numbers depend only on the seed and that name. Adding a part, or a
@@ -2139,17 +1985,15 @@ pub mod composition {
     //! of components rather than a formatted string, so a name cannot be built by accidental
     //! concatenation: `["a", "bc"]` and `["ab", "c"]` are different streams.
     //!
-    //! # Getting the result into a document
+    //! # Drum tracks
     //!
     //! **A drum kit is one drum track.** [`TrackKind::Drum`](auris_core::TrackKind::Drum) is
     //! distinct from a melodic instrument track, with its own editor and generation presets.
-    //! Kick, snare, hat and crash remain separate
-    //! writers, with their own random streams, but parts sharing a sound are collected into one
-    //! track and one clip per section. A composite recipe keeps each voice's instructions;
-    //! voice-scoped performance transforms keep its timing separate from the written notes.
-    //! Fixed accents survive local regeneration. Distinct sound sources form distinct kits.
-    //! The kit's stereo output has one fader, pan and effect path. Its internal balance belongs
-    //! to the instrument; strike velocity is not a substitute for an audio fader.
+    //! Kick, snare and hat remain separate writers inside one clip, with their own random
+    //! streams. A composite recipe keeps each voice's instructions; voice-scoped performance
+    //! transforms keep its timing separate from the written notes. Fixed accents survive local
+    //! regeneration. The kit's stereo output has one fader, pan and effect path. Its internal
+    //! balance belongs to the instrument; strike velocity is not a substitute for an audio fader.
     //!
     //! Both kinds share [`InstrumentTrack`](auris_core::InstrumentTrack) for plugin state and
     //! note clips. `is_instrument` and `as_instrument` deliberately include drums; presentation
@@ -2171,13 +2015,13 @@ pub mod composition {
     //! notes at several velocities. The classifier receives samples and measurement settings,
     //! never note names, General MIDI numbers or author labels. Spectral energy, noise content
     //! and the attack and decay produce role-fit scores, not probabilities. A kit may have no
-    //! suitable sound for a role. Measurements, role fitness and a composition's chosen note
-    //! mapping are separate results: choosing to use a tom as a kick does not change what was
-    //! measured. The desktop queues new or changed drum sources for background analysis,
-    //! including tracks in an opened project. It keeps results per track, avoids repeating an
-    //! unchanged source, and rejects stale results. Accepting a map remains an explicit edit:
-    //! automatic analysis never changes an assignment or rewrites stored notes. The accepted
-    //! mapping travels with the instrument state.
+    //! suitable sound for a role. Measurements, role fitness and a chosen note mapping are
+    //! separate results: choosing to use a tom as a kick does not change what was measured. The
+    //! desktop queues new or changed drum sources for background analysis, including tracks in
+    //! an opened project. It keeps results per track, avoids repeating an unchanged source, and
+    //! rejects stale results. Accepting a map remains an explicit edit: automatic analysis never
+    //! changes an assignment or rewrites stored notes. The accepted mapping travels with the
+    //! instrument state.
     //! [`set_drum_assignment`](crate::Session::set_drum_assignment) adds, replaces or removes a
     //! musical role's MIDI address without acoustic analysis. It preserves the other assignments
     //! and plugin state, records one undo step, and affects editor labels and future generation.
@@ -2204,33 +2048,21 @@ pub mod composition {
     //! replaces that scan's evidence.
     //!
     //! Signal measurements belong in `auris-dsp`; session commands own probing, source state
-    //! and applying a mapping. The composer only reads musical instructions and mappings, and
-    //! never loads a SoundFont or a hosted plugin to decide what to write.
+    //! and applying a mapping. The writers only read musical instructions and mappings, and
+    //! never load a SoundFont or a hosted plugin to decide what to write.
     //!
-    //! [`Session::compose`](crate::Session::compose) installs a
-    //! [`Composition`](auris_compose::Composition) as the open project — one undo step for the
-    //! whole piece, and one graph rebuild rather than one per note. A part naming an instrument
-    //! the registry does not have falls back to the first registered one and is reported, because
-    //! a missing plugin should cost a timbre rather than a whole piece.
+    //! # Balancing levels
     //!
-    //! A responsive frontend uses
-    //! [`Session::compose_without_balance`](crate::Session::compose_without_balance), followed by
-    //! [`Session::begin_composed_balance`](crate::Session::begin_composed_balance). Each
-    //! [`ComposeBalanceJob`](crate::ComposeBalanceJob) renders and measures one track or mix on a
-    //! worker; [`Session::continue_composed_balance`](crate::Session::continue_composed_balance)
-    //! captures the next job on the session thread, where hosted plugin factories must remain.
-    //! Progress covers every track render and both mix renders. Faders are calculated in a
-    //! detached document and applied together after the last measurement, within the composition's
-    //! existing undo step. An intervening edit or Undo rejects the stale result; a failed render
-    //! leaves the written levels intact. Synchronous callers use the same measurements and math.
-    //!
-    //! `ending = "loop"` makes the form circular: the final section prepares the first section's
-    //! key and the writers treat their boundary as another join. No coda or fade is added.
-    //! The composition carries this intent to the session, which enables the cycle over the
-    //! complete form. The specification and the existing project cycle fields preserve it.
-    //! Cycle export warms up the same render graph for at least one cycle and its reported
-    //! effect-tail duration, then captures exactly one cycle with delay compensation. The tail
-    //! is already present at the opening instead of being appended after the last bar.
+    //! [`Session::balance_levels`](crate::Session::balance_levels) renders each track alone,
+    //! measures it and sets its fader, as one undo step. A responsive frontend runs the same pass
+    //! in stages: [`Session::begin_balance_levels_job`](crate::Session::begin_balance_levels_job)
+    //! captures a [`ComposeBalanceJob`](crate::ComposeBalanceJob) that renders and measures one
+    //! track or mix on a worker, and
+    //! [`Session::continue_composed_balance`](crate::Session::continue_composed_balance) captures
+    //! the next job on the session thread, where hosted plugin factories must remain. Progress
+    //! covers every track render and both mix renders. Faders are calculated in a detached
+    //! document and applied together after the last measurement. An intervening edit or Undo
+    //! rejects the stale result; a failed render leaves the written levels intact.
     //!
     //! # Every clip knows what it is
     //!
@@ -2253,39 +2085,17 @@ pub mod composition {
     //! note above the lowest by a note value, written into the score, with every release left
     //! where the strike would have ended. That is the difference from the stroke performance
     //! transform, which spreads in milliseconds and leaves the text alone. Both reach the agent
-    //! through the recipe patch (`edit_recipe`, `accompaniment`) and a song part's `low_root` and
-    //! `strum` fields.
+    //! through the recipe patch (`edit_recipe`, `accompaniment`).
     //!
-    //! Each clip a piece arrives with carries a [`ClipRecipe`](auris_core::ClipRecipe), derived by
-    //! [`recipe_for`](auris_compose::recipe_for) from the part *as that section played it* — a
-    //! chorus that patched the bass an octave up produces a clip whose recipe says so. That one
-    //! field is the whole of the feature: another take, write it again, the dial panel and keep
-    //! this one all read [`Session::clip_recipe`](crate::Session::clip_recipe) and nothing else, so
-    //! not one line downstream had to learn what a composed song is. A composed piece used to be
-    //! several hundred anonymous notes whose only granularity was composing the whole thing again.
+    //! A generated clip carries its [`ClipRecipe`](auris_core::ClipRecipe). That one field is the
+    //! whole of the feature: another take, write it again, the dial panel and keep this one all
+    //! read [`Session::clip_recipe`](crate::Session::clip_recipe) and nothing else. A clip's seed
+    //! is held to six digits because a seed is a number a person reads off a panel and types
+    //! back in.
     //!
-    //! Each clip's seed is a stream of the song's seed named by the part and the stretch —
-    //! [`clip_seed`](auris_compose::clip_seed) — so it is reproducible from the specification and
-    //! different for every clip, which is what makes "individually" mean anything. It is held to
-    //! six digits because a seed is a number a person reads off a panel and types back in.
-    //!
-    //! **A recipe describes a clip; it does not reproduce it.** The two writers are not one
-    //! machine and this is where that shows. A whole song is planned with things one clip has no
-    //! room for — how far a repeated section departs from its first playing, what leads into what,
-    //! the arch of intensity across the form — so writing a composed clip again hands it to
-    //! [`write_phrase`](auris_compose::write_phrase), which knows the document's harmony and not
-    //! the plan. The notes move. What holds is everything a person meant by the clip: the same
-    //! part, the same register, the same density, over the same chords, played the same way.
-    //!
-    //! The alternative was making `compose` write its clips *through* `write_phrase` so the two
-    //! agreed exactly. That trades the composer's output for a button's arithmetic, and the output
-    //! is the product. Regenerating from the stored [`Project::song_spec`](auris_core::Project) was
-    //! the other one, and it fails the thing regeneration is *for*: it would hand back the
-    //! specification's chords over a harmony lane somebody had since edited by hand.
-    //!
-    //! One consequence to know rather than to be surprised by: a composed clip is a generated clip
-    //! in every respect, so dragging its edge rewrites it, exactly as it does for a clip written by
-    //! hand. Keep This One is how a take stops being at the mercy of a gesture.
+    //! One consequence to know rather than to be surprised by: a generated clip is generated in
+    //! every respect, so dragging its edge rewrites it. Keep This One is how a take stops being at
+    //! the mercy of a gesture.
     //!
     //! # The other direction
     //!
@@ -2303,9 +2113,8 @@ pub mod composition {
     //! can be rewritten, because a melody is one voice and one voice cannot settle every question
     //! it raises: a tune in A minor and a tune in C major play the same notes.
     //!
-    //! This is why the whole thing is one transaction rather than a document swap. Composing
-    //! replaces what is there; accompanying must not, because the melody is the part somebody
-    //! wrote.
+    //! This is one transaction rather than a document swap, because the melody is the part
+    //! somebody wrote.
 }
 
 pub mod singing {
@@ -2475,7 +2284,7 @@ pub mod singing {
     //!
     //! Singer clip names contain the complete written lyrics in note-onset order, excluding
     //! `+` continuation markers. They are derived by the session without shortening or using
-    //! phonemes. Composition retains the original section text; when mora labels cannot retain
+    //! phonemes. Lyric writing retains the original text; when mora labels cannot retain
     //! its exact spelling, the first note carries the original text and the rest carry `+`,
     //! with pronunciation still pinned separately on every note. A split through a continuation
     //! carries the written word into the new clip. Lyric writing rejects insufficient note slots
@@ -2938,7 +2747,7 @@ pub mod harmony {
     //! [`clip_hand_edited`](crate::Session::clip_hand_edited) — says so on its own panel, before
     //! the button that would replace the edits rather than after. A warning, never a gate.
     //!
-    //! The contract repeats at every layer. A song spec is text that the composer performs; a
+    //! The contract repeats at every layer. A recipe is text that the writers perform; a
     //! stored note is text that the instruments and effects perform. The left side is saved
     //! verbatim and outlives every update, and the right side is allowed to get better.
     //!
@@ -3046,22 +2855,18 @@ pub mod harmony {
     //! with a smaller independent residual; timing and velocity have separate named streams.
     //! Nearby notes therefore share a tendency, while seed and loop pass retain reproducibility.
     //!
-    //! The composer performs through the same stack. It writes its text on the grid — swing
-    //! excepted, which the groove decides and the writers keep — and installs the feel as
-    //! transforms on the clips it delivers: the wander per pitched part, the lean its role
-    //! table says (the hat pushes, the snare lays back), nothing at all on a kick that keeps
-    //! the time. `auris_compose::perform` is that table. A recipe therefore carries no
+    //! Generated clips perform through the same stack. The writers put their text on the grid —
+    //! swing excepted, which the groove decides and the writers keep — and the feel arrives as
+    //! transforms on the clip: the wander per pitched part, the lean its role table says (the
+    //! hat pushes, the snare lays back), nothing at all on a kick that keeps the time. `auris_compose::perform` is that table. A recipe therefore carries no
     //! `humanize` dial any more: how loosely a clip is played is its stack's business, one
     //! panel edits it, and writing the text again — regenerate, another take, a dial on the
     //! recipe — leaves the stack alone save for the wander's seed, which follows the take so
     //! one number keeps naming both.
     //!
-    //! Song presets additionally select an `auris_compose::PerformanceStyle`. The composer
-    //! chooses articulations by role and requested instrument, replaces combined humanisation
-    //! with independent expression, and gives the band one shared ensemble group. Guitar
-    //! strokes, quiet ghost pickups and solo pitch gestures remain clip transforms; they never
-    //! enter the writers or their note digests. The optional `performance` field survives the
-    //! `.asong` round trips. Omitting it retains plain lean/wander behavior.
+    //! A recipe's `style` names an `auris_compose::PerformanceStyle`, the musical vocabulary the
+    //! writers choose figures from. Guitar strokes, quiet ghost pickups and solo pitch gestures
+    //! remain clip transforms; they never enter the writers or their note digests.
     //! Retaking updates inherited ghost/expression seeds without replacing edited controls or
     //! ensemble groups. Singing melody parts keep the singer's separate ornament pipeline.
     //!

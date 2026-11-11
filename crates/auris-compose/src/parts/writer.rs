@@ -42,8 +42,9 @@ pub(super) fn density(settings: &ScoreSettings, part: &PartSpec, section: &Secti
 
 /// [`density`] at a stated intensity, for a caller with no section in hand.
 ///
-/// The melody's piece-level germ is drawn through here: a figure that belongs to the whole song
-/// cannot be drawn at any one section's intensity without becoming that section's figure.
+/// The melody's take-level germ is drawn through here: a figure that belongs to every stretch a
+/// take is written into cannot be drawn at any one section's intensity without becoming that
+/// section's figure.
 pub(super) fn density_at(settings: &ScoreSettings, part: &PartSpec, intensity: f32) -> f32 {
     let base = part.density.unwrap_or_else(|| settings.mood.density());
     let role = match part.role {
@@ -51,9 +52,6 @@ pub(super) fn density_at(settings: &ScoreSettings, part: &PartSpec, intensity: f
         Role::Arp => 1.2,
         Role::Chords => 0.8,
         Role::Pad => 0.4,
-        // A stab that is not busy is a chord part. The whole of what distinguishes it is that it
-        // reaches for the figures nothing else does, so it starts near the top of the dial.
-        Role::Stab => 1.3,
         Role::Bass => 0.9,
         _ => 1.0,
     };
@@ -155,46 +153,22 @@ pub(super) fn phrase_shape(grid: Grid, section: &SectionPlan, at: Ticks, dynamic
 
 /// The stream one bar of one pass draws its material from.
 ///
-/// Keyed by the section's *name* and not by which playing of it this is, so the second chorus
-/// reaches for the same numbers as the first and comes out the same chorus. That is the whole
-/// point of a chorus: the composer used to put the instance in every stream, which made every
-/// repeat a new piece of music and left the piece with nothing in it to recognise.
-///
-/// [`SongSpec::variation`](crate::spec::SongSpec::variation) buys the departures back. A bar it
-/// selects mixes the instance into the name, so that one bar — and only that one — draws
-/// different numbers and plays something else.
+/// Keyed by the section's *name* and not by which playing of it this is, so a clip in the second
+/// chorus reaches for the same numbers as one in the first and comes out the same chorus.
 pub(super) fn bar_stream(
-    settings: &ScoreSettings,
     frame: &Frame,
     part: &PartSpec,
     section: &SectionPlan,
     pass: &str,
     bar: usize,
 ) -> Rng {
-    let mut path = vec![
+    let path = [
         RngKey::Word("part"),
         RngKey::Word(&part.name),
         RngKey::Word(pass),
         RngKey::Word(&section.name),
         RngKey::Index(bar as u64),
     ];
-    // The first playing is the one the others are repeats of, so it never departs from itself.
-    if section.instance > 1 && settings.variation > 0.0 {
-        let mut choose = Rng::stream(
-            frame.seed,
-            &[
-                RngKey::Word("vary"),
-                RngKey::Word(&part.name),
-                RngKey::Word(pass),
-                RngKey::Word(&section.name),
-                RngKey::Index(section.instance as u64),
-                RngKey::Index(bar as u64),
-            ],
-        );
-        if choose.chance(settings.variation) {
-            path.push(RngKey::Index(section.instance as u64));
-        }
-    }
     Rng::stream(frame.seed, &path)
 }
 
@@ -239,24 +213,25 @@ pub(super) fn bar_onsets(
 
 #[cfg(test)]
 mod tests {
+    use crate::fixture::{Song, part};
     use crate::parts::PartDraft;
-    use crate::parts::fixture::{draft, part, roster, section_notes};
+    use crate::spec::{PartSpec, Role};
+    use auris_core::Subdivision;
+
+    /// The lead alone over the axis progression, for `bars` bars at `seed`.
+    fn lead(bars: usize, seed: u64) -> Song {
+        Song {
+            bars,
+            seed,
+            ..Song::with_parts([PartSpec::of_role("lead", Role::Melody)])
+        }
+    }
 
     #[test]
     fn a_section_leans_as_it_goes() {
         // Every bar used to be played at one level, so the only dynamic anywhere in a piece was
         // the step from one section's intensity to the next's.
-        let (_, frame, parts) = draft(
-            r#"
-                form = "verse"
-                chords = "@axis"
-                humanize = 0
-                [section.verse]
-                bars = 8
-                [[part]]
-                name = "lead"
-                "#,
-        );
+        let (frame, parts) = lead(8, 0).draft();
         let lead = part(&parts, "lead");
         let mean = |from: i64, to: i64| -> f32 {
             let levels: Vec<f32> = lead
@@ -276,39 +251,24 @@ mod tests {
     }
 
     #[test]
-    fn variation_lets_a_repeat_depart_from_the_first_playing() {
-        let text = r#"
-            form = "verse verse"
-            chords = "@axis"
-            humanize = 0
-            variation = 1.0
-            [section.verse]
-            bars = 4
-            [[part]]
-            name = "lead"
-            "#;
-        let (_, frame, parts) = draft(text);
-        let lead = part(&parts, "lead");
-        assert_ne!(
-            section_notes(&frame, lead, 0),
-            section_notes(&frame, lead, 1),
-            "`variation: 1.0` left the repeat identical"
-        );
-    }
-
-    #[test]
     fn a_part_on_a_triplet_grid_plays_where_no_straight_grid_reaches() {
         // The whole point of the setting: a position a sixteenth grid cannot express. A third of
         // a beat is 320 ticks, and no multiple of 320 but the beats themselves is a multiple of
         // the 240 a sixteenth is.
         //
-        // Over several seeds, because the figure is now drawn once per section: a seed that draws
+        // Over several seeds, because the figure is drawn once per section: a seed that draws
         // the held chord puts everything on a downbeat, which is a legitimate comp and lands on
         // both grids at once. What has to be true is that the setting is *reachable*.
         let mut off_the_straight_grid = 0;
         for seed in 1..=8u64 {
-            let text = roster(seed, "subdivision = \"8t\"\n            density = 0.9");
-            let (_, _, parts) = draft(&text);
+            let song = Song {
+                seed,
+                ..Song::with_parts([Song::part(Role::Chords, |chords| {
+                    chords.subdivision = Subdivision::EighthTriplet;
+                    chords.density = Some(0.9);
+                })])
+            };
+            let (_, parts) = song.draft();
             let chords = part(&parts, "chords");
             assert!(!chords.notes.is_empty(), "seed {seed} wrote nothing");
             for note in &chords.notes {
@@ -343,23 +303,13 @@ mod tests {
         // Two claims, and the second is why this is not just a quieter intensity: turning the
         // dial down has to flatten the playing, not turn the part down. A control that changed
         // both would be a control nobody could aim.
-        let spec = |dynamics: &str| {
-            format!(
-                r#"
-                    form = "verse"
-                    chords = "@axis"
-                    humanize = 0
-                    seed = 4
-                    dynamics = {dynamics}
-                    [section.verse]
-                    bars = 4
-                    [[part]]
-                    name = "lead"
-                    "#
-            )
+        let at = |dynamics: f32| {
+            let mut song = lead(4, 4);
+            song.settings.dynamics = dynamics;
+            song.draft().1
         };
-        let flat = draft(&spec("0")).2;
-        let wide = draft(&spec("1")).2;
+        let flat = at(0.0);
+        let wide = at(1.0);
         let (flat, wide) = (part(&flat, "lead"), part(&wide, "lead"));
 
         let flat_levels = levels(flat);
@@ -376,8 +326,7 @@ mod tests {
         );
         // Both ends of the claim, because both are the decision. A dial that did nothing at 1
         // would leave the hierarchy inaudible; a dial that scattered a part across half its own
-        // level is what `WIDEST` was written to stop, and a lead over eight bars sits within a
-        // few per cent of where it sits on average either way.
+        // level is what `WIDEST` was written to stop.
         let opened = spread(&wide_levels);
         assert!(
             (4..=15).contains(&opened),
@@ -386,8 +335,7 @@ mod tests {
 
         // And the level stays roughly where it was. Roughly and not exactly: the spread opens
         // around a fixed point on the hierarchy, and which weights a part actually writes on
-        // depends on the part. What matters is that flattening is heard as flattening rather
-        // than as a change of level, and a few percent is well under that.
+        // depends on the part.
         let mean = |levels: &[i32]| levels.iter().sum::<i32>() as f32 / levels.len().max(1) as f32;
         assert!(
             (mean(&flat_levels) - mean(&wide_levels)).abs() < 8.0,
@@ -401,23 +349,13 @@ mod tests {
     fn syncopation_moves_a_part_off_the_beat_without_making_it_busier() {
         // It lifts the weak steps toward the strong ones rather than adding notes, which is what
         // makes it a separate dial from the density rather than a second way to spell it.
-        let spec = |syncopation: &str| {
-            format!(
-                r#"
-                    form = "verse"
-                    chords = "@axis"
-                    humanize = 0
-                    seed = 6
-                    syncopation = {syncopation}
-                    [section.verse]
-                    bars = 8
-                    [[part]]
-                    name = "lead"
-                    "#
-            )
+        let at = |syncopation: f32| {
+            let mut song = lead(8, 6);
+            song.settings.mood.syncopation = syncopation;
+            song.draft().1
         };
-        let square = draft(&spec("0.0")).2;
-        let awkward = draft(&spec("1.0")).2;
+        let square = at(0.0);
+        let awkward = at(1.0);
         let (square, awkward) = (part(&square, "lead"), part(&awkward, "lead"));
 
         let off_the_beat = |draft: &PartDraft| {
@@ -436,58 +374,47 @@ mod tests {
         );
     }
 
-    /// How far a part's strokes sit from the level the section is played at, pooled over its
-    /// sections, as a fraction of that level.
-    ///
-    /// Per section and not per part, because a quiet verse followed by a loud chorus is a
-    /// difference in strength nobody would call unsteady — pooling the two would report the shape
-    /// of the piece as unsteadiness. A clip is a section, which is what makes this the measurement
-    /// it looks like.
-    fn stroke_spread(track: &crate::render::TrackDraft) -> f32 {
-        let mut squares = 0.0;
-        let mut counted = 0usize;
-        let mut level = 0.0;
-        for clip in &track.clips {
-            if clip.notes.len() < 2 {
-                continue;
-            }
-            let mean =
-                clip.notes.iter().map(|note| note.velocity).sum::<f32>() / clip.notes.len() as f32;
-            squares += clip
-                .notes
-                .iter()
-                .map(|note| (note.velocity - mean) * (note.velocity - mean))
-                .sum::<f32>();
-            level += mean * clip.notes.len() as f32;
-            counted += clip.notes.len();
-        }
-        if counted == 0 {
+    /// How far a part's strokes sit from their own mean level, as a fraction of that level.
+    fn stroke_spread(draft: &PartDraft) -> f32 {
+        let count = draft.notes.len();
+        if count < 2 {
             return 0.0;
         }
-        (squares / counted as f32).sqrt() / (level / counted as f32)
+        let mean = draft.notes.iter().map(|note| note.velocity).sum::<f32>() / count as f32;
+        let squares = draft
+            .notes
+            .iter()
+            .map(|note| (note.velocity - mean) * (note.velocity - mean))
+            .sum::<f32>();
+        (squares / count as f32).sqrt() / mean
     }
 
     #[test]
-    fn no_preset_varies_one_part_by_more_than_a_stroke_should() {
+    fn no_part_varies_by_more_than_a_stroke_should() {
         // The complaint this came out of was a kit that sounded badly played rather than humanly
-        // played, and here is what was behind it: a rock hat ran from 0.20 to 1.00 and its strokes
-        // were spread by 43 per cent of their own level, a city-pop snare by 44, a jazz ride by
-        // 43, and every lead in the set by a quarter. A stroke varying is a player phrasing; a
+        // played: a rock hat ran from 0.20 to 1.00 and its strokes were spread by 43 per cent of
+        // their own level, and every lead by a quarter. A stroke varying is a player phrasing; a
         // level varying by half is a player missing.
         //
         // A sixth, which is a little over the ten per cent this was aimed at: the parts that reach
-        // it are the ghosted grooves, where the quiet strokes are quiet on purpose and are the
-        // whole point of the pattern.
-        for preset in crate::PRESETS {
-            for track in crate::compose(&preset.spec()).tracks {
-                let spread = stroke_spread(&track);
-                assert!(
-                    spread < 0.16,
-                    "{} · {} varies by {:.0} per cent of its own level",
-                    preset.name,
-                    track.name,
-                    spread * 100.0
-                );
+        // it are the ghosted grooves, where the quiet strokes are quiet on purpose.
+        for groove in ["basic-rock", "eight-beat", "sixteen-beat", "bossa-nova"] {
+            for seed in 0..4u64 {
+                let mut song = Song {
+                    seed,
+                    bars: 8,
+                    ..Song::default()
+                };
+                song.settings.groove = groove.to_string();
+                for draft in song.draft().1 {
+                    let spread = stroke_spread(&draft);
+                    assert!(
+                        spread < 0.16,
+                        "{groove} seed {seed} · {} varies by {:.0} per cent of its own level",
+                        draft.name,
+                        spread * 100.0
+                    );
+                }
             }
         }
     }

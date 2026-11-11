@@ -665,7 +665,7 @@ mod tests {
     };
     static SERIAL: Mutex<()> = Mutex::new(());
     fn fixture() -> (Session, ClipId) {
-        let mut session = Session::new(SessionOptions::headless().with_balance(false)).unwrap();
+        let mut session = Session::new(SessionOptions::headless()).unwrap();
         let track = session.add_default_instrument_track("Melody").unwrap();
         let clip = session
             .add_midi_clip(track, "Opening", Ticks::ZERO, Ticks::QUARTER * 4)

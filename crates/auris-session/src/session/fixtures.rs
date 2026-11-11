@@ -189,3 +189,49 @@ pub(super) fn with_a_progression() -> (Session, TrackId) {
     session.forget_history();
     (session, track)
 }
+
+/// The parts [`song`] writes, as `(track name, preset, instrument)`.
+pub(super) const SONG_PARTS: [(&str, auris_core::ClipPreset, &str); 4] = [
+    ("lead", auris_core::ClipPreset::Lead, "auris.synth.chiptune"),
+    (
+        "chords",
+        auris_core::ClipPreset::Chords,
+        "auris.synth.chiptune",
+    ),
+    ("bass", auris_core::ClipPreset::Bass, "auris.synth.fm2"),
+    (
+        "drums",
+        auris_core::ClipPreset::Drums,
+        auris_synth::DrumKit::ID,
+    ),
+];
+
+/// Fills `session` with a small song: `bars` of the axis progression, and one generated clip
+/// over all of it on each of a lead, a chords, a bass and a drum track, named as
+/// [`SONG_PARTS`] names them. The history is forgotten afterwards, so the song is where a test
+/// starts rather than something it can undo.
+pub(super) fn song(session: &mut Session, bars: usize) -> Vec<(TrackId, ClipId)> {
+    session
+        .stamp_named_progression("axis", Ticks::ZERO, bars)
+        .expect("the axis progression is known");
+    let length = BAR * bars as i64;
+    let parts = SONG_PARTS
+        .iter()
+        .enumerate()
+        .map(|(index, (name, preset, instrument))| {
+            let track = if preset.is_drums() {
+                session.add_drum_track(*name, instrument)
+            } else {
+                session.add_instrument_track(*name, instrument)
+            }
+            .expect("the built-in instruments are registered");
+            let recipe = auris_core::ClipRecipe::new(*preset, index as u64 + 1);
+            let clip = session
+                .generate_clip(track, Ticks::ZERO, length, recipe)
+                .expect("a generated clip");
+            (track, clip)
+        })
+        .collect();
+    session.forget_history();
+    parts
+}

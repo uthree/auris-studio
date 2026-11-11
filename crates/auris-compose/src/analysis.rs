@@ -1,7 +1,7 @@
 //! Reading a melody: what key it is in, and what chords would go under it.
 //!
-//! The composer's other direction. Everywhere else in this crate a specification goes in and notes
-//! come out; here notes go in and the *harmony* comes out — a key and a chart — which is exactly
+//! The writer's other direction. Everywhere else in this crate a recipe goes in and notes come
+//! out; here notes go in and the *harmony* comes out — a key and a chart — which is exactly
 //! what [`write_phrase`](crate::write_phrase) needs in order to write a bass line, a comp and a
 //! pad under a tune somebody played by hand.
 //!
@@ -76,9 +76,8 @@ const TONE_WEIGHTS: [f64; 3] = [1.0, 0.8, 0.6];
 ///
 /// Here rather than in the session because it is a musical choice and not a plumbing one: which
 /// file answers to a program number is the session's business, and *which program a bass line
-/// wants* is this crate's. The composer's own presets make the same choice through
-/// [`Role`](crate::Role); a part written straight onto the timeline has no role, only a
-/// [`ClipPreset`], and this is that vocabulary's answer.
+/// wants* is this crate's. A part written straight onto the timeline has no instrument of its
+/// own, only a [`ClipPreset`], and this is that vocabulary's answer.
 ///
 /// The choices are the unremarkable ones on purpose. An accompaniment is a bed for something
 /// somebody already wrote, and a first draft played on a slap bass and a church organ is a draft
@@ -197,7 +196,7 @@ fn correlation(a: &[f64; 12], b: &[f64]) -> f64 {
 /// transposed figure would be when it is played back.
 ///
 /// What comes back obeys the motif field's own bounds — steps clamped to a ninth either way,
-/// at most thirty-two of them — so it can be written into a specification verbatim. Fewer than
+/// at most thirty-two of them — so it can be stored as a recipe's motif verbatim. Fewer than
 /// two notes come back as fewer than two, and the caller says "that is not a line" rather than
 /// this inventing one.
 pub fn motif_of(notes: &[Note], key: Key) -> Vec<i32> {

@@ -60,10 +60,10 @@ impl SongPlanner {
         prefs.system_prompt = format!(
             "You are a music director planning three song candidates.\n{}\n\
              This task selects directions, not authored notes. Apply the musical principles through \
-             the supported preset, tempo, key, density and lead fields. The preset is a style reference; \
+             the supported tempo, key, density and lead fields, and name the style in the description; \
              a subsequent tool-using agent authors the notes, arrangement and mix for each direction. \
              Density describes the intended texture, not a note quota, breathing guarantee or quality score. \
-             Explicit instruments, lyrics and singers in the brief override preset defaults. \
+             Explicit instruments, lyrics and singers in the brief take precedence. \
              Describe concrete intended motif, section, instrumentation and mix contrasts. The later \
              author must realize and verify them with notes and tools; this description alone is not \
              evidence of an octave lift, tension, phoneme placement or effect automation. \
@@ -74,13 +74,8 @@ impl SongPlanner {
              names in titles and descriptions, never internal instrument IDs or file paths.",
             crate::MUSICAL_DESIGN_INSTRUCTIONS
         );
-        let catalog = auris_session::prelude::PRESETS
-            .iter()
-            .map(|p| format!("{}: {}", p.name, p.description))
-            .collect::<Vec<_>>()
-            .join("\n");
         let prompt = format!(
-            "Create exactly three musical directions, about {seconds} seconds each (the brief may instead request automatic duration). Honour the vocal and instrumentation constraints in the brief. Return only a JSON array of 3 objects with these exact fields: title (max 80 chars), description (max 400 chars, concrete audible differences), preset (from catalog), tempo (50..180), key (e.g. C major or A minor), density (0.2..0.85), lead (piano|guitar|flute|strings|synth). Vary at least two musical parameters across the three ideas; do not merely rename the same song. Catalog:\n{catalog}\nMusical brief as JSON string:\n{}",
+            "Create exactly three musical directions, about {seconds} seconds each (the brief may instead request automatic duration). Honour the vocal and instrumentation constraints in the brief. Return only a JSON array of 3 objects with these exact fields: title (max 80 chars), description (max 400 chars, the style and concrete audible differences), tempo (50..180), key (e.g. C major or A minor), density (0.2..0.85), lead (piano|guitar|flute|strings|synth). Vary at least two musical parameters across the three ideas; do not merely rename the same song. Musical brief as JSON string:\n{}",
             serde_json::to_string(brief).map_err(|e| e.to_string())?
         );
         let worker = Worker::spawn(prefs.clone(), None, true, None)?;
@@ -155,8 +150,7 @@ fn parse(text: &str) -> Result<[SongIdea; 3], String> {
     }
     for a in 0..3 {
         for b in a + 1..3 {
-            if ideas[a].preset == ideas[b].preset
-                && ideas[a].tempo == ideas[b].tempo
+            if ideas[a].tempo == ideas[b].tempo
                 && ideas[a].key == ideas[b].key
                 && ideas[a].density == ideas[b].density
                 && ideas[a].lead == ideas[b].lead
@@ -173,7 +167,7 @@ mod tests {
     use super::*;
     #[test]
     fn configured_worker_returns_three_directions_without_a_live_project() {
-        let ideas = (0..3).map(|i| serde_json::json!({"title":format!("Draft {i}"),"description":"Bright keys","preset":"chiptune","tempo":100+i*10,"key":"C major","density":0.5,"lead":"piano"})).collect::<Vec<_>>();
+        let ideas = (0..3).map(|i| serde_json::json!({"title":format!("Draft {i}"),"description":"Bright keys","tempo":100+i*10,"key":"C major","density":0.5,"lead":"piano"})).collect::<Vec<_>>();
         let answer = serde_json::json!({"role":"assistant","content":serde_json::to_string(&ideas).unwrap()}).to_string();
         let (url, seen) =
             crate::tests::mock_server(vec![crate::tests::completion(&answer, "stop")]);
@@ -206,7 +200,7 @@ mod tests {
 
     #[test]
     fn requires_three_valid_distinct_directions() {
-        let idea = serde_json::json!({"title":"A","description":"Piano","preset":"pop-band","tempo":120,"key":"C major","density":0.5,"lead":"piano"});
+        let idea = serde_json::json!({"title":"A","description":"Piano","tempo":120,"key":"C major","density":0.5,"lead":"piano"});
         assert!(parse(&serde_json::json!([idea, idea, idea]).to_string()).is_err());
         let mut b = idea.clone();
         b["tempo"] = 100.into();

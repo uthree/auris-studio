@@ -17,7 +17,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         ("crunch", 18.0, -10.0, 1.0),
         ("lead", 34.0, -9.0, 2.0),
     ] {
-        let mut session = Session::new(SessionOptions::headless().with_balance(false))?;
+        let mut session = Session::new(SessionOptions::headless())?;
         let track =
             session.add_instrument_track("Electric Guitar", "auris.physical.electric_guitar")?;
         let pickup = session

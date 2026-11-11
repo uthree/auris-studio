@@ -36,11 +36,10 @@ fn expanded_recipe(mut recipe: ClipRecipe) -> ClipRecipe {
     }
     if recipe.preset == ClipPreset::Drums && recipe.drum_voices.is_empty() {
         for role in auris_compose::roles_of(recipe.preset) {
-            let (Some(drum_role), Some(preset)) =
-                (role.drum_role(), auris_compose::preset_of(*role))
-            else {
+            let Some(drum_role) = role.drum_role() else {
                 continue;
             };
+            let preset = auris_compose::preset_of(*role);
             let part = auris_compose::PartSpec::of_role(role.name(), *role);
             let note = match &recipe.drum_map {
                 Some(map) => match map.voices.get(&drum_role) {

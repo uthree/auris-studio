@@ -11,7 +11,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let font = args.next().filter(|arg| arg != "native").map(PathBuf::from);
     let dry = args.next().is_some_and(|arg| arg == "dry");
     fs::create_dir_all(&directory)?;
-    let mut session = Session::new(SessionOptions::headless().with_balance(false))?;
+    let mut session = Session::new(SessionOptions::headless())?;
     let font = font
         .map(|path| session.import_soundfont(&path))
         .transpose()?;

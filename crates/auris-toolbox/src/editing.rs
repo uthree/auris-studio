@@ -22,13 +22,13 @@ pub mod analyze_music {
     }
 }
 
-/// The saved specification and the current musical state, read separately.
+/// The current musical state of a document, read without rendering.
 pub mod inspect_composition {
     use super::*;
     /// The tool's wire name.
     pub const NAME: &str = "inspect_composition";
     /// The tool's model-facing description.
-    pub const DESCRIPTION: &str = "Read the original song specification, current instrument controls, key/chords/tempo/meter/sections and clip recipes, plus tracked changes since composition. Old projects without a saved baseline report comparison unavailable. The original specification is provenance; the .auris project holds final edits. Comparison scope and untracked state are explicit. Large results return report_id; use read_report without repeating edits.";
+    pub const DESCRIPTION: &str = "Read current instrument sources and controls, key/chords/tempo/meter/sections, lyrics and clip recipes, with which clips were edited by hand. Mixer, effects, automation and audio takes are not repeated here. Large results return report_id; use read_report without repeating edits.";
     /// The project to inspect.
     pub use crate::ProjectArgs as Args;
     /// Reports musical decisions without rendering audio or changing the document.
@@ -46,10 +46,7 @@ pub mod inspect_composition {
             serde_json::json!({"name": track.name, "track": track.id.0, "clips": clips})
         }).collect();
         reports::publish(serde_json::json!({
-            "original_specification": project.song_spec,
             "current_instruments": state["instruments"],
-            "changes_since_composition": {"baseline_available":state["baseline_available"],"changes":state["changes"],
-                "comparison_scope":state["comparison_scope"],"uncompared_state":state["uncompared_state"],"note":state["baseline_note"]},
             "final_state":state["final_state"],
             "playback": session.playback_readiness(),
             "grooves": groove_catalog().iter().map(|groove| groove.name).collect::<Vec<_>>(),
@@ -70,7 +67,7 @@ mod tests {
     }
 
     #[test]
-    fn composition_inspection_exposes_current_controls_without_saving_legacy_projects() {
+    fn composition_inspection_exposes_current_controls_without_saving() {
         let root = tempfile::tempdir().unwrap();
         let mut session = headless().unwrap();
         session.add_default_instrument_track("Lead").unwrap();
@@ -93,7 +90,6 @@ mod tests {
                 report.pointer(path).unwrap().clone()
             }
         };
-        assert_eq!(read("/changes_since_composition/baseline_available"), false);
         assert_eq!(read("/current_instruments/0/name"), "Lead");
         assert!(read("/current_instruments/0/parameters/0/param").is_string());
         assert_eq!(std::fs::read(&path).unwrap(), before);

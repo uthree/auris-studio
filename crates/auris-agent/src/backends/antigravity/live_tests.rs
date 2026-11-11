@@ -23,7 +23,7 @@ impl Song {
     fn new(folder: Option<PathBuf>) -> Self {
         Self {
             worker: crate::Worker::spawn(preferences(), folder, true, None).unwrap(),
-            session: Session::new(SessionOptions::headless().with_balance(false)).unwrap(),
+            session: Session::new(SessionOptions::headless()).unwrap(),
             calls: Vec::new(),
             failures: Vec::new(),
         }

@@ -78,7 +78,7 @@ fn looped_backing_cannot_be_overlapped_or_changed_outside_the_harmony_range() {
 }
 
 fn fixture() -> (Session, ClipId, TrackId, TrackId) {
-    let mut session = Session::new(crate::SessionOptions::headless().with_balance(false)).unwrap();
+    let mut session = Session::new(crate::SessionOptions::headless()).unwrap();
     let lead = session.add_default_instrument_track("Lead").unwrap();
     let clip = session
         .add_midi_clip(lead, "Authored melody", Ticks::ZERO, Ticks::QUARTER * 16)

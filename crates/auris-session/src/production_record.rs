@@ -1030,8 +1030,7 @@ mod tests {
     #[test]
     fn a_sung_lead_on_one_rhythm_throughout_is_unmet_structure() {
         use auris_core::project::Note;
-        let mut session =
-            crate::Session::new(crate::SessionOptions::headless().with_balance(false)).unwrap();
+        let mut session = crate::Session::new(crate::SessionOptions::headless()).unwrap();
         let lead = session.add_singer_track("Lead");
         let bar = Ticks(Ticks::QUARTER.raw() * 4);
         // Eight two-bar lines, each four quarter notes from the downbeat and a bar's rest.
@@ -1090,8 +1089,7 @@ mod tests {
     #[test]
     fn a_foreground_that_stops_after_a_verse_is_unmet_structure_until_it_covers_the_song() {
         use auris_core::project::Note;
-        let mut session =
-            crate::Session::new(crate::SessionOptions::headless().with_balance(false)).unwrap();
+        let mut session = crate::Session::new(crate::SessionOptions::headless()).unwrap();
         let lead = session.add_default_instrument_track("Lead").unwrap();
         let bar = Ticks(Ticks::QUARTER.raw() * 4);
         let verse = session
@@ -1157,8 +1155,7 @@ mod tests {
 
     #[test]
     fn score_facts_follow_sections_and_chords_in_the_live_document() {
-        let mut session =
-            crate::Session::new(crate::SessionOptions::headless().with_balance(false)).unwrap();
+        let mut session = crate::Session::new(crate::SessionOptions::headless()).unwrap();
         let mut run = |value: Value| {
             session
                 .agent_command(serde_json::from_value(value).unwrap())
@@ -1218,8 +1215,7 @@ mod tests {
     #[test]
     fn drums_struck_alike_in_every_section_are_unmet_arrangement_until_shaded() {
         use auris_core::project::Note;
-        let mut session =
-            crate::Session::new(crate::SessionOptions::headless().with_balance(false)).unwrap();
+        let mut session = crate::Session::new(crate::SessionOptions::headless()).unwrap();
         let bar = Ticks(Ticks::QUARTER.raw() * 4);
         let drums = session.add_default_drum_track("Drums").unwrap();
         let clip = session

@@ -147,13 +147,13 @@ pub use session::workspace_relative;
 pub use session::{
     AccompanyReport, Arm, AudioStatus, AutosaveJob, AutosaveResult, BalanceReport, CEILING_DB,
     Clipboard, CollectAssetsJob, CollectAssetsResult, ComposeBalanceJob, ComposeBalancePhase,
-    ComposeBalanceProgress, ComposeBalanceResult, ComposeBalanceStep, ComposeReport, CopiedClip,
-    CopiedContent, DEFAULT_OCTAVE, DEFAULT_PARTS, DEFAULT_VELOCITY, DiscardRecoveryJob,
-    DiskWatchJob, DiskWatchResult, InputChannels, LAYOUT, LIMITER_ALLOWANCE_DB, LoadedFont,
-    MIN_PHONEME_SECONDS, MidiExportJob, MidiExportReport, MidiExportResult, MidiImportJob,
-    MidiImportResult, MixAnalysis, MusicalTyping, NORMALIZE_LIMITER_ALLOWANCE_DB,
-    NormalizeMixReport, OCTAVE_RANGE, OpenProjectJob, OpenProjectResult, Played, PluginWindow,
-    Quantize, RECOVERY_DIR_VAR, RecordingReport, RecordingStatus, RecoveryCleanupJob, RecoveryJob,
+    ComposeBalanceProgress, ComposeBalanceResult, ComposeBalanceStep, CopiedClip, CopiedContent,
+    DEFAULT_OCTAVE, DEFAULT_PARTS, DEFAULT_VELOCITY, DiscardRecoveryJob, DiskWatchJob,
+    DiskWatchResult, InputChannels, LAYOUT, LIMITER_ALLOWANCE_DB, LoadedFont, MIN_PHONEME_SECONDS,
+    MidiExportJob, MidiExportReport, MidiExportResult, MidiImportJob, MidiImportResult,
+    MixAnalysis, MusicalTyping, NORMALIZE_LIMITER_ALLOWANCE_DB, NormalizeMixReport, OCTAVE_RANGE,
+    OpenProjectJob, OpenProjectResult, Played, PluginWindow, Quantize, RECOVERY_DIR_VAR,
+    RecordingReport, RecordingStatus, RecoveryCleanupJob, RecoveryJob,
     RecoveryQuarantineCleanupJob, RecoveryResult, RecoverySnapshot, Release, SaveJob, SaveReport,
     SaveResult, SectionLoudness, Session, SessionOptions, SingPlan, SingerFramesExportJob,
     SingerFramesExportResult, SingerLandingJob, SingerLandingResult, SingerTakeState,
@@ -168,7 +168,6 @@ pub use session::{
 };
 pub use session::{CheckpointJob, CheckpointOperation, CheckpointResult};
 pub use session::{ClipEvent, ClipEventKind, EventEdit, EventRef, clip_events};
-pub use session::{CompositionPreview, CompositionTrackPreview};
 pub use session::{
     DEFAULT_SAMPLE_ROOT, DetectedPitch, SampleZoneView, detect_pitch, parse_root_note,
 };
@@ -244,9 +243,6 @@ pub use auris_clap::{HasWindowHandle, RawWindowHandle};
 /// File extension of a saved project.
 pub use auris_io::PROJECT_EXTENSION;
 
-/// File extension of a song specification.
-pub use auris_compose::SPEC_EXTENSION;
-
 /// Audio file extensions the importer accepts, for a file-picker filter.
 pub fn supported_audio_extensions() -> &'static [&'static str] {
     auris_io::supported_extensions()
@@ -271,6 +267,7 @@ pub fn midi_extensions() -> &'static [&'static str] {
 /// know that rule to tell which `Key` a line means, and one of the two would be wrong silently.
 pub mod prelude {
     pub use crate::session::CommentHost;
+    pub use crate::session::PartSource;
     pub use crate::session::{PlaybackReadiness, PlaybackState};
     pub use crate::session::{RhythmGrid, RhythmRow};
     pub use crate::session::{TrackConversion, TrackConversionJob};
@@ -280,15 +277,10 @@ pub mod prelude {
     /// A whole module rather than the type alone, because a picker needs the name table beside
     /// it — a frontend cannot list what it has no list of.
     pub use auris_compose::gm;
+    /// Reads a recipe's motif field — `"0 2 4 2"` — so every door refuses the same text.
+    pub use auris_compose::parse_motif;
     pub use auris_compose::rhythm::Pattern;
-    /// Reads a motif field — `"0 2 4 2"` — the way a specification does, so a prompt that
-    /// takes one refuses exactly what the file would refuse.
-    pub use auris_compose::spec::{PartSource, parse_motif};
-    pub use auris_compose::{
-        Composition, EffectSpec, Ending, Mood, PRESETS, Pace, PartSpec, PerformanceStyle, Role,
-        ScaleChoice, SectionSpec, SongPreset, SongSpec, SpecError, Tonality, compose,
-        default_instrument, motif_of, preset,
-    };
+    pub use auris_compose::{Mood, PerformanceStyle, Role, motif_of};
     pub use auris_core::automation::{
         Automation, AutomationCurve, AutomationLane, AutomationPoint,
     };
@@ -311,13 +303,13 @@ pub mod prelude {
     };
     pub use auris_core::{
         AudioBuffer, AudioClip, AudioSource, AuxSend, ClipId, ClipPreset, ClipRecipe, Color,
-        ConsonantWidths, DrumMap, DrumRole, EffectSlot, EffectSlotId, FadeCurve, Fall, GhostNotes,
-        GhostPattern, LayerShape, LayerVoice, MAX_LAYER_OFFSET, MAX_STRING_MS, MidiClip,
-        MixerStrip, Note, NoteTransform, Output, PluginRegistry, PresetRef, Project, STRUM_VALUES,
-        SUSTAIN_MAX_TICKS, Scoop, SectionMap, SectionPoint, SectionSpan, SendId, SingerPitch,
-        SingerTrack, SoundFontId, SoundFontRef, SourceId, StrokeDirection, Subdivision, Track,
-        TrackId, TrackKind, Vibrato, default_frame_hop, default_loop_end, loop_passes,
-        sounding_length,
+        ConsonantWidths, DrumMap, DrumRole, DrumVoiceRecipe, EffectSlot, EffectSlotId, FadeCurve,
+        Fall, GhostNotes, GhostPattern, LayerShape, LayerVoice, MAX_LAYER_OFFSET, MAX_STRING_MS,
+        MidiClip, MixerStrip, Note, NoteTransform, Output, PluginRegistry, PresetRef, Project,
+        STRUM_VALUES, SUSTAIN_MAX_TICKS, Scoop, SectionMap, SectionPoint, SectionSpan, SendId,
+        SingerPitch, SingerTrack, SoundFontId, SoundFontRef, SourceId, StrokeDirection,
+        Subdivision, Track, TrackId, TrackKind, Vibrato, default_frame_hop, default_loop_end,
+        loop_passes, sounding_length,
     };
     pub use auris_core::{Comment, CommentId, JoinRefusal};
     pub use auris_core::{
@@ -384,11 +376,11 @@ pub mod prelude {
     pub use crate::{
         Acceleration, AccompanyReport, Arm, AudioPreferences, AutosaveJob, AutosaveResult,
         Clipboard, CollectAssetsJob, CollectAssetsResult, ComposeBalanceJob, ComposeBalancePhase,
-        ComposeBalanceProgress, ComposeBalanceResult, ComposeBalanceStep, ComposeReport,
-        CopiedClip, CopiedContent, DEFAULT_PARTS, DiscardRecoveryJob, DiskWatchJob,
-        DiskWatchResult, Edit, ExportPreferences, ExportSummary, InputChannels, LoadedFont,
-        MidiImportJob, MidiImportResult, MusicalTyping, OpenProjectJob, OpenProjectResult,
-        ParamTarget, Quantize, RecordingReport, RecordingStatus, RecoveryCleanupJob, RecoveryJob,
+        ComposeBalanceProgress, ComposeBalanceResult, ComposeBalanceStep, CopiedClip,
+        CopiedContent, DEFAULT_PARTS, DiscardRecoveryJob, DiskWatchJob, DiskWatchResult, Edit,
+        ExportPreferences, ExportSummary, InputChannels, LoadedFont, MidiImportJob,
+        MidiImportResult, MusicalTyping, OpenProjectJob, OpenProjectResult, ParamTarget, Quantize,
+        RecordingReport, RecordingStatus, RecoveryCleanupJob, RecoveryJob,
         RecoveryQuarantineCleanupJob, RecoveryResult, RenderJob, SaveJob, SaveReport, SaveResult,
         Session, SessionError, SessionOptions, Settings, SingerLandingJob, SingerLandingResult,
         SingerVoiceLoadJob, SingerVoiceLoadResult, StemRenderFailure, StemSummary, TakeReport,

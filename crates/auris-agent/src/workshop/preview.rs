@@ -140,7 +140,7 @@ mod tests {
     use auris_session::{SessionOptions, prelude::*};
 
     fn score() -> Session {
-        let mut session = Session::new(SessionOptions::headless().with_balance(false)).unwrap();
+        let mut session = Session::new(SessionOptions::headless()).unwrap();
         let track = session.add_default_instrument_track("Lead").unwrap();
         let clip = session
             .add_midi_clip(track, "Motif", Ticks::ZERO, Ticks::QUARTER * 4)

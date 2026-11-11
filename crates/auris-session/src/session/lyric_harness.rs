@@ -6,7 +6,6 @@
 
 use super::lyric_slots::{grouped_reading, mora_slots, note_groups, note_range};
 use super::{Session, lyrics};
-use auris_compose::SongSpec;
 use auris_vocal::{SungMora, split_kana_lyric};
 use serde::{Deserialize, Serialize};
 
@@ -522,128 +521,6 @@ impl Session {
             dictionary_available: self.japanese.is_some(),
             phrases,
         })
-    }
-
-    /// Diagnose all vocal sections without changing a document or loading instruments.
-    /// Uses the composer's reader and exact fixed-bar allocator, including shared closures.
-    pub fn diagnose_song_lyrics(&self, spec: &SongSpec) -> Result<LyricDiagnosis, String> {
-        let mut report = LyricDiagnosis::new();
-        let mut seen = std::collections::BTreeSet::new();
-        for name in &spec.form {
-            if !seen.insert(name) {
-                continue;
-            }
-            let Some(section) = spec.sections.get(name) else {
-                continue;
-            };
-            // An empty later lyric intentionally leaves that section instrumental.
-            if section.lyrics.trim().is_empty() {
-                continue;
-            }
-            let analysis = self.analyze_lyrics(&section.lyrics, &[])?;
-            for phrase in &analysis.phrases {
-                if let Some(error) = &phrase.error {
-                    let mut item = issue(
-                        "unreadable_phrase",
-                        name,
-                        Some(phrase.phrase),
-                        error.clone(),
-                    );
-                    item.severity = Severity::Incomplete;
-                    report.issues.push(item);
-                }
-            }
-            if analysis.complete {
-                let phrases = lyrics::read_lyrics(&section.lyrics, self.japanese.as_ref())
-                    .map_err(|e| e.to_string())?;
-                let bars = lyrics::vocal_bars(spec, section.melody_from.as_deref().unwrap_or(name));
-                if lyrics::fitted_lyric_rhythm(
-                    &phrases,
-                    spec.meter,
-                    bars,
-                    spec.writing_style,
-                    spec.seed,
-                )
-                .is_none()
-                {
-                    let mut item = issue(
-                        "lyric_capacity_exceeded",
-                        name,
-                        None,
-                        format!(
-                            "{name}: too many syllables for the fixed section length; shorten the lyrics or reduce phrase breaks"
-                        ),
-                    );
-                    item.expected = Some(serde_json::json!({"bars": bars}));
-                    item.actual = Some(
-                        serde_json::json!({"moras_per_phrase": analysis.phrases.iter().map(|p| p.moras.len()).collect::<Vec<_>>()}),
-                    );
-                    report.issues.push(item);
-                }
-            }
-            report.sections.push(SectionAnalysis {
-                section: name.clone(),
-                analysis,
-            });
-        }
-        seen.clear();
-        for name in &spec.form {
-            if !seen.insert(name) {
-                continue;
-            }
-            let Some(section) = spec.sections.get(name) else {
-                continue;
-            };
-            let Some(source) = &section.melody_from else {
-                continue;
-            };
-            if section.lyrics.trim().is_empty() {
-                continue;
-            }
-            if !spec.sections.get(source).is_some_and(|s| {
-                s.melody_from.is_none() && source != name && spec.form.contains(source)
-            }) {
-                if !report
-                    .issues
-                    .iter()
-                    .any(|i| i.section == *name && i.code == "invalid_melody_source")
-                {
-                    report.issues.push(issue(
-                        "invalid_melody_source",
-                        name,
-                        None,
-                        format!("{name}: original section `{source}` must be in the form"),
-                    ));
-                }
-                continue;
-            }
-            let original = report
-                .sections
-                .iter()
-                .find(|s| s.section == *source)
-                .map(|s| &s.analysis);
-            let repeated = report
-                .sections
-                .iter()
-                .find(|s| s.section == *name)
-                .map(|s| &s.analysis);
-            if let Some(repeated) = repeated {
-                let empty = LyricsAnalysis {
-                    complete: true,
-                    dictionary_available: self.japanese.is_some(),
-                    phrases: Vec::new(),
-                };
-                compare_phrases(
-                    name,
-                    source,
-                    original.unwrap_or(&empty),
-                    repeated,
-                    &mut report.issues,
-                );
-            }
-        }
-        report.finish();
-        Ok(report)
     }
 }
 

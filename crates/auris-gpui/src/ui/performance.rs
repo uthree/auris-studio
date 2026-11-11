@@ -1073,7 +1073,7 @@ mod tests {
     fn live_agent_parameters_match_the_existing_performance_controls() {
         use crate::ui::pitch_performance::PitchDial;
         use auris_session::{Session, SessionOptions, live_agent::Command};
-        let mut session = Session::new(SessionOptions::headless().with_balance(false)).unwrap();
+        let mut session = Session::new(SessionOptions::headless()).unwrap();
         let track = session.add_default_instrument_track("Lead").unwrap();
         let clip = session
             .add_midi_clip(track, "Phrase", Ticks::ZERO, Ticks::QUARTER * 4)

@@ -3,7 +3,7 @@ use crate::live_agent::Command;
 use serde_json::Value;
 
 fn fixture() -> (Session, ClipId) {
-    let mut session = Session::new(crate::SessionOptions::headless().with_balance(false)).unwrap();
+    let mut session = Session::new(crate::SessionOptions::headless()).unwrap();
     let track = session.add_default_instrument_track("Melody").unwrap();
     let clip = session
         .add_midi_clip(track, "Motif", Ticks::QUARTER * 4, Ticks::QUARTER * 4)

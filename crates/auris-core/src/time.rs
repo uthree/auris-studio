@@ -341,8 +341,7 @@ impl std::str::FromStr for TimeSignature {
 
     /// Reads `4/4`, and refuses anything that is not a meter this can count.
     ///
-    /// The bounds are the same ones the song specification parser applies, and for the same
-    /// reason: a numerator in the millions makes [`Self::ticks_per_bar`] overflow every position
+    /// The bounds exist because a numerator in the millions makes [`Self::ticks_per_bar`] overflow every position
     /// computed from it, and a denominator that is not a note value does not name a beat.
     fn from_str(text: &str) -> Result<Self> {
         let complaint = || CoreError::InvalidTimeSignature(text.to_string());

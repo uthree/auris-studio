@@ -426,10 +426,8 @@ mod tests {
             for allowed in [false, true] {
                 let (bridge, commands, events) = crate::worker::test_bridge();
                 let host = ToolHost::new(bridge);
-                let mut song = auris_session::Session::new(
-                    auris_session::SessionOptions::headless().with_balance(false),
-                )
-                .unwrap();
+                let mut song =
+                    auris_session::Session::new(auris_session::SessionOptions::headless()).unwrap();
                 let track = song.add_default_instrument_track("Lead").unwrap();
                 let clip = song
                     .add_midi_clip(

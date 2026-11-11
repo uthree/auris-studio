@@ -276,13 +276,12 @@ pub(super) fn bass(
         // Keep that relationship for the whole phrase, leaving the bass anchors and
         // rhythm intact. Styled parts retain the register their vocabulary establishes.
         let fifth = if settings.style.is_none() {
-            let above =
-                bar_stream(settings, frame, part, section, "voicing", phrase_start).chance(0.5);
+            let above = bar_stream(frame, part, section, "voicing", phrase_start).chance(0.5);
             voice_on_side(fifth, root, above, low, high)
         } else {
             fifth
         };
-        let mut choose = bar_stream(settings, frame, part, section, "figure", phrase_start);
+        let mut choose = bar_stream(frame, part, section, "figure", phrase_start);
         let phrase_busy = if phrase.is_some_and(|phrase| phrase.role == PhraseRole::Release) {
             busy * 0.6
         } else {
@@ -452,7 +451,8 @@ pub(super) fn bass(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parts::fixture::{BASE, draft, part};
+    use crate::fixture::{Song, part};
+    use crate::spec::Role;
 
     #[test]
     fn fifth_voicings_keep_the_chord_tone_on_the_selected_side_when_it_fits() {
@@ -485,11 +485,13 @@ mod tests {
 
     #[test]
     fn a_bass_keeps_its_figure_inside_each_phrase() {
-        use crate::parts::fixture::bar_steps;
+        use crate::fixture::bar_steps;
         for seed in 0..16 {
-            let (_, frame, parts) = draft(&format!(
-                "seed = {seed}\n{BASE}\n[[part]]\nname = \"bass\"\nrole = \"bass\""
-            ));
+            let (frame, parts) = Song {
+                seed,
+                ..Song::default()
+            }
+            .draft();
             let bass = part(&parts, "bass");
             let section = &frame.sections[0];
             for phrase in &section.phrases {
@@ -624,19 +626,11 @@ mod tests {
         // the chord's third, which no other figure plays — the rest are root, fifth and octave.
         let mut walked = false;
         for seed in 1..=16u64 {
-            let (_, frame, parts) = draft(&format!(
-                r#"
-                    form = "verse"
-                    chords = "@axis"
-                    humanize = 0
-                    seed = {seed}
-                    [section.verse]
-                    bars = 4
-                    [[part]]
-                    name = "bass"
-                    density = 1.0
-                    "#
-            ));
+            let (frame, parts) = Song {
+                seed,
+                ..Song::with_parts([Song::part(Role::Bass, |bass| bass.density = Some(1.0))])
+            }
+            .draft();
             let bass = part(&parts, "bass");
             let section = &frame.sections[0];
             for event in &section.events {
@@ -663,7 +657,7 @@ mod tests {
 
     #[test]
     fn the_bass_sounds_every_chord_change() {
-        let (_, frame, parts) = draft(BASE);
+        let (frame, parts) = Song::default().draft();
         let bass = part(&parts, "bass");
         let section = &frame.sections[0];
         for event in &section.events {
@@ -678,15 +672,11 @@ mod tests {
 
     #[test]
     fn the_bass_plays_the_sounding_bass_of_a_slash_chord() {
-        let (_, frame, parts) = draft(
-            r#"
-            form = "verse"
-            chords = "@koakuma"
-            humanize = 0
-            [section.verse]
-            bars = 4
-            "#,
-        );
+        let (frame, parts) = Song {
+            chords: "@koakuma".into(),
+            ..Song::default()
+        }
+        .draft();
         let bass = part(&parts, "bass");
         let section = &frame.sections[0];
         // Bar two is V over the subdominant, so the bass must play the subdominant.
@@ -707,17 +697,14 @@ mod tests {
         // 480. Flooring the length at a whole step re-inflated every note past its chord, so eight
         // of the nine overlapped the next by 54 ticks — two roots sounding at once on one
         // instrument, which is the one thing a bass part must not do.
-        let (_, frame, parts) = draft(
-            r#"
-                form = "verse"
-                chords = "| I ii iii IV V vi vii I bII |"
-                humanize = 0
-                [section.verse]
-                bars = 1
-                [section.verse.part.bass]
-                subdivision = "8"
-                "#,
-        );
+        let (frame, parts) = Song {
+            chords: "| I ii iii IV V vi vii I bII |".into(),
+            bars: 1,
+            ..Song::with_parts([Song::part(Role::Bass, |bass| {
+                bass.subdivision = auris_core::Subdivision::Eighth;
+            })])
+        }
+        .draft();
         let bass = part(&parts, "bass");
         let section = &frame.sections[0];
         assert!(bass.notes.len() >= 9, "one note per chord at least");
@@ -757,16 +744,11 @@ mod tests {
     fn the_bass_follows_the_kick_in_an_odd_meter() {
         // The groove is a bar long, so it has to be read modulo the bar rather than modulo its
         // own sixteen steps, or it drifts against the drums in anything but four four.
-        let (_, frame, parts) = draft(
-            r#"
-                form = "verse"
-                meter = "3/4"
-                chords = "@axis"
-                humanize = 0
-                [section.verse]
-                bars = 4
-                "#,
-        );
+        let (frame, parts) = Song {
+            meter: auris_core::TimeSignature::new(3, 4),
+            ..Song::default()
+        }
+        .draft();
         let bass = part(&parts, "bass");
         let kick = part(&parts, "kick");
         assert!(!bass.notes.is_empty() && !kick.notes.is_empty());

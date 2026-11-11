@@ -110,9 +110,6 @@ thiserror = "2.0"
 # plugin instance outright, so the fork exposes that single-owner, preallocated RT path without
 # weakening the crate's ordinary multi-threaded API. See vendor/vst3-host/README-AURIS.md.
 vst3-host = { path = "vendor/vst3-host", default-features = false }
-# The syntax a song specification is written in. Already in the lock file by way of build-time
-# tooling, so naming it here adds nothing to the build.
-toml = "1"
 
 # Win32 bindings for the plugin hosts.
 windows = "0.62"

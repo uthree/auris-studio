@@ -11,7 +11,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let font_path = args.next().map(PathBuf::from);
     fs::create_dir_all(&directory)?;
     for (name, patch) in [("piano", 0), ("guitar", 25), ("violin", 40)] {
-        let mut session = Session::new(SessionOptions::headless().with_balance(false))?;
+        let mut session = Session::new(SessionOptions::headless())?;
         let track = session.add_default_instrument_track(name)?;
         if let Some(path) = &font_path {
             let font = session.import_soundfont(path)?;

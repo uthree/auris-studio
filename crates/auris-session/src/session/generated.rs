@@ -1125,21 +1125,40 @@ mod tests {
         assert!(session.midi_clip(silent).unwrap().notes.is_empty());
     }
 
+    /// A kit of three independently written voices — kick, snare and hat at General MIDI notes
+    /// unless `snare` says otherwise — and a performance stack to keep.
+    fn kit(snare: u8) -> (ClipRecipe, Vec<NoteTransform>) {
+        let mut recipe = ClipRecipe::new(ClipPreset::Drums, 3);
+        for (name, role, preset, note) in [
+            ("kick", auris_core::DrumRole::Kick, ClipPreset::Kick, 36),
+            (
+                "snare",
+                auris_core::DrumRole::Snare,
+                ClipPreset::Snare,
+                snare,
+            ),
+            ("hat", auris_core::DrumRole::ClosedHat, ClipPreset::Hat, 42),
+        ] {
+            recipe.drum_voices.push(auris_core::DrumVoiceRecipe {
+                name: name.into(),
+                role,
+                note,
+                recipe: Some(Box::new(ClipRecipe::new(preset, 3))),
+                fixed_notes: Vec::new(),
+            });
+        }
+        (recipe, vec![NoteTransform::Lean { ticks: 6 }])
+    }
+
     #[test]
     fn rewriting_one_drum_preserves_other_voices_edits_and_performance() {
         let (mut session, track) = with_drum_progression();
-        let piece = auris_compose::compose(&auris_compose::SongSpec::default());
-        let draft = &piece
-            .tracks
-            .iter()
-            .find(|track| !track.drum_parts.is_empty())
-            .unwrap()
-            .clips[0];
+        let (recipe, performance) = kit(38);
         let clip = session
-            .generate_clip(track, Ticks::ZERO, BAR * 4, draft.recipe.clone().unwrap())
+            .generate_clip(track, Ticks::ZERO, BAR * 4, recipe)
             .unwrap();
         let midi = session.project.midi_clip_mut(clip).unwrap();
-        midi.transforms = draft.performance.clone();
+        midi.transforms = performance;
         let kick = midi
             .notes
             .iter_mut()
@@ -1214,43 +1233,19 @@ mod tests {
     #[test]
     fn kit_regeneration_keeps_fixed_accents_custom_notes_and_the_performance_stack() {
         let (mut session, track) = with_drum_progression();
-        let mut spec = auris_compose::SongSpec::default();
-        spec.parts.push(auris_compose::PartSpec::of_role(
-            "accent",
-            auris_compose::Role::Crash,
-        ));
-        for part in &mut spec.parts {
-            if part.role == auris_compose::Role::Snare {
-                part.note = Some(73);
-            }
-        }
-        let piece = auris_compose::compose(&spec);
-        let kit = piece
-            .tracks
-            .iter()
-            .find(|track| !track.drum_parts.is_empty())
-            .unwrap();
-        let draft = kit
-            .clips
-            .iter()
-            .find(|clip| {
-                clip.recipe
-                    .as_ref()
-                    .unwrap()
-                    .drum_voices
-                    .iter()
-                    .any(|voice| voice.name == "accent")
-            })
-            .unwrap();
+        let (mut recipe, performance) = kit(73);
+        // A fixed accent: a crash on the downbeat that no writer owns.
+        recipe.drum_voices.push(auris_core::DrumVoiceRecipe {
+            name: "accent".into(),
+            role: auris_core::DrumRole::Crash,
+            note: 49,
+            recipe: None,
+            fixed_notes: vec![Note::new(49, Ticks::ZERO, Ticks::QUARTER)],
+        });
         let clip = session
-            .generate_clip(
-                track,
-                Ticks::ZERO,
-                draft.length,
-                draft.recipe.clone().unwrap(),
-            )
+            .generate_clip(track, Ticks::ZERO, BAR * 4, recipe)
             .unwrap();
-        session.project.midi_clip_mut(clip).unwrap().transforms = draft.performance.clone();
+        session.project.midi_clip_mut(clip).unwrap().transforms = performance;
         let before = session.midi_clip(clip).unwrap().clone();
         session.reroll_clip(clip).unwrap();
         let after = session.midi_clip(clip).unwrap();

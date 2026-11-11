@@ -158,7 +158,7 @@ mod tests {
 
     #[test]
     fn applying_copies_the_stages_with_the_clips_own_take_and_undoes_in_one_step() {
-        let mut session = Session::new(SessionOptions::headless().with_balance(false)).unwrap();
+        let mut session = Session::new(SessionOptions::headless()).unwrap();
         let track = session.add_default_instrument_track("Piano").unwrap();
         let clip = session
             .add_midi_clip(track, "Verse", Ticks::ZERO, Ticks::QUARTER * 4)
@@ -197,7 +197,7 @@ mod tests {
 
     #[test]
     fn a_drum_kit_keeps_its_writer_scopes_and_skips_pitch_gestures() {
-        let mut session = Session::new(SessionOptions::headless().with_balance(false)).unwrap();
+        let mut session = Session::new(SessionOptions::headless()).unwrap();
         let track = session
             .add_drum_track("Drums", auris_synth::DrumKit::ID)
             .unwrap();
@@ -224,7 +224,7 @@ mod tests {
 
     #[test]
     fn a_kept_preset_comes_back_in_the_list_and_can_be_forgotten() {
-        let mut session = Session::new(SessionOptions::headless().with_balance(false)).unwrap();
+        let mut session = Session::new(SessionOptions::headless()).unwrap();
         let track = session.add_default_instrument_track("Keys").unwrap();
         let clip = session
             .add_midi_clip(track, "Verse", Ticks::ZERO, Ticks::QUARTER * 4)

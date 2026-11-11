@@ -680,9 +680,8 @@ the song rather than stored, so the numbering can never disagree with the timeli
 The labels are more than a map. A clip generated inside a named section draws its figures from
 the *label*: two clips written into stretches both called サビ come out recognisably the same
 idea, and a stretch called Bメロ writes something else — the same rule that makes a repeated
-section recognisable inside the composer, read off the timeline instead of a specification.
-This is the ground the whole-song generator will stand on; today it is already the difference
-between clips that happen to coexist and clips that belong to the same song.
+section recognisable, read off the timeline. It is the difference between clips that happen
+to coexist and clips that belong to the same song.
 
 ## Built-in instruments
 

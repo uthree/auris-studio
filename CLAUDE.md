@@ -79,7 +79,8 @@ crates/auris-video       note-roll videos: frames drawn in software, encoded by 
                          ffmpeg (never bundled); depends on auris-core only
 crates/auris-gpu         optional wgpu compute for offline analysis
 crates/auris-analysis    offline music recognition: DSP and local model inference
-crates/auris-compose     score-based automatic composition; depends on auris-core only
+crates/auris-compose     phrase-level automatic composition: one clip over the document's
+                         harmony; depends on auris-core only
 crates/auris-vocal       singing: lyrics to IPA phonemes, notes to voice-model frames;
                          depends on auris-core only
 crates/auris-i18n        interface text in every language: `locales/<tag>.toml`, compiled in by
@@ -215,11 +216,10 @@ cargo run -p auris-cli -- help              # the command line frontend
 cargo test --workspace                      # all tests
 cargo clippy --workspace --all-targets      # lints
 cargo doc --workspace --no-deps --open      # the API documentation
-cargo run -p auris-compose --example measure   # symbolic design metrics per preset
 uv run tools/eval/music.py renders/ --json scores.json   # learned aesthetic scores (see docs/evaluation.md)
 
 ```
 
-Before and after touching a writer or an audio constant, run the two measuring instruments —
+Before and after touching a writer or an audio constant, run the measuring instruments —
 `docs/evaluation.md` is the account of what they read and how to use the baseline diff. They
 are dev tooling only; no release build carries them.

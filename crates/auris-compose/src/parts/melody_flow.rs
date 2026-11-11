@@ -137,7 +137,14 @@ fn anticipate_tail(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parts::fixture::{BASE, draft};
+    use crate::fixture::Song;
+
+    /// The default stretch, whose first part is the lead.
+    fn lead() -> (Song, Frame) {
+        let song = Song::default();
+        let frame = song.frame();
+        (song, frame)
+    }
 
     fn note(at: f64, length: f64, pitch: u8) -> Draft {
         Draft {
@@ -151,7 +158,7 @@ mod tests {
 
     #[test]
     fn a_delayed_echo_keeps_its_pitch_and_endpoint() {
-        let (_, frame, _) = draft(&format!("{BASE}\n[[part]]\nname = \"lead\""));
+        let (_, frame) = lead();
         let mut notes = [note(4.0, 1.0, 67), note(5.0, 1.0, 69), note(6.0, 2.0, 71)];
         let before = notes;
         assert!(delay_head(
@@ -167,7 +174,7 @@ mod tests {
 
     #[test]
     fn a_late_arrival_is_anticipated_without_inserting_notes_or_a_central_hold() {
-        let (_, frame, _) = draft(&format!("{BASE}\n[[part]]\nname = \"lead\""));
+        let (_, frame) = lead();
         let mut notes = [note(4.0, 2.0, 67), note(6.0, 1.0, 69), note(7.0, 1.0, 71)];
         assert!(anticipate_tail(
             frame.grid,
@@ -184,7 +191,7 @@ mod tests {
 
     #[test]
     fn pickups_and_existing_late_holds_keep_their_timing() {
-        let (_, frame, _) = draft(&format!("{BASE}\n[[part]]\nname = \"lead\""));
+        let (_, frame) = lead();
         let mut notes = [note(4.5, 0.5, 67), note(5.0, 1.5, 69), note(6.5, 1.5, 71)];
         let before = notes;
         let start = Ticks::from_beats(4.0);
@@ -208,7 +215,7 @@ mod tests {
 
     #[test]
     fn an_anticipation_does_not_cross_a_chord_change_or_erase_a_rest() {
-        let (_, mut frame, _) = draft(&format!("{BASE}\n[[part]]\nname = \"lead\""));
+        let (_, mut frame) = lead();
         let section = &mut frame.sections[0];
         section.events[1].start = Ticks::from_beats(7.0);
         section.events[0].length = Ticks::from_beats(7.0);
@@ -238,13 +245,13 @@ mod tests {
 
     #[test]
     fn only_the_echo_changes_and_every_pitch_and_velocity_survives() {
-        let (spec, frame, _) = draft(&format!("{BASE}\n[[part]]\nname = \"lead\""));
+        let (spec, frame) = lead();
         let mut notes: Vec<_> = (0..16)
             .map(|at| note(f64::from(at), 1.0, 60 + (at % 7) as u8))
             .collect();
         let before = notes.clone();
         connect(
-            &ScoreSettings::from(&spec),
+            &spec.settings.clone(),
             &frame,
             &frame.sections[0],
             &spec.parts[0],
@@ -270,10 +277,10 @@ mod tests {
 
     #[test]
     fn authored_rhythms_and_sustained_styles_are_unchanged() {
-        let (spec, frame, _) = draft(&format!("{BASE}\n[[part]]\nname = \"lead\""));
+        let (spec, frame) = lead();
         let original: Vec<_> = (0..16).map(|at| note(f64::from(at), 1.0, 67)).collect();
         for style in [PerformanceStyle::Ambient, PerformanceStyle::Orchestral] {
-            let mut settings = ScoreSettings::from(&spec);
+            let mut settings = spec.settings.clone();
             settings.style = Some(style);
             let mut notes = original.clone();
             connect(
@@ -289,7 +296,7 @@ mod tests {
         part.rhythm = Some(crate::rhythm::Pattern::parse("x...x...x...x...").unwrap());
         let mut notes = original.clone();
         connect(
-            &ScoreSettings::from(&spec),
+            &spec.settings.clone(),
             &frame,
             &frame.sections[0],
             &part,
@@ -300,7 +307,7 @@ mod tests {
 
     #[test]
     fn short_meters_do_not_move_a_late_hold_into_the_middle() {
-        let (_, frame, _) = draft(&format!("{BASE}\n[[part]]\nname = \"lead\""));
+        let (_, frame) = lead();
         let grid = Grid::new(auris_core::time::TimeSignature::new(3, 4), 4);
         let mut notes = [note(0.0, 1.0, 67), note(1.0, 1.0, 69), note(2.0, 1.0, 71)];
         let before = notes;
@@ -316,7 +323,7 @@ mod tests {
 
     #[test]
     fn a_delayed_entry_cannot_cross_a_short_chord() {
-        let (_, mut frame, _) = draft(&format!("{BASE}\n[[part]]\nname = \"lead\""));
+        let (_, mut frame) = lead();
         let section = &mut frame.sections[0];
         section.events[0].length = Ticks::from_beats(0.25);
         section.events[1].start = Ticks::from_beats(0.25);
@@ -337,7 +344,7 @@ mod tests {
         use auris_core::project::Subdivision;
         use auris_core::time::TimeSignature;
 
-        let (spec, template, _) = draft(&format!("{BASE}\n[[part]]\nname = \"lead\""));
+        let (spec, template) = lead();
         for signature in [
             TimeSignature::new(4, 4),
             TimeSignature::new(3, 4),
@@ -380,13 +387,7 @@ mod tests {
                         }
                     }
                     let before = notes.clone();
-                    connect(
-                        &ScoreSettings::from(&spec),
-                        &frame,
-                        &section,
-                        &part,
-                        &mut notes,
-                    );
+                    connect(&spec.settings.clone(), &frame, &section, &part, &mut notes);
                     let division = if signature.is_compound() || grid.is_triplet() {
                         3
                     } else {

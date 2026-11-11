@@ -35,8 +35,6 @@
 mod clip;
 mod comment;
 pub use comment::{Comment, CommentId, Comments};
-mod composition;
-pub use composition::{CompositionBaseline, CompositionClipBaseline, CompositionTrackBaseline};
 mod curve;
 /// Stored drum sound assignments, separate from acoustic measurements.
 pub mod drum;
@@ -288,19 +286,9 @@ pub struct Project {
     pub count_in_bars: u32,
     /// Editing grid size, in ticks.
     pub grid: Ticks,
-    /// The specification a composed document was written from, if it was composed.
-    ///
-    /// Text rather than a typed field, because the type lives in a crate this one may not name and
-    /// because that text is the canonical representation of a song specification. It retains
-    /// the composition request across saving and reopening.
-    pub song_spec: Option<String>,
     /// Original creative request and chosen direction, retained as reference for later edits.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub creation_brief: Option<String>,
-    /// Initial composition state for explaining later edits; absent in older or manual projects.
-    /// This is comparison metadata, not an alternative score or a regeneration algorithm.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub composition_baseline: Option<CompositionBaseline>,
     /// Declared external transcription JSON, keyed by its first imported clip.
     /// Claims are retained for audit and do not certify a recognizer or its accuracy.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -369,9 +357,7 @@ impl Project {
             metronome: false,
             count_in_bars: 0,
             grid: default_grid(),
-            song_spec: None,
             creation_brief: None,
-            composition_baseline: None,
             transcription_provenance: BTreeMap::new(),
             lint_suppressions: Vec::new(),
             next_id: 1,

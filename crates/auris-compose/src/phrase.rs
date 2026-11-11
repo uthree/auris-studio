@@ -1,15 +1,10 @@
 //! Writing one part over one stretch of a document's harmony.
 //!
-//! This is the composer with the song taken out of it. [`compose`](crate::compose) needs a whole
-//! specification — a key, a form, a roster, a chart per section — and answers with a whole piece.
-//! A person who has written a chord progression onto a timeline and wants a bass line under bars
-//! nine to sixteen has none of that and should not have to invent it.
-//!
-//! So: a recipe, a range, and whatever chords the document already holds under that range. The
-//! parts are written by exactly the same code either way — a one-section [`Frame`] is built over
-//! the range and handed to [`write_parts`], which is why a phrase written here and the same part
-//! written by `compose` come out of the same machinery rather than out of two that have to be
-//! kept in step.
+//! A recipe, a range, and whatever chords the document already holds under that range: a
+//! one-section [`Frame`] is built over the range and handed to [`write_parts`]. Nothing here asks
+//! for a key, a form or a roster — a person who has written a chord progression onto a timeline
+//! and wants a bass line under bars nine to sixteen has none of that and should not have to
+//! invent it.
 
 use auris_core::harmony::Harmony;
 use auris_core::time::{SignatureMap, Ticks, TimeSignature};
@@ -19,12 +14,13 @@ use crate::frame::{Frame, SectionPlan, skeleton};
 use crate::parts::{ScoreSettings, write_parts};
 use crate::rhythm::Grid;
 use crate::spec::{Mood, PartSpec, Role};
+use crate::theory::chart::HarmonicEvent;
+use crate::theory::key::Key;
 
 /// The roles a preset writes.
 ///
 /// One for everything except the drums, where a kick, a snare and a hat share an instrument and so
-/// belong in one clip. Writing them as three parts and merging the notes is what the composer
-/// already does for a full arrangement; the only difference here is that they land in one place.
+/// belong in one clip: they are written as three parts and their notes land in one place.
 pub fn roles_of(preset: ClipPreset) -> &'static [Role] {
     match preset {
         ClipPreset::Lead => &[Role::Melody],
@@ -39,139 +35,47 @@ pub fn roles_of(preset: ClipPreset) -> &'static [Role] {
     }
 }
 
-/// The clip preset for a role; rhythmic chord roles share the chord preset.
+/// The clip preset that writes a role on its own.
 ///
-/// `None` for [`Role::Crash`], which is the one role no preset names: a crash is written against
-/// the *joins of the form* — it asks whether arriving at a section is worth striking something for
-/// — and that is a question about a whole piece rather than about a clip. A clip preset for it
-/// would be a picker entry that wrote nothing whenever the range it was given had no arrival in
-/// it, which is most ranges.
-///
-/// [`ClipPreset::Drums`] names the composite recipe; each independent writer inside it uses
-/// the preset of its own role.
-pub fn preset_of(role: Role) -> Option<ClipPreset> {
-    Some(match role {
+/// The inverse of [`roles_of`] for every preset but [`ClipPreset::Drums`], which names the
+/// composite kit; each voice inside it uses the preset of its own role.
+pub fn preset_of(role: Role) -> ClipPreset {
+    match role {
         Role::Melody => ClipPreset::Lead,
         Role::Chords => ClipPreset::Chords,
         Role::Pad => ClipPreset::Pad,
         Role::Arp => ClipPreset::Arp,
-        Role::Stab => ClipPreset::Chords,
         Role::Bass => ClipPreset::Bass,
         Role::Kick => ClipPreset::Kick,
         Role::Snare => ClipPreset::Snare,
         Role::Hat => ClipPreset::Hat,
-        // Both written against the joins of the form — a question about a whole piece that a
-        // clip preset, handed one range, could only answer with silence most of the time.
-        Role::Crash | Role::Riser => return None,
-    })
+    }
 }
 
-/// The seed one clip of a composed piece is written from.
+/// Reads a recipe's motif as it is typed — scale steps such as `0 2 4 2`.
 ///
-/// A stream of the song's own seed named by the part and the stretch it plays, so it is
-/// reproducible from the specification and **different for every clip**. That is what makes a
-/// composed piece re-takeable one clip at a time: asking the chorus bass for another take moves
-/// the chorus bass and leaves the verse bass, and the chorus drums, exactly where they were.
-///
-/// The whole song's seed on every clip would have been simpler and wrong twice over — one clip
-/// re-rolled would land on the seed the *next* re-roll of its neighbour would land on, so two
-/// takes of two different parts could not be told apart by their numbers.
-///
-/// Held to [`SEED_RANGE`] rather than handed out at the full width of the stream. A seed is a
-/// number a person reads off a panel and types back in to get a take they liked, and nineteen
-/// digits is not one — the field it lands in is an editable one, and a value nobody can retype is
-/// a value nobody can go back to. Six digits is enough that a piece of thirty clips has no
-/// realistic chance of drawing one twice, and two clips that did would still write different
-/// notes: they are different parts, over different chords, at different densities.
-pub fn clip_seed(song_seed: u64, part: &str, section: &str, instance: usize) -> u64 {
-    let drawn = crate::rng::Rng::stream(
-        song_seed,
-        &[
-            crate::rng::Key::Word("clip"),
-            crate::rng::Key::Word(part),
-            crate::rng::Key::Word(section),
-            crate::rng::Key::Index(instance as u64),
-        ],
-    )
-    .next_u64();
-    1 + drawn % SEED_RANGE
-}
-
-/// How many seeds a composed clip may be given, counting from one.
-///
-/// Six digits: long enough that a collision inside one piece is not worth guarding against, short
-/// enough to be read off a panel and typed back in.
-pub const SEED_RANGE: u64 = 999_999;
-
-/// The recipe describing one section of one part, as the whole-song writer played it.
-///
-/// The inverse of what [`write_phrase`] does, as far as the inverse goes: every dial a recipe has
-/// is read back off the specification, the part and the section, so that a composed clip arrives
-/// in the document knowing what it is. `part` must be the part **as that section plays it** —
-/// [`SectionPlan::played`](crate::frame::SectionPlan) — because a section is free to patch a part
-/// busier or an octave up, and a recipe that recorded the roster's answer would describe a clip
-/// that is not the one on the timeline.
-///
-/// `None` where no preset names the role: see [`preset_of`]. Such a clip arrives with no recipe
-/// and behaves exactly as a clip somebody played, which is the honest answer — nothing here can
-/// write it again.
-///
-/// # What it does not promise
-///
-/// It does **not** promise that [`write_phrase`] with this recipe writes the notes the clip
-/// arrived with. It cannot: a whole song is planned with things a clip has no room for — how far
-/// a repeated section departs from its first playing, what leads into what, the arch of intensity
-/// across the form — and a recipe that carried all of them would be a song specification wearing
-/// a clip's name. What it promises is the useful thing: another take of this clip is the same
-/// part, in the same register, at the same density, over the same chords, played the same way.
-pub fn recipe_for(
-    settings: &ScoreSettings,
-    part: &PartSpec,
-    section: &SectionPlan,
-    song_seed: u64,
-) -> Option<ClipRecipe> {
-    let preset = preset_of(part.role)?;
-    Some(ClipRecipe {
-        style: settings.style,
-        drum_map: None,
-        drum_voices: Vec::new(),
-        drum_note: part.drum_note(),
-        motif: settings.motif.clone(),
-        rhythm: part.rhythm.as_ref().map(crate::rhythm::Pattern::to_text),
-        preset,
-        seed: clip_seed(song_seed, &part.name, &section.name, section.instance),
-        // The *base* density, before `parts::writer::density` scales it by the role and by the
-        // section's intensity — because writing this clip again puts it through that same scaling.
-        // Recording the scaled figure would compound it, and a chorus re-taken twice would come
-        // back busier each time.
-        density: part.density.unwrap_or_else(|| settings.mood.density()),
-        intensity: section.intensity,
-        groove: settings.groove.clone(),
-        swing: settings.swing,
-        subdivision: part.subdivision,
-        gate: part.gate,
-        dynamics: settings.dynamics,
-        // The mood's, which is where a clip's syncopation comes from in the other direction too:
-        // `mood_for` builds a Mood out of the recipe, and this is that field read back.
-        syncopation: settings.mood.syncopation,
-        // A part's octave is absolute and a recipe's is a shift from where the preset sits, so
-        // the difference is the number. Clamped to what the dial can hold: a part written four
-        // octaves off its role would otherwise come back as a recipe nobody could edit back.
-        octave: (part.octave - part.role.default_octave()).clamp(-2, 2),
-        fill: settings.fill,
-        low_root: part.low_root,
-        strum: part.strum,
-        // The composer describes what it asked for, not what came out: the digest of the notes
-        // as written is the session's to stamp, at the moment the clip lands in a document.
-        text_digest: 0,
-    })
-}
-
-/// The instrument a preset's clips should be played by, when the track has none yet.
-pub fn default_instrument(preset: ClipPreset) -> &'static str {
-    roles_of(preset)
-        .first()
-        .map_or("auris.synth.chiptune", |role| role.default_instrument())
+/// The steps run from -9 to 9 and there are two to thirty-two of them, which are the bounds
+/// [`motif_of`](crate::motif_of) writes within, so a motif read back off a melody can always be
+/// typed in again.
+pub fn parse_motif(text: &str) -> Result<Vec<i32>, String> {
+    let mut motif = Vec::new();
+    for token in text.split_whitespace() {
+        let degree: i32 = token
+            .parse()
+            .map_err(|_| format!("`{token}` is not a scale step; write numbers like 0 2 4 2"))?;
+        if !(-9..=9).contains(&degree) {
+            return Err(format!(
+                "`{token}` is further from the anchor than a tune wanders; steps run from -9 to 9"
+            ));
+        }
+        motif.push(degree);
+    }
+    match motif.len() {
+        0 => Err("there are no steps in it; write numbers like 0 2 4 2".to_string()),
+        1 => Err("one note is not a line; give it at least two".to_string()),
+        2..=32 => Ok(motif),
+        _ => Err("more than 32 notes is a melody rather than a motif".to_string()),
+    }
 }
 
 /// Writes one part over the harmony under `start .. start + length`.
@@ -182,10 +86,8 @@ pub fn default_instrument(preset: ClipPreset) -> &'static str {
 ///
 /// `section` is the label of the timeline stretch the clip sits in, with which occurrence of
 /// that label it is — the composer's hint. Every stream the part draws from is keyed by it, so
-/// two clips written into stretches both called サビ draw the same figures, and a clip in the
-/// *second* サビ varies exactly as a repeated section does under [`compose`](crate::compose):
-/// the motif holds, the details may turn. With no section named, the preset keys the streams as
-/// before, so an unstructured timeline writes what it always wrote.
+/// two clips written into stretches both called サビ draw the same figures. With no section
+/// named, the preset keys the streams, so an unstructured timeline writes what it always wrote.
 ///
 /// No tempo comes in, and that is a change worth a sentence: the humanisation used to be baked
 /// into the notes here, and its dial is a *time* — milliseconds cannot become ticks without a
@@ -278,42 +180,17 @@ pub fn write_phrase(
         Some((label, instance)) => (label, instance.max(1)),
         None => (recipe.preset.name(), 1),
     };
-    // A clip is generated from a recipe, which has dials of its own and no mood — so the register
-    // is the neutral one, exactly where the arch sat before brightness could move it. A recipe
-    // that grows a brightness of its own is what would change this.
-    let skeleton = skeleton(&events, recipe.seed, section_key, instance, 0.5);
-
-    let frame = Frame {
+    let frame = frame_over(
         grid,
-        sections: vec![SectionPlan {
-            name: section_key.to_string(),
-            instance,
-            start: Ticks::ZERO,
-            length,
-            bars,
-            phrases: crate::phrasing::plan_phrases(bars, recipe.style),
-            key,
-            // Nothing under `write_parts` reads a tempo any more — the wander that converted
-            // milliseconds into ticks happens on the performance stack now — so the plan carries
-            // a placeholder rather than asking the caller to look one up it will never use.
-            tempo: 120.0,
-            intensity: recipe.intensity.clamp(0.0, 1.0),
-            events,
-            skeleton,
-            parts: Vec::new(),
-            // A clip is one part in one stretch, so there is nothing to patch it against.
-            tweaks: Default::default(),
-            // And it is a stretch of a piece, never the piece's ending.
-            coda: false,
-        }],
+        events,
+        key,
         length,
-        seed: recipe.seed,
-        mood: mood_for(recipe),
-        // A clip is one bar of an arrangement rather than the end of a piece: whatever follows
-        // it, including another playing of itself, is something for the last bar to lead into.
-        joins_on: true,
-        looping: false,
-    };
+        recipe.seed,
+        (section_key, instance),
+        recipe.intensity,
+        recipe.style,
+        mood_for(recipe),
+    );
 
     let settings = ScoreSettings {
         style: recipe.style,
@@ -321,8 +198,6 @@ pub fn write_phrase(
         swing: recipe.swing,
         dynamics: recipe.dynamics.clamp(0.0, 1.0),
         fill: recipe.fill.clamp(0.0, 1.0),
-        // One clip is one playing of one section, so there is no repeat to depart from.
-        variation: 0.0,
         groove: recipe.groove.clone(),
         motif: recipe.motif.clone(),
     };
@@ -384,6 +259,49 @@ pub fn write_phrase(
         .collect();
     notes.sort_by_key(|note| (note.start.raw(), note.pitch));
     notes
+}
+
+/// The one-section frame a phrase is written against.
+///
+/// `events` are positioned from the range's start, which is the frame of reference a
+/// [`SectionPlan`] uses and, conveniently, the one a clip uses too.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn frame_over(
+    grid: Grid,
+    events: Vec<HarmonicEvent>,
+    key: Key,
+    length: Ticks,
+    seed: u64,
+    (section, instance): (&str, usize),
+    intensity: f32,
+    style: Option<crate::PerformanceStyle>,
+    mood: Mood,
+) -> Frame {
+    let bar_ticks = grid.bar_ticks().raw().max(1);
+    let positive = length.raw().max(0);
+    let bars = (positive / bar_ticks + i64::from(positive % bar_ticks != 0)) as usize;
+    // A clip is generated from a recipe, which has dials of its own and no brightness — so the
+    // register is the neutral one. A recipe that grows a brightness of its own is what would
+    // change this.
+    let skeleton = skeleton(&events, seed, section, instance, 0.5);
+    Frame {
+        grid,
+        sections: vec![SectionPlan {
+            name: section.to_string(),
+            instance,
+            start: Ticks::ZERO,
+            length,
+            bars,
+            phrases: crate::phrasing::plan_phrases(bars, style),
+            key,
+            intensity: intensity.clamp(0.0, 1.0),
+            events,
+            skeleton,
+        }],
+        length,
+        seed,
+        mood,
+    }
 }
 
 /// Applies an accepted sound assignment to future writes of this recipe.
@@ -1067,10 +985,9 @@ mod tests {
             write(Ticks::ZERO, Some(("サビ", 1))),
             "a different label is a different idea"
         );
-        // Nothing is asserted between occurrence 1 and occurrence 2 on purpose: a clip writes
-        // with `variation: 0.0` — one clip is one playing — so the second サビ comes out the
-        // same take, give or take the skeleton's arch, exactly as a compose repeat without
-        // variation would. Which is what 「2番のサビ」 usually means.
+        // Nothing is asserted between occurrence 1 and occurrence 2 on purpose: the streams are
+        // keyed by the label, so the second サビ comes out the same take, give or take the
+        // skeleton's arch. Which is what 「2番のサビ」 usually means.
         assert_eq!(
             write(Ticks::ZERO, None),
             write(Ticks::ZERO, Some((recipe.preset.name(), 1))),

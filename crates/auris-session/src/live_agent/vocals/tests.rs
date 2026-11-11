@@ -6,7 +6,7 @@ use std::{
 };
 
 fn session() -> Session {
-    Session::new(crate::SessionOptions::headless().with_balance(false)).unwrap()
+    Session::new(crate::SessionOptions::headless()).unwrap()
 }
 
 fn voice_fixture_dir() -> tempfile::TempDir {

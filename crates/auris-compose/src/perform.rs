@@ -30,8 +30,7 @@ use crate::spec::Role;
 /// How loose a part written without a whole song around it is played.
 ///
 /// The value [`ClipRecipe`](auris_core::ClipRecipe) used to carry as its `humanize` dial's
-/// default, kept so that *Write a Part Here* sounds as it always did. A whole song reads its
-/// specification's own `humanize` instead.
+/// default, kept so that *Write a Part Here* sounds as it always did.
 const DEFAULT_LOOSENESS: f32 = 0.25;
 
 /// How far a role sits against the beat at full looseness, in ticks.
@@ -49,10 +48,10 @@ fn lean_ticks(role: Role) -> f32 {
     }
 }
 
-/// The transforms one part of a composed song starts with.
+/// The transforms one part starts with.
 ///
-/// `looseness` is the specification's `humanize` dial and `seed` is the clip's own — the same
-/// number its recipe carries, so a take and its feel are named by one number. The stack comes
+/// `looseness` runs from 0 to 1 and `seed` is the clip's own — the same number its recipe
+/// carries, so a take and its feel are named by one number. The stack comes
 /// back in the canonical order the panel keeps: lean before wander, both after the swing the
 /// text already carries.
 ///
