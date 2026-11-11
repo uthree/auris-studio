@@ -80,8 +80,8 @@ changed results with a checkpoint. Live imports stay unsaved.
 
 ## Validation
 
-On 2026-10-21, the frozen 129-note mixture draft from the
-[Codex experiment](codex-transcription-experiment.md) was imported through saved
+On 2026-10-21, a frozen 129-note mixture draft from a
+Codex-led transcription experiment was imported through saved
 MCP `import_transcription`, checkpointed and rendered with the physical piano.
 All 129 pitches survived; maximum onset/offset conversion error was 0.31 ms at
 100 BPM and 960 ticks per beat. Uniform strength 0.65 was explicitly disclosed.
@@ -90,7 +90,7 @@ no full-scale samples). Its SHA-256 was
 `86f8d72439db88eefeeb0a2e6583ba386da66cff24c34ea1822fbbb41c5f5675`.
 This reuses an existing estimate and tests API integration, not recognition quality.
 
-The subsequent [real Codex application evaluation](codex-live-transcription-evaluation.md)
+A later evaluation in the real application
 exercises original export, independent analysis, generic import, rendered inspection
 and Undo/Redo with actual model inference, and compares two frozen DSP methods with
 Basic Pitch.

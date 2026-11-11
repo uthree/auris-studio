@@ -147,6 +147,11 @@ cargo test -p auris-gpui --bins        # this crate is a binary, so `--lib` find
 
 確認できないことは2つです。**ピクセルをアサートしてはいけません。** `NoopTextSystem` はすべてのグリフを同じメトリクスで配置し、シーンをラスター化せず破棄します。色、間隔、可読性は人が確認します。**トランスポートは観測できません。** `Session::is_playing` と playhead は audio thread が書く atomic で、デバイスなしのセッションにはそのスレッドがありません。Play と Seek は送られますが返りません。ドキュメントとビュー状態をアサートしてください。このため、ウィンドウが到達できない判断もテスト可能な自由関数に置きます。例は `crate::ui::context_menu::clips::splittable` です。各 `icon_button`、`button`、コンテキストメニュー行、メニューバー行にはハーネスが名前で探せる名前があり、`debug_selector` は gpui を `test-support` 付きでビルドしない限り何もコンパイルしません。`test-support` が有効になるのは `cargo test` のときだけです。
 
+<a id="real-agent-window-tests"></a>
+### 実エージェントのウィンドウテスト
+
+インストール済みのエージェントを動かす ignore 付きのウィンドウテストは、`AURIS_TOOL_SURFACE_EVAL` から設定を読みます。値は JSON ファイルのパスで、JSON には `backend`、`model`、新しく作る `output` フォルダーの絶対パス、`timeout_seconds` を入れます。`provider`、`url`、`api_key_env`、`context_tokens`、`thinking` は省略でき、選んだトランスポートを設定します。基本のテストは `ui::agent_chat::tool_surface_eval::installed_agent_edits_and_exports_the_unsaved_document` で、編曲ハーネスと息継ぎハーネスも同じ設定で自分のテストを追加します。
+
 <a id="live-audio-visualizer"></a>
 ## ライブオーディオビジュアライザー
 

@@ -20,11 +20,11 @@ and per-partial decay, register level and soundboard knock across a Steinway's k
 This acoustic distance complements the symbolic and learned song measurements below.
 The drum kit, the guitar amplifier and the choir are fitted to recordings as well, each on its
 training notes only and evaluated on held-out ones.
-The [drum-kit calibration](physical-pack.md) fits seven kit families to 151 real drum hits,
+The drum-kit calibration fits seven kit families to 151 real drum hits,
 with separate attack/body/tail loss and acoustic-role guards for every snare/tom register.
 The [guitar-amplifier experiment](electric-guitar.md) adds an oversampled amplifier and a
 paired clean/pedal recording benchmark with pitch-grouped splits.
-The [choir calibration](choir-copy-synthesis.md) fits the native vocal-tract ensemble to
+The choir calibration fits the native vocal-tract ensemble to
 real sustained vowels, with 24 training notes and 80 notes from separate held-out singers.
 The [piano stretch tuning](piano-stretch-tuning.md) is how the piano's fundamentals leave
 equal temperament: the rule; the fundamentals, heard pitch, octaves and string stiffness
@@ -33,9 +33,7 @@ hold them.
 
 ## Native instrument upper-midrange voicing
 
-The 2026-10-19 upper-midrange study follows the
-[snare and ride correction](physical-pack.md#targeted-snare-and-ride-voicing).
-It screens the native instrument families, additional pulse/saw/FM lead patches and
+The 2026-10-19 upper-midrange study screens the native instrument families, additional pulse/saw/FM lead patches and
 unmodulated controls. The worker uses the actual instrument implementation at 44.1/48/96 kHz
 and velocities 0.35/0.65/1, with 1.2 seconds held in each 1.8-second capture.
 
@@ -123,8 +121,7 @@ beat, no line entering in the second half of a bar, no syncopated note at all, e
 ending on the tonic, several lines in a row predictable from the song so far, three sections
 sharing one drum bar, a chorus looping the verse's progression from another chord, and a guitar
 strummed over less than 10 ms (below every shipped preset) or not at all. The song whose
-friends' feedback prompted the script raises all of them
-([plan](song-feedback-improvement-plan-2026-11-09.ja.md)). None is a target, an absent flag is
+friends' feedback prompted the script raises all of them. None is a target, an absent flag is
 not a judgement, and the model knows nothing about a genre's conventions.
 
 ### How conventional a melody is against a corpus
@@ -301,7 +298,7 @@ scores by up to 0.8; fp16 turns MuQ's output into NaN.
 
 ## Controlled melody listening
 
-The [2026-10-26 local evaluator trial](local-music-evaluators-2026-10-26.ja.md)
+A 2026-10-26 local trial
 ran SongEval and Meta Audiobox Aesthetics on four fixed-context vocal mixes,
 with repeated-input and silence controls. Both ran on Windows CPU; neither is
 shipped in the application or calibrated as an automatic selector. The retained

@@ -246,9 +246,7 @@ child. Auris persists and restores its own text transcript; OpenCode may also ke
 sessions in its normal data directory. Manual compaction from Auris is not yet
 supported. Approval review uses a separate session with all tools denied.
 
-Real composition, audio feedback and feature trials are recorded in
-[OpenCode backend validation](opencode-backend-validation.md), including the free
-provider's restriction on tool-free automatic review. Startup waits for an actual
+Startup waits for an actual
 authenticated MCP tool catalogue request before allowing inference.
 
 Default tests use a scripted ACP peer and the real HTTP MCP endpoint to verify

@@ -30,4 +30,3 @@ Windows、AMD Ryzen 7 9800X3D、CPU推論のみ、最適化したデバッグRus
 
 * YAMNet: ピアノ0.84秒、ベース1.02秒、混合0.35秒。3つのクリップ平均のいずれも0.2を超える楽器はなかった。音楽は認識したが特定の楽器は判定せず、これは認識成功ではなくカバレッジの失敗である。4つのフィクスチャーでTensorFlowと比較したエクスポートの最大絶対誤差は0.0000392で、Rustも保存済み参照と一致した。別の `measure_instruments` による3分の合成タイミングプローブは、プロセス起動とソース生成／デコードを除き、モデル読み込み／推論に0.33秒かかった。楽器の正解ラベルはなく、上記CLI測定とは直接比較できない。
 
-ベンチマーク成果物はハッシュとスコアを [learned-analysis-local.json](benchmarks/learned-analysis-local.json) に記録する。[計算評価](music-analysis-compute.ja.md)も参照する。

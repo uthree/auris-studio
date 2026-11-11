@@ -1,5 +1,6 @@
 //! Training-derived excitation, loss and causal radiation priors.
-//! See docs/physical-pack.md for the fixed reference cohort and held-out measurements.
+//! The fixed reference cohort and held-out measurements are in
+//! `tools/eval/references/physical-pack-{captures,notes,validation}.json`.
 
 use super::Pad;
 

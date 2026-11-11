@@ -45,8 +45,6 @@ band-limited harmonic tables in `prepare`, plus seeded breath noise. This is a r
 physical acoustic tract driven by a parametric source. The vowel profiles and factory
 source controls are fitted to real sustained vowels, with a separate set of held-out
 singers. They describe instrument timbres, rather than measured anatomy of a singer.
-The [real-recording calibration account](choir-copy-synthesis.md) gives the cohort,
-log-mel loss, parameter bounds, results and reproducible development commands.
 
 The source/filter and tube principles are described in the Oxford phonetics
 [tube-model practical](https://www.phon.ox.ac.uk/jcoleman/tubes_practical.html).

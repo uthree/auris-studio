@@ -58,7 +58,3 @@ was not measured. The fixture generator is `render_analysis_fixture` in `auris-s
   The separate `measure_instruments` synthetic three-minute timing probe took 0.33 s for
   model loading/inference, excluding process startup and source generation/decoding; it has
   no instrument ground truth and is not directly comparable to the CLI timings above.
-
-The benchmark artifact records hashes and scores in
-[learned-analysis-local.json](benchmarks/learned-analysis-local.json).
-See also the [compute assessment](music-analysis-compute.md).

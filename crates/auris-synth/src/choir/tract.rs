@@ -5,7 +5,7 @@ const DELAY_CAPACITY: usize = 64;
 const SPEED_OF_SOUND: f32 = 343.0;
 
 // Area profiles in square centimetres, ordered from glottis to lips: /u/, /a/, /i/.
-// Bounded fitting to real sustained vowels: see docs/choir-copy-synthesis.md and
+// Bounded fitting to real sustained vowels: see
 // tools/eval/references/choir-mel-calibration.json. No recordings enter the instrument.
 pub(super) const AREAS: [[f32; SECTIONS]; 3] = [
     [

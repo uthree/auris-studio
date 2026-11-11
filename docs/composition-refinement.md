@@ -156,14 +156,9 @@ uv run --with pytest --with numpy --with soundfile pytest tools/eval/test_songev
 uv run --with ruff ruff check tools/eval/songeval.py tools/eval/composition_refine.py tools/eval/test_songeval.py tools/eval/test_composition_refine.py
 ```
 
-The [initial evaluator trial](local-music-evaluators-2026-10-26.ja.md) retains repeat
-and silence controls and disagreement with listeners. The [first loop](songeval-refinement-2026-10-26.ja.md)
-records the earlier multi-candidate runner's one-candidate pilot; its frozen artifacts
-remain historical evidence. The [reference-song calibration](songeval-reference-2026-10-26.ja.md)
-includes the NAS collection, a fresh official-source download and excerpt sensitivity.
-None establishes an automatic selection threshold.
+No evaluator score establishes an automatic selection threshold.
 
-The [simplified workflow trial](simple-refinement-2026-10-26.ja.md) records a real
+The simplified workflow trial records a real
 no-change decision: one mix and one SongEval call, with the second assessment skipped.
 Candidate and failure paths are covered by regression tests; listener preference was
 not measured in that trial.

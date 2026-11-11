@@ -130,6 +130,6 @@ Revoiceは新しい`search_instruments` IDを使用します。ミキサース�
 
 セッションテストは、正確なスコア/曲線保持、範囲限定の自動化、ソースルーティング、レイヤーのアイデンティティ、不可変のSFXコピー、アライメント、キャンセル、古い所有者/バージョン、準備失敗、リトライレシート、そしてUndo/Redoをカバーします。カタログおよびポリシーテストは、オプトインスキーマと読み取り専用/プラン拒否をカバーします。
 
-オプトインGPUIテスト`installed_agent_arranges_sections_with_performance_automation_and_sfx`は、隔離された保存されていない32バーフィクスチャーに対して、実際のClaude/Codex/rigワーカーを実行します。`AURIS_ARRANGEMENT_HARNESS=1`と`AURIS_TOOL_SURFACE_EVAL`を[agent tool validation](agent-tool-validation.ja.md)に記載されている構成に設定します。セクションのボイシング変更、ストラム、範囲限定パッドゲイン、コピーされたオーディオSFX、ネイティブライザー、独立した読み返し、数値オーディオ検査、1リクエストでのUndo/Redoをチェックします。エビデンスは実際のバックエンド結果を記録します。テストの存在自体がモデルの信頼性やリスニング品質を証明するものではありません。
+オプトインGPUIテスト`installed_agent_arranges_sections_with_performance_automation_and_sfx`は、隔離された保存されていない32バーフィクスチャーに対して、実際のClaude/Codex/rigワーカーを実行します。`AURIS_ARRANGEMENT_HARNESS=1`と`AURIS_TOOL_SURFACE_EVAL`を[開発](development.ja.md#real-agent-window-tests)に記載されている構成に設定します。セクションのボイシング変更、ストラム、範囲限定パッドゲイン、コピーされたオーディオSFX、ネイティブライザー、独立した読み返し、数値オーディオ検査、1リクエストでのUndo/Redoをチェックします。エビデンスは実際のバックエンド結果を記録します。テストの存在自体がモデルの信頼性やリスニング品質を証明するものではありません。
 
 [2026-10-23 validation record](../tools/eval/references/agent-arrangement-2026-10-23.json)には実際の結果が含まれています。Codexは、独立した読み返し、ペアリングされたオーディオ測定、そして1回のUndo/Redoを含む、数値のみのフィクスチャーを57.45秒で完了し、ツールエラーはありませんでした。ClaudeはOAuthセッションが期限切れになったため、推論前に停止しました。ローカルのQwen 27Bトライアルは、提案を適用せずに診断中にタイムアウトしました。以前のCodexトライアルは、別々の音声批評モデルでストールしました；受け入れられたフィクスチャーは明示的に数値検査に限定されています。これらの測定のいずれも、改善された音楽的品質を確立していません。

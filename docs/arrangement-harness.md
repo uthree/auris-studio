@@ -191,7 +191,7 @@ The opt-in GPUI test
 `installed_agent_arranges_sections_with_performance_automation_and_sfx` runs a real
 Claude/Codex/rig worker against an isolated unsaved 32-bar fixture. Set
 `AURIS_ARRANGEMENT_HARNESS=1` and `AURIS_TOOL_SURFACE_EVAL` to the configuration described
-in [agent tool validation](agent-tool-validation.md). It checks section revoicing,
+in [development](development.md#real-agent-window-tests). It checks section revoicing,
 strum, scoped pad gain, copied audio SFX, a native riser, independent readback, numeric
 audio inspection and one-request Undo/Redo. Evidence records actual backend outcomes;
 the test's existence alone does not establish model reliability or listening quality.

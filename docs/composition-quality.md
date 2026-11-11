@@ -106,8 +106,7 @@ An empty or mismatched prefix is an error. This compares a complete instruction
 package; it does not isolate individual rules or fix the LLM's random seed.
 
 The separate `melody-listening-v1.json` manifest contains three genres with
-instrumental and vocal cases. Its [protocol](melody-listening-protocol.ja.md)
-defines the controls and listening questions. Keep the executable, voice
+instrumental and vocal cases, and the listening questions each pair is judged on. Keep the executable, voice
 configuration, controller settings, case prompts and all attempts fixed.
 `--context-tokens` is not an effective Codex CLI context-window override.
 
@@ -165,8 +164,7 @@ platform-specific newlines. Preserve an explicitly documented legacy binding
 instead of silently accepting arbitrary mismatches or rewriting a released bundle.
 Keep rhythm, motif preference, chorus preference, naturalness and breathing
 separate. Do not sum correlated axes into an overall vote or infer delayed recall
-from motif preference. The [controlled pop-vocal follow-up](pop-melody-controlled-results-2026-10-26.ja.md)
-retains two repetitions with mixed preferences and no clear improvement. To
+from motif preference. To
 attribute an effect to one melody operation, hold the other melody features as
 well as compatible backing, lyrics and sound settings fixed.
 
@@ -218,10 +216,6 @@ model for automatic musical selection.
 
 ## Follow-up validation of production records and candidates
 
-The [follow-up report](composition-quality-validation-2026-10-24.md) covers
-conversation records, immutable candidates, scoped variation, modular prompts
-and real backend trials. It retains all 24 holdout deliveries and the six-trial
-development prompt ablation, including recovered tool errors and runtime-smoke
-failures. Human preference remains unscored. The candidate catalog stays opt-in;
+The candidate catalog stays opt-in;
 the phased prompt is now the default. See [candidate tools](composition-candidates.md)
 and [production phases](composition-workflows.md).

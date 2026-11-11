@@ -284,6 +284,16 @@ Every `icon_button`, `button`, context-menu row and menu-bar row carries a name 
 find it by, from one line each. `debug_selector` compiles to nothing unless gpui is built with
 `test-support`, which only `cargo test` does.
 
+<a id="real-agent-window-tests"></a>
+### Real-agent window tests
+
+The ignored window tests that drive an installed agent read their configuration from
+`AURIS_TOOL_SURFACE_EVAL`, a path to JSON containing `backend`, `model`, an absolute fresh
+`output` folder and `timeout_seconds`. Optional `provider`, `url`, `api_key_env`,
+`context_tokens` and `thinking` configure the selected transport. The base test is
+`ui::agent_chat::tool_surface_eval::installed_agent_edits_and_exports_the_unsaved_document`;
+the arrangement and breathing harnesses add their own tests on the same configuration.
+
 ## Live audio visualizer
 
 Open **Window > Audio Visualizer** to inspect a strip. The window is the Atelier analyser: a
