@@ -4,7 +4,9 @@
 //! Character offsets refer to the original text, never to dictionary output. An explicit
 //! reading is a diagnostic override and does not change a saved lyric's pronunciation.
 
-use super::lyric_slots::{grouped_reading, mora_slots, note_groups, note_range};
+use super::lyric_slots::{
+    dependent_moras, feet, grouped_reading, mora_slots, note_groups, note_range,
+};
 use super::{Session, lyrics};
 use auris_vocal::{SungMora, split_kana_lyric};
 use serde::{Deserialize, Serialize};
@@ -173,6 +175,11 @@ pub struct PhraseAnalysis {
     /// The reading cut into notes with '|' for write_lyrics: for the requested fit when it
     /// fits, otherwise for max_notes. Null when unreadable.
     pub note_reading: Option<String>,
+    /// The phrase cut into two-mora feet (拍), the unit Japanese lyrics are timed in: a pair
+    /// never splits a heavy syllable (かた, かっ, た) and starts again at each word group. Sung
+    /// two moras to a beat, each foot is one beat; a one-mora foot is where a pickup, a held
+    /// note or a rest goes. Empty when unreadable.
+    pub feet: Vec<String>,
     /// The answer to a requested note count.
     pub fit: Option<NoteFit>,
 }
@@ -483,6 +490,16 @@ impl Session {
             let texts: Vec<&str> = borrowed.iter().map(|(t, _)| *t).collect();
             let note_reading = note_groups(&slots, layout)
                 .map(|sizes| grouped_reading(&texts, &sizes, &word_starts));
+            let dependent = dependent_moras(&borrowed, &slots, &word_starts);
+            let mut start = 0;
+            let feet: Vec<String> = feet(&dependent, &word_starts)
+                .into_iter()
+                .map(|size| {
+                    let foot = texts[start..start + size].concat();
+                    start += size;
+                    foot
+                })
+                .collect();
             let accent = match (reading_source, self.japanese.as_ref()) {
                 (ReadingSource::Dictionary, Some(dictionary)) => dictionary
                     .accent_phrases(text)
@@ -513,6 +530,7 @@ impl Session {
                 min_notes,
                 max_notes,
                 note_reading,
+                feet,
                 fit,
             });
         }

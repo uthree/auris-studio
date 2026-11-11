@@ -199,6 +199,7 @@ impl Session {
                 moras,
                 error,
                 note_reading: None,
+                feet: Vec::new(),
                 fit: None,
             }],
         })

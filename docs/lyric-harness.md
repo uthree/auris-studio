@@ -77,6 +77,41 @@ first mora keeping three fifths of it. A group ending in `っ` sings no
 closure phoneme, so the next note must start at least a thirty-second note (120 ticks) after
 that note ends.
 
+## Feet, and the rhythm drawn on the beat
+
+Each phrase also reports `feet`: its moras paired into two-mora feet (拍), the unit Japanese
+verse and song are timed in. Pairing starts again at each word group and never splits a heavy
+syllable, so `ふるいけや` is `ふる / いけ / や` and `かたかった` is `かた / かっ / た`. Sung two
+moras a beat in eighths, each foot fills one beat. A one-mora foot is where the melody puts a
+pickup, a held note or a rest.
+
+`lyric_rhythm` reads a singer track after its lyrics are written and changes nothing. It draws
+every sung line on its beat grid, choosing the coarsest grid that holds every onset:
+
+```text
+さ く | ら が | さ い | た - ‖ - - | _ _ | _ _ | _ _
+```
+
+`‖` divides bars and `|` divides beats. Each token is one slot of `grid_unit` (here an
+eighth): kana where a note starts, with the moras it sings, `-` while it still sounds, `_`
+for silence, `~` for a melisma and `っ` for a closure. Each line and section also reports moras
+per second, the shortest mora in milliseconds and whether the line ends on a held mora.
+
+Spots, each with clip and note index for `edit_notes`:
+
+- `outlasting_syllable`: ん or the い of あい/おい lasts at least twice as long as the mora it
+  belongs to, inside a line. At the end of a line it is a held ending, not a spot. A note
+  only: in the 100 PJS songs this happens on 11% of ん notes and 8% of diphthong い notes,
+  against 20% for other moras, so it is a loose tendency rather than a rule.
+- `short_mora`: a mora shorter than 90 ms, which may lose its vowel to the next consonant in
+  synthesis. Any short mora is a warning.
+
+A section of three or more lines with no held ending, or slower than two moras a second, gets
+a note only, since a rest can close a line and a slow section may be deliberate. In PJS, 81%
+of lines end held and the median pace is 3.7 moras a second. A diphthong い written as the
+first character of a word on its own note (今) is not counted. Where ん falls in the beat is
+not checked: in PJS it arrives on a stronger position than its head as often as any mora does.
+
 ## Diagnose existing phrases
 
 `diagnose_song` compares sung phrases that should share a melody. The diagnostic checks each

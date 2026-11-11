@@ -35,6 +35,43 @@ over the beat; on a key word or the chorus's first word it adds drive, and the l
 hears where the beat is. Give the sections different note values as well: a verse speaking in
 eighths, a pre-chorus holding longer notes, sixteenths saved for pickups and turns.
 
+### Japanese lyrics in feet (2モーラ・拍)
+
+Japanese verse and song are timed in **two-mora feet**, not in moras one by one and not in
+syllables: 中道 (1980) calls the pair a タクト, and it is why a 7-5 line runs in four beats with
+a rest (ふる|いけ|や・). `analyze_lyrics` returns each phrase's `feet`. Feet are a planning
+unit, not a law of melody. In the 100 PJS songs, a foot's first mora starts on a beat 43% of
+the time and its second mora 37%, so melodies lean the same way only slightly. Plan a line's
+rhythm from them before choosing pitches:
+
+1. **Count feet, not moras.** Sung two moras to a beat, in eighths at a pop tempo, each foot
+   fills one beat, and the foot count is the line's length in beats. A section can change pace
+   on purpose (four moras a beat in sixteenths for a rapid verse, one a beat for a held chorus
+   line), but one pace for every line of the song is what makes it sound recited.
+2. **Place the odd mora.** A one-mora foot is where the line breathes. Make it a pickup into
+   the next beat (弱起), hold it to fill its beat, or let a rest take the other half. Particles
+   (を, に, が) often stand alone, and a pickup suits them.
+3. **Shape inside the foot.** Vary the two halves rather than the count: long-short (a dotted
+   eighth and a sixteenth) puts weight on a word's first mora, short-long delays the arrival,
+   two sixteenths and an eighth hurry through a particle, and one quarter holds a word.
+4. **Keep heavy syllables whole.** ん, っ, ー and the い of あい belong to the mora before
+   them (窪薗 1999): a foot never splits them, and when a song gives two moras one note, it is
+   almost always such a pair (かん, かい). Sing the pair on one note (group かん in the
+   `write_lyrics` reading), or give ん its own note. Inside a line, human songs hold that
+   note longer than its head about half as often as they do other moras, and `lyric_rhythm`
+   notes each place it happens. Where the second half falls in the beat is free: in the PJS
+   songs ん arrives on a stronger position than its head as often as any mora does.
+5. **Close the line.** Lengthen the line's last mora, or rest after it, so the line ends.
+   Koizumi's account of Japanese song (1977) has the line's first and last moras lengthened
+   to mark its start and close; the middle runs evenly.
+
+Japanese spends a note on every mora, so it needs more notes than English for the same words
+(金田一 1967 gives this as one reason it sits awkwardly in Western song forms). So
+write fewer words per line rather than packing every subdivision, and let a held arrival
+carry the important word. Since the rhythm cannot be heard while writing, read it:
+`lyric_rhythm` draws every sung line on its beat grid, one token per slot, and reports moras per
+second, held endings and the short notes that may lose their vowel in synthesis.
+
 ### Cadence plan
 
 Mark the note each line ends on and the chord under it. Open endings (degree 2, 5 or 7, or a

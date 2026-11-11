@@ -304,20 +304,21 @@ pub struct LyricAccentReport {
     pub notes: Vec<String>,
 }
 
-struct SungNote {
-    at: Ticks,
-    clip: u64,
-    index: usize,
-    pitch: i32,
-    lyric: String,
-    phonemes: Vec<String>,
+pub(super) struct SungNote {
+    pub(super) at: Ticks,
+    pub(super) length: Ticks,
+    pub(super) clip: u64,
+    pub(super) index: usize,
+    pub(super) pitch: i32,
+    pub(super) lyric: String,
+    pub(super) phonemes: Vec<String>,
 }
 
 /// A singer track's notes cut into lines at rests of a beat or more and at clip edges.
-fn sung_lines(project: &Project, track: TrackId) -> Result<Vec<Vec<SungNote>>, String> {
+pub(super) fn sung_lines(project: &Project, track: TrackId) -> Result<Vec<Vec<SungNote>>, String> {
     let source = project.track(track).ok_or("Unknown track ID")?;
     if !source.kind.is_singer() {
-        return Err("Choose a singer track; the accent is measured on sung lyrics".into());
+        return Err("Choose a singer track; only sung lyrics are measured".into());
     }
     let clips = source.kind.note_clips().ok_or("The track holds no notes")?;
     let mut lines = Vec::new();
@@ -349,6 +350,7 @@ fn sung_lines(project: &Project, track: TrackId) -> Result<Vec<Vec<SungNote>>, S
             end = at + length;
             line.push(SungNote {
                 at,
+                length,
                 clip: clip.id.0,
                 index,
                 pitch: i32::from(note.pitch),
