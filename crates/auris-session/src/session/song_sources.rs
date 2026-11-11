@@ -1,18 +1,50 @@
-//! Exact library choices for a composed part, prepared before replacing the open document.
+//! Exact library choices for a song's parts, prepared before a document is built around them.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use auris_clap::ClapPlugin;
-use auris_compose::spec::PartSource;
 use auris_core::plugin::{PluginKind, PrepareContext};
 use auris_core::{AssetPath, PresetRef, Project, TrackId};
 use auris_io::{SoundFont, byte_size, font_name, load_soundfont, presets};
 use auris_sampler::{SAMPLER_ID, store_preset};
 use auris_vst3::Vst3Plugin;
+use serde::{Deserialize, Serialize};
 
 use crate::SessionError;
 use crate::session::Session;
+
+/// The exact preset or external instrument a part asks the session to resolve.
+///
+/// This is an asset description, not a plugin instance: a song request carries it unchanged until
+/// the session resolves it against the library.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum PartSource {
+    /// One preset in a particular SoundFont file.
+    SoundFont {
+        /// The SoundFont file, resolved by the session.
+        path: PathBuf,
+        /// The bank number in the SoundFont header, from 0 to 65535.
+        bank: i32,
+        /// The preset number in the SoundFont header, from 0 to 65535.
+        patch: i32,
+    },
+    /// One instrument descriptor exported by a CLAP plugin file.
+    Clap {
+        /// The CLAP plugin file.
+        path: PathBuf,
+        /// The descriptor's stable plugin identifier.
+        plugin_id: String,
+    },
+    /// One instrument class exported by a VST3 module.
+    Vst3 {
+        /// The VST3 module or bundle.
+        path: PathBuf,
+        /// The class's stable identifier.
+        class_id: String,
+    },
+}
 
 pub(in crate::session) enum PreparedSource {
     SoundFont {
@@ -233,28 +265,6 @@ impl Session {
         }
     }
 
-    pub(super) fn composed_spec_with_sources(&self, spec: &auris_compose::SongSpec) -> String {
-        let mut spec = spec.clone();
-        for part in &mut spec.parts {
-            match &mut part.source {
-                Some(PartSource::SoundFont { path, .. }) => {
-                    if path.is_absolute() {
-                        *path = self.composed_font_reference(path).as_stored().to_path_buf();
-                    } else {
-                        *path = AssetPath::inside(path.as_path()).as_stored().to_path_buf();
-                    }
-                }
-                Some(PartSource::Clap { path, .. } | PartSource::Vst3 { path, .. }) => {
-                    if let Ok(resolved) = self.resolve_song_plugin_path(path) {
-                        *path = resolved;
-                    }
-                }
-                None => {}
-            }
-        }
-        spec.to_toml()
-    }
-
     pub(in crate::session) fn install_composed_source(
         &mut self,
         project: &mut Project,
@@ -327,28 +337,6 @@ impl Session {
             PreparedSource::SoundFont { .. } => unreachable!(),
         }
     }
-
-    /// Keeps the editable song attached to a font moved by Collect Assets, Save As or recovery.
-    pub(crate) fn relocate_composed_font(&mut self, from: &AssetPath, to: &AssetPath) {
-        let Some(text) = self.project.song_spec.as_ref() else {
-            return;
-        };
-        let Ok(mut spec) = auris_compose::SongSpec::parse(text) else {
-            return;
-        };
-        let mut changed = false;
-        for part in &mut spec.parts {
-            if let Some(PartSource::SoundFont { path, .. }) = &mut part.source
-                && path.as_path() == from.as_stored()
-            {
-                *path = to.as_stored().to_path_buf();
-                changed = true;
-            }
-        }
-        if changed {
-            self.project.song_spec = Some(spec.to_toml());
-        }
-    }
 }
 
 fn require_preset(
@@ -387,5 +375,5 @@ fn require_local_relative_path(path: &Path) -> Result<(), SessionError> {
 }
 
 #[cfg(test)]
-#[path = "compose_source_tests.rs"]
+#[path = "song_sources_tests.rs"]
 mod tests;

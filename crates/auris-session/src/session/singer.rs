@@ -1121,38 +1121,6 @@ impl Session {
         }
     }
 
-    /// Loads a composition's voice before the current project is replaced.
-    pub(super) fn prepare_composed_voice(
-        &mut self,
-        file: &Path,
-        speaker: Option<&str>,
-    ) -> Result<(SingerVoice, f64), SessionError> {
-        let absolute =
-            std::path::absolute(file).map_err(|error| auris_io::IoError::from_fs(file, error))?;
-        let file = absolute.as_path();
-        let loaded = self.loaded_voice_at(file)?;
-        let info = &loaded.info;
-        let offered = info.speakers();
-        if let Some(name) = speaker
-            && !offered.iter().any(|known| known == name)
-        {
-            return Err(SessionError::NoSuchSpeaker {
-                name: name.to_string(),
-                offered,
-            });
-        }
-        Ok((
-            SingerVoice {
-                path: AssetPath::external(file),
-                name: voice_name(info, file),
-                consonants: None,
-                levels: None,
-                speaker: speaker.map(str::to_string),
-            },
-            info.hop_seconds(),
-        ))
-    }
-
     /// Lists a voice file's saved speakers without creating or changing a track.
     ///
     /// May load model metadata; call on an explicit user action, never during painting.
@@ -3080,100 +3048,6 @@ mod tests {
             SingerTakeState::Current,
             "undo restores the score that the take sang"
         );
-    }
-
-    #[test]
-    fn a_composed_singer_keeps_its_named_speaker_and_rejects_unknown_names_atomically() {
-        let scratch = Scratch::new("composed-speaker");
-        let path = voicevox_fixture(&scratch);
-        let mut session =
-            Session::new(super::super::SessionOptions::headless().with_balance(false)).unwrap();
-        let mut spec = auris_compose::SongSpec::parse(
-            "form = 'verse'\n[section.verse]\nbars = 2\nlyrics = 'らら'",
-        )
-        .unwrap();
-        spec.singer = Some(path.to_string_lossy().into_owned());
-        spec.singer_speaker = Some("Second".into());
-        session.compose(&auris_compose::compose(&spec)).unwrap();
-        let track = session
-            .project()
-            .tracks
-            .iter()
-            .find(|track| track.kind.is_singer())
-            .unwrap()
-            .id;
-        assert_eq!(
-            session
-                .singer_voice(track)
-                .unwrap()
-                .unwrap()
-                .speaker
-                .as_deref(),
-            Some("Second")
-        );
-        assert_eq!(
-            session
-                .singer_voicevox_connection(track)
-                .unwrap()
-                .decode_style_id,
-            3002
-        );
-        let saved = scratch.join("Song.auris");
-        session.save_as(&saved).unwrap();
-        let saved = session.path().unwrap().to_path_buf();
-        session.open(&saved).unwrap();
-        let restored =
-            auris_compose::SongSpec::parse(session.project().song_spec.as_deref().unwrap())
-                .unwrap();
-        assert_eq!(restored.singer_speaker, spec.singer_speaker);
-        let before = session.project().clone();
-        spec.singer_speaker = Some("Unknown".into());
-        assert!(matches!(
-            session.compose(&auris_compose::compose(&spec)),
-            Err(SessionError::NoSuchSpeaker { .. })
-        ));
-        assert_eq!(session.project(), &before);
-    }
-
-    #[test]
-    fn a_song_sheet_can_register_a_speaker_without_creating_a_track() {
-        let scratch = Scratch::new("song-speaker-registration");
-        let path = voicevox_fixture(&scratch);
-        let mut session = session();
-        let before = session.project().clone();
-        assert_eq!(
-            session.voice_speakers_at(&path).unwrap(),
-            ["First", "Second"]
-        );
-        let connection = session.voicevox_connection_at(&path, None).unwrap();
-        let choice = VoicevoxSpeakerChoice {
-            name: "Third".into(),
-            query_style_id: 6000,
-            decode_style_id: 3003,
-        };
-        assert!(
-            session
-                .register_composed_voicevox_speaker(&path, Some("Second"), &connection, &choice)
-                .is_err()
-        );
-        session
-            .register_composed_voicevox_speaker(&path, None, &connection, &choice)
-            .unwrap();
-        assert_eq!(
-            session.voice_speakers_at(&path).unwrap(),
-            ["First", "Second", "Third"]
-        );
-        assert_eq!(session.project(), &before);
-        assert!(
-            session
-                .register_composed_voicevox_speaker(&path, None, &connection, &choice)
-                .is_err(),
-            "a stale file snapshot cannot be applied twice"
-        );
-        let (voice, _) = session
-            .prepare_composed_voice(&path, Some("Third"))
-            .unwrap();
-        assert_eq!(voice.speaker.as_deref(), Some("Third"));
     }
 
     #[test]

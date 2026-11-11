@@ -86,7 +86,7 @@ fn candidate(id: u64, parent: Option<u64>, ready: bool) -> Candidate {
 }
 
 fn seed(store: &Store, selected: Option<u64>) {
-    let mut session = Session::new(SessionOptions::headless().with_balance(false)).unwrap();
+    let mut session = Session::new(SessionOptions::headless()).unwrap();
     let cancel = AtomicBool::new(false);
     execute(
         &mut session,
@@ -154,7 +154,7 @@ fn prefs(url: String) -> AgentPreferences {
 }
 
 fn open_score(store: &Store, id: u64) -> Session {
-    let mut session = Session::new(SessionOptions::headless().with_balance(false)).unwrap();
+    let mut session = Session::new(SessionOptions::headless()).unwrap();
     assert!(
         session
             .open(&store.candidate_path(id).join("song/song.auris"))

@@ -304,7 +304,7 @@ pub enum Edit {
     SetClipTransforms(ClipId),
     /// A clip's performance was written into its notes, and the stack cleared.
     FreezeClipTransforms,
-    /// The document was replaced by a composed piece.
+    /// The document was replaced by an adopted song.
     Compose,
     /// Every fader was set from a measurement of what the mix actually sounds like.
     BalanceLevels,

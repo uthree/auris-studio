@@ -283,7 +283,6 @@ mod tests {
         SongIdea {
             title: "Authored test".into(),
             description: "A short motif".into(),
-            preset: "pop-band".into(),
             tempo: 120.0,
             key: "C major".into(),
             density: 0.5,

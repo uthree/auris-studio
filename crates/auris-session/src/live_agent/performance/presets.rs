@@ -258,7 +258,7 @@ mod tests {
 
     #[test]
     fn an_agent_lists_applies_keeps_and_deletes_presets() {
-        let mut session = Session::new(SessionOptions::headless().with_balance(false)).unwrap();
+        let mut session = Session::new(SessionOptions::headless()).unwrap();
         let track = session
             .add_default_instrument_track("Acoustic Guitar")
             .unwrap();
@@ -327,7 +327,7 @@ mod tests {
 
     #[test]
     fn a_drum_writer_takes_a_preset_in_its_own_scope() {
-        let mut session = Session::new(SessionOptions::headless().with_balance(false)).unwrap();
+        let mut session = Session::new(SessionOptions::headless()).unwrap();
         let track = session
             .add_drum_track("Drums", auris_synth::DrumKit::ID)
             .unwrap();

@@ -488,36 +488,12 @@ impl SaveJob {
                 match auris_io::copy_into(&from, &destination) {
                     Ok(name) => {
                         let collected = Path::new(auris_io::AUDIO_DIR).join(name);
-                        if let Some(previous) = self
-                            .project
-                            .soundfonts
-                            .get(&id)
-                            .map(|font| font.path.clone())
-                        {
-                            relocate_composed_font_in_project(
-                                &mut self.project,
-                                &previous,
-                                &AssetPath::inside(&collected),
-                            );
-                        }
                         if let Some(font) = self.project.soundfonts.get_mut(&id) {
                             font.path = AssetPath::inside(collected);
                         }
                     }
                     Err(error) => {
                         log::warn!("could not collect {}: {error}", from.display());
-                        if let Some(previous) = self
-                            .project
-                            .soundfonts
-                            .get(&id)
-                            .map(|font| font.path.clone())
-                        {
-                            relocate_composed_font_in_project(
-                                &mut self.project,
-                                &previous,
-                                &AssetPath::external(&from),
-                            );
-                        }
                         if let Some(font) = self.project.soundfonts.get_mut(&id) {
                             font.path = AssetPath::external(&from);
                         }
@@ -1420,14 +1396,6 @@ impl Session {
         }
         for (id, _from, name) in copied_fonts {
             let collected_path = Path::new(auris_io::AUDIO_DIR).join(name);
-            if let Some(previous) = self
-                .project
-                .soundfonts
-                .get(&id)
-                .map(|font| font.path.clone())
-            {
-                self.relocate_composed_font(&previous, &AssetPath::inside(&collected_path));
-            }
             if let Some(font) = self.project.soundfonts.get_mut(&id) {
                 font.path = AssetPath::inside(&collected_path);
                 collected += 1;
@@ -1775,29 +1743,6 @@ impl Session {
         }
     }
 
-    /// Puts an optional General MIDI font into a project being built and returns its new id.
-    ///
-    /// Takes the project rather than working on [`Self::project`] because the only caller is
-    /// [`Self::compose`], which assembles a whole document before it swaps one in — a font added
-    /// to the open project would belong to the piece being replaced.
-    ///
-    /// `None` when no library is installed; unsupported families keep their reported fallback.
-    pub(super) fn adopt_general_midi(&mut self, project: &mut Project) -> Option<SoundFontId> {
-        if !self.shipped_library {
-            return None;
-        }
-        let font = crate::library::shipped(crate::library::GENERAL_MIDI)?;
-        let path = crate::library::installed(font)?;
-        let data = self.library_font_data(&path)?;
-        let name = font_name(&data, &path);
-        let id = project.add_soundfont(name, AssetPath::external(&path), byte_size(&path));
-        // Into the bank now rather than when the document is swapped in. The swap rebuilds the
-        // graph, and a graph built while the samples were still missing would log a warning per
-        // track about a font that is right here, then be thrown away and built again.
-        self.fonts.insert(id, data);
-        Some(id)
-    }
-
     /// The same font, into the document that is already open.
     ///
     /// [`Self::accompany`] is the caller: it adds parts *beside* what a person has written rather
@@ -1888,27 +1833,6 @@ fn rebase_curve(points: &[CurvePoint], first: Ticks, last: Ticks) -> Vec<CurvePo
         );
     }
     rebased
-}
-
-fn relocate_composed_font_in_project(project: &mut Project, from: &AssetPath, to: &AssetPath) {
-    let Some(text) = project.song_spec.as_ref() else {
-        return;
-    };
-    let Ok(mut spec) = auris_compose::SongSpec::parse(text) else {
-        return;
-    };
-    let mut changed = false;
-    for part in &mut spec.parts {
-        if let Some(auris_compose::PartSource::SoundFont { path, .. }) = &mut part.source
-            && path.as_path() == from.as_stored()
-        {
-            *path = to.as_stored().to_path_buf();
-            changed = true;
-        }
-    }
-    if changed {
-        project.song_spec = Some(spec.to_toml());
-    }
 }
 
 /// Adds library availability to one snapshot while preserving references the document owns.

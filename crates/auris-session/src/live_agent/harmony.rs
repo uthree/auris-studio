@@ -185,8 +185,7 @@ mod tests {
 
     #[test]
     fn explicit_bar_arrays_place_one_progression_across_bars_without_touching_notes() {
-        let mut session =
-            Session::new(crate::SessionOptions::headless().with_balance(false)).unwrap();
+        let mut session = Session::new(crate::SessionOptions::headless()).unwrap();
         let track = session.add_default_instrument_track("Existing").unwrap();
         let clip = session
             .add_midi_clip(track, "Existing", Ticks::ZERO, Ticks::QUARTER * 160)
@@ -238,7 +237,7 @@ mod tests {
 
     #[test]
     fn clear_section_deletes_labels_and_keeps_the_section_after_the_range() {
-        let mut s = Session::new(crate::SessionOptions::headless().with_balance(false)).unwrap();
+        let mut s = Session::new(crate::SessionOptions::headless()).unwrap();
         edit(
             &mut s,
             serde_json::json!({"start_bar":1,"bars":4,"section":"Intro"}),
@@ -283,7 +282,7 @@ mod tests {
 
     #[test]
     fn clear_key_returns_the_range_to_the_key_before_it_without_leftover_markers() {
-        let mut s = Session::new(crate::SessionOptions::headless().with_balance(false)).unwrap();
+        let mut s = Session::new(crate::SessionOptions::headless()).unwrap();
         edit(
             &mut s,
             serde_json::json!({"start_bar":1,"bars":8,"key":"A minor"}),
@@ -322,7 +321,7 @@ mod tests {
 
     #[test]
     fn clearing_a_modulation_leaves_the_song_in_one_key() {
-        let mut s = Session::new(crate::SessionOptions::headless().with_balance(false)).unwrap();
+        let mut s = Session::new(crate::SessionOptions::headless()).unwrap();
         edit(
             &mut s,
             serde_json::json!({"start_bar":5,"bars":4,"key":"E major"}),
@@ -352,7 +351,7 @@ mod tests {
 
     #[test]
     fn rewriting_the_key_in_force_leaves_no_redundant_change() {
-        let mut s = Session::new(crate::SessionOptions::headless().with_balance(false)).unwrap();
+        let mut s = Session::new(crate::SessionOptions::headless()).unwrap();
         edit(
             &mut s,
             serde_json::json!({"start_bar":5,"bars":4,"key":"C major","section":"Verse"}),
@@ -369,7 +368,7 @@ mod tests {
 
     #[test]
     fn a_value_and_its_clear_flag_together_are_refused() {
-        let mut s = Session::new(crate::SessionOptions::headless().with_balance(false)).unwrap();
+        let mut s = Session::new(crate::SessionOptions::headless()).unwrap();
         for args in [
             serde_json::json!({"start_bar":1,"bars":4,"key":"D major","clear_key":true}),
             serde_json::json!({"start_bar":1,"bars":4,"section":"Verse","clear_section":true}),
@@ -381,8 +380,7 @@ mod tests {
 
     #[test]
     fn ambiguous_unbarred_progressions_are_rejected_before_any_edit() {
-        let mut session =
-            Session::new(crate::SessionOptions::headless().with_balance(false)).unwrap();
+        let mut session = Session::new(crate::SessionOptions::headless()).unwrap();
         let before = session.project().clone();
         let error = session
             .agent_edit_harmony(
@@ -405,8 +403,7 @@ mod tests {
             serde_json::json!(["I", "IV V", "vi", "ii V"]),
             serde_json::json!("| I | IV V | vi | ii V |"),
         ] {
-            let mut session =
-                Session::new(crate::SessionOptions::headless().with_balance(false)).unwrap();
+            let mut session = Session::new(crate::SessionOptions::headless()).unwrap();
             let command = serde_json::from_value(serde_json::json!({
                 "action":"edit_harmony", "start_bar":1, "bars":4, "chords":chords,
             }))
@@ -453,8 +450,7 @@ mod tests {
                 .is_err()
             );
         }
-        let mut session =
-            Session::new(crate::SessionOptions::headless().with_balance(false)).unwrap();
+        let mut session = Session::new(crate::SessionOptions::headless()).unwrap();
         session
             .agent_edit_harmony(1, 8, None, Some("@axis x2"), false, None)
             .unwrap();
@@ -472,7 +468,7 @@ mod tests {
 
     #[test]
     fn bounded_chords_restore_silence_after_the_range() {
-        let mut s = Session::new(crate::SessionOptions::headless().with_balance(false)).unwrap();
+        let mut s = Session::new(crate::SessionOptions::headless()).unwrap();
         s.agent_edit_harmony(2, 2, None, Some("| I | V |"), false, None)
             .unwrap();
         assert!(s.harmony().numeral_at(Ticks::ZERO).is_none());
@@ -488,7 +484,7 @@ mod tests {
 
     #[test]
     fn bar_addressed_harmony_ignores_the_pointer_grid() {
-        let mut s = Session::new(crate::SessionOptions::headless().with_balance(false)).unwrap();
+        let mut s = Session::new(crate::SessionOptions::headless()).unwrap();
         s.set_grid(Ticks::QUARTER * 8);
         s.agent_edit_harmony(2, 2, Some("D major"), Some("| I V vi | IV |"), false, None)
             .unwrap();
@@ -509,7 +505,7 @@ mod tests {
 
     #[test]
     fn a_bounded_key_replaces_internal_modulations() {
-        let mut s = Session::new(crate::SessionOptions::headless().with_balance(false)).unwrap();
+        let mut s = Session::new(crate::SessionOptions::headless()).unwrap();
         s.set_key(Ticks::QUARTER * 8, MusicalKey::parse("E major").unwrap());
         let before = s.project().clone();
         s.agent_edit_harmony(2, 3, Some("D major"), Some("| I |"), false, None)
@@ -533,7 +529,7 @@ mod tests {
 
     #[test]
     fn bounded_harmony_follows_meter_changes_and_preserves_outside_chords() {
-        let mut s = Session::new(crate::SessionOptions::headless().with_balance(false)).unwrap();
+        let mut s = Session::new(crate::SessionOptions::headless()).unwrap();
         s.set_signature_point(Ticks::QUARTER * 4, TimeSignature::new(7, 8));
         s.set_signature_point(Ticks(10560), TimeSignature::new(3, 4));
         s.stamp_progression(&Chart::parse("| vi |").unwrap(), Ticks::ZERO, 8);
@@ -567,8 +563,7 @@ mod tests {
 
     #[test]
     fn section_only_edits_bound_the_form_preserve_music_and_undo_together() {
-        let mut session =
-            Session::new(crate::SessionOptions::headless().with_balance(false)).unwrap();
+        let mut session = Session::new(crate::SessionOptions::headless()).unwrap();
         session.add_default_instrument_track("Existing").unwrap();
         let track = session.project().tracks[0].id;
         let clip = session
@@ -613,8 +608,7 @@ mod tests {
 
     #[test]
     fn invalid_section_labels_or_charts_leave_metadata_and_history_untouched() {
-        let mut session =
-            Session::new(crate::SessionOptions::headless().with_balance(false)).unwrap();
+        let mut session = Session::new(crate::SessionOptions::headless()).unwrap();
         let before = session.project().clone();
         for label in [" ", "bad\nlabel", &"長".repeat(100)] {
             assert!(
@@ -634,7 +628,7 @@ mod tests {
 
     #[test]
     fn harmony_writes_metadata_preserves_notes_and_is_one_undo_step() {
-        let mut s = Session::new(crate::SessionOptions::headless().with_balance(false)).unwrap();
+        let mut s = Session::new(crate::SessionOptions::headless()).unwrap();
         let track = s.add_default_instrument_track("Existing").unwrap();
         let clip = s
             .add_midi_clip(track, "Phrase", Ticks::ZERO, Ticks::QUARTER * 32)

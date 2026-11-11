@@ -1691,7 +1691,6 @@ fn idea(direction: &Direction) -> SongIdea {
     SongIdea {
         title: direction.title.clone(),
         description: direction.description.clone(),
-        preset: "pop-band".into(),
         tempo: 120.0,
         key: "C major".into(),
         density: 0.5,
@@ -1723,7 +1722,6 @@ fn usable_sources(requested: &[u64], parent: Option<u64>, saved: impl Fn(u64) ->
 fn candidate_options(settings: &Settings) -> SessionOptions {
     let installed = !cfg!(test);
     let mut options = SessionOptions::headless()
-        .with_balance(false)
         .with_shipped_fonts(installed)
         // An empty dictionary setting means the shipped one, as it does in the window; a
         // headless session would otherwise read kanji lyrics with nothing at all.
@@ -3000,7 +2998,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::new(dir.path().into());
         let cancel = AtomicBool::new(false);
-        let mut session = Session::new(SessionOptions::headless().with_balance(false)).unwrap();
+        let mut session = Session::new(SessionOptions::headless()).unwrap();
         execute(
             &mut session,
             json!({"action":"add_track","name":"Original drums","kind":"drum"}),
@@ -3101,7 +3099,7 @@ mod tests {
         assert!(child.ready, "{:?}", child.error);
         assert_eq!(child.parent, Some(1));
         assert_eq!(snapshot.document.selected, None);
-        let mut restored = Session::new(SessionOptions::headless().with_balance(false)).unwrap();
+        let mut restored = Session::new(SessionOptions::headless()).unwrap();
         restored
             .open(&store.candidate_path(3).join("song/song.auris"))
             .unwrap();
@@ -3411,7 +3409,7 @@ mod tests {
         }
         let dir = tempfile::tempdir().unwrap();
         let store = Store::new(dir.path().into());
-        let mut session = Session::new(SessionOptions::headless().with_balance(false)).unwrap();
+        let mut session = Session::new(SessionOptions::headless()).unwrap();
         let cancel = AtomicBool::new(false);
         execute(
             &mut session,
@@ -3796,7 +3794,7 @@ mod tests {
     fn checkpoint_survives_worker_failure_and_resumes_without_duplicate_tracks() {
         let dir = tempfile::tempdir().unwrap();
         let folder = dir.path().join("1");
-        let mut session = Session::new(SessionOptions::headless().with_balance(false)).unwrap();
+        let mut session = Session::new(SessionOptions::headless()).unwrap();
         let cancel = AtomicBool::new(false);
         execute(
             &mut session,

@@ -32,17 +32,6 @@ useful starting point for an accompaniment pad. Try a lower vowel value and a lo
 for a rounded background texture, or a higher Tone value and shorter attack for an exposed
 ensemble part. A reverb insert can supply the surrounding room.
 
-A song specification can select it directly:
-
-```toml
-form = ["verse"]
-
-[[part]]
-name = "choir"
-role = "pad"
-instrument = "auris.physical.choir"
-```
-
 ## Model and verification
 
 Each singer has an eight-section cylindrical vocal tract with bidirectional fractional

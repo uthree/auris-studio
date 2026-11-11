@@ -3,8 +3,8 @@
 //! Apart from the pitched writers because almost nothing they read applies here. A drum has no
 //! range, no scale and no voicing; its density thins or thickens a groove somebody already wrote
 //! instead of choosing notes; and the length it writes is only there to make the piano roll
-//! readable, because a one-shot ignores its note-off. The fill is here rather than with the form
-//! because it is the snare that plays it.
+//! readable, because a one-shot ignores its note-off. The fill is here because it is the snare
+//! that plays it.
 
 use auris_core::time::Ticks;
 
@@ -53,12 +53,12 @@ pub(super) fn drums(
     let ghosting = (dialled - 0.5).max(0.0) * 2.0;
 
     for bar in 0..section.bars {
-        let mut rng = bar_stream(settings, frame, part, section, "drums", bar);
+        let mut rng = bar_stream(frame, part, section, "drums", bar);
         // The ghosts draw from a stream of their own. They exist only above the dial's middle,
         // and a draw that appears the moment the dial crosses it would shift every later
         // survival roll in the bar — nudging density from 0.50 to 0.51 rescrambled which hits
         // of the groove survive instead of only adding ghosts. One decision, one stream.
-        let mut haunt = bar_stream(settings, frame, part, section, "ghosts", bar);
+        let mut haunt = bar_stream(frame, part, section, "ghosts", bar);
         let bar_start = grid.bar_ticks() * bar as i64;
         // Which steps ended up carrying a hit, so a fill can go round them rather than double
         // them: the pattern says where a hit belongs and thinning may already have taken it away.
@@ -166,7 +166,7 @@ fn survival(accent: Accent, weight: u8, intensity: f32, dialled: f32) -> f32 {
 /// listener is certain to notice sounded the same at every join of everything the composer wrote.
 /// These are the shapes a drummer actually reaches for, all on the snare's own note so a custom
 /// kit is never sent pitches it did not map; which one plays is drawn from the section's stream,
-/// so a repeat of a section fills the way it filled before and the `variation` dial can differ.
+/// so a clip in a stretch with the same label fills the way the last one did.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum FillShape {
     /// Every free step, rising: the classic run up to the downbeat.
@@ -227,9 +227,8 @@ fn fill(
     notes: &mut Vec<Draft>,
 ) {
     let last_bar = bar + 1 == section.bars;
-    // The last section of a piece has nothing to lead into and plays the groove to the end.
-    let leads_somewhere = index + 1 < frame.sections.len() || frame.joins_on;
-    if part.rhythm.is_some() || voice != DrumVoice::Snare || !last_bar || !leads_somewhere {
+    // A clip always leads into something — another clip, or another playing of itself.
+    if part.rhythm.is_some() || voice != DrumVoice::Snare || !last_bar {
         return;
     }
 
@@ -247,15 +246,14 @@ fn fill(
     let from = steps.saturating_sub(beats * per_beat);
     let bar_start = grid.bar_ticks() * bar as i64;
 
-    // Drawn from the section's own stream, like every other choice a bar makes: a repeat of the
-    // section fills the way it filled the first time, and `variation` can buy a departure back.
+    // Drawn from the section's own stream, like every other choice a bar makes.
     const SHAPES: [FillShape; 4] = [
         FillShape::Run,
         FillShape::Tresillo,
         FillShape::Eighths,
         FillShape::Burst,
     ];
-    let mut choose = bar_stream(settings, frame, part, section, "fill", bar);
+    let mut choose = bar_stream(frame, part, section, "fill", bar);
     let shape = SHAPES[choose.weighted(&[1.4, 1.0, 0.9, 0.8]).min(SHAPES.len() - 1)];
 
     for step in fill_steps(shape, from, steps, per_beat) {
@@ -283,8 +281,20 @@ fn fill(
 #[cfg(test)]
 mod tests {
     use super::{FillShape, fill_steps, survival};
-    use crate::parts::fixture::{BASE, bar_steps, draft, part, section_notes};
-    use crate::rhythm::Accent;
+    use crate::fixture::{Song, bar_steps, notes_of, part};
+    use crate::rhythm::{Accent, Pattern};
+    use crate::spec::Role;
+
+    /// One kick alone for a bar, playing `rhythm`, at `intensity`.
+    fn written_kick(rhythm: &str, intensity: f32) -> Song {
+        Song {
+            bars: 1,
+            intensity,
+            ..Song::with_parts([Song::part(Role::Kick, |kick| {
+                kick.rhythm = Pattern::parse(rhythm);
+            })])
+        }
+    }
 
     #[test]
     fn survival_is_certain_for_the_pattern_and_a_temperature_for_the_ghosts() {
@@ -311,17 +321,13 @@ mod tests {
 
     #[test]
     fn a_quiet_section_keeps_the_pattern_and_loses_the_ghosts() {
-        let (_, frame, parts) = draft(
-            r#"
-            form = "verse"
-            chords = "@axis"
-            humanize = 0
-            ending = "none"
-            [section.verse]
-            bars = 4
-            intensity = 0.05
-            "#,
-        );
+        // The fill is off: it is the last bar's business and is asserted where it lives.
+        let mut song = Song {
+            intensity: 0.05,
+            ..Song::default()
+        };
+        song.settings.fill = 0.0;
+        let (frame, parts) = song.draft();
         // basic-rock's kick and snare spell no ghosts, so even this quiet they play whole,
         // bar for bar. The old thinning read the intensity over the whole kit: at the default
         // settings it lost one backbeat in nine, and at this one it lost a third of the part.
@@ -394,25 +400,19 @@ mod tests {
     }
 
     #[test]
-    fn two_songs_do_not_always_fill_the_same_way() {
+    fn two_takes_do_not_always_fill_the_same_way() {
         // The draw has to reach the music: one shape was every fill in every piece, so the one
-        // moment a listener is certain to notice sounded the same at every join the composer
-        // ever wrote. The fill window's struck steps now differ from seed to seed.
+        // moment a listener is certain to notice sounded the same at every join. The fill
+        // window's struck steps now differ from seed to seed.
         let mut windows = std::collections::BTreeSet::new();
         for seed in 1..=8u64 {
-            let (_, frame, parts) = draft(&format!(
-                r#"
-                    form = "verse verse"
-                    chords = "@axis"
-                    humanize = 0
-                    variation = 0
-                    fill = 1.0
-                    seed = {seed}
-                    [section.verse]
-                    bars = 4
-                    intensity = 0.8
-                    "#
-            ));
+            let mut song = Song {
+                seed,
+                intensity: 0.8,
+                ..Song::default()
+            };
+            song.settings.fill = 1.0;
+            let (frame, parts) = song.draft();
             let snare = part(&parts, "snare");
             let plan = &frame.sections[0];
             let bar = frame.grid.bar_ticks();
@@ -435,7 +435,7 @@ mod tests {
 
     #[test]
     fn drums_play_their_general_midi_pitches() {
-        let (_, _, parts) = draft(BASE);
+        let (_, parts) = Song::default().draft();
         for (name, pitch) in [("kick", 36), ("snare", 38), ("hat", 42)] {
             let drum = part(&parts, name);
             assert!(
@@ -448,21 +448,7 @@ mod tests {
     #[test]
     fn a_written_rhythm_survives_a_quiet_section() {
         // Thinning is a suggestion about the groove, not licence to ignore an instruction.
-        // The ending is off because it lands a kick of its own past the written bar, and this
-        // test reads the written rhythm back step for step.
-        let (_, frame, parts) = draft(
-            r#"
-            form = "verse"
-            humanize = 0
-            ending = "none"
-            [section.verse]
-            bars = 1
-            intensity = 0.05
-            [[part]]
-            name = "kick"
-            rhythm = "x ~ x ~ x ~ x ~ x ~ x ~ x ~ x ~"
-            "#,
-        );
+        let (frame, parts) = written_kick("x ~ x ~ x ~ x ~ x ~ x ~ x ~ x ~", 0.05).draft();
         let steps: Vec<usize> = part(&parts, "kick")
             .notes
             .iter()
@@ -473,18 +459,7 @@ mod tests {
 
     #[test]
     fn a_written_rhythm_is_played_as_written() {
-        let (_, frame, parts) = draft(
-            r#"
-            form = "verse"
-            humanize = 0
-            ending = "none"
-            [section.verse]
-            bars = 1
-            [[part]]
-            name = "kick"
-            rhythm = "x ~ ~ ~ x ~ ~ ~ x ~ ~ ~ x ~ ~ ~"
-            "#,
-        );
+        let (frame, parts) = written_kick("x ~ ~ ~ x ~ ~ ~ x ~ ~ ~ x ~ ~ ~", 0.55).draft();
         let kick = part(&parts, "kick");
         let steps: Vec<usize> = kick
             .notes
@@ -495,61 +470,14 @@ mod tests {
     }
 
     #[test]
-    fn the_last_section_fills_into_the_ending() {
-        // The held final bar is somewhere to land, so the section before it runs its fill — the
-        // fill into the final hit, which is how every live set ends. Without the ending that
-        // section used to play the groove flat to the stop.
-        let spec = |ending: &str| {
-            format!(
-                r#"
-                form = "verse"
-                chords = "@axis"
-                humanize = 0
-                fill = 1.0
-                ending = "{ending}"
-                [section.verse]
-                bars = 4
-                intensity = 0.8
-                "#
-            )
-        };
-        let hits_in_last_verse_bar = |text: &str| {
-            let (_, frame, parts) = draft(text);
-            let snare = part(&parts, "snare");
-            let verse = &frame.sections[0];
-            let bar = frame.grid.bar_ticks();
-            snare
-                .notes
-                .iter()
-                .filter(|note| note.section == 0 && note.start >= verse.start + verse.length - bar)
-                .count()
-        };
-        assert!(
-            hits_in_last_verse_bar(&spec("held")) > hits_in_last_verse_bar(&spec("none")),
-            "the verse did not fill into the ending"
-        );
-        assert_eq!(
-            hits_in_last_verse_bar(&spec("loop")),
-            hits_in_last_verse_bar(&spec("held")),
-            "a cycle fills into its opening"
-        );
-    }
-
-    #[test]
     fn a_valid_sparse_groove_can_fill_even_with_an_empty_snare_row() {
-        let (_, frame, parts) = draft(
-            r#"
-            form = "verse"
-            chords = "@axis"
-            groove = "sparse"
-            humanize = 0
-            fill = 1.0
-            ending = "held"
-            [section.verse]
-            bars = 4
-            intensity = 1.0
-            "#,
-        );
+        let mut song = Song {
+            intensity: 1.0,
+            ..Song::default()
+        };
+        song.settings.groove = "sparse".to_string();
+        song.settings.fill = 1.0;
+        let (frame, parts) = song.draft();
         let verse = &frame.sections[0];
         let last_bar = verse.start + verse.length - frame.grid.bar_ticks();
         assert!(
@@ -562,78 +490,19 @@ mod tests {
     }
 
     #[test]
-    fn the_ending_is_one_kick_and_silence() {
-        // The kick lands once with the chord; the snare and the hat have nothing to keep time
-        // for. The cymbal is the joins writer's business and is asserted where it lives.
-        let (_, frame, parts) = draft(
-            r#"
-            form = "verse"
-            chords = "@axis"
-            humanize = 0
-            [section.verse]
-            bars = 4
-            "#,
-        );
-        let ending = frame.sections.last().expect("an ending");
-        assert!(ending.coda, "the fixture grew no ending");
-        let in_ending = |name: &str| {
-            part(&parts, name)
-                .notes
-                .iter()
-                .filter(|note| note.start >= ending.start)
-                .count()
-        };
-        assert_eq!(in_ending("kick"), 1, "one kick on the landing");
-        assert_eq!(in_ending("snare"), 0);
-        assert_eq!(in_ending("hat"), 0);
-        let landing = part(&parts, "kick").notes.last().expect("the kick plays");
-        assert_eq!(landing.start, ending.start, "on the downbeat, exactly");
-    }
-
-    #[test]
     fn a_louder_section_plays_more_drum_hits() {
-        let quiet = draft(&BASE.replace("bars = 4", "bars = 4\nintensity = 0.1")).2;
-        let loud = draft(&BASE.replace("bars = 4", "bars = 4\nintensity = 1.0")).2;
+        let at = |intensity| {
+            Song {
+                intensity,
+                ..Song::default()
+            }
+            .draft()
+            .1
+        };
+        let (quiet, loud) = (at(0.1), at(1.0));
         assert!(
             part(&loud, "hat").notes.len() > part(&quiet, "hat").notes.len(),
             "intensity did not change how much the drummer plays"
-        );
-    }
-
-    #[test]
-    fn a_section_runs_a_fill_into_the_one_that_follows() {
-        // A section that stopped and was replaced sounded like an edit rather than an arrival.
-        // With no ending written, the last section of a piece has nothing to lead into and keeps
-        // the groove instead — the ending is off here so that contrast is what gets measured.
-        let (_, frame, parts) = draft(
-            r#"
-                form = "verse verse"
-                chords = "@axis"
-                humanize = 0
-                variation = 0
-                ending = "none"
-                [section.verse]
-                bars = 4
-                intensity = 0.8
-                "#,
-        );
-        let snare = part(&parts, "snare");
-        let bar = frame.grid.bar_ticks();
-        let last_bar_hits = |section: usize| -> usize {
-            let plan = &frame.sections[section];
-            snare
-                .notes
-                .iter()
-                .filter(|note| {
-                    note.section == section && note.start >= plan.start + plan.length - bar
-                })
-                .count()
-        };
-        assert!(
-            last_bar_hits(0) > last_bar_hits(1),
-            "the first verse ran {} hits into the second's {}",
-            last_bar_hits(0),
-            last_bar_hits(1)
         );
     }
 
@@ -645,21 +514,11 @@ mod tests {
         // everything the kit plays at the middle it still plays above it — the ghosts arrive
         // on top.
         let kit = |density: f32| {
-            let text = format!(
-                r#"
-                    form = "verse"
-                    chords = "@axis"
-                    humanize = 0
-                    swing = 50
-                    [section.verse]
-                    bars = 4
-                    [[part]]
-                    name = "kick"
-                    density = {density}
-                    "#
-            );
-            let (_, frame, parts) = draft(&text);
-            section_notes(&frame, part(&parts, "kick"), 0)
+            let song = Song::with_parts([Song::part(Role::Kick, |kick| {
+                kick.density = Some(density);
+            })]);
+            let (_, parts) = song.draft();
+            notes_of(part(&parts, "kick"))
                 .into_iter()
                 .map(|(start, pitch, ..)| (start, pitch))
                 .collect::<Vec<_>>()

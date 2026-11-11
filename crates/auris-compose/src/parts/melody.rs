@@ -557,7 +557,7 @@ pub(super) fn melody(
     let mut left_off: Option<i32> = None;
     let mut phrase_line = melody_phrase::PhraseLine::default();
     for bar in 0..section.bars {
-        let mut rng = bar_stream(settings, frame, part, section, "melody", bar);
+        let mut rng = bar_stream(frame, part, section, "melody", bar);
         let closing = section.closes_phrase(bar);
         let (mut cells, inflection) = phrase_rhythm(
             &figure,
@@ -876,26 +876,27 @@ fn shift_within(scale: &ChordScale, anchor: i32, degree: i32, low: i32, high: i3
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parts::fixture::{BASE, bar_steps, draft, part};
-    use crate::spec::Role;
+    use crate::fixture::{Song, bar_steps, notes_of, part};
+    use crate::spec::{PartSpec, Role};
+
+    /// The lead alone over `chart` for `bars` bars at `seed`, with `patch` applied to it.
+    fn lead(chart: &str, bars: usize, seed: u64, patch: impl FnOnce(&mut PartSpec)) -> Song {
+        let mut part = PartSpec::of_role("lead", Role::Melody);
+        patch(&mut part);
+        Song {
+            chords: chart.to_string(),
+            bars,
+            seed,
+            ..Song::with_parts([part])
+        }
+    }
     use auris_core::time::Ticks;
 
     #[test]
     fn the_melody_restates_its_call_and_echo_in_the_next_phrase() {
         // Every bar used to roll its own rhythm from its own stream, so no figure ever recurred
         // and a section had nothing in it to recognise.
-        let (_, frame, parts) = draft(
-            r#"
-                form = "verse"
-                chords = "@axis"
-                humanize = 0
-                variation = 0
-                [section.verse]
-                bars = 8
-                [[part]]
-                name = "lead"
-                "#,
-        );
+        let (frame, parts) = lead("@axis", 8, 0, |_| {}).draft();
         let lead = part(&parts, "lead");
         let figure = bar_steps(&frame, lead, 0);
         assert!(!figure.is_empty(), "the melody played nothing at all");
@@ -911,17 +912,7 @@ mod tests {
     fn the_melody_leaves_room_to_breathe() {
         // A note used to be held until the next onset or the bar line, so every bar was full of
         // sound from end to end and a phrase never finished — it only stopped.
-        let (_, frame, parts) = draft(
-            r#"
-                form = "verse"
-                chords = "@axis"
-                humanize = 0
-                [section.verse]
-                bars = 8
-                [[part]]
-                name = "lead"
-                "#,
-        );
+        let (frame, parts) = lead("@axis", 8, 0, |_| {}).draft();
         let lead = part(&parts, "lead");
         let mut longest_rest = Ticks::ZERO;
         let mut sounded_to = Ticks::ZERO;
@@ -1139,22 +1130,11 @@ mod tests {
 
     #[test]
     fn the_realized_continuation_answers_a_monotone_call() {
-        let (_, frame, parts) = draft(
-            r#"
-                form = "verse"
-                key = "C major"
-                chords = "I"
-                motif = "0 -1 -2 -3"
-                ending = "none"
-                humanize = 0
-                variation = 0
-                [section.verse]
-                bars = 4
-                [[part]]
-                name = "lead"
-                rhythm = "x...x.x...x....."
-            "#,
-        );
+        let mut song = lead("| I |", 4, 0, |lead| {
+            lead.rhythm = crate::rhythm::Pattern::parse("x...x.x...x.....");
+        });
+        song.settings.motif = vec![0, -1, -2, -3];
+        let (frame, parts) = song.draft();
         let lead = part(&parts, "lead");
         let bar_ticks = frame.grid.bar_ticks().raw();
         let pitches = |bar: i64| {
@@ -1181,21 +1161,9 @@ mod tests {
     #[test]
     fn generated_phrase_endings_reserve_the_last_felt_beat() {
         for seed in 0..16 {
-            let (_, frame, parts) = draft(&format!(
-                r#"
-                form = "verse"
-                chords = "@axis"
-                ending = "none"
-                humanize = 0
-                seed = {seed}
-                writing_style = "rock"
-                [section.verse]
-                bars = 8
-                [[part]]
-                name = "lead"
-                density = 0.8
-                "#
-            ));
+            let mut song = lead("@axis", 8, seed, |lead| lead.density = Some(0.8));
+            song.settings.style = Some(crate::PerformanceStyle::Rock);
+            let (frame, parts) = song.draft();
             let lead = part(&parts, "lead");
             let section = &frame.sections[0];
             for phrase in &section.phrases {
@@ -1230,19 +1198,10 @@ mod tests {
 
     #[test]
     fn written_rhythm_keeps_its_late_attacks_at_a_phrase_ending() {
-        let (_, frame, parts) = draft(
-            r#"
-            form = "verse"
-            chords = "@axis"
-            ending = "none"
-            humanize = 0
-            [section.verse]
-            bars = 4
-            [[part]]
-            name = "lead"
-            rhythm = ".X......x..o...x"
-            "#,
-        );
+        let (frame, parts) = lead("@axis", 4, 0, |lead| {
+            lead.rhythm = crate::rhythm::Pattern::parse(".X......x..o...x");
+        })
+        .draft();
         let lead = part(&parts, "lead");
         for bar in 0..4 {
             assert_eq!(bar_steps(&frame, lead, bar), [1, 8, 11, 15]);
@@ -1251,7 +1210,7 @@ mod tests {
 
     #[test]
     fn a_prepared_tension_has_an_in_scale_stepwise_resolution() {
-        let (_, frame, _) = draft(BASE);
+        let frame = Song::default().frame();
         let chord = crate::theory::chord::Chord::parse("C").unwrap();
         let scale = ChordScale::new(frame.sections[0].key, chord);
         let resolution = tension_resolution(&scale, chord, 65).expect("F can resolve over C");
@@ -1273,20 +1232,11 @@ mod tests {
     fn generated_accented_tensions_are_prepared_and_resolved() {
         let mut resolved = 0;
         for seed in 0..64 {
-            let (_, frame, parts) = draft(&format!(
-                r#"
-                form = "verse"
-                ending = "none"
-                chords = "| IV | I | IV | I |"
-                seed = {seed}
-                tension = 1.0
-                [section.verse]
-                bars = 4
-                [[part]]
-                name = "lead"
-                rhythm = "x.x.x.x.x.x.x.x."
-            "#
-            ));
+            let mut song = lead("| IV | I | IV | I |", 4, seed, |lead| {
+                lead.rhythm = crate::rhythm::Pattern::parse("x.x.x.x.x.x.x.x.");
+            });
+            song.settings.mood.tension = 1.0;
+            let (frame, parts) = song.draft();
             let section = &frame.sections[0];
             let lead = part(&parts, "lead");
             for notes in lead.notes.windows(3) {
@@ -1368,36 +1318,19 @@ mod tests {
 
     #[test]
     fn a_verse_and_a_chorus_are_two_statements_of_one_tune() {
-        // The germ: every section's figure wears one piece-level contour. Two sections with the
-        // same written rhythm and the same intensity therefore state the same figure, and the
-        // shape survives to the notes — the *pitches* may sit at different heights, because each
-        // section hangs the figure on its own skeleton, but the intervals inside the opening bar
-        // are the same intervals. Before the germ, each section drew its own contour from its
-        // own stream, and one song had as many tunes as it had section names.
-        let (_, frame, parts) = draft(
-            r#"
-                form = ["verse", "chorus"]
-                chords = "@axis"
-                humanize = 0
-                variation = 0
-                ending = "none"
-
-                [section.verse]
-                bars = 4
-                intensity = 0.7
-
-                [section.chorus]
-                bars = 4
-                intensity = 0.7
-
-                [[part]]
-                name = "lead"
-                rhythm = "x.x.x.x.x......."
-                "#,
-        );
-        let lead = part(&parts, "lead");
-        let shape_of = |section: usize| -> Vec<i64> {
-            let notes = crate::parts::fixture::section_notes(&frame, lead, section);
+        // The germ: every section's figure wears one take-level contour. Two clips with the same
+        // written rhythm and the same intensity, in stretches with different labels, therefore
+        // state the same figure, and the shape survives to the notes — the *pitches* may sit at
+        // different heights, because each hangs the figure on its own skeleton, but the
+        // intervals inside the opening bar are the same intervals.
+        let shape_of = |section: &'static str| -> Vec<i64> {
+            let mut song = lead("@axis", 4, 0, |lead| {
+                lead.rhythm = crate::rhythm::Pattern::parse("x.x.x.x.x.......");
+            });
+            song.intensity = 0.7;
+            song.section = (section, 1);
+            let (frame, parts) = song.draft();
+            let notes = notes_of(part(&parts, "lead"));
             let bar = frame.grid.bar_ticks().raw();
             let opening: Vec<i64> = notes
                 .iter()
@@ -1406,39 +1339,28 @@ mod tests {
                 .collect();
             opening.windows(2).map(|pair| pair[1] - pair[0]).collect()
         };
-        let verse = shape_of(0);
+        let verse = shape_of("verse");
         assert!(!verse.is_empty(), "the verse played nothing");
-        assert_eq!(verse, shape_of(1), "two sections, two different tunes");
+        assert_eq!(
+            verse,
+            shape_of("chorus"),
+            "two sections, two different tunes"
+        );
     }
 
     #[test]
-    fn a_given_motif_is_the_tune_the_whole_piece_says() {
+    fn a_given_motif_is_the_tune_every_section_says() {
         // `motif` hands the germ over instead of drawing it: four onsets wearing four degrees
         // wear them one for one, so the opening bar rises where the motif rises and falls where
-        // it falls — in both sections, because a germ belongs to the piece.
-        let (_, frame, parts) = draft(
-            r#"
-                form = ["verse", "chorus"]
-                chords = "@axis"
-                humanize = 0
-                variation = 0
-                ending = "none"
-                motif = "0 2 4 2"
-
-                [section.verse]
-                bars = 4
-
-                [section.chorus]
-                bars = 4
-
-                [[part]]
-                name = "lead"
-                rhythm = "x.x.x.x........."
-                "#,
-        );
-        let lead = part(&parts, "lead");
-        let shape_of = |section: usize| -> Vec<i64> {
-            let notes = crate::parts::fixture::section_notes(&frame, lead, section);
+        // it falls — whatever stretch the clip is written into.
+        let shape_of = |section: &'static str| -> Vec<i64> {
+            let mut song = lead("@axis", 4, 0, |lead| {
+                lead.rhythm = crate::rhythm::Pattern::parse("x.x.x.x.........");
+            });
+            song.settings.motif = vec![0, 2, 4, 2];
+            song.section = (section, 1);
+            let (frame, parts) = song.draft();
+            let notes = notes_of(part(&parts, "lead"));
             let bar = frame.grid.bar_ticks().raw();
             let opening: Vec<i64> = notes
                 .iter()
@@ -1450,9 +1372,13 @@ mod tests {
                 .map(|pair| (pair[1] - pair[0]).signum())
                 .collect()
         };
-        assert_eq!(shape_of(0), [1, 1, -1], "the verse does not sing the motif");
         assert_eq!(
-            shape_of(1),
+            shape_of("verse"),
+            [1, 1, -1],
+            "the verse does not sing the motif"
+        );
+        assert_eq!(
+            shape_of("chorus"),
             [1, 1, -1],
             "the chorus does not sing the motif"
         );
@@ -1547,18 +1473,7 @@ mod tests {
         // busy written chart meets it head on.
         let (mut across, mut inside) = (Vec::new(), Vec::new());
         for seed in 1..=8u64 {
-            let (_, frame, parts) = draft(&format!(
-                r#"
-                    form = "verse"
-                    chords = "| I V | vi IV | I vi | ii V |"
-                    humanize = 0
-                    seed = {seed}
-                    [section.verse]
-                    bars = 8
-                    [[part]]
-                    name = "lead"
-                    "#
-            ));
+            let (frame, parts) = lead("| I V | vi IV | I vi | ii V |", 8, seed, |_| {}).draft();
             let lead = part(&parts, "lead");
             let section = &frame.sections[0];
             let bar = frame.grid.bar_ticks().raw();
@@ -1600,23 +1515,9 @@ mod tests {
         // six-bar verse used to run its figure straight over its own edge — no cadence and no
         // breath, because only `bar % 4 == 3` closed — so the melody's last note could be a
         // passing tone hanging over the bar line into the next section.
-        // The ending is off because this test asks the *verse's own* last bar to close, and the
-        // held final bar would otherwise be the last note found.
         let mut breathed = 0;
         for seed in 1..=8u64 {
-            let (_, frame, parts) = draft(&format!(
-                r#"
-                    form = "verse"
-                    chords = "@axis"
-                    humanize = 0
-                    ending = "none"
-                    seed = {seed}
-                    [section.verse]
-                    bars = 6
-                    [[part]]
-                    name = "lead"
-                    "#
-            ));
+            let (frame, parts) = lead("@axis", 6, seed, |_| {}).draft();
             let lead = part(&parts, "lead");
             let section = &frame.sections[0];
             let last = lead
@@ -1705,7 +1606,7 @@ mod tests {
         // different degrees can arrive on one pitch — a repeat nobody drew, at the top of the
         // figure's arch. The move goes the way the figure was going, and turns back only at the
         // very edge, where that direction has no room left.
-        let (_, frame, _) = draft(BASE);
+        let frame = Song::default().frame();
         let scale = ChordScale::of_key(frame.sections[0].key);
         let (low, high) = Role::Melody.range();
         let moved = unstick(&scale, 76, 1, low, high);
@@ -1729,18 +1630,7 @@ mod tests {
         // fourth or wider — an arpeggio's distribution rather than a tune's.
         let mut intervals: Vec<i32> = Vec::new();
         for seed in 0..4u64 {
-            let (_, _, parts) = draft(&format!(
-                r#"
-                    form = "verse"
-                    chords = "@axis"
-                    humanize = 0
-                    seed = {seed}
-                    [section.verse]
-                    bars = 8
-                    [[part]]
-                    name = "lead"
-                    "#
-            ));
+            let (_, parts) = lead("@axis", 8, seed, |_| {}).draft();
             let lead = part(&parts, "lead");
             let mut notes = lead.notes.clone();
             notes.sort_by_key(|note| note.start.raw());
@@ -1769,7 +1659,7 @@ mod tests {
     fn a_figure_too_wide_for_the_range_shrinks_rather_than_folding() {
         // Folding moves a note a whole octave, which is a wider leap than any figure asks for and
         // usually in the opposite direction to the one it was going.
-        let (_, frame, _) = draft(BASE);
+        let frame = Song::default().frame();
         let section = &frame.sections[0];
         let (low, high) = Role::Melody.range();
         let anchor = high - 2;
@@ -1784,32 +1674,39 @@ mod tests {
         );
     }
 
-    /// Every melodic interval the composer writes, and the ones that cross a bar line.
+    /// Every melodic interval the lead writes, and the ones that cross a bar line.
     ///
-    /// The measurement [`crate::melodic`] describes, run the way that page says to run it:
-    /// [`compose`](crate::compose) over [`PRESETS`](crate::PRESETS) at four seeds each, the melody
-    /// track picked out by [`Role::Melody`]'s colour, and the signed difference between
-    /// consecutive pitches within each clip. Nothing here is a fixture — the interval
-    /// distribution of a piece is a property of the piece.
+    /// The measurement [`crate::melodic`] describes: eight-bar takes over several charts, keys
+    /// and styles at four seeds each, verse and chorus intensities alternating, and the signed
+    /// difference between consecutive pitches. The seeds count from one, as a clip's do.
     fn intervals() -> (Vec<i32>, Vec<i32>, Vec<i32>) {
-        let colour = Role::Melody.color();
         let (mut all, mut crossing, mut inside) = (Vec::new(), Vec::new(), Vec::new());
-        for preset in crate::preset::PRESETS {
-            for seed in 0..4u64 {
-                let mut spec = preset.spec();
-                spec.seed = seed;
-                let piece = crate::render::compose(&spec);
-                let bar = piece.meter.ticks_per_bar().raw().max(1);
-                for track in piece.tracks.iter().filter(|track| track.color == colour) {
-                    for clip in &track.clips {
-                        for pair in clip.notes.windows(2) {
-                            let step = i32::from(pair[1].pitch) - i32::from(pair[0].pitch);
-                            all.push(step);
-                            match pair[0].start.raw() / bar == pair[1].start.raw() / bar {
-                                true => inside.push(step),
-                                false => crossing.push(step),
-                            }
-                        }
+        use crate::PerformanceStyle::{Chiptune, CityPop, Orchestral, PopBand, Rock};
+        for (key, chart, style, mood) in [
+            ("C major", "@axis", Some(Chiptune), "bright"),
+            ("F major", "@royal-road", Some(PopBand), "bright"),
+            ("A major", "@marusa", Some(CityPop), "funky"),
+            ("E minor", "@canon", Some(Rock), "driving"),
+            ("F major", "| I | vi | ii | V |", None, "neutral"),
+            ("D minor", "| i | iv | v | i |", Some(Orchestral), "epic"),
+        ] {
+            for (seed, intensity) in (1..=4u64).zip([0.55, 0.95, 0.45, 0.9]) {
+                let mut song = lead(chart, 8, seed, |_| {});
+                song.key = key;
+                song.intensity = intensity;
+                song.section = (if intensity > 0.8 { "chorus" } else { "verse" }, 1);
+                song.settings.style = style;
+                song.settings.mood = crate::Mood::named(mood).unwrap();
+                let (frame, parts) = song.draft();
+                let bar = frame.grid.bar_ticks().raw().max(1);
+                let mut notes = part(&parts, "lead").notes.clone();
+                notes.sort_by_key(|note| note.start.raw());
+                for pair in notes.windows(2) {
+                    let step = i32::from(pair[1].pitch) - i32::from(pair[0].pitch);
+                    all.push(step);
+                    match pair[0].start.raw() / bar == pair[1].start.raw() / bar {
+                        true => inside.push(step),
+                        false => crossing.push(step),
                     }
                 }
             }

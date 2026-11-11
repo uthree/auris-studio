@@ -1,6 +1,6 @@
 //! How the piece should feel, as four numbers.
 //!
-//! The other half of the vocabulary a specification is written in, and kept apart from the model
+//! The other half of the vocabulary a writer is asked in, and kept apart from the part
 //! for the same reason [`Role`](super::Role) is: a mood is a small table of dials, and what those
 //! dials mean — how often a chord gains a seventh, how many notes a bar wants, how high the
 //! melody sits — is arithmetic that nothing about reading or writing a document belongs in.

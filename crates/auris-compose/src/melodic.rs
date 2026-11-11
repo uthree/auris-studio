@@ -274,7 +274,8 @@
 //!
 //! # Reproducing the numbers
 //!
-//! The measurement is [`compose`](crate::compose) over [`PRESETS`](crate::PRESETS) at several
-//! seeds, the melody track picked out by [`Role::Melody`](crate::Role)'s colour, and the signed
-//! difference between consecutive pitches within each clip. Nothing else is needed and nothing here
-//! depends on a fixture: the interval distribution of a piece is a property of the piece.
+//! The figures above were taken over the whole-song presets the crate used to ship. What holds
+//! them now is the melody writer's own test `the_tune_still_measures_like_a_tune`: eight-bar takes
+//! over six charts in the presets' keys, moods and styles, at four seeds each, and the signed
+//! difference between consecutive pitches. Its bands sit between the figures reported here and the
+//! ones reported for the writer before these rules existed.

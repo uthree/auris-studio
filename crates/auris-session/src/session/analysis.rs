@@ -157,31 +157,31 @@ mod tests {
     /// Two sections, quiet then loud, on the built-in instruments — no SoundFont, so it
     /// measures the same on every machine.
     fn analyzed() -> MixAnalysis {
-        let spec = auris_compose::SongSpec::parse(
-            r#"
-            form = ["hush", "roar"]
-            ending = "none"
-            seed = 4
-            [section.hush]
-            bars = 4
-            intensity = 0.15
-            [section.roar]
-            bars = 4
-            intensity = 0.95
-            [[part]]
-            name = "tune"
-            role = "melody"
-            [[part]]
-            name = "low"
-            role = "bass"
-            "#,
-        )
-        .expect("a specification this file wrote");
-        let mut session = Session::new(SessionOptions::headless().with_balance(false))
-            .expect("a headless session opens");
+        use super::super::fixtures::BAR;
+        use auris_core::{ClipPreset, ClipRecipe, Ticks};
+        let mut session =
+            Session::new(SessionOptions::headless()).expect("a headless session opens");
         session
-            .compose(&auris_compose::compose(&spec))
-            .expect("two parts compose");
+            .stamp_named_progression("axis", Ticks::ZERO, 8)
+            .expect("a known progression");
+        session.set_section(Ticks::ZERO, Some("hush".into()));
+        session.set_section(BAR * 4, Some("roar".into()));
+        session.set_section(BAR * 8, None);
+        for (name, preset, instrument) in [
+            ("tune", ClipPreset::Lead, "auris.synth.chiptune"),
+            ("low", ClipPreset::Bass, "auris.synth.fm2"),
+        ] {
+            let track = session
+                .add_instrument_track(name, instrument)
+                .expect("a built-in instrument");
+            for (bar, intensity) in [(0, 0.15), (4, 0.95)] {
+                let mut recipe = ClipRecipe::new(preset, 4);
+                recipe.intensity = intensity;
+                session
+                    .generate_clip(track, BAR * bar, BAR * 4, recipe)
+                    .expect("a generated clip");
+            }
+        }
         session.analyze(true).expect("the piece renders")
     }
 
@@ -229,13 +229,9 @@ mod tests {
 
     #[test]
     fn asking_changes_nothing() {
-        let spec = auris_compose::SongSpec::parse("form = [\"verse\"]\n[section.verse]\nbars = 2")
-            .expect("a two-line song");
-        let mut session = Session::new(SessionOptions::headless().with_balance(false))
-            .expect("a headless session opens");
-        session
-            .compose(&auris_compose::compose(&spec))
-            .expect("the piece composes");
+        let mut session =
+            Session::new(SessionOptions::headless()).expect("a headless session opens");
+        crate::session::fixtures::song(&mut session, 2);
         let before = session.project().clone();
         session.analyze(true).expect("the piece renders");
         assert_eq!(*session.project(), before, "a report is not an edit");

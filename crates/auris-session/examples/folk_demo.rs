@@ -82,11 +82,7 @@ fn add_whistle(session: &mut Session) -> Result<(), Box<dyn Error>> {
 }
 
 fn write_project(path: &Path, dulcimer: bool, whistle: bool) -> Result<(), Box<dyn Error>> {
-    let mut session = Session::new(
-        SessionOptions::headless()
-            .with_balance(false)
-            .with_sample_rate(48_000.0),
-    )?;
+    let mut session = Session::new(SessionOptions::headless().with_sample_rate(48_000.0))?;
     if dulcimer {
         add_dulcimer(&mut session)?;
     }

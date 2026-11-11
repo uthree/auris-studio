@@ -471,6 +471,28 @@ fn is_verse(label: &str) -> bool {
 /// dial, above the level every chorus gets.
 const LAST_CHORUS_INTENSITY: f32 = 1.0;
 
+/// How hard a section is played by the name it carries, numbered occurrences included.
+///
+/// The arch a song's form usually has — a quiet intro, the verse under the chorus, the outro
+/// quietest of all — and the middle of the dial for any name it does not know.
+fn section_intensity(name: &str) -> f32 {
+    let stem = name
+        .trim()
+        .trim_end_matches(|c: char| c.is_ascii_digit())
+        .trim_end();
+    match stem.to_ascii_lowercase().as_str() {
+        "intro" => 0.30,
+        "verse" => 0.55,
+        "pre" => 0.70,
+        "chorus" => 0.90,
+        "bridge" => 0.60,
+        "break" => 0.35,
+        "solo" => 0.75,
+        "outro" => 0.25,
+        _ => 0.60,
+    }
+}
+
 /// The section a drum part generated over `start..end` is struck for, and how hard: a verse
 /// softer, a chorus harder, the last of several choruses hardest. The section is the one most of
 /// the range lies in. `None` for any other section, which leaves the recipe at its own level.
@@ -493,7 +515,7 @@ pub(crate) fn drum_intensity(project: &Project, start: Ticks, end: Ticks) -> Opt
         .enumerate()
         .filter(|(_, span)| overlap(span) > 0)
         .max_by_key(|(index, span)| (overlap(span), std::cmp::Reverse(*index)))?;
-    let level = |name: &str| auris_compose::spec::SectionSpec::named(name).intensity;
+    let level = section_intensity;
     let intensity = if is_chorus(&span.label) {
         let later = spans[index + 1..].iter().any(|s| is_chorus(&s.label));
         let earlier = spans[..index].iter().any(|s| is_chorus(&s.label));
@@ -897,8 +919,8 @@ mod tests {
                 .set_point(bar * (labels.len() as i64 * 8), None);
             project
         };
-        let verse = auris_compose::spec::SectionSpec::named("verse").intensity;
-        let chorus = auris_compose::spec::SectionSpec::named("chorus").intensity;
+        let verse = section_intensity("verse");
+        let chorus = section_intensity("chorus");
         assert!(verse < chorus && chorus < LAST_CHORUS_INTENSITY);
         let at = |project: &Project, section: i64| {
             drum_intensity(project, bar * (section * 8), bar * (section * 8 + 8))

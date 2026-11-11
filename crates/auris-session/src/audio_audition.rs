@@ -431,8 +431,7 @@ mod tests {
     use super::*;
 
     fn fixture() -> (Session, TrackId) {
-        let mut session =
-            Session::new(crate::SessionOptions::headless().with_balance(false)).unwrap();
+        let mut session = Session::new(crate::SessionOptions::headless()).unwrap();
         let track = session.add_default_instrument_track("Lead").unwrap();
         session
             .set_track_instrument(track, "auris.synth.fm2")

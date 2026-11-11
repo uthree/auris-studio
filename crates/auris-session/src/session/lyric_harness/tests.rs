@@ -7,10 +7,6 @@ fn session() -> Session {
     session
 }
 
-fn verses(second: &str) -> SongSpec {
-    SongSpec::parse(&format!("form='verse verse2'\n[section.verse]\nbars=4\nlyrics='ずっときみと、はるがきた'\n[section.verse2]\nbars=4\nmelody_from='verse'\nlyrics='{second}'")).unwrap()
-}
-
 #[test]
 fn analysis_fits_phrases_to_note_counts() {
     let session = session();
@@ -165,77 +161,6 @@ fn a_zero_based_phrase_is_refused_with_the_numbering_spelt_out() {
         .unwrap_err();
     assert!(error.contains("fit[0].phrase is 3"), "{error}");
     assert!(error.contains("2 phrases"), "{error}");
-}
-
-#[test]
-fn diagnosis_reports_each_phrase_even_when_total_moras_match() {
-    let session = session();
-    let spec = verses("きっとあう、あさがきたよ");
-    let report = session.diagnose_song_lyrics(&spec).unwrap();
-    assert_eq!(report.status, "fail");
-    assert!(report.complete);
-    let mismatches: Vec<_> = report
-        .issues
-        .iter()
-        .filter(|i| i.code == "mora_count_mismatch")
-        .collect();
-    assert_eq!(mismatches.len(), 2);
-    assert_eq!(mismatches[0].phrase, Some(1));
-    assert_eq!(mismatches[1].phrase, Some(2));
-    assert_eq!(report, session.diagnose_song_lyrics(&spec).unwrap());
-    assert!(session.validate_song_lyrics(&spec).is_err());
-}
-
-#[test]
-fn closures_are_checked_separately_from_counts_and_unreadable_phrases() {
-    let session = session();
-    let spec = verses("きみとあえる、漢字");
-    let report = session.diagnose_song_lyrics(&spec).unwrap();
-    assert_eq!(report.status, "fail");
-    assert!(!report.complete);
-    assert_eq!(
-        report
-            .issues
-            .iter()
-            .filter(|i| i.code == "unreadable_phrase")
-            .count(),
-        1
-    );
-    let closure = report
-        .issues
-        .iter()
-        .find(|i| i.code == "closure_position_mismatch")
-        .unwrap();
-    assert_eq!(closure.expected, Some(serde_json::json!([2])));
-    assert_eq!(closure.actual, Some(serde_json::json!([])));
-    assert!(
-        !report
-            .issues
-            .iter()
-            .any(|i| i.code == "mora_count_mismatch")
-    );
-}
-
-#[test]
-fn unreadable_original_is_incomplete_instead_of_a_silent_composition_pass() {
-    let session = session();
-    let spec = SongSpec::parse("form='verse'\n[section.verse]\nlyrics='漢字'").unwrap();
-    assert_eq!(
-        session.diagnose_song_lyrics(&spec).unwrap().status,
-        "incomplete"
-    );
-    assert!(session.validate_song_lyrics(&spec).is_err());
-}
-
-#[test]
-fn matched_and_intentionally_independent_sections_pass() {
-    let session = session();
-    let mut spec = verses("きっとあえる、あさがきた");
-    assert_eq!(session.diagnose_song_lyrics(&spec).unwrap().status, "pass");
-    session.validate_song_lyrics(&spec).unwrap();
-    spec.sections.get_mut("verse2").unwrap().melody_from = None;
-    spec.sections.get_mut("verse2").unwrap().lyrics = "あした".into();
-    assert_eq!(session.diagnose_song_lyrics(&spec).unwrap().status, "pass");
 }
 
 fn singer_pair(session: &mut Session) -> (NoteSpan, NoteSpan) {
@@ -487,31 +412,6 @@ fn stored_one_mora_phonemes_establish_slots_for_original_text_and_plus_labels() 
     assert_eq!(report.status, "pass");
     assert_eq!(report.sections[0].analysis.phrases[0].text, "ずっと君と");
     assert_eq!(report.sections[0].analysis.phrases[0].moras.len(), 6);
-}
-
-#[test]
-fn phrase_count_and_capacity_diagnostics_use_the_actual_fixed_bar_allocator() {
-    let session = session();
-    let mut spec = verses("きっとあえる");
-    let report = session.diagnose_song_lyrics(&spec).unwrap();
-    assert!(
-        report
-            .issues
-            .iter()
-            .any(|i| i.code == "phrase_count_mismatch")
-    );
-    let section = spec.sections.get_mut("verse2").unwrap();
-    section.melody_from = None;
-    section.bars = 1;
-    section.lyrics = "あ".repeat(100);
-    let report = session.diagnose_song_lyrics(&spec).unwrap();
-    assert!(
-        report
-            .issues
-            .iter()
-            .any(|i| i.code == "lyric_capacity_exceeded" && i.section == "verse2")
-    );
-    assert!(session.validate_song_lyrics(&spec).is_err());
 }
 
 #[test]

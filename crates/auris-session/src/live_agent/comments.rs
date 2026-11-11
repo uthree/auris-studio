@@ -277,7 +277,7 @@ mod tests {
     use crate::live_agent::Command;
 
     fn session() -> crate::Session {
-        crate::Session::new(crate::SessionOptions::headless().with_balance(false)).unwrap()
+        crate::Session::new(crate::SessionOptions::headless()).unwrap()
     }
 
     fn run(session: &mut crate::Session, value: serde_json::Value) -> Result<String, String> {

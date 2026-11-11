@@ -9,11 +9,6 @@ its pickup hears it, before any amplifier, and is described with the other
 [physical instruments](physical-instruments.md). The amp is an explicit effect, and this page
 is its account. The composer's guitar performance stages recognize the instrument ID.
 
-Song presets author their amplifier settings in each part's `effects` chain. Rock uses
-bridge pickup DI with driven lead/rhythm amps and separate clean parts; pop, city-pop and
-synthwave also amplify their DI guitars. These choices save with the song specification
-and become editable instrument and mixer controls after composition.
-
 ## Preset processing check, 2026-10-05
 
 The baseline is `7e1bf88`, after presets adopted the native DI but before they supplied

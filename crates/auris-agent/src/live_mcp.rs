@@ -296,7 +296,7 @@ mod tests {
                 let tools = rpc_response(&body);
                 let tool = tools["result"]["tools"].as_array().unwrap().iter().find(|tool| tool["name"] == "generate_phrase").unwrap();
                 assert_eq!(tool["inputSchema"]["properties"]["bars"]["maximum"], 1024);
-                let mut song = auris_session::Session::new(auris_session::SessionOptions::headless().with_balance(false)).unwrap();
+                let mut song = auris_session::Session::new(auris_session::SessionOptions::headless()).unwrap();
                 let track = song.add_default_instrument_track("Lead").unwrap();
                 song.agent_command(serde_json::from_value(json!({"action":"edit_harmony","start_bar":1,"bars":4,"chords":"| I | IV | V | I |"})).unwrap()).unwrap();
                 let before = song.project().clone();

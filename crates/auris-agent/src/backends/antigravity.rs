@@ -805,7 +805,7 @@ mod tests {
                 let (client, server) = tokio::io::duplex(128 * 1024);
                 let (reader, writer) = tokio::io::split(client);
                 let mut cli = Cli::transport(None, writer, reader, "auris-fixture".into());
-                let mut session = auris_session::Session::new(auris_session::SessionOptions::headless().with_balance(false)).unwrap();
+                let mut session = auris_session::Session::new(auris_session::SessionOptions::headless()).unwrap();
                 let before = session.project().clone();
                 let peer = async {
                     let (reader, mut writer) = tokio::io::split(server);

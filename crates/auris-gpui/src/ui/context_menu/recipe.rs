@@ -502,6 +502,28 @@ mod tests {
     use crate::ui::context_menu::MenuEntry;
     use gpui::{point, px};
 
+    /// A kit of independently written voices, one per `(name, role, preset, note)`.
+    fn kit(voices: &[(&str, DrumRole, ClipPreset, u8)]) -> ClipRecipe {
+        let mut recipe = ClipRecipe::new(ClipPreset::Drums, 3);
+        for (name, role, preset, note) in voices {
+            recipe.drum_voices.push(DrumVoiceRecipe {
+                name: (*name).into(),
+                role: *role,
+                note: *note,
+                recipe: Some(Box::new(ClipRecipe::new(*preset, 3))),
+                fixed_notes: Vec::new(),
+            });
+        }
+        recipe
+    }
+
+    /// The three voices of a basic kit at their General MIDI notes.
+    const KIT: [(&str, DrumRole, ClipPreset, u8); 3] = [
+        ("kick", DrumRole::Kick, ClipPreset::Kick, 36),
+        ("snare", DrumRole::Snare, ClipPreset::Snare, 38),
+        ("hat", DrumRole::ClosedHat, ClipPreset::Hat, 42),
+    ];
+
     /// The commands a menu offers, ignoring its labels and its separators.
     fn commands(menu: &ContextMenu) -> Vec<MenuCommand> {
         menu.entries
@@ -536,13 +558,7 @@ mod tests {
 
     #[test]
     fn a_voice_menu_offers_only_assigned_rhythmic_writers() {
-        let piece = compose(&SongSpec::default());
-        let kit = piece
-            .tracks
-            .iter()
-            .find(|track| !track.drum_parts.is_empty())
-            .unwrap();
-        let mut recipe = kit.clips[0].recipe.clone().unwrap();
+        let mut recipe = kit(&KIT);
         let mut accent = recipe.drum_voices[0].clone();
         accent.name = "fixed-accent".into();
         accent.recipe = None;

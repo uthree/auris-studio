@@ -6,9 +6,7 @@
 
 use auris_core::{Note, Ticks, TimeSignature};
 
-use crate::frame::Frame;
-use crate::parts::PartDraft;
-use crate::{PerformanceStyle, Role, SongSpec};
+use crate::{PerformanceStyle, Role};
 
 /// How much of a chord's subdivision to fill above the ordinary comping range.
 ///
@@ -36,7 +34,7 @@ pub fn accompany_foreground(
 ) {
     if foreground.is_empty()
         || notes.is_empty()
-        || !matches!(role, Role::Chords | Role::Stab | Role::Arp)
+        || !matches!(role, Role::Chords | Role::Arp)
         || style == Some(PerformanceStyle::Ambient)
     {
         return;
@@ -164,190 +162,9 @@ pub fn accompany_foreground(
     notes.sort_by_key(|n| (n.start, n.pitch));
 }
 
-pub(crate) fn arrange(spec: &SongSpec, frame: &Frame, drafts: &mut [PartDraft]) {
-    for (section_index, section) in frame.sections.iter().enumerate() {
-        if section.coda
-            || spec
-                .sections
-                .get(&section.name)
-                .is_some_and(|s| !s.lyrics.trim().is_empty())
-        {
-            // The session will use the real, lyric-conditioned voice once it exists.
-            continue;
-        }
-        let foreground: Vec<_> = drafts
-            .iter()
-            .filter(|draft| {
-                spec.parts
-                    .iter()
-                    .any(|p| p.name == draft.name && p.role == Role::Melody)
-            })
-            .flat_map(|draft| &draft.notes)
-            .filter(|n| n.section == section_index)
-            .map(|n| Note {
-                velocity: n.velocity,
-                ..Note::new(n.pitch, n.start - section.start, n.length)
-            })
-            .collect();
-        if foreground.is_empty() {
-            continue;
-        }
-        let phrase_ends: Vec<_> = section
-            .phrases
-            .iter()
-            .map(|p| frame.grid.bar_ticks() * p.end_bar() as i64)
-            .collect();
-        for draft in drafts.iter_mut() {
-            let Some(part) = spec.parts.iter().find(|p| p.name == draft.name) else {
-                continue;
-            };
-            let played = section.played(part);
-            if played.rhythm.is_some()
-                || !matches!(played.role, Role::Chords | Role::Stab | Role::Arp)
-                || (matches!(played.role, Role::Chords | Role::Stab)
-                    && chord_subdivision_fill(
-                        played.density.unwrap_or_else(|| spec.mood.density()),
-                    ) > 0.0)
-            {
-                continue;
-            }
-            let mut notes: Vec<_> = draft
-                .notes
-                .iter()
-                .filter(|n| n.section == section_index)
-                .map(|n| Note {
-                    velocity: n.velocity,
-                    ..Note::new(n.pitch, n.start - section.start, n.length)
-                })
-                .collect();
-            accompany_foreground(
-                &mut notes,
-                &foreground,
-                spec.meter,
-                played.role,
-                spec.writing_style,
-                &phrase_ends,
-                |at, pitch, requested| {
-                    if !section
-                        .chord_at(at)
-                        .is_some_and(|event| event.chord.contains_midi(i32::from(pitch)))
-                    {
-                        return Ticks::ZERO;
-                    }
-                    section
-                        .events
-                        .iter()
-                        .filter(|event| event.start > at && event.start < at + requested)
-                        .find(|event| !event.chord.contains_midi(i32::from(pitch)))
-                        .map_or(requested, |event| event.start - at)
-                },
-            );
-            draft.notes.retain(|n| n.section != section_index);
-            draft
-                .notes
-                .extend(notes.into_iter().map(|n| crate::parts::Draft {
-                    section: section_index,
-                    pitch: n.pitch,
-                    start: n.start + section.start,
-                    length: n.length,
-                    velocity: n.velocity,
-                }));
-        }
-    }
-    for draft in drafts {
-        draft.notes.sort_by_key(|n| (n.start, n.pitch));
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn ensemble() -> (SongSpec, Frame, Vec<PartDraft>) {
-        let spec = SongSpec::parse(
-            r#"
-            form = "verse"
-            ending = "none"
-            chords = "| I |"
-            [section.verse]
-            bars = 1
-            [[part]]
-            name = "a"
-            role = "melody"
-            [[part]]
-            name = "b"
-            role = "melody"
-            [[part]]
-            name = "keys"
-            role = "chords"
-            "#,
-        )
-        .unwrap();
-        let frame = crate::frame::plan(&spec);
-        let drafts = spec
-            .parts
-            .iter()
-            .map(|part| PartDraft {
-                name: part.name.clone(),
-                instrument: part.instrument.clone(),
-                sound: None,
-                gain_db: part.gain_db,
-                pan: part.pan,
-                notes: Vec::new(),
-            })
-            .collect();
-        (spec, frame, drafts)
-    }
-
-    fn written(pitch: u8, start: i64, length: i64) -> crate::parts::Draft {
-        crate::parts::Draft {
-            section: 0,
-            pitch,
-            start: Ticks(start),
-            length: Ticks(length),
-            velocity: 0.7,
-        }
-    }
-
-    #[test]
-    fn accompaniment_leaves_space_for_alternating_foreground_parts() {
-        let (spec, frame, mut drafts) = ensemble();
-        drafts[0].notes = vec![written(72, 0, 480), written(74, 960, 480)];
-        drafts[1].notes = vec![written(76, 480, 480), written(77, 1440, 480)];
-        drafts[2].notes = (0..8).map(|i| written(60, i * 480, 480)).collect();
-        let original = drafts.clone();
-        arrange(&spec, &frame, &mut drafts);
-        assert!(drafts[2].notes.len() < original[2].notes.len());
-        assert_eq!(drafts[0].notes, original[0].notes);
-        assert_eq!(drafts[1].notes, original[1].notes);
-
-        let mut reordered = original;
-        reordered.reverse();
-        let mut reordered_spec = spec;
-        reordered_spec.parts.reverse();
-        arrange(&reordered_spec, &frame, &mut reordered);
-        for draft in &drafts {
-            assert_eq!(
-                draft.notes,
-                reordered
-                    .iter()
-                    .find(|d| d.name == draft.name)
-                    .unwrap()
-                    .notes
-            );
-        }
-    }
-
-    #[test]
-    fn an_accompaniment_answer_waits_until_every_foreground_voice_rests() {
-        let (spec, frame, mut drafts) = ensemble();
-        drafts[0].notes = vec![written(72, 0, 2400)];
-        drafts[1].notes = vec![written(76, 0, 3840)];
-        drafts[2].notes = vec![written(60, 0, 3840)];
-        let original = drafts[2].notes.clone();
-        arrange(&spec, &frame, &mut drafts);
-        assert_eq!(drafts[2].notes, original);
-    }
 
     #[test]
     fn busy_foreground_has_space_and_an_answer_in_its_breath() {

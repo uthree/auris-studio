@@ -1400,10 +1400,8 @@ mod tests {
         worker.send(r#"{"say":"Listen to bar one"}"#).unwrap();
         // The desktop's half, done here: render a one-bar song the way it would.
         use auris_session::prelude::{Note, Ticks};
-        let mut session = auris_session::Session::new(
-            auris_session::SessionOptions::headless().with_balance(false),
-        )
-        .unwrap();
+        let mut session =
+            auris_session::Session::new(auris_session::SessionOptions::headless()).unwrap();
         let track = session.add_default_instrument_track("Lead").unwrap();
         let clip = session
             .add_midi_clip(track, "Phrase", Ticks::ZERO, Ticks(3840))
@@ -1573,10 +1571,8 @@ mod tests {
         preferences.provider = "ollama".into();
         preferences.model = model;
         preferences.thinking = Some(false);
-        let mut session = auris_session::Session::new(
-            auris_session::SessionOptions::headless().with_balance(false),
-        )
-        .unwrap();
+        let mut session =
+            auris_session::Session::new(auris_session::SessionOptions::headless()).unwrap();
         use auris_session::prelude::*;
         let track = session.add_default_instrument_track("Test tone").unwrap();
         session
@@ -1671,10 +1667,8 @@ mod tests {
     /// Writes `pitches` as a two-bar scale, lets the model listen, and returns its answer.
     fn hear_scale(model: &str, pitches: &[u8]) -> String {
         use auris_session::prelude::{Note, Ticks};
-        let mut session = auris_session::Session::new(
-            auris_session::SessionOptions::headless().with_balance(false),
-        )
-        .unwrap();
+        let mut session =
+            auris_session::Session::new(auris_session::SessionOptions::headless()).unwrap();
         let track = session.add_default_instrument_track("Lead").unwrap();
         let clip = session
             .add_midi_clip(track, "Scale", Ticks::ZERO, Ticks(3840 * 2))
@@ -1769,10 +1763,8 @@ mod tests {
     #[ignore = "requires AURIS_AGENT_OLLAMA_MODEL and a running local Ollama server"]
     fn local_ollama_composes_a_song_without_tool_failures() {
         let model = std::env::var("AURIS_AGENT_OLLAMA_MODEL").expect("set the local model name");
-        let mut session = auris_session::Session::new(
-            auris_session::SessionOptions::headless().with_balance(false),
-        )
-        .unwrap();
+        let mut session =
+            auris_session::Session::new(auris_session::SessionOptions::headless()).unwrap();
         let worker = Worker::spawn(
             auris_session::AgentPreferences {
                 provider: "ollama".into(),
@@ -1880,10 +1872,8 @@ mod tests {
         let mut permissions = 0;
         let mut failures = 0;
         let mut edits = 0;
-        let mut session = auris_session::Session::new(
-            auris_session::SessionOptions::headless().with_balance(false),
-        )
-        .unwrap();
+        let mut session =
+            auris_session::Session::new(auris_session::SessionOptions::headless()).unwrap();
         loop {
             let event = worker
                 .events

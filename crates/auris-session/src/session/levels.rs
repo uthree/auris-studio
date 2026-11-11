@@ -14,10 +14,10 @@
 //! its effects — a limiter cannot hold down a level that is added after it.
 //!
 //! Where a part is supposed to sit is
-//! [`MixerStrip::target_lufs`](auris_core::project::MixerStrip::target_lufs), written by the
-//! composer because the composer is the only part of this program that knows what a track is for.
-//! A strip with no target — anything a person made by hand — keeps its fader and travels with the
-//! offset, so running this over an ordinary project is a loudness normalisation and nothing more.
+//! [`MixerStrip::target_lufs`](auris_core::project::MixerStrip::target_lufs), set by whoever
+//! knows what a track is for. A strip with no target — anything a person made by hand — keeps its
+//! fader and travels with the offset, so running this over an ordinary project is a loudness
+//! normalisation and nothing more.
 //! That is the honest limit of it, and it is a limit about knowledge rather than about arithmetic.
 
 use auris_core::registry::PluginRegistry;
@@ -439,23 +439,6 @@ impl Session {
         }
     }
 
-    /// The balance pass itself, with no step of its own in the history.
-    ///
-    /// Composing calls this rather than [`Self::balance_levels`] because the levels are part of
-    /// the piece it just wrote: a person who takes back "composing a piece" wants the document
-    /// they had before it, not the same piece with the faders where the composer first guessed
-    /// them.
-    pub(super) fn balance_now(&mut self) -> Result<BalanceReport, SessionError> {
-        let mut job = self.begin_balance_job(None);
-        loop {
-            let result = job.run(&mut auris_engine::RenderProgress::default())?;
-            match self.continue_composed_balance(result)? {
-                ComposeBalanceStep::Pending(next) => job = next,
-                ComposeBalanceStep::Complete(report) => return Ok(report),
-            }
-        }
-    }
-
     /// Moves a fader without recording a step of its own.
     ///
     /// A fader is one of the few things that reaches the audio thread without a rebuild, so the
@@ -586,77 +569,6 @@ mod tests {
         assert!((master_gain_db(-9.0, -0.1) - -5.0).abs() < 1.0e-4);
     }
 
-    /// Prints what every preset measures, which is where the targets come from.
-    ///
-    /// Ignored, and it has to be: it needs the shipped SoundFont, and whether that is installed is
-    /// a fact about the machine rather than about the code — the suite's own sessions run with no
-    /// font at all so that a developer's laptop and a CI runner agree about what a document holds.
-    /// Run it by hand, on a machine with the library, when a level constant is in question:
-    ///
-    /// ```text
-    /// cargo test -p auris-session --lib calibration -- --ignored --nocapture
-    /// ```
-    ///
-    /// What comes out is one row per part — where its fader is, what it measured alone, and where
-    /// it was aiming — and one per piece. [`auris_compose::Role::target_lufs`] is the median of the
-    /// first column across the eight presets, normalised back to each role's own default fader,
-    /// and this is the only place that number can be checked. A role whose parts already measure
-    /// what they are aiming at is a fixed point, which is the property that says the table is
-    /// still the table.
-    #[test]
-    #[ignore]
-    fn calibration() {
-        use super::super::SessionOptions;
-        for name in auris_compose::PRESETS.iter().map(|preset| preset.name) {
-            let spec = auris_compose::preset(name)
-                .expect("a shipped preset")
-                .spec();
-            // With the library, and *without* the balance pass: the table below is derived from
-            // what the composer wrote, and measuring a piece whose faders have already been set by
-            // measurement would only tell us that they had been.
-            let mut session = Session::new(
-                SessionOptions::headless()
-                    .with_shipped_fonts(true)
-                    .with_balance(false),
-            )
-            .expect("a session opens");
-            session
-                .compose(&auris_compose::compose(&spec))
-                .expect("a preset composes");
-            let started = std::time::Instant::now();
-            let played: Vec<TrackId> = session
-                .project()
-                .tracks
-                .iter()
-                .filter(|track| !track.kind.is_bus())
-                .map(|track| track.id)
-                .collect();
-            for id in played {
-                let strip = session.project().track(id).expect("a listed track");
-                let (part, fader, target) = (
-                    strip.name.clone(),
-                    strip.mixer.gain_db,
-                    strip.mixer.target_lufs,
-                );
-                let measured = session.measure_alone(id).expect("a stem renders");
-                println!(
-                    "{name}\t{part}\t{fader:.1} dB\t{}\taiming {}",
-                    measured.map_or("silent".into(), |lufs| format!("{lufs:.1} LUFS")),
-                    target.map_or("nowhere".into(), |lufs| format!("{lufs:.1}")),
-                );
-            }
-            let mix = session
-                .render_snapshot(session.project().clone())
-                .expect("the mix renders");
-            println!(
-                "{name}\tMIX\t\t{}\ttrue peak {:.1} dBFS\tmeasured in {:.1}s",
-                integrated_lufs(&mix).map_or("silent".into(), |lufs| format!("{lufs:.1} LUFS")),
-                analyze_loudness_cpu(&mix).true_peak_db(),
-                started.elapsed().as_secs_f32()
-            );
-        }
-    }
-
     /// Four bars written the way an agent writes them: notes at moderate velocities, every fader
     /// at unity, on the built-in instruments so it measures the same on every machine.
     fn written_by_hand(strip_master: bool) -> Session {
@@ -771,32 +683,38 @@ mod tests {
         );
     }
 
-    /// Four bars of two parts on the built-in instruments, composed and balanced.
+    /// Four bars of two parts on the built-in instruments, written and balanced.
     ///
     /// No SoundFont, so it measures the same on every machine — and short, because every one of
     /// these renders the piece once per part and twice more.
     fn balanced() -> (Session, BalanceReport) {
         use super::super::SessionOptions;
-        let spec = auris_compose::SongSpec::parse(
-            r#"
-            form = ["verse"]
-            seed = 1
-            [section.verse]
-            bars = 4
-            [[part]]
-            name = "tune"
-            role = "melody"
-            [[part]]
-            name = "low"
-            role = "bass"
-            "#,
-        )
-        .expect("a specification this file wrote");
-        let mut session = Session::new(SessionOptions::headless().with_balance(false))
-            .expect("a headless session opens");
+        use auris_core::{ClipPreset, ClipRecipe, Ticks};
+        let mut session =
+            Session::new(SessionOptions::headless()).expect("a headless session opens");
         session
-            .compose(&auris_compose::compose(&spec))
-            .expect("two parts compose");
+            .stamp_named_progression("axis", Ticks::ZERO, 4)
+            .expect("a known progression");
+        for (name, preset, instrument) in [
+            ("tune", ClipPreset::Lead, "auris.synth.chiptune"),
+            ("low", ClipPreset::Bass, "auris.synth.fm2"),
+        ] {
+            let track = session
+                .add_instrument_track(name, instrument)
+                .expect("a built-in instrument");
+            session
+                .generate_clip(
+                    track,
+                    Ticks::ZERO,
+                    super::super::fixtures::BAR * 4,
+                    ClipRecipe::new(preset, 1),
+                )
+                .expect("a generated clip");
+        }
+        // Aimed where a tune and a bass usually sit against each other.
+        for (track, target) in session.project.tracks.iter_mut().zip([-23.0, -27.0]) {
+            track.mixer.target_lufs = Some(target);
+        }
         let report = session.balance_levels().expect("the piece renders");
         (session, report)
     }
@@ -808,7 +726,7 @@ mod tests {
         for level in &report.tracks {
             // Plus the lift, which is the piece being made louder rather than this part being put
             // somewhere else: it is the same number on every fader and leaves the balance alone.
-            let target = level.target_lufs.expect("a composed part is aimed") + report.lift_db;
+            let target = level.target_lufs.expect("an aimed part") + report.lift_db;
             let reached = level.reached_lufs().expect("a part that plays measures");
             assert!(
                 (reached - target).abs() < 0.5,
@@ -912,12 +830,8 @@ mod tests {
         use auris_core::time::Ticks;
         use auris_core::{Note, PresetRef};
 
-        let mut session = Session::new(
-            SessionOptions::headless()
-                .with_shipped_fonts(true)
-                .with_balance(false),
-        )
-        .expect("a session opens");
+        let mut session = Session::new(SessionOptions::headless().with_shipped_fonts(true))
+            .expect("a session opens");
         let path = crate::library::installed(&crate::library::GENERAL_MIDI_FONT)
             .expect("this test needs MuseScore General; see `tools/fetch-soundfonts.sh`");
         let font = session.import_soundfont(&path).expect("a font imports");

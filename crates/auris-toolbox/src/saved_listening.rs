@@ -63,7 +63,7 @@ mod tests {
     fn fresh_saved_calls_compare_opaque_baselines_without_saving() {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("Song.auris");
-        let mut session = Session::new(SessionOptions::headless().with_balance(false)).unwrap();
+        let mut session = Session::new(SessionOptions::headless()).unwrap();
         let track = session.add_default_instrument_track("Lead").unwrap();
         session
             .set_track_instrument(track, "auris.synth.fm2")

@@ -164,14 +164,15 @@ impl ComposeBalanceJob {
         progress: &mut RenderProgress<'_>,
     ) -> Result<ComposeBalanceResult, SessionError> {
         let total = (self.state.levelled.len() + 2) as f32;
-        let mix = progress.within(
-            self.state.completed as f32 / total,
-            1.0 / total,
-            |progress| {
-                self.render
-                    .render(&OfflineOptions::whole_project(), progress)
-            },
-        )?;
+        // The width as the difference of the two ends rather than `1 / total`: each end is then
+        // exactly where the neighbouring step starts, and the fractions never step backwards
+        // across a boundary by the rounding of a sum.
+        let start = self.state.completed as f32 / total;
+        let end = (self.state.completed + 1) as f32 / total;
+        let mix = progress.within(start, end - start, |progress| {
+            self.render
+                .render(&OfflineOptions::whole_project(), progress)
+        })?;
         let lufs = integrated_lufs(&mix);
         // Stem faders use LUFS only. Preserve the existing pass's two true-peak measurements.
         let true_peak_db = if self.state.completed >= self.state.levelled.len() && lufs.is_some() {
@@ -185,14 +186,6 @@ impl ComposeBalanceJob {
 }
 
 impl Session {
-    /// Starts the optional automatic balance of a piece adopted with `compose_without_balance`.
-    ///
-    /// Captures hosted render instances on this thread. The job may then run on a worker.
-    /// Returns `None` when automatic composition balancing is disabled in this session.
-    pub fn begin_composed_balance(&mut self) -> Option<ComposeBalanceJob> {
-        self.balance_composed.then(|| self.begin_balance_job(None))
-    }
-
     /// Starts an explicit, undoable balance pass whose renders may run on workers.
     pub fn begin_balance_levels_job(&mut self) -> ComposeBalanceJob {
         self.begin_balance_job(Some(Edit::BalanceLevels))
@@ -306,47 +299,22 @@ mod tests {
     use super::*;
     use crate::{Edit, SessionOptions};
 
-    fn composition() -> auris_compose::Composition {
-        let spec = auris_compose::SongSpec::parse(
-            r#"
-            title = "Measured song"
-            tempo = 240
-            form = ["verse"]
-            seed = 17
-            [section.verse]
-            bars = 1
-            [[part]]
-            name = "tune"
-            role = "melody"
-            [[part]]
-            name = "low"
-            role = "bass"
-            "#,
-        )
-        .unwrap();
-        auris_compose::compose(&spec)
-    }
-
+    /// A one-bar song at a fast tempo, so each measuring render is short.
     fn prepared_session() -> Session {
-        let mut session = Session::new(SessionOptions::headless().with_balance(true)).unwrap();
-        session
-            .add_default_instrument_track("Before composing")
-            .unwrap();
+        let mut session = Session::new(SessionOptions::headless()).unwrap();
+        crate::session::fixtures::song(&mut session, 1);
+        session.set_tempo_at(auris_core::Ticks::ZERO, 240.0);
         session.forget_history();
         session
     }
 
     #[test]
-    fn staged_balance_matches_synchronous_composition_and_keeps_one_undo() {
-        let composition = composition();
+    fn staged_balance_matches_the_synchronous_pass_and_keeps_one_undo() {
         let mut synchronous = prepared_session();
-        let expected = synchronous.compose(&composition).unwrap();
+        let expected = synchronous.balance_levels().unwrap();
         let mut session = prepared_session();
-        let before = session.project().clone();
-        let report = session.compose_without_balance(&composition).unwrap();
-        assert!(report.balance.is_none());
         let unbalanced = session.project().clone();
-        let mut job = session.begin_composed_balance().unwrap();
+        let mut job = session.begin_balance_levels_job();
         let mut reported = Vec::new();
         let total = job.progress().total;
         let mut completed = 0;
@@ -373,24 +341,26 @@ mod tests {
             }
         };
         assert_eq!(completed, total);
-        assert_eq!(Some(actual), expected.balance);
+        assert_eq!(actual, expected);
         assert_eq!(session.project(), synchronous.project());
         assert!(!reported.is_empty());
         assert!(reported.windows(2).all(|pair| pair[0] <= pair[1]));
         assert_eq!(reported.last(), Some(&1.0));
         let balanced = session.project().clone();
-        assert_eq!(session.undo(), Some(Edit::Compose));
-        assert_eq!(session.project(), &before);
-        assert!(!session.can_undo(), "balancing added another undo step");
-        assert_eq!(session.redo(), Some(Edit::Compose));
+        assert_eq!(session.undo(), Some(Edit::BalanceLevels));
+        assert_eq!(session.project(), &unbalanced);
+        assert!(
+            !session.can_undo(),
+            "balancing took more than one undo step"
+        );
+        assert_eq!(session.redo(), Some(Edit::BalanceLevels));
         assert_eq!(session.project(), &balanced);
     }
 
     #[test]
     fn a_changed_document_rejects_an_intermediate_balance_result() {
         let mut session = prepared_session();
-        session.compose_without_balance(&composition()).unwrap();
-        let job = session.begin_composed_balance().unwrap();
+        let job = session.begin_balance_levels_job();
         let result = job.run(&mut RenderProgress::default()).unwrap();
         let track = session.project().tracks[0].id;
         session
@@ -406,14 +376,10 @@ mod tests {
 
     #[test]
     fn another_session_cannot_accept_a_result_at_the_same_revision() {
-        let composition = composition();
         let mut source = prepared_session();
         let mut destination = prepared_session();
-        source.compose_without_balance(&composition).unwrap();
-        destination.compose_without_balance(&composition).unwrap();
         let result = source
-            .begin_composed_balance()
-            .unwrap()
+            .begin_balance_levels_job()
             .run(&mut RenderProgress::default())
             .unwrap();
         assert_eq!(source.revision(), destination.revision());
@@ -429,8 +395,9 @@ mod tests {
     fn undo_before_the_last_measurement_rejects_all_measured_gains() {
         let mut session = prepared_session();
         let before = session.project().clone();
-        session.compose_without_balance(&composition()).unwrap();
-        let mut job = session.begin_composed_balance().unwrap();
+        let track = session.project().tracks[0].id;
+        session.rename_track(track, "Renamed").unwrap();
+        let mut job = session.begin_balance_levels_job();
         while job.progress().completed + 1 < job.progress().total {
             let result = job.run(&mut RenderProgress::default()).unwrap();
             let ComposeBalanceStep::Pending(next) =
@@ -441,7 +408,7 @@ mod tests {
             job = next;
         }
         let result = job.run(&mut RenderProgress::default()).unwrap();
-        assert_eq!(session.undo(), Some(Edit::Compose));
+        assert_eq!(session.undo(), Some(Edit::RenameTrack));
         assert!(matches!(
             session.continue_composed_balance(result),
             Err(SessionError::StaleBalance)
@@ -452,9 +419,8 @@ mod tests {
     #[test]
     fn a_cancelled_measurement_leaves_written_levels_and_history_intact() {
         let mut session = prepared_session();
-        session.compose_without_balance(&composition()).unwrap();
         let written = session.project().clone();
-        let job = session.begin_composed_balance().unwrap();
+        let job = session.begin_balance_levels_job();
         let cancel = std::sync::atomic::AtomicBool::new(true);
         let result = job.run(&mut RenderProgress::default().cancelled_by(&cancel));
         assert!(matches!(
@@ -464,7 +430,6 @@ mod tests {
             ))
         ));
         assert_eq!(session.project(), &written);
-        assert_eq!(session.undo(), Some(Edit::Compose));
         assert!(!session.can_undo());
     }
 }

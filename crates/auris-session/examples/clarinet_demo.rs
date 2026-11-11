@@ -12,7 +12,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             .ok_or("expected output directory")?,
     );
     std::fs::create_dir_all(&directory)?;
-    let mut session = Session::new(SessionOptions::headless().with_balance(false))?;
+    let mut session = Session::new(SessionOptions::headless())?;
     let track = session.add_instrument_track("Clarinet", "auris.physical.clarinet")?;
     let clip = session.add_midi_clip(
         track,

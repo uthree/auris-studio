@@ -2030,6 +2030,40 @@ fn workshop_veil_layer(has_messages: bool, veil: f32, theme: &crate::theme::Them
 mod tests {
     use super::*;
 
+    /// A short instrumental candidate rendered from an authored document: two bars of a lead
+    /// over the axis progression.
+    fn rendered_candidate(title: &str) -> SongCandidate {
+        use auris_session::prelude::{ClipPreset, ClipRecipe, Session, SessionOptions, Ticks};
+        let mut session = Session::new(SessionOptions::headless()).unwrap();
+        session
+            .stamp_named_progression("axis", Ticks::ZERO, 2)
+            .unwrap();
+        let track = session.add_default_instrument_track("Lead").unwrap();
+        session
+            .generate_clip(
+                track,
+                Ticks::ZERO,
+                Ticks(3840 * 2),
+                ClipRecipe::new(ClipPreset::Lead, 42),
+            )
+            .unwrap();
+        SongCandidate::from_authored_session(
+            SongIdea {
+                title: title.into(),
+                description: "Bright keys".into(),
+                tempo: 120.0,
+                key: "C major".into(),
+                density: 0.5,
+                lead: "piano".into(),
+            },
+            "Bright instrumental",
+            &mut session,
+            &AtomicBool::new(false),
+            &mut |_| {},
+        )
+        .unwrap()
+    }
+
     #[gpui::test]
     fn saved_tool_call_limit_updates_an_open_workshop_without_changing_its_model(
         cx: &mut gpui::TestAppContext,
@@ -2975,27 +3009,7 @@ mod tests {
         use auris_session::workshop::{Candidate, Direction, Message, Round};
         let songs: Vec<_> = ["First", "Second"]
             .into_iter()
-            .enumerate()
-            .map(|(i, title)| {
-                Arc::new(
-                    SongCandidate::generate(
-                        SongIdea {
-                            title: title.into(),
-                            description: "Bright keys".into(),
-                            preset: "chiptune".into(),
-                            tempo: 120.,
-                            key: "C major".into(),
-                            density: 0.5,
-                            lead: "piano".into(),
-                        },
-                        "Bright instrumental",
-                        30,
-                        i as u64 + 42,
-                        &AtomicBool::new(false),
-                    )
-                    .unwrap(),
-                )
-            })
+            .map(|title| Arc::new(rendered_candidate(title)))
             .collect();
         for selected in [None, Some(100)] {
             let (app, cx) = crate::harness::open(cx);
@@ -4194,24 +4208,7 @@ mod tests {
         let (app, cx) = crate::harness::open(cx);
         cx.update(|window, cx| app.update(cx, |app, cx| app.open_song_workshop(window, cx)));
         make_ready(&app, cx);
-        let candidate = Arc::new(
-            SongCandidate::generate(
-                SongIdea {
-                    title: "Second".into(),
-                    description: "Bright keys".into(),
-                    preset: "chiptune".into(),
-                    tempo: 120.0,
-                    key: "C major".into(),
-                    density: 0.5,
-                    lead: "piano".into(),
-                },
-                "Bright instrumental",
-                30,
-                42,
-                &AtomicBool::new(false),
-            )
-            .unwrap(),
-        );
+        let candidate = Arc::new(rendered_candidate("Second"));
         let root = tempfile::tempdir().unwrap();
         let chosen = root.path().join("Second.auris");
         let before = app.read_with(cx, |app, _| app.session.project().clone());

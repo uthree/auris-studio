@@ -3465,8 +3465,8 @@ mod window_tests {
     fn recovery_fixture(project_name: &str) -> RecoveryFixture {
         let source_root =
             private_recovery_test_dir(&std::env::temp_dir(), "auris-gpui-recovery-source");
-        let mut source = Session::new(SessionOptions::headless().with_balance(false))
-            .expect("a headless source session");
+        let mut source =
+            Session::new(SessionOptions::headless()).expect("a headless source session");
         source.new_project();
         source
             .add_default_instrument_track("Recovered track")

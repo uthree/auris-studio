@@ -1,14 +1,10 @@
 //! General MIDI: the hundred and twenty-eight programs, and the percussion kits.
 //!
-//! A [`PartSpec`](crate::PartSpec) names its instrument as a plugin id, which is enough while the
-//! only instruments are the built-in ones. A SoundFont's sounds have no plugin ids — they are a
-//! bank and a patch inside one particular file — so a specification that wanted a violin had no
-//! way to say so.
-//!
-//! General MIDI is the vocabulary that solves it. It is the one agreement every SoundFont keeps:
-//! program 40 is a violin in every file that claims to be General MIDI, and the shipped font is
-//! one. So a part says `program = "Violin"`, the composer carries the number, and whichever font
-//! is installed answers it.
+//! A SoundFont's sounds have no plugin ids — they are a bank and a patch inside one particular
+//! file. General MIDI is the vocabulary that names them anyway. It is the one agreement every
+//! SoundFont keeps: program 40 is a violin in every file that claims to be General MIDI, and the
+//! shipped font is one. So an accompaniment asks for a program number and whichever font is
+//! installed answers it.
 //!
 //! # Drums are the same field read differently
 //!
@@ -17,9 +13,7 @@
 //! from everything else. [`DRUM_BANK`] is where those patches live, [`KITS`] is what the patch
 //! numbers mean, and the note comes from
 //! [`PartSpec::drum_note`](crate::PartSpec::drum_note), which was already General MIDI's.
-//!
-//! So one field on a part covers both: on a pitched role it is a program, on a drum role it is a
-//! kit. Which one it is read as is never a guess, because the role already says.
+//! [`Program::sound`] is told which reading to give the number, so it is never a guess.
 
 use std::fmt;
 
@@ -333,7 +327,7 @@ impl fmt::Display for Program {
 }
 
 impl Serialize for Program {
-    /// As its name, because a specification is meant to be read.
+    /// As its name, because a stored program is meant to be read.
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         serializer.serialize_str(self.name())
     }

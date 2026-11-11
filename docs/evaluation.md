@@ -77,29 +77,6 @@ uv run --with pytest --with numpy --with scipy --with soundfile pytest tools/eva
 uv run --with ruff ruff check tools/eval/instrument_harshness.py tools/eval/test_instrument_harshness.py
 ```
 
-## The symbolic ruler
-
-```
-cargo run -p auris-compose --example measure
-```
-
-Prints one row per preset and part, averaged over eight seeds with swing forced straight, so
-the table reads the *pattern* the composer chose rather than where the feel later nudged it:
-
-* **sync/bar** — Longuet-Higgins–Lee syncopation on the grid's metric hierarchy, per bar.
-  Zero is four-on-the-floor; a backbeat is about 3; the classic last-sixteenth anticipation
-  is 4. The groove studies (Witek et al. 2014) put pleasure and the urge to move at the
-  *middle* of this scale — an inverted U — so the number is a dial to aim, not a score to
-  maximise.
-* **pc-bits** — pitch-class entropy of the tune, duration- and velocity-weighted. A part
-  evenly over its scale sits at log₂7 ≈ 2.81; near zero is a drone, past the ceiling is a
-  line that has lost its key.
-* **steps% / mean-int** — how much of the melody moves stepwise, and its mean interval in
-  semitones. The corpus reference used while tuning the melody writer was 68 % stepwise.
-
-The functions behind the table are `auris_compose::metrics`, public and unit-tested, so a
-future command or test can read the same numbers the example prints.
-
 ## Inspecting the saved score
 
 ```

@@ -5,10 +5,10 @@
 //! them. This is where the ones they write live.
 //!
 //! **A kept progression is a snippet the picker offers, not a name a file resolves.** Choosing one
-//! writes its *chords* into the song, so an `.asong` never refers to anything outside itself: sent
+//! writes its *chords* into the song, so a project never refers to anything outside itself: sent
 //! to somebody who has never seen your book, it still plays the piece you wrote. The alternative —
-//! a `@myname` the parser has to look up on disk — would make a document that means one thing here
-//! and nothing anywhere else, which is the property a portable format is for.
+//! a `@myname` the chart parser has to look up on disk — would make a document that means one
+//! thing here and nothing anywhere else, which is the property a portable format is for.
 //!
 //! It sits in `auris-session` rather than in `auris-core` for the ordinary reason: this is a file
 //! on a disk, and the document model does no I/O.

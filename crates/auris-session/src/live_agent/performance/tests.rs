@@ -458,7 +458,7 @@ fn glide_eligibility_uses_tempo_map_seconds_at_each_note_boundary() {
 }
 
 fn fixture() -> (Session, ClipId) {
-    let mut session = Session::new(crate::SessionOptions::headless().with_balance(false)).unwrap();
+    let mut session = Session::new(crate::SessionOptions::headless()).unwrap();
     let track = session.add_default_instrument_track("Lead").unwrap();
     session
         .agent_edit_harmony(
@@ -671,7 +671,7 @@ fn invalid_batches_and_unknown_fields_leave_document_and_history_untouched() {
 
 #[test]
 fn scoped_drum_edits_preserve_other_writers_global_stages_and_stored_notes() {
-    let mut session = Session::new(crate::SessionOptions::headless().with_balance(false)).unwrap();
+    let mut session = Session::new(crate::SessionOptions::headless()).unwrap();
     let track = session.add_default_drum_track("Beat").unwrap();
     let clip = session
         .add_midi_clip(track, "Kit", Ticks::ZERO, Ticks::QUARTER * 4)

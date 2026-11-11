@@ -228,8 +228,7 @@ mod tests {
     use crate::live_agent::Command;
 
     fn session_with_piano() -> (Session, TrackId) {
-        let mut session =
-            Session::new(crate::SessionOptions::headless().with_balance(false)).unwrap();
+        let mut session = Session::new(crate::SessionOptions::headless()).unwrap();
         let piano = session.add_default_instrument_track("Piano").unwrap();
         (session, piano)
     }
