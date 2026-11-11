@@ -62,7 +62,7 @@ rhythm from them before choosing pitches:
    notes each place it happens. Where the second half falls in the beat is free: in the PJS
    songs ん arrives on a stronger position than its head as often as any mora does.
 5. **Rest between words.** A rest inside a word (マフ・ラー, か・える) cuts it apart. In the PJS
-   songs it happens on about 1 in 70 steps inside a word, against 1 in 18 between words. When
+   songs it happens on about 1 in 60 steps inside a word, against 1 in 16 between words. When
    the melody wants a breath where the words do not, move the line break, re-line the words or
    lengthen the note before the gap. `lyric_rhythm` lists each one, reading words a clip at a
    time so a word split across two lines is still found.

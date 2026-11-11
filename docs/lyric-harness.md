@@ -108,8 +108,9 @@ Spots, each with clip and note index for `edit_notes`:
 - `rest_in_word`: silence of a sixteenth or more between two moras of one word, shown as
   `まふ・らー` with the rest's length in `ms`. Words come from the Japanese dictionary and are
   read a clip at a time, so a word split by a rest long enough to end a line is still found.
-  One in a section is a note and two are a warning: in 28 PJS songs it happened on 6 of 414
-  steps inside a word, against 39 of 693 between words. Without a dictionary, or where a
+  One in a section is a note and two are a warning: in the 79 PJS songs the dictionary reads
+  to their notes, it happened on 20 of 1175 steps inside a word, against 111 of 1759 between
+  words (the `word_rest_corpus` example of `auris-session` counts them). Without a dictionary, or where a
   clip's written words do not read to the moras its notes sing, a note says it was not
   checked.
 

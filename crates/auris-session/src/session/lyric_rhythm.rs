@@ -33,9 +33,9 @@
 //!   [`SHORT_MORA_SECONDS`] may be left with almost no vowel.
 //! * **A rest does not cut a word.** Silence of at least [`WORD_REST`] between two moras of one
 //!   dictionary word (マフ・ラー) is reported. Words are the dictionary's, so this needs it. In
-//!   the 28 PJS songs whose kana a morphological analyser read to their notes, 6 of 414
-//!   note-to-note steps inside a word had such a rest (1 in 70), against 39 of 693 between
-//!   words (1 in 18). Songs avoid it, but not absolutely, so one in a section is a note and
+//!   the 79 PJS songs whose kana this dictionary reads to their notes (the
+//!   `word_rest_corpus` example), 20 of 1175 note-to-note steps inside a word had such a rest
+//!   (1 in 59), against 111 of 1759 between words (1 in 16). Songs avoid it, but not absolutely, so one in a section is a note and
 //!   [`WORD_REST_HABIT`] of them are a warning.
 
 use super::Session;
@@ -628,7 +628,7 @@ fn report(lines: Vec<LineRhythm>) -> LyricRhythmReport {
             }
             if section.rests_in_words > 0 {
                 let message = format!(
-                    "{name}: {} rest(s) fall inside a word (listed as マフ・ラー), which cuts the word apart; songs by people do this on about 1 in 70 steps inside a word, against 1 in 18 between words. Close the gap by lengthening the note before it, move the rest to a word boundary, or re-line the words so the break falls between them",
+                    "{name}: {} rest(s) fall inside a word (listed as マフ・ラー), which cuts the word apart; songs by people do this on about 1 in 60 steps inside a word, against 1 in 16 between words. Close the gap by lengthening the note before it, move the rest to a word boundary, or re-line the words so the break falls between them",
                     section.rests_in_words
                 );
                 if section.rests_in_words >= WORD_REST_HABIT {
