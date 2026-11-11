@@ -233,6 +233,7 @@ impl AurisApp {
             Rule::Unpitched => Key::LintUnpitched,
             Rule::PhaseCancellation => Key::LintPhaseCancellation,
             Rule::DuplicateNote => Key::LintDuplicateNote,
+            Rule::OverlappingClips => Key::LintOverlappingClips,
             Rule::InaudibleVelocity => Key::LintInaudibleVelocity,
             Rule::ExtremePitch => Key::LintExtremePitch,
             Rule::TightStrum => Key::LintTightStrum,
@@ -262,8 +263,15 @@ impl AurisApp {
             }
             _ => number(diagnostic.value.unwrap_or_default()),
         };
+        let clips = diagnostic
+            .clips
+            .iter()
+            .map(|clip| self.lint_clip_label(*clip))
+            .collect::<Vec<_>>()
+            .join("・");
         self.t(key)
             .replace("{pitches}", &pitches)
+            .replace("{clips}", &clips)
             .replace("{value}", &value)
             .replace("{limit}", &number(diagnostic.limit.unwrap_or_default()))
     }
@@ -284,6 +292,8 @@ impl AurisApp {
             Fix::SetVelocity { .. } => self.t(Key::LintFixVelocity).into(),
             Fix::ResetFader { .. } => self.t(Key::LintFixFader).into(),
             Fix::NormalizeMix => self.t(Key::LintFixNormalize).into(),
+            Fix::TrimClip { .. } => self.t(Key::LintFixTrimClip).into(),
+            Fix::Crossfade { .. } => self.t(Key::LintFixCrossfade).into(),
             Fix::SetChords { chords, .. } => {
                 let harmony = &self.session.project().harmony;
                 let names = chords
@@ -401,6 +411,10 @@ impl AurisApp {
         if let Some(track) = diagnostic.track {
             self.select_track(track);
         }
+        if !diagnostic.clips.is_empty() {
+            let clips = diagnostic.clips.iter().copied().collect();
+            self.select_clips(clips, diagnostic.clips.first().copied());
+        }
         if let Some(note) = diagnostic.notes.first() {
             self.select_clip(Some(note.clip));
             self.selected_notes = diagnostic
@@ -471,6 +485,7 @@ impl AurisApp {
             Rule::Unpitched => Key::LintNameUnpitched,
             Rule::PhaseCancellation => Key::LintNamePhaseCancellation,
             Rule::DuplicateNote => Key::LintNameDuplicateNote,
+            Rule::OverlappingClips => Key::LintNameOverlappingClips,
             Rule::InaudibleVelocity => Key::LintNameInaudibleVelocity,
             Rule::ExtremePitch => Key::LintNameExtremePitch,
             Rule::TightStrum => Key::LintNameTightStrum,
@@ -510,6 +525,7 @@ impl AurisApp {
         let wire = Some(diagnostic.rule.name().to_string());
         let project = self.session.project();
         let mut clips: Vec<_> = diagnostic.notes.iter().map(|note| note.clip).collect();
+        clips.extend(&diagnostic.clips);
         clips.dedup();
         let clip = (clips.len() == 1).then(|| clips[0]);
         let section = project
