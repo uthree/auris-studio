@@ -70,7 +70,6 @@ mod envelope;
 mod event_list;
 pub use envelope::{ENVELOPE_PITCHES, SoundEnvelope};
 pub use event_list::{ClipEvent, ClipEventKind, EventEdit, EventRef, clip_events};
-mod accent_fit;
 pub mod arrangement_shape;
 mod drum_assignments;
 mod files;
