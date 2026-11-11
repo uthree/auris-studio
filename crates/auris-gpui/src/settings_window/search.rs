@@ -231,7 +231,7 @@ fn matches(query: &str, keys: &[Key]) -> bool {
 
 impl SettingsWindow {
     pub(super) fn searching(&self) -> bool {
-        !self.search.content().trim().is_empty()
+        !self.search.as_str().trim().is_empty()
     }
 
     pub(super) fn matches_section(&self, section: Section) -> bool {
@@ -240,13 +240,13 @@ impl SettingsWindow {
                 .into_iter()
                 .any(|panel| self.matches_panel(panel))
         } else {
-            matches(self.search.content(), section.keys())
+            matches(self.search.as_str(), section.keys())
         }
     }
 
     fn matches_panel(&self, panel: Panel) -> bool {
         matches(
-            self.search.content(),
+            self.search.as_str(),
             &[Key::PanelPositions, Key::PanelPositionsNote, panel.label()],
         )
     }
@@ -372,7 +372,7 @@ impl SettingsWindow {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::{Entity, EntityInputHandler, TestAppContext, VisualTestContext, WindowHandle};
+    use gpui::{Entity, TestAppContext, VisualTestContext, WindowHandle};
 
     fn open_settings(
         cx: &mut TestAppContext,
@@ -402,7 +402,7 @@ mod tests {
         crate::harness::click("settings-search", cx);
         handle
             .update(cx, |this, window, cx| {
-                this.replace_and_mark_text_in_range(None, "サンプル", Some(4..4), window, cx);
+                this.type_into_focused("サンプル", Some(4..4), window, cx);
             })
             .unwrap();
         cx.run_until_parked();
@@ -414,7 +414,7 @@ mod tests {
         );
         handle
             .update(cx, |this, _, _| {
-                assert_eq!(this.search.content(), "サンプル");
+                assert_eq!(this.search.as_str(), "サンプル");
                 assert_eq!(this.tab, SettingsTab::General);
                 assert!(!this.matches_section(Section::Language));
             })
@@ -493,7 +493,7 @@ mod tests {
         cx.run_until_parked();
         handle
             .update(cx, |this, _, _| {
-                assert_eq!(this.search.content(), "mixer");
+                assert_eq!(this.search.as_str(), "mixer");
                 assert_eq!(
                     this.appearance_editor
                         .as_ref()
@@ -516,7 +516,7 @@ mod tests {
         cx.simulate_input("の続き");
         handle
             .update(cx, |this, _, _| {
-                assert_eq!(this.search.content(), "");
+                assert_eq!(this.search.as_str(), "");
                 assert_eq!(
                     this.appearance_editor
                         .as_ref()
@@ -547,7 +547,7 @@ mod tests {
         handle
             .update(cx, |this, _, _| {
                 assert!(this.capturing.is_none());
-                assert_eq!(this.search.content(), "Play / Stop");
+                assert_eq!(this.search.as_str(), "Play / Stop");
             })
             .unwrap();
     }

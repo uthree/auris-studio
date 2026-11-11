@@ -13,39 +13,49 @@
 //!
 use gpui::{AnyView, App, SharedString, Window};
 
-use crate::theme::Theme;
-
 impl crate::app::AurisApp {
-    /// A tooltip naming a control, carrying whatever key currently runs it.
+    /// A tooltip naming one of the application's own controls (a readout, a strip, a lane
+    /// mark), carrying whatever key currently runs it.
     ///
-    /// `command` is an id from [`crate::actions::BINDABLE`], or `""` for a control that is not a
-    /// bindable command — the stop button, a panel switch's neighbour, anything reached only by
-    /// pressing it. An unknown id draws no chip rather than complaining, which is the same
-    /// answer a command with no default key gets and is right for both.
+    /// An Atelier [`atelier::Button`] takes its words and keys itself, `.tooltip(..)` with
+    /// `.shortcut(self.keystroke_for(..))`; this is for the elements Atelier does not draw.
+    /// `command` is an id from [`crate::actions::BINDABLE`], or `""` for a control that is not
+    /// a bindable command. An unknown id draws no keys rather than complaining, which is the
+    /// same answer a command with no default key gets and is right for both.
     pub(crate) fn tip(
         &self,
         label: auris_i18n::Key,
         command: &str,
     ) -> impl Fn(&mut Window, &mut App) -> AnyView + 'static {
-        keyed_tip(self.t(label), self.keystroke_for(command), &self.theme)
+        let label: SharedString = self.t(label).into();
+        let keys: SharedString = self.keystroke_for(command).into();
+        move |window, cx| {
+            atelier::Tooltip::new(label.clone())
+                .shortcut(keys.clone())
+                .build(window, cx)
+        }
     }
 }
 
-/// The callback gpui's `tooltip` wants.
-///
-/// `keystroke` arrives already written the way this platform writes it — the caller has the
-/// keymap and this does not. Empty means the command has no key, which is the ordinary case and
-/// draws no chip.
-pub fn keyed_tip(
+/// The callback gpui's `tooltip` wants for words with no keys: Atelier's tooltip card.
+pub fn text_tip(
     label: impl Into<SharedString>,
-    keystroke: impl Into<SharedString>,
-    _theme: &Theme,
+) -> impl Fn(&mut Window, &mut App) -> AnyView + 'static {
+    tip_with_keys(label, "")
+}
+
+/// Atelier's tooltip card with the keys faint after the words, for an element of the
+/// application's own that has a key or a gesture (a scrollbar's Shift+Wheel, a step's Space).
+/// `keys` arrives already written for the platform; empty shows none.
+pub fn tip_with_keys(
+    label: impl Into<SharedString>,
+    keys: impl Into<SharedString>,
 ) -> impl Fn(&mut Window, &mut App) -> AnyView + 'static {
     let label = label.into();
-    let keystroke = keystroke.into();
+    let keys = keys.into();
     move |window, cx| {
         atelier::Tooltip::new(label.clone())
-            .shortcut(keystroke.clone())
+            .shortcut(keys.clone())
             .build(window, cx)
     }
 }

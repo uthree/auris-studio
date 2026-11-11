@@ -203,7 +203,7 @@ mod tests {
         let cx = &mut VisualTestContext::from_window(handle.into(), main_cx);
         handle
             .update(cx, |settings, _, cx| {
-                settings.search = TextField::new("Top toolbar");
+                settings.search = "Top toolbar".into();
                 cx.notify();
             })
             .unwrap();
@@ -228,7 +228,7 @@ mod tests {
         let cx = &mut VisualTestContext::from_window(handle.into(), main_cx);
         handle
             .update(cx, |settings, _, cx| {
-                settings.search = TextField::new("Top toolbar");
+                settings.search = "Top toolbar".into();
                 cx.notify();
             })
             .unwrap();

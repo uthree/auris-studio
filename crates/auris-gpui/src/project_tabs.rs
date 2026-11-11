@@ -328,15 +328,11 @@ impl AurisApp {
                         .min_w_0()
                         .overflow_hidden()
                         .text_color(if active { theme.text } else { theme.text_muted })
-                        .tooltip(crate::ui::tooltip::keyed_tip(
-                            if id == own {
-                                self.project_tab_tooltip()
-                            } else {
-                                project.read(cx).project_tab_tooltip()
-                            },
-                            "",
-                            theme,
-                        )),
+                        .tooltip(crate::ui::tooltip::text_tip(if id == own {
+                            self.project_tab_tooltip()
+                        } else {
+                            project.read(cx).project_tab_tooltip()
+                        })),
                     )
                     .child(
                         icon_button_enabled(
@@ -352,7 +348,8 @@ impl AurisApp {
                                 })
                             },
                         )
-                        .tooltip(self.tip(Key::CmdCloseTab, "file.close_tab")),
+                        .tooltip(self.t(Key::CmdCloseTab))
+                        .shortcut(self.keystroke_for("file.close_tab")),
                     ),
             );
         }
@@ -381,7 +378,8 @@ impl AurisApp {
                             crate::project_windows::open_in(None, this.project_window, cx)
                         }),
                     )
-                    .tooltip(self.tip(Key::CmdNewProject, "file.new")),
+                    .tooltip(self.t(Key::CmdNewProject))
+                    .shortcut(self.keystroke_for("file.new")),
                 )
                 .into_any_element(),
         )

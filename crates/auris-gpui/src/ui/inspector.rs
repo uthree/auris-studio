@@ -226,7 +226,7 @@ impl AurisApp {
                     .text_sm()
                     .font_weight(gpui::FontWeight::SEMIBOLD)
                     .text_color(theme.text)
-                    .tooltip(crate::ui::tooltip::keyed_tip(track_name.clone(), "", theme))
+                    .tooltip(crate::ui::tooltip::text_tip(track_name.clone()))
                     .child(bounded_picker_label(track_name)),
             );
         if let Some(name) = self.selected_clip.and_then(|clip| {
@@ -257,11 +257,7 @@ impl AurisApp {
                         div()
                             .id("inspector-clip-mark")
                             .flex_shrink_0()
-                            .tooltip(crate::ui::tooltip::keyed_tip(
-                                self.t(Key::InspectorClip),
-                                "",
-                                theme,
-                            ))
+                            .tooltip(crate::ui::tooltip::text_tip(self.t(Key::InspectorClip)))
                             .child(crate::ui::icons::icon(
                                 Icon::Notes,
                                 gpui::px(12.0),
@@ -274,7 +270,7 @@ impl AurisApp {
                             .flex_1()
                             .min_w_0()
                             .h_full()
-                            .tooltip(crate::ui::tooltip::keyed_tip(name.clone(), "", theme))
+                            .tooltip(crate::ui::tooltip::text_tip(name.clone()))
                             .child(bounded_picker_label(name)),
                     ),
             );
@@ -322,11 +318,7 @@ impl AurisApp {
                         .min_w_0()
                         .truncate()
                         .text_color(self.theme.text_muted)
-                        .tooltip(crate::ui::tooltip::keyed_tip(
-                            summary.clone(),
-                            "",
-                            &self.theme,
-                        ))
+                        .tooltip(crate::ui::tooltip::text_tip(summary.clone()))
                         .child(summary),
                 ),
             )
@@ -596,7 +588,7 @@ impl AurisApp {
                             .truncate()
                             .text_xs()
                             .child(shown)
-                            .tooltip(crate::ui::tooltip::keyed_tip(name.clone(), "", &theme)),
+                            .tooltip(crate::ui::tooltip::text_tip(name.clone())),
                     )
                     .child(self.plugin_editor_button("inst-open", subject, cx))
                     .child(self.plugin_menu_button("inst-menu", subject, name, cx))
@@ -764,7 +756,7 @@ impl AurisApp {
                             .truncate()
                             .text_xs()
                             .child(name.clone())
-                            .tooltip(crate::ui::tooltip::keyed_tip(name.clone(), "", &theme)),
+                            .tooltip(crate::ui::tooltip::text_tip(name.clone())),
                     )
                     .child(self.plugin_editor_button(("insert-open", slot_index), subject, cx))
                     .child(self.plugin_menu_button(("insert-menu", slot_index), subject, name, cx))

@@ -1351,17 +1351,6 @@ impl Theme {
         hsla(hue, saturation, lightness, 1.0)
     }
 
-    /// Colour for a meter or clip indicator at `level_db`.
-    pub fn meter_color(&self, level_db: f32) -> Hsla {
-        if level_db >= -3.0 {
-            self.meter_high
-        } else if level_db >= -12.0 {
-            self.meter_mid
-        } else {
-            self.meter_low
-        }
-    }
-
     /// Interprets a stored `0xRRGGBB` track colour in the current theme.
     ///
     /// Document palette values identify theme slots. Other RGB values from older projects
@@ -1824,9 +1813,9 @@ mod tests {
                 assert!(contrast_ratio(theme.text_on(color), color) >= 4.5);
             }
             assert_eq!(theme.playing, theme.signal_palette[0]);
-            assert_eq!(theme.meter_color(-20.0), theme.playing);
-            assert_eq!(theme.meter_color(-6.0), theme.warning);
-            assert_eq!(theme.meter_color(-1.0), theme.danger);
+            assert_eq!(theme.meter_low, theme.playing);
+            assert_eq!(theme.meter_mid, theme.warning);
+            assert_eq!(theme.meter_high, theme.danger);
             assert_eq!(theme.record, theme.danger);
             assert_eq!(theme.playhead, theme.danger);
             assert_eq!(theme.solo, theme.warning);
@@ -2177,14 +2166,6 @@ mod tests {
                 assert_eq!(*actual, Hsla::from(rgb(stored.unwrap())));
             }
         }
-    }
-
-    #[test]
-    fn meter_colour_changes_at_the_documented_thresholds() {
-        let theme = Theme::dark();
-        assert_eq!(theme.meter_color(-20.0), theme.meter_low);
-        assert_eq!(theme.meter_color(-6.0), theme.meter_mid);
-        assert_eq!(theme.meter_color(-1.0), theme.meter_high);
     }
 
     #[test]

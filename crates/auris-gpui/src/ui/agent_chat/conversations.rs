@@ -1050,7 +1050,7 @@ impl AurisApp {
                             .h_auto()
                             .py_2()
                             .overflow_hidden()
-                            .tooltip(crate::ui::tooltip::keyed_tip(title.clone(), "", &theme))
+                            .tooltip(crate::ui::tooltip::text_tip(title.clone()))
                             .child(
                                 div()
                                     .flex()
@@ -1131,10 +1131,8 @@ impl AurisApp {
                                 }),
                             )
                             .flex_shrink_0()
-                            .tooltip(crate::ui::tooltip::keyed_tip(
+                            .tooltip(crate::ui::tooltip::text_tip(
                                 self.t(Key::AgentConversationActions),
-                                "",
-                                &theme,
                             )),
                         ),
                 );
@@ -1224,10 +1222,8 @@ impl AurisApp {
                 .w(theme.atelier.density.control_sm)
                 .px_0()
                 .flex_shrink_0()
-                .tooltip(crate::ui::tooltip::keyed_tip(
+                .tooltip(crate::ui::tooltip::text_tip(
                     self.t(Key::AgentConversationActions),
-                    "",
-                    &theme,
                 )),
             );
         }

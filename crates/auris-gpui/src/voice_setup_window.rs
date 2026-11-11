@@ -6,7 +6,7 @@
 use std::path::PathBuf;
 use std::process::Child;
 
-use atelier::{Edge, IconName, ListItem, SectionHeader, Sidebar, StatusBar};
+use atelier::{Edge, IconName, ListItem, SectionHeader, Sidebar, StatusBar, TextInputEvent};
 use auris_i18n::{Key, Language, messages};
 use auris_session::{
     DiffSingerSetup, LeapSingerCheck, LeapSingerSetup, LeapSingerVariant, VoicevoxCatalog,
@@ -22,8 +22,8 @@ use gpui::{
 use crate::app::AurisApp;
 use crate::theme::{Metrics, Theme};
 use crate::titlebar;
-use crate::ui::prompt::{editable_text, field_text};
-use crate::ui::text_field::{HasTextField, KeyEffect, TextField};
+use crate::ui::text_field::TextField;
+use crate::ui::text_input::MirroredInput;
 use crate::ui::widgets::{ButtonState, ButtonStyle, button, button_enabled, disclosure};
 
 /// Which external backend is being configured.
@@ -63,6 +63,31 @@ enum Field {
 }
 
 impl Field {
+    /// Every field, in the order of the enum, so `Field as usize` indexes it.
+    const ALL: [Self; 21] = [
+        Self::VoicevoxName,
+        Self::VoicevoxUrl,
+        Self::VoicevoxStyle,
+        Self::VoicevoxQuery,
+        Self::VoicevoxDecode,
+        Self::VoicevoxSampleRate,
+        Self::VoicevoxFrameRate,
+        Self::VoicevoxEngine,
+        Self::DiffFolder,
+        Self::DiffPhonemes,
+        Self::DiffAcoustic,
+        Self::DiffVocoder,
+        Self::DiffSampleRate,
+        Self::DiffHop,
+        Self::DiffMelBins,
+        Self::DiffMelBase,
+        Self::LeapEntry,
+        Self::LeapName,
+        Self::LeapAcoustic,
+        Self::LeapVocoder,
+        Self::LeapPhonemes,
+    ];
+
     fn first(tab: VoiceSetupTab) -> Self {
         match tab {
             VoiceSetupTab::Voicevox => Self::VoicevoxName,
@@ -204,6 +229,12 @@ pub struct VoiceSetupWindow {
     engine: Option<Child>,
     status: String,
     status_failed: bool,
+    /// Atelier's input for each field, indexed by `Field as usize`; the field structs above keep
+    /// the text each one was last given or typed, which is what saving reads.
+    inputs: Vec<MirroredInput>,
+    /// Set when the field to type into changed under the person (a tab switch, a voicebank
+    /// opened), so the next frame gives that field the keyboard.
+    refocus: bool,
     focus: FocusHandle,
 }
 
@@ -245,11 +276,35 @@ impl VoiceSetupWindow {
             engine: None,
             status: String::new(),
             status_failed: false,
-            // The proxy is one real tab stop for the custom text fields. That lets the last
-            // field enter the ordinary child-control order and lets the last child wrap back to
-            // the fields, instead of trapping keyboard users on one side of the window.
-            focus: cx.focus_handle().tab_index(0).tab_stop(true),
+            inputs: Field::ALL
+                .iter()
+                .map(|&field| {
+                    MirroredInput::new(cx, move |this: &mut Self, event, text, cx| {
+                        if matches!(event, TextInputEvent::Changed) {
+                            this.typed(field, text);
+                            cx.notify();
+                        }
+                    })
+                })
+                .collect(),
+            refocus: true,
+            focus: cx.focus_handle(),
         }
+    }
+
+    /// The person typed into `field`: keep its text, unless a save holds the form still — the
+    /// next frame then gives the input back the text it had.
+    fn typed(&mut self, field: Field, text: String) {
+        if self.saving {
+            return;
+        }
+        self.active = field;
+        *self.field_for_mut(field) = TextField::new(text);
+        self.text_changed();
+    }
+
+    fn input_for(&self, field: Field) -> &MirroredInput {
+        &self.inputs[field as usize]
     }
 
     fn visible_fields(&self) -> &'static [Field] {
@@ -259,37 +314,6 @@ impl VoiceSetupWindow {
             (VoiceSetupTab::DiffSinger, _) => DIFFSINGER_FIELDS,
             (VoiceSetupTab::LeapSinger, _) => LEAPSINGER_FIELDS,
         }
-    }
-
-    /// Moves within the logical text fields, returning false at the edge of their tab run.
-    fn move_active_field(&mut self, backwards: bool) -> bool {
-        let fields = self.visible_fields();
-        let Some(index) = fields.iter().position(|field| *field == self.active) else {
-            self.active = fields[0];
-            self.field_for_mut(self.active).select_all();
-            return true;
-        };
-        let next = if backwards {
-            index.checked_sub(1)
-        } else {
-            (index + 1 < fields.len()).then_some(index + 1)
-        };
-        let Some(next) = next else {
-            return false;
-        };
-        self.active = fields[next];
-        self.field_for_mut(self.active).select_all();
-        true
-    }
-
-    fn select_edge_field(&mut self, backwards: bool) {
-        let fields = self.visible_fields();
-        self.active = if backwards {
-            *fields.last().expect("every voice setup tab has fields")
-        } else {
-            fields[0]
-        };
-        self.field_for_mut(self.active).select_all();
     }
 
     fn t(&self, key: Key) -> &'static str {
@@ -352,21 +376,8 @@ impl VoiceSetupWindow {
 
     fn render_field(&self, field: Field, label: Key, cx: &mut Context<Self>) -> AnyElement {
         let theme = self.theme.clone();
-        let value = self.field_for(field);
-        let active = self.active == field;
-        let body = match active {
-            true => editable_text(
-                value.content().to_string().into(),
-                value.selection(),
-                value.marked(),
-                self.focus.clone(),
-                cx.entity(),
-                theme.clone(),
-            )
-            .into_any_element(),
-            false => field_text(value.content().to_string(), theme.text).into_any_element(),
-        };
-        let height = theme.atelier.density.control_md;
+        let input = self.input_for(field);
+        let editor = input.sync(self.field_for(field).content(), cx);
         // Atelier's form row: the label above its field, so a long translated label never
         // squeezes the value it names, and the field gets the whole width of the page.
         div()
@@ -376,28 +387,22 @@ impl VoiceSetupWindow {
             .child(field_label(self.t(label), &theme))
             .child(
                 div()
-                    .id(("voice-setup-field", field as usize))
-                    .debug_selector(move || format!("voice-setup-field-{}", field as usize))
-                    .h(height)
                     .w_full()
                     .min_w_0()
-                    .rounded(theme.atelier.control_radius(height))
-                    .bg(theme.surface_sunken)
-                    .border_1()
-                    .border_color(if active { theme.accent } else { theme.border })
-                    .child(body)
-                    .on_mouse_down(
-                        gpui::MouseButton::Left,
-                        cx.listener(move |this, _, window, cx| {
-                            if this.saving {
-                                return;
-                            }
+                    // On the way down, before the input under the pointer takes the press.
+                    .capture_any_mouse_down(cx.listener(move |this, _, _, cx| {
+                        if !this.saving {
                             this.active = field;
-                            this.field_for_mut(field).select_all();
-                            window.focus(&this.focus);
-                            cx.stop_propagation();
                             cx.notify();
-                        }),
+                        }
+                    }))
+                    .child(
+                        atelier::TextField::new()
+                            .id(("voice-setup-field", field as usize))
+                            .debug_selector(move || format!("voice-setup-field-{}", field as usize))
+                            .track_focus(&input.tab_stop())
+                            .tab_index(0)
+                            .child(editor),
                     ),
             )
             .into_any_element()
@@ -422,6 +427,7 @@ impl VoiceSetupWindow {
                     this.invalidate_request();
                     this.tab = tab;
                     this.active = Field::first(tab);
+                    this.refocus = true;
                     cx.notify();
                 }))
         };
@@ -1064,6 +1070,7 @@ impl VoiceSetupWindow {
             Ok(setup) => {
                 self.leapsinger = setup.into();
                 self.active = Field::LeapName;
+                self.refocus = true;
             }
             Err(error) => {
                 self.status = error;
@@ -1385,71 +1392,45 @@ impl VoiceSetupWindow {
             return true;
         }
         let modifiers = event.keystroke.modifiers;
-        if key == "enter"
-            && !modifiers.modified()
-            && self.focus.is_focused(window)
-            && self.tab == VoiceSetupTab::LeapSinger
-        {
-            self.save_leapsinger(cx);
-            return true;
-        }
         let tab_navigation = key == "tab"
             && (!modifiers.modified() || (modifiers.shift && modifiers.number_of_modifiers() == 1));
-        if tab_navigation && self.focus.contains_focused(window, cx) {
-            let backwards = modifiers.shift;
-            if self.focus.is_focused(window) {
-                if !self.move_active_field(backwards) {
-                    if backwards {
-                        window.focus_prev();
-                    } else {
-                        window.focus_next();
-                    }
-                }
-            } else {
-                if backwards {
-                    window.focus_prev();
-                } else {
-                    window.focus_next();
-                }
-                if self.focus.is_focused(window) {
-                    self.select_edge_field(backwards);
-                }
-            }
-            cx.notify();
+        if tab_navigation {
+            self.step_focus(modifiers.shift, window, cx);
             return true;
         }
-        let effect = self.field_for_mut(self.active).apply_key_with_clipboard(
-            key,
-            event.keystroke.modifiers.shift,
-            event.keystroke.modifiers.secondary(),
-            false,
-            cx,
-        );
-        if effect != KeyEffect::Ignored {
-            if effect == KeyEffect::Changed {
-                self.text_changed();
-            }
-            cx.notify();
-            true
+        false
+    }
+
+    /// Tab or Shift-Tab: the next control in the window's tab order, fields and buttons alike.
+    /// Bound as the application's pane step and as Atelier's focus step, whichever the keymap
+    /// matches first, so both land here.
+    fn step_focus(&mut self, backwards: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if backwards {
+            crate::ui::text_input::focus_prev(window, cx);
         } else {
-            false
+            window.focus_next();
+        }
+        // Arriving in a field by keyboard selects what it holds, ready to be typed over.
+        if let Some(&field) = self
+            .visible_fields()
+            .iter()
+            .find(|field| self.input_for(**field).is_focused(window))
+        {
+            self.active = field;
+            self.input_for(field).select_all(cx);
+        }
+        cx.notify();
+    }
+
+    /// Return in a LeapSinger field registers the voice, as its Save button does.
+    fn submit(&mut self, cx: &mut Context<Self>) {
+        if !self.saving && self.tab == VoiceSetupTab::LeapSinger {
+            self.save_leapsinger(cx);
         }
     }
 }
 
-impl HasTextField for VoiceSetupWindow {
-    fn field(&mut self) -> Option<&mut TextField> {
-        if self.saving {
-            None
-        } else {
-            Some(self.field_for_mut(self.active))
-        }
-    }
-
-    fn readable_field(&self) -> Option<&TextField> {
-        Some(self.field_for(self.active))
-    }
-
+impl VoiceSetupWindow {
     fn text_changed(&mut self) {
         self.invalidate_request();
         if matches!(
@@ -1464,12 +1445,13 @@ impl HasTextField for VoiceSetupWindow {
     }
 }
 
-crate::entity_input_handler!(VoiceSetupWindow);
-
 impl Render for VoiceSetupWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if !self.focus.contains_focused(window, cx) {
-            window.focus(&self.focus);
+        if !self.visible_fields().contains(&self.active) {
+            self.active = self.visible_fields()[0];
+        }
+        if std::mem::take(&mut self.refocus) || !self.focus.contains_focused(window, cx) {
+            window.focus(self.input_for(self.active).focus_handle());
         }
         let theme = self.theme.clone();
         let titlebar = titlebar::bar(
@@ -1498,6 +1480,26 @@ impl Render for VoiceSetupWindow {
             .text_color(theme.text)
             .font(theme.font.clone())
             .text_sm()
+            .on_action(cx.listener(|this, _: &atelier::SubmitText, _, cx| this.submit(cx)))
+            .on_action(cx.listener(|this, _: &atelier::FocusNext, window, cx| {
+                this.step_focus(false, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &atelier::FocusPrevious, window, cx| {
+                this.step_focus(true, window, cx)
+            }))
+            .on_action(
+                cx.listener(|this, _: &crate::actions::FocusNextPane, window, cx| {
+                    this.step_focus(false, window, cx)
+                }),
+            )
+            .on_action(
+                cx.listener(|this, _: &crate::actions::FocusPreviousPane, window, cx| {
+                    this.step_focus(true, window, cx)
+                }),
+            )
+            .on_action(cx.listener(|_, _: &atelier::CancelText, window, _| {
+                window.remove_window();
+            }))
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
                 if this.on_key(event, window, cx) {
                     cx.stop_propagation();
@@ -1642,6 +1644,22 @@ mod tests {
     use super::*;
     use gpui::TestAppContext;
 
+    /// The field whose input holds the keyboard, if any does.
+    fn focused_field(this: &VoiceSetupWindow, window: &Window) -> Option<Field> {
+        Field::ALL
+            .into_iter()
+            .find(|field| this.input_for(*field).is_focused(window))
+    }
+
+    /// Where the query-style input's selection stands.
+    fn query_selection(this: &VoiceSetupWindow, cx: &App) -> std::ops::Range<usize> {
+        this.input_for(Field::VoicevoxQuery)
+            .input()
+            .read(cx)
+            .buffer()
+            .selection()
+    }
+
     fn leap_bank() -> (tempfile::TempDir, LeapSingerSetup) {
         let folder = tempfile::tempdir().unwrap();
         let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -1764,7 +1782,7 @@ mod tests {
             .update(cx, |this, window, _| {
                 assert_eq!(this.leapsinger_setup().manifest.hop_size, 256);
                 this.active = Field::LeapEntry;
-                window.focus(&this.focus);
+                window.focus(this.input_for(Field::LeapEntry).focus_handle());
             })
             .unwrap();
         cx.simulate_keystrokes("tab");
@@ -1909,6 +1927,7 @@ mod tests {
                 .unwrap();
             cx.run_until_parked();
             crate::harness::click(field, cx);
+            cx.simulate_keystrokes("secondary-a");
             cx.simulate_input(text);
             handle
                 .update(cx, |this, _, _| {
@@ -1993,10 +2012,11 @@ mod tests {
         let cx = &mut gpui::VisualTestContext::from_window(handle.into(), cx);
         crate::harness::click("voicevox-advanced", cx);
         crate::harness::click("voice-setup-field-3", cx);
+        cx.simulate_keystrokes("secondary-a");
         cx.simulate_input("72x");
         cx.simulate_keystrokes("shift-left");
         let selection = handle
-            .update(cx, |this, _, _| this.voicevox.query.selection())
+            .update(cx, |this, _, cx| query_selection(this, cx))
             .unwrap();
         crate::harness::click("voicevox-advanced", cx);
         handle
@@ -2004,17 +2024,17 @@ mod tests {
                 this.finish_connection(this.request_generation, Ok(catalog()));
                 assert!(this.status_failed);
                 assert_eq!(this.voicevox.query.content(), "72x");
-                assert_eq!(this.voicevox.query.selection(), selection);
+                assert_eq!(query_selection(this, cx), selection);
                 cx.notify();
             })
             .unwrap();
         cx.run_until_parked();
         crate::harness::click("voicevox-save", cx);
         handle
-            .update(cx, |this, _, _| {
+            .update(cx, |this, _, cx| {
                 assert!(this.status_failed);
                 assert_eq!(this.voicevox.query.content(), "72x");
-                assert_eq!(this.voicevox.query.selection(), selection);
+                assert_eq!(query_selection(this, cx), selection);
             })
             .unwrap();
     }
@@ -2087,7 +2107,7 @@ mod tests {
         handle
             .update(cx, |this, window, _| {
                 this.active = Field::VoicevoxName;
-                window.focus(&this.focus);
+                window.focus(this.input_for(Field::VoicevoxName).focus_handle());
             })
             .unwrap();
         cx.simulate_keystrokes("tab");
@@ -2103,8 +2123,9 @@ mod tests {
         cx.simulate_keystrokes("tab");
         handle
             .update(cx, |this, window, _| {
-                assert!(
-                    !this.focus.is_focused(window),
+                assert_eq!(
+                    focused_field(this, window),
+                    None,
                     "the last visible field enters the child-control tab order"
                 )
             })
@@ -2121,29 +2142,31 @@ mod tests {
         let handle = app.read_with(cx, |this, _| this.voice_setup_window.unwrap());
         let cx = &mut gpui::VisualTestContext::from_window(handle.into(), cx);
         cx.run_until_parked();
-        handle
+        let child = handle
             .update(cx, |this, window, cx| {
-                window.focus(&this.focus);
+                window.focus(this.input_for(Field::VoicevoxUrl).focus_handle());
                 window.focus_next();
                 assert!(this.focus.contains_focused(window, cx));
-                assert!(!this.focus.is_focused(window));
+                assert_eq!(focused_field(this, window), None);
                 cx.notify();
+                window.focused(cx)
             })
             .unwrap();
         cx.run_until_parked();
         handle
             .update(cx, |this, window, cx| {
-                assert!(this.focus.contains_focused(window, cx));
-                assert!(
-                    !this.focus.is_focused(window),
+                assert_eq!(
+                    window.focused(cx),
+                    child,
                     "rendering must preserve the focused child"
                 );
+                assert_eq!(focused_field(this, window), None);
             })
             .unwrap();
     }
 
     #[gpui::test]
-    fn tab_enters_every_child_from_the_field_proxy_and_wraps_both_ways(cx: &mut TestAppContext) {
+    fn tab_runs_through_every_field_and_child_and_wraps_both_ways(cx: &mut TestAppContext) {
         let (app, cx) = crate::harness::open(cx);
         app.update(cx, |this, cx| {
             this.open_voice_setup(VoiceSetupTab::Voicevox, cx)
@@ -2155,23 +2178,16 @@ mod tests {
         handle
             .update(cx, |this, window, _| {
                 this.active = Field::VoicevoxUrl;
-                window.focus(&this.focus);
+                window.focus(this.input_for(Field::VoicevoxUrl).focus_handle());
             })
             .unwrap();
 
-        cx.simulate_keystrokes("tab");
-        let first = handle
-            .update(cx, |this, window, cx| {
-                assert!(this.focus.contains_focused(window, cx));
-                assert!(!this.focus.is_focused(window));
-                window
-                    .focused(cx)
-                    .expect("Tab from the final text field enters the child controls")
+        let name = handle
+            .read_with(cx, |this, _| {
+                this.input_for(Field::VoicevoxName).focus_handle().clone()
             })
             .unwrap();
-
-        let proxy = handle.read_with(cx, |this, _| this.focus.clone()).unwrap();
-        let mut children = vec![first.clone()];
+        let mut children = Vec::new();
         for _ in 0..32 {
             cx.simulate_keystrokes("tab");
             let focused = handle
@@ -2180,22 +2196,29 @@ mod tests {
                     window.focused(cx).expect("the voice window keeps focus")
                 })
                 .unwrap();
-            if focused == proxy {
+            if focused == name {
                 break;
             }
             assert!(
                 !children.contains(&focused),
-                "child focus must not loop before returning to the text-field proxy"
+                "child focus must not loop before returning to the first field"
             );
             children.push(focused);
         }
         handle
-            .update(cx, |this, window, _| {
-                assert!(
-                    this.focus.is_focused(window),
-                    "the final child wraps forward to the text-field proxy"
+            .update(cx, |this, window, cx| {
+                assert_eq!(
+                    focused_field(this, window),
+                    Some(Field::VoicevoxName),
+                    "the final child wraps forward to the first field"
                 );
                 assert_eq!(this.active, Field::VoicevoxName);
+                let input = this.input_for(Field::VoicevoxName).input().read(cx);
+                assert_eq!(
+                    input.buffer().selection(),
+                    0..input.text().len(),
+                    "arriving by Tab selects the field's text"
+                );
             })
             .unwrap();
         assert!(
@@ -2206,15 +2229,24 @@ mod tests {
         cx.simulate_keystrokes("shift-tab");
         handle
             .update(cx, |this, window, cx| {
-                assert!(!this.focus.is_focused(window));
+                assert_eq!(focused_field(this, window), None);
                 assert_eq!(window.focused(cx).as_ref(), children.last());
             })
             .unwrap();
-        cx.simulate_keystrokes("tab");
+        cx.simulate_keystrokes("tab tab");
         handle
             .update(cx, |this, window, _| {
-                assert!(this.focus.is_focused(window));
-                assert_eq!(this.active, Field::VoicevoxName);
+                assert_eq!(focused_field(this, window), Some(Field::VoicevoxUrl));
+            })
+            .unwrap();
+        cx.simulate_keystrokes("shift-tab");
+        handle
+            .update(cx, |this, window, _| {
+                assert_eq!(
+                    focused_field(this, window),
+                    Some(Field::VoicevoxName),
+                    "Shift-Tab steps from one field back to the one before it"
+                );
             })
             .unwrap();
     }
@@ -2234,7 +2266,7 @@ mod tests {
                 "http://voice.invalid:50021".into(),
             ));
         });
-        cx.simulate_keystrokes("secondary-v");
+        cx.simulate_keystrokes("secondary-a secondary-v");
         handle
             .update(cx, |this, _, _| {
                 assert_eq!(this.active, Field::VoicevoxUrl);

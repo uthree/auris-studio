@@ -10,24 +10,26 @@
 //! geometry the view already keeps — the timeline's scale, the lane rows, the roll's pitch rows
 //! — so their rectangle is *computed* from the target ([`InlinePlace::Target`]). A track's name
 //! is laid out by flex in two different panels, so its label records where it was painted with
-//! [`spot`] and the prompt names that record ([`InlinePlace::Spot`]). When neither can say where
+//! Atelier's [`atelier::SpotBook::spot`] and the prompt names that record
+//! ([`InlinePlace::Spot`]). When neither can say where
 //! the label is — the panel is closed, the strip is hidden — the prompt falls back to the sheet,
 //! so nothing that used to be editable stops being so.
+//!
+//! The field itself is Atelier's [`atelier::InlineEdit`] over an [`atelier::TextInput`]; this
+//! module decides where it goes and keeps the prompt's own field in step with what is typed,
+//! since completions, validation and the commit all read the prompt.
 //!
 //! Return commits and Escape cancels, as on the sheet. A press anywhere else commits too, which
 //! is what every list of names does — except that leaving a field untouched, or emptied where
 //! empty is not an answer, closes it instead, so wandering off a box never writes an edit
 //! nobody made or traps the pointer behind an error.
 
-use std::cell::RefCell;
-use std::collections::HashMap;
-use std::rc::Rc;
-
 use auris_session::prelude::*;
 
+use atelier::{TextInput, TextInputEvent};
 use gpui::{
-    AnyElement, Bounds, Context, IntoElement, MouseButton, MouseDownEvent, Pixels, SharedString,
-    canvas, div, point, prelude::*, px, size,
+    AnyElement, AppContext as _, Bounds, Context, Entity, IntoElement, MouseButton, MouseDownEvent,
+    Pixels, SharedString, div, point, prelude::*, px, size,
 };
 
 use crate::app::AurisApp;
@@ -38,7 +40,8 @@ use crate::ui::prompt::{Prompt, PromptTarget};
 /// Where an inline prompt is drawn.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum InlinePlace {
-    /// Over the element that recorded this key with [`spot`] when it was last painted.
+    /// Over the element that recorded this key with [`atelier::SpotBook::spot`] when it was
+    /// last painted.
     Spot(SharedString),
     /// Over the target itself, from the geometry the view draws it with.
     Target,
@@ -56,70 +59,6 @@ const MAX_WIDTH: Pixels = px(420.0);
 const COMMENT_WIDTH: Pixels = px(260.0);
 /// The height of a one-line inline field.
 pub(crate) const LINE_HEIGHT: Pixels = px(22.0);
-
-/// The rectangles [`spot`] recorded, per window, with the frame each was painted in.
-#[derive(Default)]
-pub struct Spots {
-    /// The frame each window is rendering now.
-    frames: HashMap<gpui::WindowId, u64>,
-    /// Each key's last paint: its window, its frame and its rectangle.
-    painted: HashMap<SharedString, (gpui::WindowId, u64, Bounds<Pixels>)>,
-}
-
-/// The shared book of painted spots; `Rc` because paint closures are `'static`.
-pub type SpotBook = Rc<RefCell<Spots>>;
-
-impl Spots {
-    /// Starts a new frame in `window`, so a spot that is not painted again is forgotten.
-    pub(crate) fn next_frame(&mut self, window: gpui::WindowId) {
-        *self.frames.entry(window).or_default() += 1;
-    }
-
-    /// Where `key` was painted in `window`, if it was painted in the frame before this one or
-    /// in this one.
-    ///
-    /// A label that has scrolled out of its panel or whose panel was closed stops being painted,
-    /// and an editor floating over the place it used to be would be worse than the sheet.
-    pub(crate) fn get(&self, key: &str, window: gpui::WindowId) -> Option<Bounds<Pixels>> {
-        let frame = self.frames.get(&window).copied().unwrap_or_default();
-        self.painted
-            .get(key)
-            .filter(|(painted_in, painted_at, _)| {
-                *painted_in == window && fresh(*painted_at, frame)
-            })
-            .map(|(_, _, bounds)| *bounds)
-    }
-
-    fn record(&mut self, key: SharedString, window: gpui::WindowId, bounds: Bounds<Pixels>) {
-        let frame = self.frames.get(&window).copied().unwrap_or_default();
-        self.painted.insert(key, (window, frame, bounds));
-    }
-}
-
-/// Whether a spot painted in frame `painted_at` still describes the screen in frame `frame`.
-///
-/// The frame before counts: the prompt is drawn while the frame is being built, before this
-/// frame's labels are painted, so last frame's paint is the newest there is.
-fn fresh(painted_at: u64, frame: u64) -> bool {
-    painted_at + 1 >= frame
-}
-
-/// An invisible child that records its parent's rectangle under `key` each time it is painted.
-pub(crate) fn spot(book: &SpotBook, key: impl Into<SharedString>) -> impl IntoElement {
-    let book = Rc::clone(book);
-    let key = key.into();
-    canvas(
-        move |bounds, window, _| {
-            book.borrow_mut()
-                .record(key, window.window_handle().window_id(), bounds);
-        },
-        |_, _, _, _| {},
-    )
-    .absolute()
-    .top_0()
-    .left_0()
-    .size_full()
-}
 
 /// The spot key of a track's name in the arrangement's header.
 pub(crate) fn header_name_spot(track: TrackId) -> SharedString {
@@ -188,12 +127,15 @@ fn span(
 
 impl AurisApp {
     /// Where an open prompt is drawn in place, or `None` when it is a sheet.
-    pub(crate) fn inline_bounds(&self, prompt: &Prompt) -> Option<Bounds<Pixels>> {
+    pub(crate) fn inline_bounds(
+        &self,
+        prompt: &Prompt,
+        window: &gpui::Window,
+    ) -> Option<Bounds<Pixels>> {
         let target = prompt.target()?;
         match prompt.place()? {
             InlinePlace::Spot(key) => {
-                let window = self.event_window?;
-                let book = self.canvas.spots.borrow();
+                let book = &self.canvas.spots;
                 let found = book.get(key, window).or_else(|| match target {
                     // A rename opened from a menu does not know which panel asked; the other
                     // one's label will do when the first is not on screen.
@@ -213,12 +155,17 @@ impl AurisApp {
                     None,
                 ))
             }
-            InlinePlace::Target => self.target_bounds(prompt, target),
+            InlinePlace::Target => self.target_bounds(prompt, target, window),
         }
     }
 
     /// The rectangle a target is drawn in, computed from the view's own geometry.
-    fn target_bounds(&self, prompt: &Prompt, target: PromptTarget) -> Option<Bounds<Pixels>> {
+    fn target_bounds(
+        &self,
+        prompt: &Prompt,
+        target: PromptTarget,
+        window: &gpui::Window,
+    ) -> Option<Bounds<Pixels>> {
         match target {
             PromptTarget::Section(at) => {
                 let lane = self.canvas.structure.get()?;
@@ -305,12 +252,12 @@ impl AurisApp {
             PromptTarget::NewComment { host, at, pitch } => {
                 self.comment_bounds(prompt, host, at, pitch)
             }
-            PromptTarget::Comment { host, id } => {
-                self.comment_tag_bounds(prompt, host, id).or_else(|| {
+            PromptTarget::Comment { host, id } => self
+                .comment_tag_bounds(prompt, host, id, window)
+                .or_else(|| {
                     let comment = self.session.comment(host, id)?;
                     self.comment_bounds(prompt, host, comment.at, comment.pitch)
-                })
-            }
+                }),
             _ => None,
         }
     }
@@ -340,12 +287,11 @@ impl AurisApp {
         prompt: &Prompt,
         host: CommentHost,
         id: CommentId,
+        window: &gpui::Window,
     ) -> Option<Bounds<Pixels>> {
-        let window = self.event_window?;
         let tag = self
             .canvas
             .spots
-            .borrow()
             .get(&crate::ui::comments::tag_selector(host, id), window)?;
         let text = prompt.field().map_or("", |field| field.content());
         let height = crate::ui::text_area::area_height(text, 2, 6);
@@ -426,8 +372,17 @@ impl AurisApp {
         Some(bounds)
     }
 
-    /// Draws an inline prompt: the field over its label, and under it whatever the sheet would
-    /// have said under its field — an error, a hint, the completions.
+    /// Whether the open prompt is drawn in place this frame, typed into Atelier's input rather
+    /// than through the window's own handle.
+    pub(crate) fn inline_prompt_open(&self, window: &gpui::Window) -> bool {
+        self.prompt
+            .as_ref()
+            .is_some_and(|prompt| self.inline_bounds(prompt, window).is_some())
+    }
+
+    /// Draws an inline prompt: Atelier's field over its label, and under it whatever the sheet
+    /// would have said under its field — a hint, the completions. A rejected answer is the
+    /// field's own error line.
     pub(crate) fn render_inline_prompt(
         &self,
         prompt: &Prompt,
@@ -436,103 +391,60 @@ impl AurisApp {
     ) -> Option<AnyElement> {
         let target = prompt.target()?;
         let field = prompt.field()?;
-        let theme = self.theme.clone();
-        let multiline = is_multiline(target);
-        let text: SharedString = field.content().to_string().into();
-        let editor = if multiline {
-            crate::ui::text_area::editable_area(
-                text,
-                field.selection(),
-                field.marked(),
-                Vec::new(),
-                self.focus.clone(),
-                cx.entity(),
-                theme.clone(),
-            )
-            .into_any_element()
-        } else {
-            crate::ui::prompt::editable_text(
-                text,
-                field.selection(),
-                field.marked(),
-                self.focus.clone(),
-                cx.entity(),
-                theme.clone(),
-            )
-            .into_any_element()
-        };
+        let input = self.sync_prompt_input(prompt, target, field, cx);
         let error = prompt.error().cloned();
+        // Atelier pads the label by four pixels each side and clamps the width; the rectangle
+        // here is already fitted, so it is handed over as the label it was fitted from.
+        let over = Bounds {
+            origin: point(bounds.origin.x + px(4.0), bounds.origin.y),
+            size: size(bounds.size.width - px(8.0), bounds.size.height),
+        };
+        let mut edit = atelier::InlineEdit::new("inline-prompt", &input, over)
+            .original(prompt.initial().to_string())
+            .min_width(bounds.size.width)
+            .max_width(bounds.size.width)
+            .on_commit(cx.listener(move |this, text: &SharedString, window, cx| {
+                this.commit_inline_prompt(target, text, window, cx);
+                cx.notify();
+            }))
+            .on_close(cx.listener(move |this, _: &(), _, cx| {
+                if this.prompt.as_ref().and_then(Prompt::target) == Some(target) {
+                    this.cancel_prompt();
+                }
+                cx.notify();
+            }));
+        if crate::ui::prompt::empty_prompt_is_meaningful(target) {
+            edit = edit.allow_empty();
+        }
+        if let Some(error) = error.clone() {
+            edit = edit.error(error);
+        }
+        if walks_on_return(target) {
+            edit = edit.on_return(cx.listener(
+                move |this, text: &Option<SharedString>, window, cx| {
+                    match text {
+                        Some(text) => this.commit_inline_prompt(target, text, window, cx),
+                        None => this.walk_inline_prompt(target),
+                    }
+                    cx.notify();
+                },
+            ));
+        }
+
+        let theme = self.theme.clone();
         let hint = target.hint().map(|hint| self.t(hint));
         let completions = self.render_prompt_completions(prompt, cx);
-        let below = error.is_some() || hint.is_some() || completions.is_some();
-        Some(
-            div()
-                .id("inline-prompt")
-                .debug_selector(|| "inline-prompt".into())
-                .absolute()
-                .left(bounds.origin.x)
-                .top(bounds.origin.y)
-                .w(bounds.size.width)
-                .flex()
-                .flex_col()
-                .gap_1()
-                // Anything outside the box finishes the edit; the press itself goes on to
-                // whatever it landed on, so clicking the next name both commits this one and
-                // starts on that.
-                .on_mouse_down_out(cx.listener(move |this, _: &MouseDownEvent, window, cx| {
-                    this.leave_inline_prompt(target, window, cx);
-                    cx.notify();
-                }))
-                .child(
-                    div()
-                        .id("inline-prompt-field")
-                        .debug_selector(|| "prompt-text-field".into())
-                        .h(bounds.size.height)
-                        .w_full()
-                        .rounded(Metrics::RADIUS_SM)
-                        .bg(theme.surface_sunken)
-                        .border_1()
-                        .border_color(if error.is_some() {
-                            theme.danger
-                        } else {
-                            theme.accent
-                        })
-                        .shadow_md()
-                        .occlude()
-                        .cursor(gpui::CursorStyle::IBeam)
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(move |this, event: &MouseDownEvent, window, cx| {
-                                cx.stop_propagation();
-                                let focus = this.focus.clone();
-                                if let Some(field) =
-                                    this.prompt.as_mut().and_then(Prompt::field_mut)
-                                {
-                                    if multiline {
-                                        match crate::ui::text_area::area_offset_at(
-                                            window,
-                                            field.content(),
-                                            event.position,
-                                        ) {
-                                            Some(offset) => {
-                                                field.place_caret(offset, event.modifiers.shift)
-                                            }
-                                            None => field.caret_to_end(),
-                                        }
-                                    } else {
-                                        crate::ui::prompt::click_field(
-                                            field, &focus, true, window, event,
-                                        );
-                                    }
-                                }
-                                focus.focus(window);
-                                cx.notify();
-                            }),
-                        )
-                        .child(editor),
-                )
-                .when(below, |this| {
-                    this.child(
+        let notes = (hint.is_some() || completions.is_some()).then(|| {
+            // Under the field, and under its error line when it has one.
+            let below = if error.is_some() { ERROR_LINE } else { px(0.0) };
+            let top = bounds.origin.y + bounds.size.height.max(LINE_HEIGHT) + px(4.0) + below;
+            // Drawn after the field, so a press on a completion is the panel's and not a press
+            // outside the field that would commit it first.
+            gpui::deferred(
+                gpui::anchored()
+                    .position(point(bounds.origin.x, top))
+                    .snap_to_window_with_margin(px(8.0))
+                    .child(
                         div()
                             .id("inline-prompt-notes")
                             .flex()
@@ -551,14 +463,6 @@ impl AurisApp {
                                 MouseButton::Left,
                                 |_: &MouseDownEvent, _, cx: &mut gpui::App| cx.stop_propagation(),
                             )
-                            .children(error.map(|error| {
-                                div()
-                                    .id("prompt-error")
-                                    .debug_selector(|| "prompt-error".into())
-                                    .text_xs()
-                                    .text_color(theme.danger)
-                                    .child(error)
-                            }))
                             .children(hint.map(|hint| {
                                 div()
                                     .text_xs()
@@ -566,40 +470,213 @@ impl AurisApp {
                                     .child(hint.to_string())
                             }))
                             .children(completions),
-                    )
-                })
+                    ),
+            )
+            .with_priority(2)
+        });
+        Some(
+            div()
+                .debug_selector(|| "inline-prompt".into())
+                .child(edit)
+                .children(notes)
                 .into_any_element(),
         )
     }
 
-    /// Finishes an inline edit because the pointer went somewhere else.
+    /// Writes what the inline field committed and answers the prompt with it.
     ///
-    /// Commits what was typed, unless nothing was — an untouched field, or one emptied where
-    /// empty is not an answer — in which case it simply closes, so wandering off never writes an
-    /// edit nobody made, and never leaves a box behind complaining that a name cannot be empty.
-    /// Only acts on the prompt it was drawn for: the press that landed outside may already have
-    /// opened another.
-    pub(crate) fn leave_inline_prompt(
+    /// Only for the prompt it was drawn for: the press that committed it may already have opened
+    /// another.
+    fn commit_inline_prompt(
         &mut self,
         target: PromptTarget,
+        text: &str,
         window: &mut gpui::Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(prompt) = self.prompt.as_ref() else {
+        let Some(prompt) = self.prompt.as_mut() else {
             return;
         };
-        if prompt.target() != Some(target) || prompt.place().is_none() {
+        if prompt.target() != Some(target) {
             return;
         }
-        if prompt.field().is_some_and(|field| field.marked().is_some()) {
-            // An IME still composing owns the text; a stray press must not cut it short.
+        if let Some(field) = prompt.field_mut()
+            && field.content() != text
+        {
+            let all = 0..field.content().len();
+            field.replace(all, text);
+        }
+        self.commit_prompt(window, cx);
+    }
+
+    /// Return on a field left as it was, in a prompt that walks: nothing is written, and the
+    /// field moves on to the next note or row as a written one would.
+    fn walk_inline_prompt(&mut self, target: PromptTarget) {
+        if self.prompt.as_ref().and_then(Prompt::target) != Some(target) {
             return;
         }
-        if prompt.is_untouched() {
-            self.cancel_prompt();
+        self.cancel_prompt();
+        match target {
+            PromptTarget::Lyric { clip, index } => {
+                if let Some(next) = self.next_sung_note(clip, index) {
+                    self.open_lyric_prompt(clip, next);
+                }
+            }
+            PromptTarget::Event {
+                clip,
+                event,
+                column,
+            } => self.walk_event_prompt(clip, event, column),
+            _ => {}
+        }
+    }
+
+    /// The input `target` is typed into, given the prompt's text when it differs.
+    ///
+    /// The prompt's field is the text the commit reads. The input writes it on every change;
+    /// this is the other direction, for a prompt just opened, or a completion written by Tab or
+    /// a chip.
+    pub(crate) fn sync_prompt_input(
+        &self,
+        prompt: &Prompt,
+        target: PromptTarget,
+        field: &crate::ui::text_field::TextField,
+        cx: &mut Context<Self>,
+    ) -> Entity<TextInput> {
+        let input = self.prompt_input.for_target(target).clone();
+        let opened = self.prompt_input.loaded.replace(prompt.serial()) != prompt.serial();
+        if opened || input.read(cx).text() != field.content() {
+            let text = field.content().to_string();
+            // A prompt opens with its text selected, so the first key replaces it; a completion
+            // leaves the caret after what it wrote.
+            let selected = opened && !text.is_empty();
+            input.update(cx, |input, cx| {
+                input.set_text(text, cx);
+                if selected {
+                    input.select_all(cx);
+                }
+            });
+        }
+        input
+    }
+
+    /// Copies the prompt input's text into the open prompt's field, which is what completions,
+    /// validation and the commit read.
+    fn take_inline_text(&mut self, input: &Entity<TextInput>, cx: &mut Context<Self>) {
+        let text = input.read(cx).text().to_string();
+        let Some(prompt) = self.prompt.as_mut() else {
+            return;
+        };
+        let Some(target) = prompt.target() else {
+            return;
+        };
+        if self.prompt_input.for_target(target) != input {
+            return;
+        }
+        if let Some(field) = prompt.field()
+            && field.content() == text
+        {
+            return;
+        }
+        // Through `field_mut`, which ends a Tab walk: typing is a new word to complete.
+        if let Some(field) = prompt.field_mut() {
+            let all = 0..field.content().len();
+            field.replace(all, &text);
+        }
+        cx.notify();
+    }
+}
+
+/// How far a field's error line pushes what is drawn under it.
+const ERROR_LINE: Pixels = px(24.0);
+
+/// Whether Return walks on to the next thing of the same kind, written or not: the lyric sheet
+/// from note to note, the event list down its column.
+fn walks_on_return(target: PromptTarget) -> bool {
+    matches!(
+        target,
+        PromptTarget::Lyric { .. } | PromptTarget::Event { .. }
+    )
+}
+
+/// The two inputs a text prompt is typed into, in place or on the sheet: a line for names and
+/// notations, an area for a comment or an impression.
+pub(crate) struct PromptInput {
+    line: Entity<TextInput>,
+    area: Entity<TextInput>,
+    /// The [`Prompt::serial`] last loaded into an input.
+    loaded: std::cell::Cell<u64>,
+    line_focus: gpui::FocusHandle,
+    area_focus: gpui::FocusHandle,
+}
+
+impl PromptInput {
+    /// Both inputs, each writing what is typed back into the open prompt.
+    pub(crate) fn new(cx: &mut Context<AurisApp>) -> Self {
+        let line = cx.new(TextInput::new);
+        let area = cx.new(|cx| TextInput::new(cx).multiline());
+        for input in [&line, &area] {
+            cx.subscribe(input, |this, input, event: &TextInputEvent, cx| {
+                if *event == TextInputEvent::Changed {
+                    this.take_inline_text(&input, cx);
+                }
+            })
+            .detach();
+        }
+        let line_focus = gpui::Focusable::focus_handle(line.read(cx), cx);
+        let area_focus = gpui::Focusable::focus_handle(area.read(cx), cx);
+        Self {
+            line,
+            area,
+            loaded: std::cell::Cell::new(0),
+            line_focus,
+            area_focus,
+        }
+    }
+
+    /// The input `target` is typed into: the area for a comment or a workshop impression, the
+    /// line for everything else.
+    pub(crate) fn for_target(&self, target: PromptTarget) -> &Entity<TextInput> {
+        if is_multiline(target) || matches!(target, PromptTarget::WorkshopFeedback { .. }) {
+            &self.area
         } else {
-            self.commit_prompt(window, cx);
+            &self.line
         }
+    }
+
+    /// The focus handle of the input `target` is typed into.
+    pub(crate) fn focus_for(&self, target: PromptTarget) -> &gpui::FocusHandle {
+        if self.for_target(target) == &self.area {
+            &self.area_focus
+        } else {
+            &self.line_focus
+        }
+    }
+
+    /// The focus handle of the area.
+    pub(crate) fn area_focus(&self) -> &gpui::FocusHandle {
+        &self.area_focus
+    }
+
+    /// The area, which a workshop impression is always typed into.
+    pub(crate) fn area(&self) -> &Entity<TextInput> {
+        &self.area
+    }
+
+    /// The input that holds the keyboard, when one does.
+    pub(crate) fn focused(
+        &self,
+        window: &gpui::Window,
+        cx: &gpui::App,
+    ) -> Option<&Entity<TextInput>> {
+        [&self.line, &self.area]
+            .into_iter()
+            .find(|input| input.read(cx).is_focused(window))
+    }
+
+    /// Whether either input holds the keyboard.
+    pub(crate) fn is_focused(&self, window: &gpui::Window, cx: &gpui::App) -> bool {
+        self.line.read(cx).is_focused(window) || self.area.read(cx).is_focused(window)
     }
 }
 
@@ -643,13 +720,6 @@ mod tests {
     }
 
     #[test]
-    fn a_spot_from_an_earlier_frame_is_forgotten() {
-        assert!(fresh(5, 5), "painted this frame");
-        assert!(fresh(4, 5), "painted in the frame before");
-        assert!(!fresh(3, 5), "not painted since");
-    }
-
-    #[test]
     fn only_comments_are_written_over_several_lines() {
         assert!(is_multiline(PromptTarget::Comment {
             host: CommentHost::Track(TrackId(1)),
@@ -675,10 +745,11 @@ mod window_tests {
         cx: &mut gpui::VisualTestContext,
     ) -> Option<gpui::Bounds<gpui::Pixels>> {
         paint(app, cx);
-        app.read_with(cx, |this, _| {
+        cx.update(|window, cx| {
+            let this = app.read(cx);
             this.prompt
                 .as_ref()
-                .and_then(|prompt| this.inline_bounds(prompt))
+                .and_then(|prompt| this.inline_bounds(prompt, window))
         })
     }
 
@@ -687,11 +758,10 @@ mod window_tests {
         cx: &mut gpui::VisualTestContext,
         track: TrackId,
     ) -> gpui::Bounds<gpui::Pixels> {
-        app.read_with(cx, |this, _| {
-            let window = this.event_window.expect("the window has rendered");
-            this.canvas
+        cx.update(|window, cx| {
+            app.read(cx)
+                .canvas
                 .spots
-                .borrow()
                 .get(&super::header_name_spot(track), window)
                 .expect("the header's name was painted")
         })
@@ -771,10 +841,12 @@ mod window_tests {
         cx.simulate_input("H flat major");
         cx.simulate_keystrokes("enter");
         paint(&app, cx);
-        assert!(
-            cx.debug_bounds("prompt-error").is_some(),
-            "the reason is shown beside the field"
-        );
+        app.read_with(cx, |this, _| {
+            assert!(
+                this.prompt.as_ref().and_then(|p| p.error()).is_some(),
+                "the reason is kept for the field's error line"
+            );
+        });
         assert!(
             inline(&app, cx).is_some(),
             "and the field stays where it was"

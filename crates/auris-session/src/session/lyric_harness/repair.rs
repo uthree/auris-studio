@@ -192,6 +192,7 @@ impl Session {
                 reading: complete.then(|| moras.iter().map(|m| m.text.as_str()).collect()),
                 text,
                 reading_source: ReadingSource::Stored,
+                accent: None,
                 // Stored notes already sing one mora each; their count is the note count.
                 min_notes: moras.len(),
                 max_notes: moras.len(),
@@ -377,6 +378,31 @@ impl Session {
             }
             reports.push(report);
         }
+        // How each candidate's words would sit on the melody's contour: information for
+        // choosing between passing candidates, never a reason to fail one.
+        let accents: Vec<_> = reports
+            .iter()
+            .map(|report| {
+                let dictionary = self.japanese.as_ref()?;
+                let section = report.sections.first()?;
+                let phrase = section.analysis.phrases.first()?;
+                if phrase.moras.len() != destination.len() {
+                    return None;
+                }
+                let notes: Vec<_> = destination
+                    .iter()
+                    .zip(&phrase.moras)
+                    .map(
+                        |((_, note), mora)| crate::session::lyric_accent::AccentNote {
+                            pitch: i32::from(note.pitch),
+                            moras: 1,
+                            closure: mora.closure,
+                        },
+                    )
+                    .collect();
+                crate::session::lyric_accent::text_counts(dictionary, &phrase.text, &notes)
+            })
+            .collect();
         let mut applied = false;
         let mut changes = Vec::new();
         let labels = selected
@@ -426,6 +452,7 @@ impl Session {
         Ok(serde_json::json!({
             "applied": applied, "selected_candidate": selected.map(|i|i+1),
             "revision": self.agent_document_revision()?, "candidate_reports": reports,
+            "candidate_accents": accents,
             "target": request.target, "reference": request.reference,
             "original_text": selected.map(|i| &request.candidates[i].text),
             "changes": changes,

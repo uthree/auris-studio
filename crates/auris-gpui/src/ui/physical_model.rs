@@ -52,11 +52,6 @@ pub(crate) struct PhysicalView {
     pub(crate) ringing: Option<u8>,
     /// Where each body was laid out on the last frame, to turn a pointer into a place on it.
     surfaces: Rc<[Cell<Option<Bounds<Pixels>>>; LANES]>,
-    /// Where each editable picture of an oscillator patch was laid out on the last frame, so a
-    /// drag on it is measured against the plot the person saw.
-    pub(crate) plots: super::synth_edit::PlotBounds,
-    /// Wheel travel over a picture whose wheel steps a count, not yet worth a whole step.
-    pub(crate) wheel: f32,
     /// Which picture of the instrument's inside is turning, and the angle it is seen from:
     /// azimuth and elevation, in degrees.
     pub(crate) resonance: Resonance,
@@ -77,8 +72,6 @@ impl Default for PhysicalView {
             touch: None,
             ringing: None,
             surfaces: Rc::default(),
-            plots: Rc::default(),
-            wheel: 0.0,
             resonance: Resonance::default(),
             // From above the near corner, low enough that a surface's height reads as height.
             orbit: (-32., 34.),

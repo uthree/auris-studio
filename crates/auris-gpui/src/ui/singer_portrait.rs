@@ -458,7 +458,7 @@ mod tests {
             ]);
             supply_icon(this, &faced.0, Ok(Some(image())));
             supply_icon(this, &offline.0, Err("Engine is offline".into()));
-            this.library_search = crate::ui::text_field::TextField::new("Artwork test");
+            this.library_search = "Artwork test".into();
         });
         paint(&app, cx);
         let face = cx

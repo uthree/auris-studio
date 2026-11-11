@@ -37,7 +37,7 @@ use crate::ui::menu_bar::OpenMenu;
 use crate::ui::piano_roll::RollTool;
 use crate::ui::prompt::Prompt;
 use crate::ui::score_layer::{ScoreLayer, ScorePreview};
-use crate::ui::timeline::{PitchView, PlayheadFollow, TimelineView};
+use crate::ui::timeline::{PitchView, TimelineView};
 use crate::voice_setup_window::VoiceSetupWindow;
 
 /// What a press or a sweep at one position should do to whatever is already sounding.
@@ -646,12 +646,8 @@ pub enum Drag {
         /// How the horizontal axis turns into its parameter, signed for the side of a stack the
         /// press landed on.
         scale: crate::ui::synth_edit::PlotScale,
-        /// Where the drag is measured from.
-        anchor: Point<Pixels>,
-        /// The horizontal and vertical parameters at the anchor.
+        /// The horizontal and vertical parameters when the drag began.
         start: (f32, f32),
-        /// Whether Shift was held when the anchor was taken.
-        fine: bool,
     },
     /// Dragging one band's node around the equalizer's curve.
     ///
@@ -777,15 +773,6 @@ pub enum Drag {
         index: usize,
         /// Drawable graph bounds captured when the drag begins.
         bounds: Bounds<Pixels>,
-    },
-    /// Dragging one of the video window's colour sliders.
-    VideoColour {
-        /// Which slider of the open picker.
-        channel: crate::ui::colour_picker::HsvChannel,
-        /// Slider position when the drag began, from 0 to 1.
-        start_fraction: f32,
-        /// Pointer x when the drag began.
-        start_x: Pixels,
     },
     /// Dragging the time-zoom slider.
     TimeZoom {
@@ -930,8 +917,6 @@ impl Drag {
             Drag::Comment { .. } => Some(Edit::MoveComment),
             // How far in the view is zoomed is a property of the window, like a panel's width.
             Drag::TimeZoom { .. } => None,
-            // The video's look is an application setting, not part of the document.
-            Drag::VideoColour { .. } => None,
             // Panel and window geometry is a property of the window, not the document: resizing
             // a panel or moving the plugin editor is not an edit and must never land on the undo
             // stack.
@@ -1419,7 +1404,7 @@ pub struct CanvasBounds {
     /// reopened wants the rectangle it had.
     curves: CurveBounds,
     /// Where labels that can be edited in place were painted, for an inline prompt to cover.
-    pub spots: crate::ui::inline_edit::SpotBook,
+    pub spots: atelier::SpotBook,
 }
 
 impl CanvasBounds {
@@ -1497,7 +1482,7 @@ pub struct AurisApp {
     pub(crate) timeline: TimelineView,
     /// Whether the timeline keeps the playhead in view during playback, or a scroll has
     /// released it.
-    pub(crate) playhead_follow: PlayheadFollow,
+    pub(crate) playhead_follow: atelier::Follow,
     /// Fractional time-signature wheel notches carried between precise-scroll events.
     pub(crate) signature_scroll_remainder: f32,
     pub(crate) pitch: PitchView,
@@ -1632,6 +1617,8 @@ pub struct AurisApp {
     /// Keeping this separate from the document root lets a menu command move focus to another
     /// pane without the overlay teardown mistaking that intentional move for a lost menu focus.
     pub(crate) menu_focus: FocusHandle,
+    /// The inputs an inline prompt is typed into, Atelier's own rather than the window's handle.
+    pub(crate) prompt_input: crate::ui::inline_edit::PromptInput,
     /// A menu's activation release, which must not press the control that regains focus.
     pub(crate) menu_activation: Option<(gpui::WindowId, String)>,
     /// Window whose transport consumed Space, so its release cannot also click a button.
@@ -1768,9 +1755,13 @@ pub struct AurisApp {
     /// Always present rather than opened: a browser with twenty rows of plugins and a hundred
     /// and twenty-eight sounds in one font is a list nobody scrolls twice, and a search that has
     /// to be summoned first is one people forget is there.
-    pub(crate) library_search: crate::ui::text_field::TextField,
+    pub(crate) library_search: String,
+    /// The input the library's query is typed into.
+    pub(crate) library_search_input: crate::ui::text_input::MirroredInput,
     /// Whether that field is taking the keyboard.
     pub(crate) library_search_focused: bool,
+    /// The input the timbre map's query is typed into.
+    pub(crate) timbre_search_input: crate::ui::text_input::MirroredInput,
     /// The agent panel: its transcript, its fields, and the child process behind them.
     pub(crate) agent_chat: crate::ui::agent_chat::AgentChat,
     /// Whether [`Self::status`] is reporting a failure, so it can be shown as one.
@@ -2142,7 +2133,7 @@ impl AurisApp {
             theme,
             appearance,
             timeline: TimelineView::default(),
-            playhead_follow: PlayheadFollow::default(),
+            playhead_follow: atelier::Follow::new(),
             signature_scroll_remainder: 0.0,
             pitch: PitchView::default(),
             drum_editor: crate::ui::drum_editor::DrumEditorState::default(),
@@ -2201,6 +2192,7 @@ impl AurisApp {
             note_selection_preview: None,
             focus: cx.focus_handle(),
             menu_focus: cx.focus_handle(),
+            prompt_input: crate::ui::inline_edit::PromptInput::new(cx),
             menu_activation: None,
             transport_space_window: None,
             modal_focus: ModalFocus::new(cx),
@@ -2263,8 +2255,31 @@ impl AurisApp {
             input_levels: Vec::new(),
             input_clips: Vec::new(),
             input_peaks: Vec::new(),
-            library_search: crate::ui::text_field::TextField::new(String::new()),
+            library_search: String::new(),
+            library_search_input: crate::ui::text_input::MirroredInput::new(
+                cx,
+                |this, event, text, cx| {
+                    match event {
+                        atelier::TextInputEvent::Changed => this.library_search = text,
+                        // Return keeps the query and gives the keyboard back; Escape throws it
+                        // away too.
+                        atelier::TextInputEvent::Submit => this.library_search_focused = false,
+                        atelier::TextInputEvent::Cancel => this.leave_library_search(),
+                    }
+                    cx.notify();
+                },
+            ),
             library_search_focused: false,
+            timbre_search_input: crate::ui::text_input::MirroredInput::new(
+                cx,
+                |this, event, text, cx| {
+                    match event {
+                        atelier::TextInputEvent::Changed => this.timbre_map.search = text,
+                        _ => this.timbre_map.search_focused = false,
+                    }
+                    cx.notify();
+                },
+            ),
             agent_chat: crate::ui::agent_chat::AgentChat::default(),
             automation_lanes: BTreeMap::new(),
             spectrogram_tracks: Default::default(),
@@ -2326,6 +2341,25 @@ impl AurisApp {
             || self.taking_text_input()
             || self.menu.is_some()
             || self.menu_bar.is_some()
+    }
+
+    /// The focus handle of the Atelier input that should hold the keyboard: the open text
+    /// prompt's, or a search box's while it is being typed into.
+    pub(crate) fn text_input_focus(&self) -> Option<&FocusHandle> {
+        if let Some(prompt) = self.prompt.as_ref() {
+            prompt.field()?;
+            return Some(self.prompt_input.focus_for(prompt.target()?));
+        }
+        if self.palette.is_some() {
+            return None;
+        }
+        if self.timbre_map.open && self.timbre_map.search_focused {
+            return Some(self.timbre_search_input.focus_handle());
+        }
+        if self.library_search_focused {
+            return Some(self.library_search_input.focus_handle());
+        }
+        None
     }
 
     /// Whether text is being typed into something in this window.
@@ -2421,7 +2455,6 @@ impl AurisApp {
         // claim on the keyboard while preserving the draft for the next visit.
         if pane != Pane::Library && self.library_search_focused {
             self.library_search_focused = false;
-            self.library_search.unmark();
         }
         if pane != Pane::Agent {
             if let Some(field) = self.agent_chat.field_mut() {
@@ -2436,8 +2469,11 @@ impl AurisApp {
             && let Some(focus) = self.agent_chat.input_focus()
         {
             window.focus(focus);
-        } else if self.taking_text_input() {
-            window.focus(&self.focus);
+        } else if self.taking_text_input() && !self.inline_prompt_open(window) {
+            match self.text_input_focus() {
+                Some(input) => window.focus(input),
+                None => window.focus(&self.focus),
+            }
         } else {
             window.focus(self.panes.handle(pane));
         }
@@ -2494,7 +2530,6 @@ impl AurisApp {
         // keep taking input, and a hidden pane is no longer a place to restore the keyboard to.
         if !self.panels.is_open(Panel::Library) {
             self.library_search_focused = false;
-            self.library_search.unmark();
             if self.last_pane == Pane::Library {
                 self.last_pane = Pane::Arrangement;
             }
@@ -2532,11 +2567,30 @@ impl AurisApp {
             if !focus.is_focused(window) {
                 window.focus(focus);
             }
+        } else if self.inline_prompt_open(window) {
+            // Atelier's inline field focuses its own input when it opens, and gives the keyboard
+            // back when it closes.
+        } else if (self.menu.is_some() || self.menu_bar.is_some())
+            && self.text_input_focus().is_some()
+        {
+            // A menu opened over a search box holds the keyboard until it closes: an Atelier
+            // input would take its arrows and Return before the menu saw them.
+        } else if let Some(input) = self.text_input_focus() {
+            // The sheet's field and the search boxes are Atelier's inputs, each with its own
+            // focus handle.
+            if !input.is_focused(window) {
+                window.focus(input);
+            }
         } else if self.taking_text_input() {
             if !self.focus.is_focused(window) {
                 window.focus(&self.focus);
             }
-        } else if self.focus.is_focused(window) || self.modal_focus.contains_focused(window, cx) {
+        } else if self.focus.is_focused(window)
+            || self.modal_focus.contains_focused(window, cx)
+            || self.prompt_input.is_focused(window, cx)
+            || self.library_search_input.is_focused(window)
+            || self.timbre_search_input.is_focused(window)
+        {
             // Back where it came from, so the panel bindings work again the moment the sheet is
             // gone rather than after the next click.
             if let Some(pane) = self.local_pane(self.last_pane, window) {
@@ -2705,7 +2759,7 @@ impl AurisApp {
         self.playhead_follow.engage();
         let playhead = self.playhead_ticks();
         let width = self.arrangement_width;
-        self.timeline.scroll_to_reveal(playhead, width);
+        self.timeline.page_to(playhead, width);
     }
 
     // ---------------------------------------------------------------- selection
@@ -3820,12 +3874,12 @@ mod panel_input_tests {
             cx.simulate_input("draft");
             app.read_with(cx, |this, _| {
                 assert!(this.taking_text_input());
-                let field = if panel == Panel::Agent {
-                    &this.agent_chat.input
+                let field: &str = if panel == Panel::Agent {
+                    this.agent_chat.input.content()
                 } else {
                     &this.library_search
                 };
-                assert_eq!(field.content(), "draft");
+                assert_eq!(field, "draft");
             });
 
             let at = lane_point(&app, cx, track, Ticks(2 * TICKS_PER_QUARTER));
@@ -3839,16 +3893,12 @@ mod panel_input_tests {
                     "Backspace deletes the selected clip"
                 );
                 assert!(!this.taking_text_input());
-                let field = if panel == Panel::Agent {
-                    &this.agent_chat.input
+                let field: &str = if panel == Panel::Agent {
+                    this.agent_chat.input.content()
                 } else {
                     &this.library_search
                 };
-                assert_eq!(
-                    field.content(),
-                    "draft",
-                    "leaving a pane preserves its draft"
-                );
+                assert_eq!(field, "draft", "leaving a pane preserves its draft");
             });
         }
     }
@@ -3908,8 +3958,9 @@ mod panel_input_tests {
             app.update(cx, |this, _| {
                 this.focus_pane(Pane::Arrangement, window);
                 assert!(this.prompt.is_some());
-                assert!(this.focus.is_focused(window));
             });
+            let this = app.read(cx);
+            assert!(this.prompt_input.is_focused(window, cx));
         });
         cx.simulate_input("3/4");
         app.read_with(cx, |this, _| {
@@ -3966,12 +4017,12 @@ mod hidden_panel_input_tests {
                 assert!(!this.taking_text_input());
                 assert_eq!(this.last_pane, Pane::Arrangement);
                 assert!(this.session.midi_clip(clip).is_none());
-                let field = if panel == Panel::Agent {
-                    &this.agent_chat.input
+                let field: &str = if panel == Panel::Agent {
+                    this.agent_chat.input.content()
                 } else {
                     &this.library_search
                 };
-                assert_eq!(field.content(), "draft");
+                assert_eq!(field, "draft");
             });
         }
     }

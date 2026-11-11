@@ -277,10 +277,9 @@ impl AurisApp {
             .flex()
             .items_center()
             .gap_2()
-            .child(readout(
+            .child(register_stat(
                 Key::TypingPitch.get(language),
                 &format!("{bend:+.0}"),
-                theme,
             ))
             .children(control_caps().into_iter().map(|(key, role)| {
                 let lit = match role {
@@ -405,14 +404,13 @@ impl AurisApp {
             .flex()
             .items_center()
             .gap_2()
-            .child(readout(Key::TypingOctave.get(language), octave_name, theme))
+            .child(register_stat(Key::TypingOctave.get(language), octave_name))
             .child(stepper("z", "−", cx))
             .child(stepper("x", "＋", cx))
             .child(div().w(px(12.0)))
-            .child(readout(
+            .child(register_stat(
                 Key::TypingVelocity.get(language),
                 &velocity.to_string(),
-                theme,
             ))
             .child(stepper("c", "−", cx))
             .child(stepper("v", "＋", cx))
@@ -555,25 +553,13 @@ pub fn slides_onto_key(
     button == Some(MouseButton::Left) && !dragging && !already_holding_it
 }
 
-/// A label and the value it names, for the four things the keys move blind.
-fn readout(label: &str, value: &str, theme: &Theme) -> impl IntoElement + use<> {
-    // atelier: allow — caption/value pair for the musical typing keyboard's current register.
-    div()
-        .flex()
-        .items_baseline()
-        .gap_1()
-        .child(
-            div()
-                .text_xs()
-                .text_color(theme.text_muted)
-                .child(label.to_string()),
-        )
-        .child(
-            div()
-                .text_xs()
-                .text_color(theme.accent_text)
-                .child(value.to_string()),
-        )
+/// A label and the value it names, for the four things the keys move blind: Atelier's one-line
+/// [`atelier::Stat`], the value in the accent because it is what the keys are changing.
+fn register_stat(label: &str, value: &str) -> atelier::Stat {
+    atelier::Stat::new(label.to_owned(), value.to_owned())
+        .inline()
+        .size(atelier::TextSize::XSmall)
+        .color(atelier::TextColor::Accent)
 }
 
 /// Where the drawn keyboard sits on the whole of MIDI, as a bar.

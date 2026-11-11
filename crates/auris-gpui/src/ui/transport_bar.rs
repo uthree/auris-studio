@@ -13,7 +13,6 @@ use crate::theme::Metrics;
 use crate::ui::context_menu::count_in_label;
 use crate::ui::icons::Icon;
 use crate::ui::prompt::{Prompt, PromptTarget};
-use crate::ui::tooltip::keyed_tip;
 use crate::ui::widgets::{ButtonStyle, MeterReading, button, channel_meter, icon_button, readout};
 
 /// Grid divisions offered in the transport bar, as a fraction of a quarter note.
@@ -227,7 +226,7 @@ fn meter_block(
             reading,
             clipped,
             Axis::Horizontal,
-            theme,
+            px(7.0),
         )))
 }
 
@@ -241,7 +240,7 @@ fn meter_block(
 /// A free function because it is the rule that keeps the number and the bar telling one story,
 /// and a rule inside a view is a rule with no test.
 fn input_peak_text(db: f32) -> String {
-    match db > crate::ui::widgets::METER_FLOOR_DB {
+    match db > atelier::METER_FLOOR_DB {
         true => format!("{db:.1} dB"),
         false => "—".to_string(),
     }
@@ -339,7 +338,8 @@ impl AurisApp {
                                 cx.notify();
                             }),
                         )
-                        .tooltip(self.tip(Key::CmdReturnToZero, "transport.return")),
+                        .tooltip(self.t(Key::CmdReturnToZero))
+                        .shortcut(self.keystroke_for("transport.return")),
                     )
                     .child(
                         icon_button(
@@ -357,7 +357,7 @@ impl AurisApp {
                         // The one button up here that is not a bindable command, so the
                         // card carries a name and no chip. That it has no key is a thing
                         // to fix in the table rather than to hide by leaving it nameless.
-                        .tooltip(self.tip(Key::CmdStop, "")),
+                        .tooltip(self.t(Key::CmdStop)),
                     )
                     .child(
                         icon_button(
@@ -371,7 +371,8 @@ impl AurisApp {
                                 cx.notify();
                             }),
                         )
-                        .tooltip(self.tip(Key::CmdPlayStop, "transport.play")),
+                        .tooltip(self.t(Key::CmdPlayStop))
+                        .shortcut(self.keystroke_for("transport.play")),
                     )
                     .into_any_element(),
                 ToolbarItem::Record => (icon_button(
@@ -385,7 +386,8 @@ impl AurisApp {
                         cx.notify();
                     }),
                 )
-                .tooltip(self.tip(Key::CmdRecord, "transport.record")))
+                .tooltip(self.t(Key::CmdRecord))
+                .shortcut(self.keystroke_for("transport.record")))
                 .into_any_element(),
                 ToolbarItem::Punch => (icon_button(
                     "punch",
@@ -398,7 +400,8 @@ impl AurisApp {
                         cx.notify();
                     }),
                 )
-                .tooltip(self.tip(Key::CmdTogglePunch, "transport.punch")))
+                .tooltip(self.t(Key::CmdTogglePunch))
+                .shortcut(self.keystroke_for("transport.punch")))
                 .into_any_element(),
                 ToolbarItem::Loop => (icon_button(
                     "loop",
@@ -411,29 +414,38 @@ impl AurisApp {
                         cx.notify();
                     }),
                 )
-                .tooltip(self.tip(Key::CmdToggleCycle, "transport.loop")))
+                .tooltip(self.t(Key::CmdToggleCycle))
+                .shortcut(self.keystroke_for("transport.loop")))
                 .into_any_element(),
-                ToolbarItem::Metronome => (icon_button(
-                    "metronome",
-                    Icon::Metronome,
-                    clicking,
-                    theme.accent,
-                    &theme,
-                    cx.listener(|this, _, _, cx| {
-                        this.toggle_metronome();
-                        cx.notify();
-                    }),
-                )
                 // The count-in hangs off this button because a count-in is the
                 // click doing one particular job, and because the alternative
                 // was a second lamp on the bar for a setting nobody changes
-                // twice in a session.
-                .on_mouse_down(
-                    gpui::MouseButton::Right,
-                    Self::opens_menu(cx, |this, at| this.count_in_menu(at)),
-                )
-                .tooltip(self.tip(Key::CmdToggleMetronome, "transport.metronome")))
-                .into_any_element(),
+                // twice in a session. Atelier's button takes no right press, so the
+                // slot around it does.
+                ToolbarItem::Metronome => div()
+                    .id("metronome-slot")
+                    .flex()
+                    .flex_none()
+                    .on_mouse_down(
+                        gpui::MouseButton::Right,
+                        Self::opens_menu(cx, |this, at| this.count_in_menu(at)),
+                    )
+                    .child(
+                        icon_button(
+                            "metronome",
+                            Icon::Metronome,
+                            clicking,
+                            theme.accent,
+                            &theme,
+                            cx.listener(|this, _, _, cx| {
+                                this.toggle_metronome();
+                                cx.notify();
+                            }),
+                        )
+                        .tooltip(self.t(Key::CmdToggleMetronome))
+                        .shortcut(self.keystroke_for("transport.metronome")),
+                    )
+                    .into_any_element(),
                 _ => continue,
             };
             items.push(control);
@@ -634,7 +646,7 @@ impl AurisApp {
                             }),
                         )
                         .when(compact, |button| {
-                            button.tooltip(keyed_tip(self.t(Key::Grid), "", &theme))
+                            button.tooltip(crate::ui::tooltip::text_tip(self.t(Key::Grid)))
                         }),
                     ))
                 .into_any_element(),
@@ -649,7 +661,7 @@ impl AurisApp {
                         .children(caption(self.t(Key::Zoom)))
                         .child(self.zoom_slider("timeline-zoom", cx))
                         .when(compact, |slot| {
-                            slot.tooltip(keyed_tip(self.t(Key::Zoom), "", &theme))
+                            slot.tooltip(crate::ui::tooltip::text_tip(self.t(Key::Zoom)))
                         })
                 )
                 .into_any_element(),
@@ -668,10 +680,11 @@ impl AurisApp {
                         .debug_selector(|| "position".into())
                         .h_full()
                         .relative()
-                        .child(crate::ui::inline_edit::spot(
-                            &self.canvas.spots,
-                            crate::ui::inline_edit::POSITION_SPOT,
-                        ))
+                        .child(
+                            self.canvas
+                                .spots
+                                .spot(crate::ui::inline_edit::POSITION_SPOT),
+                        )
                         .on_mouse_down(
                             gpui::MouseButton::Left,
                             cx.listener(|this, event: &gpui::MouseDownEvent, _, cx| {
@@ -683,7 +696,7 @@ impl AurisApp {
                             }),
                         )
                         .when(compact, |field| {
-                            field.tooltip(keyed_tip(self.t(Key::Position), "", &theme))
+                            field.tooltip(crate::ui::tooltip::text_tip(self.t(Key::Position)))
                         })
                         .child(readout(
                             (!compact).then(|| self.t(Key::Position)),
@@ -841,7 +854,7 @@ impl AurisApp {
                 )
             })
             .when(compact, |field| {
-                field.tooltip(keyed_tip(caption, "", theme))
+                field.tooltip(crate::ui::tooltip::text_tip(caption))
             })
             .child(div().text_sm().text_color(color).child(value))
     }
@@ -862,10 +875,7 @@ impl AurisApp {
             compact,
         )
         .relative()
-        .child(crate::ui::inline_edit::spot(
-            &self.canvas.spots,
-            crate::ui::inline_edit::TEMPO_SPOT,
-        ))
+        .child(self.canvas.spots.spot(crate::ui::inline_edit::TEMPO_SPOT))
         .on_mouse_down(
             gpui::MouseButton::Left,
             cx.listener(|this, event: &gpui::MouseDownEvent, window, cx| {
@@ -1457,18 +1467,18 @@ mod tests {
 
     #[test]
     fn the_input_readout_goes_quiet_exactly_where_its_bar_does() {
-        use crate::ui::widgets::{METER_FLOOR_DB, db_to_meter_position};
+        use atelier::{LevelMeter, METER_FLOOR_DB};
 
         // The pair this test exists for: a number and a bar, and the frame where one says
         // something the other does not.
         for db in [METER_FLOOR_DB, -80.0, f32::NEG_INFINITY] {
-            assert_eq!(db_to_meter_position(db), 0.0, "{db} moves the bar");
+            assert_eq!(LevelMeter::position(db), 0.0, "{db} moves the bar");
             assert_eq!(input_peak_text(db), "—", "{db} is written as a level");
         }
 
         // And above it both have something to say.
         for db in [-59.0, -12.0, 0.0] {
-            assert!(db_to_meter_position(db) > 0.0, "{db} leaves the bar empty");
+            assert!(LevelMeter::position(db) > 0.0, "{db} leaves the bar empty");
             assert!(
                 input_peak_text(db).ends_with(" dB"),
                 "{db} is written as silence"

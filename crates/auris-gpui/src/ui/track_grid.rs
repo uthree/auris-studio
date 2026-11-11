@@ -258,7 +258,7 @@ impl AurisApp {
         .w_full()
         .min_w_0()
         .overflow_hidden()
-        .tooltip(super::tooltip::keyed_tip(track.name.clone(), "", theme));
+        .tooltip(super::tooltip::text_tip(track.name.clone()));
         let mut controls = div().flex().gap_2();
         for (key, muted) in [(Key::Mute, true), (Key::Solo, false)] {
             controls = controls.child(button(
@@ -320,7 +320,7 @@ impl AurisApp {
                     .text_color(theme.text_muted)
                     .truncate()
                     .child(label.clone())
-                    .tooltip(super::tooltip::keyed_tip(label, "", theme)),
+                    .tooltip(super::tooltip::text_tip(label)),
             )
             .child(
                 div()
