@@ -675,6 +675,7 @@ impl AurisApp {
         };
         let update = self.render_startup_update(cx);
         let shortcut_offer = self.render_cargo_shortcut_offer(cx);
+        let crash_offer = self.render_crash_offer(cx);
         let project_tabs = self.render_project_tabs(window, cx);
         let transition = transition.filter(|t| !t.to_workshop);
         let theme = self.theme.clone();
@@ -757,6 +758,7 @@ impl AurisApp {
                     .min_w_0()
                     .child(content)
                     .children(update.map(|(notice, _)| notice))
+                    .children(crash_offer)
                     .children(shortcut_offer)
                     .children(status)
                     .child(footer),

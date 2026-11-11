@@ -10,6 +10,11 @@
 //! panel reads out of; [`install`] puts it in front of `env_logger` rather than instead of it, so
 //! a developer running from a terminal still gets everything they had.
 //!
+//! A ring in memory is gone the moment the process is, which is the moment a crash makes it
+//! interesting. So every record also goes to this launch's file in
+//! [`auris_session::diagnostics::log_dir`], and a panic writes a crash report beside it with the
+//! newest records of the ring in it — **Help → Open Log Folder** is where both are found.
+//!
 //! # Threads
 //!
 //! Written from wherever a `log::warn!` happens — which is every thread the application has,
@@ -22,6 +27,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
 
+use auris_session::diagnostics::{CrashContext, LogFile};
 use log::{Level, Log, Metadata, Record};
 
 /// How many records are kept.
@@ -100,6 +106,20 @@ impl Logbook {
         self.lock().iter().cloned().collect()
     }
 
+    /// The newest `count` records, oldest first, or nothing if somebody else holds the ring.
+    ///
+    /// For the panic hook: a panic raised while this thread is pushing a record would wait for
+    /// itself forever on [`Self::entries`].
+    pub fn try_newest(&self, count: usize) -> Vec<Entry> {
+        let entries = match self.entries.try_lock() {
+            Ok(entries) => entries,
+            Err(std::sync::TryLockError::Poisoned(error)) => error.into_inner(),
+            Err(std::sync::TryLockError::WouldBlock) => return Vec::new(),
+        };
+        let skip = entries.len().saturating_sub(count);
+        entries.iter().skip(skip).cloned().collect()
+    }
+
     /// How many of the records are warnings or errors.
     ///
     /// What the status bar shows beside the panel's icon: a count of things that went wrong is
@@ -130,6 +150,7 @@ impl Logbook {
 /// A logger that keeps every record it forwards.
 struct Recorder {
     book: Arc<Logbook>,
+    file: Option<Arc<LogFile>>,
     inner: env_logger::Logger,
 }
 
@@ -145,8 +166,11 @@ impl Log for Recorder {
         if !self.inner.matches(record) {
             return;
         }
-        self.book
-            .push(record.level(), record.target(), record.args().to_string());
+        let message = record.args().to_string();
+        if let Some(file) = &self.file {
+            file.record(record.level(), record.target(), &message);
+        }
+        self.book.push(record.level(), record.target(), message);
         self.inner.log(record);
     }
 
@@ -162,22 +186,69 @@ impl Log for Recorder {
 /// constructor to reach the one place that reads it. `log` itself is a global for the same reason.
 static BOOK: OnceLock<Arc<Logbook>> = OnceLock::new();
 
-/// Starts logging, into a terminal and into [`book`].
+/// How many of the newest records a crash report carries.
+const CRASH_RECORDS: usize = 200;
+
+/// The name and version this build reports itself under.
+pub fn build_line() -> String {
+    auris_session::diagnostics::build_line(concat!("Auris Studio ", env!("CARGO_PKG_VERSION")))
+}
+
+/// Starts logging, into a terminal, into [`book`] and into this launch's log file, and starts
+/// writing a crash report for every panic.
 ///
 /// In front of `env_logger` rather than instead of it: a developer running from a terminal keeps
 /// exactly what they had, and the window gains a copy. `RUST_LOG` still decides what is recorded,
 /// and warnings are on without it because a warning here is a thing that silently did not happen.
+/// The file records exactly what the panel does, so neither knows something the other does not.
+///
+/// A log folder that cannot be written costs the file and nothing else: the panel still works,
+/// and the reason is its first record.
 ///
 /// Call once, from `main`. A second call changes nothing.
 pub fn install() {
     let book = Arc::clone(book());
+    let (file, failure) =
+        match LogFile::create(&auris_session::diagnostics::log_dir(), &build_line()) {
+            Ok(file) => (Some(Arc::new(file)), None),
+            Err(error) => (None, Some(error)),
+        };
     let inner =
         env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).build();
     let level = inner.filter();
-    let recorder = Recorder { book, inner };
+    let recorder = Recorder {
+        book,
+        file: file.clone(),
+        inner,
+    };
     if log::set_boxed_logger(Box::new(recorder)).is_ok() {
         log::set_max_level(level);
     }
+    if let Some(error) = failure {
+        log::warn!(
+            "could not open a log file in {}: {error}",
+            auris_session::diagnostics::log_dir().display()
+        );
+    }
+    auris_session::diagnostics::install_crash_reports(CrashContext {
+        build: build_line(),
+        recent: Box::new(|| log_lines(&self::book().try_newest(CRASH_RECORDS))),
+        log: file,
+    });
+}
+
+/// Records as lines of text, one per record, the way a report quotes them.
+pub fn log_lines(entries: &[Entry]) -> String {
+    entries
+        .iter()
+        .map(|entry| {
+            format!(
+                "{}s {} {}: {}",
+                entry.seconds, entry.level, entry.target, entry.message
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// The records this process has logged.

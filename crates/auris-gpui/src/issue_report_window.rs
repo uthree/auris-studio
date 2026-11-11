@@ -20,6 +20,12 @@ use crate::{
     titlebar,
 };
 
+/// Title, description, and one excerpt per [`ContextKind`].
+const FIELDS: usize = 2 + ContextKind::ALL.len();
+
+/// How much of a crash report is offered; a backtrace through gpui is long but not this long.
+const CRASH_EXCERPT: usize = 60_000;
+
 /// One report window holds consent only for the lifetime of its captured draft.
 pub(crate) struct IssueReportWindow {
     theme: Theme,
@@ -27,13 +33,15 @@ pub(crate) struct IssueReportWindow {
     prefs: auris_session::AgentPreferences,
     draft: Draft,
     proposal: Option<Suggestion>,
-    fields: [TextField; 5],
-    foci: [FocusHandle; 5],
+    fields: [TextField; FIELDS],
+    foci: [FocusHandle; FIELDS],
     focus: FocusHandle,
     active: Option<usize>,
-    viewports: [Rc<RefCell<ProseViewport>>; 5],
+    viewports: [Rc<RefCell<ProseViewport>>; FIELDS],
     reviewed: Option<ContextKind>,
-    loaded: [bool; 3],
+    loaded: [bool; ContextKind::ALL.len()],
+    /// Whether there is a crash report to offer at all; without one its row is not drawn.
+    has_crash: bool,
     context_rx: Option<(ContextKind, mpsc::Receiver<Result<String, String>>)>,
     private_paths: Vec<String>,
     prompt_snapshot: String,
@@ -49,6 +57,27 @@ impl AurisApp {
     pub(crate) fn open_issue_report(
         &mut self,
         suggestion: Option<Suggestion>,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_issue_report_with(suggestion, None, cx);
+    }
+
+    /// Open a draft about `crash`, with its report already shown for review.
+    ///
+    /// Shown, not included: the report quotes paths and log lines, so it is held back like every
+    /// other excerpt until the user allows it.
+    pub(crate) fn open_crash_report(
+        &mut self,
+        crash: auris_session::diagnostics::CrashReport,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_issue_report_with(None, Some(crash), cx);
+    }
+
+    fn open_issue_report_with(
+        &mut self,
+        suggestion: Option<Suggestion>,
+        crash: Option<auris_session::diagnostics::CrashReport>,
         cx: &mut Context<Self>,
     ) {
         // Re-entering the same window must not replace an already reviewed draft or its consent.
@@ -69,11 +98,24 @@ impl AurisApp {
             audio.sample_rate,
             audio.channels
         );
-        let mut draft = Draft::new(
-            String::new(),
-            self.t(Key::IssueTemplate).to_owned(),
-            environment,
-        );
+        let about_crash = crash.is_some();
+        // Help → Report a problem offers the newest report too: a crash dismissed at start-up
+        // is still the most useful thing a report about it can carry.
+        // Not in a test, which would otherwise read the crash folder of whoever runs it.
+        let crash = crash.or_else(|| {
+            (!cfg!(test))
+                .then(|| auris_session::diagnostics::Crashes::default().latest())
+                .flatten()
+        });
+        let title = if about_crash {
+            crash
+                .as_ref()
+                .map(|crash| bounded(&format!("Crash: {}", crash.summary()), 120))
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
+        let mut draft = Draft::new(title, self.t(Key::IssueTemplate).to_owned(), environment);
         let prompts = self.issue_prompt_snapshot();
         // The chat panel's editable fields are initialized lazily when it opens.
         let prefs = self.settings.agent.clone();
@@ -112,6 +154,10 @@ impl AurisApp {
             .collect::<Vec<_>>()
             .join("\n");
         let logs = redact(&logs, &private_paths);
+        let crash_text = crash
+            .as_ref()
+            .map(|crash| redact(&bounded(&crash.text, CRASH_EXCERPT), &private_paths));
+        let has_crash = crash_text.is_some();
         let environment = redact(&draft.environment, &private_paths);
         draft.environment = environment;
         let bounds = Bounds::centered(None, size(px(760.0), px(760.0)), cx);
@@ -129,6 +175,9 @@ impl AurisApp {
                     fields[0] = TextField::new(draft.title.clone());
                     fields[1] = TextField::new(draft.description.clone());
                     fields[2] = TextField::new(logs);
+                    if let Some(text) = crash_text {
+                        fields[2 + ContextKind::CrashReport.index()] = TextField::new(text);
+                    }
                     IssueReportWindow {
                         theme,
                         language,
@@ -142,8 +191,9 @@ impl AurisApp {
                         viewports: std::array::from_fn(|_| {
                             Rc::new(RefCell::new(ProseViewport::default()))
                         }),
-                        reviewed: None,
-                        loaded: [true, false, false],
+                        reviewed: about_crash.then_some(ContextKind::CrashReport),
+                        loaded: [true, false, false, has_crash],
+                        has_crash,
                         context_rx: None,
                         private_paths,
                         prompt_snapshot: prompts,
@@ -160,6 +210,105 @@ impl AurisApp {
             Ok(handle) => self.issue_report_window = Some(handle),
             Err(error) => self.set_status(error.to_string()),
         }
+    }
+}
+
+/// The crash report the start screen should offer, once per process and once per report.
+///
+/// Marked as offered as soon as it is taken, so a report the user dismisses is not offered on
+/// every launch after — it stays on disk, and **Help → Report a problem** still attaches it. Once
+/// per process because every project window builds its own view, and the offer belongs to the
+/// first.
+pub(crate) fn take_crash_offer() -> Option<auris_session::diagnostics::CrashReport> {
+    static TAKEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if TAKEN.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        return None;
+    }
+    let crashes = auris_session::diagnostics::Crashes::default();
+    let report = crashes.unseen()?;
+    crashes.mark_seen(&report);
+    Some(report)
+}
+
+impl AurisApp {
+    /// Show the folder holding the log files and crash reports in the system's file manager.
+    pub(crate) fn open_log_folder(&mut self, cx: &mut Context<Self>) {
+        let dir = auris_session::diagnostics::log_dir();
+        // Created first: a launch whose file could not be opened has no folder to show, and
+        // asking the file manager for a folder that is not there shows nothing at all.
+        match std::fs::create_dir_all(&dir) {
+            Ok(()) => cx.open_with_system(&dir),
+            Err(error) => self.set_failed_status(
+                self.t(Key::LogFolderMissing)
+                    .replace("{error}", &error.to_string()),
+            ),
+        }
+        cx.notify();
+    }
+
+    /// The start screen's offer to report the crash the previous launch wrote down.
+    pub(crate) fn render_crash_offer(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let crash = self.crash_offer.as_ref()?;
+        let theme = &self.theme;
+        let spacing = theme.atelier.spacing;
+        let report = crash.clone();
+        Some(
+            div()
+                .id("startup-crash-offer")
+                .debug_selector(|| "startup-crash-offer".into())
+                .flex()
+                .flex_col()
+                .flex_shrink_0()
+                .gap(spacing.sm)
+                .px(spacing.xxl)
+                .pb(spacing.md)
+                .text_size(theme.atelier.typography.size_sm)
+                .text_color(theme.text)
+                .child(self.t(Key::CrashOffer))
+                .child(
+                    div()
+                        .text_color(theme.text_muted)
+                        .child(bounded(crash.summary(), 200)),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_wrap()
+                        .gap(spacing.sm)
+                        .child(
+                            atelier::Button::new(
+                                "startup-crash-report",
+                                self.t(Key::CrashOfferReport),
+                            )
+                            .primary()
+                            .on_click(cx.listener(
+                                move |this, _, _, cx| {
+                                    this.crash_offer = None;
+                                    this.open_crash_report(report.clone(), cx);
+                                    cx.notify();
+                                },
+                            )),
+                        )
+                        .child(
+                            atelier::Button::new(
+                                "startup-crash-folder",
+                                self.t(Key::CmdOpenLogFolder),
+                            )
+                            .on_click(cx.listener(|this, _, _, cx| this.open_log_folder(cx))),
+                        )
+                        .child(
+                            atelier::Button::new(
+                                "startup-crash-dismiss",
+                                self.t(Key::CrashOfferDismiss),
+                            )
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.crash_offer = None;
+                                cx.notify();
+                            })),
+                        ),
+                )
+                .into_any_element(),
+        )
     }
 }
 
@@ -208,7 +357,7 @@ impl IssueReportWindow {
                         }
                         Ok(result)
                     })(),
-                    ContextKind::UsageLogs => Ok(String::new()),
+                    ContextKind::UsageLogs | ContextKind::CrashReport => Ok(String::new()),
                 }
                 .map(|text| redact(&text, &paths));
                 let _ = sender.send(result);
@@ -370,6 +519,7 @@ impl IssueReportWindow {
             ContextKind::UsageLogs => Key::IssueLogs,
             ContextKind::CompositionPrompts => Key::IssuePrompts,
             ContextKind::MusicPreferences => Key::IssuePreferences,
+            ContextKind::CrashReport => Key::IssueCrashReport,
         }
     }
 
@@ -624,7 +774,12 @@ impl Render for IssueReportWindow {
                     .text_color(theme.text_muted)
                     .child(self.t(Key::IssuePrivacy)),
             )
-            .children(ContextKind::ALL.map(|kind| self.context_row(kind, cx)))
+            .children(
+                ContextKind::ALL
+                    .into_iter()
+                    .filter(|kind| *kind != ContextKind::CrashReport || self.has_crash)
+                    .map(|kind| self.context_row(kind, cx)),
+            )
             .child(
                 div()
                     .flex()
@@ -899,6 +1054,55 @@ mod tests {
     }
 
     #[gpui::test]
+    fn a_crash_report_is_shown_for_review_and_included_only_when_allowed(cx: &mut TestAppContext) {
+        let (app, cx) = crate::harness::open(cx);
+        let crash = auris_session::diagnostics::CrashReport {
+            path: "crash-1.txt".into(),
+            name: "crash-1.txt".into(),
+            text:
+                "Auris Studio crash report\n\nPanic: index out of bounds\nBacktrace:\n   0: main\n"
+                    .into(),
+        };
+        app.update(cx, |this, cx| {
+            this.crash_offer = Some(crash.clone());
+            assert!(this.render_crash_offer(cx).is_some());
+            this.open_crash_report(crash, cx);
+        });
+        let handle = app.read_with(cx, |this, _| this.issue_report_window.unwrap());
+        handle
+            .update(cx, |this, _, _| {
+                assert!(this.has_crash);
+                assert_eq!(this.reviewed, Some(ContextKind::CrashReport));
+                assert_eq!(this.fields[0].content(), "Crash: index out of bounds");
+                let field = &this.fields[2 + ContextKind::CrashReport.index()];
+                assert!(field.content().contains("Backtrace:"));
+                // Shown is not included: the report quotes paths and log lines.
+                this.sync_draft();
+                assert!(!this.draft.includes(ContextKind::CrashReport));
+                assert!(!this.draft.markdown().contains("## Crash report"));
+                this.set_consent(ContextKind::CrashReport, true);
+                let body = this.draft.markdown();
+                assert!(body.contains("## Crash report"), "{body}");
+                assert!(body.contains("    Panic: index out of bounds"), "{body}");
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn a_report_without_a_crash_has_no_crash_row(cx: &mut TestAppContext) {
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, cx| this.open_issue_report(None, cx));
+        let handle = app.read_with(cx, |this, _| this.issue_report_window.unwrap());
+        handle
+            .read_with(cx, |this, _| {
+                assert!(!this.has_crash);
+                assert_eq!(this.reviewed, None);
+                assert!(this.fields[0].content().is_empty());
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
     fn report_uses_configured_agent_before_the_chat_panel_is_opened(cx: &mut TestAppContext) {
         let (app, cx) = crate::harness::open(cx);
         app.update(cx, |this, cx| {
@@ -953,7 +1157,7 @@ mod tests {
                 this.fields[2] = TextField::new("PRIVATE_LOG");
                 this.fields[3] = TextField::new("PRIVATE_PROMPT");
                 this.fields[4] = TextField::new("PRIVATE_TASTE");
-                this.loaded = [true; 3];
+                this.loaded = [true; ContextKind::ALL.len()];
                 this.reviewed = Some(ContextKind::UsageLogs);
                 this.sync_draft();
                 assert!(!this.draft.markdown().contains("PRIVATE"));
