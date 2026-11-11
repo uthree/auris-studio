@@ -216,7 +216,7 @@ cargo test --workspace                      # all tests
 cargo clippy --workspace --all-targets      # lints
 cargo doc --workspace --no-deps --open      # the API documentation
 cargo run -p auris-compose --example measure   # symbolic design metrics per preset
-uv run tools/eval/aesthetics.py --preset all   # learned aesthetic scores (see docs/evaluation.md)
+uv run tools/eval/music.py renders/ --json scores.json   # learned aesthetic scores (see docs/evaluation.md)
 
 ```
 

@@ -33,7 +33,7 @@ pub fn theory_description(text: &str, language: Language) -> &str {
 /// The short name a chord progression is shown under, or `name` itself when it is not known here.
 ///
 /// Keyed on the catalogue's own name — `axis`, `royal-road` — because that is the stable thing: it
-/// is what a `.asong` writes and what `auris compose` takes, and it does not move when somebody
+/// is what a document stores and what a tool takes, and it does not move when somebody
 /// rewords a description.
 ///
 /// The only table here whose English column is a real entry rather than the key, and it has to be:
@@ -96,16 +96,6 @@ const SCALE_NAMES: &[(&str, &str, &str)] = &[
     ("blues", "blues", "ブルース"),
     ("whole-tone", "whole tone", "ホールトーン"),
 ];
-
-/// Translation of a song preset's one-line description.
-///
-/// Same shape and the same reason as [`theory_description`]: the catalogue is a set of `.asong`
-/// documents in `auris-compose`, which may not name a language, and what a picker shows is a
-/// sentence. The names — `city-pop`, `jazz-trio` — are not translated: they are what
-/// `auris compose --preset` takes.
-pub fn preset_description(text: &str, language: Language) -> &str {
-    lookup(PRESET_DESCRIPTIONS, text, language)
-}
 
 /// Translation of a parameter's display name, or `name` itself when it is not known here.
 pub fn parameter(name: &str, language: Language) -> &str {
@@ -649,46 +639,6 @@ const THEORY_NAMES: &[(&str, &str, &str)] = &[
     ("blues", "Twelve-bar blues", "12 小節ブルース"),
     ("andalusian", "Andalusian cadence", "アンダルシア終止"),
     ("sad-loop", "Sad loop", "哀しい循環"),
-];
-
-/// The song presets, whose descriptions are what a style picker shows.
-const PRESET_DESCRIPTIONS: &[(&str, &str)] = &[
-    (
-        "A sixteen-bar chiptune loop for game background music",
-        "ゲームBGM向けの16小節チップチューンループ",
-    ),
-    (
-        "The built-in voices, four to the floor",
-        "内蔵音源のみ・四つ打ち",
-    ),
-    (
-        "Drums, bass, keys and a lead — the 王道進行",
-        "ドラム・ベース・鍵盤・リード — 王道進行",
-    ),
-    (
-        "Piano, clarinet and bass over 丸サ進行",
-        "ピアノ・クラリネット・ベース・丸サ進行",
-    ),
-    (
-        "Electric guitars, choir and a hard kit",
-        "エレキギター・コーラス・強めのドラム",
-    ),
-    (
-        "Piano, bass and ride cymbal on a ii-V-I",
-        "ピアノ・ベース・ライドシンバル・ツーファイブワン",
-    ),
-    (
-        "Strings, woodwinds and mallets in 3/4",
-        "弦・木管・マレット・3拍子",
-    ),
-    (
-        "Bowed lead, choir and bass over a steady kit",
-        "弦のリード・コーラス・ベース・一定のドラムビート",
-    ),
-    (
-        "Pads and a slow bell, no kit at all",
-        "パッドと鐘・ドラムなし",
-    ),
 ];
 
 /// Japanese versions of the one-line descriptions the progression and groove pickers show.

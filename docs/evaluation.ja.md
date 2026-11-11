@@ -7,8 +7,6 @@
 
 [エージェント作曲の試行](composition-quality.ja.md)では、パネルの完全なタスクを実行し、失敗と出所を保持し、ブラインドの聴取比較を準備します。
 
-[プリセットアレンジ研究](preset-arrangement.ja.md)では、これらの測定を曲全体のトラック参加と密度に対応付け、2026-10-04 の改訂におけるデフォルトシードの選択、新シードのチェック、プリセットごとのトレードオフを記録します。
-
 [物理楽器の測定](physical-copy-synthesis.ja.md)では、ピアノ、ギター、ストリングス、リード、ホイッスル、ハンマードストリングスを、実際の Rust レンダラーを通して実録音の固定コホートと比べます。保留した音高とダイナミクスに対する時間メルスペクトログラム距離と、Steinway の鍵盤全体にわたる部分音ごとの減衰、音域ごとの音量、響板のノックを測定します。この音響距離は、下記のシンボリック測定と学習済み測定を補完します。ドラムキット、ギターアンプ、コーラスも実録音に対してフィットしており、それぞれ訓練音だけでフィットし、保留した音で評価します。[ドラムキットのキャリブレーション](physical-pack.ja.md)では、7つのキットファミリーを151個の実録音ドラムヒットにフィットし、アタック／ボディ／テールの個別損失、スネア／タムの全レジスターに対する音響役割ガードを使います。[ギターアンプの実験](electric-guitar.ja.md)では、オーバーサンプリングしたアンプ、ピッチでグループ化した分割によるクリーン／ペダル録音のペアベンチマークを追加します。[コーラスのキャリブレーション](choir-copy-synthesis.ja.md)では、実際の持続母音に対してネイティブの声道アンサンブルをフィットし、訓練音24個と別の歌手からの保留音80個を使います。[ピアノのストレッチ調律](piano-stretch-tuning.ja.md)では、ピアノの基音が平均律からどう離れるかを説明します。調律の規則、13鍵で測った基音・聞こえる音高・オクターブ・弦の硬さと録音の Steinway を同じ方法で測った値、それらを保つテストを載せています。
 
 <a id="native-instrument-upper-midrange-voicing"></a>
@@ -52,8 +50,6 @@ cargo run -p auris-compose --example measure
 
 表の背後にある関数は `auris_compose::metrics` にあり、公開され単体テストされています。将来のコマンドやテストも、例が出力する同じ数値を読めます。
 
-オプションの [作曲探索](composition-search.ja.md) は、書かれた音符イベント数／小節という別の明示的なシンボリック目標を使います。パラメーター範囲と固定した作曲シードのもとで、目標からの負の絶対距離を最大化します。要求した密度に近づくことは測定可能なアレンジの変化ですが、曲が良く聴こえることは示しません。
-
 <a id="inspecting-the-saved-score"></a>
 ## 保存済みスコアを検査する
 
@@ -88,17 +84,15 @@ uv run tools/eval/melody_corpus.py score MySong/MySong.auris --model model.json
 
 コーパスは2つ試しました。PJS（音素の偏りをなくすために作られた短い歌100曲、CC BY-SA 4.0）は日本語ですが、速いロックとは書き方が違い、試作曲はどれも PJS より高く出ました。PDMX の、権利情報の食い違いがなく重複を除いた部分から、ジャンルがポップスかロックで歌詞がある楽譜620曲（CC0 とパブリックドメイン、189,217音、交差検証で1音あたり5.57 ± 1.65ビット）を選ぶと、参照としてはこちらが合います。14曲の試作曲は、その -0.6〜+1.3 標準偏差に収まりました。PDMX の旋律は、ドラム以外で最初に音のあるトラックの最高音の流れなので、歌のパートのない楽譜ではピアノの右手になります。どちらのモデルも学習した手元にだけ置きます。モデルは、コーパスのライセンスを引き継ぎます。
 
-`tools/eval/fixtures/vocal-phrases.asong` は、共有ヴァースと無声音の語尾を持つ固定歌詞プローブを提供します。両方のレンダーで同じ辞書と音声アセットを使います。歌唱音符の楽器試聴が確認するのはメロディー／リズムであり、学習済み歌手の明瞭さではありません。
-
 <a id="the-learned-ear"></a>
 ## 学習済みの耳
 
 ```sh
-uv run tools/eval/music.py --preset all --seeds 3 --workdir target/before --json before.json
-uv run tools/eval/music.py --preset all --seeds 3 --workdir target/after --baseline before.json --json after.json
+uv run tools/eval/music.py target/before --json before.json
+uv run tools/eval/music.py target/after --baseline before.json --json after.json
 ```
 
-`--cli path/to/auris.exe`（macOSでは `auris`）を渡してレンダーを固定するか、`--preset` の代わりに既存の WAV／ディレクトリを渡します。どちらのモデルも開発用ツールで、レンダーと推論はローカルで行います。初回実行では公開重み数GBを `target/composition-eval/models` に取得し、その隣に公式 TuneJury の固定コピーを置きます。Python とパッケージは uv が管理します。`--device cpu` がデフォルトで、`--device cuda` には CUDA 対応 PyTorch が必要です。
+WAV か WAV の入ったディレクトリを渡します。各ファイルのプロンプトプロファイルはファイル名から判別し、`--preset` を渡すとすべてのファイルに同じプロファイルを使います。どちらのモデルも開発用ツールで、推論はローカルで行います。初回実行では公開重み数GBを `target/composition-eval/models` に取得し、その隣に公式 TuneJury の固定コピーを置きます。Python とパッケージは uv が管理します。`--device cpu` がデフォルトで、`--device cuda` には CUDA 対応 PyTorch が必要です。
 
 [TuneJury](https://github.com/yonghyunk1m/TuneJury) はペアの選好を表すスカラー報酬を予測します。公開された主ヘッドは凍結した CLAP-Music と MERT 埋め込みを、学習順 `[CLAP audio, MERT audio, CLAP text]` で使います。事後のジャンルキャプションでは、評価器は作者推奨の空プロンプト手順を使い、テキスト分岐を512個のゼロにします。報酬は未校正で1〜10の範囲はなく、同じチェックポイントと前処理条件でのみ比較できます。
 
@@ -152,34 +146,16 @@ uv run tools/eval/music.py --preset all --seeds 3 --workdir target/after --basel
 
 ## 制御したメロディー聴取
 
-`melody_ab.py` は固定した伴奏に器楽リードを移植します。`melody_continuity_ab.py` はレンダーを固定し、レベルを一致させたコーラス抜粋を作ります。`melody_phrase_ab.py` はベースライン、ピッチ、リズム、統合バリアントを、明示的なアーティファクトハッシュとコンポーネント変更ガード付きで比較します。既存の音符、伴奏、ID、ミキサー、演奏変換は編集可能なプロジェクトに残ります。`structure.py`、`melody_continuity.py`、`seed_metrics.py` はモデルスコアとは独立に、書かれたスコアのリズム、フレーズ連続性、重なり、声部移動を検査します。
+`melody_ab.py` は固定した伴奏に器楽リードを移植します。既存の音符、伴奏、ID、ミキサー、演奏変換は編集可能なプロジェクトに残ります。`structure.py`、`melody_continuity.py`、`seed_metrics.py` はモデルスコアとは独立に、書かれたスコアのリズム、フレーズ連続性、重なり、声部移動を検査します。
 
-**聴取抜粋**を `music.py --segments 1` で採点します。4条件の `melody_phrase_listening.py --scores scores.json` 仕様は schema_version 1 と `variants` オブジェクトを持ちます。各条件は評価レポート用の `music: {path, sha256}` と、完全なラベルから WAV ハッシュへの対応表 `excerpt_sha256` を渡します。レポートはモデル、前処理、プロンプトのメタデータを共有しなければなりません。スコアを省略するとセルは空になります。`seed_listening.py --manifest manifest.json --scores music.json --output listening.html` はシード比較をシャッフルして生成し、採点ハッシュが聴取抜粋と一致することを確認します。両レポートはローカルの音声プレーヤーを使い、何もアップロードしません。
-
-<a id="preset-tuning"></a>
-## プリセットの調整
-
-```sh
-uv run tools/eval/tune.py --preset all --trials 18 --out tune-results.json --workdir target/tuning
-uv run tools/eval/tune.py --preset chiptune --dials humanize dynamics --trials 12 --out focused.json
-```
-
-Optuna TPE は TuneJury 報酬と MuQ-MuLan 正コサインという2つの目的を別々に最大化します。連続ダイヤルは humanize、dynamics、fill、variation、mood、テンポ±6%、スウィング±6ポイント（すでにスウィングするプリセットのみ）です。キー、グルーヴ、進行、形式、楽器は固定します。試行0は現在のプリセット、訓練シードは101/102、独立した検証シードは301/302です。`--dials` は指定したパラメーターに実験を限定し、テンポやスウィングを含む他の解決済み値はすべて固定します。
-
-2つの訓練目的が試行0以下にならない Pareto 候補を選び、その中では報酬を優先します。承認には、両方の検証平均が現状以上で、少なくとも一方が改善することが必要です。各試行は実効ダイヤル設定、編集可能なプロジェクト、完全なレンダー、窓位置、PCM ハッシュ、スコアを別のファイル名で保持します。結果はプリセットごとに保存します。訓練だけの改善では `preset.rs` を更新する理由になりません。
-
-[2026年10月のキャリブレーション](learned-music-tuning.ja.md)には、出荷したダイヤル、ライターの変更、新しいペア測定、却下した候補を記録しています。
-
-ライターを変更するときは、元のレンダーをアーカイブし、編集前にシンボリックルーラーと `music.py` を実行します。音楽上のルールを1つ変更し、同じ測定器とレンダー設定で一致するシードを比較します。失敗候補と回帰を保持します。モデルに導かれた選択後の最終的な一般化チェックには新しいシードを使います。検証シードを繰り返し使うと訓練の証拠になるためです。
-
-これらのモデルは測定可能な最適化目標を提供しますが、聴取の代わりにはなりません。平均報酬とともに、音色のアイデンティティ、スコアの多様性、音符の範囲、ケースごとの回帰を確認してください。1つの報酬を最適化すると、より良い音楽的展開ではなく、反復したテクスチャーや特定レンダーのアーティファクトが報われることがあります。
+**聴取抜粋**を `music.py --segments 1` で採点します。`seed_listening.py --manifest manifest.json --scores music.json --output listening.html` は比較をシャッフルして生成し、採点ハッシュが聴取抜粋と一致することを確認します。ローカルの音声プレーヤーを使い、何もアップロードしません。
 
 <a id="verify-the-measuring-tools"></a>
 ## 測定ツールを検証する
 
 ```sh
-uv run --python 3.11 --with pytest --with numpy --with scipy --with soundfile --with optuna pytest tools/eval/test_music.py tools/eval/test_render_audio.py tools/eval/test_tune.py
-uv run --with ruff ruff check tools/eval/music.py tools/eval/learned_models.py tools/eval/render_audio.py tools/eval/tune.py
+uv run --python 3.11 --with pytest --with numpy --with scipy --with soundfile pytest tools/eval/test_music.py
+uv run --with ruff ruff check tools/eval/music.py tools/eval/learned_models.py
 ```
 
 契約テストはモデルのダウンロードを必要としません。実モデル比較では固定した評価環境を使い、保持するすべてのアーティファクトを記録してください。

@@ -21,26 +21,23 @@
 #[cfg(test)]
 mod transcription_tests;
 
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use auris_session::prelude::*;
 use auris_session::{Session, SessionError, SessionOptions};
 
-pub mod composition_preview;
-pub mod composition_workflows;
-pub mod environment;
-pub mod phase_commands;
-pub mod workshop;
-pub use composition_preview as preview_composition;
 #[path = "capabilities.rs"]
 mod availability;
 mod cancellation;
 mod catalog;
+pub mod composition_workflows;
+pub mod environment;
+pub mod phase_commands;
 pub mod runtime;
 pub mod score_input;
 mod session_tools;
 mod tool_exposure;
+pub mod workshop;
 pub use tool_exposure::{
     ToolGroups, compact_parameters, concise_description, discover_tools, tool_group,
 };
@@ -99,11 +96,11 @@ pub struct ProjectArgs {
 /// What a model is told before it has called anything.
 ///
 /// The one piece of text a model keeps in context for the whole conversation, so it carries
-/// the workflow and nothing else — the format itself is behind `spec_reference`, fetched when
+/// the workflow and nothing else; the details of each tool are behind `tool_help`, fetched when
 /// a spec is actually being written rather than sitting in every exchange.
 pub const INSTRUCTIONS: &str = "Control Auris Studio saved projects. Respond in the user's language.
 Complete ordinary composition with the current agent and Auris: write, inspect notes, render, measure, repair when justified, and deliver. Do not discover, invoke or install external music evaluators during this workflow. Evaluator experiments belong to explicitly requested development work. Use available instruments; synthesized singing additionally needs an installed voice.
-Author expressive parts note by note with edit_notes, including leads/vocals, counterlines, distinctive bass, fills and interludes. Code may serialize explicitly chosen notes or copy an authored motif; do not use procedural note generators or frozen recipes as a substitute. Automatic writers are optional only for plain chord/pad backing, simple arpeggios and basic drum pulses, unless the user explicitly requests automatic preset composition.
+Author expressive parts note by note with edit_notes, including leads/vocals, counterlines, distinctive bass, fills and interludes. Code may serialize explicitly chosen notes or copy an authored motif; do not use procedural note generators or frozen recipes as a substitute. Automatic writers are optional only for plain chord/pad backing, simple arpeggios and basic drum pulses.
 For a new song, establish lyrics if vocal, then section harmony/form, instrument clips, purposeful handoffs and SFX, then effects and volume balance with the actual voices/sounds. Honor existing motif-first briefs and local-edit scope. Use mixer_graph for a deliberate track-level balance pass; master normalization alone is insufficient. Verify the complete final mix after the last edit, distinguishing measurements from listening judgments.
 Use project_id from open_project/create_project or an absolute project path. Dependent edits run sequentially.
 Call inspect_project for stable numeric addresses: tracks[].track identifies a track, tracks[].clips[].clip identifies a clip. Copy the returned clip for read_notes and edit_notes; a track ID cannot address its clips. read_notes returns each note's song
@@ -132,14 +129,14 @@ search_instruments accepts request with mode text and query, similar and referen
 For impression-based sound choices, use mode character with query such as ふんわり or ポコポコ, or translate the user's prose into targets {brightness,attack,sustain,release,noise}, each optional and 0..1. Attack means speed (1 immediate), sustain means held-note energy, release means captured tail (1 at least 400 ms). Explicit targets override dictionary terms. For a measured envelope (C2/C4/C6, velocity 100) add envelope ranges {attack_ms,decay_ms,sustain_db,release_ms}, each {min,max}, e.g. attack_ms {max:10} for a hard attack or release_ms {min:800} for a long tail; results report each sound's measured envelope. Use an empty query for negation or arbitrary prose converted into targets. Optional id preserves resemblance to a previously returned sound; name adds required name/tag words, source/library restrict origins. Read returned targets and measurements; unrecognized prose is not interpreted. Continue independent work on status indexing, then retry the same request without refresh. Preserve user-selected sounds unless asked to change them. Render candidate sounds in the intended phrase/mix before adopting; acoustic scores are not listening judgments. Search and audition do not authorize score changes.
 Copy returned sound IDs into set_instrument sound_id. Sound IDs expire after refresh/library changes.
 Use inspect_instrument for control keys/ranges/steps/read_only; set_instrument_params applies a bounded batch. VST3 uses normalized 0..1 values, never Hz/dB from display_unit; CLAP uses native ranges. For steps=N>1, valid values are min+i*(max-min)/(N-1), i=0..N-1. Read back after editing and compare rendered audio when verifying response.
-For generated music, check_spec validates syntax/settings; diagnose_song checks lyric readings, phrase counts,
-mora counts, closures and fixed-bar capacity before compose. analyze_lyrics shows source-located readings.
+diagnose_song checks lyric readings, phrase counts,
+mora counts, closures and fixed-bar capacity. analyze_lyrics shows source-located readings.
 Explicit analysis readings are diagnostic-only. repair_lyrics applies a reading to existing note slots.
 For a local lyric repair, read_notes and diagnose_song first, preserve target/template/required_keywords,
 preview up to three alternatives, then apply only a passing one with the same revision. Stop after three
 alternatives; report remaining diagnostics instead of changing the melody or retrying indefinitely.
 Recheck every related phrase after the edit, then sing if the take is stale. A pass checks structural fit,
-not semantic preservation or artistic quality. preview_composition checks layout. generate_phrase writes
+not semantic preservation or artistic quality. generate_phrase writes
 one new clip on an existing track with explicit start_bar/bars and seed. Write harmony and named sections
 with edit_harmony first; inspect_project verifies the result. Recipe edits explicitly regenerate notes.
 Performance edits use inspect_performance/set_performance and preserve authored notes, curves and recipes.
@@ -166,7 +163,7 @@ Use automation for parameter curves. Static settings may be overridden by existi
 Choose a singer voice with list_voices/set_singer_voice and inspect_singer; write_lyrics then sing creates
 a real take. Confirm take_state current before completion. A guide voice or stale take is unfinished.
 Every song with words must carry the song-wide lyrics annotation (video captions and lyric sheets read it,
-never the clips): write_lyrics and compose write it for the lines they set; after editing sung notes or
+never the clips): write_lyrics writes it for the lines it sets; after editing sung notes or
 lyrics any other way, call edit_lyrics from_vocals or write explicit lines in the original spelling. Before
 finishing, inspect_project lyrics must cover every sung phrase; a song without it is unfinished.
 Transcription estimates are drafts. Inspect and explicitly accept them; never invent notes from a filename.
@@ -193,7 +190,7 @@ Compare the same short rendered range before and after when verifying audible re
 
 /// Shared live/saved workflow for optional mechanical backing around authored parts.
 pub const ACCOMPANIMENT_INSTRUCTIONS: &str = "\nAuthor expressive parts note by note with edit_notes: lead/vocals, counterlines, distinctive bass, fills and interludes. Do not replace these choices with rule-based writers, generated scripts or frozen recipes. Reuse and develop explicitly authored motifs.
-Use accompaniment only for plain chord comping/held chord pads, simple arpeggios or basic drum pulses. Do not delegate all backing to it; author specific voice leading and rhythmic interplay yourself. An explicit request for automatic preset composition is a separate mode.
+Use accompaniment only for plain chord comping/held chord pads, simple arpeggios or basic drum pulses. Do not delegate all backing to it; author specific voice leading and rhythmic interplay yourself.
 When choosing or revising harmony, call suggest_harmony with request {melody_clips,start_bar,bars,mood,ending} using the actual motif clips. Mood is neutral/bright/dark/calm/driving/epic/dreamy/tense/funky; ending is settled/open. Compare its recommended and plain candidates, read per-bar melodic tensions and resolution reasons, and keep simple harmony when colour has no benefit. This read-only step returns harmony objects and a revision for explicit accompaniment regeneration; never apply a proposal just because it contains more extended chords. A score is a heuristic comparison, not evidence of better music. Split requests at meter/key changes.
 Inspect the project, explicitly identify protected melody clip IDs and use separate configured backing tracks with written harmony.
 Call accompaniment with expected_revision, protected_clips, foreground_clips and operation {kind:generate,parts:[{track,name,part,start_bar,bars,seed,settings}]}.
@@ -416,176 +413,6 @@ pub mod search_documentation {
             shortened.push('…');
         }
         shortened
-    }
-}
-
-/// A song specification, however the three optional fields spell it.
-///
-/// The same triangle as `auris compose`: a document, or a named preset, and overrides that land
-/// on either. Shared between `check_spec` and `compose` so that validating a spec and composing
-/// from it can never read the same text two different ways.
-#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct SpecArgs {
-    /// The `.asong` document itself, as TOML text. Pass this or `preset`, not both.
-    pub spec: Option<String>,
-    /// The name of a shipped style to start from instead — `list_presets` names them all.
-    pub preset: Option<String>,
-    /// Field overrides applied on top, e.g. `{"key": "D minor", "tempo": "96"}`. Every name is
-    /// a field of the format itself — run `check_spec` on an empty spec to see them all.
-    pub overrides: Option<BTreeMap<String, String>>,
-}
-
-/// The `.asong` format, taught by example.
-pub mod spec_reference {
-    /// The tool's name at every door.
-    pub const NAME: &str = "spec_reference";
-    /// The tool's model-facing description.
-    pub const DESCRIPTION: &str = "The `.asong` format, taught by example: a two-line song, \
-        then a specification using most of the vocabulary with a comment on every field. Read \
-        this before writing a spec.";
-
-    /// The reference text itself.
-    pub fn run() -> String {
-        // `include_str!` reaches outside the crate, which would break `cargo package` — and
-        // these crates are built from the repository, never published, so the examples the
-        // *repository's* documentation points at stay the ones this tool serves.
-        const HELLO: &str = include_str!("../../../examples/hello.asong");
-        const DARK_SONG: &str = include_str!("../../../examples/dark-song.asong");
-        const NEON_DRIVE: &str = include_str!("../../../examples/neon-drive.asong");
-        format!(
-            "A specification is TOML; every field has a default, so start small and only say \
-             what should differ. Start from an idea:\n\n{DARK_SONG}\n\n\
-             tonality: auto, major, minor. pace: auto, slow, moderate, fast. \
-             sound: auto, major, minor, dorian, lydian, mixolydian, phrygian. \
-             Explicit sound overrides tonality; when both are auto, mood chooses the scale: \
-             bright=major, dark=minor, epic=dorian, dreamy=lydian, funky=mixolydian, tense=phrygian. \
-             Explicit key/scale and tempo override these choices. \
-             style supplies instruments and form, with newly generated chords; use chords \
-             to specify your own progression. writing_style selects the score vocabulary \
-             independently of performance, which only sets editable playback transforms. \
-             Both accept chiptune, pop-band, city-pop, rock, jazz-trio, orchestral, synthwave \
-             or ambient; style presets select both automatically. Saved specs contain the \
-             resolved settings. Lyrics stay inside each section's bars: every mora is kept \
-             and impossible density is rejected. melody_from shares exact vocal slots.\n\n\
-             The smallest useful song:\n\n{HELLO}\n\nAnd most of the \
-             vocabulary, each field explained where it is used:\n\n{NEON_DRIVE}"
-        )
-    }
-}
-
-/// Validation without composition.
-pub mod check_spec {
-    /// The tool's name at every door.
-    pub const NAME: &str = "check_spec";
-    /// The tool's model-facing description.
-    pub const DESCRIPTION: &str = "Validates a specification without composing anything. A \
-        rejected spec answers with every complaint at once, line numbers where they exist; a \
-        valid one answers with the full document, every default filled in — the cheap way to \
-        see what a draft actually means. This checks syntax/settings; use diagnose_song for vocal lyric fit and preview_composition for actual bar count and merged tracks before compose.";
-
-    /// The three-field spec triangle, unchanged.
-    pub use crate::SpecArgs as Args;
-
-    /// Parses the spec and answers with the fully defaulted document, or the complaints.
-    pub fn run(args: &Args) -> Result<String, String> {
-        crate::resolve_spec(args).map(|spec| {
-            format!(
-                "The specification is valid. In full, with every default filled in:\n\n{}",
-                spec.to_toml()
-            )
-        })
-    }
-}
-
-/// Composition, and the save that makes it a project.
-pub mod compose {
-    use super::*;
-
-    /// The tool's name at every door.
-    pub const NAME: &str = "compose";
-    /// The tool's model-facing description.
-    pub const DESCRIPTION: &str = "Composes a song from a specification and saves it as a \
-        project. The answer reports what was written — tracks, notes, seed, where the mix was \
-        measured to — and the seed is what to pin in the spec to ask for this exact take again. \
-        For repeating game BGM, use preset game-loop or set ending: loop; the complete form \
-        becomes the enabled cycle region.";
-
-    /// Arguments to `compose`.
-    #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-    pub struct Args {
-        /// The specification to compose from.
-        #[serde(flatten)]
-        pub spec: SpecArgs,
-        /// Where to save the project, as an absolute `.auris` path. The project becomes a
-        /// folder: choosing `MySong.auris` writes `MySong/MySong.auris`.
-        pub output: String,
-        /// Replace the project already at `output`, instead of refusing to.
-        #[serde(default)]
-        pub force: bool,
-    }
-
-    /// What `auris compose` does, answering in one string.
-    pub fn run(args: &Args) -> Result<String, String> {
-        let spec = resolve_spec(&args.spec)?;
-        let piece = auris_session::prelude::compose(&spec);
-        let mut session = headless()?;
-        let report = session.compose(&piece).map_err(|error| error.to_string())?;
-
-        // `save_as`, never `save`: the project must land in a folder of its own, and a folder
-        // already holding a different project is a refusal the caller answers deliberately.
-        let chosen = Path::new(&args.output);
-        cancellation::begin_commit()?;
-        let saved = match args.force {
-            true => session.save_as_replacing(chosen),
-            false => session.save_as(chosen),
-        };
-        let written = match saved {
-            Ok(save) => save.document,
-            Err(SessionError::WouldReplace(path)) => {
-                return Err(format!(
-                    "the folder at {} already holds a project; pass force: true to replace it",
-                    path.display()
-                ));
-            }
-            Err(error) => return Err(error.to_string()),
-        };
-        // Absolute in the answer even when the ask was relative: this line is what every
-        // later tool call gets copied from, wherever the host process happens to sit.
-        let written = std::path::absolute(&written).unwrap_or(written);
-
-        let mut text = format!(
-            "Wrote {} — {} tracks, {} notes, {}, seed {}.",
-            written.display(),
-            report.tracks,
-            report.notes,
-            Seconds(session.project().duration_seconds()).format_clock(),
-            piece.seed,
-        );
-        for missing in &report.substituted {
-            text.push_str(&format!(
-                "\nNote: no instrument in this build answers to '{missing}'; a stand-in plays \
-                 that part."
-            ));
-        }
-        if report.sung > 0 {
-            text.push_str(&format!(
-                "\nThe lyrics became {} sung notes on a Vocal track — `sing` gives it a voice.",
-                report.sung
-            ));
-        }
-        for section in &report.unsung {
-            text.push_str(&format!(
-                "\nNote: section '{section}' has lyrics no dictionary here can read; it plays \
-                 instrumentally."
-            ));
-        }
-        if let Some(lufs) = report.balance.as_ref().and_then(|balance| balance.now_lufs) {
-            text.push_str(&format!(
-                "\nThe mix was measured and set to {lufs:.1} LUFS."
-            ));
-        }
-        text.push_str(&format!("\n\n{}", piece.summary()));
-        Ok(text)
     }
 }
 
@@ -909,32 +736,6 @@ pub mod list_progressions {
     }
 }
 
-/// The whole songs a spec can start from.
-pub mod list_presets {
-    /// The tool's name at every door.
-    pub const NAME: &str = "list_presets";
-    /// The tool's model-facing description.
-    pub const DESCRIPTION: &str = "Lists the whole songs a specification can start from, with \
-        each one's key, tempo and groove.";
-
-    /// Every shipped preset, one line of character each.
-    pub fn run() -> String {
-        let mut text = String::from("Styles `compose` and `check_spec` accept as `preset`:\n");
-        for preset in auris_session::prelude::PRESETS {
-            let spec = preset.spec();
-            text.push_str(&format!("  {:<13} {}\n", preset.name, preset.description));
-            text.push_str(&format!(
-                "  {:<13} {} · {:.0} BPM · {}\n",
-                "",
-                spec.key.to_text(),
-                spec.tempo,
-                spec.groove
-            ));
-        }
-        text.trim_end().to_string()
-    }
-}
-
 /// A band, written under a melody.
 pub mod accompany {
     use super::*;
@@ -1097,40 +898,6 @@ fn opened(path: &str) -> Result<Session, String> {
     Ok(session)
 }
 
-/// Reads [`SpecArgs`] into the one [`SongSpec`] both spec tools mean by it.
-fn resolve_spec(args: &SpecArgs) -> Result<SongSpec, String> {
-    let text = match (&args.spec, &args.preset) {
-        (Some(_), Some(_)) => {
-            return Err("pass either `spec` or `preset`, not both".to_string());
-        }
-        (Some(text), None) => text.clone(),
-        (None, Some(name)) => auris_session::prelude::preset(name)
-            .ok_or_else(|| format!("no preset is named '{name}' — `list_presets` names them all"))?
-            .source
-            .to_string(),
-        (None, None) => {
-            return Err(
-                "pass a specification: `spec` with the .asong text, or `preset` with a name \
-                 from `list_presets`"
-                    .to_string(),
-            );
-        }
-    };
-    let overrides: Vec<(String, String)> = args
-        .overrides
-        .iter()
-        .flatten()
-        .map(|(field, value)| (field.clone(), value.clone()))
-        .collect();
-    SongSpec::parse_with_overrides(&text, &overrides).map_err(|errors| {
-        let mut message = String::from("the specification was rejected:");
-        for error in errors {
-            message.push_str(&format!("\n  {error}"));
-        }
-        message
-    })
-}
-
 /// One loudness, spelt for a reader — a part that made no sound says so.
 fn lufs_text(lufs: Option<f32>) -> String {
     lufs.map_or_else(|| "silent".to_string(), |lufs| format!("{lufs:.1} LUFS"))
@@ -1214,68 +981,9 @@ mod tests {
         assert!(error.contains("non-empty"), "{error}");
     }
 
-    fn spec_args(spec: Option<&str>, preset: Option<&str>) -> SpecArgs {
-        SpecArgs {
-            spec: spec.map(String::from),
-            preset: preset.map(String::from),
-            overrides: None,
-        }
-    }
-
     #[test]
-    fn a_spec_needs_exactly_one_source() {
-        let both = resolve_spec(&spec_args(Some("title = \"A\""), Some("city-pop")));
-        assert!(both.unwrap_err().contains("not both"));
-        let neither = resolve_spec(&spec_args(None, None));
-        assert!(neither.unwrap_err().contains("spec"));
-    }
-
-    #[test]
-    fn an_unknown_preset_points_at_the_list() {
-        let error = resolve_spec(&spec_args(None, Some("polka"))).unwrap_err();
-        assert!(error.contains("list_presets"), "{error}");
-    }
-
-    #[test]
-    fn overrides_land_on_a_preset() {
-        let name = auris_session::prelude::PRESETS[0].name;
-        let mut args = spec_args(None, Some(name));
-        args.overrides = Some(BTreeMap::from([("tempo".to_string(), "96".to_string())]));
-        let spec = resolve_spec(&args).unwrap();
-        assert!((spec.tempo - 96.0).abs() < f64::EPSILON);
-    }
-
-    #[test]
-    fn a_rejected_spec_reports_its_lines() {
-        // An unknown field is refused rather than ignored, and the syntax reader knows lines.
-        let error = resolve_spec(&spec_args(Some("colour = 3"), None)).unwrap_err();
-        assert!(error.contains("rejected"), "{error}");
-        assert!(error.contains("line"), "{error}");
-    }
-
-    #[test]
-    fn checking_and_composing_refuse_ignored_source_controls_before_writing() {
-        let root = tempfile::tempdir().unwrap();
-        let output = root.path().join("Untouched.auris");
-        let text = "[[part]]\nname = 'Keys'\nsource = { type = 'clap', path = 'Missing.clap', plugin_id = 'keys' }\nparams = { 'clap.18' = 0.42 }";
-        let checked = check_spec::run(&spec_args(Some(text), None)).unwrap_err();
-        let composed = compose::run(&compose::Args {
-            spec: spec_args(Some(text), None),
-            output: output.to_string_lossy().into_owned(),
-            force: false,
-        })
-        .unwrap_err();
-        assert_eq!(checked, composed);
-        assert!(checked.contains("Keys"), "{checked}");
-        assert!(checked.contains("clap.18"), "{checked}");
-        assert!(checked.contains("set_instrument_param"), "{checked}");
-        assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
-    }
-
-    #[test]
-    fn the_vocabulary_lists_answer_with_real_entries() {
+    fn the_progression_list_answers_with_real_entries() {
         assert!(list_progressions::run().contains("@axis"));
-        assert!(list_presets::run().contains(auris_session::prelude::PRESETS[0].name));
     }
 
     #[test]

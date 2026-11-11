@@ -58,7 +58,6 @@ mod calibrate;
 mod checkpoints;
 #[cfg(test)]
 mod choir_tests;
-mod chord_preview;
 mod clipboard;
 mod clips;
 mod comments;
@@ -138,7 +137,6 @@ pub use autosave::{
     RecoveryQuarantineCleanupJob, RecoveryResult, RecoverySnapshot, recovery_dir, should_autosave,
 };
 pub use checkpoints::{CheckpointJob, CheckpointOperation, CheckpointResult};
-pub use chord_preview::{ChordPreview, ChordPreviewJob};
 pub use clipboard::{Clipboard, CopiedClip, CopiedContent};
 pub use compose::{composed_gain_db, kit_trim_db};
 pub use convert::{TrackConversion, TrackConversionJob};

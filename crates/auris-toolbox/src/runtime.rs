@@ -329,22 +329,4 @@ mod tests {
                 .is_err()
         );
     }
-
-    #[test]
-    fn manual_discovery_and_help_do_not_recommend_disabled_composition() {
-        let groups = ToolGroups::parse("manual").unwrap();
-        let text = call_saved(&groups, "discover_tools", json!({"query":"compose"})).unwrap();
-        let report: Value = serde_json::from_str(&text).unwrap();
-        assert!(report["tools"].as_array().unwrap().is_empty());
-        assert!(
-            call_saved(&groups, "tool_help", json!({"name":"compose"}))
-                .unwrap_err()
-                .contains("disabled")
-        );
-        assert!(
-            call_saved(&groups, "compose", json!({}))
-                .unwrap_err()
-                .contains("disabled")
-        );
-    }
 }

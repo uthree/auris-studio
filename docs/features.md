@@ -406,26 +406,6 @@ changed). Pitch is the note plus its bend curve plus its ornaments; energy is th
 and the expression pedal (controller 11), which the preview instrument also obeys — what you
 hear and what the model is told stay one story.
 
-### Lyrics in a composed song
-
-An `.asong` specification accepts `lyrics = "..."` on each section. Each mora becomes
-one note, and the melody follows the section harmony and spoken pitch accent when the
-Japanese dictionary is available. Composition creates a vocal track with one clip for
-each playing of a lyrical section. Empty lyrics leave a section instrumental.
-
-A composed vocal also arrives **ornamented, by rule**: the first note of each phrase scoops
-in, any note held past half a second carries a vibrato that waits out the front of the note
-and fades in, and the line's last note falls away. These are the same scoop, fall and
-vibrato a hand places in the piano roll — visible on the drawn pitch curve, adjustable and
-removable one by one — so the rules are a starting point, never a verdict.
-
-The accent comes from the same Japanese dictionary the lyrics use — shipped with a release,
-so it is simply there. Without one (a checkout that has not fetched it), kana lyrics still
-compose with a melody free of the accent. The dictionary is what turns "a tune with words
-attached" into "a tune the words shaped". The same lyrics and seed
-always write the same song, and everything written is ordinary editable material: notes,
-chords, recipes, one undo step.
-
 ## MIDI files
 
 **File → Import MIDI File…**, or dropping a `.mid` on the window, reads it as a **new piece**: its
@@ -1387,11 +1367,8 @@ identical session with no window and no audio device, so anything that leaks int
 compiling here.
 
 ```bash
-auris compose song.asong -o song.auris         # write a piece from a specification
 auris progressions                             # every chord progression known by name
 auris plugins                                  # every registered instrument and effect
-auris presets                                  # the whole songs a piece can start from
-auris compose --preset city-pop                # …and one written without a file
 auris soundfonts                               # optional libraries and whether they are installed
 auris new song.auris --bpm 128
 auris info song.auris                          # tracks, clips, duration
@@ -1405,17 +1382,16 @@ motif-preserving regeneration, effect chains, sidechains, parameter automation a
 `auris-mcp` is the third frontend: the same session behind the
 [Model Context Protocol](https://modelcontextprotocol.io), over stdio, so a language model's
 harness can drive it. The tools cover the loop of writing a song and hearing it —
-`spec_reference` teaches the `.asong` format by example, `check_spec` validates a draft and
-answers with every default filled in, `compose` writes the piece and saves the project,
+`create_project` starts an empty project, `edit_notes` writes the parts note by note,
 `render` turns a project into WAV files (the mix, or one per track), `describe` reads a
-project back with every clip numbered, and `list_presets` / `list_progressions` are the
-vocabulary a spec can quote. Answers are written for a reader that will act on the text: a
-rejected spec names its lines and fields, a render reports each file's length and peak.
+project back with every clip numbered, and `list_progressions` is the vocabulary of named
+chord progressions. Answers are written for a reader that will act on the text: a rejected
+edit names its fields, a render reports each file's length and peak.
 
 The loop that *improves* a piece is `analyze`: the server renders the project and listens in
 the model's place, reporting loudness and peaks for the whole mix, per named section — the
 piece's dynamic arc as numbers — and, on request, per track alone. Against that answer the
-model either edits the specification and composes again, or aims `edit_recipe` at clips
+model either edits the notes, or aims `edit_recipe` at generated clips
 numbered by `describe`. Its `take` selects `{kind:"same"}` to follow the current harmony,
 `{kind:"next"}` for new takes, or `{kind:"seed",seed:42}` for one exact seed.
 `teach_progression` keeps a chord progression by name on
@@ -1435,7 +1411,7 @@ instrument id (`list_instruments` names them) or by a musical sound hint, asked 
 ("Electric Piano 1") or program number. Supported families choose native models; other hints
 can use an optional installed GM library. `add_part` writes a generated part (lead, chords, pad, arp, bass, or
 the kit and its pieces) onto a track from the key and chords already under the song, keeping
-its recipe so `edit_recipe` applies to it like any composed clip, and
+its recipe so `edit_recipe` applies to it like any generated clip, and
 `set_instrument`, `rename_track` and `remove_track` do what they say.
 
 Notes can be placed one by one, which turns the composer around: `add_clip` opens an empty
