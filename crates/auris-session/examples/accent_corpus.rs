@@ -10,7 +10,8 @@
 //! with one kana spelling a note (`""` for a melisma, `"とー"` for a held vowel); a converter
 //! for a MusicXML corpus writes that. With `--project` the lead singer of each saved song is
 //! measured the way the agent's tool measures it. Either way one JSON line is printed per
-//! song: the tally and the verdict. The dictionary is the installed one.
+//! song: the tally and the verdict. The dictionary is the one `AURIS_JAPANESE_DICTIONARY` names,
+//! else the installed one, so two dictionaries can be compared on the same songs.
 
 use std::io::BufRead;
 use std::path::Path;
@@ -72,7 +73,9 @@ fn summary(song: &str, counts: AccentCounts, lines: usize, unread: usize) -> ser
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let folder = auris_session::library::installed_dictionary()
+    let folder = std::env::var_os("AURIS_JAPANESE_DICTIONARY")
+        .map(std::path::PathBuf::from)
+        .or_else(auris_session::library::installed_dictionary)
         .ok_or("no Japanese dictionary is installed")?;
     if args.first().map(String::as_str) == Some("--project") {
         let mut session = Session::new(SessionOptions::headless())?;
