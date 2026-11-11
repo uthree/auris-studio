@@ -180,12 +180,10 @@ pub enum Command {
         #[serde(default)]
         fit: Vec<crate::lyric_harness::PhraseFit>,
     },
-    /// Diagnose lyrics before composition or compare explicit singer-clip phrases. Pass exactly one of spec (an .asong TOML document) or comparisons. Returns all independent complaints and the live document revision. No audio synthesis or document edits.
+    /// Compare explicit singer-clip phrases. Returns all independent complaints and the live document revision. No audio synthesis or document edits.
     DiagnoseSong {
-        /// Full .asong text; shared relationships are declared with melody_from.
-        spec: Option<String>,
-        /// Existing one-mora-per-note singer phrases to compare, at most sixteen.
-        #[serde(default)]
+        /// Existing one-mora-per-note singer phrases to compare, one to sixteen.
+        #[schemars(length(min = 1, max = 16))]
         comparisons: Vec<crate::lyric_harness::ClipComparison>,
     },
     /// Preview or atomically apply a local lyric repair using 1..3 candidates. Keep the same target, template and required keywords throughout the repair round. Only a passing candidate may change target lyrics/phonemes; pitches, timing, ornaments and all other notes are preserved. Stop after three alternatives and report unresolved diagnostics. candidate_accents tallies each candidate's spoken accent against the target's melody (followed, same_pitch, opposed), as lyric_accent does; prefer fewer opposed steps between passing candidates. Read notes first; stale revisions are rejected.
@@ -621,16 +619,6 @@ pub enum Command {
         #[schemars(length(min = 1, max = 8))]
         clips: Vec<note_editing::NoteRead>,
     },
-    /// Compose into the current document. Replacing existing tracks requires replace=true.
-    Compose {
-        /// Inline .asong TOML, mutually exclusive with preset.
-        spec: Option<String>,
-        /// A name returned by list_presets, mutually exclusive with spec.
-        preset: Option<String>,
-        /// Explicit permission to replace a nonempty arrangement.
-        #[serde(default)]
-        replace: bool,
-    },
     /// Add one empty track and return its numeric track ID. Pass kind as one string, for example {"name":"Drums","kind":"drum"}. Instrument and drum tracks start with a default sound; then use set_instrument with an ID from search_instruments. Use add_clip followed by edit_notes to write music. The host owns persistence.
     AddTrack {
         /// The exact desired name; must contain non-whitespace text.
@@ -682,7 +670,7 @@ pub enum Command {
         ceiling_db: Option<f32>,
     },
 
-    /// Add an empty MIDI clip to an instrument, drum or singer track and return its numeric clip ID. start_bar is 1-based in the project's meter; bars is a duration. A line that enters before its barline (a pickup, 弱起) needs a clip that starts before it: pickup_beats opens the clip that many beats before start_bar, and it may overlap the end of the clip before as long as their notes do not sound together. Audio and bus tracks cannot hold MIDI clips.
+    /// Add an empty MIDI clip to an instrument, drum or singer track and return its numeric clip ID. start_bar is 1-based in the project's meter; bars is a duration. A line that enters before its barline (a pickup, 弱起) needs a clip that starts before it: pickup_beats opens the clip that many beats before start_bar, and it may overlap the end of the clip before as long as their notes do not sound together; lint_project then reports the overlap, and its fix ends the clip before where this one begins. Audio and bus tracks cannot hold MIDI clips.
     AddClip {
         /// Stable track ID.
         track: u64,
@@ -965,19 +953,11 @@ impl Session {
                 fit,
             } => serde_json::to_string(&self.analyze_lyrics_fitted(&text, &readings, &fit)?)
                 .map_err(|e| e.to_string()),
-            Command::DiagnoseSong { spec, comparisons } => {
-                if spec.is_some() == !comparisons.is_empty() {
-                    return Err("Pass exactly one of spec or nonempty comparisons".into());
+            Command::DiagnoseSong { comparisons } => {
+                if comparisons.is_empty() {
+                    return Err("Pass nonempty comparisons".into());
                 }
-                let report = if let Some(source) = spec {
-                    if source.len() > 262144 {
-                        return Err("Song specifications are limited to 262144 bytes".into());
-                    }
-                    let spec = SongSpec::parse(&source).map_err(|e| format!("{e:?}"))?;
-                    self.diagnose_song_lyrics(&spec)?
-                } else {
-                    self.diagnose_clip_lyrics(&comparisons)?
-                };
+                let report = self.diagnose_clip_lyrics(&comparisons)?;
                 let mut value = serde_json::to_value(report).map_err(|e| e.to_string())?;
                 value["revision"] = self.agent_document_revision()?.into();
                 Ok(value.to_string())
@@ -1314,14 +1294,8 @@ impl Session {
                 .lyric_accent(TrackId(track), &accents)
                 .and_then(|report| serde_json::to_string(&report).map_err(|e| e.to_string())),
             Command::MelodyShape { track } => {
-                crate::session::melody_shape::melody_shape(self.project(), TrackId(track)).map(
-                    |mut report| {
-                        if let Some(accent) = self.accent_fit(TrackId(track)) {
-                            report["accent"] = accent;
-                        }
-                        report.to_string()
-                    },
-                )
+                crate::session::melody_shape::melody_shape(self.project(), TrackId(track))
+                    .map(|report| report.to_string())
             }
             Command::ReportStatus { status } => report_status(&status)
                 .map(|status| serde_json::json!({ "shown": status }).to_string()),
@@ -1373,30 +1347,6 @@ impl Session {
                 serde_json::to_string(&self.continue_listening(result)?).map_err(|e| e.to_string())
             }
             Command::ReadNotes { clips } => self.agent_read_notes(&clips),
-            Command::Compose {
-                spec,
-                preset: name,
-                replace,
-            } => {
-                if !replace && !self.project().tracks.is_empty() {
-                    return Err("The arrangement is not empty. Edit its tracks, or pass replace=true only when the user requests a replacement.".into());
-                }
-                let source = match (spec, name) {
-                    (Some(spec), None) => spec,
-                    (None, Some(name)) => preset(&name)
-                        .ok_or("Unknown preset; use list_presets")?
-                        .source
-                        .to_string(),
-                    _ => return Err("Pass exactly one of spec or preset".into()),
-                };
-                let spec = SongSpec::parse(&source).map_err(|e| format!("{e:?}"))?;
-                let piece = compose(&spec);
-                let report = self.compose_without_balance(&piece).map_err(error)?;
-                Ok(format!(
-                    "Composed {} tracks and {} notes in the current document. Changes are unsaved.",
-                    report.tracks, report.notes
-                ))
-            }
             Command::AddTrack { name, kind } => {
                 if name.trim().is_empty() {
                     return Err("A track needs a name".into());
@@ -1666,14 +1616,33 @@ mod tests {
         assert_eq!(pitch_at(3.25), 0.0);
         assert!((pitch_at(3.75) - 523.3).abs() < 30.0, "{}", pitch_at(3.75));
         assert!((pitch_at(5.25) - 523.3).abs() < 30.0, "{}", pitch_at(5.25));
-        // Two clips sharing a beat of the timeline ask the voice for nothing it cannot do.
-        let warnings: Vec<_> = session
-            .lint_score()
-            .diagnostics
-            .into_iter()
-            .filter(|diagnostic| diagnostic.severity != crate::lint::Severity::Info)
-            .collect();
-        assert!(warnings.is_empty(), "{warnings:?}");
+        // Two clips sharing a beat of the timeline ask the voice for nothing it cannot do, but
+        // the verse's empty tail lies hidden under the chorus: the linter says so, and its fix
+        // ends the verse where the chorus begins without changing a sung note.
+        let warnings = |session: &Session| {
+            session
+                .lint_score()
+                .diagnostics
+                .into_iter()
+                .filter(|diagnostic| diagnostic.severity != crate::lint::Severity::Info)
+                .collect::<Vec<_>>()
+        };
+        let found = warnings(&session);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].rule, crate::lint::Rule::OverlappingClips);
+        assert_eq!(
+            found[0].fix,
+            Some(crate::lint::Fix::TrimClip {
+                clip: verse,
+                end: Ticks::QUARTER * 7
+            })
+        );
+        session
+            .apply_lint_fix(&found[0], session.revision())
+            .unwrap();
+        assert!(warnings(&session).is_empty());
+        let trimmed = session.singer_frames(track).unwrap();
+        assert_eq!(trimmed.f0_hz, frames.f0_hz);
     }
 
     #[test]
@@ -2075,53 +2044,10 @@ mod tests {
     }
 
     #[test]
-    fn composition_changes_the_open_document_without_creating_a_file() {
-        let mut session = session();
-        let before = session.project().clone();
-        let name = PRESETS.first().unwrap().name;
-        session
-            .agent_command(Command::Compose {
-                spec: None,
-                preset: Some(name.into()),
-                replace: false,
-            })
-            .unwrap();
-        assert!(!session.project().tracks.is_empty());
-        assert!(session.project().tracks.iter().any(|track| {
-            track
-                .kind
-                .note_clips()
-                .is_some_and(|clips| clips.iter().any(|clip| !clip.notes.is_empty()))
-        }));
-        assert!(session.path().is_none());
-        assert!(session.is_dirty());
-        session.undo();
-        assert_eq!(session.project(), &before);
-    }
-
-    #[test]
-    fn composing_does_not_silently_replace_existing_tracks() {
-        let mut session = session();
-        session.add_audio_track("Existing");
-        let before = session.project().clone();
-        assert!(
-            session
-                .agent_command(Command::Compose {
-                    spec: None,
-                    preset: Some("anything".into()),
-                    replace: false,
-                })
-                .is_err()
-        );
-        assert_eq!(session.project(), &before);
-    }
-
-    #[test]
     fn file_commands_and_destinations_are_rejected() {
         for value in [
             serde_json::json!({"action":"create_project", "output":"song.auris"}),
             serde_json::json!({"action":"render", "output":"song.wav"}),
-            serde_json::json!({"action":"compose", "preset":"game-loop", "output":"song.auris"}),
             serde_json::json!({"action":"inspect", "project":"other.auris"}),
         ] {
             assert!(serde_json::from_value::<Command>(value).is_err());
