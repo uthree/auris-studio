@@ -2139,7 +2139,7 @@ fn compose_guided(
                     "edit_harmony" | "suggest_harmony" => "harmony",
                     "edit_notes" | "generate_phrase" => "melody",
                     "sing" | "set_singer_voice" => "sing",
-                    "compose" | "add_track" => "compose",
+                    "add_track" => "compose",
                     _ => "arrange",
                 };
                 let _ = sender.send(JobEvent::Progress(candidate.id, stage.into()));
@@ -2351,7 +2351,6 @@ fn execute(
         && matches!(
             action,
             "render"
-                | "compose"
                 | "phrase_variation"
                 | "edit_recipe"
                 | "listen"

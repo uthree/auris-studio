@@ -61,13 +61,6 @@ pub mod phase;
 pub mod production_record;
 pub use export_inspection::{ExportInspection, inspect_export};
 pub mod note_pitch;
-/// Headless composition search and its request/result types.
-///
-/// This function-based command needs no session, audio device or UI. Frontends can prepare a
-/// bounded request and retain the exact generated score through the session boundary.
-pub mod composition_search {
-    pub use auris_compose::search::*;
-}
 
 pub mod drum_maps;
 mod drum_worker;
@@ -153,22 +146,21 @@ pub use session::source_material;
 pub use session::workspace_relative;
 pub use session::{
     AccompanyReport, Arm, AudioStatus, AutosaveJob, AutosaveResult, BalanceReport, CEILING_DB,
-    ChordPreview, ChordPreviewJob, Clipboard, CollectAssetsJob, CollectAssetsResult,
-    ComposeBalanceJob, ComposeBalancePhase, ComposeBalanceProgress, ComposeBalanceResult,
-    ComposeBalanceStep, ComposeReport, CopiedClip, CopiedContent, DEFAULT_OCTAVE, DEFAULT_PARTS,
-    DEFAULT_VELOCITY, DiscardRecoveryJob, DiskWatchJob, DiskWatchResult, InputChannels, LAYOUT,
-    LIMITER_ALLOWANCE_DB, LoadedFont, MIN_PHONEME_SECONDS, MidiExportJob, MidiExportReport,
-    MidiExportResult, MidiImportJob, MidiImportResult, MixAnalysis, MusicalTyping,
-    NORMALIZE_LIMITER_ALLOWANCE_DB, NormalizeMixReport, OCTAVE_RANGE, OpenProjectJob,
-    OpenProjectResult, Played, PluginWindow, Quantize, RECOVERY_DIR_VAR, RecordingReport,
-    RecordingStatus, RecoveryCleanupJob, RecoveryJob, RecoveryQuarantineCleanupJob, RecoveryResult,
-    RecoverySnapshot, Release, SaveJob, SaveReport, SaveResult, SectionLoudness, Session,
-    SessionOptions, SingPlan, SingerFramesExportJob, SingerFramesExportResult, SingerLandingJob,
-    SingerLandingResult, SingerTakeState, SingerVoiceInfo, SingerVoiceLoadJob,
-    SingerVoiceLoadResult, Struck, SungFrames, TARGET_LUFS, TYPING_BEND, TakeReport, TrackLevel,
-    TrackLoudness, TypingRole, VELOCITY_STEP, WHEEL_STEPS, decode_audio, fader_for, faders_lift_db,
-    input_level_of, master_gain_db, quantized, read_soundfont, recovery_dir,
-    shadows_musical_typing, take_fingerprint,
+    Clipboard, CollectAssetsJob, CollectAssetsResult, ComposeBalanceJob, ComposeBalancePhase,
+    ComposeBalanceProgress, ComposeBalanceResult, ComposeBalanceStep, ComposeReport, CopiedClip,
+    CopiedContent, DEFAULT_OCTAVE, DEFAULT_PARTS, DEFAULT_VELOCITY, DiscardRecoveryJob,
+    DiskWatchJob, DiskWatchResult, InputChannels, LAYOUT, LIMITER_ALLOWANCE_DB, LoadedFont,
+    MIN_PHONEME_SECONDS, MidiExportJob, MidiExportReport, MidiExportResult, MidiImportJob,
+    MidiImportResult, MixAnalysis, MusicalTyping, NORMALIZE_LIMITER_ALLOWANCE_DB,
+    NormalizeMixReport, OCTAVE_RANGE, OpenProjectJob, OpenProjectResult, Played, PluginWindow,
+    Quantize, RECOVERY_DIR_VAR, RecordingReport, RecordingStatus, RecoveryCleanupJob, RecoveryJob,
+    RecoveryQuarantineCleanupJob, RecoveryResult, RecoverySnapshot, Release, SaveJob, SaveReport,
+    SaveResult, SectionLoudness, Session, SessionOptions, SingPlan, SingerFramesExportJob,
+    SingerFramesExportResult, SingerLandingJob, SingerLandingResult, SingerTakeState,
+    SingerVoiceInfo, SingerVoiceLoadJob, SingerVoiceLoadResult, Struck, SungFrames, TARGET_LUFS,
+    TYPING_BEND, TakeReport, TrackLevel, TrackLoudness, TypingRole, VELOCITY_STEP, WHEEL_STEPS,
+    decode_audio, fader_for, faders_lift_db, input_level_of, master_gain_db, quantized,
+    read_soundfont, recovery_dir, shadows_musical_typing, take_fingerprint,
 };
 pub use session::{
     AudioAnalysisJob, ChordAnalysisJob, ChordAnalysisReport, ClipAudioAnalysis,

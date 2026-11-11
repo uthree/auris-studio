@@ -1838,8 +1838,7 @@ pub mod composition {
     //! source, initial controls and insert chains agree.
     //! [`Session::composition_preview`](crate::Session::composition_preview) reports the actual
     //! form length, added ending bars, authored-part mapping and merged drum tracks from the
-    //! same generated draft, including vocal preparation. The `preview_composition` tool runs
-    //! this before saving or loading instruments; source availability is checked by `compose`.
+    //! same generated draft, including vocal preparation.
     //! Newly composed projects also keep an optional comparison baseline: effective static
     //! controls, instrument selections, timeline maps and authored-note digests with recipes.
     //! [`Session::inspect_composition_state`](crate::Session::inspect_composition_state) reads
@@ -1886,6 +1885,18 @@ pub mod composition {
     //! into notes with `|` is what `write_lyrics_with_reading` accepts; a grouped っ sings no
     //! closure, so the write is refused unless a rest follows that note. A reading without
     //! `|`, and the composer, keep one mora to a note.
+    //!
+    //! [`Session::lyric_accent`](crate::Session::lyric_accent) is the other half of fitting
+    //! words to a tune: not how many notes, but which way they move. It measures a singer
+    //! track's melody against the Tokyo pitch accent the dictionary gives its sung lines,
+    //! counting where speech rises or falls between two notes and whether the melody steps the
+    //! same way, repeats or goes against it. It warns only on a whole section that goes against
+    //! speech too often and merely notes one that traces it almost exactly, because listeners
+    //! punish the first and do not reward the second, and departing from speech on purpose is
+    //! a composer's right; [`lyric_accent`](crate::session::lyric_accent) has the measurements
+    //! behind that asymmetry. The accent it used is shown in kana with ＼ after the nucleus,
+    //! the form [`analyze_lyrics`](crate::Session::analyze_lyrics) also reports, and a wrong
+    //! one is corrected for a single measurement, never saved.
     //!
     //! Kana is read a phrase at a time, never a mora at a time, because three kana are read
     //! by the words around them: the particles は and へ sing *wa* and *e*
@@ -2024,43 +2035,6 @@ pub mod composition {
     //! assert_eq!(SongSpec::parse(&spec.to_toml()).unwrap(), spec);
     //! ```
     //!
-    //! # Bounded composition search
-    //!
-    //! [`composition_search`](crate::composition_search) exposes a headless command through
-    //! the session boundary; it needs neither a [`Session`](crate::Session) nor an audio device.
-    //! [`search_composition`](crate::composition_search::search_composition) keeps three jobs
-    //! separate: an algorithm proposes a specification, the existing composer writes it, and a
-    //! fixed evaluator measures its written notes. A sequential runner owns the attempt budget,
-    //! cancellation checks, history and exact best score. Search never rewrites the base document.
-    //!
-    //! The concrete space changes one part's explicit density and/or one played section's
-    //! intensity inside declared bounds. Everything else stays fixed, including the composition
-    //! seed. A separate search seed controls proposals. Random search samples independently;
-    //! hill climbing starts at the base and uses successful evaluation feedback to select the
-    //! parent of its next single-parameter mutation. Only a strictly higher fitness replaces
-    //! the incumbent or retained best, so equal scores keep the earlier candidate.
-    //!
-    //! The evaluator measures written note events per bar across all tracks, including the
-    //! score's ending in its length. Fitness is the
-    //! negative absolute distance from a fixed positive target: zero is an exact match, and
-    //! larger is better. This controls arrangement density; it is not a judgement of musical
-    //! quality. It counts chord tones and drum notes individually and does not measure rendered
-    //! audio, non-destructive performance transforms or vocals later materialized by the session.
-    //!
-    //! Invalid requests fail before search. Each proposal consumes an attempt, including a
-    //! validation, composition or evaluation failure; non-finite fitness or diagnostics fail the
-    //! candidate. The runner reports termination and failure counts, and preserves partial
-    //! results when cancelled between attempts. The existing synchronous composer has no
-    //! cancellation hook, so a running composition finishes before the next check.
-    //!
-    //! Results retain the exact generated [`Composition`](auris_compose::Composition), its
-    //! candidate specification and seed, evaluation and ordered history. Replaying a recipe is
-    //! deterministic within the same build; a newer writer may produce different notes. A caller
-    //! adopting a result passes that retained score to
-    //! [`Session::compose_without_balance`](crate::Session::compose_without_balance), without
-    //! composing it again. The runnable `compose_search` example and `docs/composition-search.md`
-    //! show the request and report format.
-    //!
     //! # Auditioning rendered audio
     //!
     //! Retained renders are auditioned through
@@ -2069,7 +2043,7 @@ pub mod composition {
     //! conversion and uniform level adjustment, then PCM directly at the device output. This
     //! bypasses the project graph so an already rendered mix is not processed twice. The callback
     //! retains finished PCM until replacement and returns old buffers for destruction off-thread.
-    //! The same output path plays chord auditions. Each request exposes its own callback clock,
+    //! Each request exposes its own callback clock,
     //! pause, seek and volume controls through [`OutputPreviewStatus`](crate::OutputPreviewStatus).
     //! These use atomics, never callback locks or allocations, and do not edit the document mixer.
     //! Initial position and volume are queued together with PCM, including muted starts. Completion,

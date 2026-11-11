@@ -111,6 +111,23 @@ def tuning_cents(clip, pitch):
     return cents
 
 
+def load_notes(root, manifest, model, split):
+    """One instrument's prepared notes of one split, checked against the manifest's hashes."""
+    notes = [note for note in manifest["notes"] if note["model"] == model and note["split"] == split]
+    if not notes:
+        raise ValueError(f"empty {model} {split} cohort")
+    audio = []
+    for note in notes:
+        path = root / note["path"]
+        if hashlib.sha256(path.read_bytes()).hexdigest() != note["sha256"]:
+            raise ValueError(f"note hash mismatch: {path}")
+        samples, rate = sf.read(path)
+        if rate != RATE or samples.ndim != 1 or len(samples) != round(manifest["seconds"] * RATE):
+            raise ValueError(f"invalid prepared reference: {path}")
+        audio.append(samples)
+    return notes, np.array(audio)
+
+
 def prepare(root, lock=None):
     source = json.loads((root / "captures.json").read_text(encoding="utf-8"))
     destination = root / "notes"

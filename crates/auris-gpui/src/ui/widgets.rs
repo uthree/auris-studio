@@ -11,7 +11,6 @@ use gpui::{
 
 use crate::theme::{Metrics, Theme};
 use crate::ui::icons::{Icon, icon};
-use crate::ui::tooltip::keyed_tip;
 
 /// An indeterminate activity mark. Pair it with text naming the work in progress.
 /// The animation exists only while the caller renders this element.
@@ -162,16 +161,6 @@ where
     )
 }
 
-// Auris attaches keymap-aware tooltip callbacks and domain gestures to this layout host.
-// The native button owns all painting, focus, activation and its original test selector.
-fn command_frame(id: ElementId, command: atelier::Button) -> gpui::Stateful<gpui::Div> {
-    div()
-        .id(ElementId::NamedChild(Box::new(id), "layout".into()))
-        .flex()
-        .flex_none()
-        .child(command)
-}
-
 /// A [`button_enabled`] whose label yields to a narrower parent instead of escaping it.
 ///
 /// Ordinary buttons keep their caption's intrinsic width so adjacent actions wrap as complete
@@ -206,7 +195,7 @@ where
     .min_w_0()
     .flex_shrink_0()
     .overflow_hidden()
-    .tooltip(keyed_tip(label, "", theme))
+    .tooltip(crate::ui::tooltip::text_tip(label))
 }
 
 /// A section heading that reveals or hides the rows following it.
@@ -282,7 +271,7 @@ where
                 )),
         )
         .child(div().flex_1().min_w_0().truncate().child(label.clone()))
-        .tooltip(keyed_tip(label, "", theme))
+        .tooltip(crate::ui::tooltip::text_tip(label))
         .on_click(on_click)
 }
 
@@ -386,16 +375,18 @@ where
 /// [`crate::ui::icons`].
 /// Returned concretely for the reason [`button`] is, and more urgently: this one has no text on
 /// it at all, so a tooltip is the only thing that can name it.
-// This adapter retains Auris's dynamic shortcut tooltips around the native Atelier button.
+///
+/// The words and keys go on the button itself, `.tooltip(..)` and `.shortcut(..)`, so the
+/// tooltip names the key the person bound.
 pub fn icon_button<I, F>(
-    // atelier: allow
+    // atelier: allow — a preset of Button::icon_only (small, tinted), not a copy of it.
     id: I,
     glyph: Icon,
     active: bool,
     active_color: Hsla,
     _theme: &Theme,
     on_click: F,
-) -> gpui::Stateful<gpui::Div>
+) -> atelier::Button
 where
     I: Into<ElementId>,
     F: Fn(&ClickEvent, &mut Window, &mut App) + 'static,
@@ -412,21 +403,17 @@ pub fn icon_button_enabled<I, F>(
     active_color: Hsla,
     _theme: &Theme,
     on_click: F,
-) -> gpui::Stateful<gpui::Div>
+) -> atelier::Button
 where
     I: Into<ElementId>,
     F: Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 {
-    let id: ElementId = id.into();
-    command_frame(
-        id.clone(),
-        atelier::Button::icon_only(id, glyph.source())
-            .size(atelier::ControlSize::Small)
-            .selected(active)
-            .disabled(!enabled)
-            .tint(active_color)
-            .on_click(on_click),
-    )
+    atelier::Button::icon_only(id, glyph.source())
+        .size(atelier::ControlSize::Small)
+        .selected(active)
+        .disabled(!enabled)
+        .tint(active_color)
+        .on_click(on_click)
 }
 
 /// A button showing an icon next to a word, for actions where the icon alone is ambiguous.
@@ -452,23 +439,14 @@ where
 /// A small square icon button for repeated row actions, such as reordering an effect chain.
 /// Returned concretely for the reason [`icon_button`] is: a chevron and a cross are the whole of
 /// what these say, and a tooltip is the only place the words can go.
-pub fn chain_button<I, F>(
-    id: I,
-    glyph: Icon,
-    _theme: &Theme,
-    on_click: F,
-) -> gpui::Stateful<gpui::Div>
+pub fn chain_button<I, F>(id: I, glyph: Icon, _theme: &Theme, on_click: F) -> atelier::Button
 where
     I: Into<ElementId>,
     F: Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 {
-    let id = id.into();
-    command_frame(
-        id.clone(),
-        atelier::Button::icon_only(id, glyph.source())
-            .size(atelier::ControlSize::Small)
-            .on_click(on_click),
-    )
+    atelier::Button::icon_only(id, glyph.source())
+        .size(atelier::ControlSize::Small)
+        .on_click(on_click)
 }
 
 /// A draggable divider between two panels.
@@ -658,7 +636,7 @@ where
     }
     .w_full()
     .min_w_0()
-    .tooltip(keyed_tip(value, "", theme));
+    .tooltip(crate::ui::tooltip::text_tip(value));
 
     let row = div()
         .flex()
@@ -1258,78 +1236,6 @@ where
         })
 }
 
-/// A read-only level meter.
-///
-/// `level` and `peak` are normalised 0..1 positions produced by [`db_to_meter_position`], which
-/// applies a piecewise scale so the useful -60..0 dB range is not crushed into the top pixels.
-pub fn level_meter(
-    // atelier: allow — the engine supplies piecewise dB positions and a latched clip marker.
-    level: f32,
-    peak: f32,
-    clipped: bool,
-    axis: Axis,
-    color: Hsla,
-    theme: &Theme,
-) -> impl IntoElement + use<> {
-    let level = level.clamp(0.0, 1.0);
-    let peak = peak.clamp(0.0, 1.0);
-
-    let fill = match axis {
-        Axis::Vertical => div()
-            .absolute()
-            .bottom_0()
-            .left_0()
-            .right_0()
-            .h(relative(level))
-            .bg(color),
-        Axis::Horizontal => div()
-            .absolute()
-            .top_0()
-            .bottom_0()
-            .left_0()
-            .w(relative(level))
-            .bg(color),
-    };
-
-    // A thin line held at the loudest recent level, so brief transients stay visible.
-    let peak_marker = match axis {
-        Axis::Vertical => div()
-            .absolute()
-            .left_0()
-            .right_0()
-            .bottom(relative(peak))
-            .h(px(1.5))
-            .bg(theme.text),
-        Axis::Horizontal => div()
-            .absolute()
-            .top_0()
-            .bottom_0()
-            .left(relative(peak))
-            .w(px(1.5))
-            .bg(theme.text),
-    };
-
-    // The clip indicator: a solid block at the hot end, latched by the engine and only put out
-    // by asking. It is at the end the signal grows towards, which is where a console's own
-    // light sits and where the eye is already going when something sounds wrong.
-    let clip_light = match axis {
-        Axis::Vertical => div().absolute().top_0().left_0().right_0().h(px(3.0)),
-        Axis::Horizontal => div().absolute().top_0().bottom_0().right_0().w(px(3.0)),
-    };
-
-    div()
-        .relative()
-        .size_full()
-        .overflow_hidden()
-        .rounded(Metrics::RADIUS_XS)
-        .bg(theme.surface_sunken)
-        .border_1()
-        .border_color(theme.border_subtle)
-        .child(fill)
-        .when(peak > 0.001, |this| this.child(peak_marker))
-        .when(clipped, |this| this.child(clip_light.bg(theme.danger)))
-}
-
 /// What a channel's meter reads: each side's linear peak, and whether to show the two apart.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct MeterReading {
@@ -1350,28 +1256,29 @@ impl MeterReading {
 
 /// A channel's level meter: one bar for mono material, one for each side of stereo material.
 ///
-/// The pair shares the single bar's footprint, left before right — left-to-right across a
-/// vertical meter, top-to-bottom along a horizontal one, the way a console stacks them — and
-/// each side is coloured by its own level, so a hard-panned signal reads as one side running hot.
+/// The pair shares the single bar's footprint, `breadth` across, left before right —
+/// left-to-right across a vertical meter, top-to-bottom along a horizontal one, the way a console
+/// stacks them. Each bar is Atelier's [`atelier::LevelMeter`] on its dBFS scale, so a hard-panned
+/// signal reads as one side running into the yellow, and the clip light is lit on both.
 pub fn channel_meter(
     reading: MeterReading,
     clipped: bool,
     axis: Axis,
-    theme: &Theme,
+    breadth: Pixels,
 ) -> impl IntoElement + use<> {
+    const GAP: f32 = 1.0;
+    let bars = if reading.stereo { 2.0 } else { 1.0 };
+    let thickness = ((breadth - px(GAP) * (bars - 1.0)) / bars).max(px(1.0));
     let bar = |gain: f32| {
-        let db = auris_session::prelude::gain_to_db(gain);
-        let position = db_to_meter_position(db);
-        div().flex_1().min_w_0().min_h_0().child(level_meter(
-            position,
-            position,
-            clipped,
-            axis,
-            theme.meter_color(db),
-            theme,
-        ))
+        let meter = atelier::LevelMeter::db(auris_session::prelude::gain_to_db(gain))
+            .clipped(clipped)
+            .thickness(thickness);
+        match axis {
+            Axis::Vertical => meter,
+            Axis::Horizontal => meter.horizontal(),
+        }
     };
-    let frame = div().flex().size_full().gap(px(1.0));
+    let frame = div().flex().size_full().gap(px(GAP));
     let frame = match axis {
         Axis::Vertical => frame.flex_row(),
         Axis::Horizontal => frame.flex_col(),
@@ -1382,31 +1289,6 @@ pub fn channel_meter(
             .child(bar(reading.peaks[1]))
     } else {
         frame.child(bar(reading.peak()))
-    }
-}
-
-/// Quietest level a meter draws anything for.
-///
-/// Named because a readout beside a meter has to agree with it about what counts as silence: a
-/// number still moving under a bar that has bottomed out reads as a bar that has stopped working.
-pub const METER_FLOOR_DB: f32 = -60.0;
-
-/// Maps a level in dBFS onto a 0..1 meter position.
-///
-/// Linear amplitude would put everything below -20 dB in the bottom 10 % of the meter, so this
-/// uses the scale broadcast meters use: the top 12 dB gets half the travel, and the range
-/// bottoms out at [`METER_FLOOR_DB`].
-pub fn db_to_meter_position(db: f32) -> f32 {
-    if db.is_nan() || db == f32::NEG_INFINITY || db <= METER_FLOOR_DB {
-        return 0.0;
-    }
-    let db = db.min(6.0);
-    if db >= -12.0 {
-        // -12..+6 dB occupies the upper half.
-        0.5 + ((db + 12.0) / 18.0) * 0.5
-    } else {
-        // -60..-12 dB occupies the lower half.
-        ((db - METER_FLOOR_DB) / 48.0) * 0.5
     }
 }
 
@@ -1598,17 +1480,6 @@ mod tests {
     }
 
     #[test]
-    fn meter_scale_matches_its_documented_breakpoints() {
-        assert_eq!(db_to_meter_position(-70.0), 0.0);
-        assert_eq!(db_to_meter_position(-60.0), 0.0);
-        assert!((db_to_meter_position(-36.0) - 0.25).abs() < 1e-6);
-        assert!((db_to_meter_position(-12.0) - 0.5).abs() < 1e-6);
-        assert!((db_to_meter_position(0.0) - 0.833).abs() < 1e-3);
-        assert_eq!(db_to_meter_position(f32::NEG_INFINITY), 0.0);
-        assert_eq!(db_to_meter_position(f32::INFINITY), 1.0);
-    }
-
-    #[test]
     fn a_full_sweep_of_a_bar_is_the_drag_range_and_stops_at_both_ends() {
         // Every bar in the application is dragged through this, so the number here is what makes
         // a plugin's filter and a clip's density answer a hand at the same rate.
@@ -1689,17 +1560,5 @@ mod tests {
         assert_eq!(scrollbar_pressed(0.0, -800.0, 800.0, 400.0), 0.0);
         // And a bar with nothing to scroll answers no press at all.
         assert_eq!(scrollbar_pressed(0.5, 0.0, 0.0, 400.0), 0.0);
-    }
-
-    #[test]
-    fn meter_scale_is_monotonic() {
-        let mut previous = -1.0;
-        let mut db = -60.0;
-        while db <= 6.0 {
-            let position = db_to_meter_position(db);
-            assert!(position >= previous, "regressed at {db} dB");
-            previous = position;
-            db += 0.5;
-        }
     }
 }

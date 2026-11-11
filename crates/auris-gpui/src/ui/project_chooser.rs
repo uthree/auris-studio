@@ -666,7 +666,7 @@ impl AurisApp {
         }
         let prompt = if self.startup_update_prompt_open() {
             self.reconcile_focus(window, cx);
-            self.render_prompt(cx)
+            self.render_prompt(window, cx)
         } else {
             if self.modal_focus.prompt_contains_focused(window) {
                 window.focus(&self.focus);

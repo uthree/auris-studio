@@ -16,9 +16,7 @@ use gpui::{
 use crate::app::{AurisApp, Drag};
 use crate::theme::Metrics;
 use crate::ui::automation;
-use crate::ui::widgets::{
-    ButtonStyle, Latch, button, channel_meter, db_to_meter_position, level_meter,
-};
+use crate::ui::widgets::{ButtonStyle, Latch, button, channel_meter};
 
 /// How tall the strip along the bottom of a header that resizes its lane is.
 ///
@@ -232,7 +230,7 @@ impl AurisApp {
                         .when(sound_unset, |label| label.italic())
                         .truncate()
                         .child(sound_text.clone())
-                        .tooltip(crate::ui::tooltip::keyed_tip(sound_tip.clone(), "", &theme))
+                        .tooltip(crate::ui::tooltip::text_tip(sound_tip.clone()))
                 };
                 // The voice that sings this track, where one has been chosen — beside the kind
                 // label, with the one fact about the take worth a glance: whether it is still
@@ -368,10 +366,11 @@ impl AurisApp {
                                         .text_color(theme.text)
                                         .truncate()
                                         .child(name)
-                                        .child(crate::ui::inline_edit::spot(
-                                            &self.canvas.spots,
-                                            crate::ui::inline_edit::header_name_spot(id),
-                                        ))
+                                        .child(
+                                            self.canvas
+                                                .spots
+                                                .spot(crate::ui::inline_edit::header_name_spot(id)),
+                                        )
                                         .tooltip(self.tip(Key::MenuRename, ""))
                                         .on_mouse_down(
                                             MouseButton::Left,
@@ -400,25 +399,17 @@ impl AurisApp {
                         )
                         .children(input.map(|(level, input_clipped)| {
                             let db = gain_to_db(level);
-                            div()
-                                .w(px(4.0))
-                                .mr(px(2.0))
-                                .h_full()
-                                .py(px(1.0))
-                                .child(level_meter(
-                                    db_to_meter_position(db),
-                                    db_to_meter_position(db),
-                                    input_clipped,
-                                    Axis::Vertical,
-                                    theme.meter_color(db),
-                                    &theme,
-                                ))
+                            div().w(px(4.0)).mr(px(2.0)).h_full().py(px(1.0)).child(
+                                atelier::LevelMeter::db(db)
+                                    .clipped(input_clipped)
+                                    .thickness(px(4.0)),
+                            )
                         }))
                         .child(div().w(px(7.0)).h_full().py(px(1.0)).child(channel_meter(
                             meter,
                             clipped,
                             Axis::Vertical,
-                            &theme,
+                            px(7.0),
                         )))
                         .child(self.lane_resize_band(index, id, height, cx))
                         .into_any_element();
@@ -531,10 +522,11 @@ impl AurisApp {
                                             .text_color(theme.text)
                                             .truncate()
                                             .child(name)
-                                            .child(crate::ui::inline_edit::spot(
-                                                &self.canvas.spots,
-                                                crate::ui::inline_edit::header_name_spot(id),
-                                            ))
+                                            .child(
+                                                self.canvas.spots.spot(
+                                                    crate::ui::inline_edit::header_name_spot(id),
+                                                ),
+                                            )
                                             .tooltip(self.tip(Key::MenuRename, ""))
                                             .on_mouse_down(
                                                 MouseButton::Left,
@@ -556,14 +548,11 @@ impl AurisApp {
                                         this.child(sound_label(format!("track-sound-{index}")))
                                     })
                                     .when_some(voice, |this, voice| {
-                                        let label_tip = crate::ui::tooltip::keyed_tip(
-                                            match voice_status {
+                                        let label_tip =
+                                            crate::ui::tooltip::text_tip(match voice_status {
                                                 Some(status) => format!("{voice} · {status}"),
                                                 None => voice.clone(),
-                                            },
-                                            "",
-                                            &theme,
-                                        );
+                                            });
                                         this.child(
                                             div()
                                                 .id(("voice-badge", index))
@@ -725,25 +714,17 @@ impl AurisApp {
                     // thing at a glance rather than as one side of the stereo pair beside it.
                     .children(input.map(|(level, input_clipped)| {
                         let db = gain_to_db(level);
-                        div()
-                            .w(px(4.0))
-                            .mr(px(2.0))
-                            .h_full()
-                            .py(px(1.0))
-                            .child(level_meter(
-                                db_to_meter_position(db),
-                                db_to_meter_position(db),
-                                input_clipped,
-                                Axis::Vertical,
-                                theme.meter_color(db),
-                                &theme,
-                            ))
+                        div().w(px(4.0)).mr(px(2.0)).h_full().py(px(1.0)).child(
+                            atelier::LevelMeter::db(db)
+                                .clipped(input_clipped)
+                                .thickness(px(4.0)),
+                        )
                     }))
                     .child(div().w(px(7.0)).h_full().py(px(1.0)).child(channel_meter(
                         meter,
                         clipped,
                         Axis::Vertical,
-                        &theme,
+                        px(7.0),
                     )))
                     // Last, so it paints over the fader it overlaps and so a press on it is the
                     // press that lands. The header's own handler runs afterwards — a parent's

@@ -160,32 +160,3 @@ All four controls default to zero (off). Source notes and curves remain editable
 the Performance** writes the heard notes and controllers, and Undo restores the settings.
 
 Editable long-note volume contours are saved with the project.
-
-## Starting from automatic composition
-
-Song presets install a genre-specific performance stack on their clips. The source
-score and generation recipe are unchanged. Open a generated clip's Performance tab to adjust
-the same controls used on hand-written clips; regeneration keeps those adjustments. Another
-Take updates inherited ghost/expression seeds and preserves their settings and ensemble group.
-
-| Preset | Initial performance |
-| --- | --- |
-| Chiptune | Tight shared expression and small lead bends/vibrato |
-| Game Loop | The chiptune palette over its sixteen-bar loop |
-| Pop Band | Lead scoops/connections, light keyboard attack spread, bass and snare pickups |
-| City Pop | Sax scoops, vibrato and falls; offbeat bass ghosts, slides and muted tails |
-| Rock | Alternating partial guitar strums, sparse sixteenth brushes, muted tails and lead bends |
-| Jazz Trio | Piano attack spread and offbeat phrasing, quiet snare pickups; piano pitch stays fixed |
-| Orchestral | Shared phrase dynamics, restrained flute/cello vibrato and cello connections |
-| Synthwave | Tight rhythm, connected saw lead, delayed vibrato and subtle falls |
-| Ambient | Slow shared phrase dynamics and subtle cello motion; bells stay at their written pitch |
-
-Requested instruments are respected: bend, strum and mute choices depend on
-the instrument and role, not the part's name. Ghosts preserve long rests and final tails;
-drum ghosts stay scoped to their named kit voice. Singing melodies use the voice pipeline's
-own ornaments.
-
-The `.asong` root field `performance = "city-pop"` selects the palette; `game-loop` uses the
-`chiptune` palette. Omitting the field keeps the plain lean/wander behavior. The
-`humanize` dial controls random timing/velocity and lean; intentional articulations remain
-independent. Existing saved clips are never upgraded or rewritten when a preset changes.

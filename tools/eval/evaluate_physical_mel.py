@@ -9,23 +9,29 @@ import hashlib
 import json
 from pathlib import Path
 
-from fit_physical_mel import BOUNDS, Renderer, color, load_notes, summary
+import numpy as np
+import soundfile as sf
+from fit_worker import Renderer
 from physical_mel import RATE, configuration, distances, features, normalize
-from prepare_physical_reference import manifest_digest
+from prepare_physical_reference import load_notes, manifest_digest
 from scipy.signal import resample_poly
 
+MODELS = ("piano", "guitar", "violin")
 
-def evaluate(root, before, after, output, production_rate=RATE, calibration=None):
+
+def summary(values):
+    return {"mean": float(np.mean(values)), "median": float(np.median(values)),
+            "per_note": [float(value) for value in values]}
+
+
+def evaluate(root, before, after, output, production_rate=RATE):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
-    import numpy as np
-    import soundfile as sf
 
     manifest = json.loads((root / "notes.json").read_text(encoding="utf-8"))
-    fitted = json.loads(calibration.read_text(encoding="utf-8")) if calibration else None
-    if production_rate not in (RATE, 48000) or production_rate != RATE and fitted is None:
-        raise ValueError("48 kHz cross-check requires the frozen calibration report")
+    if production_rate not in (RATE, 48000):
+        raise ValueError("unsupported production sample rate")
     if manifest["rate"] != RATE:
         raise ValueError("unsupported cohort sample rate")
     renderers = [Renderer(before.resolve()), Renderer(after.resolve())]
@@ -36,41 +42,22 @@ def evaluate(root, before, after, output, production_rate=RATE, calibration=None
     output.mkdir(parents=True, exist_ok=True)
     audition, order = [], []
     try:
-        for model in BOUNDS:
+        for model in MODELS:
             report["models"][model] = {}
             for split in ("train", "validation"):
                 notes, reference = load_notes(root, manifest, model, split)
                 target = features(reference)
-                rendered = [renderer.render(model, notes, {}, manifest["seconds"], manifest["hold"])
-                            for renderer in renderers] if production_rate == RATE else []
-                agreement = None
+                rendered = [renderer.render(model, notes, {}, manifest["seconds"], manifest["hold"],
+                                            rate=production_rate) for renderer in renderers]
                 if production_rate != RATE:
-                    # This change only alters defaults, coloration and scalar normalization.
-                    # Verify their reconstruction against the frozen worker before using the
-                    # same unchanged oscillator/string algorithms for a 48 kHz cross-check.
-                    previous_settings = fitted["defaults"][model] | {"body": 0.0}
-                    gains = np.array(fitted["initial_gains_db"][model])
-                    gain = fitted["models"][model]["output_gain"]
-                    dry = renderers[1].render(model, notes, previous_settings,
-                                             manifest["seconds"], manifest["hold"])
-                    reconstructed = color(dry, gains) / gain
-                    frozen = renderers[0].render(model, notes, {}, manifest["seconds"], manifest["hold"])
-                    agreement = float(np.max(abs(reconstructed - frozen)))
-                    if agreement > 2e-4:
-                        raise ValueError(f"cannot reconstruct baseline: {agreement}")
-                    old_dry = renderers[1].render(model, notes, previous_settings,
-                        manifest["seconds"], manifest["hold"], rate=production_rate)
-                    current = renderers[1].render(model, notes, {}, manifest["seconds"],
-                                                  manifest["hold"], rate=production_rate)
-                    rendered = [resample_poly(samples, RATE, production_rate, axis=-1)
-                                for samples in (color(old_dry, gains, rate=production_rate) / gain, current)]
+                    # Both builds play at the production rate; the measure stays at 24 kHz.
+                    rendered = [resample_poly(samples, RATE, production_rate, axis=-1) for samples in rendered]
                 result = [distances(target, features(audio)) for audio in rendered]
                 report["models"][model][split] = {
                     "notes": notes, "before": summary(result[0]), "after": summary(result[1]),
                     "relative_reduction": float(1 - np.mean(result[1]) / np.mean(result[0])),
                     "improved_notes": int(np.sum(result[1] < result[0])),
                     "peak_before": float(np.max(abs(rendered[0]))), "peak_after": float(np.max(abs(rendered[1]))),
-                    "baseline_reconstruction_max_error": agreement,
                 }
                 print(f"{model} {split} ({len(notes)}): {result[0].mean():.6f} -> {result[1].mean():.6f}", flush=True)
                 if split != "validation":
@@ -119,6 +106,5 @@ if __name__ == "__main__":
     parser.add_argument("after", type=Path)
     parser.add_argument("output", type=Path)
     parser.add_argument("--production-rate", type=int, default=RATE, choices=(RATE, 48000))
-    parser.add_argument("--calibration", type=Path, help="required for the 48 kHz baseline reconstruction")
     args = parser.parse_args()
-    evaluate(args.reference, args.before, args.after, args.output, args.production_rate, args.calibration)
+    evaluate(args.reference, args.before, args.after, args.output, args.production_rate)

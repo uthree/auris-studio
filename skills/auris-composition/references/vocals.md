@@ -45,51 +45,27 @@ A VOICEVOX connection is metadata, not a voicebank. Its configured Engine must b
 
 A single short health-check timeout does not prove that the Engine is unavailable. If the configured process is running, retry the read-only version/style discovery once with a longer bounded timeout (for example, 15 seconds). If it still fails, report the endpoint/error; do not automatically restart the Engine or rewrite its connection. Keep this separate from a synthesis request, which may take longer and must not be duplicated while pending.
 
-## CLI: specification to sung mix
+## CLI: synthesize and render a saved project
 
-For a new song, put lyrics in each sung section of an `.asong`. Use distinct section names for different words, and `melody_from` for intentional melodic reuse. Shared sections must match phrase counts, mora counts per phrase, and closure positions (Japanese sokuon, small `っ`); equal total counts alone are insufficient. Newlines and sentence punctuation divide lyric phrases. A minimal short demo is:
-
-```toml
-title = "Morning Song"
-style = "pop-band"
-key = "C major"
-tempo = 108
-seed = 42
-chords = "@axis"
-form = ["verse", "chorus"]
-
-[section.verse]
-bars = 4
-lyrics = "あさの ひかりが\nまどを たたくよ"
-
-[section.chorus]
-bars = 4
-lyrics = "きみの こえが\nそらへ とどくよ"
-```
-
-Top-level `singer` and `singer_speaker` can record an existing voice path and speaker in the specification. Without a selected voice, the generated score may use a preview voice; that is not evidence of finished singing. Section lyrics create the singer track beside the accompaniment. Do not model a singer as an ordinary instrument part.
-
-Diagnose the original and reused sections together before composing. For `closure_position_mismatch`, inspect the affected phrase's actual reading and closure indices; revise new lyrics while preserving their meaning, or choose an independent melody when reuse is unnecessary. Do not remove all sokuon or impose one mora count on every song. Keep readable display lyrics beside the synthesis reading when they differ, and verify that both still express the same words.
+The CLI does not write notes or lyrics; author them with MCP or in the desktop application, then synthesize and render headlessly:
 
 ```text
-auris compose song.asong --print
-auris compose song.asong -o Song.auris
-auris info <actual-saved-project.auris>
-auris sing <actual-saved-project.auris> --track <actual-singer-track-name> --voice <existing-voice-path> --seed 42
-auris render <actual-saved-project.auris> -o Song-mix.wav
-auris render <actual-saved-project.auris> --stems Song-stems
+auris info <project.auris>
+auris sing <project.auris> --track <actual-singer-track-name> --voice <existing-voice-path> --seed 42
+auris render <project.auris> -o Song-mix.wav
+auris render <project.auris> --stems Song-stems
 ```
 
-Use the saved path printed by `compose` (often `Song/Song.auris`) and the singer name reported by `info`. Omit `--track` only when there is exactly one singer. Add `--speaker <actual-speaker-name>` when needed. `sing` selects the voice, synthesizes a take, and saves the project in place; it is not a standalone mix export and has no `-o` option. Synthesize each requested singer before rendering. Re-synthesize after score, lyrics, or relevant performance changes; an older take cannot verify a new score. Do not run `compose` over an existing authored project to repair one phrase.
+Use the singer name reported by `info`. Omit `--track` only when there is exactly one singer. Add `--speaker <actual-speaker-name>` when needed. `sing` selects the voice, synthesizes a take, and saves the project in place; it is not a standalone mix export and has no `-o` option. Synthesize each requested singer before rendering. Re-synthesize after score, lyrics, or relevant performance changes; an older take cannot verify a new score.
 
-`--print` validates specification syntax/settings, not pronunciation or full vocal coverage. The CLI has no equivalent of all the MCP lyric diagnostics. Inspect the saved notes/lyrics read-only or use MCP when available, and check the rendered vocal stem through the last sung phrase. Keep any remaining uncertainty explicit. `frames`/`sing-frames` are not a substitute for this workflow: raw frames lack lyrics, so VOICEVOX cannot synthesize them.
+The CLI has no equivalent of the MCP lyric diagnostics. Inspect the saved notes/lyrics read-only or use MCP when available, and check the rendered vocal stem through the last sung phrase. Keep any remaining uncertainty explicit. `frames`/`sing-frames` are not a substitute for this workflow: raw frames lack lyrics, so VOICEVOX cannot synthesize them.
 
 ## MCP: discover, author, synthesize, verify
 
-Use the advertised catalog and `tool_help`; saved-project MCP and the desktop live agent differ. If `AURIS_MCP_TOOL_GROUPS` restricts the server, enable `vocals`, plus `composition` for specification generation, `manual` for note edits, and `mix` for mixing as needed. Set groups in the server process environment and restart it after a change.
+Use the advertised catalog and `tool_help`; saved-project MCP and the desktop live agent differ. If `AURIS_MCP_TOOL_GROUPS` restricts the server, enable `vocals`, plus `manual` for note edits, and `mix` for mixing as needed. Set groups in the server process environment and restart it after a change.
 
 1. Inspect the project and planned section ranges. Use `production_record` and `edit_harmony` for the plan when available. Discover voices with `list_voices`; select with `set_singer_voice` and inspect real speaker names/capabilities with `inspect_singer`.
-2. For saved-project generation, fetch `spec_reference`, validate with `check_spec`, check lyric fit with `diagnose_song`, then `compose`. For live or targeted edits, create a `singer` track when needed, write the score with advertised clip/note tools, then use `write_lyrics` to fill existing slots. Read notes before changing them and read assigned lyrics back afterward.
+2. Create a `singer` track when needed, write the score with advertised clip/note tools, then use `write_lyrics` to fill existing slots. Read notes before changing them and read assigned lyrics back afterward.
 3. Use `analyze_lyrics` for readings and `diagnose_song` for phrase fit. Diagnostic readings do not persist as lyric corrections. If using `repair_lyrics`, fix the target, reference/template, and required keywords; preview at most three alternatives, apply only a passing candidate at the unchanged revision, and recheck meaning and related phrases. Use the revision fields required by the actual tool schema.
 4. Finish notes, lyrics, and backing in every planned vocal section, including later verses. Call `sing` for each singer using the actual schema. Wait for completion if the host returns an asynchronous job; failed, cancelled, or pending synthesis is not success.
 5. Read `inspect_singer`: require `take_state` to be `current`, then inspect `section_coverage`, following `section_coverage.next_section_offset` with `section_offset` until complete. Compare with the plan and read later sections' actual notes and lyrics. Counts, labels, and a current take alone do not prove completeness; intentional instrumental sections may be empty. Check mute/routing and render the mix and requested stems. Save through the host's supported project-save operation; live edits may still be unsaved.
@@ -106,7 +82,7 @@ Do not overlap heavy requests to the same Engine. A client timeout or stopped CL
 
 After the composition is established, complete [the arrangement pass](arrangement.md) around the actual vocal line. Check backing in sung passages and gaps, including later verses. Refresh any affected singer takes before final export; arrangement review does not authorize replacing the lyrics or vocal melody.
 
-Verify the rendered mix and vocal stem across the opening, later verses, joins, and final sung phrase. Check missing/truncated singing, vocal audibility, duration, peak/true peak, and loudness using `verify_render` or equivalent measurements. A short successful voice probe does not verify a complete song. Preserve the editable project, lyrics/specification, voice/speaker selection, seed, and saved audio take; report unsung or stale sections explicitly.
+Verify the rendered mix and vocal stem across the opening, later verses, joins, and final sung phrase. Check missing/truncated singing, vocal audibility, duration, peak/true peak, and loudness using `verify_render` or equivalent measurements. A short successful voice probe does not verify a complete song. Preserve the editable project, lyrics, voice/speaker selection, seed, and saved audio take; report unsung or stale sections explicitly.
 
 ### Balance and verify the synthesized take
 

@@ -83,7 +83,8 @@ impl AurisApp {
                         window.dispatch_action(Box::new(crate::actions::OpenMenuBar), cx);
                     }),
                 )
-                .tooltip(self.tip(Key::CmdOpenMenuBar, "view.menu_bar")),
+                .tooltip(self.t(Key::CmdOpenMenuBar))
+                .shortcut(self.keystroke_for("view.menu_bar")),
             )
         })
     }

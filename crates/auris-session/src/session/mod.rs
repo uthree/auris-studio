@@ -58,7 +58,6 @@ mod calibrate;
 mod checkpoints;
 #[cfg(test)]
 mod choir_tests;
-mod chord_preview;
 mod clipboard;
 mod clips;
 mod comments;
@@ -70,7 +69,6 @@ mod envelope;
 mod event_list;
 pub use envelope::{ENVELOPE_PITCHES, SoundEnvelope};
 pub use event_list::{ClipEvent, ClipEventKind, EventEdit, EventRef, clip_events};
-mod accent_fit;
 pub mod arrangement_shape;
 mod drum_assignments;
 mod files;
@@ -80,6 +78,7 @@ mod harmony;
 mod hosted;
 mod layers;
 mod levels;
+pub mod lyric_accent;
 pub mod lyric_harness;
 mod lyric_lines;
 pub(crate) mod lyric_slots;
@@ -138,7 +137,6 @@ pub use autosave::{
     RecoveryQuarantineCleanupJob, RecoveryResult, RecoverySnapshot, recovery_dir, should_autosave,
 };
 pub use checkpoints::{CheckpointJob, CheckpointOperation, CheckpointResult};
-pub use chord_preview::{ChordPreview, ChordPreviewJob};
 pub use clipboard::{Clipboard, CopiedClip, CopiedContent};
 pub use compose::{composed_gain_db, kit_trim_db};
 pub use convert::{TrackConversion, TrackConversionJob};

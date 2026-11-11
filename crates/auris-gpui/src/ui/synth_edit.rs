@@ -21,26 +21,23 @@
 //! | Electronic kit kick | kick decay | kick punch | — |
 //! | Electronic kit hats | hat tone | metal | — |
 //!
-//! A drag is measured from where it began, as every other drag in the application is, rather
-//! than putting the value under the pointer: the press can land anywhere on the plot, and nothing
-//! jumps when it does. The horizontal axis moves in the plot's own units — one harmonic of
-//! travel moves the cutoff by one harmonic, a stack's outermost copy follows the pointer — and
+//! The gestures are Atelier's: [`LinePlot::on_drag`] measures a drag from where it began, in the
+//! plot's own units on the data area the plot really drew, so the press can land anywhere and
+//! nothing jumps; Shift slows it without a jump, a double click is [`LinePlot::on_reset`], the
+//! wheel comes in whole notches, and a focused plot nudges with the arrows. This file only maps
+//! that travel to parameters. The horizontal axis moves in the plot's own units — one harmonic
+//! of travel moves the cutoff by one harmonic, a stack's outermost copy follows the pointer — and
 //! the vertical one sweeps its parameter's whole range across the plot's height, because no plot
-//! here draws its second parameter as a height it could be read back from. Shift slows both, and
-//! a double click puts both back to their defaults.
+//! here draws its second parameter as a height it could be read back from. A double click puts
+//! both back to their defaults.
 //!
 //! The whole drag is one undo step, filed under the horizontal parameter as the envelope's
 //! two-parameter corner is.
 
-use std::{cell::Cell, rc::Rc};
-
 use crate::app::{AurisApp, Drag};
-use atelier::plot::LinePlot;
+use atelier::plot::{DragPhase, LinePlot, PlotDrag};
 use auris_session::prelude::*;
-use gpui::{
-    Bounds, Context, MouseButton, MouseDownEvent, Pixels, Point, ScrollWheelEvent, canvas, div,
-    prelude::*, px,
-};
+use gpui::{Context, div, prelude::*};
 
 /// An oscillator patch's picture that a drag can take hold of.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -65,28 +62,7 @@ pub(crate) enum SynthPlot {
     Metal,
 }
 
-/// How many [`SynthPlot`]s there are, for the table of where each was drawn.
-const PLOTS: usize = 9;
-
-/// Where each plot was drawn on the last frame, by [`SynthPlot::index`].
-pub(crate) type PlotBounds = Rc<[Cell<Option<Bounds<Pixels>>>; PLOTS]>;
-
 impl SynthPlot {
-    /// The plot's slot in [`PlotBounds`].
-    fn index(self) -> usize {
-        match self {
-            SynthPlot::Stack => 0,
-            SynthPlot::Filter => 1,
-            SynthPlot::Sidebands => 2,
-            SynthPlot::Cycle => 3,
-            SynthPlot::ChipStack => 4,
-            SynthPlot::Punch => 5,
-            SynthPlot::Drive => 6,
-            SynthPlot::Kick => 7,
-            SynthPlot::Metal => 8,
-        }
-    }
-
     /// The parameter the horizontal axis moves, by its stable key.
     pub(crate) fn horizontal(self) -> &'static str {
         match self {
@@ -138,31 +114,17 @@ pub(crate) struct PlotScale {
     pub across: f32,
     /// The x axis's half width, held still while a drag on a stack is under way.
     pub reach: f32,
+    /// How wide and how tall the plot's ranges are, in its own units: the travel Atelier
+    /// reports is divided by these to give the share of the plot crossed.
+    pub span: (f32, f32),
 }
 
-/// The pixels the plot's axes take from its bounds: the y tick labels and the margin on the
-/// right across, the margin above and the x tick labels below.
-///
-/// Atelier's `LinePlot` lays its data area out from the width of its widest tick label, which
-/// only the painter knows. These are what that comes to for the short labels every one of these
-/// plots carries; being a few pixels out changes how fast a drag moves by a per cent or two, and
-/// never where it starts, since a drag is measured from its anchor.
-const GUTTER: (f32, f32) = (48.0, 34.0);
-
-/// The size of the data area inside a plot's bounds, in pixels.
-pub(crate) fn data_area(bounds: Bounds<Pixels>) -> (f32, f32) {
+/// How far a drag has gone, in plot units, as shares of the plot's width and height:
+/// rightwards and *upwards*, since up is more on every plot here.
+pub(crate) fn travel(delta: (f32, f32), span: (f32, f32)) -> (f32, f32) {
     (
-        (f32::from(bounds.size.width) - GUTTER.0).max(1.0),
-        (f32::from(bounds.size.height) - GUTTER.1).max(1.0),
-    )
-}
-
-/// How far the pointer has moved from `anchor` as fractions of the data area: rightwards and
-/// *upwards*, since up is more on every plot here.
-pub(crate) fn travel(anchor: Point<Pixels>, at: Point<Pixels>, area: (f32, f32)) -> (f32, f32) {
-    (
-        f32::from(at.x - anchor.x) / area.0.max(1.0),
-        f32::from(anchor.y - at.y) / area.1.max(1.0),
+        delta.0 / span.0.abs().max(f32::MIN_POSITIVE),
+        delta.1 / span.1.abs().max(f32::MIN_POSITIVE),
     )
 }
 
@@ -231,9 +193,9 @@ impl AurisApp {
         }
     }
 
-    /// A plot drawn on its well that a drag, a double click and (for a stack) the wheel edit.
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn synth_plot_well(
+    /// A plot drawn on its well, which Atelier makes the control for what it draws: a drag, a
+    /// double click, the arrows and (for a stack) the wheel edit it.
+    pub(crate) fn synth_plot(
         &self,
         id: &'static str,
         track: TrackId,
@@ -241,147 +203,106 @@ impl AurisApp {
         scale: PlotScale,
         chart: LinePlot,
         cx: &mut Context<Self>,
-    ) -> gpui::Stateful<gpui::Div> {
+    ) -> gpui::Div {
         let tokens = &self.theme.atelier;
-        let recorded = self.physical_view.plots.clone();
-        let mut well = div()
+        let mut chart = chart
             .id(id)
-            .debug_selector(move || id.into())
+            .on_drag(cx.listener(move |this, drag: &PlotDrag, window, cx| {
+                this.drag_synth_plot(track, plot, scale, drag, window, cx);
+                cx.notify();
+            }))
+            .on_reset(cx.listener(move |this, _: &(), _, cx| {
+                this.reset_synth_plot(track, plot);
+                cx.notify();
+            }));
+        if plot.wheel().is_some() {
+            chart = chart.on_wheel(cx.listener(move |this, notches: &i32, _, cx| {
+                if this.scroll_synth_plot(track, plot, *notches) {
+                    cx.notify();
+                }
+            }));
+        }
+        div()
             .h(gpui::rems(8.))
             .rounded(tokens.shape.radius_sm)
             .bg(tokens.colors.sunken)
             .overflow_hidden()
             .p(tokens.spacing.xs)
-            .cursor_crosshair()
-            .child(
-                div().size_full().relative().child(chart).child(
-                    canvas(
-                        move |bounds, _, _| recorded[plot.index()].set(Some(bounds)),
-                        |_, _, _, _| {},
-                    )
-                    .absolute()
-                    .top_0()
-                    .left_0()
-                    .size_full(),
-                ),
-            )
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |this, event: &MouseDownEvent, _, cx| {
-                    if event.click_count >= 2 {
-                        this.reset_synth_plot(track, plot);
-                    } else {
-                        this.press_synth_plot(track, plot, scale, event.position, event.modifiers);
-                    }
-                    cx.stop_propagation();
-                    cx.notify();
-                }),
-            );
-        if plot.wheel().is_some() {
-            well =
-                well.on_scroll_wheel(cx.listener(move |this, event: &ScrollWheelEvent, _, cx| {
-                    let notches = f32::from(event.delta.pixel_delta(px(16.0)).y) / 16.0;
-                    if this.scroll_synth_plot(track, plot, notches) {
-                        cx.notify();
-                    }
-                }));
-        }
-        well
+            .child(chart)
     }
 
-    /// Takes hold of a plot: notes where the drag starts and what the two parameters stood at.
-    fn press_synth_plot(
+    /// Follows one step of a drag on a plot: takes hold of it on the press, moves its
+    /// parameters by the travel since, and lets go on the release.
+    fn drag_synth_plot(
         &mut self,
         track: TrackId,
         plot: SynthPlot,
         scale: PlotScale,
-        at: Point<Pixels>,
-        modifiers: gpui::Modifiers,
+        drag: &PlotDrag,
+        window: &mut gpui::Window,
+        cx: &mut Context<Self>,
     ) {
-        let Some((target, _)) = self.synth_param(track, plot.horizontal()) else {
-            return;
-        };
-        let bounds = self.physical_view.plots[plot.index()].get();
-        // Pressed left of a stack's centre, dragging further left is what widens it.
-        let side = match bounds {
-            Some(bounds) if plot.mirrored() && at.x < bounds.center().x => -1.0,
-            _ => 1.0,
-        };
-        let start = (
-            self.synth_value(track, plot.horizontal())
-                .unwrap_or_default(),
-            plot.vertical()
-                .and_then(|key| self.synth_value(track, key))
-                .unwrap_or_default(),
-        );
-        self.begin_drag(Drag::SynthPlot {
-            track,
-            plot,
-            target,
-            scale: PlotScale {
-                across: scale.across * side,
-                ..scale
-            },
-            anchor: at,
-            start,
-            fine: modifiers.shift,
-        });
-    }
-
-    /// Moves a plot's parameters with the pointer.
-    pub(crate) fn drag_synth_plot(&mut self, at: Point<Pixels>, modifiers: gpui::Modifiers) {
-        let Some(Drag::SynthPlot {
-            track,
-            plot,
-            scale,
-            anchor,
-            start,
-            fine,
-            ..
-        }) = self.drag.clone()
-        else {
-            return;
-        };
-        // Shift pressed or let go half way: carry on from here at the new rate, rather than
-        // rescaling the travel so far and jumping.
-        if modifiers.shift != fine {
-            let start = (
-                self.synth_value(track, plot.horizontal())
-                    .unwrap_or(start.0),
-                plot.vertical()
-                    .and_then(|key| self.synth_value(track, key))
-                    .unwrap_or(start.1),
-            );
-            if let Some(Drag::SynthPlot {
-                anchor,
-                start: held,
-                fine,
-                ..
-            }) = self.drag.as_mut()
-            {
-                *anchor = at;
-                *held = start;
-                *fine = modifiers.shift;
+        match drag.phase {
+            DragPhase::Start => {
+                let Some((target, _)) = self.synth_param(track, plot.horizontal()) else {
+                    return;
+                };
+                // Pressed left of a stack's centre, dragging further left is what widens it.
+                let side = if plot.mirrored() && drag.from.0 < 0.0 {
+                    -1.0
+                } else {
+                    1.0
+                };
+                let start = (
+                    self.synth_value(track, plot.horizontal())
+                        .unwrap_or_default(),
+                    plot.vertical()
+                        .and_then(|key| self.synth_value(track, key))
+                        .unwrap_or_default(),
+                );
+                self.begin_drag(Drag::SynthPlot {
+                    track,
+                    plot,
+                    target,
+                    scale: PlotScale {
+                        across: scale.across * side,
+                        ..scale
+                    },
+                    start,
+                });
             }
-            return;
-        }
-        let Some(bounds) = self.physical_view.plots[plot.index()].get() else {
-            return;
-        };
-        let (dx, dy) = travel(anchor, at, data_area(bounds));
-        let rate = crate::ui::widgets::fine_scaled(1.0, modifiers);
-        if let Some((target, descriptor)) = self.synth_param(track, plot.horizontal())
-            && scale.across != 0.0
-        {
-            let value = dragged_value(&descriptor, start.0, dx * rate, scale.across);
-            self.session.set_param(target, value);
-        }
-        if let Some((target, descriptor)) =
-            plot.vertical().and_then(|key| self.synth_param(track, key))
-        {
-            let across = vertical_across(&descriptor);
-            let value = dragged_value(&descriptor, start.1, dy * rate, across);
-            self.session.set_param(target, value);
+            DragPhase::Move | DragPhase::End => {
+                let Some(Drag::SynthPlot {
+                    track: held_track,
+                    plot: held_plot,
+                    scale,
+                    start,
+                    ..
+                }) = self.drag.clone()
+                else {
+                    return;
+                };
+                if held_track != track || held_plot != plot {
+                    return;
+                }
+                let (dx, dy) = travel(drag.delta, scale.span);
+                if let Some((target, descriptor)) = self.synth_param(track, plot.horizontal())
+                    && scale.across != 0.0
+                {
+                    let value = dragged_value(&descriptor, start.0, dx, scale.across);
+                    self.session.set_param(target, value);
+                }
+                if let Some((target, descriptor)) =
+                    plot.vertical().and_then(|key| self.synth_param(track, key))
+                {
+                    let across = vertical_across(&descriptor);
+                    let value = dragged_value(&descriptor, start.1, dy, across);
+                    self.session.set_param(target, value);
+                }
+                if drag.phase == DragPhase::End {
+                    self.end_drag(window, cx);
+                }
+            }
         }
     }
 
@@ -407,18 +328,16 @@ impl AurisApp {
         &mut self,
         track: TrackId,
         plot: SynthPlot,
-        notches: f32,
+        steps: i32,
     ) -> bool {
         let Some((target, descriptor)) = plot.wheel().and_then(|key| self.synth_param(track, key))
         else {
             return false;
         };
-        self.physical_view.wheel += notches;
-        let steps = self.physical_view.wheel.trunc();
-        if steps == 0.0 {
+        if steps == 0 {
             return false;
         }
-        self.physical_view.wheel -= steps;
+        let steps = steps as f32;
         let now = self.session.param_value(target, &descriptor);
         let next = descriptor.clamp(now.round() + steps);
         if next == now {
@@ -432,27 +351,19 @@ impl AurisApp {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::{point, size};
 
     fn descriptor(min: f32, max: f32) -> ParamDescriptor {
         ParamDescriptor::new(ParamId(0), "x", "X", min, max, min)
     }
 
     #[test]
-    fn travel_is_rightwards_and_upwards_over_the_data_area() {
-        let bounds = Bounds::new(point(px(10.), px(20.)), size(px(448.), px(134.)));
-        let area = data_area(bounds);
-        assert_eq!(area, (400.0, 100.0));
-        let anchor = point(px(100.), px(100.));
-        let (dx, dy) = travel(anchor, point(px(200.), px(75.)), area);
-        assert!(
-            (dx - 0.25).abs() < 1e-6,
-            "a quarter of the width rightwards: {dx}"
-        );
-        assert!(
-            (dy - 0.25).abs() < 1e-6,
-            "a quarter of the height upwards: {dy}"
-        );
+    fn travel_is_a_share_of_the_plot_rightwards_and_upwards() {
+        // A quarter of a 0..16 harmonic axis across, and a quarter of a -1..1 one up.
+        let (dx, dy) = travel((4.0, 0.5), (16.0, 2.0));
+        assert!((dx - 0.25).abs() < 1e-6, "{dx}");
+        assert!((dy - 0.25).abs() < 1e-6, "{dy}");
+        // A plot with nothing to cross never divides by nothing.
+        assert!(travel((1.0, 1.0), (0.0, 0.0)).0.is_finite());
     }
 
     #[test]

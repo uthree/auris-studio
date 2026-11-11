@@ -13,7 +13,7 @@ from pathlib import Path
 import numpy as np
 import scipy
 import soundfile as sf
-from fit_physical_mel import Renderer
+from fit_worker import Renderer
 from physical_pack import snare_fitness, snare_wire_ratio
 from scipy.signal import periodogram
 

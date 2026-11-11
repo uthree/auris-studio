@@ -13,52 +13,39 @@ The [local refinement loop](composition-refinement.md) connects those trials to
 SongEval, bounded foreground edits and retained before/after audio. It records
 per-axis evidence and validity checks without an automatic musical winner.
 
-The [preset arrangement study](preset-arrangement.md) pairs these measurements with track
-participation and density across the form, and records the default-seed selection, fresh-seed
-check, and per-preset tradeoffs from the 2026-10-04 revision.
-
-The [physical-instrument copy-synthesis loop](physical-copy-synthesis.md) measures temporal
-mel-spectrogram distance against a frozen cohort of real piano, guitar and violin recordings.
-It fits only training notes and evaluates held-out pitches and dynamics with the actual Rust
-renderer. This acoustic distance complements the symbolic and learned song measurements below.
-The [grand-piano calibration](grand-piano-calibration.md) fits three-second Steinway notes
-and checks held-out pitches/dynamics at one, three and six seconds, at 24/48 kHz.
-The [whole-keyboard piano voicing](grand-piano-register.md) measures per-partial two-stage decay,
-register level and soundboard knock from C1 to C8, and checks itself on that cohort's held-out notes.
-The [low-register correction](physical-low-register.md) measures bow-force continuity,
-bass-note periodicity and piano partial stretch, with paired audition files.
-The [piano stretch tuning](piano-stretch-tuning.md) measures each key's fundamental, heard
-pitch and octave beats against equal temperament.
-The [long-note/trajectory extension](physical-trajectories.md) adds 3/6-second notes, real
-violin glissandi, recorded performance guides and separate late-sustain/transition/release losses.
-The [physical-model experiments](physical-extensions.md) add causal radiation modes,
-register/gesture ablations, paired confidence intervals and synchronized piano-pedal references.
-The [bass/bar/drum calibration](physical-pack.md) adds 391 real-recording excerpts, separate
-attack/body/tail loss and acoustic-role guards for every snare/tom register.
-The [electric-guitar experiment](electric-guitar.md) adds independent pickup DI, an
-oversampled amplifier and a paired clean/pedal recording benchmark with pitch-grouped splits.
-The [folk-instrument experiment](folk-physical-instruments.md) adds hammered dulcimer strikes
-and settled tin-whistle scale excerpts, with distinct-pitch validation and frozen source hashes.
+The [physical-instrument measurements](physical-copy-synthesis.md) compare the piano, guitar,
+strings, reeds, whistles and hammered strings with frozen cohorts of real recordings, through
+the actual Rust renderer: temporal mel-spectrogram distance on held-out pitches and dynamics,
+and per-partial decay, register level and soundboard knock across a Steinway's keyboard.
+This acoustic distance complements the symbolic and learned song measurements below.
+The drum kit, the guitar amplifier and the choir are fitted to recordings as well, each on its
+training notes only and evaluated on held-out ones.
+The [drum-kit calibration](physical-pack.md) fits seven kit families to 151 real drum hits,
+with separate attack/body/tail loss and acoustic-role guards for every snare/tom register.
+The [guitar-amplifier experiment](electric-guitar.md) adds an oversampled amplifier and a
+paired clean/pedal recording benchmark with pitch-grouped splits.
 The [choir calibration](choir-copy-synthesis.md) fits the native vocal-tract ensemble to
 real sustained vowels, with 24 training notes and 80 notes from separate held-out singers.
+The [piano stretch tuning](piano-stretch-tuning.md) is how the piano's fundamentals leave
+equal temperament: the rule; the fundamentals, heard pitch, octaves and string stiffness
+measured at thirteen keys beside the same reading of a recorded Steinway; and the tests that
+hold them.
 
 ## Native instrument upper-midrange voicing
 
 The 2026-10-19 upper-midrange study follows the
 [snare and ride correction](physical-pack.md#targeted-snare-and-ride-voicing).
-It screens all sixteen native instrument families, additional pulse/saw/FM lead patches,
-unmodulated controls and the production pop/rock guitar-amp chains. The worker uses the
-actual instrument implementation at 44.1/48/96 kHz and velocities 0.35/0.65/1: 2,295 paired
-conditions, with 1.2 seconds held in each 1.8-second capture.
+It screens the native instrument families, additional pulse/saw/FM lead patches and
+unmodulated controls. The worker uses the actual instrument implementation at 44.1/48/96 kHz
+and velocities 0.35/0.65/1, with 1.2 seconds held in each 1.8-second capture.
 
-Piano, acoustic guitar, electric guitar, bowed strings, clarinet and pulse/saw leads receive
-a Q=0.9 section at 3.2 kHz. Maximum cuts are respectively 3.5/2/3/3/2/3 dB. This runs per
-voice before its amplitude envelope; the acoustic models' feedback and modal frequencies
-are unchanged. The wet amount falls linearly from full at a 1 kHz fundamental to zero at
-2 kHz, with 3 ms smoothing for bends, glides and timbre changes. FM applies up to 3 dB while
-its modulation envelope is active; an unmodulated sine is unchanged. The preview voice
-reduces its 2.6 kHz formant by up to 20% with the same fundamental protection, retaining
-the two lower formants. This does not change the physical choir's vocal tract.
+Pulse and saw leads receive a Q=0.9 section at 3.2 kHz, cutting at most 3 dB. This runs per
+voice before its amplitude envelope. The wet amount falls linearly from full at a 1 kHz
+fundamental to zero at 2 kHz, with 3 ms smoothing for bends, glides and timbre changes. FM
+applies up to 3 dB while its modulation envelope is active; an unmodulated sine is unchanged.
+The preview voice reduces its 2.6 kHz formant by up to 20% with the same fundamental
+protection, retaining the two lower formants. This does not change the physical choir's vocal
+tract.
 
 The following medians describe the paired probe windows whose fundamental is below 1.4 kHz
 and whose original 2–5 kHz power exceeds 1% of audible power. Attack is 0–150 ms; sustain is
@@ -66,24 +53,16 @@ and whose original 2–5 kHz power exceeds 1% of audible power. Attack is 0–15
 
 | Sound | Attack 2–5 kHz | Sustain 2–5 kHz |
 | --- | ---: | ---: |
-| Piano | -2.15 dB | -2.20 dB |
-| Acoustic guitar | -1.21 dB | -1.19 dB |
-| Electric guitar DI | -1.84 dB | -1.81 dB |
-| Bowed strings | -2.43 dB | -2.47 dB |
-| Clarinet | -1.65 dB | -1.65 dB |
 | Pulse lead, width 0.125 | -2.21 dB | -2.21 dB |
 | Saw lead | -2.25 dB | -2.25 dB |
 | Factory FM | -2.11 dB | — |
 | Preview voice | -1.36 dB | -1.37 dB |
-| Pop amplified guitar | -1.80 dB | -1.81 dB |
-| Rock amplified guitar | -1.19 dB | -1.55 dB |
 
 The report also retains deltas after audible-power matching, to distinguish spectral
 changes from overall attenuation. Hann-periodogram normalization excludes frequencies
 below 30 Hz, so a narrow pulse's DC offset cannot hide its upper harmonics. All tested
-notes at MIDI 96 and above match the baseline sample for sample, including the amp chains.
-The bass, bell, mallet, dulcimer, whistle, choir, complete drum kit and legacy noise drum
-also remain identical, as do sine/triangle and zero-index FM controls.
+notes at MIDI 96 and above match the baseline sample for sample. The choir, complete drum kit
+and legacy noise drum also remain identical, as do sine/triangle and zero-index FM controls.
 
 `tools/eval/references/instrument-harshness.json` retains the cohort, hashes and results.
 The symbolic ruler is unchanged. A frozen solo pulse-lead melody through `music.py` has
@@ -120,11 +99,6 @@ the table reads the *pattern* the composer chose rather than where the feel late
 
 The functions behind the table are `auris_compose::metrics`, public and unit-tested, so a
 future command or test can read the same numbers the example prints.
-
-The optional [composition search](composition-search.md) uses a separate, explicit symbolic
-target: written note events per bar. It maximizes negative absolute distance from that target,
-with parameter bounds and a fixed composition seed. Moving closer to a requested density is
-a measurable arrangement change; it does not establish that the song sounds better.
 
 ## Inspecting the saved score
 
@@ -215,19 +189,37 @@ warning sits at the 90th percentile and fires on one in ten: at the 95th, four s
 a row all finished at 76-78%, just under it. With `--any-part`, 518 songs give 3.9%, 5.8% and
 11% for the three rows.
 
-`tools/eval/fixtures/vocal-phrases.asong` supplies a fixed lyric probe with shared verses and
-unvoiced closures. Use the same dictionary and sound assets for both renders. An instrument
-audition of sung notes checks melody/rhythm, not the intelligibility of a learned singer.
+## Melody against the lyric's accent
+
+```
+cargo run --release -p auris-session --example accent_corpus -- --project song.auris...
+uv run tools/eval/pjs_accent_lines.py <PJS_corpus_ver1.1> > pjs.jsonl
+cargo run --release -p auris-session --example accent_corpus -- pjs.jsonl
+```
+
+Prints, per song, what the agent's `lyric_accent` tool measures: of the places where the
+dictionary's Tokyo accent rises or falls between two sung notes, the share the melody follows,
+repeats a pitch on, or opposes, with the verdict the tool would give if the song were one
+section. It needs the installed Japanese dictionary.
+
+The thresholds come from a published corpus of 1988 popular songs, which followed about 42%
+of the accent's changes and opposed about 30% — `auris_session::session::lyric_accent` has the
+figures. Measured on 40 saved agent songs (1959 lines, all read), the agent followed 39% and
+opposed 34% on average, nearer to a melody that ignores its words (about 36% each).
+
+PJS is a poor reference for this: its lyrics are sung kana with long vowels written by ear
+(とー for 冬至, よおに for ように), the dictionary misreads them, and the accent is wrong
+before any melody is compared. Its numbers measure the dictionary, not the composer.
 
 ## The learned ear
 
 ```sh
-uv run tools/eval/music.py --preset all --seeds 3 --workdir target/before --json before.json
-uv run tools/eval/music.py --preset all --seeds 3 --workdir target/after --baseline before.json --json after.json
+uv run tools/eval/music.py target/before --json before.json
+uv run tools/eval/music.py target/after --baseline before.json --json after.json
 ```
 
-Pass `--cli path/to/auris.exe` (or `auris` on macOS) to freeze a renderer, or
-pass existing WAVs/directories instead of `--preset`. Both models are development
+Pass WAVs or directories of WAVs; each file's prompt profile is recognised from its
+name, or named for all of them with `--preset`. Both models are development
 tools; rendering and inference stay local. The initial run fetches several GB of
 public weights into `target/composition-eval/models` and a pinned copy of the
 official TuneJury source beside them. Python and packages are managed by uv.
@@ -340,64 +332,21 @@ shipped in the application or calibrated as an automatic selector. The retained
 successful local inference from the Antigravity CLI attempt, which did not
 deliver raw audio and produced no valid music assessment.
 
-`melody_ab.py` transplants an instrumental lead into a frozen backing;
-`melody_continuity_ab.py` freezes the renderer and makes level-matched chorus
-excerpts. `melody_phrase_ab.py` compares baseline, pitch, rhythm and combined
-variants with explicit artifact hashes and component-change guards. Existing
+`melody_ab.py` transplants an instrumental lead into a frozen backing. Existing
 notes, backing, IDs, mixer and performance transforms remain in editable projects.
 `structure.py`, `melody_continuity.py` and `seed_metrics.py` inspect written-score
 rhythm, phrase continuity, overlap and voice motion independently of model scores.
 
-Score **the listening excerpts** with `music.py --segments 1`. The four-condition
-`melody_phrase_listening.py --scores scores.json` specification has schema_version
-1 and a `variants` object. Each condition supplies `music: {path, sha256}` for its
-evaluation report and `excerpt_sha256`, a complete label-to-WAV-hash map. Reports
-must share model, preprocessing and prompt metadata. Omitting scores leaves cells
-blank. `seed_listening.py --manifest manifest.json --scores music.json --output
-listening.html` produces a shuffled seed comparison and verifies that scored hashes
-match the listening excerpts. Both reports use local audio players and upload nothing.
-
-## Preset tuning
-
-```sh
-uv run tools/eval/tune.py --preset all --trials 18 --out tune-results.json --workdir target/tuning
-uv run tools/eval/tune.py --preset chiptune --dials humanize dynamics --trials 12 --out focused.json
-```
-
-Optuna TPE maximizes two separate objectives: TuneJury reward and MuQ-MuLan positive
-cosine. The continuous dials are humanize, dynamics, fill, variation, mood, tempo
-within ±6%, and swing within ±6 points only for already swung presets. Key, groove,
-progression, form and instruments stay fixed. Trial zero uses the current preset;
-training seeds are 101/102 and independent validation seeds are 301/302.
-`--dials` confines an experiment to the named parameters; every other resolved
-value, including tempo and swing, remains fixed.
-
-Select a Pareto candidate whose two training objectives are no worse than trial
-zero; prioritize reward among those candidates. Acceptance requires both validation
-means to be no worse than current and at least one to improve. Every trial retains
-its effective dial settings, editable projects, full renders, window positions,
-PCM hashes and scores under distinct filenames. Results save after each preset.
-An improvement on training alone is insufficient to update `preset.rs`.
-
-The [October 2026 calibration](learned-music-tuning.md) records the shipped dials,
-writer changes, fresh paired measurements and rejected candidates.
-
-For writer changes, archive the original renderer, run the symbolic ruler and
-`music.py` before editing, change one musical rule, then compare matching seeds
-through the same instruments and render settings. Retain failed candidates and
-regressions. Use fresh seeds for a final generalization check after model-guided
-selection, since validation seeds used repeatedly become training evidence.
-
-These models provide a measurable optimization objective, not a substitute for
-listening. Check timbral identity, score diversity, note bounds, and per-case
-regressions along with mean reward. Optimizing one reward can reward a repeated
-texture or a specific renderer artifact instead of better musical development.
+Score **the listening excerpts** with `music.py --segments 1`.
+`seed_listening.py --manifest manifest.json --scores music.json --output
+listening.html` produces a shuffled comparison and verifies that scored hashes
+match the listening excerpts. It uses local audio players and uploads nothing.
 
 ## Verify the measuring tools
 
 ```sh
-uv run --python 3.11 --with pytest --with numpy --with scipy --with soundfile --with optuna pytest tools/eval/test_music.py tools/eval/test_render_audio.py tools/eval/test_tune.py
-uv run --with ruff ruff check tools/eval/music.py tools/eval/learned_models.py tools/eval/render_audio.py tools/eval/tune.py
+uv run --python 3.11 --with pytest --with numpy --with scipy --with soundfile pytest tools/eval/test_music.py
+uv run --with ruff ruff check tools/eval/music.py tools/eval/learned_models.py
 ```
 
 The contract tests require no model download. Real-model comparisons should use

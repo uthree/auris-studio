@@ -225,7 +225,7 @@ fn execute(
     evidence: &mut Evidence,
 ) -> Result<Value, String> {
     match &command {
-        Command::Compose { .. } | Command::Accompaniment { .. } | Command::Candidates { .. }
+        Command::Accompaniment { .. } | Command::Candidates { .. }
         | Command::PhraseVariation { .. } | Command::Arrangement { .. } | Command::EditRecipe { .. } =>
             return Err("Write expressive notes directly with edit_notes. Only simple backing may use generate_phrase.".into()),
         Command::GeneratePhrase { part, .. } if !matches!(part.as_str(), "chords" | "pad" | "arp" | "drums" | "kick" | "snare" | "hat") =>

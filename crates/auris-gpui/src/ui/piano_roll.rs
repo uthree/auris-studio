@@ -907,11 +907,7 @@ impl AurisApp {
                             // both ends and let the label spill over the hint beside it.
                             .flex_shrink_0()
                             .whitespace_nowrap()
-                            .tooltip(crate::ui::tooltip::keyed_tip(
-                                self.note_snap_tip(),
-                                "",
-                                &theme,
-                            )),
+                            .tooltip(crate::ui::tooltip::text_tip(self.note_snap_tip())),
                         )
                     })
                     .when(editable && !self.reference_editor, |row| {

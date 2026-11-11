@@ -361,11 +361,7 @@ impl AurisApp {
                                 .w(mark.width)
                                 .h(crate::ui::lint::MARK_STRIP)
                                 .cursor_pointer()
-                                .tooltip(crate::ui::tooltip::keyed_tip(
-                                    mark.message.clone(),
-                                    "",
-                                    &theme,
-                                ))
+                                .tooltip(crate::ui::tooltip::text_tip(mark.message.clone()))
                                 .on_mouse_down(
                                     MouseButton::Left,
                                     AurisApp::opens_menu(cx, move |this, at| {
@@ -375,7 +371,12 @@ impl AurisApp {
                         }))
                         .on_mouse_down(
                             MouseButton::Left,
-                            cx.listener(|this, event: &MouseDownEvent, _, cx| {
+                            cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                                // A control over the lanes (the return-to-playhead button)
+                                // took the press and its focus first; it is not a sweep.
+                                if window.default_prevented() {
+                                    return;
+                                }
                                 this.begin_lane_drag(event, cx);
                             }),
                         )
@@ -403,30 +404,28 @@ impl AurisApp {
             )
     }
 
-    /// While a scroll has taken the view away from a rolling playhead, a button in the corner
-    /// the playhead went out of that takes the view back to it.
+    /// While a scroll has taken the view away from a rolling playhead, Atelier's
+    /// [`atelier::BackToPlayhead`] in the corner the playhead went out of, which takes the view
+    /// back to it.
     fn return_to_playhead_chip(
         &self,
         playhead: Ticks,
         cx: &mut gpui::Context<Self>,
-    ) -> Option<gpui::AnyElement> {
+    ) -> Option<atelier::BackToPlayhead> {
         if !self.is_playing() {
             return None;
         }
-        let side = crate::ui::timeline::playhead_side(
-            &self.playhead_follow,
-            &self.timeline,
-            playhead,
-            self.arrangement_width,
-        )?;
-        let back = atelier::BackToPlayhead::new("return-to-playhead", side)
-            .label(self.t(Key::CmdRevealPlayhead))
-            .on_click(cx.listener(|this, _, _, cx| {
-                this.reveal_playhead();
-                cx.notify();
-            }));
-        // It keeps its own press, so the lanes under it do not start a rubber band.
-        Some(back.into_any_element())
+        let side =
+            self.timeline
+                .playhead_side(&self.playhead_follow, playhead, self.arrangement_width)?;
+        Some(
+            atelier::BackToPlayhead::new("return-to-playhead", side)
+                .label(self.t(Key::CmdRevealPlayhead))
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.reveal_playhead();
+                    cx.notify();
+                })),
+        )
     }
 
     /// Removes open rows whose parameter disappeared with a plugin or track edit.

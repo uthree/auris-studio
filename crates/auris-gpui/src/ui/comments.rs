@@ -216,11 +216,8 @@ impl AurisApp {
             .child(div().w(px(3.0)).h_full().bg(theme.warning))
             .child(tag_text(&comment.text))
             // Where the tag stands, so editing it opens the editor over it.
-            .child(crate::ui::inline_edit::spot(
-                &self.canvas.spots,
-                tag_selector(host, id),
-            ))
-            .tooltip(crate::ui::tooltip::keyed_tip(full, "", theme))
+            .child(self.canvas.spots.spot(tag_selector(host, id)))
+            .tooltip(crate::ui::tooltip::text_tip(full))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, event: &MouseDownEvent, _, cx| {
@@ -282,7 +279,11 @@ impl AurisApp {
     /// note about the mix is read where it is written. A single press opens the text, since a
     /// note on a node has nowhere to be dragged to; the press stops there, so it never also
     /// takes hold of the node.
+    ///
+    /// Atelier's `GraphNode::comment` draws the same note on its own `NodeCanvas`, but the
+    /// mixer graph is drawn by `gpui_flow`, so the note stays here until the graph moves over.
     pub(crate) fn mixer_comment_notes(
+        // atelier: allow — the mixer graph is a gpui_flow canvas, not an Atelier NodeCanvas.
         &self,
         node: MixerNode,
         zoom: f32,
@@ -319,15 +320,8 @@ impl AurisApp {
                             .child(note_text(&comment.text)),
                     )
                     // Where the note stands, so editing it opens the editor over it.
-                    .child(crate::ui::inline_edit::spot(
-                        &self.canvas.spots,
-                        tag_selector(host, id),
-                    ))
-                    .tooltip(crate::ui::tooltip::keyed_tip(
-                        comment.text.clone(),
-                        "",
-                        theme,
-                    ))
+                    .child(self.canvas.spots.spot(tag_selector(host, id)))
+                    .tooltip(crate::ui::tooltip::text_tip(comment.text.clone()))
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |this, event: &MouseDownEvent, _, cx| {

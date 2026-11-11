@@ -78,7 +78,7 @@ mod tests {
         let cx = &mut VisualTestContext::from_window(handle.into(), main_cx);
         handle
             .update(cx, |settings, _, cx| {
-                settings.search = TextField::new("Title bar menus");
+                settings.search = "Title bar menus".into();
                 cx.notify();
             })
             .unwrap();

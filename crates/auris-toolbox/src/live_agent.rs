@@ -172,9 +172,6 @@ fn definitions_with_arrangement(arrangement_enabled: bool) -> Vec<Definition> {
             let Some(action) = branch["properties"]["action"]["const"].as_str() else {
                 continue;
             };
-            if action == "compose" {
-                continue;
-            }
             if action == "arrangement" && !arrangement_enabled {
                 continue;
             }

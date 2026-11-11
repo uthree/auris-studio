@@ -1,10 +1,10 @@
 # Arrangement after composition
 
-Use this pass for complete songs and instrumental cues after the core melody, lyrics where applicable, harmony, and form exist. Composing and arranging may overlap, but revisit the actual score before final synthesis/export. Author counterlines, distinctive bass, interludes and fills note by note; reserve writers for plain chord/pad backing, simple arpeggios and basic drum pulses. The CLI specification examples below apply to an explicit automatic-generation request. A preset's track count, automatic balance, or successful render does not establish an intentional arrangement. Scale the work to the brief; do not expand a local edit or a short demo into a full production.
+Use this pass for complete songs and instrumental cues after the core melody, lyrics where applicable, harmony, and form exist. Composing and arranging may overlap, but revisit the actual score before final synthesis/export. Author counterlines, distinctive bass, interludes and fills note by note; reserve writers for plain chord/pad backing, simple arpeggios and basic drum pulses. A track count, automatic balance, or successful render does not establish an intentional arrangement. Scale the work to the brief; do not expand a local edit or a short demo into a full production.
 
 ## Establish what the arrangement must serve
 
-Save a baseline project/specification and a short preview when available. Inspect actual notes, sound selections, section boundaries, and the requested loop/ending. Identify the foreground and protected material. Briefly map each section's foreground, accompaniment roles, register, density, and entrance/exit. Keep this in `production_record` when available or in concise delivery notes. This is a working musical plan, not a requirement to fill every role in every section.
+Save a baseline project and a short preview when available. Inspect actual notes, sound selections, section boundaries, and the requested loop/ending. Identify the foreground and protected material. Briefly map each section's foreground, accompaniment roles, register, density, and entrance/exit. Keep this in `production_record` when available or in concise delivery notes. This is a working musical plan, not a requirement to fill every role in every section.
 
 For each proposed change, name its purpose and range: for example, leave space for verse lyrics, make the refrain open up, or prepare the loop return. Keep recognizable hooks, authored melody/lyrics, and intentional harmonic tensions. Reharmonization or replacing the main theme is a separate creative choice, not an automatic consequence of arranging.
 
@@ -33,26 +33,6 @@ Choose sounds for their role and range. Match sustained lines to sustained/legat
 Shape emphasis and release over phrases. Use deliberate timing, velocity, gate, or supported automation before adding random humanization; keep ensemble arrivals coherent. Ableton discusses [automation for performance variation](https://makingmusic.ableton.com/humanizing-with-automation-envelopes). Inspect the actual instrument's controls: Spitfire distinguishes [dynamic-layer changes from expression volume](https://support.spitfireaudio.com/en/articles/11816091-what-is-the-difference-between-dynamics-vibrato-and-expression), but its CC mappings are library-specific. Do not assume CC1, CC11, a keyswitch, or a similarly named Auris parameter has the same effect. Verify supported controls and the rendered result; do not claim an articulation change from a saved setting alone.
 
 ## Apply through the available Auris interface
-
-### CLI specification revisions
-
-Keep the composition baseline and create a separately named arranged candidate. In `.asong`, section `parts` controls participation; `[section.<section>.part.<name>]` can override `octave`, `density`, `gate`, `subdivision`, `rhythm`, and `note`. Part-level sound, role, gain, and pan belong to the track, not a section patch. Use separate parts for different instruments entering in different sections. For example, with `lead`, `chords`, `bass`, and `arp` already declared:
-
-```toml
-[section.verse]
-bars = 8
-parts = "lead chords bass"
-
-[section.chorus]
-bars = 8
-parts = "lead chords bass arp"
-
-[section.chorus.part.arp]
-density = 0.45
-gate = 0.6
-```
-
-This is a structural example, not a prescription to always add an arpeggio. Validate with `auris compose arranged.asong --print`, compose to a new project path, then use `auris info` and compare the score/preview. The CLI regenerates the complete specification: a fixed seed does not guarantee unchanged melody after settings change. Never use this route to claim preservation of an existing authored foreground. For exact backing-only edits, use MCP/live tools; if unavailable, preserve the original and explain the limitation. Do not invent a CLI `arrange` command or directly rewrite project JSON to bypass supported edits.
 
 ### MCP and live editing
 

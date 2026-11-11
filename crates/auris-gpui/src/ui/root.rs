@@ -178,17 +178,12 @@ impl Render for AurisApp {
             .map_or(window.viewport_size().width, |bounds| bounds.size.width);
 
         // Keep the playhead on screen while the transport rolls, until a hand scrolls it out
-        // of view — see `follow_playhead` for when following comes back.
+        // of view — see `TimelineView::follow` for when following comes back.
         let playing = self.is_playing();
         let playhead = self.playhead_ticks();
         let width = self.arrangement_width;
-        crate::ui::timeline::follow_playhead(
-            &mut self.playhead_follow,
-            &mut self.timeline,
-            playhead,
-            width,
-            playing,
-        );
+        self.timeline
+            .follow(&mut self.playhead_follow, playhead, width, playing);
 
         // The taskbar and the Alt-Tab list are where a user looks to tell one project's window
         // from another's, and they were both showing a constant. Only on a change: setting it is
@@ -320,17 +315,26 @@ impl AurisApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
-        // Every window that draws the document starts a frame of painted spots here, before
-        // the early return, so a label that stops being painted in it is forgotten.
-        self.canvas
-            .spots
-            .borrow_mut()
-            .next_frame(window.window_handle().window_id());
+        let (mut overlays, inline) = self.render_document_overlays_split(window, cx);
+        overlays.extend(inline);
+        overlays
+    }
+
+    /// [`Self::render_document_overlays`], with a prompt drawn in place apart from the rest.
+    ///
+    /// Atelier's inline field floats itself over the window, which gpui allows only outside
+    /// another floating layer, so a host that floats its overlays has to place this one beside
+    /// them rather than among them.
+    pub(crate) fn render_document_overlays_split(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> (Vec<AnyElement>, Option<AnyElement>) {
         if self
             .event_window
             .is_some_and(|id| id != window.window_handle().window_id())
         {
-            return Vec::new();
+            return (Vec::new(), None);
         }
         // A menu owns Enter/Space while open; they must not activate its focused trigger.
         let menu_open = self.menu.is_some() || self.menu_bar.is_some();
@@ -345,7 +349,8 @@ impl AurisApp {
         }
         let export_overlay = self.render_export_overlay(cx);
         let export_dialog = self.render_export_dialog(cx);
-        let prompt = self.render_prompt(cx);
+        let inline = self.inline_prompt_open(window);
+        let prompt = self.render_prompt(window, cx);
         let palette = self.render_palette(cx);
         let menu = self.render_context_menu(window, cx);
         let mut overlays = Vec::new();
@@ -376,8 +381,13 @@ impl AurisApp {
             overlays.push(element);
         }
 
+        let mut inline_prompt = None;
         if let Some(element) = prompt {
-            overlays.push(element.into_any_element());
+            if inline {
+                inline_prompt = Some(element.into_any_element());
+            } else {
+                overlays.push(element.into_any_element());
+            }
         }
         if let Some(element) = palette {
             overlays.push(element.into_any_element());
@@ -386,7 +396,7 @@ impl AurisApp {
             overlays.push(element.into_any_element());
         }
 
-        overlays
+        (overlays, inline_prompt)
     }
 
     /// Note commands shared by docked and independent score editors.
@@ -2007,7 +2017,8 @@ impl AurisApp {
                 subject, handle, ..
             } => self.drag_envelope_handle(subject, handle, event.position),
             Drag::EqNode { subject, band, .. } => self.drag_eq_node(subject, band, event.position),
-            Drag::SynthPlot { .. } => self.drag_synth_plot(event.position, event.modifiers),
+            // Atelier's plot follows its own drag and reports it to `synth_edit`.
+            Drag::SynthPlot { .. } => {}
             Drag::PartDial {
                 clip,
                 dial,
@@ -2059,18 +2070,6 @@ impl AurisApp {
                 bounds,
             } => {
                 self.drag_volume_contour_point(clip, index, bounds, event.position);
-            }
-            Drag::VideoColour {
-                channel,
-                start_fraction,
-                start_x,
-            } => {
-                let delta = crate::ui::widgets::fine_scaled(
-                    f32::from(event.position.x - start_x),
-                    event.modifiers,
-                );
-                let fraction = crate::ui::widgets::dragged(start_fraction, delta);
-                self.set_video_colour_channel(channel, fraction, false);
             }
             Drag::TimeZoom {
                 start_fraction,
@@ -2137,13 +2136,6 @@ impl AurisApp {
             Some(Drag::DrumLaneReorder { track, .. }) => Some(*track),
             _ => None,
         };
-        // A colour drag changed the look without writing it down on every move; this is the
-        // one write for the whole sweep.
-        if matches!(self.drag, Some(Drag::VideoColour { .. }))
-            && let Err(error) = self.save_settings()
-        {
-            log::warn!("could not save settings: {error}");
-        }
         self.stop_audition();
         // A key of the drawn keyboard pressed with the pointer is let go of here rather than on
         // the key itself, because the pointer may well have left it — or the panel — by now.
@@ -2211,7 +2203,8 @@ impl AurisApp {
         } else if self.timbre_map.open && self.timbre_map.search_focused {
             self.timbre_search_key(event, cx)
         } else if self.library_search_focused {
-            self.library_search_key(event, cx)
+            // Atelier's input takes the search box's keys before they get here.
+            false
         } else {
             self.agent_key(event, window, cx)
         };
@@ -2306,47 +2299,6 @@ impl AurisApp {
             ExportDialogControl::Dither => {}
         }
         cx.notify();
-    }
-
-    /// Answers for a key while the library's search box holds the keyboard.
-    ///
-    /// The characters themselves never come through here — they arrive through the platform's
-    /// input handler, which is what lets an IME compose a Japanese query into the field.
-    /// Everything that is *not* a character does, though, and has to be dispatched by hand:
-    /// gpui hands a field its insertions and nothing else. That list is
-    /// [`TextField::apply_key`](crate::ui::text_field::TextField::apply_key), shared with every
-    /// other field in the window — writing it out here is what left this box with no backspace.
-    fn library_search_key(&mut self, event: &gpui::KeyDownEvent, cx: &mut Context<Self>) -> bool {
-        if !self.library_search_focused {
-            return false;
-        }
-        let key = event.keystroke.key.as_str();
-        // While the IME is composing, Escape and Enter belong to the candidate window: one
-        // cancels the composition and the other accepts it.
-        if self.library_search.marked().is_none() {
-            match key {
-                // Escape throws the query away; Enter keeps it. The list is already showing what
-                // was found, so leaving with it on screen is the useful half of pressing Return
-                // — it is a browser being searched, not a dialog being answered.
-                "escape" => {
-                    self.leave_library_search();
-                    return true;
-                }
-                "enter" => {
-                    self.library_search_focused = false;
-                    return true;
-                }
-                _ => {}
-            }
-        }
-
-        self.library_search.apply_key_with_clipboard(
-            key,
-            event.keystroke.modifiers.shift,
-            event.keystroke.modifiers.secondary(),
-            false,
-            cx,
-        ) != crate::ui::text_field::KeyEffect::Ignored
     }
 
     /// Plays `event` on the typing keyboard, and says whether it was one of its keys.

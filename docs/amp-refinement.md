@@ -39,11 +39,9 @@ models. Both receive the same recorded DI with cabinet bypass. A paired
 [−0.017270, −0.009835] against the previous amp and [−0.001333, −0.000912]
 against simple tanh. This cohort supplies no recorded speaker-cabinet target.
 
-Local final timing at 48 kHz stereo, 256 frames and 24 electric-guitar voices
-plus amp is 0.270 ms mean and 0.290 ms p99 over 512 blocks. Existing nine-preset
-WAV hashes, symbolic rows and Audiobox scores are unchanged. These presets
-do not exercise the changed plugins. The timing, tuning and matched-level
-audition records are in `tools/eval/references/physical-next-regressions.json`.
+Existing nine-preset WAV hashes, symbolic rows and Audiobox scores are unchanged.
+These presets do not exercise the changed plugins. That regression record is in
+`tools/eval/references/physical-next-regressions.json`.
 
 The complete per-note report is `tools/eval/references/amp-refinement.json`,
 the fitted parameters are in `tools/eval/references/amp-refinement-fit.json`, and the

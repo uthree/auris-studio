@@ -77,7 +77,7 @@ impl Render for ReferencePianoRoll {
             app.claim_event_window(window);
             app.reconcile_focus(window, cx);
             let roll = app.render_piano_roll(window, cx);
-            let overlays = app.render_document_overlays(window, cx);
+            let (overlays, inline_prompt) = app.render_document_overlays_split(window, cx);
             // Shared overlays use window coordinates and must escape the composer's scroll clip.
             let overlays = (!overlays.is_empty()).then(|| {
                 gpui::deferred(
@@ -108,6 +108,7 @@ impl Render for ReferencePianoRoll {
                         .child(roll),
                 )
                 .children(overlays)
+                .children(inline_prompt)
                 .into_any_element()
         })
     }

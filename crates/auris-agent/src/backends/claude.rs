@@ -799,9 +799,12 @@ async fn receive_turn_tracked(
                                 }
                             }
                             "tool_use" => {
-                                let tool = part["name"].as_str().and_then(tool_name).ok_or(
-                                    "Claude Code requested a tool outside the Auris catalog",
-                                )?;
+                                // A name the CLI does not offer cannot run: the CLI answers it
+                                // with "No such tool available" and the model corrects itself.
+                                // It is reported under the name it asked for, as the failed
+                                // call it is, so the log says what was asked.
+                                let requested = part["name"].as_str().unwrap_or_default();
+                                let tool = tool_name(requested).unwrap_or(requested);
                                 let id = part["id"]
                                     .as_str()
                                     .ok_or("Claude Code omitted a tool call ID")?;
@@ -1216,6 +1219,59 @@ mod tests {
             && event["tool"] == "add_track"
             && event["text"] == "Done"
             && event["images"] == json!([{"media_type":"image/png","data":"QQ=="}])
+            && event["ok"] == true));
+    }
+
+    #[tokio::test]
+    async fn a_tool_the_cli_does_not_offer_is_a_failed_call_not_the_end_of_the_turn() {
+        let (bridge, _commands, events) = crate::worker::test_bridge();
+        let (client, server) = tokio::io::duplex(32768);
+        let (reader, writer) = tokio::io::split(client);
+        let mut cli = Cli::transport(None, writer, reader);
+        let drive = async { receive_turn(&mut cli, &bridge).await.unwrap() };
+        let peer = async {
+            let (_, mut writer) = tokio::io::split(server);
+            reply(
+                &mut writer,
+                json!({"type":"system","subtype":"init","tools":["mcp__auris_live__add_track"]}),
+            )
+            .await;
+            // What the installed CLI sends back for a name outside its catalog.
+            reply(&mut writer, json!({"type":"assistant","message":{"content":[{"type":"tool_use","id":"missing","name":"TodoWrite","input":{"todos":[]}}]}})).await;
+            reply(&mut writer, json!({"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"missing","is_error":true,"content":"<tool_use_error>Error: No such tool available: TodoWrite</tool_use_error>"}]}})).await;
+            emit_tool_result(
+                &mut writer,
+                "call",
+                "mcp__auris_live__add_track",
+                json!({"name":"Lead"}),
+                true,
+            )
+            .await;
+            reply(
+                &mut writer,
+                json!({"type":"result","subtype":"success","is_error":false,"result":"Added."}),
+            )
+            .await;
+        };
+        let (answer, ()) = tokio::join!(drive, peer);
+        assert_eq!(answer, "Added.");
+        let events: Vec<_> = events.try_iter().collect();
+        assert!(
+            events
+                .iter()
+                .any(|event| event["event"] == "call" && event["tool"] == "TodoWrite")
+        );
+        assert!(events.iter().any(|event| {
+            event["event"] == "result"
+                && event["tool"] == "TodoWrite"
+                && event["ok"] == false
+                && event["text"]
+                    .as_str()
+                    .unwrap()
+                    .contains("No such tool available")
+        }));
+        assert!(events.iter().any(|event| event["event"] == "result"
+            && event["tool"] == "add_track"
             && event["ok"] == true));
     }
 

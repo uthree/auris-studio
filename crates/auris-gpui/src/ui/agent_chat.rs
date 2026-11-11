@@ -4589,7 +4589,7 @@ impl AurisApp {
                                     .flex_shrink_0()
                                     .justify_start()
                                     .child(div().min_w_0().truncate().child(name))
-                                    .tooltip(crate::ui::tooltip::keyed_tip(tip, "", theme))
+                                    .tooltip(crate::ui::tooltip::text_tip(tip))
                                 },
                             )),
                     )
@@ -5035,7 +5035,7 @@ impl AurisApp {
                     },
                 ))
             })
-            .tooltip(crate::ui::tooltip::keyed_tip(tooltip, "", theme))
+            .tooltip(crate::ui::tooltip::text_tip(tooltip))
             .into_any_element()
     }
 
@@ -5088,10 +5088,9 @@ impl AurisApp {
                 )
                 .w_full()
                 .flex_shrink_0()
-                .tooltip(crate::ui::tooltip::keyed_tip(
+                .tooltip(crate::ui::tooltip::tip_with_keys(
                     self.t(Key::AgentModelsFetch),
                     &crate::actions::menu_keystroke("secondary-r"),
-                    theme,
                 )),
             )
             .when(self.agent_chat.fetching_models, |this| {
@@ -5183,7 +5182,7 @@ impl AurisApp {
                             .h_full()
                             .child(bounded_picker_label(name.clone())),
                     )
-                    .tooltip(crate::ui::tooltip::keyed_tip(tooltip, "", theme)),
+                    .tooltip(crate::ui::tooltip::text_tip(tooltip)),
             );
         }
         Self::agent_dropdown_popup(list)
@@ -5268,7 +5267,7 @@ impl AurisApp {
             cx.stop_propagation();
             cx.notify();
         }))
-        .tooltip(crate::ui::tooltip::keyed_tip(tooltip, "", theme))
+        .tooltip(crate::ui::tooltip::text_tip(tooltip))
         .into_any_element()
     }
 
@@ -5564,7 +5563,7 @@ impl AurisApp {
                                             .h_full()
                                             .child(bounded_picker_label(name)),
                                     )
-                                    .tooltip(crate::ui::tooltip::keyed_tip(open_tip, "", &theme)),
+                                    .tooltip(crate::ui::tooltip::text_tip(open_tip)),
                                 )
                                 .child(
                                     button_enabled(
@@ -5594,7 +5593,7 @@ impl AurisApp {
                                     .gap_0()
                                     .justify_center()
                                     .child(icon(Icon::Cross, px(12.0), theme.text_muted))
-                                    .tooltip(crate::ui::tooltip::keyed_tip(remove_tip, "", &theme)),
+                                    .tooltip(crate::ui::tooltip::text_tip(remove_tip)),
                                 )
                         })),
                 )
@@ -5710,11 +5709,7 @@ impl AurisApp {
                                     cx.notify();
                                 }),
                             )
-                            .tooltip(crate::ui::tooltip::keyed_tip(
-                                self.t(Key::AgentSendNowHint),
-                                "",
-                                &theme,
-                            )),
+                            .tooltip(crate::ui::tooltip::text_tip(self.t(Key::AgentSendNowHint))),
                         ),
                 )
             })
