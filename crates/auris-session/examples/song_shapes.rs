@@ -40,7 +40,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             )
             .ok()?;
             session.open(Path::new(&path)).ok()?;
-            session.accent_fit(track)
+            let report = session.lyric_accent(track, &[]).ok()?;
+            serde_json::to_value(report).ok()
         });
         let report = serde_json::json!({
             "path": path,

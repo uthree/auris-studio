@@ -19,7 +19,6 @@ use crate::ui::context_menu::{ContextMenu, MenuCommand};
 use crate::ui::paint;
 use crate::ui::piano_roll::{RollTool, paint_clip_extent};
 use crate::ui::prompt::{Prompt, PromptTarget};
-use crate::ui::tooltip::keyed_tip;
 use crate::ui::widgets::{ButtonStyle, button};
 
 const ROW_HEIGHT: f32 = 28.0;
@@ -178,7 +177,9 @@ impl AurisApp {
                 cx.notify();
             }),
         )
-        .tooltip(keyed_tip(self.t(Key::DrumEditorAutoSaved), "", &theme))
+        .tooltip(crate::ui::tooltip::text_tip(
+            self.t(Key::DrumEditorAutoSaved),
+        ))
         .into_any_element()
     }
 
@@ -722,7 +723,7 @@ impl AurisApp {
                     .when(selected, |row| row.bg(theme.accent_soft))
                     .children(handle)
                     .child(div().flex_1().min_w_0().truncate().child(label.clone()))
-                    .tooltip(keyed_tip(label, "", &theme));
+                    .tooltip(crate::ui::tooltip::text_tip(label));
                 if let Some(track) = track {
                     element = element
                         .on_mouse_down(
@@ -911,7 +912,7 @@ impl AurisApp {
                             .min_w_0()
                             .h_full()
                             .overflow_hidden()
-                            .tooltip(keyed_tip(self.t(Key::DrumRepeatPaint), "", &theme))
+                            .tooltip(crate::ui::tooltip::text_tip(self.t(Key::DrumRepeatPaint)))
                             .when(editable && self.tool == RollTool::Velocity, |this| {
                                 this.cursor(gpui::CursorStyle::ResizeUpDown)
                             })

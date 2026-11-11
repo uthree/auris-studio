@@ -299,10 +299,9 @@ impl AurisApp {
                     .tab_stop(true)
                     .key_context("AurisRhythmCell")
                     .focus(|style| style.border_color(theme.text).border_2())
-                    .tooltip(crate::ui::tooltip::keyed_tip(
+                    .tooltip(crate::ui::tooltip::tip_with_keys(
                         format!("{name} · {}", step + 1),
                         "Space",
-                        &theme,
                     ))
                     .on_action(cx.listener(move |this, _: &Activate, _, cx| {
                         this.change_rhythm_cell(clip, &key_voice, Some(step), cx);

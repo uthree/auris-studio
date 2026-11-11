@@ -196,7 +196,7 @@ impl AurisApp {
                             .truncate()
                             .text_xs()
                             .child(name.clone())
-                            .tooltip(crate::ui::tooltip::keyed_tip(name.clone(), "", &self.theme)),
+                            .tooltip(crate::ui::tooltip::text_tip(name.clone())),
                     )
                     .child(self.plugin_menu_button(menu_id, subject, name, cx)),
             )
@@ -211,7 +211,7 @@ impl AurisApp {
         subject: PluginSubject,
         name: String,
         cx: &mut gpui::Context<Self>,
-    ) -> gpui::Stateful<gpui::Div> {
+    ) -> atelier::Button {
         let open = self.menu.as_ref().is_some_and(|menu| menu.entries.iter().any(|entry| {
             matches!(entry, MenuEntry::Item(item) if item.command == MenuCommand::PluginParameters(subject))
         }));
@@ -231,10 +231,7 @@ impl AurisApp {
                 }
             }),
         )
-        .w(Metrics::CONTROL_HEIGHT)
-        .px_0()
-        .flex_shrink_0()
-        .tooltip(self.tip(Key::PluginActions, ""))
+        .tooltip(self.t(Key::PluginActions))
     }
 
     /// Adds parameter access and a separate close command to a plugin's menu.
@@ -490,7 +487,7 @@ impl AurisApp {
                                     cx.notify();
                                 }),
                             )
-                            .tooltip(self.tip(Key::Close, "")),
+                            .tooltip(self.t(Key::Close)),
                         ),
                 )
                 .children(analyser)

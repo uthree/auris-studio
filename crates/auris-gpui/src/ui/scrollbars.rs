@@ -124,10 +124,9 @@ impl AurisApp {
             div()
                 .id(("time-scroll-help", panel.index()))
                 .debug_selector(move || format!("{}-help", panel.element_id()))
-                .tooltip(crate::ui::tooltip::keyed_tip(
+                .tooltip(crate::ui::tooltip::tip_with_keys(
                     self.t(auris_i18n::Key::TimelineScrollHelp),
                     "Shift+Wheel",
-                    &self.theme,
                 ))
                 .on_scroll_wheel(cx.listener(|this, event: &gpui::ScrollWheelEvent, _, cx| {
                     let delta = event.delta.pixel_delta(px(24.0));

@@ -1,6 +1,6 @@
 //! Appearance changes exercised through the real settings window and its input handler.
 
-use gpui::{Entity, EntityInputHandler, TestAppContext, VisualTestContext, WindowHandle, size};
+use gpui::{Entity, TestAppContext, VisualTestContext, WindowHandle, size};
 
 use super::*;
 
@@ -79,7 +79,7 @@ fn a_japanese_theme_is_committed_then_edited_without_losing_its_font(cx: &mut Te
     handle
         .update(cx, |this, window, cx| {
             // Exercise the platform's UTF-16 input boundary, not only direct field mutation.
-            this.replace_and_mark_text_in_range(None, "宵の青", Some(3..3), window, cx);
+            this.type_into_focused("宵の青", Some(3..3), window, cx);
         })
         .unwrap();
     cx.run_until_parked();
@@ -282,7 +282,7 @@ fn invalid_theme_input_stays_open_for_correction(cx: &mut TestAppContext) {
                 "opening the editor focuses its name field"
             );
             // A paste arrives as one platform text replacement, including its line breaks.
-            this.replace_text_in_range(None, "入力の\n確認", window, cx);
+            this.type_into_focused("入力の\n確認", None, window, cx);
         })
         .unwrap();
     cx.run_until_parked();
@@ -464,7 +464,7 @@ fn signal_editor_saves_overrides_preserves_base_edits_and_restores_fallbacks(
         assert_eq!(this.theme.signal_palette, saved.theme().signal_palette);
         let declared: gpui::Hsla = gpui::rgb(0xbb44cc).into();
         assert!((this.theme.playing.h - declared.h).abs() < 1e-4);
-        assert_eq!(this.theme.meter_color(-20.0), this.theme.playing);
+        assert_eq!(this.theme.meter_low, this.theme.playing);
     });
     crate::harness::click("edit-theme", cx);
     crate::harness::click("theme-signal-active", cx);
@@ -507,6 +507,17 @@ fn intermediate_gradient_points_edit_validate_persist_and_delete(cx: &mut TestAp
     // Tab must switch the input handler as well as the visible focus.
     cx.simulate_keystrokes("tab secondary-a");
     cx.simulate_input("#ABCDEF");
+    // Shift-Tab steps back out of a field into the one before it, not into its own frame.
+    cx.simulate_keystrokes("shift-tab");
+    handle
+        .update(cx, |this, window, cx| {
+            let input = this
+                .focused_input(window)
+                .expect("a field holds the keyboard");
+            assert_eq!(input.read(cx).text(), "60");
+        })
+        .unwrap();
+    cx.simulate_keystrokes("tab");
     app.read_with(cx, |this, _| {
         assert_eq!(this.theme.velocity_color(0.6), before)
     });

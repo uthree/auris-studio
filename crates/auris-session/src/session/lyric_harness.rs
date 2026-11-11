@@ -158,6 +158,10 @@ pub struct PhraseAnalysis {
     pub reading: Option<String>,
     /// Provenance of this reading.
     pub reading_source: ReadingSource,
+    /// The dictionary's Tokyo pitch accent of the phrase: kana accent phrases separated by
+    /// spaces, ＼ after each nucleus and none for 平板 (は＼し 箸, はし＼ 橋, はし 端). Null
+    /// without a dictionary or with an explicit reading.
+    pub accent: Option<String>,
     /// Established moras; empty when unreadable, distinguished by reading and error.
     pub moras: Vec<MoraAnalysis>,
     /// Complete-phrase error; no guessed character alignment is reported.
@@ -479,6 +483,13 @@ impl Session {
             let texts: Vec<&str> = borrowed.iter().map(|(t, _)| *t).collect();
             let note_reading = note_groups(&slots, layout)
                 .map(|sizes| grouped_reading(&texts, &sizes, &word_starts));
+            let accent = match (reading_source, self.japanese.as_ref()) {
+                (ReadingSource::Dictionary, Some(dictionary)) => dictionary
+                    .accent_phrases(text)
+                    .ok()
+                    .and_then(|phrases| auris_vocal::accent_notation(&phrases)),
+                _ => None,
+            };
             phrases.push(PhraseAnalysis {
                 phrase,
                 line,
@@ -486,6 +497,7 @@ impl Session {
                 end_char,
                 text: text.into(),
                 reading_source,
+                accent,
                 reading: error
                     .is_none()
                     .then(|| moras.iter().map(|m| m.text.as_str()).collect()),

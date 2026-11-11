@@ -618,13 +618,13 @@ mod tests {
         double_click(cx, at);
         paint(&app, cx);
         assert!(editor.read_with(cx, |app, _| app.prompt.is_some()));
-        assert!(
-            cx.debug_bounds("prompt-text-field").is_some(),
-            "shared prompt was not painted"
-        );
         cx.update(|window, cx| {
             assert!(
-                editor.read(cx).focus.is_focused(window),
+                editor.read(cx).inline_prompt_open(window),
+                "shared prompt was not painted in place"
+            );
+            assert!(
+                editor.read(cx).prompt_input.is_focused(window, cx),
                 "reference focus lost; parent field: {:?}; parent prompt: {:?}",
                 app.read(cx).agent_chat.focused,
                 app.read(cx).prompt.as_ref()

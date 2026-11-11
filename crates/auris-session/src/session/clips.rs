@@ -1119,6 +1119,17 @@ impl Session {
         early.fade_out_frames == 0 && late.fade_in_frames == 0
     }
 
+    /// A crossfade inside a transaction the caller has already opened: the linter's fix.
+    pub(crate) fn crossfade_in_transaction(
+        &mut self,
+        first: ClipId,
+        second: ClipId,
+    ) -> Result<Ticks, SessionError> {
+        let overlap = self.shape_join(first, second)?;
+        self.invalidate_graph();
+        Ok(overlap)
+    }
+
     /// The whole of a crossfade except the undo step, so a caller already recording one can
     /// borrow it.
     fn shape_join(&mut self, first: ClipId, second: ClipId) -> Result<Ticks, SessionError> {
@@ -1876,6 +1887,29 @@ mod tests {
     fn curves(session: &Session, clip: ClipId) -> (FadeCurve, FadeCurve) {
         let audio = session.project().audio_clip(clip).expect("the clip exists");
         (audio.fade_in_curve, audio.fade_out_curve)
+    }
+
+    #[test]
+    fn the_linter_reports_a_bare_audio_overlap_and_its_fix_is_the_crossfade() {
+        let overlaps = |session: &Session| {
+            crate::lint::lint_score(session.project())
+                .into_iter()
+                .filter(|d| d.rule == crate::lint::Rule::OverlappingClips)
+                .collect::<Vec<_>>()
+        };
+        let mut session = session();
+        overlapping(&mut session, 48_000, Ticks::QUARTER);
+        let found = overlaps(&session);
+        assert_eq!(found.len(), 1);
+        session
+            .apply_lint_fix(&found[0], session.revision())
+            .expect("the crossfade applies");
+        assert!(
+            overlaps(&session).is_empty(),
+            "a shaped join is not a problem"
+        );
+        assert_eq!(session.undo(), Some(Edit::LintFix));
+        assert_eq!(overlaps(&session).len(), 1);
     }
 
     #[test]

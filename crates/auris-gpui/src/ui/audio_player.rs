@@ -1,6 +1,5 @@
 //! Shared controls for finite audio previews. The callback owns the playback clock.
 
-use super::tooltip::keyed_tip;
 use super::widgets::{ButtonState, ButtonStyle, button_with_content};
 use crate::app::AurisApp;
 use auris_session::OutputPreviewStatus;
@@ -385,7 +384,7 @@ impl AurisApp {
                         .min_w_0()
                         .rounded_sm()
                         .px_0()
-                        .tooltip(keyed_tip(detail, "", theme)),
+                        .tooltip(crate::ui::tooltip::text_tip(detail)),
                     ),
             );
         }

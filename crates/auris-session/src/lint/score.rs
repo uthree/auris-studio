@@ -105,6 +105,7 @@ pub fn lint_score(project: &Project) -> Vec<Diagnostic> {
     diagnostics.extend(harmony(project, &events));
     diagnostics.extend(limit(missing_chords(project, &events)));
     diagnostics.extend(clip_rules(project));
+    diagnostics.extend(limit(overlapping_clips(project)));
     diagnostics.extend(limit(tight_strums(project)));
     diagnostics.extend(limit(unfrettable_chords(project)));
     diagnostics.extend(limit(position_jumps(project)));
@@ -1091,6 +1092,101 @@ fn unfrettable_chords(project: &Project) -> Vec<Diagnostic> {
     found
 }
 
+/// Clips on one track that sound over the same stretch of time.
+///
+/// Two clips on a lane are drawn one over the other, so the earlier one's tail disappears under
+/// the later one while both go on playing: the track doubles itself, two takes argue, or a note
+/// is hidden where nobody can see it to edit it. Each overlapping pair is reported once, over the
+/// stretch they share, repeats of a looped clip included. Muted clips and tracks are skipped,
+/// because a muted take lying under the one that plays is how takes are kept.
+///
+/// The fix is offered only where one repair is plainly right:
+///
+/// * **Notes**: when nothing of the earlier clip sounds past the point the later one begins —
+///   the usual case, a pickup laid over the empty tail of the clip before — the earlier clip
+///   ends there, and not a note moves. When notes of the earlier clip do sound there, either
+///   clip could give way, or the layering could be meant, so no fix is offered.
+/// * **Audio**: two takes laid over each other are a join, and a join is a crossfade. An overlap
+///   whose meeting edges are both faded has been shaped already and is not reported.
+fn overlapping_clips(project: &Project) -> Vec<Diagnostic> {
+    use auris_core::project::ClipId;
+
+    let mut found = Vec::new();
+    for track in project.tracks.iter().filter(|t| !t.mixer.mute) {
+        let audio = track.kind.as_audio();
+        let midi = match &track.kind {
+            TrackKind::Instrument(instrument) | TrackKind::Drum(instrument) => {
+                Some(&instrument.clips)
+            }
+            TrackKind::Singer(singer) => Some(&singer.clips),
+            TrackKind::Audio(_) | TrackKind::Bus => None,
+        };
+        let mut spans: Vec<(Ticks, Ticks, ClipId)> = match (midi, audio) {
+            (Some(clips), _) => clips
+                .iter()
+                .filter(|clip| !clip.muted)
+                .map(|clip| (clip.start, clip.sounding_end(), clip.id))
+                .collect(),
+            (None, Some(audio)) => audio
+                .clips
+                .iter()
+                .filter(|clip| !clip.muted)
+                .map(|clip| {
+                    let end = clip.start + project.audio_clip_sounding_ticks(clip);
+                    (clip.start, end, clip.id)
+                })
+                .collect(),
+            (None, None) => continue,
+        };
+        spans.sort();
+        for (i, &(start, end, first)) in spans.iter().enumerate() {
+            for &(later_start, later_end, second) in &spans[i + 1..] {
+                if later_start >= end {
+                    break;
+                }
+                let shared_end = end.min(later_end);
+                if shared_end <= later_start {
+                    continue;
+                }
+                let mut diagnostic = Diagnostic::new(
+                    Rule::OverlappingClips,
+                    Severity::Warning,
+                    later_start.max(start),
+                    shared_end,
+                );
+                diagnostic.track = Some(track.id);
+                diagnostic.clips = vec![first, second];
+                if let Some(clips) = midi {
+                    let Some(early) = clips.iter().find(|clip| clip.id == first) else {
+                        continue;
+                    };
+                    let keep = later_start - early.start;
+                    let silent_tail = keep > Ticks::ZERO
+                        && !early.is_looped()
+                        && early.notes.iter().all(|note| note.end() <= keep);
+                    if silent_tail {
+                        diagnostic.fix = Some(Fix::TrimClip {
+                            clip: first,
+                            end: later_start,
+                        });
+                    }
+                } else if let Some(audio) = audio {
+                    let clip = |id| audio.clips.iter().find(|clip| clip.id == id);
+                    let (Some(early), Some(late)) = (clip(first), clip(second)) else {
+                        continue;
+                    };
+                    if early.fade_out_frames > 0 && late.fade_in_frames > 0 {
+                        continue;
+                    }
+                    diagnostic.fix = Some(Fix::Crossfade { first, second });
+                }
+                found.push(diagnostic);
+            }
+        }
+    }
+    found
+}
+
 /// What a voice cannot do: sing two notes at once, or sing a note with no words on it.
 ///
 /// Overlaps are read within a clip, where trimming the earlier note is the obvious repair: a
@@ -1722,5 +1818,97 @@ mod tests {
         assert!(a.abs_diff(b) >= JUMP_FRETS, "{path:?}");
         // An unfrettable onset is skipped, not guessed.
         assert_eq!(hand_path(&[vec![41, 42, 43, 44]]), [None]);
+    }
+
+    fn overlaps(project: &Project) -> Vec<Diagnostic> {
+        lint_score(project)
+            .into_iter()
+            .filter(|d| d.rule == Rule::OverlappingClips)
+            .collect()
+    }
+
+    #[test]
+    fn two_clips_laid_over_each_other_on_one_track_are_reported_over_what_they_share() {
+        let mut project = Project::new("Lint", 48_000.0);
+        let track = project.add_instrument_track("Keys", "auris.synth.pulse");
+        let first = project
+            .add_midi_clip(track, "A", Ticks::ZERO, Ticks(1920))
+            .unwrap();
+        let second = project
+            .add_midi_clip(track, "B", Ticks(1440), Ticks(1920))
+            .unwrap();
+        // Butted end to start is not an overlap.
+        project
+            .add_midi_clip(track, "C", Ticks(3360), Ticks(960))
+            .unwrap();
+        let found = overlaps(&project);
+        assert_eq!(found.len(), 1);
+        assert_eq!((found[0].start, found[0].end), (Ticks(1440), Ticks(1920)));
+        assert_eq!(found[0].track, Some(track));
+        assert_eq!(found[0].clips, vec![first, second]);
+        assert_eq!(found[0].severity, Severity::Warning);
+        // Nothing of A sounds past where B begins, so A ends there.
+        assert_eq!(
+            found[0].fix,
+            Some(Fix::TrimClip {
+                clip: first,
+                end: Ticks(1440)
+            })
+        );
+        // A note of A ringing under B leaves the choice to somebody.
+        project.midi_clip_mut(first).unwrap().notes = vec![Note::new(60, Ticks(1200), Ticks(480))];
+        assert!(overlaps(&project)[0].fix.is_none());
+
+        // A clip on another track at the same time is a second part, not an overlap.
+        let other = project.add_instrument_track("Bass", "auris.synth.pulse");
+        project
+            .add_midi_clip(other, "Bass", Ticks::ZERO, Ticks(3840))
+            .unwrap();
+        assert_eq!(overlaps(&project).len(), 1);
+
+        // A muted take lying under the one that plays is how takes are kept.
+        project.midi_clip_mut(first).unwrap().muted = true;
+        assert!(overlaps(&project).is_empty());
+    }
+
+    #[test]
+    fn a_looped_clip_overlaps_by_its_repeats_and_audio_clips_by_their_length() {
+        let mut project = Project::new("Lint", 48_000.0);
+        let track = project.add_instrument_track("Keys", "auris.synth.pulse");
+        let looped = project
+            .add_midi_clip(track, "Loop", Ticks::ZERO, Ticks(960))
+            .unwrap();
+        project.midi_clip_mut(looped).unwrap().loop_end = Ticks(3840);
+        project
+            .add_midi_clip(track, "Later", Ticks(1920), Ticks(960))
+            .unwrap();
+        let found = overlaps(&project);
+        assert_eq!(found.len(), 1);
+        assert_eq!((found[0].start, found[0].end), (Ticks(1920), Ticks(2880)));
+
+        let audio = project.add_audio_track("Vocal");
+        let source = project.add_audio_source(
+            "take",
+            auris_core::asset::AssetPath::external("take.wav"),
+            48_000 * 4,
+            48_000.0,
+            1,
+        );
+        let a = project.add_audio_clip(audio, source, Ticks::ZERO).unwrap();
+        let b = project.add_audio_clip(audio, source, Ticks(960)).unwrap();
+        let found: Vec<_> = overlaps(&project)
+            .into_iter()
+            .filter(|d| d.track == Some(audio))
+            .collect();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].clips, vec![a, b]);
+        assert_eq!(found[0].start, Ticks(960));
+        assert_eq!(
+            found[0].fix,
+            Some(Fix::Crossfade {
+                first: a,
+                second: b
+            })
+        );
     }
 }

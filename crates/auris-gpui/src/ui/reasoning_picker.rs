@@ -154,11 +154,7 @@ impl Render for ReasoningPicker {
                 })
                 .border_color(gpui::transparent_black())
                 .when(!enabled, |button| button.opacity(0.5))
-                .tooltip(super::tooltip::keyed_tip(
-                    Key::AgentEffort.get(language),
-                    "",
-                    &theme,
-                )),
+                .tooltip(super::tooltip::text_tip(Key::AgentEffort.get(language))),
             )
             .when(self.open, |root| {
                 root.child(gpui::deferred(
