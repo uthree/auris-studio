@@ -356,6 +356,9 @@ pub enum OrnamentHandle {
 pub enum Drag {
     /// Scrubbing the playhead along the ruler.
     Playhead,
+    /// Scrubbing the playhead along the piano roll's ruler, which measures from the roll's edge
+    /// rather than the arrangement's.
+    RollPlayhead,
     /// Sweeping out a loop region; `anchor` is where the drag began.
     LoopRegion {
         /// Tick the drag started at.
@@ -843,7 +846,7 @@ impl Drag {
     /// The edit this gesture records, or `None` when it changes no document state.
     fn edit(&self) -> Option<Edit> {
         match self {
-            Drag::Playhead => None,
+            Drag::Playhead | Drag::RollPlayhead => None,
             // Where a panel is looking is not something to undo.
             Drag::PanelScroll { .. } => None,
             Drag::LoopRegion { .. } => Some(Edit::SetLoopRegion),

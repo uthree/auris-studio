@@ -786,6 +786,7 @@ impl AurisApp {
             .map(|which| self.render_curve_lane(which, cx))
             .collect();
 
+        let ruler = self.render_roll_ruler(cx);
         let layer_tabs = (!self.reference_editor).then(|| self.score_layer_tabs(cx));
         let event_list = (editable && !self.reference_editor && self.panels.event_list)
             .then_some(self.selected_clip)
@@ -932,6 +933,7 @@ impl AurisApp {
                         .flex_1()
                         .min_w_0()
                         .min_h_0()
+                        .child(ruler)
                         .child(
                             div()
                                 .flex()
@@ -1216,6 +1218,97 @@ impl AurisApp {
             .into_any_element()
     }
 
+    /// The bar numbers over the grid, the arrangement's ruler at the roll's width.
+    ///
+    /// The same painter as the arrangement's and the same timeline under it, so bar 9 is labelled
+    /// over the bar line the grid draws for bar 9 at every zoom and scroll, and a meter change or
+    /// a tempo change reads here as it does there. The keyboard's width is left blank on the left
+    /// for the reason the curve lanes leave it: the numbers have to sit over the grid they name.
+    ///
+    /// A press seeks and a drag scrubs, as on the arrangement's ruler; the loop and punch gestures
+    /// stay up there, where the regions are made.
+    fn render_roll_ruler(&self, cx: &mut gpui::Context<Self>) -> gpui::AnyElement {
+        let theme = self.theme.clone();
+        let view = self.timeline.clone();
+        let signatures = self.project().signatures.spans();
+        let playhead = self.playhead_ticks();
+        let tempo: Vec<TempoPoint> = match self.panels.lanes.tempo {
+            true => self.project().tempo_map.points().to_vec(),
+            false => Vec::new(),
+        };
+        let loop_region = self
+            .project()
+            .loop_region
+            .filter(|_| self.project().loop_enabled);
+        div()
+            .flex()
+            .flex_shrink_0()
+            .h(Metrics::RULER_HEIGHT)
+            .border_b_1()
+            .border_color(theme.border)
+            .child(
+                div()
+                    .w(Metrics::KEYBOARD_WIDTH)
+                    .flex_shrink_0()
+                    .h_full()
+                    .bg(theme.surface_raised),
+            )
+            .child(
+                div()
+                    .id("roll-ruler")
+                    .flex_1()
+                    .min_w_0()
+                    .h_full()
+                    .child(
+                        canvas(
+                            |_, _, _| (),
+                            move |bounds, _, window, cx| {
+                                paint::clipped(window, bounds, |window| {
+                                    paint::ruler(
+                                        window,
+                                        cx,
+                                        bounds,
+                                        &view,
+                                        &signatures,
+                                        &tempo,
+                                        &theme,
+                                    );
+                                    if let Some(region) = loop_region {
+                                        paint::loop_region(window, bounds, &view, region, &theme);
+                                    }
+                                    paint::playhead(
+                                        window,
+                                        bounds,
+                                        bounds.origin.x + view.tick_to_x(playhead),
+                                        &theme,
+                                    );
+                                });
+                            },
+                        )
+                        .size_full(),
+                    )
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, event: &MouseDownEvent, _, cx| {
+                            this.begin_roll_ruler_drag(event, cx);
+                        }),
+                    )
+                    .on_scroll_wheel(cx.listener(|this, event: &gpui::ScrollWheelEvent, _, cx| {
+                        this.scroll_roll(event, cx);
+                    })),
+            )
+            .into_any_element()
+    }
+
+    /// A press on the roll's ruler: move the playhead there and keep scrubbing while held.
+    fn begin_roll_ruler_drag(&mut self, event: &MouseDownEvent, cx: &mut gpui::Context<Self>) {
+        let x = event.position.x - self.roll_origin().x;
+        let tick = self.snap(self.timeline.x_to_tick(x));
+        self.seek(tick);
+        self.begin_drag(Drag::RollPlayhead);
+        cx.notify();
+    }
+
     /// One of the strips under the notes: the pitch bend, or the modulation.
     ///
     /// Under rather than beside, and spanning the same timeline: both are things that happen *at a
@@ -1450,7 +1543,8 @@ impl AurisApp {
                 point(
                     Metrics::KEYBOARD_WIDTH,
                     self.viewport_height - Metrics::STATUS_HEIGHT - self.panels.size(Dock::Bottom)
-                        + Metrics::PANEL_HEADER_HEIGHT,
+                        + Metrics::PANEL_HEADER_HEIGHT
+                        + Metrics::RULER_HEIGHT,
                 )
             },
             |bounds| bounds.origin,
@@ -4082,8 +4176,8 @@ mod window_tests {
 
     use crate::gestures::PointerGesture;
     use crate::harness::{
-        CLIP_LENGTH, click_at, creating, deleting, double_click, drag, drag_with, paint, press,
-        release, roll_point, show_pitch, with_a_clip, with_a_singer_clip,
+        CLIP_LENGTH, click_at, creating, deleting, double_click, drag, drag_to, drag_with, paint,
+        press, release, roll_point, show_pitch, with_a_clip, with_a_singer_clip,
     };
     use crate::ui::context_menu::MenuCommand;
 
@@ -4306,6 +4400,37 @@ mod window_tests {
         let to = roll_point(&app, cx, Ticks(790), MIDDLE_C);
         drag(cx, from, to);
         assert_eq!(notes(&app, cx)[0].start, Ticks(310));
+    }
+
+    #[gpui::test]
+    fn the_bar_numbers_sit_over_the_grid_and_a_press_there_scrubs_instead_of_writing(
+        cx: &mut TestAppContext,
+    ) {
+        let (app, cx, _) = with_the_roll_open(cx);
+        // A ruler's height above the top of the grid, a bar in: the strip the numbers are on.
+        let on_the_ruler = app.read_with(cx, |this, _| {
+            let roll = this.canvas.roll.get().expect("the roll is painted");
+            gpui::point(
+                roll.origin.x + this.timeline.tick_to_x(BEAT * 4),
+                roll.origin.y - crate::theme::Metrics::RULER_HEIGHT / 2.0,
+            )
+        });
+        press(cx, on_the_ruler);
+        app.read_with(cx, |this, _| {
+            assert!(
+                matches!(this.drag, Some(crate::app::Drag::RollPlayhead)),
+                "a press on the roll's ruler takes the playhead, got {:?}",
+                this.drag
+            );
+        });
+        let along = gpui::point(on_the_ruler.x + gpui::px(40.0), on_the_ruler.y);
+        drag_to(cx, along);
+        release(cx, along);
+        app.read_with(cx, |this, _| assert!(this.drag.is_none()));
+        assert!(
+            notes(&app, cx).is_empty(),
+            "the ruler is not the grid, and nothing was written on it"
+        );
     }
 
     #[gpui::test]
@@ -4868,7 +4993,7 @@ mod window_tests {
         edge.x -= gpui::px(1.0);
         let end = roll_point(&app, cx, BEAT * 4, MIDDLE_C + 4);
         drag(cx, edge, end);
-        let next = roll_point(&app, cx, BEAT, MIDDLE_C + 7);
+        let next = roll_point(&app, cx, BEAT, MIDDLE_C + 6);
         click_at(cx, next, creating());
         assert_eq!(notes(&app, cx)[2].length, BEAT * 3);
         app.update(cx, |this, cx| {
