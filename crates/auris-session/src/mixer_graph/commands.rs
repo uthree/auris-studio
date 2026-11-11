@@ -18,6 +18,8 @@ pub enum ConnectionKind {
     Output,
     /// Feed an effect's detector input.
     Sidechain,
+    /// Notes from a score, or a performance, into an instrument or a performance.
+    Notes,
 }
 
 /// One graph operation, using stable node IDs returned by mixer_graph read.
@@ -74,16 +76,16 @@ pub enum GraphAction {
         /// Node page size, default 32, clamped to 1..64.
         limit: Option<usize>,
     },
-    /// Connect two nodes from mixer_graph read. source must be a track output; output targets a bus track node or master and adds a unity post-fader output; sidechain targets an effect. All cycles are refused, including mixed output/sidechain paths. Duplicate connections are unchanged. Changes are undoable.
+    /// Connect two nodes from mixer_graph read. source must be a track output; output targets a bus track node or master and adds a unity post-fader output; sidechain targets an effect; notes runs from a score:N node to an instrument:M node, adding that score to what the instrument plays (its own, or a melodic or singer score onto a melodic instrument). All cycles are refused, including mixed output/sidechain paths. Duplicate connections are unchanged. Changes are undoable.
     Connect {
         /// Exact track node ID or its output_node from mixer_graph read.
         source: String,
         /// Exact track or effect node ID from mixer_graph read.
         target: String,
-        /// output or sidechain; must match the target port.
+        /// output, sidechain or notes; must match the target port.
         kind: ConnectionKind,
     },
-    /// Disconnect an existing graph edge. Only the named output or sidechain is removed; an empty output list remains disconnected. Internal chain edges cannot be disconnected. Supply pre_fader when a pre- and a post-fader output share the same source/target. A stale or mismatched edge is refused.
+    /// Disconnect an existing graph edge. Only the named output, sidechain or notes edge is removed; an empty output list remains disconnected, and a layer whose only notes path is cut keeps what it played as clips of its own. Internal chain edges cannot be disconnected. Supply pre_fader when a pre- and a post-fader output share the same source/target. A stale or mismatched edge is refused.
     Disconnect {
         /// Exact source track node ID, including for a pre-fader output.
         source: String,
@@ -206,6 +208,8 @@ impl MixerNode {
 
             Self::Effect(_, slot) => format!("effect:{}", slot.0),
             Self::Performance(id) => format!("performance:{}", id.0),
+            Self::Score(track) => format!("score:{}", track.0),
+            Self::Instrument(track) => format!("instrument:{}", track.0),
         }
     }
 }
@@ -409,6 +413,48 @@ impl Session {
             GraphAction::Connect {
                 source,
                 target,
+                kind: ConnectionKind::Notes,
+            } => {
+                let (MixerNode::Score(from), MixerNode::Instrument(to)) =
+                    (self.graph_node(source)?, self.graph_node(target)?)
+                else {
+                    return Err(
+                        "A notes connection runs from a score node to an instrument node".into(),
+                    );
+                };
+                if !self.project().routing.has_notes_edge(
+                    auris_core::NotesNode::Score(from),
+                    auris_core::NotesNode::Instrument(to),
+                ) {
+                    if !self.can_connect_score(from, to) {
+                        return Err("Connection refused: that instrument may not play this score (a drum score plays only its own kit, a layer's score is empty, and only a melodic instrument plays another track's)".into());
+                    }
+                    changed = self.connect_score(from, to).map_err(error)?;
+                }
+            }
+            GraphAction::Disconnect {
+                source,
+                target,
+                kind: ConnectionKind::Notes,
+                pre_fader,
+            } => {
+                if pre_fader.is_some() {
+                    return Err("pre_fader is only accepted for an output edge".into());
+                }
+                let (Some(from), Some(to)) = (
+                    self.graph_node(source)?.notes(),
+                    self.graph_node(target)?.notes(),
+                ) else {
+                    return Err("A notes edge joins score, performance and instrument nodes".into());
+                };
+                changed = self.disconnect_notes(from, to).map_err(error)?;
+                if !changed {
+                    return Err("This notes edge no longer exists; mixer_graph read again".into());
+                }
+            }
+            GraphAction::Connect {
+                source,
+                target,
                 kind,
             } => {
                 let (from, to) = self.graph_connection(source, target, *kind)?;
@@ -429,6 +475,7 @@ impl Session {
                         }
                         _ => false,
                     },
+                    ConnectionKind::Notes => unreachable!("handled above"),
                 };
                 if !exists {
                     if !self.can_connect_mixer(from, to) {
@@ -491,6 +538,7 @@ impl Session {
                             .map_err(error)?;
                         changed = true;
                     }
+                    ConnectionKind::Notes => unreachable!("handled above"),
                 }
             }
             GraphAction::AddEffect { input, effect } => {
@@ -734,6 +782,26 @@ impl Session {
                     row["enabled"] = strip.effects[index].enabled.into();
                     row["accepts_sidechain"] = self.effect_wants_sidechain(owner, *slot).into();
                 }
+                MixerNode::Score(_) => {
+                    row["kind"] = "score".into();
+                    row["clips"] = track
+                        .and_then(|track| track.kind.note_clips())
+                        .map_or(0, Vec::len)
+                        .into();
+                }
+                MixerNode::Instrument(_) => {
+                    row["kind"] = "instrument".into();
+                    row["instrument_id"] = track
+                        .and_then(|track| match &track.kind {
+                            auris_core::TrackKind::Singer(inner) => Some(&inner.instrument_id),
+                            kind => kind.as_instrument().map(|inner| &inner.instrument_id),
+                        })
+                        .cloned()
+                        .into();
+                    row["layer"] = owner
+                        .is_some_and(|id| self.project().routing.is_layer(id))
+                        .into();
+                }
                 MixerNode::Performance(_) => unreachable!("reported above"),
             }
             // People's notes about this node; edit_comments with mixer_node changes them.
@@ -775,9 +843,7 @@ impl Session {
                         row["control_source"] = MixerNode::Strip(Some(track)).key().into();
                         let to = match edge.target {
                             MixerNode::Strip(owner) => destination(owner),
-                            MixerNode::Effect(..) | MixerNode::Performance(_) => {
-                                Destination::Master
-                            }
+                            _ => Destination::Master,
                         };
                         row["automated"] = self
                             .is_automated(ParamTarget::Output { track, to, tap })

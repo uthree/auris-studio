@@ -221,7 +221,11 @@ impl Session {
             project.tracks.retain(|entry| entry.id == track);
             let entry = &mut project.tracks[0];
             entry.mixer = MixerStrip::default();
-            project.routing = auris_core::Routing::new();
+            // Only the notes survive: what its instrument plays is part of what is rendered, and
+            // every audio connection is the mix the conversion leaves in place.
+            project
+                .routing
+                .retain(|edge| matches!(edge, auris_core::Edge::Notes { .. }));
             project.routing.set_outputs(track, &[Output::master()]);
             project.master = MixerStrip::default();
             project.automation.remove_lanes_where(|target| !matches!(target, ParamTarget::Instrument { track: id, .. } if id == track));
@@ -302,6 +306,13 @@ impl Session {
             return Err(error.into());
         }
         self.record(Edit::ConvertTrackToAudio);
+        // An audio track has no score to lend and no instrument to play one: its layers keep what
+        // they played, and every notes connection touching it goes.
+        self.detach_layers_of(result.track);
+        self.project.routing.retain(|edge| {
+            !(matches!(edge, auris_core::Edge::Notes { .. }) && edge.touches(result.track))
+        });
+        self.project.routing.prune_performances();
         let source = self.project.add_audio_source(
             name,
             AssetPath::inside(inside),

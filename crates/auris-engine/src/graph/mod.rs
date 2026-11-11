@@ -416,10 +416,10 @@ impl RenderGraph {
                         Ok(mut instrument) => {
                             instrument.load_state(instrument_state);
                             let mut events = Vec::new();
-                            let schedule_error = played.clips.iter().find_map(|clip| {
+                            let schedule_error = played.clips().find_map(|(clip, part)| {
                                 schedule_clip(
                                     clip,
-                                    &played,
+                                    part,
                                     &project.tempo_map,
                                     &project.signatures,
                                     sample_rate,

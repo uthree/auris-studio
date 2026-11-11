@@ -468,6 +468,9 @@ impl Project {
             from: id,
             output: Output::master(),
         });
+        if self.has_notes_nodes(id) {
+            self.routing.push(Edge::own_notes(id));
+        }
         id
     }
 
@@ -640,8 +643,14 @@ impl Project {
                             to: *new,
                         })
                 }
-                Edge::Notes { from, to } if *to == NotesNode::Track(id) => {
-                    Some(Edge::notes(*from, NotesNode::Track(new_id)))
+                // What fed its instrument feeds the copy's; its own score becomes the copy's own.
+                Edge::Notes { from, to } if *to == NotesNode::Instrument(id) => {
+                    let from = if *from == NotesNode::Score(id) {
+                        NotesNode::Score(new_id)
+                    } else {
+                        *from
+                    };
+                    Some(Edge::notes(from, NotesNode::Instrument(new_id)))
                 }
                 _ => None,
             })

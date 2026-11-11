@@ -38,6 +38,79 @@ mod menu;
 pub use menu::NewMixerTrack;
 
 impl AurisApp {
+    /// A score's or an instrument's card: what it is and one line about it.
+    ///
+    /// Clicking either selects its track, whose own panels are where the clips and the instrument
+    /// are edited.
+    fn render_notes_node(
+        &mut self,
+        id: &SharedString,
+        node: MixerNode,
+        track: TrackId,
+        cx: &mut gpui::Context<Self>,
+    ) -> AnyElement {
+        let theme = self.theme.clone();
+        let (zoom, selected) = self.mixer_canvas.as_ref().map_or((1.0, false), |canvas| {
+            let state = canvas.state.read(cx);
+            (
+                state.viewport.zoom,
+                state.get_node(id).is_some_and(|node| node.selected),
+            )
+        });
+        let Some(entry) = self.project().track(track) else {
+            return div().into_any_element();
+        };
+        let (title, detail) = match node {
+            MixerNode::Score(_) => {
+                let clips = entry.kind.note_clips().map_or(0, Vec::len);
+                (self.t(Key::MixerScore), format!("{} · {clips}", entry.name))
+            }
+            _ => {
+                let instrument = match &entry.kind {
+                    auris_session::prelude::TrackKind::Singer(inner) => inner.instrument_id.clone(),
+                    kind => kind
+                        .as_instrument()
+                        .map(|inner| inner.instrument_id.clone())
+                        .unwrap_or_default(),
+                };
+                (self.t(Key::MixerInstrument), instrument)
+            }
+        };
+        let selector = format!("graph-name-{id}");
+        div()
+            .w(px(NODE_WIDTH * zoom))
+            .p_2()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .bg(theme.surface)
+            .border_1()
+            .border_color(if selected { theme.accent } else { theme.border })
+            .rounded(Metrics::RADIUS_MD)
+            .text_xs()
+            .text_color(theme.text)
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _, _, cx| {
+                    this.select_track(track);
+                    cx.notify();
+                }),
+            )
+            .on_mouse_down(
+                MouseButton::Right,
+                Self::opens_menu(cx, move |this, at| this.mixer_node_menu(at, node)),
+            )
+            .child(
+                div()
+                    .debug_selector(move || selector.clone())
+                    .truncate()
+                    .text_color(theme.text_muted)
+                    .child(title),
+            )
+            .child(div().truncate().child(detail))
+            .into_any_element()
+    }
+
     /// A performance's card: its name and the stages it runs, in order.
     ///
     /// Clicking it selects the layer it feeds, whose inspector is where the stages are dialled.
@@ -340,6 +413,8 @@ fn node_id(node: MixerNode) -> SharedString {
 
         MixerNode::Effect(_, slot) => format!("mix-effect-{}", slot.0),
         MixerNode::Performance(id) => format!("mix-performance-{}", id.0),
+        MixerNode::Score(track) => format!("mix-score-{}", track.0),
+        MixerNode::Instrument(track) => format!("mix-instrument-{}", track.0),
     }
     .into()
 }
@@ -356,26 +431,44 @@ fn edge_id(edge: &MixerEdge) -> SharedString {
             if tap == Tap::PreFader { "-pre" } else { "" }
         ),
         MixerEdgeKind::Sidechain => format!("mix-key-{source}-{}", edge.target.key()),
-        MixerEdgeKind::Notes => format!("mix-notes-{source}-{}", edge.target.key()),
+        MixerEdgeKind::Notes => format!("mix-notes-{}-{}", edge.source.key(), edge.target.key()),
         MixerEdgeKind::Chain => format!("mix-chain-{}-{}", edge.source.key(), edge.target.key()),
     }
     .into()
 }
 
-fn gesture(graph: &MixerGraph, connection: &Connection) -> Option<(TrackId, MixerNode)> {
-    let source = graph.nodes.iter().find_map(|node| match node {
-        MixerNode::Strip(Some(track)) | MixerNode::Effect(Some(track), _)
-            if node_id(*node) == connection.source =>
-        {
-            Some(*track)
-        }
-        _ => None,
-    })?;
+/// What a dragged wire asks for.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Gesture {
+    /// A track's audio into a bus, the master or an effect's detector.
+    Audio(TrackId, MixerNode),
+    /// One track's score into another's instrument, or into its own.
+    Notes {
+        /// The track whose score it is.
+        score: TrackId,
+        /// The track whose instrument plays it.
+        instrument: TrackId,
+    },
+}
+
+fn gesture(graph: &MixerGraph, connection: &Connection) -> Option<Gesture> {
+    let source = graph
+        .nodes
+        .iter()
+        .find(|node| node_id(**node) == connection.source)?;
     let target = graph
         .nodes
         .iter()
         .find(|node| node_id(**node) == connection.target)?;
-    Some((source, *target))
+    match (*source, *target) {
+        (MixerNode::Score(score), MixerNode::Instrument(instrument)) => {
+            Some(Gesture::Notes { score, instrument })
+        }
+        (MixerNode::Strip(Some(track)) | MixerNode::Effect(Some(track), _), target) => {
+            Some(Gesture::Audio(track, target))
+        }
+        _ => None,
+    }
 }
 
 /// Longest-path columns make every dependency point forward, including sidechains.
@@ -858,8 +951,12 @@ impl AurisApp {
         }
         for connection in pending {
             let document = self.session.mixer_graph();
-            let result = gesture(&document, &connection)
-                .map(|(from, to)| self.session.connect_mixer(from, to));
+            let result = gesture(&document, &connection).map(|gesture| match gesture {
+                Gesture::Audio(from, to) => self.session.connect_mixer(from, to),
+                Gesture::Notes { score, instrument } => {
+                    self.session.connect_score(score, instrument)
+                }
+            });
             match result {
                 Some(Ok(true)) => {}
                 Some(Err(error)) => self.set_failed_status(self.failure(Key::MixerGraph, &error)),
@@ -937,6 +1034,16 @@ impl AurisApp {
                 {
                     for target in &document.nodes {
                         if self.session.can_connect_mixer(source, *target) {
+                            allowed.insert((node_id(*node), node_id(*target)));
+                        }
+                    }
+                }
+                // A score reaches the instruments that may play it.
+                if let MixerNode::Score(score) = node {
+                    for target in &document.nodes {
+                        if let MixerNode::Instrument(instrument) = target
+                            && self.session.can_connect_score(*score, *instrument)
+                        {
                             allowed.insert((node_id(*node), node_id(*target)));
                         }
                     }
@@ -1036,8 +1143,10 @@ impl AurisApp {
                             }
                             handles
                         }
-                        // Notes are connected from the layer's inspector, not by dragging audio
-                        // ports, so a performance offers no port to drag.
+                        // Notes leave a score and arrive at an instrument. A performance is made
+                        // from the layer's inspector, so it offers no port to drag.
+                        MixerNode::Score(_) => vec![HandleDef::source(HandlePosition::Right)],
+                        MixerNode::Instrument(_) => vec![HandleDef::target(HandlePosition::Left)],
                         MixerNode::Performance(_) => Vec::new(),
                     };
                     let mut flow = FlowNode::new(id, position.x, position.y)
@@ -1244,8 +1353,14 @@ impl AurisApp {
         else {
             return div().into_any_element();
         };
-        if let MixerNode::Performance(performance) = node {
-            return self.render_performance_node(id, performance, cx);
+        match node {
+            MixerNode::Performance(performance) => {
+                return self.render_performance_node(id, performance, cx);
+            }
+            MixerNode::Score(track) | MixerNode::Instrument(track) => {
+                return self.render_notes_node(id, node, track, cx);
+            }
+            MixerNode::Strip(_) | MixerNode::Effect(..) => {}
         }
         let owner = node.owner().flatten();
         let theme = self.theme.clone();
@@ -1354,7 +1469,7 @@ impl AurisApp {
                         ));
                 }
             }
-            MixerNode::Strip(_) | MixerNode::Performance(_) => {
+            _ => {
                 let strip = owner
                     .and_then(|id| self.project().track(id))
                     .map_or(&self.project().master, |t| &t.mixer);
@@ -1476,6 +1591,49 @@ impl AurisApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_wire_from_a_score_to_an_instrument_asks_for_notes() {
+        let (a, b) = (TrackId(1), TrackId(2));
+        let graph = MixerGraph {
+            nodes: vec![
+                MixerNode::Score(a),
+                MixerNode::Instrument(a),
+                MixerNode::Strip(Some(a)),
+                MixerNode::Instrument(b),
+                MixerNode::Strip(Some(b)),
+            ],
+            edges: Vec::new(),
+        };
+        let wire = |from: MixerNode, to: MixerNode| Connection {
+            source: node_id(from),
+            target: node_id(to),
+            source_handle: None,
+            target_handle: None,
+        };
+        assert_eq!(
+            gesture(&graph, &wire(MixerNode::Score(a), MixerNode::Instrument(b))),
+            Some(Gesture::Notes {
+                score: a,
+                instrument: b
+            })
+        );
+        assert_eq!(
+            gesture(
+                &graph,
+                &wire(MixerNode::Strip(Some(a)), MixerNode::Strip(Some(b)))
+            ),
+            Some(Gesture::Audio(a, MixerNode::Strip(Some(b))))
+        );
+        assert_eq!(
+            gesture(
+                &graph,
+                &wire(MixerNode::Instrument(a), MixerNode::Instrument(b))
+            ),
+            None,
+            "notes leave a score, never an instrument"
+        );
+    }
     use crate::dock::{Dock, Panel};
     use crate::harness::{click, drag, open, paint};
     use gpui::{TestAppContext, VisualTestContext};
@@ -1701,9 +1859,21 @@ mod tests {
                 1,
                 "a track and its fader have one shared node"
             );
-            // The only other nodes are the new document's master inserts — its limiter.
+            // Each note track adds its score and its instrument; the only other nodes are the new
+            // document's master inserts — its limiter.
+            let notes_nodes = nodes
+                .iter()
+                .filter(|node| matches!(node, MixerNode::Score(_) | MixerNode::Instrument(_)))
+                .count();
+            let note_tracks = this
+                .project()
+                .tracks
+                .iter()
+                .filter(|track| track.kind.note_clips().is_some())
+                .count();
+            assert_eq!(notes_nodes, note_tracks * 2);
             assert_eq!(
-                nodes.len() - strips,
+                nodes.len() - strips - notes_nodes,
                 this.project().master.effects.len(),
                 "no node for a fader of its own"
             );

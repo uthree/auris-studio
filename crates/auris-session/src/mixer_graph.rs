@@ -3,7 +3,7 @@
 //! Nodes are stable document identities, not plugin instances. Internal edges describe the
 //! insert order; editable edges use the same session commands as the console and the toolbox.
 
-use auris_core::{Destination, EffectSlotId, PerformanceId, Tap, TrackId};
+use auris_core::{Destination, EffectSlotId, NotesNode, PerformanceId, Tap, TrackId};
 
 use crate::{Session, SessionError};
 
@@ -12,6 +12,10 @@ pub mod commands;
 /// A strip or insert in the signal path. `None` identifies the master strip.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum MixerNode {
+    /// A note track's clips: where its notes leave.
+    Score(TrackId),
+    /// A note track's instrument: where notes arrive and audio starts.
+    Instrument(TrackId),
     /// A track or summing bus with its gain, pan, mute and solo controls. Inserts precede
     /// the fader even though its controls share this node with the source.
     Strip(Option<TrackId>),
@@ -27,7 +31,27 @@ impl MixerNode {
     pub fn owner(self) -> Option<Option<TrackId>> {
         match self {
             MixerNode::Strip(owner) | MixerNode::Effect(owner, _) => Some(owner),
+            MixerNode::Score(track) | MixerNode::Instrument(track) => Some(Some(track)),
             MixerNode::Performance(_) => None,
+        }
+    }
+
+    /// The node on the notes side this stands for, if it is one.
+    pub fn notes(self) -> Option<NotesNode> {
+        match self {
+            MixerNode::Score(track) => Some(NotesNode::Score(track)),
+            MixerNode::Instrument(track) => Some(NotesNode::Instrument(track)),
+            MixerNode::Performance(id) => Some(NotesNode::Performance(id)),
+            MixerNode::Strip(_) | MixerNode::Effect(..) => None,
+        }
+    }
+
+    /// The graph node standing for `node`.
+    pub fn from_notes(node: NotesNode) -> Self {
+        match node {
+            NotesNode::Score(track) => MixerNode::Score(track),
+            NotesNode::Instrument(track) => MixerNode::Instrument(track),
+            NotesNode::Performance(id) => MixerNode::Performance(id),
         }
     }
 }
@@ -51,11 +75,10 @@ pub enum MixerEdgeKind {
     },
     /// A key signal arriving at an effect's second input.
     Sidechain,
-    /// Notes on a layer's path: from the source's strip, through any performances, to the
-    /// layer's.
+    /// Notes from a score, through any performances, to an instrument.
     ///
-    /// Notes rather than audio, so it carries no level and no meter; disconnecting it detaches
-    /// every layer the path fed.
+    /// Notes rather than audio, so it carries no level and no meter. Disconnecting it stops that
+    /// path; a layer it was the only path into is detached first and keeps what it played.
     Notes,
 }
 
@@ -112,28 +135,8 @@ impl Session {
                         }
                     }
                     MixerEdgeKind::Notes => {
-                        // Cutting a notes wire anywhere on a path detaches every layer it fed, so
-                        // each keeps the part it was playing as notes of its own.
-                        let fed: Vec<TrackId> = self
-                            .project()
-                            .tracks
-                            .iter()
-                            .map(|track| track.id)
-                            .filter(|layer| {
-                                MixerNode::Strip(Some(*layer)) == edge.target
-                                    || matches!(
-                                        edge.target,
-                                        MixerNode::Performance(id)
-                                            if self
-                                                .project()
-                                                .routing
-                                                .path_into(*layer)
-                                                .is_some_and(|path| path.performances.contains(&id))
-                                    )
-                            })
-                            .collect();
-                        for layer in fed {
-                            self.detach_layer(layer)?;
+                        if let (Some(from), Some(to)) = (edge.source.notes(), edge.target.notes()) {
+                            self.disconnect_notes(from, to)?;
                         }
                     }
                     MixerEdgeKind::Chain => unreachable!(),
@@ -172,6 +175,18 @@ impl Session {
             .chain(std::iter::once((None, &self.project().master)))
         {
             let input = MixerNode::Strip(owner);
+            // A note track's score and instrument come first, the instrument feeding the strip.
+            if let Some(track) = owner
+                && self.project().has_notes_nodes(track)
+            {
+                graph.nodes.push(MixerNode::Score(track));
+                graph.nodes.push(MixerNode::Instrument(track));
+                graph.edges.push(MixerEdge {
+                    source: MixerNode::Instrument(track),
+                    target: input,
+                    kind: MixerEdgeKind::Chain,
+                });
+            }
             graph.nodes.push(input);
             let mut previous = input;
             for slot in &strip.effects {
@@ -214,13 +229,14 @@ impl Session {
                 .iter()
                 .map(|performance| MixerNode::Performance(performance.id)),
         );
-        let node = |end: auris_core::NotesNode| match end {
-            auris_core::NotesNode::Track(id) => {
-                self.project().track(id).map(|_| MixerNode::Strip(Some(id)))
-            }
-            auris_core::NotesNode::Performance(id) => {
-                routing.performance(id).map(|_| MixerNode::Performance(id))
-            }
+        let node = |end: NotesNode| {
+            let there = match end {
+                NotesNode::Score(track) | NotesNode::Instrument(track) => {
+                    self.project().has_notes_nodes(track)
+                }
+                NotesNode::Performance(id) => routing.performance(id).is_some(),
+            };
+            there.then_some(MixerNode::from_notes(end))
         };
         for edge in routing.edges() {
             if let auris_core::Edge::Notes { from, to } = edge
@@ -265,8 +281,8 @@ impl Session {
                     && !self.project().sidechain_would_cycle(owner, source)
                     && self.effect_wants_sidechain(owner, slot)
             }
-            // A performance takes notes, not audio; a strip's output port never reaches one.
-            MixerNode::Performance(_) => false,
+            // These take notes, not audio; a strip's output port never reaches one.
+            MixerNode::Performance(_) | MixerNode::Score(_) | MixerNode::Instrument(_) => false,
         }
     }
 
@@ -287,7 +303,9 @@ impl Session {
             MixerNode::Effect(owner, slot) => {
                 self.set_effect_sidechain(owner, slot, Some(source))?
             }
-            MixerNode::Performance(_) => unreachable!("refused by can_connect_mixer"),
+            MixerNode::Performance(_) | MixerNode::Score(_) | MixerNode::Instrument(_) => {
+                unreachable!("refused by can_connect_mixer")
+            }
         }
         Ok(true)
     }

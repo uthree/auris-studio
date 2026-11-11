@@ -62,7 +62,9 @@ impl Session {
                         .map(|effect| effect as &dyn Comments)
                         .ok_or_else(missing),
                     // A performance holds no comments of its own.
-                    MixerNode::Performance(_) => Err(missing()),
+                    MixerNode::Performance(_) | MixerNode::Score(_) | MixerNode::Instrument(_) => {
+                        Err(missing())
+                    }
                 }
             }
         }
@@ -97,7 +99,9 @@ impl Session {
                         .and_then(|strip| strip.effects.iter_mut().find(|effect| effect.id == slot))
                         .map(|effect| effect as &mut dyn Comments)
                         .ok_or(missing),
-                    MixerNode::Performance(_) => Err(missing),
+                    MixerNode::Performance(_) | MixerNode::Score(_) | MixerNode::Instrument(_) => {
+                        Err(missing)
+                    }
                 }
             }
         }

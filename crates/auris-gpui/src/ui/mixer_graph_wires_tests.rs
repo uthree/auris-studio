@@ -457,7 +457,16 @@ fn signal_motion_can_be_disabled_without_editing_the_mix_or_losing_selection(
     paint(&app, cx);
     let (id, start, before) = app.update(cx, |this, cx| {
         let canvas = this.mixer_canvas.as_ref().unwrap();
-        let id = canvas.state.read(cx).edges[0].id.clone();
+        // The first wire a person can select; a chain inside a strip is not one.
+        let id = canvas
+            .state
+            .read(cx)
+            .edges
+            .iter()
+            .find(|edge| edge.selectable)
+            .unwrap()
+            .id
+            .clone();
         canvas
             .state
             .update(cx, |state, _| state.select_edge(&id, false));

@@ -725,7 +725,7 @@ fn curve_event_upper_bound(
     events
 }
 
-/// The clips an exported instrument track plays: its own, or a layer's source's.
+/// What an exported instrument track plays: every score reaching its instrument.
 fn played_clips(project: &Project, track_index: usize) -> Result<auris_core::PlayedClips<'_>> {
     project
         .tracks
@@ -787,10 +787,15 @@ fn preflight_export(
     let mut bend_ranges = [BEND_RANGE; 16];
     for seed in &seeds {
         let played = played_clips(project, seed.track_index)?;
-        if played.clips.iter().filter(|clip| !clip.muted).any(|clip| {
-            clip.has_pitch_performance()
-                || clip.bend.iter().any(|point| point.value.abs() > BEND_RANGE)
-        }) {
+        if played
+            .clips()
+            .map(|(clip, _)| clip)
+            .filter(|clip| !clip.muted)
+            .any(|clip| {
+                clip.has_pitch_performance()
+                    || clip.bend.iter().any(|point| point.value.abs() > BEND_RANGE)
+            })
+        {
             bend_ranges[usize::from(seed.channel.as_int())] = 12.0;
         }
     }
@@ -833,8 +838,8 @@ fn preflight_export(
         let played = played_clips(project, seed.track_index)?;
         let bend_range = bend_ranges[usize::from(seed.channel.as_int())];
         let end_tick = played
-            .clips
-            .iter()
+            .clips()
+            .map(|(clip, _)| clip)
             .filter(|clip| !clip.muted)
             .map(|clip| clip.sounding_end())
             .max()
@@ -858,7 +863,11 @@ fn preflight_export(
             MidiExportResource::FileEvents,
         )?;
 
-        for clip in played.clips.iter().filter(|clip| !clip.muted) {
+        for clip in played
+            .clips()
+            .map(|(clip, _)| clip)
+            .filter(|clip| !clip.muted)
+        {
             let passes = validated_loop_pass_count(clip.id, clip.length, clip.loop_end)? as u128;
             let notes = clip.looped_note_instances()? as u128;
             add_export_count(
@@ -1130,7 +1139,7 @@ fn build_tracks(
                 ));
             }
         }
-        for clip in played.clips {
+        for (clip, part) in played.clips() {
             if clip.muted {
                 continue;
             }
@@ -1139,7 +1148,7 @@ fn build_tracks(
             // reading that matches what the renderer does with the same clip. The tempo handed
             // over is the one the renderer reads for the same clip, so a humanised wobble lands
             // on the same ticks in the file as in the mix.
-            for note in played.sounding_notes(
+            for note in part.sounding_notes(
                 clip,
                 project.tempo_map.bpm_at(clip.start),
                 project.signatures.clone(),

@@ -342,12 +342,14 @@ pub fn stage_file_bytes(path: &Path, bytes: &[u8]) -> Result<StagedFile> {
 ///
 /// Every version bump must decide whether the version it replaces joins this range. Version 32
 /// forgot to, and a project saved the day before would not open at all.
-const READABLE_OLDER: std::ops::RangeInclusive<u32> = 27..=37;
+const READABLE_OLDER: std::ops::RangeInclusive<u32> = 27..=38;
 
 /// Reads a project from `path`.
 ///
 /// The format version must match this build, or be one of the older versions it still reads:
-/// 37 and earlier with a shape on each layer's connection (see `perform_layer_shapes`), 36 and
+/// 38 and earlier with notes edges joining tracks rather than scores and instruments (see
+/// `split_notes_nodes`), 37 and earlier with a shape on each layer's connection (see
+/// `perform_layer_shapes`), 36 and
 /// earlier with connections kept on the tracks and slots they touch (see
 /// `hoist_connections`), 35 and earlier with sends beside the outputs (see
 /// `fold_sends_into_outputs`), 31 with each
@@ -370,7 +372,7 @@ pub fn load_project(path: &Path) -> Result<Project> {
         });
     }
 
-    let mut project: Project = if probe.format_version < SHAPES_PERFORMED {
+    let mut project: Project = if probe.format_version < NOTES_SPLIT {
         let mut document: serde_json::Value = serde_json::from_slice(&bytes)?;
         if probe.format_version < SENDS_FOLDED {
             fold_sends_into_outputs(&mut document);
@@ -378,7 +380,10 @@ pub fn load_project(path: &Path) -> Result<Project> {
         if probe.format_version < CONNECTIONS_HOISTED {
             hoist_connections(&mut document);
         }
-        perform_layer_shapes(&mut document);
+        if probe.format_version < SHAPES_PERFORMED {
+            perform_layer_shapes(&mut document);
+        }
+        split_notes_nodes(&mut document);
         serde_json::from_value(document)?
     } else {
         serde_json::from_slice(&bytes)?
@@ -415,6 +420,77 @@ const CONNECTIONS_HOISTED: u32 = 37;
 
 /// The first format version in which a layer's shape is a performance node on its notes path.
 const SHAPES_PERFORMED: u32 = 38;
+
+/// The first format version in which a note track is a score and an instrument on the notes side.
+const NOTES_SPLIT: u32 = 39;
+
+/// Rewrites version-38 notes edges into today's, in place.
+///
+/// Version 38 joined tracks: a notes edge left the source *track* and arrived at the layer
+/// *track*, and a track nothing fed played its own clips without an edge saying so. Today an edge
+/// leaves a score and arrives at an instrument, and every note track's own score reaches its own
+/// instrument by an edge like any other. So each `{"track": n}` becomes `{"score": n}` where notes
+/// leave and `{"instrument": n}` where they arrive, and every melodic, drum or singer track whose
+/// instrument nothing fed gets its own score. A document whose notes edges already name scores or
+/// instruments is today's shape stamped with an older number and is left alone.
+fn split_notes_nodes(document: &mut serde_json::Value) {
+    use serde_json::{Value, json};
+
+    let Some(edges) = document
+        .get_mut("routing")
+        .and_then(|routing| routing.get_mut("edges"))
+        .and_then(Value::as_array_mut)
+    else {
+        return;
+    };
+    let notes = |edge: &Value| edge.get("kind").and_then(Value::as_str) == Some("notes");
+    let names_today = |end: Option<&Value>| {
+        end.is_some_and(|end| end.get("score").is_some() || end.get("instrument").is_some())
+    };
+    if edges
+        .iter()
+        .filter(|edge| notes(edge))
+        .any(|edge| names_today(edge.get("from")) || names_today(edge.get("to")))
+    {
+        return;
+    }
+    let mut fed = std::collections::HashSet::new();
+    for edge in edges.iter_mut().filter(|edge| notes(edge)) {
+        for (end, node) in [("from", "score"), ("to", "instrument")] {
+            if let Some(track) = edge.get(end).and_then(|end| end.get("track")).cloned() {
+                if end == "to" {
+                    fed.insert(track.as_u64());
+                }
+                edge[end] = json!({ node: track });
+            }
+        }
+    }
+    let own: Vec<Value> = document
+        .get("tracks")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|track| {
+            matches!(
+                track
+                    .get("kind")
+                    .and_then(|kind| kind.get("type"))
+                    .and_then(Value::as_str),
+                Some("instrument" | "drum" | "singer")
+            )
+        })
+        .filter_map(|track| track.get("id").cloned())
+        .filter(|id| !fed.contains(&id.as_u64()))
+        .map(|id| json!({ "kind": "notes", "from": { "score": id }, "to": { "instrument": id } }))
+        .collect();
+    if let Some(edges) = document
+        .get_mut("routing")
+        .and_then(|routing| routing.get_mut("edges"))
+        .and_then(Value::as_array_mut)
+    {
+        edges.extend(own);
+    }
+}
 
 /// Furthest a version-37 layer shape moved its notes either way: one 4/4 bar. Kept so a document
 /// sounds as it did; a delay written today has no such limit.
@@ -1249,6 +1325,68 @@ mod tests {
             Project::FORMAT_VERSION - 1,
             "decide whether the version a bump replaces is still readable"
         );
+    }
+
+    #[test]
+    fn version_38_joins_scores_to_instruments_and_gives_every_note_track_its_own() {
+        let file = TempFile::new("version-38.auris");
+        let mut expected = demo_project();
+        let lead = expected.add_instrument_track("Lead", "auris.synth.pulse");
+        let layer = expected
+            .add_layer_track(lead, "Pad", "auris.synth.pulse")
+            .unwrap();
+        let performance = expected.add_performance(layer).unwrap();
+        expected
+            .routing
+            .performance_mut(performance)
+            .unwrap()
+            .transforms = vec![auris_core::NoteTransform::Delay { ticks: 120 }];
+        let bus = expected.add_bus_track("Bus");
+
+        // Version 38 joined tracks, and wrote no edge for a track playing its own notes.
+        let mut stored = serde_json::to_value(&expected).unwrap();
+        stored["format_version"] = serde_json::json!(38);
+        let edges = stored["routing"]["edges"].as_array_mut().unwrap();
+        edges.retain(|edge| {
+            edge["kind"] != "notes" || edge["from"].get("score") != edge["to"].get("instrument")
+        });
+        for edge in edges.iter_mut().filter(|edge| edge["kind"] == "notes") {
+            for (end, node) in [("from", "score"), ("to", "instrument")] {
+                if let Some(track) = edge[end].get(node).cloned() {
+                    edge[end] = serde_json::json!({ "track": track });
+                }
+            }
+        }
+        std::fs::write(file.path(), serde_json::to_vec(&stored).unwrap()).unwrap();
+
+        let loaded = load_project(file.path()).unwrap();
+        // The own edges come back at the end; what matters is that the same ones are there.
+        assert_eq!(loaded.routing.edges().len(), expected.routing.edges().len());
+        for edge in expected.routing.edges() {
+            assert!(loaded.routing.edges().contains(edge), "{edge:?} came back");
+        }
+        assert_eq!(
+            loaded.routing.performances(),
+            expected.routing.performances()
+        );
+        assert!(loaded.routing.is_layer(layer));
+        assert_eq!(loaded.routing.source_of(layer), Some(lead));
+        assert!(
+            loaded.routing.paths_into(bus).is_empty(),
+            "a bus has no score"
+        );
+        for track in &loaded.tracks {
+            if track.kind.note_clips().is_some() && track.id != layer {
+                assert!(
+                    loaded
+                        .routing
+                        .edges()
+                        .contains(&auris_core::Edge::own_notes(track.id)),
+                    "{} plays its own score",
+                    track.name
+                );
+            }
+        }
     }
 
     #[test]

@@ -10,7 +10,7 @@
 //! from and written into the performance standing directly in front of the layer. The panel and
 //! the agent both speak dials; the document holds only the transforms.
 
-use auris_core::{ChordVoice, NoteTransform, PerformanceId, Ticks, TrackId};
+use auris_core::{ChordVoice, NoteTransform, NotesNode, PerformanceId, Ticks, TrackId};
 
 use crate::error::SessionError;
 use crate::history::Edit;
@@ -150,6 +150,69 @@ impl Session {
         self.project.detach_layer(track);
         self.invalidate_graph();
         Ok(())
+    }
+
+    /// Feeds `track`'s instrument from `source`'s score as well, as one undo step.
+    ///
+    /// Its own score, or another melodic or singer track's onto a melodic instrument. `false`,
+    /// changing nothing, when that score may not be played there or already is, straight.
+    pub fn connect_score(&mut self, source: TrackId, track: TrackId) -> Result<bool, SessionError> {
+        self.require_track(source)?;
+        self.require_track(track)?;
+        if !self.can_connect_score(source, track) {
+            return Ok(false);
+        }
+        self.record(Edit::RouteNotes);
+        self.project.connect_score(source, track);
+        self.invalidate_graph();
+        Ok(true)
+    }
+
+    /// Whether [`Session::connect_score`] would connect `source`'s score to `track`'s instrument.
+    pub fn can_connect_score(&self, source: TrackId, track: TrackId) -> bool {
+        self.project.may_play_score(track, source)
+            && !self
+                .project
+                .routing
+                .has_notes_edge(NotesNode::Score(source), NotesNode::Instrument(track))
+    }
+
+    /// Cuts the notes connection from `from` to `to`, as one undo step.
+    ///
+    /// A layer whose only path runs along it is detached first, so it keeps the part it was
+    /// playing as notes of its own; anything else simply stops playing what came that way, and a
+    /// performance left standing on nothing goes too. `false`, changing nothing, when there is no
+    /// such connection.
+    pub fn disconnect_notes(
+        &mut self,
+        from: NotesNode,
+        to: NotesNode,
+    ) -> Result<bool, SessionError> {
+        if !self.project.routing.has_notes_edge(from, to) {
+            return Ok(false);
+        }
+        self.record(Edit::RouteNotes);
+        let alone: Vec<TrackId> = self
+            .project
+            .tracks
+            .iter()
+            .map(|track| track.id)
+            .filter(|&layer| {
+                let paths = self.project.routing.paths_into(layer);
+                self.project.routing.is_layer(layer)
+                    && paths.len() == 1
+                    && paths[0].runs_along(layer, from, to)
+            })
+            .collect();
+        for layer in alone {
+            self.project.detach_layer(layer);
+        }
+        self.project
+            .routing
+            .retain(|edge| *edge != auris_core::Edge::notes(from, to));
+        self.project.routing.prune_performances();
+        self.invalidate_graph();
+        Ok(true)
     }
 
     /// Detaches every layer on `source`, inside whatever step is already recording.
@@ -594,20 +657,24 @@ mod tests {
             .mixer_graph()
             .edges
             .into_iter()
-            .find(|edge| edge.kind == MixerEdgeKind::Notes)
-            .expect("a layer is drawn as a wire from its source");
-        assert_eq!(wire.source, MixerNode::Strip(Some(lead)));
-        assert_eq!(wire.target, MixerNode::Strip(Some(layer)));
+            .find(|edge| {
+                edge.kind == MixerEdgeKind::Notes && edge.target == MixerNode::Instrument(layer)
+            })
+            .expect("a layer is drawn as a wire from its source's score");
+        assert_eq!(wire.source, MixerNode::Score(lead));
 
         assert!(session.disconnect_mixer_edges(&[wire]).unwrap());
         assert_eq!(session.layer_source(layer), None);
+        // Detached, the layer plays clips of its own, through its own score.
         assert!(
-            !session
+            session
                 .mixer_graph()
                 .edges
                 .iter()
-                .any(|edge| edge.kind == MixerEdgeKind::Notes)
+                .any(|edge| edge.source == MixerNode::Score(layer)
+                    && edge.target == MixerNode::Instrument(layer))
         );
+        assert!(session.project().holds_notes(layer));
         session.undo().unwrap();
         assert_eq!(session.layer_source(layer), Some(lead));
     }
@@ -661,18 +728,18 @@ mod tests {
             .edges
             .iter()
             .filter(|edge| edge.kind == MixerEdgeKind::Notes)
+            .filter(|edge| {
+                edge.source != MixerNode::Score(lead) || edge.target != MixerNode::Instrument(lead)
+            })
             .map(|edge| (edge.source, edge.target))
             .collect();
         assert_eq!(
             notes,
             [
-                (
-                    MixerNode::Strip(Some(lead)),
-                    MixerNode::Performance(performance)
-                ),
+                (MixerNode::Score(lead), MixerNode::Performance(performance)),
                 (
                     MixerNode::Performance(performance),
-                    MixerNode::Strip(Some(layer))
+                    MixerNode::Instrument(layer)
                 ),
             ]
         );
@@ -686,5 +753,30 @@ mod tests {
         assert!(session.disconnect_mixer_edges(&[into]).unwrap());
         assert_eq!(session.layer_source(layer), None);
         assert!(session.project().routing.performances().is_empty());
+    }
+
+    #[test]
+    fn a_score_can_be_added_to_an_instrument_and_its_own_cut_away() {
+        use auris_core::NotesNode;
+
+        let (mut session, lead, _) = session_with_layer();
+        let pad = session.add_default_instrument_track("Pad").unwrap();
+        assert!(session.connect_score(lead, pad).unwrap());
+        assert!(!session.connect_score(lead, pad).unwrap(), "already there");
+        let played = session
+            .project()
+            .played_clips(session.project().track(pad).unwrap())
+            .unwrap();
+        assert_eq!(played.parts.len(), 2, "its own score and the lead's");
+
+        // Cutting its own score leaves it a layer of the lead, still sounding.
+        assert!(
+            session
+                .disconnect_notes(NotesNode::Score(pad), NotesNode::Instrument(pad))
+                .unwrap()
+        );
+        assert_eq!(session.layer_source(pad), Some(lead));
+        assert_eq!(session.undo(), Some(Edit::RouteNotes));
+        assert!(!session.project().routing.is_layer(pad));
     }
 }

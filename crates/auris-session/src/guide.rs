@@ -1219,10 +1219,11 @@ pub mod architecture {
     //!
     //! Every connection between tracks lives in one list on the project,
     //! [`Project::routing`](auris_core::Project::routing): a track's outputs, a track keying an
-    //! effect, a layer playing another track's notes. Each is an [`Edge`](auris_core::Edge) of the
+    //! effect, a score feeding an instrument. Each is an [`Edge`](auris_core::Edge) of the
     //! kind it is, and each joins two [`Port`](auris_core::Port)s that carry the same
     //! [`Signal`](auris_core::Signal) — notes or audio. The nodes are still the document's own:
-    //! tracks, the master and effect slots. Keeping the connections apart from the nodes is what
+    //! tracks — with a score and an instrument on the notes side — the master, effect slots, and
+    //! the performances standing on notes paths. Keeping the connections apart from the nodes is what
     //! lets adding, removing, copying, repairing and walking them be one set of rules: deleting a
     //! track drops every edge touching it, duplicating one copies the edges it owns, and
     //! [`Project::repair_routing`](auris_core::Project::repair_routing) checks one list.
@@ -1250,19 +1251,29 @@ pub mod architecture {
     //! [`Effect::wants_sidechain`](auris_core::plugin::Effect::wants_sidechain) — so a project
     //! with no key in it carries no extra buffer and copies nothing.
     //!
-    //! # Notes are an edge too: layers
+    //! # Notes are an edge too: scores, instruments and layers
     //!
-    //! A **layer** is an instrument track that plays another track's clips instead of its own — a
-    //! notes edge from its source, made by
-    //! [`Session::add_layer_track`](crate::Session::add_layer_track). It is the cheapest way to put
-    //! one part through several instruments: each layer is a whole track, so its own fader,
-    //! chain, outputs and automation are the ones every track already has, and a filter shared by
-    //! the source and its layers is a bus they all feed.
+    //! On the notes side a melodic, drum or singer track is two nodes: its **score**, the clips it
+    //! holds, and its **instrument**, what plays notes. A new track joins the two with a notes edge
+    //! of its own, and nothing else about them is special: the track still owns both, and its lane,
+    //! header, strip and automation are the ones it always had. What changes is what can be wired.
+    //! A score can feed several instruments, and an instrument plays every score that reaches it,
+    //! merged — [`Session::connect_score`](crate::Session::connect_score) adds one, and
+    //! [`Session::disconnect_notes`](crate::Session::disconnect_notes) cuts one, its own included.
     //!
-    //! **The source is always a track with notes of its own.** A layer is never followed and a drum
-    //! track never is either, so there is no chain to walk and no cycle to refuse; a file that says
-    //! otherwise opens with that one connection dropped and the layer silent. Notes are resolved
-    //! before playback, so a notes edge orders nothing on the audio thread.
+    //! A **layer** is an instrument playing other tracks' scores and not its own, made by
+    //! [`Session::add_layer_track`](crate::Session::add_layer_track) or by cutting a track's own
+    //! score once another reaches its instrument. It is the cheapest way to put one part through
+    //! several instruments: each layer is a whole track, so its own fader, chain, outputs and
+    //! automation are the ones every track already has, and a filter shared by the source and its
+    //! layers is a bus they all feed.
+    //!
+    //! **A score played elsewhere is always a track with notes of its own.** A layer's score is
+    //! empty and a drum kit's note numbers name different sounds on every other kit, so neither is
+    //! played on another instrument, and only a melodic instrument plays another track's score.
+    //! There is no chain to walk and no cycle to refuse; a file that says otherwise opens with that
+    //! one connection dropped, and an instrument left with nothing plays its own score again. Notes
+    //! are resolved before playback, so a notes edge orders nothing on the audio thread.
     //!
     //! **Performance applies at two levels.** The source clip's own stack runs first, as it does
     //! for the source itself; then each [`Performance`](auris_core::Performance) node on the notes
@@ -1278,7 +1289,9 @@ pub mod architecture {
     //!
     //! **A layer holds no clips.** [`Project::holds_notes`](auris_core::Project::holds_notes)
     //! is `false` for one, which is what keeps every command that writes, pastes or moves notes off
-    //! it. Removing the source detaches its layers in the same step:
+    //! it. A track whose own score reaches no instrument still holds notes, and they still lie on
+    //! its lane; they are simply heard only where the score is wired. Cutting a layer's only path,
+    //! or removing its source, detaches it in the same step:
     //! [`Session::detach_layer`](crate::Session::detach_layer) preserves the sound in ordinary
     //! clips. A layer with no performance on its path retains the source's editable loops,
     //! performance stack and recipe. Any other freezes every performed pass through every stage,

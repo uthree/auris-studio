@@ -113,9 +113,9 @@ impl NoteScore {
             };
             let index = score.tracks.len();
             let before = score.notes.len();
-            for clip in played.clips.iter().filter(|clip| !clip.muted) {
+            for (clip, part) in played.clips().filter(|(clip, _)| !clip.muted) {
                 let bpm = project.tempo_map.bpm_at(clip.start);
-                for note in played.sounding_notes(clip, bpm, project.signatures.clone()) {
+                for note in part.sounding_notes(clip, bpm, project.signatures.clone()) {
                     let start = clip.start + note.start;
                     let start_seconds = project.tempo_map.ticks_to_seconds(start).0;
                     let end_seconds = project.tempo_map.ticks_to_seconds(start + note.length).0;

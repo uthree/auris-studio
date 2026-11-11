@@ -1,10 +1,14 @@
-//! Layers: an instrument track that plays another track's notes.
+//! What an instrument plays, and layers: instrument tracks that play another track's notes.
 //!
-//! A layer owns everything a track owns — its instrument, its strip, its outputs, its
-//! automation — except the notes. Those it borrows along a notes path from the track whose clips
-//! they are, so editing the part once is heard on every instrument stacked on it, and each
-//! instrument keeps its own settings. That is the whole of "one source, several performers": the
-//! bus a layer and its source both feed is where a shared filter goes.
+//! Every note track has a score and an instrument, and what the instrument plays is whatever
+//! arrives on its notes edges — its own score, as a track starts out, another track's, or several
+//! at once, merged. [`Project::played_clips`] is the one answer to that question.
+//!
+//! A **layer** is an instrument playing other tracks' scores and not its own. It owns everything a
+//! track owns — its instrument, its strip, its outputs, its automation — except the notes, so
+//! editing the part once is heard on every instrument stacked on it, and each instrument keeps
+//! its own settings. That is the whole of "one source, several performers": the bus a layer and
+//! its source both feed is where a shared filter goes.
 //!
 //! On the way across, [`Performance`](super::Performance) nodes can bend what is borrowed: any
 //! [`NoteTransform`](super::NoteTransform), including the ones made for this — a key range, the
@@ -12,10 +16,10 @@
 //! after the source clip's own performance stack, so a layer hears exactly what its source plays
 //! and changes only what its performances say.
 //!
-//! A layer is never a source. A path always starts at a track whose notes are its own, so there
-//! is no chain of layers to walk and no cycle among them to refuse: a layer whose source is
-//! missing, is a drum track or is itself a layer simply plays nothing, the way a missing asset
-//! leaves its one track silent.
+//! A layer's score is never played elsewhere. A path always starts at a track whose notes are its
+//! own, so there is no chain of layers to walk and no cycle among them to refuse: a path whose
+//! source is missing, is a drum track or is itself a layer simply plays nothing, the way a missing
+//! asset leaves its one track silent.
 
 use crate::time::Ticks;
 
@@ -25,17 +29,34 @@ use super::track::{Track, TrackKind};
 use super::transform::NoteTransform;
 use super::{ClipId, PerformanceContext, PerformanceId, Project, TrackId, performed_notes};
 
-/// The clips a track plays and the performances they pass through on the way.
-#[derive(Clone, Debug)]
+/// Everything an instrument plays: one part per path into it.
+#[derive(Clone, Debug, Default)]
 pub struct PlayedClips<'a> {
-    /// The clips: the track's own, or its source's.
+    /// The parts, in the order their connections were made.
+    pub parts: Vec<PlayedPart<'a>>,
+}
+
+impl<'a> PlayedClips<'a> {
+    /// Every clip played, each with the part it arrives through.
+    pub fn clips(&self) -> impl Iterator<Item = (&'a MidiClip, &PlayedPart<'a>)> + '_ {
+        self.parts
+            .iter()
+            .flat_map(|part| part.clips.iter().map(move |clip| (clip, part)))
+    }
+}
+
+/// One score's clips and the performances they pass through on the way to an instrument.
+#[derive(Clone, Debug)]
+pub struct PlayedPart<'a> {
+    /// The track whose score this is.
+    pub source: TrackId,
+    /// Its clips.
     pub clips: &'a [MidiClip],
-    /// The stacks of the performances on a layer's path, nearest the source first; empty for a
-    /// track playing its own notes.
+    /// The stacks of the performances on the path, nearest the score first.
     pub stages: Vec<&'a [NoteTransform]>,
 }
 
-impl PlayedClips<'_> {
+impl PlayedPart<'_> {
     /// The notes `clip` sounds on this track, positions relative to the clip.
     ///
     /// The one answer the renderer and the MIDI writer share, for the reason
@@ -83,36 +104,50 @@ impl PlayedClips<'_> {
 }
 
 impl Project {
-    /// The note clips `track` plays, or `None` when it is not a note track.
+    /// What `track`'s instrument plays, or `None` when it is not a note track.
     ///
-    /// A layer plays its source's clips through the performances on its path, and nothing at all
-    /// when its source is missing or cannot be followed. Every other note track plays its own.
+    /// One part per path into the instrument: its own score's clips, another track's through the
+    /// performances on the way, or nothing at all from a path whose source is missing or cannot
+    /// be followed. An instrument nothing feeds plays nothing.
     pub fn played_clips<'a>(&'a self, track: &'a Track) -> Option<PlayedClips<'a>> {
-        if !self.routing.is_layer(track.id) {
-            return track.kind.note_clips().map(|clips| PlayedClips {
-                clips: clips.as_slice(),
-                stages: Vec::new(),
-            });
-        }
-        let Some(path) = self.routing.path_into(track.id) else {
-            return Some(PlayedClips {
-                clips: &[],
-                stages: Vec::new(),
-            });
-        };
-        let clips = self
-            .track(path.source)
-            .filter(|_| self.can_be_followed(path.source))
-            .and_then(|source| source.kind.note_clips())
-            .map(Vec::as_slice)
-            .unwrap_or_default();
-        let stages = path
-            .performances
-            .iter()
-            .filter_map(|id| self.routing.performance(*id))
-            .map(|performance| performance.transforms.as_slice())
+        track.kind.note_clips()?;
+        let parts = self
+            .routing
+            .paths_into(track.id)
+            .into_iter()
+            .filter(|path| self.may_play_score(track.id, path.source))
+            .filter_map(|path| {
+                let clips = self.track(path.source)?.kind.note_clips()?;
+                let stages = path
+                    .performances
+                    .iter()
+                    .filter_map(|id| self.routing.performance(*id))
+                    .map(|performance| performance.transforms.as_slice())
+                    .collect();
+                Some(PlayedPart {
+                    source: path.source,
+                    clips: clips.as_slice(),
+                    stages,
+                })
+            })
             .collect();
-        Some(PlayedClips { clips, stages })
+        Some(PlayedClips { parts })
+    }
+
+    /// Feeds `track`'s instrument from `source`'s score as well as whatever already feeds it.
+    ///
+    /// `false`, changing nothing, when the instrument may not play that score or already plays it
+    /// straight.
+    pub fn connect_score(&mut self, source: TrackId, track: TrackId) -> bool {
+        let edge = super::Edge::notes(
+            super::NotesNode::Score(source),
+            super::NotesNode::Instrument(track),
+        );
+        if !self.may_play_score(track, source) || self.routing.edges().contains(&edge) {
+            return false;
+        }
+        self.routing.push(edge);
+        true
     }
 
     /// The track layer `track` plays the notes of, when it is a layer.
@@ -163,9 +198,10 @@ impl Project {
             .then_some(id)
     }
 
-    /// Turns a layer back into a track with notes of its own.
+    /// Turns a layer back into a track with notes of its own, its instrument playing its own score.
     ///
-    /// A layer with no performance on its path copies its source's clips. One with a performance
+    /// Every part it played is copied in. One with no performance on its path copies its source's
+    /// clips. One with a performance
     /// freezes the complete performed notes, including each loop pass, before running them
     /// through the performances. Its performance stack and recipe are then removed so neither can
     /// rewrite the frozen part. If flattening changes the clip boundaries, curves retain their
@@ -178,21 +214,30 @@ impl Project {
         if !self.routing.is_layer(id) {
             return false;
         }
-        let stages: Vec<Vec<NoteTransform>> =
-            played.stages.iter().map(|stage| stage.to_vec()).collect();
-        let originals: Vec<MidiClip> = played.clips.to_vec();
-        let unchanged = stages.iter().all(Vec::is_empty);
+        let parts: Vec<(Vec<Vec<NoteTransform>>, Vec<MidiClip>)> = played
+            .parts
+            .iter()
+            .map(|part| {
+                (
+                    part.stages.iter().map(|stage| stage.to_vec()).collect(),
+                    part.clips.to_vec(),
+                )
+            })
+            .collect();
         let mut copies = Vec::new();
-        for clip in originals {
-            if unchanged {
-                copies.push(clip);
-            } else {
-                copies.extend(detached_performance(
-                    clip,
-                    &stages,
-                    &self.tempo_map,
-                    &self.signatures,
-                ));
+        for (stages, originals) in parts {
+            let unchanged = stages.iter().all(Vec::is_empty);
+            for clip in originals {
+                if unchanged {
+                    copies.push(clip);
+                } else {
+                    copies.extend(detached_performance(
+                        clip,
+                        &stages,
+                        &self.tempo_map,
+                        &self.signatures,
+                    ));
+                }
             }
         }
         for clip in &mut copies {
@@ -217,7 +262,8 @@ fn detached_performance(
     signatures: &crate::SignatureMap,
 ) -> Vec<MidiClip> {
     let mut notes = original.clone();
-    let played = PlayedClips {
+    let played = PlayedPart {
+        source: TrackId(0),
         clips: std::slice::from_ref(&original),
         stages: stages.iter().map(Vec::as_slice).collect(),
     };
@@ -325,7 +371,8 @@ mod tests {
     /// What `layer` sounds for its source's first clip.
     fn heard(project: &Project, layer: TrackId) -> Vec<Note> {
         let played = project.played_clips(project.track(layer).unwrap()).unwrap();
-        played.sounding_notes(&played.clips[0], 120.0, project.signatures.clone())
+        let part = &played.parts[0];
+        part.sounding_notes(&part.clips[0], 120.0, project.signatures.clone())
     }
 
     /// A layer on `lead` with one performance holding `transforms`.
@@ -433,7 +480,7 @@ mod tests {
         );
         let layer = project.track(first).unwrap();
         let played = project.played_clips(layer).unwrap();
-        assert_eq!(played.clips.len(), 1);
+        assert_eq!(played.clips().count(), 1);
         assert_eq!(project.layers_of(lead), vec![first, second]);
     }
 
@@ -453,7 +500,7 @@ mod tests {
         // A document that says otherwise opens and plays nothing on that track.
         project.routing.set_follows(layer, Some(drums));
         let track = project.track(layer).unwrap();
-        assert!(project.played_clips(track).unwrap().clips.is_empty());
+        assert_eq!(project.played_clips(track).unwrap().clips().count(), 0);
     }
 
     #[test]
@@ -581,9 +628,9 @@ mod tests {
             );
 
             let played = project.played_clips(project.track(layer).unwrap()).unwrap();
-            let expected =
-                played.sounding_notes(&played.clips[0], 120.0, project.signatures.clone());
-            let original = played.clips[0].clone();
+            let part = &played.parts[0];
+            let expected = part.sounding_notes(&part.clips[0], 120.0, project.signatures.clone());
+            let original = part.clips[0].clone();
             let expected_curves: Vec<_> = original
                 .performance_curves()
                 .map(|which| {
@@ -648,12 +695,49 @@ mod tests {
             .as_array()
             .unwrap()
             .iter()
-            .find(|edge| edge["kind"] == "notes")
+            .find(|edge| edge["kind"] == "notes" && edge["to"]["instrument"] == layer.0)
             .unwrap();
-        assert_eq!(notes["from"]["track"], serde_json::json!(lead.0));
-        assert_eq!(notes["to"]["track"], serde_json::json!(layer.0));
+        assert_eq!(notes["from"]["score"], serde_json::json!(lead.0));
         let back: super::super::Routing = serde_json::from_value(stored).unwrap();
         assert_eq!(back.source_of(layer), Some(lead));
         assert_eq!(back.path_into(layer).unwrap().performances, []);
+    }
+
+    #[test]
+    fn an_instrument_plays_every_score_that_reaches_it_merged() {
+        let (mut project, lead) = project_with_lead();
+        let pad = project.add_instrument_track("Pad", "pad");
+        let clip = project
+            .add_midi_clip(pad, "B", Ticks::ZERO, Ticks(1920))
+            .unwrap();
+        project.midi_clip_mut(clip).unwrap().notes = vec![note(48, 0, 1920)];
+        assert!(project.connect_score(lead, pad));
+        assert!(!project.connect_score(lead, pad), "already playing it");
+        assert!(project.holds_notes(pad), "it still plays its own score");
+
+        let played = project.played_clips(project.track(pad).unwrap()).unwrap();
+        let sources: Vec<TrackId> = played.parts.iter().map(|part| part.source).collect();
+        assert_eq!(sources, [pad, lead]);
+        assert_eq!(played.clips().count(), 2);
+
+        // The lead's own instrument is untouched.
+        let own = project.played_clips(project.track(lead).unwrap()).unwrap();
+        assert_eq!(own.parts.len(), 1);
+    }
+
+    #[test]
+    fn a_drum_score_plays_only_its_own_instrument() {
+        let (mut project, lead) = project_with_lead();
+        let drums = project.add_drum_track("Drums", "kit");
+        assert!(!project.connect_score(drums, lead));
+        // A file that says otherwise loses that edge and keeps the rest.
+        project.routing.push(super::super::Edge::notes(
+            super::super::NotesNode::Score(drums),
+            super::super::NotesNode::Instrument(lead),
+        ));
+        assert!(project.repair_routing());
+        let played = project.played_clips(project.track(lead).unwrap()).unwrap();
+        assert_eq!(played.parts.len(), 1);
+        assert_eq!(played.parts[0].source, lead);
     }
 }

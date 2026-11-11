@@ -312,10 +312,12 @@ fn every_reported_edge_says_what_it_carries() {
     let edges = graph["edges"].as_array().unwrap();
     let notes = edges
         .iter()
-        .find(|edge| edge["kind"] == "notes")
+        .find(|edge| {
+            edge["kind"] == "notes" && edge["target"] == MixerNode::Instrument(layer).key()
+        })
         .expect("the layer's notes edge is reported");
     assert_eq!(notes["signal"], "notes");
-    assert_eq!(notes["target"], MixerNode::Strip(Some(layer)).key());
+    assert_eq!(notes["source"], MixerNode::Score(lead).key());
     assert!(
         edges
             .iter()

@@ -397,6 +397,27 @@ impl Project {
         }
     }
 
+    /// `true` when `track` has a score and an instrument: a melodic, drum or singer track.
+    pub fn has_notes_nodes(&self, track: TrackId) -> bool {
+        matches!(
+            self.track(track).map(|entry| &entry.kind),
+            Some(TrackKind::Instrument(_) | TrackKind::Drum(_) | TrackKind::Singer(_))
+        )
+    }
+
+    /// `true` when `track`'s instrument may play the score of `source`: always its own, and
+    /// another's only on a melodic instrument and from a score that [`Project::can_be_followed`].
+    pub fn may_play_score(&self, track: TrackId, source: TrackId) -> bool {
+        if source == track {
+            return self.has_notes_nodes(track);
+        }
+        self.can_be_followed(source)
+            && matches!(
+                self.track(track).map(|entry| &entry.kind),
+                Some(TrackKind::Instrument(_))
+            )
+    }
+
     /// Whether `edge` names things that exist and may be joined that way, ignoring loops and the
     /// uniqueness rules.
     fn edge_is_usable(&self, edge: &Edge) -> bool {
@@ -416,50 +437,68 @@ impl Project {
             }
             Edge::Notes { from, to } => {
                 let from_usable = match from {
-                    NotesNode::Track(source) => self.can_be_followed(*source),
+                    NotesNode::Score(source) => self.has_notes_nodes(*source),
                     NotesNode::Performance(id) => self.routing.performance(*id).is_some(),
+                    NotesNode::Instrument(_) => false,
                 };
-                let to_usable = match to {
-                    NotesNode::Track(layer) => {
-                        *from != *to
-                            && matches!(
-                                self.track(*layer).map(|layer| &layer.kind),
-                                Some(TrackKind::Instrument(_))
-                            )
+                let to_usable = match (from, to) {
+                    (NotesNode::Score(source), NotesNode::Instrument(track)) => {
+                        self.may_play_score(*track, *source)
                     }
-                    NotesNode::Performance(id) => {
+                    (_, NotesNode::Instrument(track)) => self.has_notes_nodes(*track),
+                    (_, NotesNode::Performance(id)) => {
                         *from != *to && self.routing.performance(*id).is_some()
                     }
+                    (_, NotesNode::Score(_)) => false,
                 };
                 from_usable && to_usable
             }
         }
     }
 
-    /// `true` when every notes path ends at a track whose notes are its own and every
-    /// performance stands on one.
+    /// The notes edges into an instrument whose path back loops, breaks, or starts at a score
+    /// that instrument may not play.
+    fn broken_notes_inputs(&self) -> Vec<Edge> {
+        let mut broken = Vec::new();
+        for edge in self.routing.edges() {
+            if let Edge::Notes {
+                from,
+                to: NotesNode::Instrument(track),
+            } = edge
+            {
+                let whole = self
+                    .routing
+                    .path_from(*from)
+                    .is_some_and(|path| self.may_play_score(*track, path.source));
+                if !whole {
+                    broken.push(edge.clone());
+                }
+            }
+        }
+        broken
+    }
+
+    /// `true` when every notes path into an instrument is whole and every performance stands on
+    /// one.
     fn notes_paths_are_whole(&self) -> bool {
-        let layers_resolve = self.routing.edges().iter().all(|edge| match edge {
-            Edge::Notes {
-                to: NotesNode::Track(layer),
-                ..
-            } => self.routing.path_into(*layer).is_some(),
-            _ => true,
-        });
         let mut pruned = self.routing.clone();
-        layers_resolve && !pruned.prune_performances()
+        self.broken_notes_inputs().is_empty() && !pruned.prune_performances()
     }
 
     /// Whether every connection is usable, unique where it must be, and the graph acyclic.
     fn routing_is_valid(&self) -> bool {
         let mut outputs = HashSet::new();
         let mut keys = HashSet::new();
-        let mut layers = HashSet::new();
+        let mut notes = HashSet::new();
+        let mut fed = HashSet::new();
         for edge in self.routing.edges() {
             let unique = match edge {
                 Edge::Output { from, output } => outputs.insert((*from, output.key())),
                 Edge::Key { to, .. } => keys.insert(*to),
-                Edge::Notes { to, .. } => layers.insert(*to),
+                Edge::Notes { from, to } => {
+                    notes.insert((*from, *to))
+                        && (!matches!(to, NotesNode::Performance(_)) || fed.insert(*to))
+                }
             };
             if !unique || !self.edge_is_usable(edge) {
                 return false;
@@ -630,14 +669,18 @@ impl Project {
                 repaired = true;
             }
         }
-        let (mut outputs, mut keys, mut layers) = (HashSet::new(), HashSet::new(), HashSet::new());
+        let (mut outputs, mut keys) = (HashSet::new(), HashSet::new());
+        let (mut notes, mut fed) = (HashSet::new(), HashSet::new());
         let usable: Vec<bool> = edges.iter().map(|edge| self.edge_is_usable(edge)).collect();
         let mut kept = Vec::with_capacity(edges.len());
         for (edge, usable) in edges.into_iter().zip(usable) {
             let unique = match &edge {
                 Edge::Output { from, output } => outputs.insert((*from, output.key())),
                 Edge::Key { to, .. } => keys.insert(*to),
-                Edge::Notes { to, .. } => layers.insert(*to),
+                Edge::Notes { from, to } => {
+                    notes.insert((*from, *to))
+                        && (!matches!(to, NotesNode::Performance(_)) || fed.insert(*to))
+                }
             };
             if usable && unique {
                 kept.push(edge);
@@ -673,23 +716,20 @@ impl Project {
                 self.routing.push(edge);
             }
         }
-        // A layer whose path loops among performances, or ends anywhere but a track with notes of
-        // its own, loses its input; the performances that then stand on nothing go with it.
-        let broken: Vec<TrackId> = self
-            .routing
-            .edges()
-            .iter()
-            .filter_map(|edge| match edge {
-                Edge::Notes {
-                    to: NotesNode::Track(layer),
-                    ..
-                } if self.routing.path_into(*layer).is_none() => Some(*layer),
-                _ => None,
-            })
-            .collect();
-        for layer in broken {
-            self.routing.set_follows(layer, None);
+        // A path into an instrument that loops among performances, or starts at a score that
+        // instrument may not play, loses its last edge. An instrument left with nothing to play
+        // plays its own score again, so a broken layer is silent rather than lost; the
+        // performances that then stand on nothing go with it.
+        let broken = self.broken_notes_inputs();
+        for edge in &broken {
+            self.routing.retain(|kept| kept != edge);
             repaired = true;
+            if let Some(track) = edge.to_track()
+                && self.routing.paths_into(track).is_empty()
+                && self.has_notes_nodes(track)
+            {
+                self.routing.push(Edge::own_notes(track));
+            }
         }
         repaired |= self.routing.prune_performances();
         for track in had_outputs {

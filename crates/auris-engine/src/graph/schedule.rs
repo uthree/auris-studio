@@ -12,7 +12,7 @@ use auris_core::AudioBuffer;
 use auris_core::param::db_to_gain;
 use auris_core::plugin::NoteEvent;
 use auris_core::project::{
-    AudioClip, AudioSourceBank, ClipCurve, ClipId, FadeCurve, MidiClip, NoteTransform, PlayedClips,
+    AudioClip, AudioSourceBank, ClipCurve, ClipId, FadeCurve, MidiClip, NoteTransform, PlayedPart,
 };
 use auris_core::time::{SignatureMap, TempoMap, Ticks};
 
@@ -176,7 +176,7 @@ impl RenderAudioClip {
 /// thread has to know it happened.
 pub(super) fn schedule_clip(
     clip: &MidiClip,
-    played: &PlayedClips<'_>,
+    played: &PlayedPart<'_>,
     tempo_map: &TempoMap,
     signatures: &SignatureMap,
     sample_rate: f64,
@@ -514,7 +514,8 @@ mod tests {
         let meter = SignatureMap::constant(TimeSignature::new(6, 8));
         let tempo = TempoMap::default();
         let mut events = Vec::new();
-        let own = auris_core::PlayedClips {
+        let own = auris_core::PlayedPart {
+            source: auris_core::TrackId(0),
             clips: &[],
             stages: Vec::new(),
         };

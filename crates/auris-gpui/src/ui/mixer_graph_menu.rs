@@ -31,7 +31,10 @@ impl AurisApp {
         node: MixerNode,
     ) -> ContextMenu {
         let menu = match node {
-            MixerNode::Strip(Some(track)) => {
+            // A score and an instrument are parts of their track; its menu is theirs.
+            MixerNode::Strip(Some(track))
+            | MixerNode::Score(track)
+            | MixerNode::Instrument(track) => {
                 self.select_track(track);
                 self.track_menu(at, track)
             }

@@ -60,7 +60,7 @@ pub use volume_contour::{VolumeContour, VolumeContourPreset};
 mod mixer_view;
 mod recipe;
 mod routing;
-pub use layer::PlayedClips;
+pub use layer::{PlayedClips, PlayedPart};
 pub use mixer_view::{MixerGraphView, MixerNodePosition};
 mod track;
 mod transform;
@@ -321,6 +321,9 @@ impl Default for Project {
 
 impl Project {
     /// Schema version written into saved files and required when opening them.
+    /// Version 39 splits a note track into a score and an instrument on the notes side: every note
+    /// track's own score reaches its own instrument by an edge of its own, and an instrument may
+    /// play several scores at once.
     /// Version 38 replaces a layer's shape with a performance node on its notes path, and adds
     /// the key range, voice, velocity, length and delay transforms that shape was made of.
     /// Version 37 moves every connection — outputs, sidechain keys and layers — off the tracks and
@@ -333,7 +336,7 @@ impl Project {
     /// Version 31 adds power, added-tone, 6/9 and thirteenth chord qualities to stored harmony.
     /// Version 30 adds eleventh chord qualities to stored harmony.
     /// Version 29 adds ordered, named manual drum lanes beside generation-role assignments.
-    pub const FORMAT_VERSION: u32 = 38;
+    pub const FORMAT_VERSION: u32 = 39;
 
     /// The name a document carries until somebody — a person or the agent — gives it one.
     pub const UNTITLED: &'static str = "Untitled";

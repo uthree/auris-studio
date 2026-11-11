@@ -193,6 +193,7 @@ pub fn edit_key(edit: Edit) -> Key {
         Edit::AddLayerTrack => Key::EditAddLayerTrack,
         Edit::SetLayerShape => Key::EditSetLayerShape,
         Edit::DetachLayer => Key::EditDetachLayer,
+        Edit::RouteNotes => Key::EditRouteNotes,
         Edit::ConvertTrackToAudio => Key::EditConvertTrackToAudio,
         Edit::MoveTrack => Key::EditMoveTrack,
         Edit::MoveMixerNodes => Key::EditMoveMixerNodes,

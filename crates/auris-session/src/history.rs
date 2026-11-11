@@ -73,6 +73,8 @@ pub enum Edit {
     SetLayerShape,
     /// A layer was given notes of its own.
     DetachLayer,
+    /// A score was connected to an instrument, or a notes connection was cut.
+    RouteNotes,
     /// A note track was rendered and replaced with audio.
     ConvertTrackToAudio,
     /// A track was moved up or down the list.

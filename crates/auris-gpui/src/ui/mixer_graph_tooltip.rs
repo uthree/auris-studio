@@ -44,6 +44,7 @@ impl AurisApp {
     fn wire_node_name(&self, node: MixerNode) -> Option<String> {
         let owner = match node {
             MixerNode::Strip(owner) | MixerNode::Effect(owner, _) => owner,
+            MixerNode::Score(track) | MixerNode::Instrument(track) => Some(track),
             MixerNode::Performance(id) => {
                 return Some(format!("{} #{}", self.t(Key::MixerPerformance), id.0));
             }
@@ -58,6 +59,8 @@ impl AurisApp {
         );
         match node {
             MixerNode::Strip(_) => Some(name),
+            MixerNode::Score(_) => Some(format!("{name} / {}", self.t(Key::MixerScore))),
+            MixerNode::Instrument(_) => Some(format!("{name} / {}", self.t(Key::MixerInstrument))),
             MixerNode::Performance(_) => None,
             MixerNode::Effect(_, slot) => {
                 let effect = mixer

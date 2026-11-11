@@ -560,9 +560,8 @@ impl AurisApp {
                         .played_clips(track)
                         .map(|played| {
                             played
-                                .clips
-                                .iter()
-                                .map(|clip| ClipPaint {
+                                .clips()
+                                .map(|(clip, part)| ClipPaint {
                                     id: clip.id,
                                     name: clip.name.clone(),
                                     start: clip.start,
@@ -571,7 +570,7 @@ impl AurisApp {
                                     muted: true,
                                     generated: false,
                                     follows: None,
-                                    content: ClipContent::Notes(played.through_stages(
+                                    content: ClipContent::Notes(part.through_stages(
                                         clip.notes.clone(),
                                         clip,
                                         self.project().tempo_map.bpm_at(clip.start),

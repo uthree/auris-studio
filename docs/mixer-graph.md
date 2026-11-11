@@ -21,13 +21,21 @@ connections both participate in cycle validation. A connection that
 would lead back to its source is refused before the document or undo history
 changes.
 
-A layer plays another track's notes, and the notes wire runs from its source to it. When the
-layer's dials shape those notes, a **Performance** node stands on that wire. It lists its stages
+A melodic, drum or singer track also has a **Score** node, its clips, and an **Instrument** node,
+what plays them. The track's own score is wired to its own instrument, and the instrument feeds
+the track's node. Drag a score's right port to another track's instrument to play the part there
+as well; the instrument plays every score that reaches it, merged. Only a melodic instrument plays
+another track's score, and a drum or layer score plays nowhere but its own instrument. Delete a
+track's own notes wire and its instrument plays only what else reaches it: a track playing only
+other tracks' scores is a layer.
+
+A layer plays another track's notes, and the notes wire runs from that track's score to the layer's
+instrument. When the layer's dials shape those notes, a **Performance** node stands on that wire. It lists its stages
 in order: key range, voice, transpose, velocity, length and delay. They run after the source
 clip's own performance. Click the node to select the layer, and set the stages from the layer
 panel. Choose **Remove Performance** from the node's menu to take it off the wire, so the layer
-plays its source as written. Deleting a notes wire detaches the layers it fed. Each layer keeps
-the notes it was playing as clips of its own.
+plays its source as written. Deleting a layer's only notes wire detaches it: the layer keeps the
+notes it was playing as clips of its own and plays its own score again.
 
 Wire roles use themed colors, labels and distinct line styles:
 
@@ -96,8 +104,10 @@ automatic layout at 100%. The system's architecture is documented in
 
 MCP exposes `mixer_graph` with a project handle/path and an `operation` object.
 Start with `{"action":"read"}`. Nodes use stable `track:N`, `track:master`
-and `effect:N` IDs, independent of names and effect positions. A performance is
-`performance:N`, listed last, with its `name` and `transforms`. Read pages are
+and `effect:N` IDs, independent of names and effect positions. A note track also has
+`score:N` and `instrument:N` nodes. A performance is `performance:N`, listed last, with its `name`
+and `transforms`. A `notes` connection runs from a `score:N` node to an `instrument:N` node, and
+disconnecting one names its two ends. Read pages are
 in processing order; `next_offset` continues the node list and each page includes
 its nodes' outgoing edges. A track's `output_node` identifies its terminal insert
 or the track itself. Both the track ID and its terminal effect ID can address an
