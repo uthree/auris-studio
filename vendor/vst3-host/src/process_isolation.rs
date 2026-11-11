@@ -2672,6 +2672,25 @@ mod wire_tests {
             }
         }
 
+        /// Starts a host on the script.
+        ///
+        /// Another test thread can fork while this script is still open for writing; its child
+        /// holds the descriptor until it execs, and until then executing the script fails with
+        /// "Text file busy". That clears within milliseconds, so the spawn is retried briefly.
+        fn spawn(&self) -> PluginHostProcess {
+            let mut tries = 0;
+            loop {
+                match PluginHostProcess::spawn(self.script.clone(), Duration::from_secs(5)) {
+                    Ok(process) => return process,
+                    Err(error) if error.contains("os error 26") && tries < 50 => {
+                        tries += 1;
+                        std::thread::sleep(Duration::from_millis(20));
+                    }
+                    Err(error) => panic!("spawn flaky helper: {error:?}"),
+                }
+            }
+        }
+
         fn load_attempts(&self) -> u32 {
             std::fs::read_to_string(&self.attempts)
                 .ok()
@@ -2706,8 +2725,7 @@ mod wire_tests {
     #[test]
     fn a_load_that_kills_the_helper_is_replayed_against_a_fresh_one() {
         let fake = FlakyLoadHelper::new("recovers", 1);
-        let mut proc = PluginHostProcess::spawn(fake.script.clone(), Duration::from_secs(5))
-            .expect("spawn flaky helper");
+        let mut proc = fake.spawn();
         let first_pid = proc.helper_pid().expect("helper pid");
 
         let response = proc
@@ -2729,8 +2747,7 @@ mod wire_tests {
     #[test]
     fn a_load_that_always_crashes_gives_up_after_one_retry() {
         let fake = FlakyLoadHelper::new("always", 99);
-        let mut proc = PluginHostProcess::spawn(fake.script.clone(), Duration::from_secs(5))
-            .expect("spawn flaky helper");
+        let mut proc = fake.spawn();
 
         let error = proc
             .send_command(FlakyLoadHelper::load_command())
@@ -2753,8 +2770,7 @@ mod wire_tests {
     #[test]
     fn a_crash_on_any_other_command_is_reported_not_retried() {
         let fake = FlakyLoadHelper::new("other", 0);
-        let mut proc = PluginHostProcess::spawn(fake.script.clone(), Duration::from_secs(5))
-            .expect("spawn flaky helper");
+        let mut proc = fake.spawn();
         let pid = proc.helper_pid().expect("helper pid");
 
         assert!(
