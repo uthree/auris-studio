@@ -36,8 +36,21 @@ pub(super) struct AppearanceEditor {
     active: ThemeField,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum ThemeField {
+/// The id a field is drawn and found under, for every field but a gradient stop's.
+fn theme_field_id(field: ThemeField) -> Option<&'static str> {
+    match field {
+        ThemeField::Name => Some("theme-name"),
+        ThemeField::Accent => Some("theme-accent"),
+        ThemeField::Palette(index) => Some(PALETTE_FIELDS[index]),
+        ThemeField::Signal(index) => Some(SIGNAL_FIELDS[index]),
+        ThemeField::Chord(index) => Some(CHORD_FIELDS[index]),
+        ThemeField::Velocity(index) => Some(VELOCITY_FIELDS[index]),
+        ThemeField::Stop(..) => None,
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub(super) enum ThemeField {
     Name,
     Accent,
     Palette(usize),
@@ -149,7 +162,11 @@ impl AppearanceEditor {
     }
 
     pub(super) fn field(&mut self) -> &mut TextField {
-        match self.active {
+        self.field_of(self.active)
+    }
+
+    fn field_of(&mut self, field: ThemeField) -> &mut TextField {
+        match field {
             ThemeField::Name => &mut self.name,
             ThemeField::Accent => &mut self.accent,
             ThemeField::Palette(index) => &mut self.palette[index],
@@ -442,11 +459,7 @@ impl SettingsWindow {
                 .collect(),
             active: ThemeField::Name,
         });
-        let focus = self
-            .dropdown_focus
-            .entry("theme-name")
-            .or_insert_with(|| cx.focus_handle().tab_stop(true))
-            .clone();
+        let focus = self.theme_input_focus(ThemeField::Name, cx);
         window.focus(&focus);
         cx.notify();
     }
@@ -817,14 +830,14 @@ impl SettingsWindow {
             .unwrap_or_else(|_| self.theme.clone());
         let color: gpui::Rgba = preview.velocity_color(position).into();
         let channel = |value: f32| (value.clamp(0.0, 1.0) * 255.0).round() as u32;
-        let mut row = GradientFields::new(&GradientStop {
+        let row = GradientFields::new(&GradientStop {
             position,
             color: (channel(color.r) << 16) | (channel(color.g) << 8) | channel(color.b),
         });
-        let focus = cx.focus_handle().tab_stop(true);
-        row.focus[0] = Some(focus.clone());
-        editor.active = ThemeField::Stop(editor.stops.len(), 0);
+        let field = ThemeField::Stop(editor.stops.len(), 0);
+        editor.active = field;
         editor.stops.push(row);
+        let focus = self.theme_input_focus(field, cx);
         window.focus(&focus);
         cx.notify();
     }
@@ -871,9 +884,8 @@ impl SettingsWindow {
                             editor.stops.remove(index);
                             editor.active = ThemeField::Name;
                         }
-                        if let Some(focus) = this.dropdown_focus.get("theme-name") {
-                            window.focus(focus);
-                        }
+                        let focus = this.theme_input_focus(ThemeField::Name, cx);
+                        window.focus(&focus);
                         cx.notify();
                     }),
                 )
@@ -884,34 +896,54 @@ impl SettingsWindow {
             .into_any_element()
     }
 
+    /// The focus handle of the input `field` is typed into, made the first time it is asked for.
+    fn theme_input_focus(&mut self, field: ThemeField, cx: &mut Context<Self>) -> FocusHandle {
+        self.theme_inputs.entry(field).or_insert_with(|| {
+            crate::ui::text_input::MirroredInput::new(
+                cx,
+                move |this: &mut SettingsWindow, event, text, cx| {
+                    match event {
+                        atelier::TextInputEvent::Changed => {
+                            if let Some(editor) = &mut this.appearance_editor {
+                                let edited = editor.field_of(field);
+                                let all = 0..edited.content().len();
+                                edited.replace(all, &text);
+                                this.text_changed();
+                            }
+                        }
+                        atelier::TextInputEvent::Submit => this.save_theme_editor(cx),
+                        atelier::TextInputEvent::Cancel => this.appearance_editor = None,
+                    }
+                    cx.notify();
+                },
+            )
+        });
+        let focus = self.theme_inputs[&field].focus_handle().clone();
+        // Where the editor looks for which field holds the keyboard.
+        match theme_field_id(field) {
+            Some(id) => {
+                self.dropdown_focus.insert(id, focus.clone());
+            }
+            None => {
+                if let (ThemeField::Stop(index, component), Some(editor)) =
+                    (field, self.appearance_editor.as_mut())
+                    && let Some(row) = editor.stops.get_mut(index)
+                {
+                    row.focus[component] = Some(focus.clone());
+                }
+            }
+        }
+        focus
+    }
+
     fn theme_text_field(&mut self, field: ThemeField, cx: &mut Context<Self>) -> AnyElement {
-        let static_id = match field {
-            ThemeField::Name => Some("theme-name"),
-            ThemeField::Accent => Some("theme-accent"),
-            ThemeField::Palette(index) => Some(PALETTE_FIELDS[index]),
-            ThemeField::Signal(index) => Some(SIGNAL_FIELDS[index]),
-            ThemeField::Chord(index) => Some(CHORD_FIELDS[index]),
-            ThemeField::Velocity(index) => Some(VELOCITY_FIELDS[index]),
-            ThemeField::Stop(..) => None,
-        };
-        let (id, focus): (SharedString, FocusHandle) = if let Some(id) = static_id {
-            (
-                id.into(),
-                self.dropdown_focus
-                    .entry(id)
-                    .or_insert_with(|| cx.focus_handle().tab_stop(true))
-                    .clone(),
-            )
-        } else if let ThemeField::Stop(index, component) = field {
-            let editor = self.appearance_editor.as_mut().expect("the editor is open");
-            (
-                format!("theme-velocity-stop-{index}-{component}").into(),
-                editor.stops[index].focus[component]
-                    .get_or_insert_with(|| cx.focus_handle().tab_stop(true))
-                    .clone(),
-            )
-        } else {
-            unreachable!()
+        self.theme_input_focus(field, cx);
+        let id: SharedString = match (theme_field_id(field), field) {
+            (Some(id), _) => id.into(),
+            (None, ThemeField::Stop(index, component)) => {
+                format!("theme-velocity-stop-{index}-{component}").into()
+            }
+            (None, _) => unreachable!(),
         };
         let editor = self.appearance_editor.as_ref().expect("the editor is open");
         let text = match field {
@@ -923,56 +955,25 @@ impl SettingsWindow {
             ThemeField::Velocity(index) => &editor.velocity[index],
             ThemeField::Stop(index, component) => &editor.stops[index].fields[component],
         };
-        let active = editor.active == field;
-        let contents = if active {
-            crate::ui::prompt::editable_text(
-                text.content().to_owned().into(),
-                text.selection(),
-                text.marked(),
-                focus.clone(),
-                cx.entity(),
-                self.theme.clone(),
-            )
-            .into_any_element()
-        } else {
-            crate::ui::prompt::field_text(text.content().to_owned(), self.theme.text)
-                .into_any_element()
-        };
+        let input = self.theme_inputs[&field].sync(text.content(), cx);
         div()
-            .id(id.clone())
-            .debug_selector(move || id.to_string())
-            .track_focus(&focus)
-            .tab_index(0)
-            .h(px(30.0))
             .w_full()
             .min_w_0()
-            .bg(self.theme.surface_sunken)
-            .border_1()
-            .rounded_sm()
-            .border_color(if active {
-                self.theme.accent
-            } else {
-                self.theme.border
-            })
-            .cursor_text()
-            .on_mouse_down(
-                gpui::MouseButton::Left,
-                cx.listener(move |this, event: &gpui::MouseDownEvent, window, cx| {
-                    if let Some(editor) = &mut this.appearance_editor {
-                        editor.active = field;
-                        crate::ui::prompt::click_field(
-                            editor.field(),
-                            &focus,
-                            active,
-                            window,
-                            event,
-                        );
-                    }
-                    window.focus(&focus);
-                    cx.notify();
-                }),
+            // On the way down, before the input under the pointer takes the press.
+            .capture_any_mouse_down(cx.listener(move |this, _, _, cx| {
+                if let Some(editor) = &mut this.appearance_editor {
+                    editor.active = field;
+                }
+                cx.notify();
+            }))
+            .child(
+                atelier::TextField::new()
+                    .id(id.clone())
+                    .debug_selector(move || id.to_string())
+                    .track_focus(&self.theme_inputs[&field].tab_stop())
+                    .tab_index(0)
+                    .child(input),
             )
-            .child(contents)
             .into_any_element()
     }
 
@@ -1035,36 +1036,14 @@ impl SettingsWindow {
         false
     }
 
+    /// The theme editor's fields are Atelier's inputs, which take their own keys: Return
+    /// saves the draft and Escape closes it.
     pub(super) fn appearance_editor_key(
         &mut self,
-        event: &KeyDownEvent,
-        cx: &mut Context<Self>,
+        _event: &KeyDownEvent,
+        _cx: &mut Context<Self>,
     ) -> bool {
-        let Some(editor) = &mut self.appearance_editor else {
-            return false;
-        };
-        match event.keystroke.key.as_str() {
-            "escape" => self.appearance_editor = None,
-            "enter" if editor.readable_field().marked().is_none() => self.save_theme_editor(cx),
-            "enter" => return true,
-            "tab" => return false,
-            key => {
-                let modifiers = event.keystroke.modifiers;
-                if editor.field().apply_key_with_clipboard(
-                    key,
-                    modifiers.shift,
-                    modifiers.secondary(),
-                    false,
-                    cx,
-                ) == KeyEffect::Ignored
-                {
-                    return false;
-                }
-            }
-        }
-        self.text_changed();
-        cx.notify();
-        true
+        false
     }
 }
 

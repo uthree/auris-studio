@@ -12,8 +12,8 @@ use super::{analyser::FLOOR_DB, paint};
 use crate::{app::AurisApp, theme::Theme};
 use atelier::viz::{Heatmap, Spectrum, Vectorscope, Waveform};
 use atelier::{
-    Badge, Button, Card, ControlSize, IconName, Label, LevelMeter, SectionHeader, Segment,
-    SegmentedControl, TextColor, TextSize, Tone,
+    Badge, Button, Card, ControlSize, IconName, Label, LevelMeter, METER_FLOOR_DB, SectionHeader,
+    Segment, SegmentedControl, Stat, TextColor, TextSize, Tone,
 };
 use auris_i18n::Key;
 use auris_session::{
@@ -55,10 +55,6 @@ const SPECTRUM_AVERAGE_SECONDS: f32 = 0.2;
 
 /// How long a channel meter's peak mark stays put before it lets a lower one replace it.
 const METER_HOLD: Duration = Duration::from_secs(2);
-
-/// The bottom of the channel meters, in dBFS. With Atelier's meter zones at 0.7 and 0.9 of the
-/// travel, the meter turns yellow at -18 dBFS and red at -6.
-const METER_FLOOR_DB: f32 = -60.0;
 
 /// The integrated loudness the common streaming services normalise to, and how far either side
 /// of it counts as on target.
@@ -937,44 +933,39 @@ impl AurisApp {
             .flex_1()
             .min_w_0()
             .gap(spacing.md)
-            .child(labelled_figure(
+            .child(figure(
                 self.t(Key::VisualizerMomentary),
                 loudness.momentary,
                 lufs,
                 TextSize::Display,
-                tokens,
             ))
-            .child(labelled_figure(
+            .child(figure(
                 self.t(Key::VisualizerShortTerm),
                 loudness.short_term,
                 lufs,
                 TextSize::XLarge,
-                tokens,
             ))
-            .child(labelled_figure(
+            .child(figure(
                 self.t(Key::VisualizerIntegrated),
                 loudness.integrated,
                 lufs,
                 TextSize::XLarge,
-                tokens,
             ))
             .child(
                 div()
                     .flex()
                     .gap(spacing.lg)
-                    .child(labelled_figure(
+                    .child(figure(
                         self.t(Key::VisualizerTruePeak),
                         loudness.true_peak,
                         "dBTP",
                         TextSize::XLarge,
-                        tokens,
                     ))
-                    .child(labelled_figure(
+                    .child(figure(
                         self.t(Key::VisualizerRange),
                         loudness.range,
                         "LU",
                         TextSize::XLarge,
-                        tokens,
                     )),
             )
             .children(
@@ -987,33 +978,26 @@ impl AurisApp {
             .frame
             .as_ref()
             .map_or([METER_FLOOR_DB; 2], channel_peaks_db);
+        // Atelier's meters fill the height the row stretches this column to.
         let meters = div()
             .id("visualizer-meters")
             .debug_selector(|| "visualizer-meters".into())
-            .relative()
+            .flex()
             .flex_none()
-            .w(px(8. * 2.) + spacing.xs)
+            .gap(spacing.xs)
             .min_h(px(230.))
             .children(
                 peaks
                     .into_iter()
                     .zip(self.visualizer.meter_hold)
-                    .enumerate()
-                    .map(|(channel, (peak, hold))| {
-                        let mut meter = LevelMeter::new(meter_level(peak)).thickness(px(8.));
-                        if let Some((held, at)) = hold
-                            && now.saturating_duration_since(at) <= METER_HOLD
-                        {
-                            meter = meter.peak(meter_level(held));
+                    .map(|(peak, hold)| {
+                        let meter = LevelMeter::db(peak).thickness(px(8.));
+                        match hold {
+                            Some((held, at)) if now.saturating_duration_since(at) <= METER_HOLD => {
+                                meter.peak_db(held)
+                            }
+                            _ => meter,
                         }
-                        // Pinned top and bottom rather than sized by percentage, so the meter
-                        // has a definite height to fill however the row was stretched.
-                        div()
-                            .absolute()
-                            .top_0()
-                            .bottom_0()
-                            .left((px(8.) + spacing.xs) * channel as f32)
-                            .child(meter)
                     }),
             );
         visualizer_card_with(
@@ -1480,38 +1464,15 @@ fn reference_curve(levels: Vec<f32>, color: Hsla) -> impl IntoElement {
     .size_full()
 }
 
-/// A labelled number with its unit, or a dash when there is nothing to read yet.
-fn labelled_figure(
-    label: &str,
-    value: Option<f32>,
-    unit: &str,
-    size: TextSize,
-    tokens: &atelier::Theme,
-) -> gpui::Div {
-    div()
-        .flex()
-        .flex_col()
-        .gap(tokens.spacing.xxs)
-        .child(Label::caption(label.to_owned()))
-        .child(
-            div()
-                .flex()
-                .items_baseline()
-                .gap(tokens.spacing.xs)
-                .child(
-                    Label::new(
-                        value.map_or_else(|| "—".to_owned(), |value| signed_plain(value, 1)),
-                    )
-                    .size(size)
-                    .mono()
-                    .weight(tokens.typography.label_weight),
-                )
-                .child(
-                    Label::new(unit.to_owned())
-                        .size(TextSize::Small)
-                        .color(TextColor::Muted),
-                ),
-        )
+/// One loudness reading: Atelier's [`Stat`] with its caption, the figure to one decimal with a
+/// true minus, and the unit; a dash before anything is measured.
+fn figure(caption: &str, value: Option<f32>, unit: &str, size: TextSize) -> Stat {
+    Stat::maybe(
+        caption.to_owned(),
+        value.map(|value| signed_plain(value, 1)),
+    )
+    .unit(unit.to_owned())
+    .size(size)
 }
 
 fn spectrum_channel_key(mode: VisualizerSpectrum) -> Key {
@@ -1541,11 +1502,6 @@ fn frequency_label(hz: f64) -> String {
     } else {
         format!("{hz}")
     }
-}
-
-/// Where a sample peak in dBFS sits on a channel meter.
-fn meter_level(db: f32) -> f32 {
-    (1.0 - db / METER_FLOOR_DB).clamp(0.0, 1.0)
 }
 
 /// The sample peak of each channel's newest window, in dBFS, no lower than the meter's floor.
@@ -2053,10 +2009,6 @@ mod tests {
         assert_eq!(spectrum_level(0.), 1.);
         assert_eq!(spectrum_level(FLOOR_DB), 0.);
         assert!((spectrum_level(-12.) - 5. / 6.).abs() < 1e-6);
-        assert!(
-            (meter_level(-18.) - 0.7).abs() < 1e-6,
-            "the meter turns yellow at -18 dBFS"
-        );
         assert_eq!(signed(0.724, 2), "+0.72");
         assert_eq!(signed(-0.31, 2), "\u{2212}0.31");
         assert_eq!(signed_plain(-15.44, 1), "\u{2212}15.4");

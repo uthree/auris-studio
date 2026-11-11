@@ -189,6 +189,28 @@ warning sits at the 90th percentile and fires on one in ten: at the 95th, four s
 a row all finished at 76-78%, just under it. With `--any-part`, 518 songs give 3.9%, 5.8% and
 11% for the three rows.
 
+## Melody against the lyric's accent
+
+```
+cargo run --release -p auris-session --example accent_corpus -- --project song.auris...
+uv run tools/eval/pjs_accent_lines.py <PJS_corpus_ver1.1> > pjs.jsonl
+cargo run --release -p auris-session --example accent_corpus -- pjs.jsonl
+```
+
+Prints, per song, what the agent's `lyric_accent` tool measures: of the places where the
+dictionary's Tokyo accent rises or falls between two sung notes, the share the melody follows,
+repeats a pitch on, or opposes, with the verdict the tool would give if the song were one
+section. It needs the installed Japanese dictionary.
+
+The thresholds come from a published corpus of 1988 popular songs, which followed about 42%
+of the accent's changes and opposed about 30% — `auris_session::session::lyric_accent` has the
+figures. Measured on 40 saved agent songs (1959 lines, all read), the agent followed 39% and
+opposed 34% on average, nearer to a melody that ignores its words (about 36% each).
+
+PJS is a poor reference for this: its lyrics are sung kana with long vowels written by ear
+(とー for 冬至, よおに for ように), the dictionary misreads them, and the accent is wrong
+before any melody is compared. Its numbers measure the dictionary, not the composer.
+
 ## The learned ear
 
 ```sh

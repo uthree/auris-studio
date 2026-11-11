@@ -89,7 +89,7 @@ pub fn tool_group(name: &str) -> &'static str {
         }
         "write_lyrics" | "edit_lyrics" | "sing" | "list_voices" | "inspect_singer"
         | "set_singer_voice" | "edit_vocal_notes" | "analyze_lyrics" | "diagnose_song"
-        | "repair_lyrics" => "vocals",
+        | "repair_lyrics" | "lyric_accent" => "vocals",
         "mixer_graph"
         | "automation"
         | "normalize_mix"

@@ -326,11 +326,7 @@ impl AurisApp {
                         .child("!"),
                 )
             })
-            .tooltip(crate::ui::tooltip::keyed_tip(
-                tooltip_label,
-                shortcut,
-                theme,
-            ))
+            .tooltip(crate::ui::tooltip::tip_with_keys(tooltip_label, shortcut))
             // Where a panel is moved from. The switch is the one part of a hidden panel that is
             // still on screen, so it is the only thing a "put that over there" can be aimed at.
             .on_mouse_down(

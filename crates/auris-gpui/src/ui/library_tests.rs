@@ -609,7 +609,7 @@ fn choosing_a_japanese_search_result_changes_only_the_selected_instrument(cx: &m
                 expected
             );
         }
-        assert!(this.library_search.content().is_empty());
+        assert!(this.library_search.is_empty());
         assert!(!this.library_search_focused);
     });
 }
@@ -640,7 +640,7 @@ fn an_instrument_result_without_a_compatible_target_keeps_the_query_and_document
         click("lib-auris.synth.chiptune", cx);
 
         app.read_with(cx, |this, _| {
-            assert_eq!(this.library_search.content(), "チップチューン");
+            assert_eq!(this.library_search.as_str(), "チップチューン");
             assert_eq!(serde_json::to_value(this.project()).unwrap(), before);
         });
     }

@@ -1029,7 +1029,7 @@ impl AurisApp {
         }
         let input = self.render_workshop_input(window, cx);
         let prompt = chord_prompt
-            .then(|| self.render_prompt(cx))
+            .then(|| self.render_prompt(window, cx))
             .flatten()
             .map(IntoElement::into_any_element);
         let attachment_preview = self.render_attachment_preview(true, window, cx);
@@ -2080,7 +2080,7 @@ mod tests {
         paint(&app, cx);
         click("song-feedback-0", cx);
         paint(&app, cx);
-        cx.simulate_keystrokes("secondary-enter");
+        cx.simulate_keystrokes("enter");
         paint(&app, cx);
         assert!(cx.debug_bounds("prompt-error").is_some());
         cx.simulate_keystrokes("shift-tab space");
@@ -2097,9 +2097,9 @@ mod tests {
         click("feedback-star-4", cx);
         click("feedback-comment", cx);
         cx.simulate_input("メロディが好き");
-        cx.simulate_keystrokes("enter");
+        cx.simulate_keystrokes("shift-enter");
         cx.simulate_input("ドラムを控えめに");
-        cx.simulate_keystrokes("secondary-enter");
+        cx.simulate_keystrokes("enter");
         app.read_with(cx, |this, _| {
             let prompt = this.prompt.as_ref().unwrap();
             assert!(matches!(

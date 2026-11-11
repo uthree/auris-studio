@@ -683,10 +683,8 @@ impl AurisApp {
                                     .debug_selector(|| "mixer-graph-help".into())
                                     .flex()
                                     .items_center()
-                                    .tooltip(crate::ui::tooltip::keyed_tip(
+                                    .tooltip(crate::ui::tooltip::text_tip(
                                         self.t(Key::MixerGraphHelp),
-                                        "",
-                                        &theme,
                                     ))
                                     .child(
                                         atelier::Icon::new(atelier::IconName::Info)
@@ -1328,7 +1326,7 @@ impl AurisApp {
                             meter,
                             self.session.meters().track_clipped(index),
                             Axis::Horizontal,
-                            &theme,
+                            px(6.0 * zoom),
                         )))
                         .child(node_button(
                             zoom,
@@ -1371,7 +1369,7 @@ impl AurisApp {
                         meter,
                         self.session.meters().master_clipped(),
                         Axis::Horizontal,
-                        &theme,
+                        px(6.0 * zoom),
                     )));
                 }
             }

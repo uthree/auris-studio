@@ -85,6 +85,8 @@ pub enum Rule {
     MissingChord,
     /// Two notes of the same pitch on top of each other in one clip.
     DuplicateNote,
+    /// Two clips on one track sound over the same stretch of time.
+    OverlappingClips,
     /// A singer asked to sing two notes at once.
     SingerOverlap,
     /// A sung note with no lyric, which the voice sings as a stock vowel.
@@ -122,7 +124,7 @@ pub enum Rule {
 
 impl Rule {
     /// Every rule, score rules first.
-    pub const ALL: [Rule; 24] = [
+    pub const ALL: [Rule; 25] = [
         Rule::CrowdedOnset,
         Rule::DenseNotes,
         Rule::HarshInterval,
@@ -131,6 +133,7 @@ impl Rule {
         Rule::AvoidNote,
         Rule::MissingChord,
         Rule::DuplicateNote,
+        Rule::OverlappingClips,
         Rule::SingerOverlap,
         Rule::MissingLyric,
         Rule::InaudibleVelocity,
@@ -160,6 +163,7 @@ impl Rule {
             Rule::AvoidNote => "avoid_note",
             Rule::MissingChord => "missing_chord",
             Rule::DuplicateNote => "duplicate_note",
+            Rule::OverlappingClips => "overlapping_clips",
             Rule::SingerOverlap => "singer_overlap",
             Rule::MissingLyric => "missing_lyric",
             Rule::InaudibleVelocity => "inaudible_velocity",
@@ -249,6 +253,22 @@ pub enum Fix {
         /// Where the run of bars ends.
         end: Ticks,
     },
+    /// End a MIDI clip earlier, keeping every note where it is: its tail is empty and lies under
+    /// the next clip.
+    TrimClip {
+        /// The clip.
+        clip: ClipId,
+        /// Where it now ends on the timeline.
+        end: Ticks,
+    },
+    /// Crossfade two overlapping audio clips on one track, as
+    /// [`Session::crossfade_clips`](crate::Session::crossfade_clips) does.
+    Crossfade {
+        /// The clip that begins first.
+        first: ClipId,
+        /// The clip that begins inside it.
+        second: ClipId,
+    },
     /// Run [`Session::normalize_mix`](crate::Session::normalize_mix) toward the standard target.
     NormalizeMix,
 }
@@ -275,6 +295,9 @@ pub struct Diagnostic {
     pub end: Ticks,
     /// The stored notes involved, when the problem is in notes.
     pub notes: Vec<NoteRef>,
+    /// The clips involved, when the problem is in clips as a whole rather than in their notes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub clips: Vec<ClipId>,
     /// MIDI pitches involved, for describing the problem.
     pub pitches: Vec<u8>,
     /// The measured quantity: a note count, attacks per beat, LUFS, dBFS.
@@ -294,6 +317,7 @@ impl Diagnostic {
             start,
             end: end.max(start + Ticks(1)),
             notes: Vec::new(),
+            clips: Vec::new(),
             pitches: Vec::new(),
             value: None,
             limit: None,
@@ -312,6 +336,7 @@ impl Diagnostic {
         self.start.raw().hash(&mut hasher);
         self.end.raw().hash(&mut hasher);
         self.notes.hash(&mut hasher);
+        self.clips.hash(&mut hasher);
         self.pitches.hash(&mut hasher);
         format!(
             "{}-{:012x}",
@@ -372,6 +397,10 @@ impl Diagnostic {
             }
             Rule::DuplicateNote => {
                 format!("{pitches} is written twice on top of itself in one clip")
+            }
+            Rule::OverlappingClips => {
+                "two clips on this track overlap here; both play at once, which is rarely meant"
+                    .to_string()
             }
             Rule::SingerOverlap => {
                 format!("{pitches} overlap on a singer track; a voice sings one note at a time")
@@ -445,6 +474,8 @@ impl Diagnostic {
             Fix::SetVelocity { .. } => "raise the velocity to the default",
             Fix::ResetFader { .. } => "bring the track's fader back to 0 dB",
             Fix::SetChords { .. } => "write the chords the notes spell, one per bar",
+            Fix::TrimClip { .. } => "end the earlier clip where the later one begins",
+            Fix::Crossfade { .. } => "crossfade the two audio clips across their overlap",
             Fix::NormalizeMix => "normalize the mix toward -14 LUFS",
         })
     }
@@ -482,7 +513,10 @@ pub fn suppresses(
                             .is_some_and(|(owner, _)| owner == *track)
                     }))
         }
-        LintScope::Clip { clip } => diagnostic.notes.iter().any(|note| note.clip == *clip),
+        LintScope::Clip { clip } => {
+            diagnostic.notes.iter().any(|note| note.clip == *clip)
+                || diagnostic.clips.contains(clip)
+        }
         LintScope::Section { label } => project
             .sections
             .section_at(diagnostic.start)
@@ -547,6 +581,7 @@ pub(crate) fn sort(diagnostics: &mut [Diagnostic]) {
             .then(a.rule.name().cmp(b.rule.name()))
             .then(a.track.map(|t| t.0).cmp(&b.track.map(|t| t.0)))
             .then(a.notes.cmp(&b.notes))
+            .then(a.clips.cmp(&b.clips))
     });
 }
 
