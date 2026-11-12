@@ -302,8 +302,8 @@ const PLUGIN_DESCRIPTIONS: &[(&str, &str)] = &[
         "空気ジェットと管の共鳴で鳴らすティンホイッスル音源。息の圧力と雑音を調整",
     ),
     (
-        "Wordless ensemble vowels from glottal excitation and vocal-tract waveguides",
-        "声道の共鳴で鳴らす合唱音源。母音や声の揺らぎ、広がりを調整",
+        "Wordless ensemble vowels from self-oscillating vocal folds and vocal-tract waveguides",
+        "自ら振動する声帯と声道の共鳴で鳴らす合唱音源。母音や声の揺らぎ、広がりを調整",
     ),
     (
         "Hammer-excited stiff strings: hardness, strike position and soundboard",

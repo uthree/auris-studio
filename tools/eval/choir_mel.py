@@ -125,14 +125,17 @@ def fit(root, executable, iterations, seed):
         areas = np.array(initial_profile["areas"])
         radiation = initial_profile["radiation_hz"]
         params = {key: initial_profile["params"][key] for key in ("tone", "breath", "attack")}
+        # The folds' resting closure (cm² of half-gap) and a factor on lung pressure.
+        source = {"adduction": 0.05, "lung": 1.0}
         history = []
         calls = 0
 
-        def evaluate(settings, profiles, radiation_hz, cohort=notes, goal=target):
+        def evaluate(settings, profiles, radiation_hz, cohort=notes, goal=target, folds=None):
             nonlocal calls
             calls += 1
             audio = worker.render(cohort, settings, manifest["seconds"],
-                                  {"areas": profiles.tolist(), "radiation_hz": float(radiation_hz)})
+                                  {"areas": profiles.tolist(), "radiation_hz": float(radiation_hz)}
+                                  | (folds or source))
             loss = float(np.mean(distances(goal, features(audio))))
             if calls % 25 == 0:
                 print(f"evaluation {calls}: loss {loss:.6f}", flush=True)
@@ -141,12 +144,15 @@ def fit(root, executable, iterations, seed):
         print(f"{len(notes)} training notes; baseline {baseline.mean():.6f}", flush=True)
         # Alternate a shared excitation/radiation fit with three bounded tract fits.
         for stage in range(2):
-            bounds = [(0.0, 1.0), (0.0, 0.5), (0.01, 0.5), (np.log(30), np.log(4000))]
-            initial = [params["tone"], params["breath"], params["attack"], np.log(radiation)]
+            bounds = [(0.0, 1.0), (0.0, 0.5), (0.01, 0.5), (np.log(30), np.log(4000)),
+                      (-0.02, 0.2), (0.6, 1.8)]
+            initial = [params["tone"], params["breath"], params["attack"], np.log(radiation),
+                       source["adduction"], source["lung"]]
 
             def source_objective(vector):
                 settings = dict(zip(("tone", "breath", "attack"), map(float, vector[:3]), strict=True))
-                return evaluate(settings, areas, np.exp(vector[3]))
+                folds = {"adduction": float(vector[4]), "lung": float(vector[5])}
+                return evaluate(settings, areas, np.exp(vector[3]), folds=folds)
 
             result = differential_evolution(source_objective, bounds, x0=initial,
                                             rng=seed + stage * 4, popsize=3, maxiter=iterations,
@@ -154,6 +160,7 @@ def fit(root, executable, iterations, seed):
             if result.fun < source_objective(initial):
                 params = dict(zip(("tone", "breath", "attack"), map(float, result.x[:3]), strict=True))
                 radiation = float(np.exp(result.x[3]))
+                source = {"adduction": float(result.x[4]), "lung": float(result.x[5])}
             for vowel in range(3):
                 indices = [i for i, note in enumerate(notes) if note["vowel"] == vowel]
                 cohort = [notes[i] for i in indices]
@@ -178,10 +185,11 @@ def fit(root, executable, iterations, seed):
                       flush=True)
             value = evaluate(params, areas, radiation)
             history.append({"stage": stage + 1, "loss": value, "params": params.copy(),
+                            "source": dict(source),
                             "areas": areas.tolist(), "radiation_hz": radiation})
             print(f"stage {stage + 1} all vowels: {value:.6f}", flush=True)
         final_audio = worker.render(notes, params, manifest["seconds"],
-                                    {"areas": areas.tolist(), "radiation_hz": radiation})
+                                    {"areas": areas.tolist(), "radiation_hz": radiation} | source)
         after = distances(target, features(final_audio))
         ratios = np.sqrt(np.mean(baseline_audio**2, axis=1) / np.mean(final_audio**2, axis=1))
         gains = [float(np.median(ratios[[note["vowel"] == vowel for note in notes]]))
@@ -189,7 +197,7 @@ def fit(root, executable, iterations, seed):
         return provenance(manifest, {"fit": worker}) | {
             "seed": seed, "iterations": iterations, "population_per_dimension": 3,
             "training_notes": [note["path"] for note in notes], "calls": calls,
-            "params": params, "areas": areas.tolist(), "radiation_hz": radiation,
+            "params": params, "source": source, "areas": areas.tolist(), "radiation_hz": radiation,
             "initial_profile_sha256": manifest_digest(initial_profile),
             "vowel_output_gains": gains,
             "level_policy": "preserve pre-calibration median training-note RMS per vowel",

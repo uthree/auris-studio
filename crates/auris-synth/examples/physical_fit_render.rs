@@ -86,6 +86,11 @@ struct ChoirCalibration {
     radiation_hz: f32,
     #[serde(default = "unity_output_gains")]
     output_gains: [f32; 3],
+    /// Resting half-gap of the folds in square centimetres, and a factor on lung pressure.
+    #[serde(default)]
+    adduction: Option<f32>,
+    #[serde(default)]
+    lung: Option<f32>,
 }
 
 fn unity_output_gains() -> [f32; 3] {
@@ -129,12 +134,20 @@ fn render_blocks(request: &Request, block: usize) -> Result<Vec<f32>, Box<dyn Er
             ) {
                 return Err("invalid choir calibration".into());
             }
+            #[cfg(feature = "choir-calibration")]
+            if let (Some(adduction), Some(lung)) = (calibration.adduction, calibration.lung)
+                && !choir.set_calibration_source(adduction, lung)
+            {
+                return Err("invalid choir source calibration".into());
+            }
             #[cfg(not(feature = "choir-calibration"))]
             {
                 let _ = (
                     calibration.areas,
                     calibration.radiation_hz,
                     calibration.output_gains,
+                    calibration.adduction,
+                    calibration.lung,
                 );
                 return Err("choir-calibration feature is required".into());
             }

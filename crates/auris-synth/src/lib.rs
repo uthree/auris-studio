@@ -25,8 +25,8 @@
 //! [`Physical`] is the sample-free instruments — piano, hammered strings, guitars, bass, bowed
 //! strings, mallets, bells, reeds and whistles — as one polyphonic shell around an engine per
 //! family: [`Model`] chooses the instrument and [`Quality`] how much of it is computed.
-//! [`Choir`] adds a stereo, wordless vocal ensemble using glottal-flow excitation and
-//! physical vocal-tract waveguides, played with ordinary polyphonic MIDI notes.
+//! [`Choir`] adds a stereo, wordless vocal ensemble: self-oscillating two-mass vocal folds
+//! coupled to physical vocal-tract waveguides, played with ordinary polyphonic MIDI notes.
 //!
 //! # Realtime behaviour
 //!

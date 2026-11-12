@@ -1,11 +1,14 @@
 //! A wordless ensemble instrument with glottal excitation and physical vocal tracts.
 //!
-//! Each played note drives four eight-section Kelly–Lochbaum tube waveguides. Calibrated
-//! area profiles morph between rounded "oo", open "ah" and front "ee" vowels. The source
-//! is prescribed band-limited glottal flow, with independent breath noise; the acoustic
-//! tract is a reduced physical model, rather than a simulation of vocal-fold biomechanics.
-//! Ensemble variation separates pitch, vibrato phase/rate and tract length. All storage
-//! is prepared off the audio thread, and identical input gives identical stereo output.
+//! Each played note is four singers. In each, lung pressure drives a pair of two-mass vocal
+//! folds that oscillate on their own (`folds`), and the flow they let through is solved
+//! against the pressure coming back down an eight-section Kelly–Lochbaum vocal tract
+//! (`tract`), so source and tract act on each other. Calibrated area profiles morph between
+//! rounded "oo", open "ah" and front "ee" vowels. No waveform is written anywhere: the pitch
+//! is the folds' own, held to the note by measuring every period and correcting the tension,
+//! and breath is turbulence riding on the glottal jet. Ensemble variation separates tuning,
+//! vibrato phase/rate and tract length. All storage is prepared off the audio thread, and
+//! identical input gives identical stereo output.
 
 use std::f32::consts::TAU;
 
@@ -24,13 +27,13 @@ use crate::render::{SegmentRenderer, render_segments};
 use crate::voice::{VoiceAllocator, VoiceState};
 use auris_core::motion::{MotionFrame, MotionGeometry};
 
-mod source;
+mod folds;
 mod tract;
 
 #[cfg(test)]
 mod tests;
 
-use source::GlottalTables;
+use folds::{ADDUCTED, Folds, OVERSAMPLE};
 use tract::Tract;
 
 const VOICE_COUNT: usize = 16;
@@ -52,10 +55,11 @@ const PAN: [f32; SINGERS] = [-0.9, -0.3, 0.3, 0.9];
 
 struct Singer {
     tract: Tract,
-    phase: f32,
+    folds: Folds,
     vibrato_phase: f32,
     drift_phase: f32,
     noise: u32,
+    noise_memory: f32,
     source_memory: f32,
     width: f32,
 }
@@ -64,53 +68,98 @@ impl Singer {
     fn new(sample_rate: f32) -> Self {
         Self {
             tract: Tract::new(sample_rate),
-            phase: 0.0,
+            folds: Folds::new(sample_rate),
             vibrato_phase: 0.0,
             drift_phase: 0.0,
             noise: 1,
+            noise_memory: 0.0,
             source_memory: 0.0,
             width: 0.0,
         }
     }
 
-    fn reset(&mut self, index: usize, ensemble: f32, width: f32) {
+    fn reset(&mut self, index: usize, ensemble: f32, width: f32, hertz: f32) {
         self.tract.reset();
-        self.phase = index as f32 * 0.237 * ensemble;
+        self.folds.reset(hertz);
         self.vibrato_phase = index as f32 * 0.193 * ensemble;
         self.drift_phase = index as f32 * 0.211 * ensemble;
         self.noise = 0x9e37_79b9_u32.wrapping_mul(index as u32 + 1);
+        self.noise_memory = 0.0;
         self.source_memory = 0.0;
         self.width = width;
     }
 
-    fn next(&mut self, index: usize, frequency: f32, tables: &GlottalTables, sound: &Sound) -> f32 {
+    /// One sample of this singer: `lung` is the subglottal pressure in pascals.
+    fn next(&mut self, index: usize, frequency: f32, lung: f64, sound: &Sound) -> f32 {
         let vibrato = (TAU * self.vibrato_phase).sin() * sound.vibrato;
         let drift = (TAU * self.drift_phase).sin() * 0.04 * sound.ensemble;
         let pitch_offset = DETUNE[index] * sound.ensemble + vibrato + drift;
         let frequency = (frequency * (pitch_offset / 12.0).exp2()).min(sound.sample_rate * 0.2);
-        let pulse = tables.sample(self.phase, frequency, sound.sample_rate);
-        self.phase = (self.phase + frequency / sound.sample_rate).fract();
         let vibrato_rate = 5.1 + (index as f32 - 1.5) * 0.31 * sound.ensemble;
         self.vibrato_phase = (self.vibrato_phase + vibrato_rate / sound.sample_rate).fract();
         self.drift_phase =
             (self.drift_phase + (0.19 + index as f32 * 0.047) / sound.sample_rate).fract();
 
+        let incoming = f64::from(self.tract.incoming());
+        let z0 = self.tract.glottal_impedance();
+        let mut flow = 0.0;
+        let mut breath = 0.0;
+        for _ in 0..OVERSAMPLE {
+            let glottis = self
+                .folds
+                .step(frequency, lung, sound.rest, sound.chink, incoming, z0);
+            flow += glottis.flow;
+            // Turbulence at the jet: as loud as the pressure it loses, and quieter through a
+            // nearly closed slit than an open one.
+            let opening = (glottis.area / 0.1e-4).min(3.0).sqrt();
+            breath += glottis.drop.abs() * opening;
+        }
+        flow /= OVERSAMPLE as f64;
+        breath /= OVERSAMPLE as f64;
+
         self.noise ^= self.noise << 13;
         self.noise ^= self.noise >> 17;
         self.noise ^= self.noise << 5;
-        let noise = self.noise as i32 as f32 / 2_147_483_648.0;
-        self.source_memory += sound.source_smoothing * (pulse - self.source_memory);
+        let white = self.noise as i32 as f32 / 2_147_483_648.0;
+        self.noise_memory += (white - self.noise_memory) * 0.05;
+        let turbulence = (white - self.noise_memory) * breath as f32 * sound.aspiration;
+        // The closing folds are soft and the tract walls give: the injected flow loses its top.
+        let pressure = (z0 * flow) as f32;
+        self.source_memory += sound.source_smoothing * (pressure - self.source_memory);
         self.width += (sound.width - self.width) * sound.smoothing;
-        self.tract
-            .next(self.source_memory + noise * sound.breath * 0.12)
+        let radiated = self
+            .tract
+            .next(incoming as f32 + self.source_memory + turbulence);
+        radiated * SOURCE_SCALE
     }
 }
+
+/// Brings a singer's radiated pressure, in pascals at the tract's scale, to the level the
+/// instrument was calibrated at.
+const SOURCE_SCALE: f32 = 6.2e-4;
+
+/// Lung pressure for a note, in pascals: singers push harder for higher notes.
+fn lung_pressure(pitch: f32) -> f64 {
+    f64::from(LUNG_PA + LUNG_PER_SEMITONE * (pitch - 55.0)).clamp(f64::from(LUNG_FLOOR), 1_800.0)
+}
+
+const LUNG_PA: f32 = 880.0;
+/// How hard the singers push, against the pressure a note needs; fitted with the tract.
+const LUNG_SCALE: f64 = 0.7736;
+const LUNG_PER_SEMITONE: f32 = 30.0;
+/// Low notes still need enough pressure to set large folds going against the tract.
+const LUNG_FLOOR: f32 = 900.0;
+/// Posterior glottal gap at full Breath, square metres before size scaling.
+const BREATHY_CHINK: f64 = 0.06e-4;
+/// Turbulence per pascal of glottal pressure drop, at the tract's pressure scale.
+const ASPIRATION: f32 = 0.012;
 
 struct ChoirVoice {
     singers: [Singer; SINGERS],
     envelope: Adsr,
     pitch: f32,
     velocity: f32,
+    lung: f64,
 }
 
 impl ChoirVoice {
@@ -122,6 +171,7 @@ impl ChoirVoice {
             envelope,
             pitch: 69.0,
             velocity: 0.0,
+            lung: 0.0,
         }
     }
 }
@@ -129,7 +179,14 @@ impl ChoirVoice {
 struct Sound {
     sample_rate: f32,
     ensemble: f32,
-    breath: f32,
+    /// A gap at the back of the glottis that never closes, square metres before scaling.
+    chink: f64,
+    /// Turbulence per pascal of jet pressure drop.
+    aspiration: f32,
+    /// Half-gap the folds are held at, square metres before size scaling.
+    rest: f64,
+    /// Factor on every note's lung pressure.
+    lung: f64,
     vibrato: f32,
     width: f32,
     source_smoothing: f32,
@@ -141,7 +198,6 @@ pub struct Choir {
     params: ParamBank,
     voices: Vec<ChoirVoice>,
     allocator: VoiceAllocator,
-    tables: GlottalTables,
     sound: Sound,
     bend: f32,
     modulation: f32,
@@ -170,11 +226,13 @@ impl Choir {
             params: ParamBank::new(descriptors()),
             voices: Vec::new(),
             allocator: VoiceAllocator::new(),
-            tables: GlottalTables::new(),
             sound: Sound {
                 sample_rate: 48_000.0,
                 ensemble: 0.0,
-                breath: 0.0,
+                chink: 0.0,
+                aspiration: 0.0,
+                rest: ADDUCTED,
+                lung: LUNG_SCALE,
                 vibrato: 0.0,
                 width: 0.0,
                 source_smoothing: 1.0,
@@ -225,10 +283,28 @@ impl Choir {
         true
     }
 
+    /// Overrides how closed the folds rest (square centimetres of half-gap) and a factor on
+    /// lung pressure, for offline fitting. Available only with the development
+    /// `choir-calibration` feature; invalid input leaves the instrument unchanged. Call off
+    /// the audio thread.
+    #[cfg(feature = "choir-calibration")]
+    pub fn set_calibration_source(&mut self, adduction: f32, lung: f32) -> bool {
+        if !(adduction.is_finite() && (-0.05..=0.3).contains(&adduction))
+            || !(lung.is_finite() && (0.4..=2.5).contains(&lung))
+        {
+            return false;
+        }
+        self.sound.rest = f64::from(adduction) * 1e-4;
+        self.sound.lung = f64::from(lung);
+        true
+    }
+
     fn refresh(&mut self) {
         let sample_rate = self.sound.sample_rate;
         self.sound.ensemble = self.params.at(P_ENSEMBLE);
-        self.sound.breath = self.params.at(P_BREATH);
+        let breath = self.params.at(P_BREATH);
+        self.sound.chink = f64::from(breath) * BREATHY_CHINK;
+        self.sound.aspiration = ASPIRATION * (0.25 + 2.75 * breath);
         self.sound.vibrato = self.params.at(P_VIBRATO) + self.modulation * 0.3;
         self.sound.width = self.params.at(P_WIDTH);
         self.sound.smoothing = 1.0 - (-1.0 / (sample_rate * 0.02)).exp();
@@ -236,30 +312,41 @@ impl Choir {
         self.sound.source_smoothing = 1.0 - (-TAU * cutoff / sample_rate).exp();
         self.target_gain =
             db_to_gain(self.params.at(P_LEVEL)) * self.expression * self.channel_volume;
-        let length = 0.14 + 0.065 * self.params.at(P_SIZE);
-        for voice in &mut self.voices {
+        for index in 0..self.voices.len() {
+            let voice = &mut self.voices[index];
             voice.envelope.set_adsr(
                 self.params.at(P_ATTACK),
                 0.08,
                 0.9,
                 self.params.at(P_RELEASE),
             );
-            for (index, singer) in voice.singers.iter_mut().enumerate() {
-                let length = length * (1.0 + LENGTH_VARIATION[index] * self.sound.ensemble);
-                #[cfg(not(feature = "choir-calibration"))]
-                singer
-                    .tract
-                    .configure(self.params.at(P_VOWEL), length, sample_rate);
-                #[cfg(feature = "choir-calibration")]
-                singer.tract.configure_profile(
-                    self.params.at(P_VOWEL),
-                    length,
-                    sample_rate,
-                    &self.calibration.0,
-                    self.calibration.1,
-                    &self.calibration.2,
-                );
-            }
+            self.shape(index);
+        }
+    }
+
+    /// Sets a voice's tracts for its note: the vowel asked for, opened towards "ah" and
+    /// shortened where the note would otherwise rise past the vowel's first resonance.
+    fn shape(&mut self, index: usize) {
+        let sample_rate = self.sound.sample_rate;
+        let size = 0.14 + 0.065 * self.params.at(P_SIZE);
+        let vowel = self.params.at(P_VOWEL);
+        let ensemble = self.sound.ensemble;
+        let voice = &mut self.voices[index];
+        let hertz = pitch_to_hz(voice.pitch);
+        for (index, singer) in voice.singers.iter_mut().enumerate() {
+            let length = size * (1.0 + LENGTH_VARIATION[index] * ensemble);
+            let (vowel, length) = tract::tuned(vowel, length, hertz);
+            #[cfg(not(feature = "choir-calibration"))]
+            singer.tract.configure(vowel, length, sample_rate);
+            #[cfg(feature = "choir-calibration")]
+            singer.tract.configure_profile(
+                vowel,
+                length,
+                sample_rate,
+                &self.calibration.0,
+                self.calibration.1,
+                &self.calibration.2,
+            );
         }
     }
 
@@ -273,9 +360,18 @@ impl Choir {
         };
         voice.pitch = f32::from(pitch);
         voice.velocity = velocity;
-        if !assignment.stolen {
+        voice.lung = lung_pressure(voice.pitch) * self.sound.lung;
+        let hertz = pitch_to_hz(voice.pitch);
+        self.shape(assignment.index);
+        let voice = &mut self.voices[assignment.index];
+        if assignment.stolen {
+            // A stolen voice keeps its sounding tract and takes the new note's larynx.
+            for singer in &mut voice.singers {
+                singer.folds.choose_size(hertz);
+            }
+        } else {
             for (index, singer) in voice.singers.iter_mut().enumerate() {
-                singer.reset(index, self.sound.ensemble, self.sound.width);
+                singer.reset(index, self.sound.ensemble, self.sound.width, hertz);
             }
         }
         voice.envelope.trigger();
@@ -316,20 +412,21 @@ impl Choir {
     }
 }
 
-/// Tract pressure swings near unity; the scale a string's displacement is published at.
-const TRACT_DISPLAY: f32 = 0.04;
+/// Tract pressure swings about a kilopascal, the lungs' own pressure; this publishes it at
+/// the scale a string's displacement is.
+const TRACT_DISPLAY: f32 = 4.0e-5;
 
 fn descriptors() -> Vec<ParamDescriptor> {
     vec![
         ParamDescriptor::new(P_VOWEL, "vowel", "Vowel (Oo / Ah / Ee)", 0.0, 2.0, 1.0),
         ParamDescriptor::percent(P_SIZE, "voice_size", "Voice Size", 0.46),
         ParamDescriptor::percent(P_ENSEMBLE, "ensemble", "Ensemble Variation", 0.65),
-        ParamDescriptor::percent(P_BREATH, "breath", "Breath", 0.234_949),
-        ParamDescriptor::percent(P_TONE, "tone", "Tone", 0.164_280),
+        ParamDescriptor::percent(P_BREATH, "breath", "Breath", 0.069603),
+        ParamDescriptor::percent(P_TONE, "tone", "Tone", 0.787636),
         ParamDescriptor::new(P_VIBRATO, "vibrato", "Vibrato", 0.0, 0.5, 0.09)
             .with_unit(ParamUnit::Semitones),
         ParamDescriptor::percent(P_WIDTH, "width", "Stereo Width", 0.8),
-        ParamDescriptor::new(P_ATTACK, "attack", "Attack", 0.001, 3.0, 0.282_929)
+        ParamDescriptor::new(P_ATTACK, "attack", "Attack", 0.001, 3.0, 0.243677)
             .with_unit(ParamUnit::Seconds)
             .with_curve(ParamValueCurve::Power(3.0)),
         ParamDescriptor::new(P_RELEASE, "release", "Release", 0.005, 6.0, 0.7)
@@ -408,10 +505,14 @@ impl SegmentRenderer for Choir {
             }
             let frequency = pitch_to_hz(voice.pitch + self.bend);
             for frame in start..end {
-                let envelope = voice.envelope.process() * voice.velocity / SINGERS as f32;
+                // The envelope is the singer's breath: the folds start when the pressure is
+                // enough to set them going and stop when it is not. A fast gate still has the
+                // last word, so a killed note is silent when the de-click says it is.
+                let envelope = voice.envelope.process();
+                let lung = voice.lung * f64::from((envelope * 3.0).min(1.0));
+                let gain = envelope * voice.velocity / SINGERS as f32;
                 for (index, singer) in voice.singers.iter_mut().enumerate() {
-                    let sample =
-                        singer.next(index, frequency, &self.tables, &self.sound) * envelope;
+                    let sample = singer.next(index, frequency, lung, &self.sound) * gain;
                     if let Some(right) = right.as_deref_mut() {
                         let pan = PAN[index] * singer.width;
                         first[frame] += sample * (1.0 - pan);
@@ -450,14 +551,13 @@ impl Instrument for Choir {
         PluginDescriptor::instrument(
             Self::ID,
             "Physical Choir",
-            "Wordless ensemble vowels from glottal excitation and vocal-tract waveguides",
+            "Wordless ensemble vowels from self-oscillating vocal folds and vocal-tract waveguides",
             PluginCategory::Synth,
         )
     }
 
     fn prepare(&mut self, ctx: &PrepareContext) {
         self.sound.sample_rate = crate::sample_rate_f32(ctx.sample_rate);
-        self.tables.prepare();
         self.voices = (0..VOICE_COUNT)
             .map(|_| ChoirVoice::new(self.sound.sample_rate))
             .collect();
@@ -475,7 +575,7 @@ impl Instrument for Choir {
         for voice in &mut self.voices {
             voice.envelope.silence();
             for (index, singer) in voice.singers.iter_mut().enumerate() {
-                singer.reset(index, self.sound.ensemble, self.sound.width);
+                singer.reset(index, self.sound.ensemble, self.sound.width, 220.0);
             }
         }
         self.allocator.clear();

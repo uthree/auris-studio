@@ -27,7 +27,7 @@ that wave sample by sample.
 | --- | --- | --- |
 | Piano | A felt hammer that stiffens as it is driven in, thrown at one, two or three strings that share a bridge; dampers; every other string answering; a soundboard; the knock of the case | Contact hardness, excitation position, unison detune, sympathetic resonance, string stiffness, release (the dampers) |
 | Hammered Strings | A light hammer on courses of thin wire over a shallow box | Hammer hardness, strike position, course detune, bridge damping |
-| Guitar | Plucked strings moving in two directions at once, on a box with an air resonance and a top plate | Pick hardness, pluck position, damping, body, pickup blend (box to saddle) |
+| Guitar | Plucked strings moving in two directions at once, on a box with an air resonance and a top plate; the open strings nobody is playing answer through the bridge | Pick hardness, pluck position, damping, body, pickup blend (box to saddle) |
 | Electric Guitar | Steel strings under a magnet, before the amplifier | Pick and pickup position, tone, pickup Q, decay per octave |
 | Bass | Plucked bass strings under a pickup, or on an upright's body | Hardness, position, body (zero is electric, one is upright), tone |
 | Strings | Each player a string under a bow whose rosin grips and lets go; a section of one to four players; violin, viola, cello and bass bodies | Bow pressure, speed, position and response, players, instrument, vibrato, legato |
@@ -56,6 +56,11 @@ Some of what these do is worth knowing before you hear it.
 - **A blow knocks the case.** Under every piano note is a third of a second of pitchless knock
   from the keybed and the case, the same whichever key it is: nothing beside a bass note, and
   a good part of what is heard of the top octave.
+- **A guitar's open strings answer.** Play A3 and let it go: the open fifth string, whose
+  second harmonic it is, goes on ringing about thirty-five decibels down. B♭3, which falls
+  between every open string's partials, leaves nothing. A string being fretted is the note's
+  own and does not ring open; turning **Body** down, or the pickup blend over to the saddle,
+  takes the bridge's coupling away with it.
 - **A key pressed very gently makes no sound and lifts its damper.** Take a low C at velocity
   1, play the C above and let it go: the low strings ring on at the higher note's pitch. The
   sustain pedal does that for every string at once.
