@@ -115,14 +115,6 @@ impl AurisApp {
                 self.t(Key::MenuRouteTo),
                 MenuCommand::ShowOutputPicker { track, at: anchor },
             )
-            // Only where there is a bus at all: with none in the project the item can do nothing
-            // but open an empty list. One that exists and cannot be sent to *is* worth opening,
-            // because the greyed row is the answer to why.
-            .item_if(
-                self.session.buses().next().is_some(),
-                self.t(Key::MenuAddSend),
-                MenuCommand::ShowSendPicker { track, at: anchor },
-            )
             .separator()
             .toggle(
                 self.t(Key::MenuAutomateVolume),
@@ -633,7 +625,7 @@ impl AurisApp {
         menu
     }
 
-    /// Where a track's output could go: the master, then every bus in the project.
+    /// Where a track's outputs could go: the master, then every bus in the project.
     ///
     /// *Every* bus, not only the legal ones. A destination that would send a signal back into
     /// itself is greyed out rather than left out, because the two look identical to a person
@@ -642,44 +634,25 @@ impl AurisApp {
     /// [`Session::can_route`](auris_session::Session::can_route), the same rule the command that
     /// enforces it uses, so the list can never offer something the session would refuse.
     pub(crate) fn output_menu(&self, anchor: Point<Pixels>, track: TrackId) -> ContextMenu {
-        let current = self
+        let current: Vec<Destination> = self
             .project()
             .track(track)
-            .map(|track| track.outputs.clone())
+            .map(|track| track.outputs.iter().map(|output| output.to).collect())
             .unwrap_or_default();
         let mut menu = ContextMenu::new(anchor, self.t(Key::MenuRouteTo)).toggle(
             self.t(Key::Master),
-            MenuCommand::ToggleTrackOutput(track, Output::Master),
-            current.contains(&Output::Master),
+            MenuCommand::ToggleTrackOutput(track, Destination::Master),
+            current.contains(&Destination::Master),
         );
         for (bus, name) in self.bus_names() {
             // Greyed rather than left out: the list is every bus in the project, and a bus that
             // silently went missing from it would look like a bus that had been deleted. The
             // dimmed row is the answer to why this one cannot be chosen.
             menu = menu.toggle_greyed_unless(
-                current.contains(&Output::Bus(bus)) || self.session.can_route(track, bus),
+                current.contains(&Destination::Bus(bus)) || self.session.can_route(track, bus),
                 name,
-                MenuCommand::ToggleTrackOutput(track, Output::Bus(bus)),
-                current.contains(&Output::Bus(bus)),
-            );
-        }
-        menu
-    }
-
-    /// Every bus a track could send to, with the ones that would loop greyed out for the reason
-    /// [`Self::output_menu`] gives.
-    ///
-    /// A bus it already sends to is still offered: a second send to the same bus is unusual rather
-    /// than wrong, and hiding it would mean the list changed shape as it was used.
-    pub(crate) fn send_picker_menu(&self, anchor: Point<Pixels>, track: TrackId) -> ContextMenu {
-        let mut menu = ContextMenu::new(anchor, self.t(Key::MenuAddSend));
-        for (bus, name) in self.bus_names() {
-            // Greyed, for the reason `output_menu` gives: this is the whole list of buses, and
-            // one quietly absent from it reads as one that no longer exists.
-            menu = menu.item_greyed_unless(
-                self.session.can_route(track, bus),
-                name,
-                MenuCommand::AddSend { track, bus },
+                MenuCommand::ToggleTrackOutput(track, Destination::Bus(bus)),
+                current.contains(&Destination::Bus(bus)),
             );
         }
         menu
@@ -696,32 +669,28 @@ impl AurisApp {
             .collect()
     }
 
-    /// The menu for one send row in the mixer.
-    pub(crate) fn send_menu(
+    /// The menu for one output's level row in the mixer.
+    pub(crate) fn output_level_menu(
         &self,
         anchor: Point<Pixels>,
         track: TrackId,
-        send: SendId,
+        to: Destination,
+        tap: Tap,
     ) -> ContextMenu {
-        let pre_fader = self
-            .project()
-            .track(track)
-            .and_then(|track| track.sends.iter().find(|existing| existing.id == send))
-            .is_some_and(|send| send.pre_fader);
-        ContextMenu::new(anchor, self.t(Key::Sends))
+        ContextMenu::new(anchor, self.t(Key::OutputLevel))
             .toggle(
-                self.t(Key::MenuSendPreFader),
-                MenuCommand::ToggleSendPreFader { track, send },
-                pre_fader,
+                self.t(Key::MenuOutputPreFader),
+                MenuCommand::ToggleOutputPreFader { track, to, tap },
+                tap == Tap::PreFader,
             )
             .item(
-                self.t(Key::MenuRemoveSend),
-                MenuCommand::RemoveSend { track, send },
+                self.t(Key::MenuRemoveOutput),
+                MenuCommand::RemoveOutput { track, to, tap },
             )
             .separator()
             .item(
-                self.t(Key::MenuAddSend),
-                MenuCommand::ShowSendPicker { track, at: anchor },
+                self.t(Key::MenuRouteTo),
+                MenuCommand::ShowOutputPicker { track, at: anchor },
             )
     }
 }

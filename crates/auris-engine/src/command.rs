@@ -64,14 +64,14 @@ pub enum EngineCommand {
     },
     /// Updates the project-wide solo resolution, fading every changed track.
     SetSoloResolution(Box<[bool]>),
-    /// Moves one of a track's send levels.
-    SetSendLevel {
+    /// Moves the level of one of a track's outputs.
+    SetOutputGain {
         /// Track position in the project.
         track: usize,
-        /// Position of the send in that track's send list.
-        send: usize,
-        /// New send level in decibels.
-        level_db: f32,
+        /// Position of the output in that track's output list.
+        output: usize,
+        /// New output level in decibels.
+        gain_db: f32,
     },
     /// Moves the master fader, in decibels.
     SetMasterGain(f32),
@@ -229,15 +229,15 @@ impl std::fmt::Debug for EngineCommand {
             Self::SetSoloResolution(audible) => {
                 f.debug_tuple("SetSoloResolution").field(audible).finish()
             }
-            Self::SetSendLevel {
+            Self::SetOutputGain {
                 track,
-                send,
-                level_db,
+                output,
+                gain_db,
             } => f
-                .debug_struct("SetSendLevel")
+                .debug_struct("SetOutputGain")
                 .field("track", track)
-                .field("send", send)
-                .field("level_db", level_db)
+                .field("output", output)
+                .field("gain_db", gain_db)
                 .finish(),
             Self::SetMasterGain(gain_db) => f.debug_tuple("SetMasterGain").field(gain_db).finish(),
             Self::SetMasterPan(pan) => f.debug_tuple("SetMasterPan").field(pan).finish(),

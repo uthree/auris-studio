@@ -52,11 +52,11 @@ Techniques: Part roles and registers; Voicings out of the voice; Kick and bass t
 Balance the finished arrangement and deliver it. Notes, sounds and performance stay as the arrangement left them.
 
 - Read [delivery.md](references/delivery.md) when the request includes game-loop integration, video timing, stems, or loudness requirements.
-- Finish the mix with the actual synthesized voice; preview-voice levels are provisional. Adjust track levels, panning and competing registers for foreground intelligibility first, then use supported EQ, dynamics and reverb/delay sends each for a stated purpose. Master normalization alone is not track balancing. If the existing balance works, record the concrete evidence rather than forcing processing.
+- Finish the mix with the actual synthesized voice; preview-voice levels are provisional. Adjust track levels, panning and competing registers for foreground intelligibility first, then use supported EQ, dynamics and reverb/delay returns each for a stated purpose. Master normalization alone is not track balancing. If the existing balance works, record the concrete evidence rather than forcing processing.
 - Check transitions, tails and headroom, and verify the full mix after the last edit. A preview is a quick structural/listening candidate; a final delivery requires a full render and `verify_render` (or equivalent measurement) against the requested duration, peak, loudness, and ending. Use Auris's local `inspect_audio`/`analyze` for measurable checks. If your model takes audio input, `listen` delivers rendered bars to you to hear, and `compare_to` gives before and after; if you cannot hear audio, do not call it, and never claim to have heard what did not reach you. A successful render or numeric report is not proof that the cue is musically suitable; deliver the audio for the user's listening, and do not let missing subjective feedback block delivery.
 - Deliver the requested audio plus the editable project/source, settings, seed, loop/trim notes, and a concise verification report including meaningful arrangement decisions. Keep generated files in the user-requested project directory. Never overwrite unrelated assets.
 
-Techniques: Volume and pan first; Low cut on everything but the bass; Kick-triggered sidechain; Reverb and delay sends for the voice; Bus processing; Section automation; normalize_mix last.
+Techniques: Volume and pan first; Low cut on everything but the bass; Kick-triggered sidechain; Reverb and delay returns for the voice; Bus processing; Section automation; normalize_mix last.
 
 ## Boundaries
 

@@ -1,7 +1,7 @@
 //! The mixer strip, and where what leaves it goes.
 //!
 //! A [`MixerStrip`] is what a track sounds like — gain, pan, mute, solo and the effects in front
-//! of the fader — and an [`Output`] with its [`AuxSend`]s is where that lands. The two are one
+//! of the fader — and its [`Output`]s are where that lands. The two are one
 //! file because every question worth asking is about the pair: the order tracks have to be mixed
 //! in, whether an edit would leave a bus waiting for itself, and which tracks a solo leaves
 //! audible. All three are walks over [`Track::feeds`](super::Track::feeds), and not one of them
@@ -19,7 +19,7 @@ use crate::plugin::PluginState;
 
 use super::comment::Comment;
 use super::track::Track;
-use super::{EffectSlotId, Project, SendId, TrackId};
+use super::{EffectSlotId, Project, TrackId};
 
 /// One effect in a chain.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -94,13 +94,17 @@ impl EffectSlot {
     }
 }
 
-/// Where a track's output goes once its own strip has finished with it.
+/// Where one of a track's outputs lands.
 ///
-/// Each entry in a track's output list names a real destination. An empty list disconnects
-/// the track, while master and several buses can receive copies at the same time.
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+/// Each entry in a track's output list names a real destination. Together with its [`Tap`] it is
+/// what identifies the output — to the commands that edit it and to the automation lane that rides
+/// its level — so a track holds at most one output per destination and tap point. Two copies of
+/// the same signal into the same place would only be one copy at the sum of their levels.
+#[derive(
+    Copy, Clone, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize,
+)]
 #[serde(rename_all = "snake_case")]
-pub enum Output {
+pub enum Destination {
     /// Straight to the master bus, which is where a track starts.
     #[default]
     Master,
@@ -108,52 +112,83 @@ pub enum Output {
     Bus(TrackId),
 }
 
-impl Output {
+impl Destination {
     /// The bus this names, or `None` for the master.
     pub fn bus(self) -> Option<TrackId> {
         match self {
-            Output::Master => None,
-            Output::Bus(id) => Some(id),
+            Destination::Master => None,
+            Destination::Bus(id) => Some(id),
         }
     }
 }
 
-/// A copy of a track's signal, fed to a bus at a level of its own.
-///
-/// The difference between a send and an [`Output`] is that a send is a *tap*: the track carries on
-/// to its own destination as well. That is what makes one reverb shared — six tracks send to it at
-/// six different levels and all six are still heard dry.
-///
-/// A mixing desk calls this an *aux send*, and so does this type, for a reason that has nothing to
-/// do with consoles: a document type called `Send` would shadow [`std::marker::Send`] in every file
-/// that glob-imports the session's prelude, which is every file in both frontends. The error that
-/// produces names a trait nobody mentioned, in a file that never touched the mixer.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct AuxSend {
-    /// Unique within the project.
-    pub id: SendId,
-    /// The bus this feeds.
-    pub target: TrackId,
-    /// How much of the signal is sent, in decibels.
-    pub level_db: f32,
-    /// Whether the copy is taken before the track's fader rather than after it.
-    ///
-    /// After it is the default and is what a reverb wants: pulling a track down should take its
-    /// reverb with it. Before it is what a headphone mix wants, where the point is a balance that
-    /// does not follow the one in the room.
-    #[serde(default)]
-    pub pre_fader: bool,
+/// Where on its strip an output takes the track's signal.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Tap {
+    /// After the fader, the pan and the mute: what the track puts into the mix. What a reverb
+    /// wants, because pulling a track down should take its reverb with it.
+    #[default]
+    PostFader,
+    /// After the inserts and before the fader. What a headphone mix wants, where the point is a
+    /// balance that does not follow the one in the room.
+    PreFader,
 }
 
-impl AuxSend {
-    /// A post-fader send at unity.
-    pub fn new(id: SendId, target: TrackId) -> Self {
+/// One of the places a track's signal goes, at a level of its own.
+///
+/// There is no separate *send*. A send was an output with a level and a tap point, and a track
+/// with several outputs already sends to several places, so the two were folded into this one
+/// edge: six tracks feeding one reverb at six levels are six outputs to the reverb bus, each
+/// beside whatever other outputs its track has.
+#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Output {
+    /// Where the signal lands.
+    pub to: Destination,
+    /// How much of it lands there, in decibels.
+    #[serde(default, skip_serializing_if = "is_unity")]
+    pub gain_db: f32,
+    /// Where on the strip it is taken.
+    #[serde(default, skip_serializing_if = "is_post_fader")]
+    pub tap: Tap,
+}
+
+fn is_unity(gain_db: &f32) -> bool {
+    *gain_db == 0.0
+}
+
+fn is_post_fader(tap: &Tap) -> bool {
+    *tap == Tap::PostFader
+}
+
+impl Output {
+    /// A post-fader output at unity, which is what a new route is: it is made in order to be heard.
+    pub fn new(to: Destination) -> Self {
         Self {
-            id,
-            target,
-            level_db: 0.0,
-            pre_fader: false,
+            to,
+            gain_db: 0.0,
+            tap: Tap::PostFader,
         }
+    }
+
+    /// Straight to the master at unity, which is where every new track is routed.
+    pub fn master() -> Self {
+        Self::new(Destination::Master)
+    }
+
+    /// Into `bus` at unity, after the fader.
+    pub fn to_bus(bus: TrackId) -> Self {
+        Self::new(Destination::Bus(bus))
+    }
+
+    /// The bus this lands in, or `None` for the master.
+    pub fn bus(self) -> Option<TrackId> {
+        self.to.bus()
+    }
+
+    /// What identifies this output among its track's others.
+    pub fn key(self) -> (Destination, Tap) {
+        (self.to, self.tap)
     }
 }
 
@@ -273,21 +308,21 @@ impl Project {
         removed
     }
 
-    /// Removes a send from a track, returning `true` when it was there.
+    /// Removes the output from `track` to `to` taken at `tap`, returning `true` when it was there.
     ///
     /// Its automation goes with it, for the reason a deleted track's and a deleted effect slot's
-    /// do: a lane addressed to a send that no longer exists would come back to life driving
-    /// whichever send is created next.
-    pub fn remove_send(&mut self, track: TrackId, send: SendId) -> bool {
+    /// do: a lane addressed to an output that no longer exists would come back to life driving
+    /// the next output somebody routes to the same place.
+    pub fn remove_output(&mut self, track: TrackId, to: Destination, tap: Tap) -> bool {
         let Some(entry) = self.track_mut(track) else {
             return false;
         };
-        let before = entry.sends.len();
-        entry.sends.retain(|existing| existing.id != send);
-        let removed = entry.sends.len() != before;
+        let before = entry.outputs.len();
+        entry.outputs.retain(|existing| existing.key() != (to, tap));
+        let removed = entry.outputs.len() != before;
         if removed {
             self.automation.remove_lanes_where(|target| {
-                matches!(target, crate::param::ParamTarget::Send { send: id, .. } if id == send)
+                target == crate::param::ParamTarget::Output { track, to, tap }
             });
         }
         removed
@@ -312,8 +347,8 @@ impl Project {
 
     /// Out-edges by track index: for each track, everything that cannot be mixed until it has.
     ///
-    /// Two kinds of edge, and they are written down facing opposite ways. An [`Output`] and an
-    /// [`AuxSend`] are recorded on the track the audio leaves, so they are read straight off. A
+    /// Two kinds of edge, and they are written down facing opposite ways. An [`Output`] is
+    /// recorded on the track the audio leaves, so it is read straight off. A
     /// sidechain is recorded on the slot that *listens*, because that is the end that wants one —
     /// so it is turned round here, and the track it names gains an edge to the track it keys.
     ///
@@ -359,13 +394,18 @@ impl Project {
                     .is_some_and(|&index| self.tracks[index].kind.is_bus())
         };
         for track in &self.tracks {
-            if track.outputs.iter().any(
-                |output| matches!(output, Output::Bus(target) if !usable_bus(*target, track.id)),
-            ) || track.outputs.iter().collect::<HashSet<_>>().len() != track.outputs.len()
-                || track
-                    .sends
-                    .iter()
-                    .any(|send| !usable_bus(send.target, track.id))
+            if track.outputs.iter().any(|output| {
+                !output.gain_db.is_finite()
+                    || output
+                        .bus()
+                        .is_some_and(|target| !usable_bus(target, track.id))
+            }) || track
+                .outputs
+                .iter()
+                .map(|output| output.key())
+                .collect::<HashSet<_>>()
+                .len()
+                != track.outputs.len()
                 || track
                     .mixer
                     .sidechain_sources()
@@ -458,7 +498,7 @@ impl Project {
 
     /// `true` when routing `from` into `to` would make a signal loop back on itself.
     ///
-    /// Asked before an output is changed or a send is added, because a loop is not a strange mix —
+    /// Asked before an output is added or re-pointed, because a loop is not a strange mix —
     /// it is a bus waiting for itself, and there is no order to render it in.
     ///
     /// Every edge already in the routing counts, sidechains included: a compressor keyed from a
@@ -506,15 +546,21 @@ impl Project {
         }
     }
 
-    /// Points every output and every send at a bus that exists, breaking any loop it finds.
+    /// Points every output at a bus that exists, breaking any loop it finds.
     ///
     /// Called when a document is loaded, for the same reason [`Self::repair_id_counter`] is: the
     /// editing commands refuse to create either fault, so a file carrying one was either written
     /// by another tool or edited by hand, and the alternative to repairing it is a project that
     /// cannot be rendered at all. Returns `true` when anything had to be changed.
+    ///
+    /// An output that cannot stand is dropped rather than re-pointed, because it carries a level
+    /// and a tap chosen for where it went: a reverb feed at -12 dB before the fader means nothing
+    /// on the master. A track left with no outputs at all by the repair is given the master at
+    /// unity, so that a broken route costs a reverb and not the whole part.
     pub fn repair_routing(&mut self) -> bool {
+        let mut repaired = self.prune_output_automation();
         if self.routing_is_valid() {
-            return false;
+            return repaired;
         }
         let is_bus: Vec<(TrackId, bool)> = self
             .tracks
@@ -525,78 +571,56 @@ impl Project {
             id != owner && is_bus.iter().any(|(bus, yes)| *bus == id && *yes)
         };
 
-        let mut repaired = false;
         for index in 0..self.tracks.len() {
             let owner = self.tracks[index].id;
+            let had_any = !self.tracks[index].outputs.is_empty();
             let mut seen = HashSet::new();
-            for output in &mut self.tracks[index].outputs {
-                if let Output::Bus(target) = *output
-                    && !usable(target, owner)
-                {
-                    *output = Output::Master;
+            self.tracks[index].outputs.retain_mut(|output| {
+                if !output.gain_db.is_finite() {
+                    output.gain_db = 0.0;
                     repaired = true;
                 }
-            }
-            self.tracks[index].outputs.retain(|output| {
-                let unique = seen.insert(*output);
-                repaired |= !unique;
-                unique
+                let keep = output.bus().is_none_or(|target| usable(target, owner))
+                    && seen.insert(output.key());
+                repaired |= !keep;
+                keep
             });
-            let before = self.tracks[index].sends.len();
-            self.tracks[index]
-                .sends
-                .retain(|send| usable(send.target, owner));
-            repaired |= self.tracks[index].sends.len() != before;
+            if had_any && self.tracks[index].outputs.is_empty() {
+                self.tracks[index].outputs.push(Output::master());
+            }
         }
 
         // Now every edge points at a real bus, so what is left is loops. Each edge is put back one
         // at a time and dropped if it closes one, which terminates and does not depend on where in
         // the document the loop happened to start.
-        let edges: Vec<(usize, Vec<Output>, Vec<AuxSend>)> = self
+        let edges: Vec<(usize, Vec<Output>)> = self
             .tracks
             .iter()
             .enumerate()
-            .map(|(index, track)| (index, track.outputs.clone(), track.sends.clone()))
+            .map(|(index, track)| (index, track.outputs.clone()))
             .collect();
         for track in &mut self.tracks {
             track.outputs.clear();
-            track.sends.clear();
         }
-        for (index, outputs, sends) in edges {
+        for (index, outputs) in edges {
             let owner = self.tracks[index].id;
+            let had_any = !outputs.is_empty();
             for output in outputs {
                 if output
                     .bus()
                     .is_some_and(|target| self.routing_would_cycle(owner, target))
                 {
                     repaired = true;
-                    if !self.tracks[index].outputs.contains(&Output::Master) {
-                        self.tracks[index].outputs.push(Output::Master);
-                    }
-                } else if !self.tracks[index].outputs.contains(&output) {
+                } else {
                     self.tracks[index].outputs.push(output);
                 }
             }
-            for send in sends {
-                if self.routing_would_cycle(owner, send.target) {
-                    repaired = true;
-                } else {
-                    self.tracks[index].sends.push(send);
-                }
+            let outputs = &mut self.tracks[index].outputs;
+            if had_any && outputs.is_empty() {
+                outputs.push(Output::master());
             }
         }
-
-        let live_sends: HashSet<SendId> = self
-            .tracks
-            .iter()
-            .flat_map(|track| track.sends.iter().map(|send| send.id))
-            .collect();
-        repaired |= self.automation.remove_lanes_where(|target| {
-            matches!(
-                target,
-                crate::param::ParamTarget::Send { send, .. } if !live_sends.contains(&send)
-            )
-        });
+        repaired |= self.prune_output_automation();
 
         // Sidechains last, and taken off before they are put back for the reason the edges above
         // are: a loop among them would otherwise be judged against itself. They are not held to
@@ -604,6 +628,30 @@ impl Project {
         // exists and not closing a loop.
         repaired |= self.repair_sidechains();
         repaired
+    }
+
+    /// Drops every lane riding the level of an output that is not there.
+    ///
+    /// Returns `true` when anything had to be removed. Called by anything that replaces a track's
+    /// outputs wholesale, which is the one edit that can leave a lane behind.
+    pub fn prune_output_automation(&mut self) -> bool {
+        let live: HashSet<(TrackId, Destination, Tap)> = self
+            .tracks
+            .iter()
+            .flat_map(|track| {
+                track
+                    .outputs
+                    .iter()
+                    .map(|output| (track.id, output.to, output.tap))
+            })
+            .collect();
+        self.automation.remove_lanes_where(|target| {
+            matches!(
+                target,
+                crate::param::ParamTarget::Output { track, to, tap }
+                    if !live.contains(&(track, to, tap))
+            )
+        })
     }
 
     /// Drops every sidechain that names a track which is not there, or which would leave a strip
@@ -785,12 +833,11 @@ mod tests {
         // track routed into it has arrived.
         let (mut project, kick, snare, bus) = bussed_project();
         let reverb = project.add_bus_track("Reverb");
-        let send = project.next_send_id();
         project
             .track_mut(bus)
             .unwrap()
-            .sends
-            .push(AuxSend::new(send, reverb));
+            .outputs
+            .push(Output::to_bus(reverb));
 
         let order = project.routing_order();
         assert_eq!(order.len(), project.tracks.len());
@@ -800,7 +847,10 @@ mod tests {
         };
         assert!(at(kick) < at(bus));
         assert!(at(snare) < at(bus));
-        assert!(at(bus) < at(reverb), "a send is a routing edge too");
+        assert!(
+            at(bus) < at(reverb),
+            "a second output is a routing edge too"
+        );
     }
 
     #[test]
@@ -810,8 +860,8 @@ mod tests {
         project
             .track_mut(bus)
             .unwrap()
-            .sends
-            .push(AuxSend::new(SendId(500), reverb));
+            .outputs
+            .push(Output::to_bus(reverb));
 
         // A bus into itself, and the two ways round the existing chain.
         assert!(project.routing_would_cycle(bus, bus));
@@ -833,8 +883,8 @@ mod tests {
         // The alternative to repairing it is a project that can never be rendered at all.
         let (mut project, _, _, bus) = bussed_project();
         let reverb = project.add_bus_track("Reverb");
-        project.track_mut(bus).unwrap().outputs = vec![Output::Bus(reverb)];
-        project.track_mut(reverb).unwrap().outputs = vec![Output::Bus(bus)];
+        project.track_mut(bus).unwrap().outputs = vec![Output::to_bus(reverb)];
+        project.track_mut(reverb).unwrap().outputs = vec![Output::to_bus(bus)];
 
         assert!(project.repair_routing());
         // One of the two edges survives — which one does not matter, only that no track can now
@@ -857,16 +907,19 @@ mod tests {
     fn a_route_to_something_that_is_not_a_bus_is_dropped_on_load() {
         let (mut project, kick, snare, _) = bussed_project();
         // An instrument track is not a mixing point, and neither is a track that is not there.
-        project.track_mut(kick).unwrap().outputs = vec![Output::Bus(snare)];
+        project.track_mut(kick).unwrap().outputs = vec![Output::to_bus(snare)];
+        let snare_outputs = project.track(snare).unwrap().outputs.clone();
         project
             .track_mut(snare)
             .unwrap()
-            .sends
-            .push(AuxSend::new(SendId(9), TrackId(9_999)));
+            .outputs
+            .push(Output::to_bus(TrackId(9_999)));
 
         assert!(project.repair_routing());
-        assert_eq!(project.track(kick).unwrap().outputs, vec![Output::Master]);
-        assert!(project.track(snare).unwrap().sends.is_empty());
+        // A track whose only route was dropped falls back to the master, so the part is still
+        // heard; one that has another route simply loses the broken one.
+        assert_eq!(project.track(kick).unwrap().outputs, vec![Output::master()]);
+        assert_eq!(project.track(snare).unwrap().outputs, snare_outputs);
     }
 
     #[test]
@@ -902,27 +955,25 @@ mod tests {
         // The routing goes, not the tracks: what was going through the bus goes where it would
         // have gone had the bus never existed.
         let (mut project, kick, snare, bus) = bussed_project();
-        project
-            .track_mut(snare)
-            .unwrap()
-            .sends
-            .push(AuxSend::new(SendId(77), bus));
+        project.track_mut(snare).unwrap().outputs = vec![Output::master(), Output::to_bus(bus)];
 
         assert!(project.remove_track(bus));
-        assert_eq!(project.track(kick).unwrap().outputs, vec![Output::Master]);
-        assert!(project.track(snare).unwrap().sends.is_empty());
+        assert_eq!(project.track(kick).unwrap().outputs, vec![Output::master()]);
+        assert_eq!(
+            project.track(snare).unwrap().outputs,
+            vec![Output::master()]
+        );
     }
 
     #[test]
-    fn pruning_a_send_also_prunes_its_automation() {
+    fn pruning_an_output_also_prunes_its_automation() {
         let (mut project, _, snare, bus) = bussed_project();
-        let send = SendId(77);
-        project
-            .track_mut(snare)
-            .unwrap()
-            .sends
-            .push(AuxSend::new(send, bus));
-        let target = crate::param::ParamTarget::Send { track: snare, send };
+        let to = Destination::Bus(bus);
+        let target = crate::param::ParamTarget::Output {
+            track: snare,
+            to,
+            tap: Tap::PostFader,
+        };
         project.automation.set_point(
             target,
             None,
@@ -934,14 +985,17 @@ mod tests {
         assert!(project.remove_track(bus));
         assert!(project.automation.lane(target).is_none());
 
-        let missing = TrackId(99_999);
-        let send = SendId(88);
+        let missing = Destination::Bus(TrackId(99_999));
         project
             .track_mut(snare)
             .unwrap()
-            .sends
-            .push(AuxSend::new(send, missing));
-        let target = crate::param::ParamTarget::Send { track: snare, send };
+            .outputs
+            .push(Output::new(missing));
+        let target = crate::param::ParamTarget::Output {
+            track: snare,
+            to: missing,
+            tap: Tap::PostFader,
+        };
         project.automation.set_point(
             target,
             None,
@@ -957,12 +1011,14 @@ mod tests {
     #[test]
     fn routing_survives_a_round_trip_through_json() {
         let (mut project, kick, _, bus) = bussed_project();
-        project.track_mut(kick).unwrap().sends.push(AuxSend {
-            id: SendId(42),
-            target: bus,
-            level_db: -7.5,
-            pre_fader: true,
-        });
+        project.track_mut(kick).unwrap().outputs = vec![
+            Output::master(),
+            Output {
+                to: Destination::Bus(bus),
+                gain_db: -7.5,
+                tap: Tap::PreFader,
+            },
+        ];
 
         let json = serde_json::to_string(&project).expect("serialises");
         let back: Project = serde_json::from_str(&json).expect("deserialises");
@@ -1026,7 +1082,7 @@ mod tests {
         let kick = project.add_instrument_track("Kick", "x");
         let bass = project.add_instrument_track("Bass", "x");
         let bus = project.add_bus_track("Sub");
-        project.track_mut(bass).unwrap().outputs = vec![Output::Bus(bus)];
+        project.track_mut(bass).unwrap().outputs = vec![Output::to_bus(bus)];
         assert!(!project.sidechain_would_cycle(Some(kick), bus));
 
         key_from(&mut project, Some(bass), kick);

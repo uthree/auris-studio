@@ -71,8 +71,7 @@ impl AnalysisRender {
         for track in &mut project.tracks {
             track.mixer = Default::default();
             track.mixer.mute = track.id != selected;
-            track.sends.clear();
-            track.outputs = vec![auris_core::project::Output::Master];
+            track.outputs = vec![auris_core::project::Output::master()];
         }
         project.master = Default::default();
         Ok(())
@@ -401,7 +400,7 @@ impl Session {
                 "document_instance":self.document_instance(),"project_format_version":self.project().format_version,
                 "tempo_map":self.project().tempo_map,"signature_map":self.project().signatures,
                 "automation":project.automation,"instruments":instruments,"effects":effects,
-                "routing":project.tracks.iter().map(|track|json!({"track":track.id,"outputs":track.outputs,"sends":track.sends,"gain_db":track.mixer.gain_db,"pan":track.mixer.pan,"mute":track.mixer.mute,"solo":track.mixer.solo})).collect::<Vec<_>>(),
+                "routing":project.tracks.iter().map(|track|json!({"track":track.id,"outputs":track.outputs,"gain_db":track.mixer.gain_db,"pan":track.mixer.pan,"mute":track.mixer.mute,"solo":track.mixer.solo})).collect::<Vec<_>>(),
                 "master":{"gain_db":project.master.gain_db,"pan":project.master.pan,"mute":project.master.mute},
                 "clip_recipes":project.tracks.iter().flat_map(|track|track.kind.note_clips().into_iter().flatten().map(move|clip|json!({"track":track.id,"clip":clip.id,"recipe":clip.recipe,"transforms":clip.transforms}))).collect::<Vec<_>>(),
                 "assets":assets,"singers":singers,"playback_readiness":self.playback_readiness(),

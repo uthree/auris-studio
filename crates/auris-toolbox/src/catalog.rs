@@ -358,7 +358,7 @@ pub mod tool_help {
             "mixer_graph" => serde_json::json!([
                 {"project":project,"operation":{"action":"read"}},
                 {"project":project,"operation":{"action":"set_strip","node":"track:1","gain_db":-6.0,"pan":0.25}},
-                {"project":project,"operation":{"action":"connect","source":"track:1","target":"track:2","kind":"send"}},
+                {"project":project,"operation":{"action":"add_output","source":"track:1","target":"track:2","gain_db":-12.0,"pre_fader":false}},
                 {"project":project,"operation":{"action":"parameters","node":"effect:3"}}
             ]),
             "add_track" => serde_json::json!([

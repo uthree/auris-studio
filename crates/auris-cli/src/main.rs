@@ -959,21 +959,38 @@ fn info(path: &Path) -> Result<(), String> {
                     .map(|bus| bus.name.clone())
                     .unwrap_or_else(|| format!("#{}", id.0))
             };
-            let mut routing: Vec<String> = track
-                .outputs
-                .iter()
-                .filter_map(|output| output.bus())
-                .map(|bus| format!("-> {}", name_of(bus)))
-                .collect();
+            // The ordinary case — the master alone, at unity after the fader — says nothing;
+            // anything else lists every output, each with its level and tap once those differ
+            // from the default.
+            let ordinary = matches!(track.outputs.as_slice(), [only] if *only == Output::master());
+            let mut routing: Vec<String> = if ordinary {
+                Vec::new()
+            } else {
+                track
+                    .outputs
+                    .iter()
+                    .map(|output| {
+                        let to = match output.to {
+                            Destination::Master => field(Key::Master).to_string(),
+                            Destination::Bus(bus) => name_of(bus),
+                        };
+                        let level = if output.gain_db == 0.0 {
+                            String::new()
+                        } else {
+                            format!(" {:+.1} dB", output.gain_db)
+                        };
+                        let tap = if output.tap == Tap::PreFader {
+                            " pre"
+                        } else {
+                            ""
+                        };
+                        format!("-> {to}{level}{tap}")
+                    })
+                    .collect()
+            };
             if track.outputs.is_empty() {
                 routing.push(format!("-> {}", field(Key::MixerNoOutput)));
-            } else if track.outputs.len() > 1 && track.outputs.contains(&Output::Master) {
-                routing.insert(0, format!("-> {}", field(Key::Master)));
             }
-            routing.extend(track.sends.iter().map(|send| {
-                let tap = if send.pre_fader { " pre" } else { "" };
-                format!("=> {} {:+.1} dB{tap}", name_of(send.target), send.level_db)
-            }));
             if !routing.is_empty() {
                 writeln!(
                     out,

@@ -47,7 +47,7 @@ Guidance
 - Read mixer_graph before editing and copy stable node and parameter IDs. Keep routing acyclic. Hosted VST3 values are normalized 0..1, CLAP values use native ranges; master normalization does not replace track balancing.
 - inspect_audio renders local measurements, not listening. Use bounded ranges during edits and the full current mix after the last change. Verification mutes, solos and bypasses belong in an isolated snapshot or an advertised non-persistent override.
 - For exports read render, export_midi and verify_render help, choose an explicit range and tail and new destinations (workspace-relative unless the user names a location), and inspect PASS/FAIL and the actual files.
-Techniques (search_documentation the name for detail): Volume and pan first; Low cut on everything but the bass; Kick-triggered sidechain; Reverb and delay sends for the voice; Bus processing; Section automation; normalize_mix last.";
+Techniques (search_documentation the name for detail): Volume and pan first; Low cut on everything but the bass; Kick-triggered sidechain; Reverb and delay returns for the voice; Bus processing; Section automation; normalize_mix last.";
 
 /// What one phase asks of the agent, given the score phase's starting point.
 ///

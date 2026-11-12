@@ -155,7 +155,8 @@ a deliberate choice needs explaining or the user asks for one; never remove or r
 
 mixer_graph has one operation object with an action tag. Read first and copy stable node IDs.
 set_strip changes only supplied gain_db/pan/mute/solo. set_outputs atomically replaces output destinations;
-connect adds a branch. add_send creates a send with level and tap; set_send edits it by send ID.
+connect adds a unity post-fader output. add_output creates one with a level and tap; set_output edits one
+named by source, target and pre_fader. There are no sends: a send is simply another output.
 set_sidechain replaces or clears a sidechain. Add/remove/move/enable inserts and inspect/set their parameters
 through this tool. All routing must remain a DAG. Parallel effects use bus branches.
 Use automation for parameter curves. Static settings may be overridden by existing automation.

@@ -70,35 +70,23 @@ pub(crate) struct OneShot {
     pub(crate) cursor: usize,
 }
 
-/// A copy of a track's signal, on its way to a bus.
+/// One copy of a track's signal, on its way to a bus or the master at a level of its own.
 ///
-/// The gain is smoothed for the same reason a fader is: a send level moved during playback would
+/// The gain is smoothed for the same reason a fader is: a level moved during playback would
 /// otherwise step, and a step is a click.
-pub(crate) struct RenderSend {
-    /// Prepared slot in the graph's optional connection meters.
-    pub(crate) meter: Option<usize>,
-    /// Which of the graph's bus input buffers this feeds.
-    pub(crate) target: usize,
-    /// Send level as a linear gain, ramped across the block it changes in.
-    pub(crate) gain: SmoothedGain,
-    /// Whether the copy is taken before the fader rather than after it.
-    pub(crate) pre_fader: bool,
-    /// Holds this copy back so it reaches the bus in step with everything else feeding it.
-    pub(crate) delay: LatencyDelay,
-    /// Somewhere to hold the delayed copy. Empty, and never touched, when the delay is zero —
-    /// which it is for every send in a graph where nothing looks ahead.
-    pub(crate) scratch: AudioBuffer,
-}
-
-/// One unity output branch with independent latency compensation.
 pub(crate) struct RenderOutput {
     /// Prepared slot in the graph's optional connection meters.
     pub(crate) meter: Option<usize>,
     /// Bus input slot, or the master when absent.
     pub(crate) target: Option<usize>,
-    /// Independent post-fader delay for this path through the graph.
+    /// Output level as a linear gain, ramped across the block it changes in.
+    pub(crate) gain: SmoothedGain,
+    /// Whether the copy is taken before the fader rather than after it.
+    pub(crate) pre_fader: bool,
+    /// Holds this copy back so it reaches its destination in step with everything else there.
     pub(crate) delay: LatencyDelay,
-    /// Prepared copy buffer, empty when the path needs no compensation.
+    /// Somewhere to hold the delayed copy. Empty, and never touched, when the delay is zero —
+    /// which it is for every output in a graph where nothing looks ahead.
     pub(crate) scratch: AudioBuffer,
 }
 
@@ -114,18 +102,16 @@ pub struct RenderTrack {
     ///
     /// A singer track is one, because a voice is one point in the room. The graph still carries
     /// two channels — the pan has to put the voice somewhere — so the strip folds the sides back
-    /// into one signal after the chain and before the sends and the pan. A stereo take, or an
-    /// insert that widens, therefore cannot spread the voice; width comes from a send to a
+    /// into one signal after the chain and before the outputs and the pan. A stereo take, or an
+    /// insert that widens, therefore cannot spread the voice; width comes from an output to a
     /// stereo bus, the way it would on a mono channel in any mixer.
     pub(crate) mono: bool,
     pub(crate) strip: RenderStrip,
     /// Caller-placed plugins stay on the rendering caller's thread. Their native thread
     /// migration contracts have not been established for a work-stealing pool.
     pub(crate) parallel_safe: bool,
-    /// Every post-fader unity output branch.
+    /// Every copy of this track's signal, in the order of the document's output list.
     pub(crate) outputs: Vec<RenderOutput>,
-    /// Copies of this track's signal, on their way to buses.
-    pub(crate) sends: Vec<RenderSend>,
     /// Holds this track back to the longest path through the graph, so the sources line up.
     pub(crate) delay: LatencyDelay,
     /// Prepared working buffer shared by the strip and its outgoing copies.

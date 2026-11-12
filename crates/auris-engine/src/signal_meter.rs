@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
-use auris_core::{EffectSlotId, Output, Project, SendId, TrackId};
+use auris_core::{Destination, EffectSlotId, Project, Tap, TrackId};
 
 use crate::MeterBank;
 
@@ -12,10 +12,8 @@ use crate::MeterBank;
 pub enum SignalRoute {
     /// Audio entering an insert, including an insert that is bypassed.
     InsertInput(Option<TrackId>, EffectSlotId),
-    /// One post-fader output, after its independent compensation delay.
-    Output(TrackId, Output),
-    /// One auxiliary send, after its tap gain and compensation delay.
-    Send(TrackId, SendId),
+    /// One of a track's outputs, after its level and its compensation delay.
+    Output(TrackId, Destination, Tap),
     /// Key audio consumed by an enabled insert that accepts sidechains.
     Sidechain(Option<TrackId>, EffectSlotId),
 }
@@ -51,16 +49,10 @@ impl SignalMeters {
             }
         }
         for track in &project.tracks {
-            for &output in &track.outputs {
+            for output in &track.outputs {
                 let index = routes.len();
                 routes
-                    .entry(SignalRoute::Output(track.id, output))
-                    .or_insert(index);
-            }
-            for send in &track.sends {
-                let index = routes.len();
-                routes
-                    .entry(SignalRoute::Send(track.id, send.id))
+                    .entry(SignalRoute::Output(track.id, output.to, output.tap))
                     .or_insert(index);
             }
         }

@@ -19,7 +19,11 @@ fn routing_edits_preserve_untouched_card_positions_across_reopening(cx: &mut Tes
     let before = app.read_with(cx, |this, cx| {
         this.mixer_canvas.as_ref().unwrap().presentation(cx)
     });
-    app.update(cx, |this, _| this.session.add_send(source, bus).unwrap());
+    app.update(cx, |this, _| {
+        this.session
+            .add_track_output(source, Destination::Bus(bus))
+            .unwrap()
+    });
     paint(&app, cx);
     app.update(cx, |this, cx| {
         let current = this.mixer_canvas.as_ref().unwrap().presentation(cx);

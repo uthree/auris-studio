@@ -203,13 +203,26 @@ pub enum SessionError {
     )]
     NotANoteClip(u64),
 
-    /// The requested send does not exist on that track.
-    #[error("track {track} has no send with id {send}")]
-    UnknownSend {
+    /// The requested output does not exist on that track.
+    #[error("track {track} has no output to {to:?} taken {tap:?}")]
+    UnknownOutput {
         /// The track that was addressed.
         track: u64,
-        /// The send that is not on it.
-        send: u64,
+        /// Where the output would have landed.
+        to: auris_core::Destination,
+        /// Where on the strip it would have been taken.
+        tap: auris_core::Tap,
+    },
+
+    /// The track already has an output to that destination taken at that point.
+    #[error("track {track} already has an output to {to:?} taken {tap:?}")]
+    DuplicateOutput {
+        /// The track that was addressed.
+        track: u64,
+        /// Where both outputs would land.
+        to: auris_core::Destination,
+        /// Where on the strip both would be taken.
+        tap: auris_core::Tap,
     },
 
     /// Audio can only be routed into a bus, and this track is not one.

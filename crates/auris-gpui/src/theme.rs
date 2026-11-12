@@ -928,8 +928,8 @@ impl Theme {
         readable_indicator(self.track_palette[0], self)
     }
 
-    /// Color for auxiliary mixer branches, following the bus/effects palette.
-    pub fn mixer_send_color(&self) -> Hsla {
+    /// Color for outputs taken before the fader, following the bus/effects palette.
+    pub fn mixer_pre_fader_color(&self) -> Hsla {
         readable_indicator(self.track_palette[3], self)
     }
 

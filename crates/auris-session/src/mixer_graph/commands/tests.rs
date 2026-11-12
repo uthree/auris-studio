@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn replacement_routes_and_configured_sends_are_atomic_and_undoable() {
+fn replacement_routes_and_configured_outputs_are_atomic_and_undoable() {
     let mut session = session();
     let source = session.add_default_instrument_track("Source").unwrap();
     let bus = session.add_bus_track("Bus");
@@ -15,20 +15,27 @@ fn replacement_routes_and_configured_sends_are_atomic_and_undoable() {
     .unwrap();
     assert_eq!(
         session.project().track(source).unwrap().outputs,
-        vec![Output::Bus(bus)]
+        vec![Output::to_bus(bus)]
     );
     session.undo();
     assert_eq!(session.project(), &before);
-    let result=apply(&mut session,json!({"action":"add_send","source":from,"target":destination,"level_db":-17.5,"pre_fader":true})).unwrap();
-    assert!(result["result"]["send_id"].is_u64());
-    let send = &session.project().track(source).unwrap().sends[0];
+    apply(
+        &mut session,
+        json!({"action":"add_output","source":from,"target":destination,"gain_db":-17.5,"pre_fader":true}),
+    )
+    .unwrap();
+    let added = session.project().track(source).unwrap().outputs[1];
     assert_eq!(
-        (send.target, send.level_db, send.pre_fader),
-        (bus, -17.5, true)
+        added,
+        Output {
+            to: Destination::Bus(bus),
+            gain_db: -17.5,
+            tap: Tap::PreFader,
+        }
     );
     session.undo();
     assert_eq!(session.project(), &before);
-    assert!(apply(&mut session,json!({"action":"add_send","source":from,"target":destination,"level_db":-70,"pre_fader":true})).is_err());
+    assert!(apply(&mut session,json!({"action":"add_output","source":from,"target":destination,"gain_db":-70,"pre_fader":true})).is_err());
     assert_eq!(session.project(), &before);
 }
 
@@ -85,7 +92,9 @@ fn compact_graph_pages_are_topological_and_track_nodes_contain_faders() {
     let slot = session
         .add_effect(Some(source), "auris.fx.compressor")
         .unwrap();
-    session.set_track_output(source, Output::Bus(bus)).unwrap();
+    session
+        .set_track_output(source, Destination::Bus(bus))
+        .unwrap();
     let graph = session.mixer_graph_report(0, Some(64)).unwrap();
     assert_eq!(graph["total_nodes"], 4);
     let nodes = graph["nodes"].as_array().unwrap();
@@ -128,9 +137,7 @@ fn graph_actions_reject_mixed_cycles_and_wrong_ports_without_history_changes() {
     )
     .unwrap();
     let before = serde_json::to_value(session.project()).unwrap();
-    for kind in ["output", "send"] {
-        assert!(apply(&mut session, json!({"action":"connect","source":MixerNode::Strip(Some(b)).key(),"target":from,"kind":kind})).unwrap_err().contains("cycle"));
-    }
+    assert!(apply(&mut session, json!({"action":"connect","source":MixerNode::Strip(Some(b)).key(),"target":from,"kind":"output"})).unwrap_err().contains("cycle"));
     assert!(
         apply(
             &mut session,
@@ -206,34 +213,57 @@ fn effect_ids_survive_ordering_and_parameter_edits_target_the_same_slot() {
 }
 
 #[test]
-fn send_controls_undo_as_one_and_duplicate_connects_are_unchanged() {
+fn output_controls_undo_as_one_and_duplicate_connects_are_unchanged() {
     let mut session = session();
     let a = session.add_bus_track("A");
     let b = session.add_bus_track("B");
     let source = MixerNode::Strip(Some(a)).key();
     let target = MixerNode::Strip(Some(b)).key();
-    let connect = json!({"action":"connect","source":source,"target":target,"kind":"send"});
+    let connect = json!({"action":"connect","source":source,"target":target,"kind":"output"});
     apply(&mut session, connect.clone()).unwrap();
     assert_eq!(apply(&mut session, connect).unwrap()["changed"], false);
-    let send = session.project().track(a).unwrap().sends[0].id;
     let before = serde_json::to_value(session.project()).unwrap();
     assert!(
         apply(
             &mut session,
-            json!({"action":"set_send","send_id":send.0,"level_db":5,"pre_fader":true})
+            json!({"action":"set_output","source":source,"target":target,"gain_db":5,"move_pre_fader":true})
         )
         .is_err()
     );
     assert_eq!(serde_json::to_value(session.project()).unwrap(), before);
     apply(
         &mut session,
-        json!({"action":"set_send","send_id":send.0,"level_db":-12,"pre_fader":true}),
+        json!({"action":"set_output","source":source,"target":target,"gain_db":-12,"move_pre_fader":true}),
     )
     .unwrap();
+    assert_eq!(
+        session.project().track(a).unwrap().outputs[1],
+        Output {
+            to: Destination::Bus(b),
+            gain_db: -12.0,
+            tap: Tap::PreFader,
+        }
+    );
     session.undo();
     assert_eq!(serde_json::to_value(session.project()).unwrap(), before);
-    apply(&mut session,json!({"action":"disconnect","source":source,"target":target,"kind":"send","send_id":send.0})).unwrap();
-    assert!(session.project().track(a).unwrap().sends.is_empty());
+
+    // A pre- and a post-fader output to the same bus are told apart by pre_fader.
+    apply(
+        &mut session,
+        json!({"action":"add_output","source":source,"target":target,"gain_db":-6,"pre_fader":true}),
+    )
+    .unwrap();
+    let ambiguous = json!({"action":"disconnect","source":source,"target":target,"kind":"output"});
+    assert!(apply(&mut session, ambiguous).is_err());
+    apply(
+        &mut session,
+        json!({"action":"disconnect","source":source,"target":target,"kind":"output","pre_fader":true}),
+    )
+    .unwrap();
+    assert_eq!(
+        session.project().track(a).unwrap().outputs,
+        vec![Output::master(), Output::to_bus(b)]
+    );
 }
 
 #[test]
@@ -258,7 +288,7 @@ fn disconnect_removes_only_the_named_output_and_allows_no_outputs() {
     );
     assert_eq!(
         session.project().track(a).unwrap().outputs,
-        vec![Output::Master, Output::Bus(b)]
+        vec![Output::master(), Output::to_bus(b)]
     );
     apply(
         &mut session,
@@ -267,7 +297,7 @@ fn disconnect_removes_only_the_named_output_and_allows_no_outputs() {
     .unwrap();
     assert_eq!(
         session.project().track(a).unwrap().outputs,
-        vec![Output::Master]
+        vec![Output::master()]
     );
     apply(
         &mut session,
@@ -278,6 +308,6 @@ fn disconnect_removes_only_the_named_output_and_allows_no_outputs() {
     session.undo();
     assert_eq!(
         session.project().track(a).unwrap().outputs,
-        vec![Output::Master]
+        vec![Output::master()]
     );
 }

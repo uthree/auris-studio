@@ -2,8 +2,8 @@
 
 use auris_core::project::CurvePoint;
 use auris_core::{
-    AssetPath, AutomationCurve, ClipId, ClipPreset, DrumMap, DrumRole, EffectSlotId, Note,
-    NoteTransform, Output, ParamId, ParamTarget, Project, SendId, SoundFontId, SourceId, Ticks,
+    AssetPath, AutomationCurve, ClipId, ClipPreset, Destination, DrumMap, DrumRole, EffectSlotId,
+    Note, NoteTransform, Output, ParamId, ParamTarget, Project, SoundFontId, SourceId, Tap, Ticks,
     TrackId,
 };
 use auris_io::{load_project, save_project};
@@ -154,34 +154,47 @@ fn routing_preserves_parallel_outputs_empty_outputs_and_send_taps() {
     for (version, text) in FIXTURES {
         let project = load_fixture(text);
         let lead = project.track(TrackId(1)).unwrap();
-        let expected = if version < 32 {
-            vec![Output::Bus(TrackId(12))]
+        // The lead already reached the bus at unity after the fader, so its post-fader send at
+        // -18 dB is the same signal arriving twice and is summed into that one output; the
+        // pre-fader send at -12 dB becomes an output of its own.
+        let bus = Destination::Bus(TrackId(12));
+        let summed = 20.0 * (1.0 + 10f32.powf(-18.0 / 20.0)).log10();
+        let mut expected = if version < 32 {
+            vec![]
         } else {
-            vec![Output::Master, Output::Bus(TrackId(12))]
+            vec![Output::master()]
         };
-        assert_eq!(lead.outputs, expected, "format {version}");
+        expected.extend([
+            Output {
+                to: bus,
+                gain_db: summed,
+                tap: Tap::PostFader,
+            },
+            Output {
+                to: bus,
+                gain_db: -12.0,
+                tap: Tap::PreFader,
+            },
+        ]);
+        assert_eq!(lead.outputs.len(), expected.len(), "format {version}");
+        for (output, expected) in lead.outputs.iter().zip(&expected) {
+            assert_eq!(output.key(), expected.key(), "format {version}");
+            assert!(
+                (output.gain_db - expected.gain_db).abs() < 1e-4,
+                "format {version}: {} dB",
+                output.gain_db
+            );
+        }
         let audio = project.track(TrackId(5)).unwrap();
         assert_eq!(
             audio.outputs,
             if version < 32 {
-                vec![Output::Master]
+                vec![Output::master()]
             } else {
                 vec![]
             }
         );
         assert_eq!((lead.mixer.gain_db, lead.mixer.pan), (-6.0, -0.25));
-        let sends: Vec<_> = lead
-            .sends
-            .iter()
-            .map(|s| (s.id, s.target, s.level_db, s.pre_fader))
-            .collect();
-        assert_eq!(
-            sends,
-            vec![
-                (SendId(17), TrackId(12), -12.0, true),
-                (SendId(18), TrackId(12), -18.0, false)
-            ]
-        );
         let effects: Vec<_> = lead
             .mixer
             .effects
@@ -253,9 +266,10 @@ fn automation_keeps_stable_targets_keys_domains_and_endpoint_holds() {
             0.0,
         ),
         (
-            ParamTarget::Send {
+            ParamTarget::Output {
                 track: TrackId(1),
-                send: SendId(17),
+                to: Destination::Bus(TrackId(12)),
+                tap: Tap::PreFader,
             },
             None,
             -12.0,

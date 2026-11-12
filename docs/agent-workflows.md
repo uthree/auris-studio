@@ -162,8 +162,9 @@ parameter automation is preserved and may override static values during playback
 object tagged by action. Start with `read` and copy stable track/effect node IDs.
 `set_strip` changes only supplied gain_db, pan, mute or solo fields; track:master
 accepts gain/pan. `set_outputs` replaces destinations atomically; `connect` adds a
-branch. `add_send` sets initial level and pre/post-fader tap in one edit; `set_send`
-uses the returned send ID. `set_sidechain` replaces or clears a detector source.
+unity post-fader output. `add_output` adds one with an initial level and pre/post-fader tap in
+one edit; `set_output` changes one named by source, target and `pre_fader`. There are no sends:
+a send is another output. `set_sidechain` replaces or clears a detector source.
 Insert actions add/remove/move/enable effects and read/set native parameters.
 All connections must form a DAG. See [Mixer signal flow](mixer-graph.md).
 
@@ -177,7 +178,7 @@ note by note several decibels quiet. Sound replacement preserves faders but can 
 level substantially, so remeasure. Audio file delivery never establishes listening.
 
 `automation` selects a typed target (`track_gain`, `track_pan`, `master_gain`,
-`master_pan`, `send`, `instrument` or `effect`) and an operation. `read` pages
+`master_pan`, `output`, `instrument` or `effect`) and an operation. `read` pages
 points and choices in native units. Copy its revision into `expected_revision`
 for `set` or `clear`. `set` accepts up to 4096 `{at_tick,value}` points, optional
 `replace` and `curve` (`linear` or `hold`). Absolute ticks, discrete parameter

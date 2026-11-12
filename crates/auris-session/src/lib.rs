@@ -303,14 +303,14 @@ pub mod prelude {
         TempoPoint, Ticks, TimeSignature,
     };
     pub use auris_core::{
-        AudioBuffer, AudioClip, AudioSource, AuxSend, ClipId, ClipPreset, ClipRecipe, Color,
-        ConsonantWidths, DrumMap, DrumRole, DrumVoiceRecipe, EffectSlot, EffectSlotId, FadeCurve,
-        Fall, GhostNotes, GhostPattern, LayerShape, LayerVoice, MAX_LAYER_OFFSET, MAX_STRING_MS,
-        MidiClip, MixerStrip, Note, NoteTransform, Output, PluginRegistry, PresetRef, Project,
-        STRUM_VALUES, SUSTAIN_MAX_TICKS, Scoop, SectionMap, SectionPoint, SectionSpan, SendId,
-        SingerPitch, SingerTrack, SoundFontId, SoundFontRef, SourceId, StrokeDirection,
-        Subdivision, Track, TrackId, TrackKind, Vibrato, default_frame_hop, default_loop_end,
-        loop_passes, sounding_length,
+        AudioBuffer, AudioClip, AudioSource, ClipId, ClipPreset, ClipRecipe, Color,
+        ConsonantWidths, Destination, DrumMap, DrumRole, DrumVoiceRecipe, EffectSlot, EffectSlotId,
+        FadeCurve, Fall, GhostNotes, GhostPattern, LayerShape, LayerVoice, MAX_LAYER_OFFSET,
+        MAX_STRING_MS, MidiClip, MixerStrip, Note, NoteTransform, Output, PluginRegistry,
+        PresetRef, Project, STRUM_VALUES, SUSTAIN_MAX_TICKS, Scoop, SectionMap, SectionPoint,
+        SectionSpan, SingerPitch, SingerTrack, SoundFontId, SoundFontRef, SourceId,
+        StrokeDirection, Subdivision, Tap, Track, TrackId, TrackKind, Vibrato, default_frame_hop,
+        default_loop_end, loop_passes, sounding_length,
     };
     pub use auris_core::{Comment, CommentId, JoinRefusal};
     pub use auris_core::{

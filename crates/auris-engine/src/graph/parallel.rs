@@ -1,7 +1,7 @@
 //! Dependency generations for offline track preparation.
 //!
 //! The renderer still commits each generation's outputs in the graph's original routing order.
-//! Only source/strip preparation is parallel; sends, fader/output mixing and sidechain publication
+//! Only source/strip preparation is parallel; fader and output mixing and sidechain publication
 //! remain ordered by the existing renderer.
 
 use super::{RenderSource, RenderTrack};
@@ -114,11 +114,6 @@ fn dependencies(
                 writers.push(index);
             }
         }
-        for send in &track.sends {
-            if let Some(writers) = writers_by_bus.get_mut(send.target) {
-                writers.push(index);
-            }
-        }
         if let Some(tap) = track.tap
             && let Some(writers) = writers_by_tap.get_mut(tap)
         {
@@ -147,7 +142,7 @@ fn dependencies(
 mod tests {
     use super::*;
     use crate::testkit;
-    use auris_core::project::{AudioSourceBank, AuxSend, Output, Project};
+    use auris_core::project::{AudioSourceBank, Destination, Output, Project, Tap};
 
     fn plan(order: &[usize], deps: &[(usize, &[usize])]) -> OfflineRenderPlan {
         let mut dependencies = vec![Vec::new(); order.len()];
@@ -181,7 +176,7 @@ mod tests {
         let mut project = Project::new("Cycle", 48_000.0);
         let source = project.add_instrument_track("Source", testkit::TONE_ID);
         let bus = project.add_bus_track("Bus");
-        project.track_mut(source).unwrap().outputs = vec![Output::Bus(bus)];
+        project.track_mut(source).unwrap().outputs = vec![Output::to_bus(bus)];
         let graph = crate::graph::RenderGraph::build(
             &project,
             &AudioSourceBank::new(),
@@ -201,14 +196,12 @@ mod tests {
         let source = project.add_instrument_track("Source", testkit::TONE_ID);
         let listener = project.add_instrument_track("Listener", testkit::TONE_ID);
         let bus = project.add_bus_track("Bus");
-        project.track_mut(source).unwrap().outputs = vec![Output::Bus(bus)];
-        project.track_mut(listener).unwrap().outputs = vec![Output::Bus(bus)];
-        let send_id = project.next_send_id();
-        project.track_mut(source).unwrap().sends.push(AuxSend {
-            id: send_id,
-            target: bus,
-            level_db: 0.0,
-            pre_fader: false,
+        project.track_mut(source).unwrap().outputs = vec![Output::to_bus(bus)];
+        project.track_mut(listener).unwrap().outputs = vec![Output::to_bus(bus)];
+        project.track_mut(source).unwrap().outputs.push(Output {
+            to: Destination::Bus(bus),
+            gain_db: 0.0,
+            tap: Tap::PreFader,
         });
         let effect = project
             .add_effect(Some(listener), testkit::KEYED_ID)

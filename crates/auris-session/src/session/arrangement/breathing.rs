@@ -268,7 +268,7 @@ pub(super) fn inspect(
         "authored":authored,"performed":performed,"clips":observed.clips,"suggestions":suggestions,
         "ending_guidance":endings::guidance(project, track),
         "audibility":{"sustain_data_present":observed.sustain,"sustain_response":sustain_response,"track_muted":track.mixer.mute,
-            "effect_or_send_paths_present":!track.mixer.effects.is_empty()||!track.sends.is_empty(),
+            "effect_or_extra_output_paths_present":!track.mixer.effects.is_empty()||track.outputs.len()>1,
             "limitation":"Note occupancy excludes instrument release, pedal-held tails, effect/bus tails and other tracks. Compare the foreground stem and mix with inspect_audio/preview/listen; these flags identify possible causes, not proven audible silence."}}),
     )
 }

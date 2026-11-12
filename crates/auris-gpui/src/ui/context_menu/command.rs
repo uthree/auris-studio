@@ -379,7 +379,7 @@ pub enum MenuCommand {
         at: Point<Pixels>,
     },
     /// Add or remove one destination while retaining the other output branches.
-    ToggleTrackOutput(TrackId, Output),
+    ToggleTrackOutput(TrackId, Destination),
     /// Disconnect selected graph edges in one undoable document edit.
     DeleteMixerConnections(Vec<auris_session::mixer_graph::MixerEdge>),
     /// Add a track from the mixer graph's canvas, its strip placed where the menu opened.
@@ -391,33 +391,23 @@ pub enum MenuCommand {
     },
     /// Lay the mixer graph out again from its routing.
     ArrangeMixerGraph,
-    /// Open the list of buses a track could send to.
-    ShowSendPicker {
-        /// Track the send would come from.
+    /// Remove one of a track's outputs.
+    RemoveOutput {
+        /// Track the output leaves.
         track: TrackId,
-        /// Where the list is dropped.
-        at: Point<Pixels>,
+        /// Where it lands.
+        to: Destination,
+        /// Where it is taken.
+        tap: Tap,
     },
-    /// Add a send from a track to a bus.
-    AddSend {
-        /// Track the copy is taken from.
+    /// Move one of a track's outputs before or after the fader.
+    ToggleOutputPreFader {
+        /// Track the output leaves.
         track: TrackId,
-        /// Bus it feeds.
-        bus: TrackId,
-    },
-    /// Remove a send from a track.
-    RemoveSend {
-        /// Track the send is on.
-        track: TrackId,
-        /// Which send.
-        send: SendId,
-    },
-    /// Move a send's tap before or after the fader.
-    ToggleSendPreFader {
-        /// Track the send is on.
-        track: TrackId,
-        /// Which send.
-        send: SendId,
+        /// Where it lands.
+        to: Destination,
+        /// Where it is taken now.
+        tap: Tap,
     },
 
     /// Copy a clip, immediately after the original.
@@ -1217,28 +1207,31 @@ impl AurisApp {
             MenuCommand::DeleteMixerConnections(edges) => self.delete_mixer_connections(&edges),
             MenuCommand::NewMixerTrack { kind, at } => self.add_mixer_track(kind, at, cx),
             MenuCommand::ArrangeMixerGraph => self.arrange_mixer_nodes(cx),
-            MenuCommand::ToggleTrackOutput(track, output) => {
-                let remove = self
+            MenuCommand::ToggleTrackOutput(track, to) => {
+                let outputs = self
                     .project()
                     .track(track)
-                    .is_some_and(|track| track.outputs.contains(&output));
-                let result = if remove {
-                    self.session.remove_track_output(track, output)
+                    .map(|track| track.outputs.clone())
+                    .unwrap_or_default();
+                // Every output to that destination goes, whichever point it is taken from: the
+                // row stands for the destination, and a check that stayed ticked after it was
+                // cleared would read as a click that did nothing.
+                let result = if outputs.iter().any(|output| output.to == to) {
+                    let kept: Vec<_> = outputs
+                        .into_iter()
+                        .filter(|output| output.to != to)
+                        .collect();
+                    self.session.set_track_outputs(track, &kept)
                 } else {
-                    self.session.add_track_output(track, output)
+                    self.session.add_track_output(track, to)
                 };
                 if let Err(error) = result {
                     self.set_failed_status(self.failure(Key::MixerGraph, &error));
                 }
             }
-            MenuCommand::ShowSendPicker { track, at } => {
-                let menu = self.send_picker_menu(at, track);
-                self.open_menu(menu);
-            }
-            MenuCommand::AddSend { track, bus } => self.add_send(track, bus),
-            MenuCommand::RemoveSend { track, send } => self.remove_send(track, send),
-            MenuCommand::ToggleSendPreFader { track, send } => {
-                self.toggle_send_pre_fader(track, send)
+            MenuCommand::RemoveOutput { track, to, tap } => self.remove_output(track, to, tap),
+            MenuCommand::ToggleOutputPreFader { track, to, tap } => {
+                self.toggle_output_pre_fader(track, to, tap)
             }
 
             MenuCommand::DuplicateClip(clip) => {

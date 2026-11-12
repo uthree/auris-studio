@@ -248,7 +248,7 @@
 //! [`crate::Session::capture_sound`] and [`crate::Session::apply_sound`] own this workflow for
 //! every frontend. Applying replaces the target's instrument and complete insert chain as one
 //! undoable command, allocating fresh effect identities and removing the old instrument/effect
-//! automation. Notes, track faders, pan, routing and sends belong to the song and stay in place.
+//! automation. Notes, track faders, pan and routing belong to the song and stay in place.
 //! Sidechain track identities also belong to the song and are not part of a reusable sound.
 //! [`crate::factory_sound_families`] groups editable starting patches beneath every physical
 //! instrument. Each family's first patch keeps the engine's existing default parameters; other
@@ -730,7 +730,7 @@ pub mod architecture {
     //! Track conversion follows this boundary too. [`Session::convert_track_job`](crate::Session::convert_track_job)
     //! captures an instrument/drum source or a singer performance for a worker; the session lands
     //! the result as a float WAV in `Audio/` and replaces the track in one undo step. Only source
-    //! processing, including instrument automation, is baked. The track id, mixer, effects, sends
+    //! processing, including instrument automation, is baked. The track id, mixer, effects, outputs
     //! and mixer automation survive, so the audio passes through the same mix exactly once.
     //! Singer conversion reuses a current take or renders the selected voice for the current score.
     //! The resulting clip starts at zero, retaining lead-in silence and the original timing; it
@@ -920,7 +920,7 @@ pub mod architecture {
     //! Other track kinds and the project overview use
     //! [`Session::rendered_spectrogram_job`](crate::Session::rendered_spectrogram_job): a render
     //! snapshot performs the arrangement on the worker before the same FFT analysis. Track
-    //! views use the stem renderer's solo routing, including buses, sends and master effects;
+    //! views use the stem renderer's solo routing, including buses, extra outputs and master effects;
     //! the project view uses the current mix's mute and solo settings. The cache is keyed by
     //! document revision, obsolete renders are cancelled, and results from older revisions are
     //! discarded. Elapsed-time images are split at tempo changes to follow the musical ruler.
@@ -1007,7 +1007,7 @@ pub mod architecture {
     //! one consumer by construction, and it is the file writer — so
     //! [`auris_engine::monitor`] is a second channel from the same callback: a ring of stereo
     //! frames the input callback fills and the *render graph* empties, joined to a track so the
-    //! input arrives before the effects, the fader and the sends.
+    //! input arrives before the effects, the fader and the outputs.
     //!
     //! **A ring per monitored track, all of them made when the device opens.** The set changes
     //! while the input callback is running and that callback may not allocate, so the slots exist
@@ -1091,7 +1091,7 @@ pub mod architecture {
     //! Realtime playback calls it from the device callback; [`auris_engine::render_project`] calls
     //! it in a loop as fast as the CPU allows. Both execute the same track DSP, event scheduling,
     //! automation and delay compensation. Offline rendering groups tracks into dependency
-    //! generations, including outputs, sends and sidechain keys, and uses Rayon for wide
+    //! generations, including outputs and sidechain keys, and uses Rayon for wide
     //! generations. Workers only modify their own track; the caller then commits outputs in
     //! stable order before the next generation starts. Reordering independent contributions
     //! can introduce floating-point roundoff relative to playback, while output length and
@@ -1099,13 +1099,13 @@ pub mod architecture {
     //! thread until their native worker-migration contracts are established. Realtime rendering
     //! retains the serial routing order and never dispatches to or waits for Rayon.
     //!
-    //! # How it gets there: outputs, buses and sends
+    //! # How it gets there: outputs and buses
     //!
     //! [`Session::mixer_graph`](crate::Session::mixer_graph) projects the document into stable
     //! track and insert nodes. Each track node owns its source and fader controls; inserts
     //! still process before gain and pan. The terminal insert is the output connection point,
-    //! or the track itself for an empty chain. Edges distinguish the serial insert chain, main output,
-    //! pre/post-fader sends and sidechain keys. The graph editor connects these identities with
+    //! or the track itself for an empty chain. Edges distinguish the serial insert chain, outputs
+    //! (each with its level and tap) and sidechain keys. The graph editor connects these identities with
     //! [`Session::connect_mixer`](crate::Session::connect_mixer), which revalidates the complete
     //! routing before delegating to an ordinary undoable command. Parallel processing uses bus
     //! branches; inserts within each strip remain ordered. Layout belongs to the frontend and
@@ -1119,21 +1119,24 @@ pub mod architecture {
     //! from edits and connection/effect removal. Persistence stays with the caller: live edits
     //! are undoable and unsaved, while MCP checkpoints actual changes once.
     //!
-    //! A track's audio does not necessarily go to the master. Its
-    //! [`Output`](auris_core::Output) is either the master or a **bus**, and it may also carry any
-    //! number of outputs and [`AuxSend`](auris_core::AuxSend)s. Every output receives a unity
-    //! post-fader copy, while sends have independent levels and pre/post-fader taps. No outputs
-    //! means disconnected; sends and sidechain keys can still carry its signal. Graph connections
-    //! add destinations without replacing others, and disconnection removes exactly one edge.
-    //! The console's output menu toggles the same destinations. Legacy single-output commands
-    //! replace the destination list explicitly. Older documents' `output` fields load as one
-    //! destination, and the current format stores an `outputs` list, including an empty list.
+    //! A track's audio does not necessarily go to the master. It carries any number of
+    //! [`Output`](auris_core::Output)s, each landing on the master or a **bus** at a level of its
+    //! own and taken after the fader or before it ([`Tap`](auris_core::Tap)). There is no separate
+    //! send: what a desk calls one is an output beside the track's others, so one edge type carries
+    //! every copy, one latency rule delays them and one meter route reads them. An output is named
+    //! by its destination and tap — a track holds at most one per pair, because two copies of the
+    //! same signal into the same place are one copy at the sum of their levels — and that name is
+    //! also what its automation lane is addressed by. No outputs means disconnected; sidechain
+    //! keys can still carry its signal. Graph connections add a unity post-fader output without
+    //! replacing others, and disconnection removes exactly one edge. The console's output menu
+    //! toggles destinations. Documents older than format 36 kept sends in a list of their own;
+    //! `auris_io` folds them into outputs as it opens them.
     //!
     //! The graph owns selection and pointer geometry, while the session owns deletion and undo.
     //! Editable edges have stable identities independent of graph order and insert positions.
-    //! The desktop distinguishes outputs, sends and sidechains with themed colors, solid/dashed/
-    //! dotted strokes, and labels. Duplicate source/target pairs are placed in deterministic
-    //! parallel Bezier lanes ordered by role and stable send ID. Their endpoints stay attached
+    //! The desktop distinguishes post-fader outputs, pre-fader outputs and sidechains with themed
+    //! colors, solid/dashed/dotted strokes, and labels. Duplicate source/target pairs are placed in
+    //! deterministic parallel Bezier lanes ordered by role and tap. Their endpoints stay attached
     //! to the ports. Painting, label anchors and nearest-wire hit testing share a flattened
     //! window-space route, including pan, zoom and text-scale lane clearance. Labels select their
     //! exact edge ID directly. These are frontend geometry and presentation; session identities

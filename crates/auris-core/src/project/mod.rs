@@ -86,7 +86,7 @@ pub use recipe::{
     ClipPreset, ClipRecipe, DrumVoiceRecipe, PerformanceStyle, STRUM_VALUES, Subdivision,
     strum_ticks,
 };
-pub use routing::{AuxSend, EffectSlot, MixerStrip, Output};
+pub use routing::{Destination, EffectSlot, MixerStrip, Output, Tap};
 pub use track::{
     AudioTrack, Color, ConsonantLevels, ConsonantWidths, InstrumentTrack, SingerPitch, SingerTake,
     SingerTrack, SingerVoice, Track, TrackKind, default_frame_hop,
@@ -128,13 +128,6 @@ pub struct SourceId(pub u64);
 )]
 #[serde(transparent)]
 pub struct EffectSlotId(pub u64);
-
-/// Identifies one send within a project.
-#[derive(
-    Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
-)]
-#[serde(transparent)]
-pub struct SendId(pub u64);
 
 /// Identifies an imported SoundFont within a project.
 #[derive(
@@ -311,6 +304,7 @@ impl Default for Project {
 
 impl Project {
     /// Schema version written into saved files and required when opening them.
+    /// Version 36 folds sends into outputs, which now carry a level and a tap point of their own.
     /// Version 35 stores the audio sampler's samples as a map of zones rather than one sample.
     /// Version 34 adds the sustain transform, which holds every release on like a pedal.
     /// Version 33 adds layers: instrument tracks that follow another track's notes.
@@ -318,7 +312,7 @@ impl Project {
     /// Version 31 adds power, added-tone, 6/9 and thirteenth chord qualities to stored harmony.
     /// Version 30 adds eleventh chord qualities to stored harmony.
     /// Version 29 adds ordered, named manual drum lanes beside generation-role assignments.
-    pub const FORMAT_VERSION: u32 = 35;
+    pub const FORMAT_VERSION: u32 = 36;
 
     /// The name a document carries until somebody — a person or the agent — gives it one.
     pub const UNTITLED: &'static str = "Untitled";
@@ -452,14 +446,9 @@ impl Project {
         EffectSlotId(self.allocate_id())
     }
 
-    /// Reserves a send id.
-    pub fn next_send_id(&mut self) -> SendId {
-        SendId(self.allocate_id())
-    }
-
     /// Returns an object id that is duplicated or inconsistent in this document.
     ///
-    /// Every track, clip, audio source, SoundFont, effect slot and send shares one id namespace.
+    /// Every track, clip, audio source, SoundFont and effect slot shares one id namespace.
     /// A loader must reject a document for which this returns `Some`: lookup normally selects one
     /// matching object while deletion can select every match, so accepting a duplicate would make
     /// the meaning of a later edit depend on which command performs it.
@@ -506,9 +495,6 @@ impl Project {
             visit(track.id.0);
             for slot in &track.mixer.effects {
                 visit(slot.id.0);
-            }
-            for send in &track.sends {
-                visit(send.id.0);
             }
             for clip in track.kind.note_clips().into_iter().flatten() {
                 visit(clip.id.0);

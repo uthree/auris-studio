@@ -98,7 +98,7 @@ pub(super) struct LatencyPlan {
     pub(super) edges: Vec<Vec<usize>>,
 }
 
-/// What each outgoing edge costs downstream: output branches first, then sends.
+/// What each outgoing edge costs downstream, in the order of the track's outputs.
 ///
 /// Written into `out` rather than returned so the caller can reuse one allocation across a whole
 /// graph — this runs once per node per pass and none of it happens on the audio thread, but a
@@ -120,7 +120,6 @@ fn edge_costs(
     };
     out.clear();
     out.extend(track.outputs.iter().map(|output| resolve(output.target)));
-    out.extend(track.sends.iter().map(|send| resolve(Some(send.target))));
 }
 
 /// The longest path from every track to the output, adding each strip's own `cost` along the way.

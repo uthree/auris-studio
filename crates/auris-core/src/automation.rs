@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{CoreError, Result};
 use crate::param::{ParamId, ParamTarget};
-use crate::project::{EffectSlotId, SendId, TrackId};
+use crate::project::{EffectSlotId, TrackId};
 use crate::time::Ticks;
 
 /// How a lane gets from one point to the next.
@@ -430,6 +430,24 @@ impl Automation {
         self.lanes.len() != before
     }
 
+    /// Moves the lane over `from` to `to`, returning `true` when there was one to move.
+    ///
+    /// For a parameter whose name changed while it stayed the same parameter — an output whose
+    /// tap point moved, which is how an output is named. Refused, leaving both as they were, when
+    /// `to` already has a lane: two curves cannot drive one value.
+    pub fn retarget(&mut self, from: ParamTarget, to: ParamTarget) -> bool {
+        if from == to || self.lane(to).is_some() {
+            return false;
+        }
+        match self.lanes.iter_mut().find(|lane| lane.target == from) {
+            Some(lane) => {
+                lane.target = to;
+                true
+            }
+            None => false,
+        }
+    }
+
     /// Drops every lane addressed to `track`.
     ///
     /// Called when a track is deleted. A lane left behind names a track that is not there, and
@@ -446,7 +464,6 @@ impl Automation {
         source: TrackId,
         copy: TrackId,
         effects: &[(EffectSlotId, EffectSlotId)],
-        sends: &[(SendId, SendId)],
     ) {
         let copies: Vec<AutomationLane> = self
             .lanes
@@ -460,10 +477,13 @@ impl Automation {
                     ParamTarget::Instrument { track, param } if track == source => {
                         ParamTarget::Instrument { track: copy, param }
                     }
-                    ParamTarget::Send { track, send } if track == source => ParamTarget::Send {
-                        track: copy,
-                        send: sends.iter().find(|(old, _)| *old == send)?.1,
-                    },
+                    ParamTarget::Output { track, to, tap } if track == source => {
+                        ParamTarget::Output {
+                            track: copy,
+                            to,
+                            tap,
+                        }
+                    }
                     ParamTarget::Effect {
                         track: Some(track),
                         slot,

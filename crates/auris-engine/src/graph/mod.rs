@@ -36,7 +36,7 @@ pub use strip::{MuteFade, RenderStrip, SmoothedGain};
 pub use track::{RenderSource, RenderTrack};
 
 pub(crate) use latency::LatencyDelay;
-pub(crate) use track::RenderSend;
+pub(crate) use track::RenderOutput;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -214,7 +214,7 @@ pub struct RenderGraph {
 /// A live input joined to the track it is heard through.
 ///
 /// The input enters the mix as though the track were playing it: before the effects, before the
-/// fader, before the sends. That is what makes monitoring *useful* rather than merely audible — a
+/// fader, before the outputs. That is what makes monitoring *useful* rather than merely audible — a
 /// singer hears themselves through the reverb they will be recorded into, at the level the fader
 /// is set to, and a muted track is silent because a muted track is silent.
 pub(crate) struct MonitorTap {
@@ -537,25 +537,14 @@ impl RenderGraph {
                 .outputs
                 .iter()
                 .map(|output| track::RenderOutput {
-                    meter: signal_meters.slot(crate::SignalRoute::Output(track.id, *output)),
+                    meter: signal_meters
+                        .slot(crate::SignalRoute::Output(track.id, output.to, output.tap)),
                     target: output.bus().and_then(bus_slot),
+                    gain: SmoothedGain::new(db_to_gain(output.gain_db)),
+                    pre_fader: output.tap == auris_core::Tap::PreFader,
+                    // Both sized below, once every chain's latency is known.
                     delay: LatencyDelay::new(0, RENDER_CHANNELS),
                     scratch: AudioBuffer::new(RENDER_CHANNELS, 0, sample_rate),
-                })
-                .collect();
-            let sends = track
-                .sends
-                .iter()
-                .filter_map(|send| {
-                    Some(RenderSend {
-                        meter: signal_meters.slot(crate::SignalRoute::Send(track.id, send.id)),
-                        target: bus_slot(send.target)?,
-                        gain: SmoothedGain::new(db_to_gain(send.level_db)),
-                        pre_fader: send.pre_fader,
-                        // Both sized below, once every chain's latency is known.
-                        delay: LatencyDelay::new(0, RENDER_CHANNELS),
-                        scratch: AudioBuffer::new(RENDER_CHANNELS, 0, sample_rate),
-                    })
                 })
                 .collect();
 
@@ -567,7 +556,6 @@ impl RenderGraph {
                 strip,
                 parallel_safe,
                 outputs,
-                sends,
                 // Sized below, once every chain's latency is known.
                 delay: LatencyDelay::new(0, RENDER_CHANNELS),
 
@@ -653,18 +641,10 @@ impl RenderGraph {
                 let frames = edges.next().unwrap_or(0);
                 output.delay = LatencyDelay::new(frames, RENDER_CHANNELS);
                 if frames > 0 {
+                    // Only an output that is actually held back needs somewhere to be held, which
+                    // is why an ordinary one costs one extra buffer of nothing at all.
                     output.scratch = AudioBuffer::new(RENDER_CHANNELS, max_block, sample_rate);
                     output.scratch.reserve_frames(max_block);
-                }
-            }
-            for send in &mut track.sends {
-                let frames = edges.next().unwrap_or(0);
-                send.delay = LatencyDelay::new(frames, RENDER_CHANNELS);
-                if frames > 0 {
-                    // Only a send that is actually held back needs somewhere to be held, which is
-                    // why an ordinary send costs one extra buffer of nothing at all.
-                    send.scratch = AudioBuffer::new(RENDER_CHANNELS, max_block, sample_rate);
-                    send.scratch.reserve_frames(max_block);
                 }
             }
         }
@@ -1030,19 +1010,19 @@ impl RenderGraph {
         }
     }
 
-    /// Moves one of a track's send levels. Out-of-range indices are ignored.
+    /// Moves the level of one of a track's outputs. Out-of-range indices are ignored.
     ///
-    /// Addressed by position in the track's send list, the same way an effect is addressed by
-    /// position in its chain: a send the graph could not resolve keeps no slot, so this is the one
-    /// place where a document position and a graph position can disagree — which is why adding or
-    /// removing a send rebuilds the graph rather than sending a command.
-    pub fn set_send_level_db(&mut self, track: usize, send: usize, level_db: f32) {
-        if let Some(send) = self
+    /// Addressed by position in the track's output list, the same way an effect is addressed by
+    /// position in its chain. The graph keeps every output the document holds, in the same order,
+    /// so the two positions agree — and adding or removing an output rebuilds the graph rather
+    /// than sending a command, which is what keeps them agreeing.
+    pub fn set_output_gain_db(&mut self, track: usize, output: usize, gain_db: f32) {
+        if let Some(output) = self
             .tracks
             .get_mut(track)
-            .and_then(|track| track.sends.get_mut(send))
+            .and_then(|track| track.outputs.get_mut(output))
         {
-            send.gain.set_target(db_to_gain(level_db));
+            output.gain.set_target(db_to_gain(gain_db));
         }
     }
 
@@ -1167,9 +1147,6 @@ impl RenderGraph {
             track.delay.reset();
             for output in &mut track.outputs {
                 output.delay.reset();
-            }
-            for send in &mut track.sends {
-                send.delay.reset();
             }
             track.peaks = [0.0, 0.0];
             track.sides_differ = false;

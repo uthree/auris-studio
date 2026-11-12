@@ -84,8 +84,8 @@ Supported edits:
 | `audio_sfx` | A frozen local source copy, aligned by start, absolute sample peak or exclusive source end, with explicit gain and source-time fades. |
 | `clip_mute` | Add or remove a rest without deleting the score. |
 
-Revoice uses fresh `search_instruments` IDs. It copies the mixer strip, effects, outputs,
-sends and their reissued identities through the existing track-duplication operation.
+Revoice uses fresh `search_instruments` IDs. It copies the mixer strip, effects and outputs,
+with reissued effect identities, through the existing track-duplication operation.
 Unselected source clips remain unchanged. Source instrument parameter lanes stay on the
 original track; old parameter addresses are not copied onto the new instrument. Optional
 `settings` modifies the new clips' performance only. Split clips at appropriate phrase

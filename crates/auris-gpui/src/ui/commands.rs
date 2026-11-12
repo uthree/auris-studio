@@ -466,28 +466,22 @@ impl AurisApp {
         self.reveal_track(id);
     }
 
-    /// Adds a send from a track to a bus.
-    pub(crate) fn add_send(&mut self, track: TrackId, bus: TrackId) {
-        if let Err(error) = self.session.add_send(track, bus) {
-            self.set_failed_status(self.failure(Key::CmdAddSend, &error));
+    /// Removes one of a track's outputs.
+    pub(crate) fn remove_output(&mut self, track: TrackId, to: Destination, tap: Tap) {
+        if let Err(error) = self.session.remove_track_output(track, to, tap) {
+            self.set_failed_status(self.failure(Key::CmdRemoveOutput, &error));
         }
     }
 
-    /// Removes a send from a track.
-    pub(crate) fn remove_send(&mut self, track: TrackId, send: SendId) {
-        if let Err(error) = self.session.remove_send(track, send) {
-            self.set_failed_status(self.failure(Key::CmdRemoveSend, &error));
+    /// Moves one of a track's outputs before or after the fader.
+    pub(crate) fn toggle_output_pre_fader(&mut self, track: TrackId, to: Destination, tap: Tap) {
+        let moved = match tap {
+            Tap::PreFader => Tap::PostFader,
+            Tap::PostFader => Tap::PreFader,
+        };
+        if let Err(error) = self.session.set_output_tap(track, to, tap, moved) {
+            self.set_failed_status(self.failure(Key::CmdMoveOutputTap, &error));
         }
-    }
-
-    /// Moves a send's tap before or after the fader.
-    pub(crate) fn toggle_send_pre_fader(&mut self, track: TrackId, send: SendId) {
-        let pre_fader = self
-            .project()
-            .track(track)
-            .and_then(|track| track.sends.iter().find(|existing| existing.id == send))
-            .is_some_and(|send| send.pre_fader);
-        let _ = self.session.set_send_pre_fader(track, send, !pre_fader);
     }
 
     /// Deletes the selected track.

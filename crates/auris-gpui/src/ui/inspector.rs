@@ -1485,9 +1485,13 @@ fn target_element_key(target: ParamTarget, param: ParamId) -> usize {
         ParamTarget::MasterPan => 3,
         ParamTarget::Instrument { track, .. } => track.0 as usize * 4096,
         ParamTarget::Effect { slot, .. } => slot.0 as usize * 4096,
-        // A send id comes from the same counter as a slot id, so the same stride keeps it clear
-        // of everything else.
-        ParamTarget::Send { send, .. } => send.0 as usize * 4096,
+        // An output has no id of its own; its track, its destination and its tap together keep
+        // it clear of everything else on the same stride.
+        ParamTarget::Output { track, to, tap } => {
+            track.0 as usize * 4096
+                + to.bus().map_or(1, |bus| bus.0 as usize * 2 + 2)
+                + usize::from(tap == Tap::PreFader)
+        }
     };
     base + param.index()
 }

@@ -7,16 +7,17 @@ its name, fader, pan, mute, solo and meters. Effects remain individual nodes in
 processing order. Fader controls still act after all inserts. Bus and master nodes sum their incoming signals.
 Arrows show the direction audio travels. Bypassed effects remain in the chain.
 
-Drag a track's right port, or its last effect's right port, to a bus's left input port. **Output** changes the
-strip's destinations by adding a unity post-fader branch; it keeps every existing
-output. **Sends** adds a branch with its own level and pre/post-fader tap. The master
-and several buses can receive the same strip at once. The console's **Output** menu
-checks each connected destination; choosing one toggles that branch. Add a bus from the toolbar
-to create a shared return or another processing branch.
+Drag a track's right port, or its last effect's right port, to a bus's left input port. That adds
+an output: a unity post-fader branch beside every existing one. There is no separate
+send. Every output has its own level and its own tap point, after the fader or before it, so a
+reverb feed is simply a second output at a lower level. The master and several buses can receive
+the same strip at once. The console's **Output** menu checks each connected destination; choosing
+one toggles that branch. Add a bus from the toolbar to create a shared return or another
+processing branch.
 
 An effect that accepts a sidechain has a port on its top edge. Drag another
-strip's output port there to key the effect from that strip. Output, send and
-sidechain connections all participate in cycle validation. A connection that
+strip's output port there to key the effect from that strip. Output and sidechain
+connections both participate in cycle validation. A connection that
 would lead back to its source is refused before the document or undo history
 changes.
 
@@ -24,22 +25,22 @@ Wire roles use themed colors, labels and distinct line styles:
 
 | Connection | Line | Label |
 | --- | --- | --- |
-| Output | Solid | Out |
-| Send | Dashed | Send ID, level, and pre-fader mark when applicable |
+| Output after the fader | Solid | Out, and its level once it is not unity |
+| Output before the fader | Dashed | Out, its level, and the pre-fader mark |
 | Sidechain | Dotted | Sidechain |
 
 The legend below the canvas shows the current colors. Wires sharing the same
-source and destination use separate curved lanes, including multiple sends to
-one bus. Their labels follow their lanes and identify each send independently.
+source and destination use separate curved lanes, such as a pre- and a post-fader
+output to one bus. Their labels follow their lanes and identify each one.
 
 During playback, wires glow and become slightly thicker in proportion to the
-signal they actually carry. Outputs, sends and sidechains retain their own
+signal they actually carry. Outputs and sidechains retain their own
 colors and line styles. Short highlights travel from each source towards its
 destination, following curves and bends at a steady visual speed. Their fading
 trails point back towards the source and their brightness follows the signal.
 Turn off **Animate signals** in the graph toolbar to stop moving highlights
 while retaining level glow and direction arrows. This preference is remembered.
-Sends show their own gain and pre/post-fader tap;
+Outputs show their own gain and tap;
 insert-chain wires show the next effect's input. A bypassed effect's sidechain
 is inactive. Reverb and delay tails remain visible after Stop and fade with
 the audio. The display holds brief peaks and falls smoothly, like the meters.
@@ -50,15 +51,16 @@ Click a wire or its label to select it. Selection adds a thicker accent outline
 while retaining the role color and line style. Press Delete or Backspace, or right-click the wire or label and choose
 **Delete connections**. Hold Ctrl on Windows or Command on macOS while clicking
 to select several wires; their deletion is one Undo step. Undo and Redo restore
-the actual routing, including removed send automation. A disconnection removes
+the actual routing, including removed output automation. A disconnection removes
 only the selected branch. Deleting every output leaves the strip disconnected;
 it does not create a new master route. Thin insert-chain arrows follow effect
 order; use the effect menu to change that order.
 
 Use **Add effect** on a track node. Open an effect by its name, toggle
 **Enabled** to bypass it, or use its **Effect** menu to reorder, remove or choose
-a sidechain. Gain, pan, mute, solo, meters and send levels are on the track node.
-A send's context menu changes its pre/post-fader tap or removes it.
+a sidechain. Gain, pan, mute, solo and meters are on the track node. Once a track has more than its
+one unity post-fader output, every output also gets a level row there; its context menu moves it
+before or after the fader or removes it.
 
 Drag nodes to arrange the workspace, or drag/scroll the background to pan.
 Hold Shift and drag the background to select nodes in a rectangle. Selected
@@ -71,8 +73,8 @@ the channel strips; **Signal flow** returns to the graph. Both views edit the
 same project and share undo/redo. Keyboard focus moves through the controls with
 Tab; routing and effect menus also provide keyboard access to connections.
 
-The saved project contains the routing, effect order, parameters and send tap
-points, plus node positions, zoom and pan. Save after arranging or navigating
+The saved project contains the routing, effect order, parameters and output levels
+and tap points, plus node positions, zoom and pan. Save after arranging or navigating
 the graph to restore the same view next time. This includes scales below 50%
 chosen by **Fit graph**. A node drag is one Undo step; **Arrange nodes** is also
 undoable. These steps share the history with routing and other project edits.
@@ -90,12 +92,13 @@ and `effect:N` IDs, independent of names and effect positions. Read pages are
 in processing order; `next_offset` continues the node list and each page includes
 its nodes' outgoing edges. A track's `output_node` identifies its terminal insert
 or the track itself. Both the track ID and its terminal effect ID can address an
-outgoing connection. Send edges include a stable `send_id` and pre/post-fader tap.
+outgoing connection. Output edges include their `gain_db` and `pre_fader` tap. An output is
+named by its source, its target and its tap; a track holds at most one per pair.
 
 For example, after reading the actual IDs:
 
 ```json
-{"project":"/absolute/path/Song/Song.auris","operation":{"action":"connect","source":"track:1","target":"track:2","kind":"send"}}
+{"project":"/absolute/path/Song/Song.auris","operation":{"action":"connect","source":"track:1","target":"track:2","kind":"output"}}
 ```
 
 The same `mixer_graph` operation object is used by the built-in Claude, Codex and
@@ -106,7 +109,7 @@ native API agents; omit only the saved-project `project` field for live calls.
 | Read graph | `read` |
 | Fader / pan / mute / solo | `set_strip` |
 | Replace outputs / add or remove a branch | `set_outputs` / `connect` / `disconnect` |
-| Create configured send / change level or tap | `add_send` / `set_send` |
+| Add an output with a level and tap / change level or tap | `add_output` / `set_output` |
 | Replace or clear detector source | `set_sidechain` |
 | Add / remove inserts | `add_effect` / `remove_effect` |
 | Reorder / bypass | `move_effect` / `enable_effect` |
@@ -115,7 +118,9 @@ native API agents; omit only the saved-project `project` field for live calls.
 Both transports use the same session operations and cycle checks. Invalid and
 stale edges are refused before editing. Connecting an output adds a destination
 without replacing the others. Disconnecting removes only the named branch;
-an empty output list stays disconnected. Removing a send or effect also removes its automation. MCP saves
+an empty output list stays disconnected. When a pre- and a post-fader output share a source and
+target, `disconnect` takes `pre_fader` to say which. Removing an output or effect also removes its
+automation. MCP saves
 actual changes with a checkpoint; reads and unchanged connection retries do not
 write. Live edits remain unsaved and undoable. Read-only and Plan modes permit
 graph inspection but deny edits; ordinary Edit mode asks before disconnecting or

@@ -11,7 +11,7 @@ how a piece writes itself is in [Automatic composition](composition.md).
 * **Singer tracks** — notes that carry words, for a singing-voice synthesiser; see
   [Singer tracks](#singer-tracks) and [Singing backends](singing-backends.md).
 * **Audio tracks** — imported audio, arranged as clips with trim, gain and fades.
-* **Buses** — mixing points with no clips of their own; see [Buses and sends](#buses-and-sends).
+* **Buses** — mixing points with no clips of their own; see [Buses and outputs](#buses-and-outputs).
 * Every track carries a **colour**, tinting its header and its clips. A new one takes the next
   palette entry; the track's right-click menu offers the other seven as swatches, since the order
   tracks were made in has nothing to do with which of them are drums.
@@ -22,7 +22,7 @@ itself; the whole drag is one undo step. A press that does not travel is a selec
 a press that lands on the header's fader, pan or mute keeps its own gesture.
 
 Only the list moves. Everything the document holds names a track by id — automation lanes, a
-routing output, a send — so a bus can end up above the tracks feeding it without changing a note of
+a routing output — so a bus can end up above the tracks feeding it without changing a note of
 what is heard.
 
 Right-click an audio track header or an empty part of its lane and choose **Audio Display →
@@ -486,19 +486,19 @@ Volume and pan are what the lane offers today. The document, the engine and the 
 already address every parameter a plugin has — see
 [`ParamTarget`](https://docs.rs/auris-core) — so widening the menu is a menu change.
 
-## Buses and sends
+## Buses and outputs
 
 **Bus** on the arrangement's header, or **New Bus** in any track menu, adds a mixing point: a track
 with no clips, whose material is whatever is routed into it. It has a fader, a pan, a mute, an
 effect chain and an automation lane, because it is a track.
 
 Every strip in the mixer says where it goes. Clicking that name offers the master and every bus,
-and the **+** beside it adds a **send** — a copy of the track fed to a bus at a level of its own,
-*as well as* wherever the track's own output goes. Six tracks sending to one reverb is six sends;
-one fader over a whole drum kit is six outputs. A send row's slider is a mixer control like any
-other, so it drags, resets on a double click and can be automated. Right-clicking
-one moves its tap before the fader — where a reverb wants to follow the fader down, a headphone mix
-does not — or takes it away.
+and ticking more than one sends the track to all of them at once. There is no separate send: a
+copy of a track fed to a reverb at a level of its own is simply another output, beside wherever
+else the track goes. Once a strip has anything beyond its one unity output, each output gets a
+level row. Its slider is a mixer control like any other, so it drags, resets on a double click and
+can be automated. Right-clicking one moves it before the fader — where a reverb wants to follow
+the fader down, a headphone mix does not — or takes it away.
 
 Solo travels both ways along the routing. Soloing a drum track leaves the drum bus open, because
 its audio has nowhere else to go; soloing the drum *bus* leaves the drum tracks open, because a bus
@@ -515,12 +515,12 @@ nothing here can write one — is repaired on open rather than refused, with a l
 
 Plugin delay compensation follows the routing rather than the track list. A limiter on a bus holds
 back the tracks that *do not* pass through it, so the mix stays in step; and a track feeding the
-master dry while sending to that same bus has each copy delayed on its own, so the dry and the wet
+master dry while also feeding that same bus has each copy delayed on its own, so the dry and the wet
 still arrive together instead of comb-filtering each other.
 
 In the mixer's graph view, hover over a wire or its label to see the connection's source,
-destination and live peak level in dBFS. Parallel wires have individual tooltips; sends include
-their ID. Silence reads **−∞ dBFS**. The card updates while open and closes on Escape or when
+destination and live peak level in dBFS. Parallel wires have individual tooltips, and an
+output's shows its level and whether it is taken before the fader. Silence reads **−∞ dBFS**. The card updates while open and closes on Escape or when
 the pointer leaves the wire.
 
 Use **Ctrl+wheel** over the graph to zoom about the pointer, normally from 50% to 200%. Nodes, controls,

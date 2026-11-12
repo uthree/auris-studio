@@ -20,8 +20,8 @@ use crate::plugin::PluginState;
 use crate::time::{TempoMap, Ticks};
 
 use super::clip::{AudioClip, MidiClip, audio_clip_ticks};
-use super::routing::{AuxSend, MixerStrip, Output};
-use super::{ClipId, EffectSlotId, Project, SendId, TrackId};
+use super::routing::{Destination, MixerStrip, Output};
+use super::{ClipId, EffectSlotId, Project, TrackId};
 
 /// An RGB colour used for track and clip tinting.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -266,7 +266,7 @@ pub enum TrackKind {
     /// A mixing point: whatever is routed here, summed, and put through one strip.
     ///
     /// A bus holds no clips of its own — its material arrives from the tracks that name it, as an
-    /// [`Output`] or through a [`AuxSend`]. It is a track rather than a thing of its own so that it
+    /// [`Output`]. It is a track rather than a thing of its own so that it
     /// gets a fader, a pan, a mute, an effect chain, a colour and an automation lane without any
     /// of them being written twice.
     Bus,
@@ -425,16 +425,10 @@ pub struct Track {
     pub kind: TrackKind,
     /// Volume, pan and effects.
     pub mixer: MixerStrip,
-    /// Post-fader destinations, each receiving a unity copy. Empty disconnects the track.
-    #[serde(
-        alias = "output",
-        deserialize_with = "deserialize_outputs",
-        default = "default_outputs"
-    )]
+    /// Where the track's signal goes, each at its own level and tap point. Empty disconnects the
+    /// track; no destination appears twice.
+    #[serde(default = "default_outputs")]
     pub outputs: Vec<Output>,
-    /// Copies of this track's signal, fed to buses alongside its own output.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub sends: Vec<AuxSend>,
     /// Notes for the reader pinned along the track's lane, in song time; nothing plays them.
     ///
     /// See [`Comment`](super::Comment).
@@ -443,33 +437,30 @@ pub struct Track {
 }
 
 fn default_outputs() -> Vec<Output> {
-    vec![Output::Master]
+    vec![Output::master()]
 }
 
 #[cfg(test)]
 mod output_format_tests {
     use super::*;
+    use crate::project::{Destination, Tap};
 
     #[test]
-    fn legacy_single_outputs_and_unconnected_multi_outputs_round_trip() {
+    fn outputs_round_trip_and_default_to_the_master() {
         let mut project = Project::new("Routes", 48_000.0);
         let id = project.add_bus_track("Bus");
-        let track = project.track(id).unwrap();
-        let mut old = serde_json::to_value(track).unwrap();
+        let mut old = serde_json::to_value(project.track(id).unwrap()).unwrap();
         old.as_object_mut().unwrap().remove("outputs");
-        old["output"] = serde_json::json!(Output::Master);
-        assert_eq!(
-            serde_json::from_value::<Track>(old.clone())
-                .unwrap()
-                .outputs,
-            vec![Output::Master]
-        );
-        old.as_object_mut().unwrap().remove("output");
         assert_eq!(
             serde_json::from_value::<Track>(old).unwrap().outputs,
-            vec![Output::Master]
+            vec![Output::master()]
         );
-        for outputs in [vec![], vec![Output::Master, Output::Bus(TrackId(123))]] {
+        let level = Output {
+            to: Destination::Bus(TrackId(123)),
+            gain_db: -9.0,
+            tap: Tap::PreFader,
+        };
+        for outputs in [vec![], vec![Output::master(), level]] {
             project.track_mut(id).unwrap().outputs = outputs.clone();
             let saved = serde_json::to_value(project.track(id).unwrap()).unwrap();
             assert_eq!(
@@ -478,21 +469,6 @@ mod output_format_tests {
             );
         }
     }
-}
-
-fn deserialize_outputs<'de, D: serde::Deserializer<'de>>(
-    deserializer: D,
-) -> Result<Vec<Output>, D::Error> {
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum StoredOutputs {
-        One(Output),
-        Many(Vec<Output>),
-    }
-    Ok(match StoredOutputs::deserialize(deserializer)? {
-        StoredOutputs::One(output) => vec![output],
-        StoredOutputs::Many(outputs) => outputs,
-    })
 }
 
 fn default_track_height() -> f32 {
@@ -539,16 +515,12 @@ impl Track {
     /// routing — the order to render in, whether an edit would make a loop, how far behind a chain
     /// runs — is a walk over exactly these.
     pub fn feeds(&self) -> impl Iterator<Item = TrackId> + '_ {
-        self.outputs
-            .iter()
-            .copied()
-            .filter_map(Output::bus)
-            .chain(self.sends.iter().map(|send| send.target))
+        self.outputs.iter().copied().filter_map(Output::bus)
     }
 }
 
 impl Project {
-    /// Appends a track of any kind, routed to the master with no sends.
+    /// Appends a track of any kind, routed to the master alone.
     fn push_track(&mut self, name: impl Into<String>, kind: TrackKind) -> TrackId {
         let id = TrackId(self.allocate_id());
         let color = kind.default_color();
@@ -560,7 +532,6 @@ impl Project {
             kind,
             mixer: MixerStrip::default(),
             outputs: default_outputs(),
-            sends: Vec::new(),
             comments: Vec::new(),
         });
         id
@@ -679,12 +650,6 @@ impl Project {
             slot.id = EffectSlotId(self.allocate_id());
             effect_ids.push((old, slot.id));
         }
-        let mut send_ids = Vec::with_capacity(copy.sends.len());
-        for send in &mut copy.sends {
-            let old = send.id;
-            send.id = SendId(self.allocate_id());
-            send_ids.push((old, send.id));
-        }
         match &mut copy.kind {
             TrackKind::Instrument(_) | TrackKind::Drum(_) | TrackKind::Singer(_) => {
                 // Reserved one by one rather than inside the loop below: the clip list borrows
@@ -704,8 +669,7 @@ impl Project {
 
         let new_id = copy.id;
         self.tracks.insert(index + 1, copy);
-        self.automation
-            .duplicate_track(id, new_id, &effect_ids, &send_ids);
+        self.automation.duplicate_track(id, new_id, &effect_ids);
         Some(new_id)
     }
 
@@ -722,28 +686,16 @@ impl Project {
             // And so does everything that fed it. A deleted bus takes the *routing* with it, not
             // the tracks: what was going through it goes straight to the master instead, which is
             // where it would have been had the bus never existed.
-            let mut removed_sends = Vec::new();
+            let gone = Destination::Bus(id);
             for track in &mut self.tracks {
-                let had_route = track.outputs.contains(&Output::Bus(id));
-                track.outputs.retain(|output| *output != Output::Bus(id));
+                let had_route = track.outputs.iter().any(|output| output.to == gone);
+                track.outputs.retain(|output| output.to != gone);
                 if had_route && track.outputs.is_empty() {
-                    track.outputs.push(Output::Master);
+                    track.outputs.push(Output::master());
                 }
-                removed_sends.extend(
-                    track
-                        .sends
-                        .iter()
-                        .filter(|send| send.target == id)
-                        .map(|send| send.id),
-                );
-                track.sends.retain(|send| send.target != id);
             }
             self.automation.remove_lanes_where(|target| {
-                matches!(
-                    target,
-                    crate::param::ParamTarget::Send { send, .. }
-                        if removed_sends.contains(&send)
-                )
+                matches!(target, crate::param::ParamTarget::Output { to, .. } if to == gone)
             });
             // Including what it was keying. See `clear_sidechains_from` for why a slot must not
             // be left holding the id.
@@ -925,22 +877,19 @@ mod tests {
     }
 
     #[test]
-    fn a_duplicated_track_gets_send_ids_of_its_own() {
-        // Every id in a copy is reissued for the same reason a clip's is: two sends answering to
-        // one id would send an edit aimed at the copy to the original.
+    fn a_duplicated_track_keeps_its_routing() {
         let (mut project, kick, _, bus) = bussed_project();
-        let send = project.next_send_id();
         project
             .track_mut(kick)
             .unwrap()
-            .sends
-            .push(AuxSend::new(send, bus));
+            .outputs
+            .push(Output::master());
 
         let copy = project.duplicate_track(kick).unwrap();
-        assert_ne!(project.track(copy).unwrap().sends[0].id, send);
-        // The routing itself is copied as it was: the copy feeds the same bus.
-        assert_eq!(project.track(copy).unwrap().outputs, vec![Output::Bus(bus)]);
-        assert_eq!(project.track(copy).unwrap().sends[0].target, bus);
+        assert_eq!(
+            project.track(copy).unwrap().outputs,
+            vec![Output::to_bus(bus), Output::master()]
+        );
     }
 
     #[test]
@@ -978,12 +927,7 @@ mod tests {
     fn a_duplicated_track_keeps_automation_on_its_reissued_ids() {
         let (mut project, original, _, bus) = bussed_project();
         let effect = project.add_effect(Some(original), "auris.fx.gain").unwrap();
-        let send = SendId(700);
-        project
-            .track_mut(original)
-            .unwrap()
-            .sends
-            .push(AuxSend::new(send, bus));
+        let to = Destination::Bus(bus);
         let param = crate::param::ParamId(0);
         let targets = [
             crate::param::ParamTarget::TrackGain(original),
@@ -996,9 +940,10 @@ mod tests {
                 slot: effect,
                 param,
             },
-            crate::param::ParamTarget::Send {
+            crate::param::ParamTarget::Output {
                 track: original,
-                send,
+                to,
+                tap: crate::project::Tap::PreFader,
             },
         ];
         for target in targets {
@@ -1014,7 +959,6 @@ mod tests {
         let copy = project.duplicate_track(original).unwrap();
         let copied = project.track(copy).unwrap();
         let copied_effect = copied.mixer.effects[0].id;
-        let copied_send = copied.sends.last().unwrap().id;
         for target in [
             crate::param::ParamTarget::TrackGain(copy),
             crate::param::ParamTarget::Instrument { track: copy, param },
@@ -1023,9 +967,10 @@ mod tests {
                 slot: copied_effect,
                 param,
             },
-            crate::param::ParamTarget::Send {
+            crate::param::ParamTarget::Output {
                 track: copy,
-                send: copied_send,
+                to,
+                tap: crate::project::Tap::PreFader,
             },
         ] {
             assert_eq!(project.automation.value_at(target, Ticks::ZERO), Some(0.25));

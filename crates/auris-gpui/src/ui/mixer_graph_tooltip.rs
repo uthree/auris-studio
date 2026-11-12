@@ -98,18 +98,11 @@ impl Render for WireTooltip {
             return div().into_any_element();
         };
         let kind = match edge.kind {
-            MixerEdgeKind::Output => app.t(Key::OutputShort).to_string(),
-            MixerEdgeKind::Send {
-                send, pre_fader, ..
-            } => format!(
-                "{} #{}{}",
-                app.t(Key::Sends),
-                send.0,
-                if pre_fader {
-                    format!(" · {}", app.t(Key::SendPreFaderMark))
-                } else {
-                    String::new()
-                }
+            MixerEdgeKind::Output { gain_db, tap, .. } => super::output_wire_label(
+                app.t(Key::OutputShort),
+                app.t(Key::OutputPreFaderMark),
+                gain_db,
+                tap,
             ),
             MixerEdgeKind::Sidechain => app.t(Key::MenuSidechain).to_string(),
             MixerEdgeKind::Notes => app.t(Key::MixerNotesWire).to_string(),
