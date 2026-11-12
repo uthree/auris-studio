@@ -118,6 +118,7 @@ fn instructions(prefs: &AgentPreferences, review: bool) -> String {
         // Removing those made valid-looking chord charts change harmony every beat.
         let tools: Vec<_> = ToolHost::catalog()
             .into_iter()
+            .filter(|tool| !prefs.withheld_tools.contains(&tool.name))
             .map(|tool| {
                 json!({
                     "name":tool.name, "description":tool.description, "parameters":tool.parameters
@@ -146,7 +147,7 @@ impl Invocation {
         let schema = if review {
             json!({"type":"object","properties":{"text":{"type":"string"}},"required":["text"],"additionalProperties":false})
         } else {
-            response_schema()
+            response_schema(&prefs.withheld_tools)
         };
         std::fs::write(directory.path().join("response.json"), schema.to_string())
             .map_err(|error| error.to_string())?;
@@ -217,11 +218,11 @@ impl Invocation {
     }
 }
 
-fn response_schema() -> Value {
+fn response_schema(withheld: &[String]) -> Value {
     json!({"type":"object","properties":{
         "text":{"type":"string"},
         "calls":{"type":"array","maxItems":8,"items":{"type":"object","properties":{
-            "name":{"type":"string","enum":ToolHost::definitions().iter().map(|tool| tool.name.clone()).collect::<Vec<_>>()},
+            "name":{"type":"string","enum":ToolHost::definitions_for(false, withheld).iter().map(|tool| tool.name.clone()).collect::<Vec<_>>()},
             "arguments":{"type":"object","additionalProperties":true}},"required":["name","arguments"],"additionalProperties":false}}
     },"required":["text","calls"],"additionalProperties":false})
 }
@@ -720,7 +721,7 @@ mod tests {
             command.as_std().get_current_dir(),
             Some(invocation.directory.path())
         );
-        let schema = response_schema();
+        let schema = response_schema(&[]);
         assert!(
             schema["properties"]["calls"]["items"]["properties"]["name"]["enum"]
                 .as_array()

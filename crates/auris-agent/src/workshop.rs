@@ -1980,13 +1980,21 @@ fn compose_guided(
         allow: vec![],
         // Denying the shell outright starts CLI runtimes without their own shell and file
         // tools, so a composer is never offered one only to have it refused.
-        deny: vec![
-            "search_internet".into(),
-            "edit_project.listen".into(),
-            "cli_command".into(),
-            "cli_file_change".into(),
-            "cli_file_read".into(),
-        ],
+        deny: [
+            "search_internet",
+            "edit_project.listen",
+            "cli_command",
+            "cli_file_change",
+            "cli_file_read",
+        ]
+        .into_iter()
+        .map(String::from)
+        .chain(
+            CANDIDATE_NO_EFFECT
+                .iter()
+                .map(|tool| candidate_operation(tool)),
+        )
+        .collect(),
     };
     prefs.system_prompt = match guidance {
         Guidance::Full => format!(
@@ -2002,6 +2010,7 @@ fn compose_guided(
             auris_toolbox::workshop::BARE_COMPOSER.into()
         }
     };
+    prefs.withheld_tools = candidate_withheld(&prefs.policy.deny);
     let worker = crate::Worker::spawn(prefs.clone(), None, true, None)?;
     let kept = folder.join(CHECKPOINT_RECORD);
     if checkpoint_exists && kept.is_file() {
@@ -2311,7 +2320,7 @@ fn send_back(unresolved: &serde_json::Value) -> serde_json::Value {
     json!({
         "host_check": "The host checked the song you reported finished and found it incomplete: lint warnings or errors that remain, structural phase checks that are unmet, or both. Complete it now, then finish with your final report again.",
         "unresolved": unresolved,
-        "instruction": "For structure, do the missing work the assignment asks for: write the remaining sections, melody and lyrics, replace the guide, arrange and mix; production_record read lists the phase checks. When a score check such as melody_develops is among several unmet, do it first and go on to the arrangement and the mix afterwards: a score change made after the mix means singing and balancing the song again. melody_develops is a score change: enter_phase score, rewrite the lead's entries, note values and restated lines as its melody_shape warnings say, sing it again, then fix the parts over the changed bars. drums_follow_sections is an arrangement change: rewrite the drum notes' velocities by section with edit_notes, since set_performance does not change them: every verse and a bridge softer, every chorus harder, the last chorus hardest, the accents within the bar kept, until arrangement_shape no longer reports a chorus struck no harder than a verse. For lint, run lint_project for the full list with ids; apply_lint_fixes takes the obvious fixes, and a finding without one needs your own edit. A change to locked material needs enter_phase to the phase that owns it, with this check as the reason. A warning you keep on purpose: name it and say why in your final report. Do not redo finished work.",
+        "instruction": "For structure, do the missing work the assignment asks for: write the remaining sections, melody and lyrics, replace the guide, arrange and mix; production_record read lists the phase checks. When a score check such as melody_develops is among several unmet, do it first and go on to the arrangement and the mix afterwards: a score change made after the mix means singing and balancing the song again. melody_develops is a score change: production_record enter_phase score, rewrite the lead's entries, note values and restated lines as its melody_shape warnings say, sing it again, then fix the parts over the changed bars. drums_follow_sections is an arrangement change: rewrite the drum notes' velocities by section with edit_notes, since set_performance does not change them: every verse and a bridge softer, every chorus harder, the last chorus hardest, the accents within the bar kept, until arrangement_shape no longer reports a chorus struck no harder than a verse. For lint, run lint_project for the full list with ids; apply_lint_fixes takes the obvious fixes, and a finding without one needs your own edit. A change to locked material needs production_record enter_phase to the phase that owns it, with this check as the reason. A warning you keep on purpose: name it and say why in your final report. Do not redo finished work.",
     })
 }
 
@@ -2328,6 +2337,79 @@ fn audio_gate(cancel: &AtomicBool) -> Result<std::sync::MutexGuard<'static, ()>,
     }
 }
 
+/// Tools a candidate composer may never use: playback, nested jobs, network and outside files
+/// are not child capabilities, so [`execute`] refuses them.
+///
+/// A composer is offered only tools that work and do something for it (see
+/// [`candidate_withheld`]), because a cheaper model reads an offered tool as a usable one:
+/// Sonnet spent most of its failed calls on `edit_recipe`, every one of them refused.
+pub(crate) const CANDIDATE_REFUSED: &[&str] = &[
+    "phrase_variation",
+    "edit_recipe",
+    "listen",
+    "import_transcription",
+    "preview",
+    "audio_assets",
+    "checkpoints",
+    "candidates",
+    "accompaniment",
+    "arrangement",
+];
+
+/// Tools that run inside a candidate but do nothing for it, so its policy denies them: no person
+/// answers a choice card or reads an issue draft, no attachment reaches a candidate, nobody plays
+/// its loop, and an execution trace is evidence for a person debugging. GPT Luna put a choice
+/// card up and ended its turn waiting for a pick that never comes.
+///
+/// `ignore_lint` belongs here too: it is for a finding the user agreed is deliberate, and no
+/// user is there to agree. Sonnet used it to silence 60 findings before declaring the song done,
+/// which hid them from the checks that read the candidate afterwards.
+const CANDIDATE_NO_EFFECT: &[&str] = &[
+    "offer_choices",
+    "suggest_issue_report",
+    "export_audio_attachment",
+    "execution_trace",
+    "set_loop",
+    "ignore_lint",
+];
+
+/// The permission operation that names every call of one live tool.
+fn candidate_operation(tool: &str) -> String {
+    if auris_session::agent_policy::OPERATIONS.contains(&tool) {
+        tool.to_owned()
+    } else {
+        format!("edit_project.{tool}")
+    }
+}
+
+/// The tools left out of a composer's catalog: those [`execute`] refuses, and every tool its
+/// deny rules forbid outright, so a refusal and a missing tool cannot drift apart.
+fn candidate_withheld(deny: &[String]) -> Vec<String> {
+    CANDIDATE_REFUSED
+        .iter()
+        .map(|tool| (*tool).to_owned())
+        .chain(
+            deny.iter()
+                .filter(|rule| !rule.starts_with("cli_"))
+                .map(|rule| {
+                    rule.strip_prefix("edit_project.")
+                        .unwrap_or(rule)
+                        .to_owned()
+                }),
+        )
+        .collect()
+}
+
+/// File tools a candidate may use only on paths inside its own project workspace, so they stay
+/// offered and are refused anywhere else on disk.
+const CANDIDATE_WORKSPACE_FILES: &[&str] = &[
+    "render",
+    "export_midi",
+    "import_audio",
+    "import_midi",
+    "verify_render",
+];
+
 fn execute(
     session: &mut Session,
     command: serde_json::Value,
@@ -2338,35 +2420,13 @@ fn execute(
     let action = command["action"].as_str().unwrap_or_default();
     // A file tool aimed only at the candidate's own project workspace stays inside the private
     // candidate, so it is a child capability like any edit; anywhere else on disk is not.
-    let workspace_file =
-        matches!(
-            action,
-            "render" | "export_midi" | "import_audio" | "import_midi" | "verify_render"
-        ) && serde_json::from_value::<auris_session::live_agent::Command>(command.clone())
+    let outside_file = CANDIDATE_WORKSPACE_FILES.contains(&action)
+        && !serde_json::from_value::<auris_session::live_agent::Command>(command.clone())
             .is_ok_and(|command| command.uses_only_workspace());
-    // File exports/imports, playback, nested jobs and network tools are not child capabilities.
-    if !workspace_file
-        && matches!(
-            action,
-            "render"
-                | "phrase_variation"
-                | "edit_recipe"
-                | "listen"
-                | "import_transcription"
-                | "preview"
-                | "export_midi"
-                | "import_audio"
-                | "import_midi"
-                | "audio_assets"
-                | "checkpoints"
-                | "verify_render"
-                | "candidates"
-                | "accompaniment"
-                | "arrangement"
-        )
-    {
+    if outside_file || CANDIDATE_REFUSED.contains(&action) {
         return Err("This operation is not available inside candidate production".into());
     }
+    let workspace_file = CANDIDATE_WORKSPACE_FILES.contains(&action);
     let vocal = matches!(action, "list_voices" | "set_singer_voice" | "sing");
     let command = serde_json::from_value(command).map_err(|e| e.to_string())?;
     if let auris_session::live_agent::Command::InspectAudio {
@@ -2412,6 +2472,49 @@ mod tests {
             assert!(std::time::Instant::now() < deadline, "no snapshot");
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
+    }
+
+    #[test]
+    fn a_composer_is_offered_only_tools_that_work_and_do_something() {
+        // A renamed tool would silently fall out of these lists, so each must still be one.
+        for tool in super::CANDIDATE_REFUSED
+            .iter()
+            .chain(super::CANDIDATE_NO_EFFECT)
+            .chain(super::CANDIDATE_WORKSPACE_FILES)
+        {
+            let operation = super::candidate_operation(tool);
+            assert!(
+                auris_session::agent_policy::OPERATIONS.contains(&operation.as_str()),
+                "{tool} is not a live tool"
+            );
+        }
+        let deny: Vec<String> = ["search_internet", "edit_project.listen", "cli_command"]
+            .into_iter()
+            .map(String::from)
+            .chain(
+                super::CANDIDATE_NO_EFFECT
+                    .iter()
+                    .map(|t| super::candidate_operation(t)),
+            )
+            .collect();
+        let withheld = super::candidate_withheld(&deny);
+        assert!(!withheld.iter().any(|tool| tool.starts_with("cli_")));
+        let offered: Vec<_> = crate::host::ToolHost::definitions_for(true, &withheld)
+            .into_iter()
+            .map(|tool| tool.name)
+            .collect();
+        for gone in super::CANDIDATE_REFUSED
+            .iter()
+            .chain(super::CANDIDATE_NO_EFFECT)
+            .chain(&["listen", "search_internet"])
+        {
+            assert!(!offered.iter().any(|name| name == gone), "{gone}");
+        }
+        // Workspace file tools stay usable, and so stay offered.
+        for tool in super::CANDIDATE_WORKSPACE_FILES {
+            assert!(offered.iter().any(|name| name == tool), "{tool}");
+        }
+        assert!(offered.iter().any(|name| name == "edit_notes"));
     }
 
     #[test]
