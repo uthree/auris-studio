@@ -614,9 +614,9 @@ impl HostedSlot {
         };
         let count = plugin.parameters().len();
         self.values.resize(count, None);
-        for index in 0..count {
+        for (index, value) in self.values.iter_mut().enumerate() {
             let id = ParamId(index as u32);
-            self.values[index] = if plugin.is_active() {
+            *value = if plugin.is_active() {
                 plugin.cached_value(id)
             } else {
                 plugin.value(id)

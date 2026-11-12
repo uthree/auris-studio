@@ -303,7 +303,7 @@ fn control_wheel_scales_nodes_handles_and_controls_and_pans_without_editing_audi
         this.session.add_bus_track("Zoom")
     });
     paint(&app, cx);
-    let id = node_id(MixerNode::Strip(Some(track)));
+    let id = node_id(MixerNode(Some(track)));
     let node_selector = Box::leak(id.to_string().into_boxed_str());
     let gain_selector = Box::leak(format!("graph-gain-{id}").into_boxed_str());
     let handle_selector = Box::leak(format!("flow-handle-{id}-0").into_boxed_str());

@@ -29,8 +29,8 @@ fn routing_edits_preserve_untouched_card_positions_across_reopening(cx: &mut Tes
         let current = this.mixer_canvas.as_ref().unwrap().presentation(cx);
         assert_eq!(current, before);
         assert_eq!(this.project().mixer_graph_view, before);
-        let automatic = positions(&this.session.mixer_graph());
-        let owner = MixerNode::Strip(Some(bus));
+        let automatic = positions(&this.session.mixer_graph(), this.session.project());
+        let owner = MixerNode(Some(bus));
         assert_ne!(before.nodes[&owner.key()].y, automatic[&owner].y);
         this.reset_view();
     });
@@ -59,7 +59,7 @@ fn gestures_save_and_reopen_restore_each_node_and_the_canvas_camera(cx: &mut Tes
         assert!(!this.session.is_dirty(), "initial layout is not an edit");
         assert!(this.project().mixer_graph_view.nodes.is_empty());
     });
-    let id = node_id(MixerNode::Strip(Some(track)));
+    let id = node_id(MixerNode(Some(track)));
     let selector = Box::leak(id.to_string().into_boxed_str());
     let node = cx.debug_bounds(selector).unwrap();
     let from = node.origin + point(px(12.), px(10.));
@@ -152,28 +152,26 @@ fn restored_fit_scale_and_surviving_positions_allow_new_nodes_and_musical_undo(
     cx: &mut TestAppContext,
 ) {
     let (app, cx) = open(cx);
-    let (track, effect) = app.update(cx, |this, _| {
+    let (track, far) = app.update(cx, |this, _| {
         this.panels.set_detached(Panel::Mixer, false);
         this.panels.move_to(Panel::Mixer, Dock::Bottom);
         this.panels.show(Panel::Mixer);
         let track = this.session.add_bus_track("Existing");
-        let effect = this
-            .session
-            .add_effect(Some(track), "auris.fx.gain")
-            .unwrap();
+        let far = this.session.add_bus_track("Far");
         this.session.set_mixer_graph_view(MixerGraphView {
             nodes: [
                 (
-                    MixerNode::Strip(Some(track)).key(),
+                    MixerNode(Some(track)).key(),
                     MixerNodePosition { x: -400., y: 600. },
                 ),
                 (
-                    MixerNode::Effect(Some(track), effect).key(),
+                    MixerNode(Some(far)).key(),
                     MixerNodePosition {
                         x: 12000.,
                         y: -8000.,
                     },
                 ),
+                // Older projects saved effect cards' places; they are ignored.
                 ("effect:999999".into(), MixerNodePosition { x: 99., y: 99. }),
             ]
             .into(),
@@ -182,7 +180,7 @@ fn restored_fit_scale_and_surviving_positions_allow_new_nodes_and_musical_undo(
             pan_y: -10.,
         });
         this.session.forget_history();
-        (track, effect)
+        (track, far)
     });
     paint(&app, cx);
     let before = app.read_with(cx, |this, cx| {
@@ -199,25 +197,25 @@ fn restored_fit_scale_and_surviving_positions_allow_new_nodes_and_musical_undo(
         let state = canvas.state.read(cx);
         assert_eq!(state.viewport.zoom, before.zoom);
         assert_eq!(
-            canvas.presentation(cx).nodes[&MixerNode::Strip(Some(track)).key()],
-            before.nodes[&MixerNode::Strip(Some(track)).key()]
+            canvas.presentation(cx).nodes[&MixerNode(Some(track)).key()],
+            before.nodes[&MixerNode(Some(track)).key()]
         );
-        let layout = positions(&this.session.mixer_graph());
+        let layout = positions(&this.session.mixer_graph(), this.session.project());
         assert_eq!(
             state
-                .get_node(&node_id(MixerNode::Strip(Some(new))))
+                .get_node(&node_id(MixerNode(Some(new))))
                 .unwrap()
                 .position,
-            layout[&MixerNode::Strip(Some(new))]
+            layout[&MixerNode(Some(new))]
         );
     });
-    app.update(cx, |this, _| this.session.remove_effect(effect));
+    app.update(cx, |this, _| this.session.remove_track(far).unwrap());
     paint(&app, cx);
     app.update(cx, |this, _| this.undo());
     paint(&app, cx);
     app.read_with(cx, |this, cx| {
         let current = this.mixer_canvas.as_ref().unwrap().presentation(cx);
-        let key = MixerNode::Effect(Some(track), effect).key();
+        let key = MixerNode(Some(far)).key();
         assert_eq!(current.nodes[&key], before.nodes[&key]);
         assert_eq!(
             (current.zoom, current.pan_x, current.pan_y),

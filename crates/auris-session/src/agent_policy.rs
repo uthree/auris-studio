@@ -820,12 +820,12 @@ mod tests {
                 false,
             ),
             (
-                serde_json::json!({"action":"connect","source":"track:1","target":"track:2","kind":"output"}),
+                serde_json::json!({"action":"connect","source":"track:1","target":"track:2"}),
                 false,
                 false,
             ),
             (
-                serde_json::json!({"action":"disconnect","source":"track:1","target":"track:2","kind":"output"}),
+                serde_json::json!({"action":"disconnect","source":"track:1","target":"track:2"}),
                 false,
                 true,
             ),

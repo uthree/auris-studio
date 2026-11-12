@@ -1,8 +1,8 @@
 //! The mixer graph's two context menus: the one a node opens and the one the empty canvas opens.
 //!
 //! A node's menu is the menu that thing already has elsewhere — a strip is a track, so it gets
-//! the track header's menu, and an insert gets the inspector's effect menu — because the same
-//! object answering a right click two different ways is a thing to learn twice. The canvas has no
+//! the track header's menu, and an insert's row inside it gets the inspector's effect menu —
+//! because the same object answering a right click two different ways is a thing to learn twice. The canvas has no
 //! object under the pointer, so its menu is about adding one, and a node added from it appears
 //! where the menu was opened rather than wherever the automatic layout would have put it.
 
@@ -31,30 +31,14 @@ impl AurisApp {
         node: MixerNode,
     ) -> ContextMenu {
         let menu = match node {
-            MixerNode::Strip(Some(track)) => {
+            MixerNode(Some(track)) => {
                 self.select_track(track);
                 self.track_menu(at, track)
             }
-            MixerNode::Strip(None) => ContextMenu::new(at, self.t(Key::Master)).item(
+            MixerNode(None) => ContextMenu::new(at, self.t(Key::Master)).item(
                 self.t(Key::MenuAddEffect),
                 MenuCommand::ShowEffectPicker { track: None, at },
             ),
-            MixerNode::Effect(owner, slot) => {
-                let effect_id = owner
-                    .and_then(|id| self.project().track(id))
-                    .map_or(&self.project().master, |track| &track.mixer)
-                    .effects
-                    .iter()
-                    .find(|effect| effect.id == slot)
-                    .map(|effect| effect.effect_id.clone());
-                match effect_id {
-                    Some(effect_id) => {
-                        let label = self.effect_label(slot, &effect_id);
-                        self.effect_menu(at, owner, slot, label)
-                    }
-                    None => return ContextMenu::new(at, self.t(Key::MixerGraph)),
-                }
-            }
         };
         // Every node can carry a note about how it sits in the mix.
         menu.separator().item(
@@ -111,7 +95,7 @@ impl AurisApp {
         if let (Some(track), Some(place)) = (added, place) {
             let mut view = self.project().mixer_graph_view.clone();
             view.nodes.insert(
-                MixerNode::Strip(Some(track)).key(),
+                MixerNode(Some(track)).key(),
                 MixerNodePosition {
                     x: place.x,
                     y: place.y,
@@ -156,7 +140,7 @@ mod tests {
         paint(&app, cx);
         let card = cx
             .debug_bounds(Box::leak(
-                format!("graph-gain-{}", node_id(MixerNode::Strip(Some(track)))).into_boxed_str(),
+                format!("graph-gain-{}", node_id(MixerNode(Some(track)))).into_boxed_str(),
             ))
             .expect("the strip's fader is drawn");
         // Above the fader, on the card itself rather than on a control.
@@ -186,13 +170,22 @@ mod tests {
             (track, slot)
         });
         paint(&app, cx);
-        let menu = app.update(cx, |this, _| {
-            this.mixer_node_menu(
-                point(px(10.), px(10.)),
-                MixerNode::Effect(Some(track), slot),
-            )
+        let row = cx
+            .debug_bounds(Box::leak(
+                format!("graph-effect-{}", slot.0).into_boxed_str(),
+            ))
+            .expect("the insert is a row of its strip's card");
+        let card = cx
+            .debug_bounds(Box::leak(
+                format!("graph-gain-{}", node_id(MixerNode(Some(track)))).into_boxed_str(),
+            ))
+            .unwrap();
+        assert!(row.left() >= card.left() && row.right() <= card.right());
+        right_press(cx, row.center());
+        let remove = app.update(cx, |this, _| {
+            let menu = this.menu.as_ref().expect("a menu opened");
+            command_for(menu, this.t(Key::MenuRemove))
         });
-        let remove = command_for(&menu, app.update(cx, |this, _| this.t(Key::MenuRemove)));
         assert_eq!(remove, Some(MenuCommand::RemoveEffect(slot)));
     }
 
@@ -231,7 +224,7 @@ mod tests {
             let bus = this.project().tracks.last().unwrap().id;
             let state = this.mixer_canvas.as_ref().unwrap().state.read(cx);
             let node = state
-                .get_node(&node_id(MixerNode::Strip(Some(bus))))
+                .get_node(&node_id(MixerNode(Some(bus))))
                 .expect("the bus is a node");
             let (x, y) = state.viewport.flow_to_screen(node.position);
             assert!((x + state.origin.0 - f32::from(at.x)).abs() < 0.5);

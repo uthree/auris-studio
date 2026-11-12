@@ -124,15 +124,10 @@ impl Session {
                 pre_fader,
             } => {
                 let track = match self.graph_node(source)? {
-                    crate::mixer_graph::MixerNode::Strip(Some(track)) => track,
+                    crate::mixer_graph::MixerNode(Some(track)) => track,
                     _ => return Err("source must be a track node from mixer_graph".into()),
                 };
-                let to = match self.graph_node(target)? {
-                    crate::mixer_graph::MixerNode::Strip(owner) => {
-                        crate::mixer_graph::destination(owner)
-                    }
-                    _ => return Err("target must be a bus node or track:master".into()),
-                };
+                let to = crate::mixer_graph::destination(self.graph_node(target)?.0);
                 let tap = if *pre_fader {
                     auris_core::Tap::PreFader
                 } else {
@@ -158,15 +153,7 @@ impl Session {
                 })
             }
             ControlTarget::Effect { node, param } => {
-                let effect = self
-                    .mixer_graph()
-                    .nodes
-                    .into_iter()
-                    .find(|n| n.key() == *node)
-                    .ok_or("Unknown effect node")?;
-                let crate::mixer_graph::MixerNode::Effect(track, slot) = effect else {
-                    return Err("Expected effect node".into());
-                };
+                let (track, slot) = self.graph_effect(node)?;
                 let descriptor = self
                     .effect_descriptors(slot)
                     .iter()
