@@ -558,6 +558,10 @@ impl AurisApp {
                             this.open_issue_report(None, cx);
                         },
                     ))
+                    .on_action(Self::window_listener(
+                        cx,
+                        |this, _: &actions::OpenLogFolder, _, cx| this.open_log_folder(cx),
+                    ))
                     .on_action(Self::window_listener(cx, Self::on_toggle_agent))
                     .on_action(Self::window_listener(cx, Self::on_toggle_structure_lane))
                     .on_action(Self::window_listener(cx, Self::on_toggle_key_lane))
@@ -1547,6 +1551,11 @@ impl AurisApp {
         match drag {
             Drag::Playhead => {
                 let x = event.position.x - self.timeline_origin().x;
+                let tick = self.snap_unless_held(self.timeline.x_to_tick(x), event.modifiers);
+                self.seek(tick);
+            }
+            Drag::RollPlayhead => {
+                let x = event.position.x - self.roll_origin().x;
                 let tick = self.snap_unless_held(self.timeline.x_to_tick(x), event.modifiers);
                 self.seek(tick);
             }

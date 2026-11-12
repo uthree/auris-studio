@@ -63,6 +63,8 @@ actions!(
         ShowAbout,
         /// Prepare a local issue draft with per-report private-context consent.
         ReportProblem,
+        /// Show the folder holding this launch's log file and any crash reports.
+        OpenLogFolder,
         /// Compare this build with the latest published desktop release.
         CheckForUpdates,
         /// Start or stop playback.
@@ -575,6 +577,7 @@ bindable! {
         "view.agent",           GroupView,      CmdShowAgent,          "secondary-alt-a" => ToggleAgent;
         "view.about",           GroupHelp,      CmdAbout,              "" => ShowAbout;
         "help.report_problem",  GroupHelp,      IssueReport,           "" => ReportProblem;
+        "help.open_logs",       GroupHelp,      CmdOpenLogFolder,      "" => OpenLogFolder;
         "help.check_updates",   GroupHelp,      CmdCheckForUpdates,    "" => CheckForUpdates;
         // The strips over the arrangement. Out on `secondary-alt-` because they are
         // arrangement furniture rather than things reached mid-take, and because the plain and

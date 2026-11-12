@@ -11,14 +11,17 @@ pub enum ContextKind {
     CompositionPrompts,
     /// Locally recorded musical preference evidence.
     MusicPreferences,
+    /// The newest crash report on disk, from this launch or an earlier one.
+    CrashReport,
 }
 
 impl ContextKind {
-    /// The three independently reviewed categories.
-    pub const ALL: [Self; 3] = [
+    /// The independently reviewed categories.
+    pub const ALL: [Self; 4] = [
         Self::UsageLogs,
         Self::CompositionPrompts,
         Self::MusicPreferences,
+        Self::CrashReport,
     ];
 
     /// Stable position in a report's consent controls.
@@ -27,6 +30,7 @@ impl ContextKind {
             Self::UsageLogs => 0,
             Self::CompositionPrompts => 1,
             Self::MusicPreferences => 2,
+            Self::CrashReport => 3,
         }
     }
 
@@ -35,6 +39,7 @@ impl ContextKind {
             Self::UsageLogs => "Application logs (current launch)",
             Self::CompositionPrompts => "User prompts (selected conversation)",
             Self::MusicPreferences => "Local musical preference evidence",
+            Self::CrashReport => "Crash report",
         }
     }
 }
@@ -72,7 +77,7 @@ pub struct Draft {
     pub description: String,
     /// Basic build and audio metadata, supplied by the host without paths or song content.
     pub environment: String,
-    approved: [Option<String>; 3],
+    approved: [Option<String>; 4],
     analysis: Option<String>,
 }
 

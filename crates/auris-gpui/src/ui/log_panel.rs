@@ -99,6 +99,15 @@ impl AurisApp {
                             &theme,
                             cx.listener(|this, _, _, cx| this.open_issue_report(None, cx)),
                         ))
+                        .child(button(
+                            "log-open-folder",
+                            self.t(Key::CmdOpenLogFolder),
+                            ButtonStyle::Normal,
+                            false,
+                            theme.accent,
+                            &theme,
+                            cx.listener(|this, _, _, cx| this.open_log_folder(cx)),
+                        ))
                         .child(button_enabled(
                             "log-copy-all",
                             self.t(Key::LogCopyAll),

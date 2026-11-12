@@ -827,6 +827,11 @@ pub fn model(language: Language, panels: &PanelLayout, state: MenuState) -> Vec<
                 "help.report_problem",
             ),
             command(
+                t(Key::CmdOpenLogFolder),
+                actions::OpenLogFolder,
+                "help.open_logs",
+            ),
+            command(
                 t(Key::CmdCheckForUpdates),
                 actions::CheckForUpdates,
                 "help.check_updates",
@@ -1087,6 +1092,7 @@ mod tests {
             labels,
             [
                 Key::IssueReport.get(Language::English),
+                Key::CmdOpenLogFolder.get(Language::English),
                 Key::CmdCheckForUpdates.get(Language::English),
                 Key::CmdAbout.get(Language::English),
             ]

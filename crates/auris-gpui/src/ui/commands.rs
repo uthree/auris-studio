@@ -3781,8 +3781,9 @@ impl AurisApp {
         let middle = clip
             .pitch_range()
             .map_or(60, |range| ((range.0 as u16 + range.1 as u16) / 2) as u8);
-        let body_height =
-            crate::theme::Metrics::BOTTOM_DOCK_HEIGHT - crate::theme::Metrics::PANEL_HEADER_HEIGHT;
+        let body_height = crate::theme::Metrics::BOTTOM_DOCK_HEIGHT
+            - crate::theme::Metrics::PANEL_HEADER_HEIGHT
+            - crate::theme::Metrics::RULER_HEIGHT;
         self.pitch.center_on(middle, body_height);
     }
 
