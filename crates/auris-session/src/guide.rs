@@ -134,7 +134,8 @@
 //! A composer is offered only the tools that work inside its candidate and do something there.
 //! A tool the candidate refuses (playback, nested generator jobs, network, files outside its
 //! workspace) or one that has no reader there (a choice card, an issue draft, an attachment
-//! export, a playback loop, an execution trace) is left out of its catalog, of `discover_tools`
+//! export, a playback loop, an execution trace, silencing a lint finding the user never agreed
+//! to) is left out of its catalog, of `discover_tools`
 //! and of `capabilities`, and is still refused if called. A cheaper model reads an offered tool as
 //! a usable one: given the whole catalog, Sonnet spent most of its failed calls on refused tools,
 //! and GPT Luna put up a choice card and waited for an answer no one would give.

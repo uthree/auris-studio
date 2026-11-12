@@ -2360,12 +2360,17 @@ pub(crate) const CANDIDATE_REFUSED: &[&str] = &[
 /// answers a choice card or reads an issue draft, no attachment reaches a candidate, nobody plays
 /// its loop, and an execution trace is evidence for a person debugging. GPT Luna put a choice
 /// card up and ended its turn waiting for a pick that never comes.
+///
+/// `ignore_lint` belongs here too: it is for a finding the user agreed is deliberate, and no
+/// user is there to agree. Sonnet used it to silence 60 findings before declaring the song done,
+/// which hid them from the checks that read the candidate afterwards.
 const CANDIDATE_NO_EFFECT: &[&str] = &[
     "offer_choices",
     "suggest_issue_report",
     "export_audio_attachment",
     "execution_trace",
     "set_loop",
+    "ignore_lint",
 ];
 
 /// The permission operation that names every call of one live tool.
