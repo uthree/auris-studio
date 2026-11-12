@@ -96,7 +96,7 @@ Read `mixer_graph`, copy the audio track's node ID, and insert the built-in EQ:
 {"operation":{"action":"add_effect","input":"track:3","effect":"auris.fx.eq"}}
 ```
 
-Read `parameters` for the returned effect node. Set keys using their returned native
+Read `parameters` for the returned effect ID. Set keys using their returned native
 units, for example `hp_enabled` = 1 and `hp_freq` = 180 Hz, or a peaking band's frequency,
 gain and Q. `set_parameter` takes `node`, `param` and `value`. These are track inserts:
 use separate tracks when only one sound should receive an effect. Existing effects,

@@ -447,7 +447,7 @@ fn agent_eq_changes_rendered_audio_without_rewriting_source() {
         &mut session,
         json!({"action":"add_effect","input":format!("track:{}",imported["track"]),"effect":"auris.fx.eq"}),
     );
-    let node = &added["result"]["node"];
+    let node = &added["result"]["effect"];
     mixer(
         &mut session,
         json!({"action":"set_parameter","node":node,"param":"hp_enabled","value":1.0}),
