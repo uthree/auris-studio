@@ -27,7 +27,7 @@ The saved-project server works on saved project files:
 1. `create_project` or `open_project`.
 2. `inspect_project` to obtain stable track and clip IDs.
 3. `list_progressions` for named chord progressions.
-4. `add_clip`/`read_notes`/`edit_notes` to author expressive parts. `generate_phrase` is optional for mechanical backing only.
+4. `add_clip`/`read_notes`/`edit_notes` to author parts, or `generate_phrase` for a take of any part to read and edit.
 5. `accompany` for backing parts under an existing melody.
 6. `inspect_project` and `inspect_audio`/`analyze` to verify.
 7. `render` and `verify_render` for delivery files.

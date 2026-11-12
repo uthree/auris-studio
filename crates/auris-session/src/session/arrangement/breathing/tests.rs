@@ -664,6 +664,7 @@ fn existing_generated_phrase_breaths_are_observed_without_regeneration() {
         .unwrap();
     let result = session
         .agent_command(crate::live_agent::Command::GeneratePhrase {
+            settings: Default::default(),
             track: track.0,
             part: "melody".into(),
             start_bar: 1,

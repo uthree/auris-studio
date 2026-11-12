@@ -214,11 +214,14 @@ time per string instead, so a six-string chord takes longer than a three-string 
 struck identically. Alternate the direction on the strumming clock, with lighter upstrokes on
 fewer strings (`up_notes`, `up_velocity`).
 
-### Generators for scaffolding, authored notes for what is remembered
+### Generated takes are drafts
 
-Use `accompaniment` and `generate_phrase` for plain chords, pads, simple arpeggios and basic
-drum pulses. Write by hand what a listener will remember: the counterline, the bass hook, the
-fill into the chorus, the backing vocal.
+`generate_phrase` writes a take of any part over the written harmony: lead (on a singer track
+too), chords, pad, arpeggio, bass or drums. Its `settings` start the take where the song needs
+it: `density`, a pitch `range` the part is moved into by octaves, a grid `rhythm` and `swing`.
+Read what it wrote and edit it where the song needs something else; a generated line is a
+starting point, and what a listener remembers (the hook, the bass figure, the fill into the
+chorus) is usually where the edits go.
 
 ## Mix phase
 
