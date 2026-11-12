@@ -151,6 +151,17 @@ pub(crate) fn read(path: &Path) -> Result<Option<ModuleInfo>> {
         )));
     }
 
+    // Some shipping bundles (Serum among them) carry a zero-byte `moduleinfo.json`. The file
+    // states nothing, so it cannot be authoritative about anything either: treat it as absent
+    // and let the caller ask the factory, exactly as for a bundle that has no file at all.
+    if bytes.iter().all(u8::is_ascii_whitespace) {
+        log::warn!(
+            "ignoring empty {}; the plugin factory is queried instead",
+            module_info_path.display()
+        );
+        return Ok(None);
+    }
+
     // Steinberg calls the format JSON5. moduleinfotool output uses JSON with comments and
     // trailing commas, so accept those two extensions without pulling a permissive parser
     // into the host. Other JSON5 extensions remain errors.
@@ -851,6 +862,24 @@ mod tests {
         assert_eq!(value["url"], "https://example.test/a//b");
         assert_eq!(value["array"], serde_json::json!([1, 2]));
         assert_eq!(value["object"]["value"], "/* literal */");
+    }
+
+    #[test]
+    fn empty_moduleinfo_is_treated_as_absent() {
+        let bundle = TempBundle::new();
+        let file = bundle.0.join("Contents/Resources/moduleinfo.json");
+        for contents in ["", " \n\t"] {
+            std::fs::write(&file, contents).expect("write moduleinfo");
+            assert!(
+                read(&bundle.0)
+                    .expect("an empty file is not an error")
+                    .is_none(),
+                "{contents:?} must read as no moduleinfo"
+            );
+        }
+        // A file with content is still held to the format.
+        std::fs::write(&file, "{").expect("write moduleinfo");
+        assert!(read(&bundle.0).is_err());
     }
 
     #[test]

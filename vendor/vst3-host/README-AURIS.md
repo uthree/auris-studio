@@ -22,3 +22,12 @@ allocation-free and lock-free owner API.
 `get_detailed_plugin_info` also reports each class's own sub-categories (`ClassInfo::sub_categories`,
 from `PClassInfo2`/`PClassInfoW`). The bundle-level category describes only the first audio class,
 which classified every class of a shell bundle such as WaveShell as whatever that first one was.
+
+On macOS, loads of one bundle are shared and counted (`module_loader::shared`). `CFBundleCreate`
+returns the same bundle object for the same URL and `CFBundleLoadExecutable` is not counted, so
+the published crate's unload on every handle drop let a discovery pass unmap the code of a live
+instance of the same plugin; the next call into it crashed. The last handle now unloads.
+
+A `moduleinfo.json` that is empty or only whitespace is treated as absent, so the factory is
+asked instead. Some shipping bundles carry a zero-byte file, which the published crate rejected as
+invalid JSON and so refused to load the plugin at all.
