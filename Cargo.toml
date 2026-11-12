@@ -32,6 +32,7 @@ auris-synth = { path = "crates/auris-synth", version = "0.20.0" }
 auris-gpu = { path = "crates/auris-gpu", version = "0.20.0" }
 auris-i18n = { path = "crates/auris-i18n", version = "0.20.0" }
 auris-io = { path = "crates/auris-io", version = "0.20.0" }
+auris-onnx = { path = "crates/auris-onnx", version = "0.20.0" }
 auris-vocal = { path = "crates/auris-vocal", version = "0.20.0" }
 auris-engine = { path = "crates/auris-engine", version = "0.20.0" }
 auris-session = { path = "crates/auris-session", version = "0.20.0" }
@@ -77,7 +78,7 @@ objc2 = "0.6"
 objc2-app-kit = "0.3"
 objc2-foundation = "0.3"
 # Keep every inference backend on the same ONNX Runtime release candidate.
-ort = "=2.0.0-rc.13"
+ort = "=2.0.0-rc.15"
 pollster = "1.0"
 # The platform's own window handle and nothing else. A hosted plugin's floating window has to be
 # told which window to stay above, and this is the one vocabulary gpui and CLAP already share — so

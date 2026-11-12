@@ -8,10 +8,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  # Rust 1.100's Cargo moved build-script output one directory deeper, and ort-sys 2.0.0-rc.13
-  # finds `target` by counting parents from it, so its Windows DLL copy panics. Stay on 1.99
-  # until ort moves to rc.15, which finds the directory either way.
-  RUST_TOOLCHAIN: "1.99.0"
+  RUST_TOOLCHAIN: "1.100.0"
   # Warnings are the point of running this at all.
   RUSTFLAGS: -D warnings
 

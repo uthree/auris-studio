@@ -20,6 +20,7 @@ rust-version.workspace = true
 # runtime data and is loaded from wherever the user keeps it, exactly like a SoundFont.
 [dependencies]
 auris-core.workspace = true
+auris-onnx.workspace = true
 auris-vocal.workspace = true
 base64.workspace = true
 hound.workspace = true
