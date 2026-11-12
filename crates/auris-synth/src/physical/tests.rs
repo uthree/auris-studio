@@ -1640,3 +1640,26 @@ fn a_slurred_wind_note_glides_and_releases_when_its_last_key_does() {
         assert_eq!(wind.instrument.active_voices(), 0, "{model:?}");
     }
 }
+
+#[test]
+fn open_guitar_strings_answer_a_note_that_shares_their_partials() {
+    // A3 is the open fifth string's second harmonic; B♭3 lies between every open string's
+    // partials. Let each go after a quarter of a second, and listen a second later.
+    let residue = |pitch: u8| {
+        let mut guitar = whole(Model::Guitar);
+        let audio = guitar.render(96_000, &[on(pitch, 0.9), off(12_000, pitch)]);
+        let played = partial(&audio[..12_000], hz(pitch), 1.0);
+        let left = partial(&audio[48_000..72_000], hz(pitch), 1.0);
+        20.0 * (left / played).max(1e-12).log10()
+    };
+    let shared = residue(57);
+    let between = residue(58);
+    assert!(
+        (-45.0..-20.0).contains(&shared),
+        "the open A answers A3 {shared} dB under it"
+    );
+    assert!(
+        between < shared - 15.0,
+        "B♭3 leaves {between} dB, against A3's {shared} dB"
+    );
+}

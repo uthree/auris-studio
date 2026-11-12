@@ -255,6 +255,8 @@ struct Voice {
     glide: f32,
     /// Cents the phasors are currently tuned away from the note.
     tuned: f32,
+    /// The string the note is fretted on, while the finger holds it there.
+    string: Option<usize>,
 }
 
 impl Voice {
@@ -306,6 +308,8 @@ pub(super) struct Plucked {
     performance: Performance,
     voices: Vec<Voice>,
     body: Radiator,
+    /// The acoustic guitar's strings that are not being played.
+    open: OpenStrings,
     /// The pickup's coil and cable: a resonant low-pass, on the mid and the side signal.
     electronics: [Biquad; 2],
     pan_step: f32,
@@ -321,6 +325,7 @@ impl Plucked {
             performance: Performance::default(),
             voices: Vec::new(),
             body: Radiator::default(),
+            open: OpenStrings::default(),
             electronics: Default::default(),
             pan_step: 1.0,
         }
@@ -417,6 +422,42 @@ impl Plucked {
         }
     }
 
+    /// Whether the unplayed strings ring: an acoustic guitar's, which share its bridge.
+    fn has_open_strings(&self) -> bool {
+        self.model == Model::Guitar
+    }
+
+    /// Tunes the open strings to the controls: they lose what a sounding string of their
+    /// pitch loses, and take from the bridge what the bridge takes from them.
+    fn tune_open_strings(&mut self) {
+        if !self.has_open_strings() {
+            return;
+        }
+        let acoustic = self.acoustic() * (1.0 - self.settings.saddle);
+        let spec = self.body_spec();
+        let scale = self.body_scale();
+        for (index, pitch) in self.build.strings.iter().enumerate() {
+            let pitch = f32::from(*pitch);
+            let hz = hertz(pitch);
+            let drained = 0.006 * hz * spec.conductance(hz, scale);
+            let nepers = self.fundamental_rate(pitch) + self.acoustic() * drained;
+            let takes = OPEN_COUPLING * acoustic * (0.25 + spec.conductance(hz, scale));
+            self.open.tune(index, hz, nepers, takes, self.rate);
+        }
+    }
+
+    /// Lifts the finger of voice `index` off its string, which is then free to ring.
+    fn leave_string(&mut self, index: usize) {
+        if let Some(string) = self
+            .voices
+            .get_mut(index)
+            .and_then(|voice| voice.string.take())
+            && let Some(open) = self.open.strings.get_mut(string)
+        {
+            open.busy = open.busy.saturating_sub(1);
+        }
+    }
+
     fn body_scale(&self) -> f32 {
         if self.model == Model::Bass { 0.23 } else { 1.0 }
     }
@@ -441,6 +482,10 @@ impl Engine for Plucked {
         if !self.is_electric() {
             self.body.prepare(self.body_spec(), self.body_scale(), rate);
         }
+        if self.has_open_strings() {
+            self.open.prepare(self.build.strings, rate);
+            self.tune_open_strings();
+        }
         self.pan_step = 1.0 - (-1.0 / (0.010 * rate)).exp();
         self.reset();
     }
@@ -453,8 +498,10 @@ impl Engine for Plucked {
             voice.declick = Declick::default();
             voice.mute.open();
             voice.last = 0.0;
+            voice.string = None;
         }
         self.body.reset();
+        self.open.reset();
         for filter in &mut self.electronics {
             filter.reset();
         }
@@ -501,6 +548,7 @@ impl Engine for Plucked {
                 filter.set_coefficients(coefficients);
             }
         }
+        self.tune_open_strings();
         // A sounding string answers its decay and damping at once; where it was plucked and
         // how hard is already in it.
         let cents = self.bend_cents();
@@ -559,9 +607,17 @@ impl Engine for Plucked {
             0.0
         };
         let split = 4.0e-4 * (1.0 + seeded(note.seed, 2));
+        self.leave_string(index);
+        if self.has_open_strings()
+            && let Some(open) = self.open.strings.get_mut(string)
+        {
+            open.busy = open.busy.saturating_add(1);
+        }
+        let open_strings = self.has_open_strings();
         let Some(voice) = self.voices.get_mut(index) else {
             return;
         };
+        voice.string = open_strings.then_some(string);
         voice.declick = if note.stolen {
             Declick::from(voice.last, rate)
         } else {
@@ -648,6 +704,7 @@ impl Engine for Plucked {
             && voice.held
         {
             voice.held = false;
+            self.leave_string(index);
             self.set_rates(index);
             let rate = self.rate;
             let voice = &mut self.voices[index];
@@ -657,6 +714,7 @@ impl Engine for Plucked {
     }
 
     fn silence(&mut self, index: usize) {
+        self.leave_string(index);
         let rate = self.rate;
         if let Some(voice) = self.voices.get_mut(index) {
             voice.held = false;
@@ -681,6 +739,7 @@ impl Engine for Plucked {
         let (cents, rate, width) = (self.bend_cents(), self.rate, self.performance.width);
         if tick {
             self.body.tick();
+            self.open.tick();
             for voice in self.voices.iter_mut().filter(|voice| voice.sounding) {
                 voice.moving = voice.rotors.settle(FLOOR);
                 if voice.moving == 0.0 || voice.mute.is_closed() {
@@ -744,6 +803,9 @@ impl Engine for Plucked {
                 }
             }
             _ => {
+                if self.has_open_strings() {
+                    self.open.process(bus_mid);
+                }
                 // A saddle pickup hears the bridge itself, before the body has had its say.
                 let amount = self.settings.body * (1.0 - self.settings.saddle);
                 self.body.process(bus_mid, bus_side, amount, width);
@@ -817,5 +879,146 @@ impl Engine for Plucked {
                 *mode *= amount * super::BODY_DISPLAY;
             }
         }
+    }
+}
+
+/// How strongly the bridge passes what it is doing to an open string, each time round.
+const OPEN_COUPLING: f32 = 0.007;
+/// Pole of the low-pass in each open string's loop: its upper partials die sooner.
+const OPEN_POLE: f32 = 0.3;
+/// Below this an open string is taken to have stopped.
+const OPEN_FLOOR: f32 = 1.0e-7;
+
+/// One open string, free to ring: a wave going round it, once a period.
+#[derive(Clone, Copy, Debug, Default)]
+struct Open {
+    start: usize,
+    size: usize,
+    cursor: usize,
+    period: f32,
+    /// What it keeps of itself each time round.
+    ring: f32,
+    /// What it takes of the bridge's motion each time round.
+    takes: f32,
+    low: f32,
+    /// Notes being played on this string, which are its own motion and do not ring it twice.
+    busy: u8,
+    moving: bool,
+    loudest: f32,
+}
+
+/// The strings of a guitar nobody is playing, which the bridge sets ringing.
+///
+/// A note played on one string moves the bridge, and every other string is tied to that
+/// bridge: those with a partial near one of the note's ring on after it, quietly and for a
+/// long time. It is why an A on the third string leaves the open fifth humming, and much of
+/// why a guitar sounds like a box of strings rather than one string at a time.
+#[derive(Clone, Debug, Default)]
+struct OpenStrings {
+    lines: Vec<f32>,
+    strings: [Open; 6],
+    count: usize,
+    any: bool,
+}
+
+impl OpenStrings {
+    fn prepare(&mut self, open: &[u8], rate: f32) {
+        self.count = open.len().min(self.strings.len());
+        let mut start = 0;
+        for (string, pitch) in self.strings.iter_mut().zip(open) {
+            // Room for the string tuned down a semitone, whatever the sample rate.
+            let lowest = hertz(f32::from(*pitch) - 1.0);
+            string.start = start;
+            string.size = (rate / lowest).ceil() as usize + 4;
+            start += string.size;
+        }
+        self.lines = vec![0.0; start];
+        self.reset();
+    }
+
+    fn reset(&mut self) {
+        self.lines.fill(0.0);
+        for string in &mut self.strings {
+            string.cursor = 0;
+            string.low = 0.0;
+            string.busy = 0;
+            string.moving = false;
+            string.loudest = 0.0;
+        }
+        self.any = false;
+    }
+
+    /// Tunes string `index` to `hz`; it loses `nepers` a second of its own, and the bridge
+    /// passes it `takes` of its motion each period.
+    fn tune(&mut self, index: usize, hz: f32, nepers: f32, takes: f32, rate: f32) {
+        let Some(string) = self.strings.get_mut(index) else {
+            return;
+        };
+        let filter = OPEN_POLE / (1.0 - OPEN_POLE);
+        let longest = (string.size.saturating_sub(3) as f32).max(2.0);
+        string.period = (rate / hz - filter).clamp(2.0, longest);
+        string.ring = (-nepers / hz).exp();
+        string.takes = takes;
+    }
+
+    /// Lets the open strings hear the bridge, and adds what they answer to it.
+    fn process(&mut self, bus: &mut [f32]) {
+        if self.lines.is_empty() {
+            return;
+        }
+        let frames = bus.len().min(TICK);
+        let mut answer = [0.0_f32; TICK];
+        let mut heard_any = false;
+        for sample in bus.iter().take(frames) {
+            heard_any |= *sample != 0.0;
+        }
+        if !heard_any && !self.any {
+            return;
+        }
+        for string in self.strings.iter_mut().take(self.count) {
+            let open = string.busy == 0;
+            if !open && !string.moving {
+                continue;
+            }
+            let Some(line) = self.lines.get_mut(string.start..string.start + string.size) else {
+                continue;
+            };
+            let whole = string.period as usize;
+            let part = string.period - whole as f32;
+            for (heard, answer) in bus.iter().zip(answer.iter_mut()).take(frames) {
+                let newer = (string.cursor + string.size - whole) % string.size;
+                let older = (newer + string.size - 1) % string.size;
+                let back = line[newer] + part * (line[older] - line[newer]);
+                string.low += (1.0 - OPEN_POLE) * (back - string.low);
+                // A string being fretted is the note's own, and its open ring is stopped.
+                let kept = if open { string.ring } else { 0.2 };
+                let fed = if open { string.takes * heard } else { 0.0 };
+                line[string.cursor] = kept * string.low + fed;
+                string.cursor = (string.cursor + 1) % string.size;
+                string.loudest = string.loudest.max(string.low.abs());
+                *answer += kept * string.low;
+            }
+        }
+        for (sample, answer) in bus.iter_mut().zip(answer) {
+            *sample += answer;
+        }
+    }
+
+    /// Notes which strings have died away, and empties their lines for the next time.
+    fn tick(&mut self) {
+        let mut any = false;
+        for string in self.strings.iter_mut().take(self.count) {
+            let was = string.moving;
+            string.moving = string.loudest > OPEN_FLOOR;
+            string.loudest = 0.0;
+            if was && !string.moving {
+                if let Some(line) = self.lines.get_mut(string.start..string.start + string.size) {
+                    line.fill(0.0);
+                }
+                string.low = 0.0;
+            }
+            any |= string.moving;
+        }
+        self.any = any;
     }
 }
