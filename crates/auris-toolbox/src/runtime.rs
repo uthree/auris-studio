@@ -54,8 +54,10 @@ pub fn call_live_reference_in(
                 let names: Vec<_> = catalog.iter().map(|d| d.name.as_str()).collect();
                 let schemas:Vec<_>=catalog.iter().map(|d|json!({"name":d.name,"group":tool_group(&d.name),"schema_sha256":schema_hash(&d.parameters)})).collect();
                 let catalog_sha256 = schema_hash(&json!(schemas));
+                // No feature flags: whether an optional tool is on is whether `tools` lists it.
+                // A bare `"arrangement": false` read to a model as "arranging is unavailable",
+                // and one stopped composing because of it.
                 Ok(json!({"context":"open_document","tools":names,"tool_schemas":schemas,"catalog_sha256":catalog_sha256,"audio_input_contract":audio_input_contract,
-                    "feature_flags":{"arrangement":auris_session::arrangement::enabled()},
                     "groups":catalog.iter().map(|d|tool_group(&d.name)).collect::<std::collections::BTreeSet<_>>()}).to_string())
             }
             "tool_help" => {
@@ -221,6 +223,9 @@ mod tests {
                 .unwrap(),
         )
         .unwrap();
+        // An optional tool is on exactly when `tools` lists it; there is no separate flag for
+        // a model to read as a missing feature.
+        assert!(live_capabilities.get("feature_flags").is_none());
         let groups = ToolGroups::default();
         let saved_capabilities: Value =
             serde_json::from_str(&call_saved(&groups, "capabilities", json!({})).unwrap()).unwrap();

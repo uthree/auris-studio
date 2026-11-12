@@ -181,7 +181,11 @@ impl ToolHost {
             .any(|tool| tool.name == name)
         {
             permissions::authorize(Some(&self.bridge), name, &args.to_string()).await?;
-            let result = toolbox::runtime::call_live_reference_in(name, args, &Self::catalog())
+            // tool_help, discover_tools and capabilities describe the catalog this model was
+            // offered: a withheld tool found through discovery would be offered after all.
+            let mut catalog = Self::catalog();
+            catalog.retain(|tool| !self.bridge.withheld().contains(&tool.name));
+            let result = toolbox::runtime::call_live_reference_in(name, args, &catalog)
                 .expect("registered reference tool");
             return result.map(|text| json!({"event":"edit_result","ok":true,"text":text}));
         }
