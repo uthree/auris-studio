@@ -1980,20 +1980,22 @@ fn compose_guided(
         allow: vec![],
         // Denying the shell outright starts CLI runtimes without their own shell and file
         // tools, so a composer is never offered one only to have it refused.
-        deny: vec![
-            "search_internet".into(),
-            "edit_project.listen".into(),
-            "cli_command".into(),
-            "cli_file_change".into(),
-            "cli_file_read".into(),
-        ],
+        deny: [
+            "search_internet",
+            "edit_project.listen",
+            "cli_command",
+            "cli_file_change",
+            "cli_file_read",
+        ]
+        .into_iter()
+        .map(String::from)
+        .chain(
+            CANDIDATE_NO_EFFECT
+                .iter()
+                .map(|tool| candidate_operation(tool)),
+        )
+        .collect(),
     };
-    // What the composer can never use is not offered either; see `CANDIDATE_WITHHELD`.
-    prefs.withheld_tools = CANDIDATE_WITHHELD
-        .iter()
-        .chain(&[auris_toolbox::internet_search::NAME])
-        .map(|tool| (*tool).to_owned())
-        .collect();
     prefs.system_prompt = match guidance {
         Guidance::Full => format!(
             "{}\n{}",
@@ -2001,15 +2003,14 @@ fn compose_guided(
             auris_toolbox::workshop::COMPOSER
         ),
         Guidance::Bare => {
-            let bare_denied = [
-                auris_toolbox::live_agent::production_record::NAME,
-                auris_toolbox::search_documentation::NAME,
-            ];
-            prefs.policy.deny.extend(bare_denied.map(String::from));
-            prefs.withheld_tools.extend(bare_denied.map(String::from));
+            prefs.policy.deny.extend([
+                auris_toolbox::live_agent::production_record::NAME.into(),
+                auris_toolbox::search_documentation::NAME.into(),
+            ]);
             auris_toolbox::workshop::BARE_COMPOSER.into()
         }
     };
+    prefs.withheld_tools = candidate_withheld(&prefs.policy.deny);
     let worker = crate::Worker::spawn(prefs.clone(), None, true, None)?;
     let kept = folder.join(CHECKPOINT_RECORD);
     if checkpoint_exists && kept.is_file() {
@@ -2337,10 +2338,12 @@ fn audio_gate(cancel: &AtomicBool) -> Result<std::sync::MutexGuard<'static, ()>,
 }
 
 /// Tools a candidate composer may never use: playback, nested jobs, network and outside files
-/// are not child capabilities. They are left out of the composer's catalog as well as refused,
-/// because a cheaper model reads an offered tool as a usable one: Sonnet spent most of its failed
-/// calls on `edit_recipe`, every one of them refused.
-pub(crate) const CANDIDATE_WITHHELD: &[&str] = &[
+/// are not child capabilities, so [`execute`] refuses them.
+///
+/// A composer is offered only tools that work and do something for it (see
+/// [`candidate_withheld`]), because a cheaper model reads an offered tool as a usable one:
+/// Sonnet spent most of its failed calls on `edit_recipe`, every one of them refused.
+pub(crate) const CANDIDATE_REFUSED: &[&str] = &[
     "phrase_variation",
     "edit_recipe",
     "listen",
@@ -2352,6 +2355,45 @@ pub(crate) const CANDIDATE_WITHHELD: &[&str] = &[
     "accompaniment",
     "arrangement",
 ];
+
+/// Tools that run inside a candidate but do nothing for it, so its policy denies them: no person
+/// answers a choice card or reads an issue draft, no attachment reaches a candidate, nobody plays
+/// its loop, and an execution trace is evidence for a person debugging. GPT Luna put a choice
+/// card up and ended its turn waiting for a pick that never comes.
+const CANDIDATE_NO_EFFECT: &[&str] = &[
+    "offer_choices",
+    "suggest_issue_report",
+    "export_audio_attachment",
+    "execution_trace",
+    "set_loop",
+];
+
+/// The permission operation that names every call of one live tool.
+fn candidate_operation(tool: &str) -> String {
+    if auris_session::agent_policy::OPERATIONS.contains(&tool) {
+        tool.to_owned()
+    } else {
+        format!("edit_project.{tool}")
+    }
+}
+
+/// The tools left out of a composer's catalog: those [`execute`] refuses, and every tool its
+/// deny rules forbid outright, so a refusal and a missing tool cannot drift apart.
+fn candidate_withheld(deny: &[String]) -> Vec<String> {
+    CANDIDATE_REFUSED
+        .iter()
+        .map(|tool| (*tool).to_owned())
+        .chain(
+            deny.iter()
+                .filter(|rule| !rule.starts_with("cli_"))
+                .map(|rule| {
+                    rule.strip_prefix("edit_project.")
+                        .unwrap_or(rule)
+                        .to_owned()
+                }),
+        )
+        .collect()
+}
 
 /// File tools a candidate may use only on paths inside its own project workspace, so they stay
 /// offered and are refused anywhere else on disk.
@@ -2376,7 +2418,7 @@ fn execute(
     let outside_file = CANDIDATE_WORKSPACE_FILES.contains(&action)
         && !serde_json::from_value::<auris_session::live_agent::Command>(command.clone())
             .is_ok_and(|command| command.uses_only_workspace());
-    if outside_file || CANDIDATE_WITHHELD.contains(&action) {
+    if outside_file || CANDIDATE_REFUSED.contains(&action) {
         return Err("This operation is not available inside candidate production".into());
     }
     let workspace_file = CANDIDATE_WORKSPACE_FILES.contains(&action);
@@ -2436,26 +2478,40 @@ mod tests {
     }
 
     #[test]
-    fn a_composer_is_not_offered_the_tools_it_may_never_use() {
-        let names = |list: &[&str]| list.iter().map(|n| (*n).to_owned()).collect::<Vec<_>>();
-        // A renamed tool would silently fall out of both lists, so each must still be one.
-        for tool in super::CANDIDATE_WITHHELD
+    fn a_composer_is_offered_only_tools_that_work_and_do_something() {
+        // A renamed tool would silently fall out of these lists, so each must still be one.
+        for tool in super::CANDIDATE_REFUSED
             .iter()
+            .chain(super::CANDIDATE_NO_EFFECT)
             .chain(super::CANDIDATE_WORKSPACE_FILES)
         {
-            let operation = format!("edit_project.{tool}");
+            let operation = super::candidate_operation(tool);
             assert!(
                 auris_session::agent_policy::OPERATIONS.contains(&operation.as_str()),
                 "{tool} is not a live tool"
             );
         }
-        let offered: Vec<_> =
-            crate::host::ToolHost::definitions_for(true, &names(super::CANDIDATE_WITHHELD))
-                .into_iter()
-                .map(|tool| tool.name)
-                .collect();
-        for withheld in super::CANDIDATE_WITHHELD {
-            assert!(!offered.iter().any(|name| name == withheld), "{withheld}");
+        let deny: Vec<String> = ["search_internet", "edit_project.listen", "cli_command"]
+            .into_iter()
+            .map(String::from)
+            .chain(
+                super::CANDIDATE_NO_EFFECT
+                    .iter()
+                    .map(|t| super::candidate_operation(t)),
+            )
+            .collect();
+        let withheld = super::candidate_withheld(&deny);
+        assert!(!withheld.iter().any(|tool| tool.starts_with("cli_")));
+        let offered: Vec<_> = crate::host::ToolHost::definitions_for(true, &withheld)
+            .into_iter()
+            .map(|tool| tool.name)
+            .collect();
+        for gone in super::CANDIDATE_REFUSED
+            .iter()
+            .chain(super::CANDIDATE_NO_EFFECT)
+            .chain(&["listen", "search_internet"])
+        {
+            assert!(!offered.iter().any(|name| name == gone), "{gone}");
         }
         // Workspace file tools stay usable, and so stay offered.
         for tool in super::CANDIDATE_WORKSPACE_FILES {
