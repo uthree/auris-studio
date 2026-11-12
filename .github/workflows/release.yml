@@ -24,6 +24,10 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # Rust 1.100's Cargo moved build-script output one directory deeper, and ort-sys 2.0.0-rc.13
+  # finds `target` by counting parents from it, so its Windows DLL copy panics. Stay on 1.99
+  # until ort moves to rc.15, which finds the directory either way.
+  RUST_TOOLCHAIN: "1.99.0"
   RELEASE_NAME: ${{ inputs.release_tag || github.ref_name }}
 
 # Application builds are deliberately uncached.
@@ -104,7 +108,7 @@ jobs:
 
       - name: Install the toolchain
         run: |
-          rustup toolchain install stable --profile minimal
+          rustup toolchain install ${{ env.RUST_TOOLCHAIN }} --profile minimal && rustup default ${{ env.RUST_TOOLCHAIN }}
           rustup target add aarch64-apple-darwin
 
       # ONNX Runtime's Core ML objects use Apple's availability checks. Rust drives the final
@@ -253,7 +257,7 @@ jobs:
         run: cp "$RUNNER_TEMP/app-icon/icon.ico" crates/auris-gpui/assets/auris-studio.ico
 
       - name: Install the toolchain
-        run: rustup toolchain install stable --profile minimal
+        run: rustup toolchain install ${{ env.RUST_TOOLCHAIN }} --profile minimal && rustup default ${{ env.RUST_TOOLCHAIN }}
 
       - name: Build
         shell: pwsh
@@ -411,7 +415,7 @@ jobs:
           sparse-checkout-cone-mode: false
 
       - name: Install the toolchain
-        run: rustup toolchain install stable --profile minimal
+        run: rustup toolchain install ${{ env.RUST_TOOLCHAIN }} --profile minimal && rustup default ${{ env.RUST_TOOLCHAIN }}
 
       # cpal builds against ALSA here, and vst3-host links against XCB.
       - name: Install Linux development headers
