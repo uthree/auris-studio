@@ -146,7 +146,7 @@ impl Reference {
             Self::Image { data, media_type } => {
                 UserContent::image_base64(data, Some(media_type), None)
             }
-            Self::Audio { data, media_type } => UserContent::audio(data, Some(media_type)),
+            Self::Audio { data, media_type } => UserContent::audio_base64(data, Some(media_type)),
         }
     }
 }

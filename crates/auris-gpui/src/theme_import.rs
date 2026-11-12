@@ -36,7 +36,7 @@ fn read_theme(path: &Path, depth: usize, remaining: &mut u64) -> Result<EditorTh
         return Err("Theme files exceed the 4 MiB import limit.".into());
     }
     *remaining -= text.len() as u64;
-    let value = jsonc_parser::parse_to_serde_value(
+    let value = jsonc_parser::parse_to_serde_value::<Option<serde_json::Value>>(
         text.trim_start_matches('\u{feff}'),
         &Default::default(),
     )

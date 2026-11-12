@@ -95,7 +95,7 @@ pub(super) async fn compact(
     .await
     .map_err(|_| "Compaction timed out. Conversation unchanged.")?
     .map_err(|e| format!("Compaction failed: {e}. Conversation unchanged."))?;
-    apply(memory, count, summary.output(), &text)?;
+    apply(memory, count, &summary.output(), &text)?;
     Ok(format!(
         "Summarized {count} earlier exchanges; the latest {KEEP} exchanges are unchanged."
     ))

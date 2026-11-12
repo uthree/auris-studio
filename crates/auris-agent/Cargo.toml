@@ -22,8 +22,8 @@ futures.workspace = true
 log.workspace = true
 # Use the facade with only the runtime and HTTP transport features this crate uses. This keeps
 # provider construction in the facade while avoiding unused integration features.
-rig = { version = "0.43", default-features = false, features = ["agent", "reqwest"] }
-rig-core = { version = "0.43", features = ["reqwest", "rustls"] }
+rig = { version = "0.46", default-features = false, features = ["agent", "reqwest"] }
+rig-core = { version = "0.46", features = ["reqwest", "rustls"] }
 # Audio attachments ride the wire base64-encoded, shared with the session.
 base64.workspace = true
 # For asking Ollama what it serves and Brave Search what the public web contains. The same

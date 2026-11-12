@@ -384,7 +384,7 @@ impl Bridge {
         }
         for clip in &audition.clips {
             content.push(rig_core::message::UserContent::text(audition.caption(clip)));
-            content.push(rig_core::message::UserContent::audio(
+            content.push(rig_core::message::UserContent::audio_base64(
                 clip.wav_base64.clone(),
                 Some(rig_core::message::AudioMediaType::WAV),
             ));

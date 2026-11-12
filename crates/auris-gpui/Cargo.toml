@@ -41,7 +41,7 @@ gpui-component = "=0.5.1"
 base64.workspace = true
 # Decode voice artwork on a worker, with bounded dimensions before GPUI sees the pixels.
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
-rfd = "0.17"
+rfd = "0.18"
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 semver.workspace = true
@@ -51,7 +51,7 @@ sha2.workspace = true
 tempfile.workspace = true
 # Decodes the file URLs macOS hands over when a project is double-clicked in Finder.
 url.workspace = true
-jsonc-parser = { version = "0.26", features = ["serde"] }
+jsonc-parser = { version = "0.34", features = ["serde"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2.workspace = true

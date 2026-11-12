@@ -15,7 +15,7 @@ version = "0.20.0"
 edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/uthree/auris-studio"
-rust-version = "1.95"
+rust-version = "1.100"
 
 [workspace.dependencies]
 auris-agent = { path = "crates/auris-agent", version = "0.20.0" }
