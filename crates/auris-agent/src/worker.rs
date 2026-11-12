@@ -1933,7 +1933,7 @@ mod tests {
     #[test]
     fn instrument_search_uses_the_permission_checked_live_session() {
         let call = completion(
-            r#"{"role":"assistant","tool_calls":[{"id":"sounds","type":"function","function":{"name":"search_instruments","arguments":"{\"request\":{\"mode\":\"text\",\"query\":\"strings\"}}"}}]}"#,
+            r#"{"role":"assistant","tool_calls":[{"id":"sounds","type":"function","function":{"name":"search_instruments","arguments":"{\"request\":{\"name\":\"strings\"}}"}}]}"#,
             "tool_calls",
         );
         let done = completion(
@@ -1959,7 +1959,7 @@ mod tests {
             .unwrap();
         let edit = until(&worker, "edit");
         assert_eq!(edit["command"]["action"], "search_instruments");
-        assert_eq!(edit["command"]["request"]["query"], "strings");
+        assert_eq!(edit["command"]["request"]["name"], "strings");
         worker.send(&serde_json::json!({"event":"edit_result","ok":true,"text":"live-session-only-strings"}).to_string()).unwrap();
         until(&worker, "answer");
         assert!(requests.lock().unwrap()[1].contains("live-session-only-strings"));

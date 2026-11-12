@@ -259,9 +259,10 @@
 //! # Live instrument discovery
 //!
 //! [`crate::Session::sound_library_job`] snapshots loaded fonts and configured plugin search roots for a
-//! worker-owned search catalog. `search_instruments` requires query words and returns at most
-//! 50 exact, process-local preset IDs; `similar_instruments` starts or queries a reusable
-//! background acoustic index. Both MCP and Rig use the same session implementation. MCP
+//! worker-owned search catalog. `search_instruments` takes one [`crate::SoundSearch`]: name
+//! words alone page through the catalogue, and `like`, `targets` or `envelope` rank measured
+//! sounds through a reusable background acoustic index instead. Each page holds at most 50
+//! exact, process-local preset IDs. Both MCP and Rig use the same session implementation. MCP
 //! resolves IDs against the named saved project and passes them as `sound_id`; Rig resolves
 //! against the unsaved document and passes them as `set_instrument.instrument`.
 //!
@@ -270,23 +271,20 @@
 //! browser is not a preset API. Applying a native preset prepares a separate instance first,
 //! snapshots its state, then records one undoable edit. No preset path is supplied by the model.
 //! Acoustic indexing uses the timbre map's six reference triggers and full standardized feature
-//! space, without its PCA display limit or cached audition buffers. Each failed/silent source is
+//! space, without the map's 512-sound limit or cached audition buffers. Each failed/silent source is
 //! reported within fixed metadata and index budgets. Explicit refresh, library-identity changes,
 //! bounded handle eviction and process restart invalidate IDs; heavyweight catalog eviction does
 //! not redirect an issued handle. Neither discovery nor measurement edits the document.
 //!
-//! Character discovery shares [`crate::TimbreTargets`] between the map and `search_instruments`
-//! mode `character`. Matched reference notes also produce fixed-scale brightness, attack speed,
-//! held sustain, captured release and noise descriptors. These do not depend on catalogue PCA
-//! normalization. Local Japanese/English impression terms map to target hypotheses; explicit
-//! targets override them. Arbitrary prose and negation are translated by the calling agent into
-//! targets, not interpreted by the local dictionary. Responses expose targets, recognized terms,
-//! measured descriptors and relative mismatch, never a probability or listening judgment.
-//! Optional reference IDs blend full-feature resemblance with target distance; ordinary name,
-//! source and library constraints still apply. Character and similarity searches reuse one bounded
-//! background index. Isolated native plugins remain metadata-only. Release uses the captured
-//! 400 ms tail and explicitly marks censored lower bounds. Desktop browsing keeps PCA and semantic
-//! coordinates separate; searching changes the result order/highlights without moving points.
+//! Acoustic discovery shares [`crate::SoundAxes`] with the desktop map: brightness and noise from
+//! the reference notes' spectra, attack speed and held sustain level from the envelope measured on
+//! C2, C4 and C6. [`crate::TimbreTargets`] are optional 0..1 values on those axes, so a target and
+//! a point on the map mean the same thing. Words such as "soft" are translated into targets by the
+//! calling agent; a person reads the map directly.
+//! Responses expose the axes, measured envelopes and relative mismatch, never a probability or
+//! listening judgment. `like` alone orders by full-feature distance; with targets it blends that
+//! resemblance with the target distance. Name, source and library constraints always apply.
+//! Isolated native plugins remain metadata-only.
 //!
 //! The measured envelope ([`crate::SoundEnvelope`]) is a separate render: C2, C4 and C6 at velocity
 //! 100, held until the level settles or dies and recorded until the tail falls 60 dB, each phase
@@ -380,8 +378,8 @@
 //! on the CPU. Library timbre exploration uses [`crate::Session::timbre_map_job`]: a read-only
 //! snapshot shares immutable SoundFonts with independent background instruments, measures matched
 //! reference notes through [`auris_dsp::timbre`], and retains previews and a feature-space index.
-//! The desktop displays PCA coordinates and clusters, while similarity queries use the complete
-//! standardized features. Only adopting a sound edits a track. Map audition uses independent
+//! The desktop places each sound on fixed [`crate::SoundAxes`] and colours it by feature-space
+//! cluster, while similarity queries use the complete standardized features. Only adopting a sound edits a track. Map audition uses independent
 //! output previews, including in an empty project. [`crate::Session::timbre_preview_job`] reuses
 //! the cached middle-C one-shot or renders an actual note from the same immutable library snapshot
 //! on a worker. The desktop cancels obsolete requests before replacing or closing the preview.

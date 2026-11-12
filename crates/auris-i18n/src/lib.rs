@@ -136,9 +136,6 @@ mod tests {
             Key::FormatMp3,
             // Dimensional notation is the same in both languages.
             Key::TimbreMapView3d,
-            Key::TimbreAxisPc1,
-            Key::TimbreAxisPc2,
-            Key::TimbreAxisPc3,
             // Product names, which the navigation column shows as names rather than as the
             // sentence 「…設定」 the old tab row needed.
             Key::VoiceSetupVoicevox,

@@ -855,10 +855,7 @@ impl AurisApp {
         let limited = found.len() > SEARCH_LIMIT;
         found.truncate(SEARCH_LIMIT);
         if found.is_empty() {
-            return vec![
-                self.note_row(0, self.t(Key::BrowserNothingFound)),
-                self.find_by_sound_row(query, cx),
-            ];
+            return vec![self.note_row(0, self.t(Key::BrowserNothingFound))];
         }
         let mut rows: Vec<AnyElement> = found
             .into_iter()
@@ -960,32 +957,7 @@ impl AurisApp {
         if limited {
             rows.push(self.note_row(0, self.t(Key::BrowserSearchLimited)));
         }
-        rows.push(self.find_by_sound_row(query, cx));
         rows
-    }
-
-    /// The way from a name search to the sound finder, carrying the words across: the tree
-    /// knows names, the finder knows names and how things sound, and somebody typing `soft`
-    /// here meant the second.
-    fn find_by_sound_row(&self, query: &str, cx: &mut gpui::Context<Self>) -> AnyElement {
-        let query = query.to_owned();
-        div()
-            .mx_1()
-            .mt_1()
-            .child(
-                atelier::Button::new("library-find-by-sound", self.t(Key::LibraryFindBySound))
-                    .icon(atelier::IconName::Search)
-                    .ghost()
-                    .size(atelier::ControlSize::Small)
-                    .full_width()
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.timbre_map.search = query.clone();
-                        this.leave_library_search();
-                        this.open_timbre_map(cx);
-                        cx.notify();
-                    })),
-            )
-            .into_any_element()
     }
 
     /// The singer voices section — the browser interface a voice shares with the instruments.
