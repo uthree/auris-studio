@@ -4,7 +4,6 @@
 //! the same two voices. Keeping those voices in one adapter makes the Atelier design language
 //! visible in both places and prevents a new entry point from inventing a third chat treatment.
 
-use atelier::CopyButton;
 use atelier::agent::{AssistantMessage, ChatNotice, UserMessage};
 use gpui::prelude::*;
 use gpui::{AnyElement, ElementId, IntoElement, ParentElement, SharedString, div};
@@ -118,46 +117,18 @@ mod selection_tests {
     }
 }
 
-/// What a message's Copy button says: its tooltip, and what it reads once it has copied.
-///
-/// A drag copies what the person sees: the conversation is one `SelectionScope`, so it runs
-/// across paragraphs, lists, code and messages, and a copy gives the words without their
-/// markup. The footer button is the other copy: the message whole, as its Markdown source,
-/// which is what someone pasting it into another editor or back to a model wants.
-#[derive(Clone)]
-pub(crate) struct CopyLabels {
-    /// The button's tooltip, such as "Copy Markdown".
-    pub(crate) tooltip: SharedString,
-    /// What the tooltip reads for a moment after a press.
-    pub(crate) copied: SharedString,
-}
-
-impl CopyLabels {
-    /// The footer button, findable in window tests as the message id followed by `-copy`.
-    fn button(&self, id: &ElementId, text: SharedString) -> CopyButton {
-        CopyButton::new(SharedString::from(format!("{id}-copy")), text)
-            .tooltip(self.tooltip.clone())
-            .copied_label(self.copied.clone())
-    }
-}
-
 /// Draws a person's selectable message with Atelier's trailing bubble geometry and tokens.
+///
+/// Neither conversation puts a Copy button under its messages. Each is one `SelectionScope`, so
+/// a drag runs across paragraphs, lists, code and messages and copies the words as shown, and
+/// the agent panel's Copy conversation still takes the whole transcript. A footer row kept a
+/// line of height free under every message even while its button was hidden.
 pub(crate) fn user_message(
     // atelier: allow — both conversations delegate their person message to UserMessage.
     id: impl Into<ElementId>,
     text: impl Into<SharedString>,
-    copy: Option<&CopyLabels>,
-    _theme: &Theme,
-    _window: &mut gpui::Window,
-    _cx: &mut gpui::App,
 ) -> AnyElement {
-    let id = id.into();
-    let text = text.into();
-    let copy = copy.map(|labels| labels.button(&id, text.clone()));
-    UserMessage::new(text)
-        .id(id)
-        .when_some(copy, |message, copy| message.action(copy))
-        .into_any_element()
+    UserMessage::new(text.into()).id(id).into_any_element()
 }
 
 /// Draws an agent answer: the prose alone, with no avatar or name above it.
@@ -171,17 +142,12 @@ pub(crate) fn assistant_message(
     // atelier: allow — both conversations delegate their answers to AssistantMessage.
     id: impl Into<ElementId>,
     text: impl Into<SharedString>,
-    copy: Option<&CopyLabels>,
     streaming: bool,
 ) -> AnyElement {
-    let id = id.into();
-    let text = text.into();
-    let copy = copy.map(|labels| labels.button(&id, text.clone()));
-    AssistantMessage::new(text)
+    AssistantMessage::new(text.into())
         .id(id)
         .anonymous()
         .streaming(streaming)
-        .when_some(copy, |message, copy| message.action(copy))
         .into_any_element()
 }
 
@@ -193,15 +159,11 @@ pub(crate) fn workshop_message(
     id: impl Into<ElementId>,
     user: bool,
     text: impl Into<SharedString>,
-    copy: Option<&CopyLabels>,
-    theme: &Theme,
-    window: &mut gpui::Window,
-    cx: &mut gpui::App,
 ) -> AnyElement {
     if user {
-        user_message(id, text, copy, theme, window, cx)
+        user_message(id, text)
     } else {
-        assistant_message(id, text, copy, false)
+        assistant_message(id, text, false)
     }
 }
 

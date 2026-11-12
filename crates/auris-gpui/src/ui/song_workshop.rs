@@ -112,13 +112,17 @@ impl SongWorkshop {
         changed
     }
     /// Send feedback only to the exact conversation and candidate that opened the sheet.
+    ///
+    /// The window's copy of the conversation takes it at once, so the stars and impressions
+    /// shown are the ones just chosen rather than the ones before, until the worker publishes
+    /// the same edit back.
     pub(super) fn send_feedback(
-        &self,
+        &mut self,
         identity: u64,
         id: u64,
         feedback: auris_session::workshop::Feedback,
     ) -> bool {
-        self.identity == identity
+        let sent = self.identity == identity
             && self.snapshot.as_ref().is_some_and(|snapshot| {
                 snapshot
                     .document
@@ -134,8 +138,13 @@ impl SongWorkshop {
                     .map_or("default", |s| s.document.thread_id.as_str())
                     .to_owned(),
                 id,
-                feedback,
-            ))
+                feedback.clone(),
+            ));
+        if sent && let Some(snapshot) = self.snapshot.as_mut() {
+            // Validated by the check above; a refusal here would be a candidate gone meanwhile.
+            let _ = snapshot.document.record_feedback(id, feedback);
+        }
+        sent
     }
     /// Whether the director's last card can be answered now: nothing running, nothing already
     /// waiting to go, and a model to send the answer to.
@@ -295,7 +304,43 @@ impl Drop for SongWorkshop {
 }
 
 impl AurisApp {
-    fn open_workshop_feedback(&mut self, id: u64, cx: &mut Context<Self>) {
+    /// Rate a finished candidate with `rating` stars, keeping whatever impressions it already has.
+    ///
+    /// Sent as the star is pressed: a rating is one choice, and a sheet that asked for it again
+    /// and then for a confirmation was two steps between hearing a song and saying so.
+    fn rate_workshop_candidate(&mut self, id: u64, rating: u8) {
+        let Some(state) = self.song_workshop.as_mut() else {
+            return;
+        };
+        let comment = state
+            .snapshot
+            .as_ref()
+            .and_then(|snapshot| {
+                snapshot
+                    .document
+                    .rounds
+                    .iter()
+                    .flat_map(|r| &r.candidates)
+                    .find(|c| c.id == id)
+            })
+            .and_then(|candidate| candidate.feedback.as_ref())
+            .map_or_else(String::new, |feedback| feedback.comment.clone());
+        let identity = state.identity;
+        let sent = state.send_feedback(
+            identity,
+            id,
+            auris_session::workshop::Feedback { rating, comment },
+        );
+        if !sent {
+            self.set_status(self.t(Key::WorkshopFeedbackUnavailable));
+        }
+    }
+
+    /// Open the impressions of a rated candidate for writing, in place over the card.
+    ///
+    /// The field carries the rating it was opened with; a star pressed while it is open commits
+    /// the field first (a press outside it does), so neither edit overwrites the other.
+    fn open_workshop_impressions(&mut self, id: u64) {
         let Some(state) = &self.song_workshop else {
             return;
         };
@@ -311,7 +356,9 @@ impl AurisApp {
         else {
             return;
         };
-        let feedback = candidate.feedback.as_ref();
+        let Some(feedback) = candidate.feedback.as_ref() else {
+            return;
+        };
         let prompt = super::prompt::Prompt::new(
             self.t(Key::WorkshopFeedbackTitle)
                 .replace(
@@ -322,13 +369,96 @@ impl AurisApp {
             super::prompt::PromptTarget::WorkshopFeedback {
                 workshop: state.identity,
                 candidate: id,
-                rating: feedback.map_or(0, |f| f.rating),
+                rating: feedback.rating,
             },
-            feedback.map_or_else(String::new, |f| f.comment.clone()),
+            feedback.comment.clone(),
         )
-        .with_feedback_focus(cx);
+        .inline(super::inline_edit::InlinePlace::Spot(
+            super::inline_edit::impressions_spot(id),
+        ));
         self.open_prompt(prompt);
     }
+
+    /// A candidate's five stars, and under them its impressions with the button that writes them.
+    fn render_candidate_rating(
+        &self,
+        index: usize,
+        id: u64,
+        feedback: Option<&auris_session::workshop::Feedback>,
+        rateable: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let theme = &self.theme;
+        let spacing = theme.atelier.spacing;
+        let rating = feedback.map_or(0, |f| f.rating.min(5));
+        let mut stars = div().flex().items_center().gap(spacing.xs).child(
+            Label::new(self.t(Key::WorkshopFeedbackRating))
+                .size(TextSize::Small)
+                .color(TextColor::Muted),
+        );
+        for value in 1..=5u8 {
+            let filled = value <= rating;
+            stars = stars.child(
+                Button::icon_only(
+                    gpui::ElementId::Name(format!("song-star-{index}-{value}").into()),
+                    super::icons::Icon::Star { filled }.source(),
+                )
+                .size(atelier::ControlSize::Small)
+                .tooltip(
+                    self.t(Key::WorkshopRateStars)
+                        .replace("{value}", &value.to_string()),
+                )
+                .disabled(!rateable)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.rate_workshop_candidate(id, value);
+                    cx.notify();
+                })),
+            );
+        }
+        let mut column = div().flex().flex_col().gap(spacing.xs).child(stars);
+        if let Some(feedback) = feedback {
+            let mut impressions = div()
+                .relative()
+                .flex()
+                .flex_col()
+                .items_start()
+                .gap(spacing.xs)
+                .child(
+                    self.canvas
+                        .spots
+                        .spot(super::inline_edit::impressions_spot(id)),
+                );
+            if !feedback.comment.is_empty() {
+                impressions = impressions.child(
+                    div()
+                        .debug_selector(move || format!("song-impressions-text-{index}"))
+                        .text_size(theme.atelier.typography.size_sm)
+                        .child(feedback.comment.clone()),
+                );
+            }
+            column = column.child(
+                impressions.child(
+                    Button::new(
+                        gpui::ElementId::Name(format!("song-impressions-{index}").into()),
+                        self.t(if feedback.comment.is_empty() {
+                            Key::WorkshopWriteImpressions
+                        } else {
+                            Key::WorkshopEditImpressions
+                        }),
+                    )
+                    .ghost()
+                    .size(atelier::ControlSize::Small)
+                    .disabled(!rateable)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.open_workshop_impressions(id);
+                        cx.notify();
+                    })),
+                ),
+            );
+        }
+        column.into_any_element()
+    }
+
     pub(crate) fn workshop_attach_files(
         &mut self,
         paths: &[std::path::PathBuf],
@@ -1060,25 +1190,16 @@ impl AurisApp {
                     &theme,
                 ));
             }
-            let copy = agent_components::CopyLabels {
-                tooltip: self.t(Key::AgentCopyMarkdown).into(),
-                copied: self.t(Key::CopiedToClipboard).into(),
-            };
             for (i, message) in snapshot.document.messages.iter().enumerate() {
                 let entry = agent_components::workshop_message(
                     ("song-workshop-message", i),
                     message.user,
                     message.text.clone(),
-                    Some(&copy),
-                    &theme,
-                    window,
-                    cx,
                 );
                 let entry =
                     div()
                         .flex()
                         .flex_col()
-                        .group("workshop-copy")
                         .gap(spacing.xs)
                         .child(entry)
                         .children(message.attachments.iter().enumerate().map(
@@ -1119,23 +1240,6 @@ impl AurisApp {
                                     .child(preview)
                             },
                         ))
-                        .child(
-                            div()
-                                .flex()
-                                .when(message.user, |row| row.justify_end())
-                                .child(
-                                    div()
-                                        .rounded(theme.atelier.shape.radius_md)
-                                        .when(message.user, |copy| copy.bg(theme.surface))
-                                        .child(self.workshop_copy_button(
-                                            ("song-copy-message", i),
-                                            Key::WorkshopCopyMessage,
-                                            message.text.clone(),
-                                            window,
-                                            cx,
-                                        )),
-                                ),
-                        )
                         .into_any_element();
                 // The person's own words are already in an opaque bubble.
                 transcript = transcript.child(if message.user {
@@ -1812,46 +1916,21 @@ impl AurisApp {
         let retry_enabled =
             !s.switching && (running || (!snapshot.planning && snapshot.progress.len() < 3));
         let unfinished = !candidate.ready;
-        if let Some(feedback) = &candidate.feedback {
-            card = card.child(
-                Label::new(format!(
-                    "{}{}  {}/5",
-                    "★".repeat(usize::from(feedback.rating.min(5))),
-                    "☆".repeat(usize::from(5 - feedback.rating.min(5))),
-                    feedback.rating
-                ))
-                .size(TextSize::Small),
-            );
-            if !feedback.comment.is_empty() {
-                card = card.child(
-                    div()
-                        .text_size(theme.atelier.typography.size_sm)
-                        .child(feedback.comment.clone()),
-                );
-            }
-        }
+        // Rated where the song is heard: a star press is the rating, sent as it is pressed,
+        // and the impressions are written over the card rather than in a sheet.
+        let rateable = candidate.ready && !running && !s.switching;
+        card = card.child(self.render_candidate_rating(
+            index,
+            id,
+            candidate.feedback.as_ref(),
+            rateable,
+            cx,
+        ));
         card.child(
             div()
                 .flex()
                 .flex_wrap()
                 .gap(spacing.sm)
-                .child(
-                    Button::new(
-                        ("song-feedback", index),
-                        self.t(if candidate.feedback.is_some() {
-                            Key::WorkshopEditFeedback
-                        } else {
-                            Key::WorkshopRateSong
-                        }),
-                    )
-                    .ghost()
-                    .disabled(!candidate.ready || running || s.switching)
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.open_workshop_feedback(id, cx);
-                        this.focus.focus(window);
-                        cx.notify();
-                    })),
-                )
                 .child(
                     Button::new(("song-adopt", index), self.t(Key::WorkshopContinue))
                         .icon(IconName::Check)
@@ -2089,8 +2168,28 @@ mod tests {
         });
     }
 
+    /// The feedback the window's copy of the conversation holds for its first candidate.
+    fn first_feedback(
+        app: &gpui::Entity<AurisApp>,
+        cx: &mut gpui::VisualTestContext,
+    ) -> Option<auris_session::workshop::Feedback> {
+        app.read_with(cx, |this, _| {
+            this.song_workshop
+                .as_ref()
+                .unwrap()
+                .snapshot
+                .as_ref()
+                .unwrap()
+                .document
+                .rounds[0]
+                .candidates[0]
+                .feedback
+                .clone()
+        })
+    }
+
     #[gpui::test]
-    fn feedback_form_accepts_stars_multiline_impressions_and_preserves_failed_submissions(
+    fn stars_rate_a_candidate_in_place_and_impressions_are_written_over_the_card(
         cx: &mut gpui::TestAppContext,
     ) {
         use crate::harness::{click, paint};
@@ -2102,40 +2201,48 @@ mod tests {
             })
         });
         make_ready(&app, cx);
-        app.update(cx, |this, _| {
+        let (commands, _snapshots) = app.update(cx, |this, _| {
             let state = this.song_workshop.as_mut().unwrap();
+            let (runtime, commands, snapshots) = Workshop::loopback();
+            state.runtime = Some(runtime);
             state.brief = TextField::new("Unsent brief");
             state.snapshot.as_mut().unwrap().document = serde_json::from_value(serde_json::json!({
                 "messages":[{"user":false,"text":"Here is your song"}],
                 "rounds":[{"after_message":1,"candidates":[{"id":1,"parent":null,"ready":true,"error":null,
                     "direction":{"title":"My song","description":"Piano","instructions":"Compose"}}]}]
             })).unwrap();
+            (commands, snapshots)
         });
         paint(&app, cx);
-        click("song-feedback-0", cx);
-        paint(&app, cx);
-        cx.simulate_keystrokes("enter");
-        paint(&app, cx);
-        assert!(cx.debug_bounds("prompt-error").is_some());
-        cx.simulate_keystrokes("shift-tab space");
-        // A focused control is pressed when Space comes back up, as a native button is.
-        cx.simulate_event(gpui::KeyUpEvent {
-            keystroke: gpui::Keystroke::parse("space").unwrap(),
-        });
-        app.read_with(cx, |this, _| {
-            assert!(matches!(
-                this.prompt.as_ref().unwrap().target(),
-                Some(super::super::prompt::PromptTarget::WorkshopFeedback { rating: 5, .. })
+        // Nothing to write impressions on until there is a rating to attach them to.
+        assert!(cx.debug_bounds("song-impressions-0").is_none());
+
+        // One press is the rating: no sheet, and the card shows it at once.
+        click("song-star-0-4", cx);
+        app.read_with(cx, |this, _| assert!(this.prompt.is_none()));
+        assert_eq!(
+            first_feedback(&app, cx),
+            Some(auris_session::workshop::Feedback {
+                rating: 4,
+                comment: String::new(),
+            })
+        );
+        assert!(matches!(
+            commands.try_recv(),
+            Ok(Command::Feedback(
+                _,
+                1,
+                auris_session::workshop::Feedback { rating: 4, .. }
             ))
-        });
-        click("feedback-star-4", cx);
-        click("feedback-comment", cx);
-        cx.simulate_input("メロディが好き");
-        cx.simulate_keystrokes("shift-enter");
-        cx.simulate_input("ドラムを控えめに");
-        cx.simulate_keystrokes("enter");
-        app.read_with(cx, |this, _| {
-            let prompt = this.prompt.as_ref().unwrap();
+        ));
+
+        // The impressions open in place, over the card, not as a sheet.
+        paint(&app, cx);
+        click("song-impressions-0", cx);
+        paint(&app, cx);
+        cx.update(|window, cx| {
+            let this = app.read(cx);
+            let prompt = this.prompt.as_ref().expect("the impressions opened");
             assert!(matches!(
                 prompt.target(),
                 Some(super::super::prompt::PromptTarget::WorkshopFeedback {
@@ -2144,29 +2251,64 @@ mod tests {
                     ..
                 })
             ));
-            assert_eq!(
-                prompt.field().unwrap().content(),
-                "メロディが好き\nドラムを控えめに"
-            );
+            assert!(this.inline_bounds(prompt, window).is_some());
+        });
+        cx.simulate_input("メロディが好き");
+        cx.simulate_keystrokes("shift-enter");
+        cx.simulate_input("ドラムを控えめに");
+        cx.simulate_keystrokes("enter");
+        paint(&app, cx);
+        app.read_with(cx, |this, _| {
+            assert!(this.prompt.is_none());
             assert_eq!(
                 this.song_workshop.as_ref().unwrap().brief.content(),
                 "Unsent brief"
             );
-            assert!(
-                this.song_workshop
-                    .as_ref()
-                    .unwrap()
-                    .snapshot
-                    .as_ref()
-                    .unwrap()
-                    .document
-                    .rounds[0]
-                    .candidates[0]
-                    .feedback
-                    .is_none()
-            );
         });
-        cx.simulate_keystrokes("escape");
+        assert_eq!(
+            first_feedback(&app, cx),
+            Some(auris_session::workshop::Feedback {
+                rating: 4,
+                comment: "メロディが好き\nドラムを控えめに".into(),
+            })
+        );
+        assert!(cx.debug_bounds("song-impressions-text-0").is_some());
+
+        // A new rating keeps what was written.
+        click("song-star-0-2", cx);
+        assert_eq!(
+            first_feedback(&app, cx),
+            Some(auris_session::workshop::Feedback {
+                rating: 2,
+                comment: "メロディが好き\nドラムを控えめに".into(),
+            })
+        );
+    }
+
+    #[gpui::test]
+    fn a_rating_that_cannot_be_sent_changes_nothing(cx: &mut gpui::TestAppContext) {
+        use crate::harness::{click, paint};
+        let (app, cx) = crate::harness::open(cx);
+        cx.update(|window, cx| {
+            app.update(cx, |this, cx| {
+                this.show_project_chooser(window, cx);
+                this.open_song_workshop(window, cx);
+            })
+        });
+        // No worker behind the window: the press has nowhere to go.
+        make_ready(&app, cx);
+        app.update(cx, |this, _| {
+            this.song_workshop.as_mut().unwrap().snapshot.as_mut().unwrap().document =
+                serde_json::from_value(serde_json::json!({
+                    "messages":[{"user":false,"text":"Here is your song"}],
+                    "rounds":[{"after_message":1,"candidates":[{"id":1,"parent":null,"ready":true,"error":null,
+                        "direction":{"title":"My song","description":"Piano","instructions":"Compose"}}]}]
+                }))
+                .unwrap();
+        });
+        paint(&app, cx);
+        click("song-star-0-5", cx);
+        assert_eq!(first_feedback(&app, cx), None);
         app.read_with(cx, |this, _| assert!(this.prompt.is_none()));
     }
 
@@ -3140,10 +3282,6 @@ mod tests {
         for (selector, expected) in [
             ("song-copy-title-0", "夜の散歩"),
             ("song-copy-concept-0", "静かなピアノ\n柔らかな弦楽器"),
-            (
-                "song-copy-message-0",
-                "この方向で作ります。\nピアノを中心に。",
-            ),
         ] {
             crate::harness::click(selector, cx);
             cx.update(|_, cx| {

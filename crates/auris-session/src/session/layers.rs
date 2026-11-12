@@ -404,8 +404,8 @@ mod tests {
             .into_iter()
             .find(|edge| edge.kind == MixerEdgeKind::Notes)
             .expect("a layer is drawn as a wire from its source");
-        assert_eq!(wire.source, MixerNode::Strip(Some(lead)));
-        assert_eq!(wire.target, MixerNode::Strip(Some(layer)));
+        assert_eq!(wire.source, MixerNode(Some(lead)));
+        assert_eq!(wire.target, MixerNode(Some(layer)));
 
         assert!(session.disconnect_mixer_edges(&[wire]).unwrap());
         assert_eq!(session.layer_source(layer), None);

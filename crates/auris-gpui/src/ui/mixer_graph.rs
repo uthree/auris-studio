@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::time::{Duration, Instant};
 
 use auris_i18n::Key;
-use auris_session::mixer_graph::{MixerEdge, MixerEdgeKind, MixerGraph, MixerNode};
+use auris_session::mixer_graph::{MixerEdge, MixerEdgeKind, MixerGraph, MixerNode, MixerPort};
 use auris_session::prelude::*;
 use gpui::{AnyElement, Axis, Entity, IntoElement, MouseButton, SharedString, div, prelude::*, px};
 use gpui_flow::{
@@ -20,6 +20,8 @@ use crate::ui::plugin_window::PluginSubject;
 use crate::ui::widgets::{ButtonState, ButtonStyle, button, button_enabled, channel_meter};
 
 const NODE_WIDTH: f32 = 176.0;
+/// The handle on a strip's top edge that a sidechain lands on.
+const KEY_HANDLE: &str = "key";
 const COLUMN: f32 = 360.0;
 const ROW: f32 = 280.0;
 // Curve control points are separated enough to leave a label-height gap at their midpoints.
@@ -102,9 +104,8 @@ fn wire_style(kind: MixerEdgeKind, theme: &Theme) -> (gpui::Hsla, EdgeStroke) {
         MixerEdgeKind::Output {
             tap: Tap::PreFader, ..
         } => (theme.mixer_pre_fader_color(), EdgeStroke::Dashed),
-        MixerEdgeKind::Sidechain => (theme.mixer_sidechain_color(), EdgeStroke::Dotted),
+        MixerEdgeKind::Sidechain { .. } => (theme.mixer_sidechain_color(), EdgeStroke::Dotted),
         MixerEdgeKind::Notes => (theme.mixer_notes_color(), EdgeStroke::Dashed),
-        MixerEdgeKind::Chain => (theme.text_faint, EdgeStroke::Solid),
     }
 }
 
@@ -149,12 +150,10 @@ fn wire_palette(theme: &Theme) -> [u32; 4] {
 fn wire_lanes(graph: &MixerGraph) -> HashMap<SharedString, f32> {
     let mut pairs: HashMap<_, Vec<_>> = HashMap::new();
     for edge in &graph.edges {
-        if !matches!(edge.kind, MixerEdgeKind::Chain) {
-            pairs
-                .entry((edge.source, edge.target))
-                .or_default()
-                .push(edge);
-        }
+        pairs
+            .entry((edge.source, edge.target))
+            .or_default()
+            .push(edge);
     }
     pairs
         .into_values()
@@ -167,9 +166,8 @@ fn wire_lanes(graph: &MixerGraph) -> HashMap<SharedString, f32> {
                 MixerEdgeKind::Output {
                     tap: Tap::PreFader, ..
                 } => (1, 0),
-                MixerEdgeKind::Sidechain => (2, 0),
-                MixerEdgeKind::Chain => (3, 0),
-                MixerEdgeKind::Notes => (4, 0),
+                MixerEdgeKind::Sidechain { slot } => (2, slot.0),
+                MixerEdgeKind::Notes => (3, 0),
             });
             let center = (edges.len() - 1) as f32 / 2.0;
             edges.into_iter().enumerate().map(move |(index, edge)| {
@@ -247,50 +245,66 @@ where
 }
 
 fn node_id(node: MixerNode) -> SharedString {
-    match node {
-        MixerNode::Strip(owner) => format!("mix-track-{}", owner.map_or(0, |id| id.0)),
-
-        MixerNode::Effect(_, slot) => format!("mix-effect-{}", slot.0),
-    }
-    .into()
+    format!("mix-track-{}", node.0.map_or(0, |id| id.0)).into()
 }
 
 fn edge_id(edge: &MixerEdge) -> SharedString {
-    let owner = match edge.source {
-        MixerNode::Strip(owner) | MixerNode::Effect(owner, _) => owner,
-    };
-    let source = MixerNode::Strip(owner).key();
+    let source = edge.source.key();
     match edge.kind {
         MixerEdgeKind::Output { tap, .. } => format!(
             "mix-output-{source}-{}{}",
             edge.target.key(),
             if tap == Tap::PreFader { "-pre" } else { "" }
         ),
-        MixerEdgeKind::Sidechain => format!("mix-key-{source}-{}", edge.target.key()),
+        MixerEdgeKind::Sidechain { slot } => {
+            format!("mix-key-{source}-{}-{}", edge.target.key(), slot.0)
+        }
         MixerEdgeKind::Notes => format!("mix-notes-{source}-{}", edge.target.key()),
-        MixerEdgeKind::Chain => format!("mix-chain-{}-{}", edge.source.key(), edge.target.key()),
     }
     .into()
 }
 
-fn gesture(graph: &MixerGraph, connection: &Connection) -> Option<(TrackId, MixerNode)> {
+/// What a finished drag asks for: a new output, or a key for one of the target's effects.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Gesture {
+    Output(TrackId, MixerNode),
+    Key(TrackId, MixerNode),
+}
+
+fn gesture(graph: &MixerGraph, connection: &Connection) -> Option<Gesture> {
     let source = graph.nodes.iter().find_map(|node| match node {
-        MixerNode::Strip(Some(track)) | MixerNode::Effect(Some(track), _)
-            if node_id(*node) == connection.source =>
-        {
-            Some(*track)
-        }
+        MixerNode(Some(track)) if node_id(*node) == connection.source => Some(*track),
         _ => None,
     })?;
-    let target = graph
+    let target = *graph
         .nodes
         .iter()
         .find(|node| node_id(**node) == connection.target)?;
-    Some((source, *target))
+    Some(
+        if connection
+            .target_handle
+            .as_ref()
+            .map(|handle| handle.as_ref())
+            == Some(KEY_HANDLE)
+        {
+            Gesture::Key(source, target)
+        } else {
+            Gesture::Output(source, target)
+        },
+    )
 }
 
-/// Longest-path columns make every dependency point forward, including sidechains.
-fn positions(graph: &MixerGraph) -> HashMap<MixerNode, FlowPoint> {
+/// A strip of the project: a track's or bus's, or the master's for `None`.
+fn strip_of(project: &Project, owner: Option<TrackId>) -> Option<&MixerStrip> {
+    match owner {
+        Some(id) => project.track(id).map(|track| &track.mixer),
+        None => Some(&project.master),
+    }
+}
+
+/// Longest-path columns make every dependency point forward, including sidechains. Rows leave
+/// room for each card's inserts, which are part of the card rather than nodes of their own.
+fn positions(graph: &MixerGraph, project: &Project) -> HashMap<MixerNode, FlowPoint> {
     let indices: HashMap<_, _> = graph
         .nodes
         .iter()
@@ -322,8 +336,11 @@ fn positions(graph: &MixerGraph) -> HashMap<MixerNode, FlowPoint> {
     }
     let mut rows = HashMap::new();
     let mut y = 24.0;
+    let effect_rows =
+        |owner: &Option<TrackId>| strip_of(project, *owner).map_or(0, |strip| strip.effects.len());
     for node in &graph.nodes {
-        if let MixerNode::Strip(owner) = node {
+        {
+            let owner = &node.0;
             rows.insert(*owner, y);
             let outputs: Vec<Output> = graph
                 .edges
@@ -335,7 +352,7 @@ fn positions(graph: &MixerGraph) -> HashMap<MixerNode, FlowPoint> {
                             gain_db,
                             tap,
                         },
-                        MixerNode::Strip(target),
+                        MixerNode(target),
                     ) if Some(track) == *owner => Some(Output {
                         to: auris_session::mixer_graph::destination(target),
                         gain_db,
@@ -349,7 +366,7 @@ fn positions(graph: &MixerGraph) -> HashMap<MixerNode, FlowPoint> {
             } else {
                 0
             };
-            y += ROW + rows as f32 * 64.0;
+            y += ROW + rows as f32 * 64.0 + effect_rows(owner) as f32 * 40.0;
         }
     }
     graph
@@ -357,12 +374,9 @@ fn positions(graph: &MixerGraph) -> HashMap<MixerNode, FlowPoint> {
         .iter()
         .enumerate()
         .map(|(i, node)| {
-            let owner = match node {
-                MixerNode::Strip(t) | MixerNode::Effect(t, _) => t,
-            };
             (
                 *node,
-                FlowPoint::new(24.0 + columns[i] as f32 * COLUMN, rows[owner]),
+                FlowPoint::new(24.0 + columns[i] as f32 * COLUMN, rows[&node.0]),
             )
         })
         .collect()
@@ -753,11 +767,32 @@ impl AurisApp {
         for connection in pending {
             let document = self.session.mixer_graph();
             let result = gesture(&document, &connection)
-                .map(|(from, to)| self.session.connect_mixer(from, to));
+                .and_then(|gesture| self.mixer_gesture_port(gesture))
+                .map(|(from, port)| self.session.connect_mixer(from, port));
             match result {
                 Some(Ok(true)) => {}
                 Some(Err(error)) => self.set_failed_status(self.failure(Key::MixerGraph, &error)),
                 _ => self.set_failed_status(self.t(Key::MixerConnectionRejected).to_string()),
+            }
+        }
+    }
+
+    /// The port a drag lands on. A key goes to the first effect on the strip that will take it
+    /// from this source; the effect's own menu chooses another.
+    fn mixer_gesture_port(&mut self, gesture: Gesture) -> Option<(TrackId, MixerPort)> {
+        match gesture {
+            Gesture::Output(from, to) => Some((from, MixerPort::Input(to))),
+            Gesture::Key(from, to) => {
+                let slots: Vec<_> = strip_of(self.session.project(), to.0)?
+                    .effects
+                    .iter()
+                    .map(|effect| effect.id)
+                    .collect();
+                slots
+                    .into_iter()
+                    .map(|slot| MixerPort::Key(to, slot))
+                    .find(|port| self.session.can_connect_mixer(from, *port))
+                    .map(|port| (from, port))
             }
         }
     }
@@ -822,17 +857,19 @@ impl AurisApp {
         let mut allowed = HashSet::new();
         if routing_changed {
             for node in &document.nodes {
-                let source = match node {
-                    MixerNode::Strip(Some(id)) | MixerNode::Effect(Some(id), _) => Some(*id),
-                    _ => None,
+                let MixerNode(Some(source)) = *node else {
+                    continue;
                 };
-                if let Some(source) = source
-                    && self.session.mixer_graph_output(Some(source)) == *node
-                {
-                    for target in &document.nodes {
-                        if self.session.can_connect_mixer(source, *target) {
-                            allowed.insert((node_id(*node), node_id(*target)));
-                        }
+                for target in &document.nodes {
+                    let input = self
+                        .session
+                        .can_connect_mixer(source, MixerPort::Input(*target));
+                    if input
+                        || self
+                            .mixer_gesture_port(Gesture::Key(source, *target))
+                            .is_some()
+                    {
+                        allowed.insert((node_id(*node), node_id(*target)));
                     }
                 }
             }
@@ -842,7 +879,7 @@ impl AurisApp {
         if let Some(canvas) = self.mixer_canvas.as_mut()
             && canvas.stored_nodes != *saved_nodes
         {
-            let layout = positions(document);
+            let layout = positions(document, self.session.project());
             canvas.state.update(cx, |state, _| {
                 for node in &mut state.nodes {
                     if let Some(identity) = canvas.by_id.get(&node.id) {
@@ -877,15 +914,19 @@ impl AurisApp {
             return;
         }
         let saved = self.project().mixer_graph_view.clone().sanitized();
-        let layout = positions(document);
+        let layout = positions(document, self.session.project());
         let lanes = wire_lanes(document);
         let old_owners: HashSet<_> = canvas.document.nodes.iter().copied().collect();
-        let mut sidechain_slots = HashSet::new();
+        let mut keyed = HashSet::new();
         for node in &document.nodes {
-            if let MixerNode::Effect(track, slot) = node
-                && self.session.effect_wants_sidechain(*track, *slot)
+            let slots: Vec<_> = strip_of(self.session.project(), node.0)
+                .map(|strip| strip.effects.iter().map(|effect| effect.id).collect())
+                .unwrap_or_default();
+            if slots
+                .into_iter()
+                .any(|slot| self.session.effect_wants_sidechain(node.0, slot))
             {
-                sidechain_slots.insert(*slot);
+                keyed.insert(*node);
             }
         }
         canvas.state.update(cx, |state, _| {
@@ -904,33 +945,21 @@ impl AurisApp {
                                 .map(|p| FlowPoint::new(p.x, p.y))
                         })
                         .unwrap_or(layout[node]);
-                    let handles = match node {
-                        MixerNode::Strip(owner) => {
-                            let mut handles = Vec::new();
-                            if owner.is_some() && self.session.mixer_graph_output(*owner) == *node {
-                                handles.push(HandleDef::source(HandlePosition::Right));
-                            }
-                            if owner.is_none_or(|id| {
-                                self.project()
-                                    .track(id)
-                                    .is_some_and(|track| track.kind.is_bus())
-                            }) {
-                                handles.push(HandleDef::target(HandlePosition::Left));
-                            }
-                            handles
-                        }
-                        MixerNode::Effect(owner, slot) => {
-                            let mut handles = Vec::new();
-                            if owner.is_some() && self.session.mixer_graph_output(*owner) == *node {
-                                handles.push(HandleDef::source(HandlePosition::Right));
-                            }
-                            if sidechain_slots.contains(slot) {
-                                handles
-                                    .push(HandleDef::target(HandlePosition::Top).id("sidechain"));
-                            }
-                            handles
-                        }
-                    };
+                    let owner = node.0;
+                    let mut handles = Vec::new();
+                    if owner.is_some() {
+                        handles.push(HandleDef::source(HandlePosition::Right));
+                    }
+                    if owner.is_none_or(|id| {
+                        self.project()
+                            .track(id)
+                            .is_some_and(|track| track.kind.is_bus())
+                    }) {
+                        handles.push(HandleDef::target(HandlePosition::Left));
+                    }
+                    if keyed.contains(node) {
+                        handles.push(HandleDef::target(HandlePosition::Top).id(KEY_HANDLE));
+                    }
                     let mut flow = FlowNode::new(id, position.x, position.y)
                         .size(NODE_WIDTH, 136.0)
                         .handles(handles);
@@ -959,11 +988,8 @@ impl AurisApp {
                         .edges
                         .iter()
                         .any(|existing| existing.id == id && existing.selected);
-                    flow.deletable = !matches!(edge.kind, MixerEdgeKind::Chain);
-                    flow.selectable = flow.deletable;
-                    if !flow.deletable {
-                        flow.stroke_width = Some(1.0);
-                    }
+                    flow.deletable = true;
+                    flow.selectable = true;
                     match edge.kind {
                         MixerEdgeKind::Output { gain_db, tap, .. } => {
                             flow = flow.label(output_wire_label(
@@ -973,13 +999,12 @@ impl AurisApp {
                                 tap,
                             ));
                         }
-                        MixerEdgeKind::Sidechain => {
+                        MixerEdgeKind::Sidechain { .. } => {
                             flow = flow
                                 .label(self.t(Key::MenuSidechain))
-                                .target_handle("sidechain");
+                                .target_handle(KEY_HANDLE);
                         }
                         MixerEdgeKind::Notes => flow = flow.label(self.t(Key::MixerNotesWire)),
-                        _ => {}
                     }
                     flow
                 })
@@ -1019,7 +1044,7 @@ impl AurisApp {
     }
 
     pub(crate) fn arrange_mixer_nodes(&mut self, cx: &mut gpui::Context<Self>) {
-        let layout = positions(&self.session.mixer_graph());
+        let layout = positions(&self.session.mixer_graph(), self.session.project());
         if let Some(canvas) = &mut self.mixer_canvas {
             let before = canvas.presentation(cx);
             self.session.seed_mixer_node_positions(&before.nodes);
@@ -1135,9 +1160,7 @@ impl AurisApp {
         else {
             return div().into_any_element();
         };
-        let owner = match node {
-            MixerNode::Strip(t) | MixerNode::Effect(t, _) => t,
-        };
+        let owner = node.0;
         let theme = self.theme.clone();
         let (zoom, selected) = self.mixer_canvas.as_ref().map_or((1.0, false), |canvas| {
             let state = canvas.state.read(cx);
@@ -1184,186 +1207,237 @@ impl AurisApp {
                     .text_color(theme.text_muted)
                     .child(name)
             });
-        match node {
-            MixerNode::Effect(_, slot) => {
-                let effect = owner
-                    .and_then(|id| self.project().track(id))
-                    .map_or(&self.project().master, |t| &t.mixer)
-                    .effects
-                    .iter()
-                    .find(|effect| effect.id == slot);
-                if let Some(effect) = effect {
-                    let label = self.effect_label(slot, &effect.effect_id.clone());
-                    let enabled = effect.enabled;
-                    let menu_label = label.clone();
-                    let subject = PluginSubject::Insert { track: owner, slot };
-                    let open = self.plugin_editor_is_open(subject);
-                    card = card
-                        .child(div().truncate().child(label))
-                        .child(node_button(
+        let strip = owner
+            .and_then(|id| self.project().track(id))
+            .map_or(&self.project().master, |t| &t.mixer);
+        let (gain, pan, muted, soloed) = (strip.gain_db, strip.pan, strip.mute, strip.solo);
+        let effects: Vec<_> = strip
+            .effects
+            .iter()
+            .map(|effect| {
+                (
+                    effect.id,
+                    effect.effect_id.clone(),
+                    effect.enabled,
+                    effect.sidechain,
+                )
+            })
+            .collect();
+        for (slot, effect_id, enabled, key) in effects {
+            card =
+                card.child(self.mixer_effect_row(owner, slot, &effect_id, enabled, key, zoom, cx));
+        }
+        card = card
+            .child(node_button(
+                zoom,
+                SharedString::from(format!("graph-add-fx-{id}")),
+                self.t(Key::MenuAddEffect),
+                ButtonStyle::Ghost,
+                false,
+                theme.accent_soft,
+                &theme,
+                Self::opens_menu(cx, move |this, at| this.effect_picker_menu(at, owner)),
+            ))
+            .child(
+                self.fader_control(
+                    SharedString::from(format!("graph-gain-{id}")),
+                    self.t(Key::Volume),
+                    owner.map_or(ParamTarget::MasterGain, ParamTarget::TrackGain),
+                    gain,
+                    cx,
+                )
+                .h(Metrics::CONTROL_HEIGHT * zoom),
+            )
+            .child(
+                self.fader_control(
+                    SharedString::from(format!("graph-pan-{id}")),
+                    self.t(Key::Pan),
+                    owner.map_or(ParamTarget::MasterPan, ParamTarget::TrackPan),
+                    pan,
+                    cx,
+                )
+                .h(Metrics::CONTROL_HEIGHT * zoom),
+            );
+        if let Some(track) = owner {
+            let index = self.project().track_index(track).unwrap_or(0);
+            let outputs: Vec<Output> = self
+                .project()
+                .track(track)
+                .map(|track| track.outputs.clone())
+                .unwrap_or_default();
+            let level_rows = if output_levels_shown(&outputs) {
+                outputs
+            } else {
+                Vec::new()
+            };
+            let meter = self.track_meter(index);
+            card = card
+                .child(
+                    div()
+                        .flex()
+                        .gap_1()
+                        .child(
+                            node_button(
+                                zoom,
+                                SharedString::from(format!("graph-mute-{id}")),
+                                self.t(Key::MuteInitial),
+                                ButtonStyle::Normal,
+                                muted,
+                                theme.mute,
+                                &theme,
+                                cx.listener(move |this, _, _, cx| {
+                                    this.toggle_mute(track);
+                                    cx.notify();
+                                }),
+                            )
+                            .tooltip(self.tip(Key::CmdToggleTrackMute, "track.mute")),
+                        )
+                        .child(
+                            node_button(
+                                zoom,
+                                SharedString::from(format!("graph-solo-{id}")),
+                                self.t(Key::SoloInitial),
+                                ButtonStyle::Normal,
+                                soloed,
+                                theme.solo,
+                                &theme,
+                                cx.listener(move |this, _, _, cx| {
+                                    this.toggle_solo(track);
+                                    cx.notify();
+                                }),
+                            )
+                            .tooltip(self.tip(Key::CmdToggleTrackSolo, "track.solo")),
+                        ),
+                )
+                .child(div().h(px(6.0 * zoom)).child(channel_meter(
+                    meter,
+                    self.session.meters().track_clipped(index),
+                    Axis::Horizontal,
+                    px(6.0 * zoom),
+                )))
+                .child(node_button(
+                    zoom,
+                    SharedString::from(format!("graph-route-menu-{id}")),
+                    self.t(Key::OutputShort),
+                    ButtonStyle::Ghost,
+                    false,
+                    theme.accent_soft,
+                    &theme,
+                    Self::opens_menu(cx, move |this, at| this.output_menu(at, track)),
+                ));
+            for (position, output) in level_rows.into_iter().enumerate() {
+                card = card.child(self.output_level_row(index, position, track, output, zoom, cx));
+            }
+        } else {
+            let meter = self.master_meter();
+            card = card.child(div().h(px(6.0 * zoom)).child(channel_meter(
+                meter,
+                self.session.meters().master_clipped(),
+                Axis::Horizontal,
+                px(6.0 * zoom),
+            )));
+        }
+        card.children(self.mixer_comment_notes(node, zoom, cx))
+            .into_any_element()
+    }
+
+    /// One insert inside its strip's card: its name opens its editor, then bypass and its menu,
+    /// with the strip keying it underneath once it has one.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "One row of a card, drawn from values read before the card borrows the app."
+    )]
+    fn mixer_effect_row(
+        &mut self,
+        owner: Option<TrackId>,
+        slot: EffectSlotId,
+        effect_id: &str,
+        enabled: bool,
+        key: Option<TrackId>,
+        zoom: f32,
+        cx: &mut gpui::Context<Self>,
+    ) -> AnyElement {
+        let theme = self.theme.clone();
+        let theme = &theme;
+        let label = self.effect_label(slot, effect_id);
+        let menu_label = label.clone();
+        let subject = PluginSubject::Insert { track: owner, slot };
+        let open = self.plugin_editor_is_open(subject);
+        let mut row = div()
+            .id(SharedString::from(format!("graph-effect-{}", slot.0)))
+            .debug_selector(move || format!("graph-effect-{}", slot.0))
+            .flex()
+            .flex_col()
+            .gap_0p5()
+            .on_mouse_down(
+                MouseButton::Right,
+                Self::opens_menu(cx, move |this, at| {
+                    this.effect_menu(at, owner, slot, menu_label.clone())
+                }),
+            )
+            .child(
+                div()
+                    .flex()
+                    .gap_1()
+                    .items_center()
+                    .child(
+                        div().flex_1().min_w_0().child(
+                            node_button(
+                                zoom,
+                                SharedString::from(format!("graph-effect-open-{}", slot.0)),
+                                label.clone(),
+                                ButtonStyle::Ghost,
+                                open,
+                                theme.accent_soft,
+                                theme,
+                                cx.listener(move |this, _, _, cx| {
+                                    this.show_plugin_editor(subject);
+                                    cx.notify();
+                                }),
+                            )
+                            .w_full()
+                            .tooltip(self.tip(Key::PluginOpenEditor, "")),
+                        ),
+                    )
+                    .child(
+                        node_button(
                             zoom,
-                            SharedString::from(format!("graph-effect-open-{id}")),
-                            self.t(if open {
-                                Key::PluginRaiseEditor
-                            } else {
-                                Key::PluginOpenEditor
-                            }),
-                            ButtonStyle::Ghost,
-                            false,
-                            theme.accent_soft,
-                            &theme,
-                            cx.listener(move |this, _, _, cx| {
-                                this.show_plugin_editor(subject);
-                                cx.notify();
-                            }),
-                        ))
-                        .child(node_button(
-                            zoom,
-                            SharedString::from(format!("graph-effect-enabled-{id}")),
-                            self.t(Key::MenuEnabled),
+                            SharedString::from(format!("graph-effect-enabled-{}", slot.0)),
+                            if enabled { "●" } else { "○" },
                             ButtonStyle::Ghost,
                             enabled,
                             theme.accent_soft,
-                            &theme,
+                            theme,
                             cx.listener(move |this, _, _, cx| {
                                 this.session.set_effect_enabled(owner, slot, !enabled);
                                 cx.notify();
                             }),
-                        ))
-                        .child(node_button(
-                            zoom,
-                            SharedString::from(format!("graph-effect-menu-{id}")),
-                            self.t(Key::Effect),
-                            ButtonStyle::Ghost,
-                            false,
-                            theme.accent_soft,
-                            &theme,
-                            Self::opens_menu(cx, move |this, at| {
-                                this.effect_menu(at, owner, slot, menu_label.clone())
-                            }),
-                        ));
-                }
-            }
-            MixerNode::Strip(_) => {
-                let strip = owner
-                    .and_then(|id| self.project().track(id))
-                    .map_or(&self.project().master, |t| &t.mixer);
-                let (gain, pan, muted, soloed) = (strip.gain_db, strip.pan, strip.mute, strip.solo);
-                card = card
+                        )
+                        .tooltip(self.tip(Key::MenuEnabled, "")),
+                    )
                     .child(node_button(
                         zoom,
-                        SharedString::from(format!("graph-add-fx-{id}")),
-                        self.t(Key::MenuAddEffect),
+                        SharedString::from(format!("graph-effect-menu-{}", slot.0)),
+                        "…",
                         ButtonStyle::Ghost,
                         false,
                         theme.accent_soft,
-                        &theme,
-                        Self::opens_menu(cx, move |this, at| this.effect_picker_menu(at, owner)),
-                    ))
-                    .child(
-                        self.fader_control(
-                            SharedString::from(format!("graph-gain-{id}")),
-                            self.t(Key::Volume),
-                            owner.map_or(ParamTarget::MasterGain, ParamTarget::TrackGain),
-                            gain,
-                            cx,
-                        )
-                        .h(Metrics::CONTROL_HEIGHT * zoom),
-                    )
-                    .child(
-                        self.fader_control(
-                            SharedString::from(format!("graph-pan-{id}")),
-                            self.t(Key::Pan),
-                            owner.map_or(ParamTarget::MasterPan, ParamTarget::TrackPan),
-                            pan,
-                            cx,
-                        )
-                        .h(Metrics::CONTROL_HEIGHT * zoom),
-                    );
-                if let Some(track) = owner {
-                    let index = self.project().track_index(track).unwrap_or(0);
-                    let outputs: Vec<Output> = self
-                        .project()
-                        .track(track)
-                        .map(|track| track.outputs.clone())
-                        .unwrap_or_default();
-                    let level_rows = if output_levels_shown(&outputs) {
-                        outputs
-                    } else {
-                        Vec::new()
-                    };
-                    let meter = self.track_meter(index);
-                    card = card
-                        .child(
-                            div()
-                                .flex()
-                                .gap_1()
-                                .child(
-                                    node_button(
-                                        zoom,
-                                        SharedString::from(format!("graph-mute-{id}")),
-                                        self.t(Key::MuteInitial),
-                                        ButtonStyle::Normal,
-                                        muted,
-                                        theme.mute,
-                                        &theme,
-                                        cx.listener(move |this, _, _, cx| {
-                                            this.toggle_mute(track);
-                                            cx.notify();
-                                        }),
-                                    )
-                                    .tooltip(self.tip(Key::CmdToggleTrackMute, "track.mute")),
-                                )
-                                .child(
-                                    node_button(
-                                        zoom,
-                                        SharedString::from(format!("graph-solo-{id}")),
-                                        self.t(Key::SoloInitial),
-                                        ButtonStyle::Normal,
-                                        soloed,
-                                        theme.solo,
-                                        &theme,
-                                        cx.listener(move |this, _, _, cx| {
-                                            this.toggle_solo(track);
-                                            cx.notify();
-                                        }),
-                                    )
-                                    .tooltip(self.tip(Key::CmdToggleTrackSolo, "track.solo")),
-                                ),
-                        )
-                        .child(div().h(px(6.0 * zoom)).child(channel_meter(
-                            meter,
-                            self.session.meters().track_clipped(index),
-                            Axis::Horizontal,
-                            px(6.0 * zoom),
-                        )))
-                        .child(node_button(
-                            zoom,
-                            SharedString::from(format!("graph-route-menu-{id}")),
-                            self.t(Key::OutputShort),
-                            ButtonStyle::Ghost,
-                            false,
-                            theme.accent_soft,
-                            &theme,
-                            Self::opens_menu(cx, move |this, at| this.output_menu(at, track)),
-                        ));
-                    for (position, output) in level_rows.into_iter().enumerate() {
-                        card = card
-                            .child(self.output_level_row(index, position, track, output, zoom, cx));
-                    }
-                } else {
-                    let meter = self.master_meter();
-                    card = card.child(div().h(px(6.0 * zoom)).child(channel_meter(
-                        meter,
-                        self.session.meters().master_clipped(),
-                        Axis::Horizontal,
-                        px(6.0 * zoom),
-                    )));
-                }
-            }
+                        theme,
+                        Self::opens_menu(cx, move |this, at| {
+                            this.effect_menu(at, owner, slot, label.clone())
+                        }),
+                    )),
+            );
+        if let Some(source) = key.and_then(|id| self.project().track(id)) {
+            row = row.child(
+                div()
+                    .pl_2()
+                    .truncate()
+                    .text_color(theme.text_muted)
+                    .child(format!("{} ← {}", self.t(Key::MenuSidechain), source.name)),
+            );
         }
-        card.children(self.mixer_comment_notes(node, zoom, cx))
-            .into_any_element()
+        row.into_any_element()
     }
 }
 
@@ -1435,13 +1509,8 @@ mod tests {
             )
         });
         paint(&app, cx);
-        expose_pair(
-            &app,
-            cx,
-            MixerNode::Strip(Some(a)),
-            MixerNode::Strip(Some(b)),
-        );
-        connect(cx, MixerNode::Strip(Some(a)), MixerNode::Strip(Some(b)));
+        expose_pair(&app, cx, MixerNode(Some(a)), MixerNode(Some(b)));
+        connect(cx, MixerNode(Some(a)), MixerNode(Some(b)));
         paint(&app, cx);
         app.read_with(cx, |this, _| {
             assert_eq!(
@@ -1480,8 +1549,8 @@ mod tests {
             this.session.add_bus_track("Bus")
         });
         paint(&app, cx);
-        let node = MixerNode::Strip(Some(bus));
-        expose_pair(&app, cx, node, MixerNode::Strip(None));
+        let node = MixerNode(Some(bus));
+        expose_pair(&app, cx, node, MixerNode(None));
         let host = CommentHost::Mixer(node);
 
         let name = cx
@@ -1579,30 +1648,28 @@ mod tests {
         assert!(
             cx.debug_bounds(selector(format!(
                 "graph-gain-{}",
-                node_id(MixerNode::Strip(Some(track)))
+                node_id(MixerNode(Some(track)))
             )))
             .is_some()
         );
         app.read_with(cx, |this, _| {
             let nodes = &this.mixer_canvas.as_ref().unwrap().document.nodes;
-            let strips = nodes
-                .iter()
-                .filter(|node| matches!(node, MixerNode::Strip(_)))
-                .count();
-            assert_eq!(strips, this.project().tracks.len() + 1);
+            assert!(
+                !this.project().master.effects.is_empty(),
+                "a new document's master carries a limiter"
+            );
+            assert_eq!(
+                nodes.len(),
+                this.project().tracks.len() + 1,
+                "one node per strip; the limiter is a row of the master's"
+            );
             assert_eq!(
                 nodes
                     .iter()
-                    .filter(|node| **node == MixerNode::Strip(Some(track)))
+                    .filter(|node| **node == MixerNode(Some(track)))
                     .count(),
                 1,
                 "a track and its fader have one shared node"
-            );
-            // The only other nodes are the new document's master inserts — its limiter.
-            assert_eq!(
-                nodes.len() - strips,
-                this.project().master.effects.len(),
-                "no node for a fader of its own"
             );
         });
     }
@@ -1622,23 +1689,18 @@ mod tests {
             (a, b)
         });
         paint(&app, cx);
-        expose_pair(
-            &app,
-            cx,
-            MixerNode::Strip(Some(a)),
-            MixerNode::Strip(Some(b)),
-        );
+        expose_pair(&app, cx, MixerNode(Some(a)), MixerNode(Some(b)));
         let source = cx
             .debug_bounds(selector(format!(
                 "flow-handle-{}-0",
-                node_id(MixerNode::Strip(Some(a)))
+                node_id(MixerNode(Some(a)))
             )))
             .unwrap()
             .center();
         let target = cx
             .debug_bounds(selector(format!(
                 "flow-handle-{}-1",
-                node_id(MixerNode::Strip(Some(b)))
+                node_id(MixerNode(Some(b)))
             )))
             .unwrap()
             .center();
@@ -1713,13 +1775,8 @@ mod tests {
         });
         paint(&app, cx);
         let before = app.read_with(cx, |this, _| this.session.mixer_graph());
-        expose_pair(
-            &app,
-            cx,
-            MixerNode::Strip(Some(b)),
-            MixerNode::Strip(Some(a)),
-        );
-        connect(cx, MixerNode::Strip(Some(b)), MixerNode::Strip(Some(a)));
+        expose_pair(&app, cx, MixerNode(Some(b)), MixerNode(Some(a)));
+        connect(cx, MixerNode(Some(b)), MixerNode(Some(a)));
         paint(&app, cx);
         app.read_with(cx, |this, cx| {
             assert_eq!(this.session.mixer_graph(), before);
@@ -1745,17 +1802,12 @@ mod tests {
             (a, b, c)
         });
         paint(&app, cx);
-        expose_pair(
-            &app,
-            cx,
-            MixerNode::Strip(Some(a)),
-            MixerNode::Strip(Some(b)),
-        );
+        expose_pair(&app, cx, MixerNode(Some(a)), MixerNode(Some(b)));
         app.update(cx, |this, cx| {
             let canvas = this.mixer_canvas.as_ref().unwrap();
             canvas.state.update(cx, |state, _| {
                 state
-                    .get_node_mut(&node_id(MixerNode::Strip(Some(c))))
+                    .get_node_mut(&node_id(MixerNode(Some(c))))
                     .unwrap()
                     .position = FlowPoint::new(380., 240.);
             });
@@ -1765,7 +1817,7 @@ mod tests {
         let from = cx
             .debug_bounds(selector(format!(
                 "flow-handle-{}-0",
-                node_id(MixerNode::Strip(Some(a)))
+                node_id(MixerNode(Some(a)))
             )))
             .unwrap()
             .center();
@@ -1773,7 +1825,7 @@ mod tests {
             let to = cx
                 .debug_bounds(selector(format!(
                     "flow-handle-{}-1",
-                    node_id(MixerNode::Strip(Some(target)))
+                    node_id(MixerNode(Some(target)))
                 )))
                 .unwrap()
                 .center();
@@ -1820,48 +1872,90 @@ mod tests {
     }
 
     #[gpui::test]
-    fn connecting_adds_a_branch_and_effect_nodes_control_the_real_insert(cx: &mut TestAppContext) {
+    fn connecting_adds_a_branch_and_effect_rows_control_the_real_insert(cx: &mut TestAppContext) {
         let (app, cx) = open(cx);
         let (a, b, slot) = app.update(cx, |this, _| {
             show(this);
             let a = this.session.add_bus_track("A");
             let b = this.session.add_bus_track("B");
             let slot = this.session.add_effect(Some(a), "auris.fx.reverb").unwrap();
+            this.session.add_effect(None, "auris.fx.limiter").unwrap();
             (a, b, slot)
         });
         paint(&app, cx);
-        expose_pair(
-            &app,
-            cx,
-            MixerNode::Effect(Some(a), slot),
-            MixerNode::Strip(Some(b)),
-        );
-        connect(
-            cx,
-            MixerNode::Effect(Some(a), slot),
-            MixerNode::Strip(Some(b)),
-        );
+        app.read_with(cx, |this, cx| {
+            let state = this.mixer_canvas.as_ref().unwrap().state.read(cx);
+            let strips = this.project().tracks.len() + 1;
+            let masters = state
+                .nodes
+                .iter()
+                .filter(|node| node.id == node_id(MixerNode::MASTER))
+                .count();
+            assert_eq!(
+                masters, 1,
+                "the master's limiter is a row, not a second master"
+            );
+            assert_eq!(
+                state.nodes.len(),
+                strips,
+                "one card per strip; no effect nodes"
+            );
+        });
+        expose_pair(&app, cx, MixerNode(Some(a)), MixerNode(Some(b)));
+        connect(cx, MixerNode(Some(a)), MixerNode(Some(b)));
         paint(&app, cx);
         app.read_with(cx, |this, _| {
             let track = this.project().track(a).unwrap();
             assert_eq!(track.outputs, vec![Output::master(), Output::to_bus(b)]);
         });
-        expose_pair(
-            &app,
-            cx,
-            MixerNode::Effect(Some(a), slot),
-            MixerNode::Strip(Some(b)),
-        );
-        click(
-            selector(format!(
-                "graph-effect-enabled-{}",
-                node_id(MixerNode::Effect(Some(a), slot))
-            )),
-            cx,
-        );
+        expose_pair(&app, cx, MixerNode(Some(a)), MixerNode(Some(b)));
+        click(selector(format!("graph-effect-enabled-{}", slot.0)), cx);
         paint(&app, cx);
         app.read_with(cx, |this, _| {
             assert_eq!(this.session.effect_enabled(Some(a), slot), Some(false))
+        });
+    }
+
+    #[gpui::test]
+    fn a_drag_onto_the_key_port_keys_the_strips_effect(cx: &mut TestAppContext) {
+        let (app, cx) = open(cx);
+        let (kick, bass, slot) = app.update(cx, |this, _| {
+            show(this);
+            let kick = this.session.add_bus_track("Kick");
+            let bass = this.session.add_bus_track("Bass");
+            this.session
+                .add_effect(Some(bass), "auris.fx.reverb")
+                .unwrap();
+            let slot = this
+                .session
+                .add_effect(Some(bass), "auris.fx.compressor")
+                .unwrap();
+            (kick, bass, slot)
+        });
+        paint(&app, cx);
+        expose_pair(&app, cx, MixerNode(Some(kick)), MixerNode(Some(bass)));
+        let source = cx
+            .debug_bounds(selector(format!(
+                "flow-handle-{}-0",
+                node_id(MixerNode(Some(kick)))
+            )))
+            .unwrap();
+        // The bus has its input on the left and the key on top, in that order.
+        let key = cx
+            .debug_bounds(selector(format!(
+                "flow-handle-{}-2",
+                node_id(MixerNode(Some(bass)))
+            )))
+            .unwrap();
+        drag(cx, source.center(), key.center());
+        paint(&app, cx);
+        app.read_with(cx, |this, _| {
+            assert_eq!(this.session.effect_sidechain(Some(bass), slot), Some(kick));
+            assert_eq!(
+                this.project().track(kick).unwrap().outputs,
+                vec![Output::master()],
+                "a key is not an output"
+            );
         });
     }
 
@@ -1876,7 +1970,7 @@ mod tests {
             .set_effect_sidechain(Some(b), slot, Some(a))
             .unwrap();
         let graph = session.mixer_graph();
-        let layout = positions(&graph);
+        let layout = positions(&graph, session.project());
         assert!(
             graph
                 .edges

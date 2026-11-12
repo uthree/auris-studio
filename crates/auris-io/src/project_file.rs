@@ -342,12 +342,13 @@ pub fn stage_file_bytes(path: &Path, bytes: &[u8]) -> Result<StagedFile> {
 ///
 /// Every version bump must decide whether the version it replaces joins this range. Version 32
 /// forgot to, and a project saved the day before would not open at all.
-const READABLE_OLDER: std::ops::RangeInclusive<u32> = 27..=35;
+const READABLE_OLDER: std::ops::RangeInclusive<u32> = 27..=36;
 
 /// Reads a project from `path`.
 ///
 /// The format version must match this build, or be one of the older versions it still reads:
-/// 35 and earlier with sends beside the outputs (see `fold_sends_into_outputs`), 31 with each
+/// 36 and earlier with comments pinned to effects (see `move_effect_comments_to_strips`), 35 and
+/// earlier with sends beside the outputs (see `fold_sends_into_outputs`), 31 with each
 /// track's single output, 30 without the latest extended chords, 29 without eleventh chords, 28
 /// without named drum lanes, or 27, whose volume contour is defaulted.
 /// After parsing, the
@@ -367,9 +368,12 @@ pub fn load_project(path: &Path) -> Result<Project> {
         });
     }
 
-    let mut project: Project = if probe.format_version < SENDS_FOLDED {
+    let mut project: Project = if probe.format_version < EFFECT_COMMENTS_ON_STRIPS {
         let mut document: serde_json::Value = serde_json::from_slice(&bytes)?;
-        fold_sends_into_outputs(&mut document);
+        if probe.format_version < SENDS_FOLDED {
+            fold_sends_into_outputs(&mut document);
+        }
+        move_effect_comments_to_strips(&mut document);
         serde_json::from_value(document)?
     } else {
         serde_json::from_slice(&bytes)?
@@ -400,6 +404,82 @@ pub fn load_project(path: &Path) -> Result<Project> {
 
 /// The first format version in which a track's sends are outputs like any other.
 const SENDS_FOLDED: u32 = 36;
+
+/// The first format version in which an effect carries no comments of its own.
+const EFFECT_COMMENTS_ON_STRIPS: u32 = 37;
+
+/// Moves the comments pinned to each effect onto the strip that holds it, in place.
+///
+/// An effect used to be a node of the mixer graph, and a comment could be pinned to it. It is now
+/// a row inside its strip's node, so its comments join the strip's, after the strip's own, each
+/// prefixed with the effect it was about and given an id past the strip's highest — a comment id
+/// is unique only within the list that holds it.
+fn move_effect_comments_to_strips(document: &mut serde_json::Value) {
+    use serde_json::Value;
+
+    let mut strips: Vec<&mut Value> = Vec::new();
+    let Some(document) = document.as_object_mut() else {
+        return;
+    };
+    let (tracks, master) = {
+        let mut tracks = None;
+        let mut master = None;
+        for (key, value) in document.iter_mut() {
+            match key.as_str() {
+                "tracks" => tracks = Some(value),
+                "master" => master = Some(value),
+                _ => {}
+            }
+        }
+        (tracks, master)
+    };
+    if let Some(Value::Array(tracks)) = tracks {
+        strips.extend(tracks.iter_mut().filter_map(|track| track.get_mut("mixer")));
+    }
+    strips.extend(master);
+    for strip in strips {
+        let Some(strip) = strip.as_object_mut() else {
+            continue;
+        };
+        let mut moved = Vec::new();
+        if let Some(Value::Array(effects)) = strip.get_mut("effects") {
+            for effect in effects.iter_mut().filter_map(Value::as_object_mut) {
+                let name = effect
+                    .get("effect_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or("effect")
+                    .to_owned();
+                if let Some(Value::Array(comments)) = effect.remove("comments") {
+                    moved.extend(comments.into_iter().map(|comment| (name.clone(), comment)));
+                }
+            }
+        }
+        if moved.is_empty() {
+            continue;
+        }
+        let comments = strip
+            .entry("comments")
+            .or_insert_with(|| Value::Array(Vec::new()));
+        let Some(comments) = comments.as_array_mut() else {
+            continue;
+        };
+        let mut next = comments
+            .iter()
+            .filter_map(|comment| comment.get("id").and_then(Value::as_u64))
+            .max()
+            .unwrap_or(0);
+        for (name, mut comment) in moved {
+            next += 1;
+            if let Some(comment) = comment.as_object_mut() {
+                comment.insert("id".into(), next.into());
+                let text = comment.get("text").and_then(Value::as_str).unwrap_or("");
+                let text = format!("[{name}] {text}");
+                comment.insert("text".into(), text.into());
+            }
+            comments.push(comment);
+        }
+    }
+}
 
 /// Rewrites a document older than [`SENDS_FOLDED`] into today's shape, in place.
 ///
@@ -1064,6 +1144,38 @@ mod tests {
             Project::FORMAT_VERSION - 1,
             "decide whether the version a bump replaces is still readable"
         );
+    }
+
+    #[test]
+    fn version_36_moves_effect_comments_onto_their_strip() {
+        let file = TempFile::new("version-36.auris");
+        let project = demo_project();
+        let drums = project.tracks[1].id;
+        let mut value = serde_json::to_value(&project).unwrap();
+        value["format_version"] = serde_json::json!(36);
+        let strip = &mut value["tracks"][1]["mixer"];
+        strip["comments"] = serde_json::json!([{ "id": 2, "text": "keep it dry" }]);
+        strip["effects"][0]["comments"] =
+            serde_json::json!([{ "id": 1, "text": "ride it in the bridge" }]);
+        value["master"]["effects"][0]["comments"] =
+            serde_json::json!([{ "id": 7, "text": "-1 dBTP" }]);
+        std::fs::write(file.path(), serde_json::to_vec(&value).unwrap()).unwrap();
+
+        let loaded = load_project(file.path()).unwrap();
+        let comments = &loaded.track(drums).unwrap().mixer.comments;
+        assert_eq!(
+            comments
+                .iter()
+                .map(|comment| (comment.id.0, comment.text.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                (2, "keep it dry"),
+                (3, "[auris.fx.gain] ride it in the bridge")
+            ],
+            "after the strip's own, with an id past its highest"
+        );
+        assert_eq!(loaded.master.comments.len(), 1);
+        assert_eq!(loaded.master.comments[0].text, "[auris.fx.limiter] -1 dBTP");
     }
 
     #[test]

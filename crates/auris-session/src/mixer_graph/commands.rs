@@ -2,23 +2,11 @@
 
 use serde_json::{Value, json};
 
-use super::{MixerEdgeKind, MixerNode, destination};
+use super::{MixerEdgeKind, MixerNode, MixerPort, destination};
 use crate::{Edit, ParamTarget, Session, prelude::*};
 
 #[cfg(test)]
 mod tests;
-
-/// A connection's role; every role participates in DAG validation.
-#[derive(
-    Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum ConnectionKind {
-    /// A copy of the track's signal into a bus or the master, at a level and tap of its own.
-    Output,
-    /// Feed an effect's detector input.
-    Sidechain,
-}
 
 /// One graph operation, using stable node IDs returned by mixer_graph read.
 #[derive(Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
@@ -44,10 +32,10 @@ pub enum GraphAction {
         /// True taps after inserts before the fader; false (the usual) after the fader.
         pre_fader: bool,
     },
-    /// Replace or clear an effect's sidechain atomically.
+    /// Replace or clear an effect's sidechain atomically. The key arrives from another track's strip; cycles are refused.
     SetSidechain {
-        /// Stable effect node.
-        node: String,
+        /// Effect ID (effect:N) from a track node's effects.
+        effect: String,
         /// Stable source track node; null clears the sidechain.
         source: Option<String>,
     },
@@ -66,7 +54,7 @@ pub enum GraphAction {
         /// Solo this track additively; omitted preserves it. Not available on master.
         solo: Option<bool>,
     },
-    /// Read the mixer DAG: stable node IDs, outgoing edges, controls and available effects. Nodes are paged in processing order; follow next_offset. Parallel processing branches through buses. Internal chain edges are changed by effect ordering, not connect/disconnect.
+    /// Read the mixer DAG: one node per track, bus and master, each with its controls and its insert effects in processing order (effect:N IDs), plus outgoing edges and available effects. Nodes are paged in processing order; follow next_offset. Effects are not nodes; parallel processing branches through buses.
     Read {
         /// Zero-based first node, default 0.
         #[serde(default)]
@@ -74,49 +62,45 @@ pub enum GraphAction {
         /// Node page size, default 32, clamped to 1..64.
         limit: Option<usize>,
     },
-    /// Connect two nodes from mixer_graph read. source must be a track output; output targets a bus track node or master and adds a unity post-fader output; sidechain targets an effect. All cycles are refused, including mixed output/sidechain paths. Duplicate connections are unchanged. Changes are undoable.
+    /// Add a unity post-fader output from a track node to a bus node or track:master. All cycles are refused, including mixed output/sidechain paths. An existing connection is unchanged. Undoable. Sidechains use set_sidechain.
     Connect {
-        /// Exact track node ID or its output_node from mixer_graph read.
+        /// Exact source track node ID; never an effect, never the master.
         source: String,
-        /// Exact track or effect node ID from mixer_graph read.
+        /// Exact bus node ID or track:master.
         target: String,
-        /// output or sidechain; must match the target port.
-        kind: ConnectionKind,
     },
-    /// Disconnect an existing graph edge. Only the named output or sidechain is removed; an empty output list remains disconnected. Internal chain edges cannot be disconnected. Supply pre_fader when a pre- and a post-fader output share the same source/target. A stale or mismatched edge is refused.
+    /// Remove one output. An empty output list remains disconnected. Supply pre_fader when a pre- and a post-fader output share the same source/target. A stale edge is refused. Sidechains are cleared with set_sidechain.
     Disconnect {
         /// Exact source track node ID, including for a pre-fader output.
         source: String,
-        /// Exact destination track or effect node ID.
+        /// Exact destination bus node ID or track:master.
         target: String,
-        /// Role of the edge to remove.
-        kind: ConnectionKind,
-        /// Which output to remove by its tap; only accepted for kind output.
+        /// Which output to remove by its tap.
         pre_fader: Option<bool>,
     },
-    /// Add an effect before a strip's fader. input is the strip's track node ID; effect is an exact available_effects ID. Returns the new effect node ID. Use a bus branch for parallel effects.
+    /// Append an effect to a strip's inserts, before its fader. input is the strip's track node ID; effect is an exact available_effects ID. Returns the new effect ID. Use a bus for parallel effects.
     AddEffect {
         /// Input node ID, including track:master for the master strip.
         input: String,
         /// Exact available_effects ID returned by mixer_graph read.
         effect: String,
     },
-    /// Remove an effect node and its automation. Other effect node IDs stay valid.
+    /// Remove an effect and its automation. Other effect IDs stay valid.
     RemoveEffect {
-        /// Exact effect node ID.
+        /// Exact effect ID (effect:N).
         node: String,
     },
-    /// Move an effect within its strip's serial chain. Node IDs remain stable after ordering changes.
+    /// Move an effect within its strip's serial chain. Effect IDs remain stable after ordering changes.
     MoveEffect {
-        /// Exact effect node ID.
+        /// Exact effect ID (effect:N).
         node: String,
         /// New 1-based chain position.
         #[schemars(range(min = 1))]
         position: usize,
     },
-    /// Enable or bypass an effect node without removing its connections or state.
+    /// Enable or bypass an effect without removing its sidechain or state.
     EnableEffect {
-        /// Exact effect node ID.
+        /// Exact effect ID (effect:N).
         node: String,
         /// Whether the effect processes audio.
         enabled: bool,
@@ -136,9 +120,9 @@ pub enum GraphAction {
         /// Move the output: true takes it after inserts but before the fader, false after it.
         move_pre_fader: Option<bool>,
     },
-    /// Read an effect node's parameter keys, value_domain, units, ranges, steps, read_only flags, static values and automation flags. VST3 values are normalized 0..1, not display units such as Hz/dB. Follow next_offset for more parameters. Choice labels are previews of at most 16.
+    /// Read an effect's parameter keys, value_domain, units, ranges, steps, read_only flags, static values and automation flags. VST3 values are normalized 0..1, not display units such as Hz/dB. Follow next_offset for more parameters. Choice labels are previews of at most 16.
     Parameters {
-        /// Exact effect node ID.
+        /// Exact effect ID (effect:N).
         node: String,
         /// Zero-based first parameter, default 0.
         #[serde(default)]
@@ -146,9 +130,9 @@ pub enum GraphAction {
         /// Page size, default 32, clamped to 1..64.
         limit: Option<usize>,
     },
-    /// Set one static parameter on an effect node using a key and value_domain from mixer_graph parameters (VST3: normalized 0..1). Refuses read_only controls, non-finite or out-of-range values and invalid steps. Automation, if present, still overrides the static value.
+    /// Set one static parameter on an effect using a key and value_domain from mixer_graph parameters (VST3: normalized 0..1). Refuses read_only controls, non-finite or out-of-range values and invalid steps. Automation, if present, still overrides the static value.
     SetParameter {
-        /// Exact effect node ID.
+        /// Exact effect ID (effect:N).
         node: String,
         /// Exact parameter key from mixer_graph parameters.
         param: String,
@@ -198,19 +182,26 @@ impl GraphAction {
 impl MixerNode {
     /// Stable model-facing identity, independent of names and effect positions.
     pub fn key(self) -> String {
-        match self {
-            Self::Strip(owner) => format!(
-                "track:{}",
-                owner.map_or_else(|| "master".into(), |id| id.0.to_string())
-            ),
-
-            Self::Effect(_, slot) => format!("effect:{}", slot.0),
-        }
+        format!(
+            "track:{}",
+            self.0
+                .map_or_else(|| "master".into(), |id| id.0.to_string())
+        )
     }
+}
+
+/// Stable model-facing identity of an effect, independent of its position in the chain.
+pub fn effect_key(slot: EffectSlotId) -> String {
+    format!("effect:{}", slot.0)
 }
 
 impl Session {
     pub(crate) fn graph_node(&self, key: &str) -> Result<MixerNode, String> {
+        if key.starts_with("effect:") {
+            return Err(format!(
+                "'{key}' is an effect inside a track, not a graph node; use its track's node ID"
+            ));
+        }
         self.mixer_graph()
             .nodes
             .into_iter()
@@ -218,11 +209,19 @@ impl Session {
             .ok_or_else(|| format!("Unknown mixer node '{key}'; mixer_graph read again"))
     }
 
-    fn graph_effect(&self, key: &str) -> Result<(Option<TrackId>, EffectSlotId), String> {
-        match self.graph_node(key)? {
-            MixerNode::Effect(owner, slot) => Ok((owner, slot)),
-            _ => Err("Expected an effect node ID from mixer_graph read".into()),
-        }
+    pub(crate) fn graph_effect(
+        &self,
+        key: &str,
+    ) -> Result<(Option<TrackId>, EffectSlotId), String> {
+        let slot = key
+            .strip_prefix("effect:")
+            .and_then(|id| id.parse().ok())
+            .map(EffectSlotId)
+            .ok_or_else(|| format!("Expected an effect ID (effect:N), not '{key}'"))?;
+        let owner = self
+            .effect_owner(slot)
+            .ok_or_else(|| format!("Unknown effect '{key}'; mixer_graph read again"))?;
+        Ok((owner.0, slot))
     }
 
     fn graph_chain(&self, owner: Option<TrackId>) -> &[EffectSlot] {
@@ -265,18 +264,12 @@ impl Session {
                 if targets.len() > 64 {
                     return Err("At most 64 output destinations".into());
                 }
-                let MixerNode::Strip(Some(track)) = self.graph_node(source)? else {
-                    return Err("Expected source track node".into());
-                };
+                let track = self.graph_source(source)?;
                 let outputs = targets
                     .iter()
                     .map(|target| {
-                        let (_, destination) =
-                            self.graph_connection(source, target, ConnectionKind::Output)?;
-                        match destination {
-                            MixerNode::Strip(owner) => Ok(Output::new(super::destination(owner))),
-                            _ => Err("Expected bus or master track node".to_string()),
-                        }
+                        self.graph_output_target(source, target)
+                            .map(|(_, to)| Output::new(to))
                     })
                     .collect::<Result<Vec<_>, _>>()?;
                 let revision = self.revision();
@@ -314,20 +307,24 @@ impl Session {
                 changed = true;
                 result = json!({"source":source,"target":target,"gain_db":gain_db,"pre_fader":pre_fader});
             }
-            GraphAction::SetSidechain { node, source } => {
-                let (owner, slot) = self.graph_effect(node)?;
+            GraphAction::SetSidechain { effect, source } => {
+                let (owner, slot) = self.graph_effect(effect)?;
                 let source = source
                     .as_ref()
-                    .map(|source| {
-                        self.graph_connection(source, node, ConnectionKind::Sidechain)
-                            .map(|(track, _)| track)
-                    })
+                    .map(|source| self.graph_source(source))
                     .transpose()?;
                 changed = self.effect_sidechain(owner, slot) != source;
                 if changed {
+                    if let Some(from) = source
+                        && !self.can_connect_mixer(from, MixerPort::Key(MixerNode(owner), slot))
+                    {
+                        return Err("Sidechain refused: the effect has no key input, or it would close a cycle".into());
+                    }
                     self.set_effect_sidechain(owner, slot, source)
                         .map_err(error)?;
                 }
+                result =
+                    json!({"effect":effect,"source":source.map(|id| MixerNode(Some(id)).key())});
             }
             GraphAction::SetStrip {
                 node,
@@ -336,9 +333,7 @@ impl Session {
                 mute,
                 solo,
             } => {
-                let MixerNode::Strip(owner) = self.graph_node(node)? else {
-                    return Err("Expected a track node ID".into());
-                };
+                let MixerNode(owner) = self.graph_node(node)?;
                 if gain_db.is_none() && pan.is_none() && mute.is_none() && solo.is_none() {
                     return Err("Supply at least one track control".into());
                 }
@@ -410,97 +405,60 @@ impl Session {
                     json!({"node":node,"parameters":page,"total":parameters.len(),"next_offset":(next < parameters.len()).then_some(next)}),
                 );
             }
-            GraphAction::Connect {
-                source,
-                target,
-                kind,
-            } => {
-                let (from, to) = self.graph_connection(source, target, *kind)?;
-                let exists = match kind {
-                    ConnectionKind::Output => self.project().track(from).is_some_and(|track| {
-                        let key = match to {
-                            MixerNode::Strip(owner) => (destination(owner), Tap::PostFader),
-                            _ => (Destination::Master, Tap::PostFader),
-                        };
-                        track.outputs.iter().any(|output| output.key() == key)
-                    }),
-                    ConnectionKind::Sidechain => match to {
-                        MixerNode::Effect(owner, slot) => {
-                            self.effect_sidechain(owner, slot) == Some(from)
-                        }
-                        _ => false,
-                    },
-                };
+            GraphAction::Connect { source, target } => {
+                let (from, to) = self.graph_output_target(source, target)?;
+                let exists = self.project().track(from).is_some_and(|track| {
+                    track
+                        .outputs
+                        .iter()
+                        .any(|output| output.key() == (to, Tap::PostFader))
+                });
                 if !exists {
-                    if !self.can_connect_mixer(from, to) {
-                        return Err("Connection refused: incompatible port or a cycle through outputs or sidechains".into());
+                    let port = MixerPort::Input(MixerNode(to.bus()));
+                    if !self.can_connect_mixer(from, port) {
+                        return Err(
+                            "Connection refused: it would close a cycle through outputs or sidechains"
+                                .into(),
+                        );
                     }
-                    changed = self.connect_mixer(from, to).map_err(error)?;
+                    changed = self.connect_mixer(from, port).map_err(error)?;
                 }
             }
             GraphAction::Disconnect {
                 source,
                 target,
-                kind,
                 pre_fader,
             } => {
-                let (from, to) = self.graph_connection(source, target, *kind)?;
-                if *kind != ConnectionKind::Output && pre_fader.is_some() {
-                    return Err("pre_fader is only accepted for an output edge".into());
-                }
-                match kind {
-                    ConnectionKind::Output => {
-                        let to = match to {
-                            MixerNode::Strip(owner) => destination(owner),
-                            _ => return Err("Expected an input".into()),
-                        };
-                        let matching: Vec<Tap> = self
-                            .project()
-                            .track(from)
-                            .into_iter()
-                            .flat_map(|track| &track.outputs)
-                            .filter(|output| {
-                                output.to == to
-                                    && pre_fader.is_none_or(|pre| output.tap == tap_of(pre))
-                            })
-                            .map(|output| output.tap)
-                            .collect();
-                        match matching.as_slice() {
-                            [] => {
-                                return Err(
-                                    "This output edge no longer exists; mixer_graph read again"
-                                        .into(),
-                                );
-                            }
-                            [tap] => {
-                                self.remove_track_output(from, to, *tap).map_err(error)?;
-                                changed = true;
-                            }
-                            _ => {
-                                return Err("A pre- and a post-fader output share this source and target; supply pre_fader".into());
-                            }
-                        }
+                let (from, to) = self.graph_output_target(source, target)?;
+                let matching: Vec<Tap> = self
+                    .project()
+                    .track(from)
+                    .into_iter()
+                    .flat_map(|track| &track.outputs)
+                    .filter(|output| {
+                        output.to == to && pre_fader.is_none_or(|pre| output.tap == tap_of(pre))
+                    })
+                    .map(|output| output.tap)
+                    .collect();
+                match matching.as_slice() {
+                    [] => {
+                        return Err(
+                            "This output edge no longer exists; mixer_graph read again".into()
+                        );
                     }
-                    ConnectionKind::Sidechain => {
-                        let (owner, slot) = self.graph_effect(target)?;
-                        if self.effect_sidechain(owner, slot) != Some(from) {
-                            return Err(
-                                "This sidechain edge no longer exists; mixer_graph read again"
-                                    .into(),
-                            );
-                        }
-                        self.set_effect_sidechain(owner, slot, None)
-                            .map_err(error)?;
+                    [tap] => {
+                        self.remove_track_output(from, to, *tap).map_err(error)?;
                         changed = true;
+                    }
+                    _ => {
+                        return Err("A pre- and a post-fader output share this source and target; supply pre_fader".into());
                     }
                 }
             }
             GraphAction::AddEffect { input, effect } => {
-                let MixerNode::Strip(owner) = self.graph_node(input)? else {
-                    return Err("input must be a track node ID".into());
-                };
+                let MixerNode(owner) = self.graph_node(input)?;
                 let slot = self.add_effect(owner, effect).map_err(error)?;
-                result = json!({"node":MixerNode::Effect(owner, slot).key(),"slot_id":slot.0});
+                result = json!({"effect":effect_key(slot),"node":input});
                 changed = true;
             }
             GraphAction::RemoveEffect { node } => {
@@ -518,7 +476,7 @@ impl Session {
                 let index = chain
                     .iter()
                     .position(|effect| effect.id == slot)
-                    .ok_or("Unknown effect node")?;
+                    .ok_or("Unknown effect")?;
                 let delta = *position as isize - 1 - index as isize;
                 changed = delta != 0;
                 if changed {
@@ -609,41 +567,12 @@ impl Session {
         Ok(json!({"changed":changed,"result":result,"graph":self.mixer_graph_report(0, None)?}))
     }
 
-    fn graph_connection(
-        &self,
-        source: &str,
-        target: &str,
-        kind: ConnectionKind,
-    ) -> Result<(TrackId, MixerNode), String> {
-        let from = match self.graph_node(source)? {
-            MixerNode::Strip(Some(from)) => from,
-            node @ MixerNode::Effect(Some(from), _)
-                if self.mixer_graph_output(Some(from)) == node =>
-            {
-                from
-            }
-            _ => {
-                return Err(
-                    "source must be a track or its terminal effect node; the master is a sink"
-                        .into(),
-                );
-            }
-        };
-        let to = self.graph_node(target)?;
-        match (kind, to) {
-            (ConnectionKind::Output, MixerNode::Strip(owner)) => {
-                if owner.is_some_and(|id| {
-                    self.project()
-                        .track(id)
-                        .is_none_or(|track| !track.kind.is_bus())
-                }) {
-                    return Err("Only bus and master inputs accept routing connections".into());
-                }
-            }
-            (ConnectionKind::Sidechain, MixerNode::Effect(_, _)) => {}
-            _ => return Err("Connection kind does not match the target port".into()),
+    /// The track a model names as the source of a connection.
+    fn graph_source(&self, source: &str) -> Result<TrackId, String> {
+        match self.graph_node(source)? {
+            MixerNode(Some(track)) => Ok(track),
+            MixerNode(None) => Err("The master is a sink; it has no outputs".into()),
         }
-        Ok((from, to))
     }
 
     /// The source track and destination of an output named by graph node IDs.
@@ -652,10 +581,16 @@ impl Session {
         source: &str,
         target: &str,
     ) -> Result<(TrackId, Destination), String> {
-        match self.graph_connection(source, target, ConnectionKind::Output)? {
-            (track, MixerNode::Strip(owner)) => Ok((track, destination(owner))),
-            _ => Err("Expected bus or master track node".into()),
+        let from = self.graph_source(source)?;
+        let MixerNode(owner) = self.graph_node(target)?;
+        if owner.is_some_and(|id| {
+            self.project()
+                .track(id)
+                .is_none_or(|track| !track.kind.is_bus())
+        }) {
+            return Err("Only bus and master inputs accept routing connections".into());
         }
+        Ok((from, destination(owner)))
     }
 
     /// A bounded JSON graph page, in processing order, with each page node's outgoing edges.
@@ -672,15 +607,8 @@ impl Session {
             .map(|index| Some(self.project().tracks[index].id))
             .chain(std::iter::once(None));
         let ordered: Vec<_> = owners
-            .flat_map(|owner| {
-                graph
-                    .nodes
-                    .iter()
-                    .filter(move |node| match node {
-                        MixerNode::Strip(id) | MixerNode::Effect(id, _) => *id == owner,
-                    })
-                    .copied()
-            })
+            .map(MixerNode)
+            .filter(|node| graph.nodes.contains(node))
             .collect();
         if offset > ordered.len() {
             return Err("offset exceeds mixer node count".into());
@@ -693,40 +621,44 @@ impl Session {
             .collect();
         let mut nodes = Vec::new();
         for node in &page {
-            let owner = match node {
-                MixerNode::Strip(id) | MixerNode::Effect(id, _) => *id,
-            };
+            let owner = node.0;
+            // Asked first: whether an effect has a key input can mean building it.
+            let keyed: Vec<bool> = self
+                .graph_chain(owner)
+                .iter()
+                .map(|effect| effect.id)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .map(|slot| self.effect_wants_sidechain(owner, slot))
+                .collect();
             let track = owner.and_then(|id| self.project().track(id));
             let strip = track.map_or(&self.project().master, |track| &track.mixer);
             let mut row = json!({"id":node.key(),"track_id":owner.map(|id| id.0),"name":track.map_or("master",|track| track.name.as_str())});
-            match node {
-                MixerNode::Strip(_) => {
-                    row["kind"] = "track".into();
-                    row["accepts_routing"] =
-                        (owner.is_none() || track.is_some_and(|track| track.kind.is_bus())).into();
-                    row["controls"] = json!({"gain_db":strip.gain_db,"pan":strip.pan,"mute":strip.mute,"solo":strip.solo});
-                    row["gain_automated"] = self
-                        .is_automated(owner.map_or(ParamTarget::MasterGain, ParamTarget::TrackGain))
-                        .into();
-                    row["pan_automated"] = self
-                        .is_automated(owner.map_or(ParamTarget::MasterPan, ParamTarget::TrackPan))
-                        .into();
-                    row["output_node"] = self.mixer_graph_output(owner).key().into();
-                }
-                MixerNode::Effect(_, slot) => {
-                    let index = strip
-                        .effects
-                        .iter()
-                        .position(|effect| effect.id == *slot)
-                        .ok_or("Unknown effect")?;
-                    row["kind"] = "effect".into();
-                    row["effect_id"] = strip.effects[index].effect_id.clone().into();
-                    row["slot_id"] = slot.0.into();
-                    row["position"] = (index + 1).into();
-                    row["enabled"] = strip.effects[index].enabled.into();
-                    row["accepts_sidechain"] = self.effect_wants_sidechain(owner, *slot).into();
-                }
-            }
+            row["accepts_routing"] =
+                (owner.is_none() || track.is_some_and(|track| track.kind.is_bus())).into();
+            row["controls"] = json!({"gain_db":strip.gain_db,"pan":strip.pan,"mute":strip.mute,"solo":strip.solo});
+            row["gain_automated"] = self
+                .is_automated(owner.map_or(ParamTarget::MasterGain, ParamTarget::TrackGain))
+                .into();
+            row["pan_automated"] = self
+                .is_automated(owner.map_or(ParamTarget::MasterPan, ParamTarget::TrackPan))
+                .into();
+            row["effects"] = strip
+                .effects
+                .iter()
+                .enumerate()
+                .map(|(index, effect)| {
+                    json!({
+                        "id": effect_key(effect.id),
+                        "effect_id": effect.effect_id,
+                        "position": index + 1,
+                        "enabled": effect.enabled,
+                        "accepts_sidechain": keyed[index],
+                        "sidechain": effect.sidechain.map(|source| MixerNode(Some(source)).key()),
+                    })
+                })
+                .collect::<Vec<_>>()
+                .into();
             // People's notes about this node; edit_comments with mixer_node changes them.
             let comments = self.comments(crate::session::CommentHost::Mixer(*node));
             if !comments.is_empty() {
@@ -745,8 +677,10 @@ impl Session {
             .map(|edge| {
                 let mut row = json!({"source":edge.source.key(),"target":edge.target.key()});
                 match edge.kind {
-                    MixerEdgeKind::Chain => row["kind"] = "chain".into(),
-                    MixerEdgeKind::Sidechain => row["kind"] = "sidechain".into(),
+                    MixerEdgeKind::Sidechain { slot } => {
+                        row["kind"] = "sidechain".into();
+                        row["effect"] = effect_key(slot).into();
+                    }
                     MixerEdgeKind::Notes => row["kind"] = "notes".into(),
                     MixerEdgeKind::Output {
                         track,
@@ -756,11 +690,8 @@ impl Session {
                         row["kind"] = "output".into();
                         row["gain_db"] = gain_db.into();
                         row["pre_fader"] = (tap == Tap::PreFader).into();
-                        row["control_source"] = MixerNode::Strip(Some(track)).key().into();
-                        let to = match edge.target {
-                            MixerNode::Strip(owner) => destination(owner),
-                            MixerNode::Effect(..) => Destination::Master,
-                        };
+                        row["control_source"] = MixerNode(Some(track)).key().into();
+                        let to = destination(edge.target.0);
                         row["automated"] = self
                             .is_automated(ParamTarget::Output { track, to, tap })
                             .into();

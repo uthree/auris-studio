@@ -8,6 +8,10 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # Rust 1.100's Cargo moved build-script output one directory deeper, and ort-sys 2.0.0-rc.13
+  # finds `target` by counting parents from it, so its Windows DLL copy panics. Stay on 1.99
+  # until ort moves to rc.15, which finds the directory either way.
+  RUST_TOOLCHAIN: "1.99.0"
   # Warnings are the point of running this at all.
   RUSTFLAGS: -D warnings
 
@@ -35,7 +39,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install the toolchain
-        run: rustup toolchain install stable --profile minimal --component rustfmt,clippy
+        run: rustup toolchain install ${{ env.RUST_TOOLCHAIN }} --profile minimal --component rustfmt,clippy && rustup default ${{ env.RUST_TOOLCHAIN }}
 
       # ONNX Runtime's Core ML objects use Apple's availability checks. Rust drives the final
       # linker directly, so carry the compiler runtime that provides those symbols with it.
@@ -125,7 +129,7 @@ jobs:
       - uses: ilammy/msvc-dev-cmd@v1
 
       - name: Install the toolchain
-        run: rustup toolchain install stable --profile minimal --component clippy
+        run: rustup toolchain install ${{ env.RUST_TOOLCHAIN }} --profile minimal --component clippy && rustup default ${{ env.RUST_TOOLCHAIN }}
 
       - name: Cache the build
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
@@ -178,7 +182,7 @@ jobs:
       - uses: ilammy/msvc-dev-cmd@v1
 
       - name: Install the toolchain
-        run: rustup toolchain install stable --profile minimal --component clippy
+        run: rustup toolchain install ${{ env.RUST_TOOLCHAIN }} --profile minimal --component clippy && rustup default ${{ env.RUST_TOOLCHAIN }}
 
       # Restore the default Windows job's cache rather than keep one of its own: rust-cache
       # keys by job, and a key of this job's own started cold on every pull request until main
@@ -223,7 +227,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install the toolchain
-        run: rustup toolchain install stable --profile minimal --component clippy
+        run: rustup toolchain install ${{ env.RUST_TOOLCHAIN }} --profile minimal --component clippy && rustup default ${{ env.RUST_TOOLCHAIN }}
 
       # cpal builds against ALSA on Linux, and vst3-host links against XCB. wgpu loads its
       # backends at run time.

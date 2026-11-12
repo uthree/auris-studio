@@ -530,7 +530,7 @@ mod tests {
                 .unwrap();
         });
         let client = ().serve(client_transport).await.unwrap();
-        let forward = serde_json::json!({"project":path,"operation":{"action":"connect","source":format!("track:{}",a.0),"target":format!("track:{}",b.0),"kind":"output"}});
+        let forward = serde_json::json!({"project":path,"operation":{"action":"connect","source":format!("track:{}",a.0),"target":format!("track:{}",b.0)}});
         let accepted = client
             .call_tool(
                 rmcp::model::CallToolRequestParams::new("mixer_graph")
@@ -540,7 +540,7 @@ mod tests {
             .unwrap();
         assert_ne!(accepted.is_error, Some(true));
         let saved = std::fs::read(&path).unwrap();
-        let backward = serde_json::json!({"project":path,"operation":{"action":"connect","source":format!("track:{}",b.0),"target":format!("track:{}",a.0),"kind":"output"}});
+        let backward = serde_json::json!({"project":path,"operation":{"action":"connect","source":format!("track:{}",b.0),"target":format!("track:{}",a.0)}});
         let rejected = client
             .call_tool(
                 rmcp::model::CallToolRequestParams::new("mixer_graph")

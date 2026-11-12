@@ -70,6 +70,14 @@ pub enum Icon {
     Bolt,
     /// Step forward one edit: Undo's arrow, mirrored.
     Redo,
+    /// One star of a five-star rating, filled when the rating reaches it.
+    ///
+    /// Atelier's set has no star; this one is drawn on its grid and stroke, and the filled
+    /// form is the same outline with its inside painted, so a row of them reads as one scale.
+    Star {
+        /// Whether the rating reaches this star.
+        filled: bool,
+    },
 }
 
 /// An element that draws `icon` at `size`, centred in whatever box it is given.
@@ -119,13 +127,15 @@ impl Icon {
     pub fn source(self) -> IconSource {
         match self {
             Self::Sound(family) => IconSource::svg(sound_icon_path(family)),
+            Self::Star { filled: false } => IconSource::svg("icons/star.svg"),
+            Self::Star { filled: true } => IconSource::svg("icons/star-filled.svg"),
             other => other.atelier_name().into(),
         }
     }
 
     /// The Atelier symbol this icon is drawn with, for components that take an `IconName`
     /// rather than a source. A sound family's own drawing has no name; it answers with the
-    /// waveform every sound shares.
+    /// waveform every sound shares, and a star with the check.
     pub fn atelier_name(self) -> AtelierIconName {
         match self {
             Self::Sound(_) => AtelierIconName::Waveform,
@@ -158,6 +168,8 @@ impl Icon {
             Self::Undo => AtelierIconName::Undo,
             Self::Redo => AtelierIconName::Redo,
             Self::Bolt => AtelierIconName::Bolt,
+            // The nearest mark in the set: a rating is a judgement passed, as a check is.
+            Self::Star { .. } => AtelierIconName::Check,
         }
     }
 }

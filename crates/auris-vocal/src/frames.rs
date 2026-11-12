@@ -1127,8 +1127,8 @@ mod tests {
         let frames = render_frames(&track(vec![sung(60, 0.0, 1.0, &["k", "a"])]), &map());
         assert_eq!(frames.inventory, [SILENCE, "k", "a"]);
         // 60 ms at a 10 ms hop: frames 0..=5 are the k, frame 6 is the vowel.
-        for frame in 0..6 {
-            assert_eq!(frames.phonemes[frame], 1, "frame {frame}");
+        for (frame, &phoneme) in frames.phonemes.iter().take(6).enumerate() {
+            assert_eq!(phoneme, 1, "frame {frame}");
         }
         assert_eq!(frames.phonemes[6], 2);
         // The consonant carries the note's pitch: f0 is a contour, not a voicing flag.

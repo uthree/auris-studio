@@ -57,13 +57,6 @@ pub struct EffectSlot {
     /// stands.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sidechain: Option<TrackId>,
-    /// Comments pinned to this effect's node in the mixer graph; see [`Comment`].
-    ///
-    /// On the slot, so that they go where the effect goes — moved along the chain, copied with
-    /// its track, gone when it is removed — and never outlive it pointing at whatever slot is
-    /// handed its id next.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub comments: Vec<Comment>,
 }
 
 impl EffectSlot {
@@ -76,7 +69,6 @@ impl EffectSlot {
             state: PluginState::empty(),
             file: None,
             sidechain: None,
-            comments: Vec::new(),
         }
     }
 

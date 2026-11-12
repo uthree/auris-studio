@@ -152,15 +152,6 @@ impl Comments for super::MixerStrip {
     }
 }
 
-impl Comments for super::EffectSlot {
-    fn comment_list(&self) -> &[Comment] {
-        &self.comments
-    }
-    fn comment_list_mut(&mut self) -> &mut Vec<Comment> {
-        &mut self.comments
-    }
-}
-
 impl Comments for super::MidiClip {
     fn comment_list(&self) -> &[Comment] {
         &self.comments

@@ -6,7 +6,7 @@
 //! - Must call bundleExit before unloading or on program termination
 //! - Host must reject plugins not exporting these functions
 
-use super::{ModuleLoader, VstModule};
+use super::{shared::SharedLoads, ModuleLoader, VstModule};
 use crate::error::{Error, Result};
 use core_foundation::{
     base::{Boolean, CFRelease, CFRetain, CFTypeRef, TCFType},
@@ -17,7 +17,11 @@ use core_foundation::{
     string::CFString,
     url::CFURLCreateFromFileSystemRepresentation,
 };
-use std::{ffi::CString, path::Path, ptr};
+use std::{
+    ffi::CString,
+    path::{Path, PathBuf},
+    ptr,
+};
 use vst3::Steinberg::IPluginFactory;
 
 /// The architecture this host binary was built for (what the plugin must also provide).
@@ -95,51 +99,52 @@ type BundleExitFunc = unsafe extern "C" fn() -> Boolean;
 /// Function signature for GetPluginFactory
 type GetPluginFactoryFunc = unsafe extern "C" fn() -> *mut IPluginFactory;
 
-/// macOS VST3 module implementation using CFBundle APIs
-pub struct MacOSModule {
+/// A bundle whose executable is loaded and entered: what every handle on it shares.
+#[derive(Clone, Copy)]
+struct LoadedBundle {
     /// CoreFoundation bundle reference
     bundle: CFBundleRef,
+    /// bundleExit function pointer (for cleanup)
+    bundle_exit: BundleExitFunc,
+    /// GetPluginFactory function pointer
+    get_factory_fn: GetPluginFactoryFunc,
+}
+
+// SAFETY: the bundle reference and the two entry points are plain addresses; CoreFoundation
+// bundles may be used from any thread, and `LOADED` serialises loading and unloading.
+unsafe impl Send for LoadedBundle {}
+
+/// Every bundle loaded in this process, so one handle's drop cannot unload another's code.
+static LOADED: SharedLoads<LoadedBundle> = SharedLoads::new();
+
+/// macOS VST3 module implementation using CFBundle APIs: one handle on a shared load.
+pub struct MacOSModule {
+    /// The key `LOADED` holds this handle under
+    key: PathBuf,
     /// Path to the module (diagnostics / config record)
     #[allow(dead_code)]
-    path: std::path::PathBuf,
-    /// bundleExit function pointer (for cleanup)
-    bundle_exit: Option<BundleExitFunc>,
-    /// GetPluginFactory function pointer
-    get_factory_fn: Option<GetPluginFactoryFunc>,
+    path: PathBuf,
+    loaded: LoadedBundle,
 }
 
 impl MacOSModule {
+    /// The `.vst3` bundle `path` names or lies inside.
+    fn find_bundle_path(path: &Path) -> Result<PathBuf> {
+        // For VST3 bundles, we need to load the bundle itself, not the binary
+        // The CFBundle APIs will automatically find and load the correct binary
+        path.ancestors()
+            .find(|ancestor| ancestor.extension().and_then(|s| s.to_str()) == Some("vst3"))
+            .map(Path::to_path_buf)
+            .ok_or_else(|| {
+                Error::PluginLoadFailed("Could not find .vst3 bundle in path hierarchy".to_string())
+            })
+    }
+
     /// Load a VST3 bundle using the correct macOS sequence
-    fn load_internal(path: &Path) -> Result<Self> {
+    fn load_bundle(bundle_path: &Path) -> Result<LoadedBundle> {
         unsafe {
             log::info!("=== macOS VST3 MODULE LOADING START ===");
-            log::info!("Loading VST3 bundle: {}", path.display());
-
-            // For VST3 bundles, we need to load the bundle itself, not the binary
-            // The CFBundle APIs will automatically find and load the correct binary
-            let bundle_path = if path.extension().and_then(|s| s.to_str()) == Some("vst3") {
-                // This is already a .vst3 bundle, use it directly
-                path.to_path_buf()
-            } else {
-                // This might be a path to the binary inside the bundle
-                // Try to find the .vst3 bundle in the parent directories
-                let mut current = path;
-                loop {
-                    if let Some(ext) = current.extension() {
-                        if ext == "vst3" {
-                            break current.to_path_buf();
-                        }
-                    }
-                    match current.parent() {
-                        Some(parent) => current = parent,
-                        None => {
-                            return Err(Error::PluginLoadFailed(
-                                "Could not find .vst3 bundle in path hierarchy".to_string(),
-                            ))
-                        }
-                    }
-                }
-            };
+            log::info!("Loading VST3 bundle: {}", bundle_path.display());
 
             log::debug!("Using bundle path: {}", bundle_path.display());
 
@@ -184,7 +189,7 @@ impl MacOSModule {
                 // The most common cause on Apple Silicon is an architecture mismatch
                 // (e.g. an x86_64-only plugin in an arm64 host). Diagnose it so the error
                 // is actionable rather than just "failed to load".
-                let detail = match bundle_executable_archs(&bundle_path) {
+                let detail = match bundle_executable_archs(bundle_path) {
                     archs if !archs.is_empty() && !archs.contains(&HOST_ARCH) => format!(
                         "Failed to load bundle executable: plugin is {}-only but this host \
                          is {HOST_ARCH}. Run the host under Rosetta or use a universal/{HOST_ARCH} \
@@ -268,39 +273,26 @@ impl MacOSModule {
             log::debug!("GetPluginFactory function found");
 
             log::info!("=== macOS VST3 MODULE LOADING COMPLETE ===");
-            log::info!("Bundle loaded successfully: {}", path.display());
+            log::info!("Bundle loaded successfully: {}", bundle_path.display());
 
-            Ok(MacOSModule {
+            Ok(LoadedBundle {
                 bundle,
-                path: bundle_path,
-                bundle_exit: Some(bundle_exit),
-                get_factory_fn: Some(get_factory_fn),
+                bundle_exit,
+                get_factory_fn,
             })
         }
     }
 }
 
-// SAFETY: CFBundleRef is not automatically Send, but VST3 modules are typically loaded
-// and used on a single thread (usually the main thread), so this is safe in practice.
-// The bundle loading and unloading happens in a controlled manner.
-unsafe impl Send for MacOSModule {}
-
 impl VstModule for MacOSModule {
     fn get_factory(&self) -> Result<*mut IPluginFactory> {
-        match self.get_factory_fn {
-            Some(factory_fn) => {
-                let factory = unsafe { factory_fn() };
-                if factory.is_null() {
-                    Err(Error::PluginLoadFailed(
-                        "GetPluginFactory returned null".to_string(),
-                    ))
-                } else {
-                    Ok(factory)
-                }
-            }
-            None => Err(Error::PluginLoadFailed(
-                "GetPluginFactory function not available".to_string(),
-            )),
+        let factory = unsafe { (self.loaded.get_factory_fn)() };
+        if factory.is_null() {
+            Err(Error::PluginLoadFailed(
+                "GetPluginFactory returned null".to_string(),
+            ))
+        } else {
+            Ok(factory)
         }
     }
 
@@ -309,24 +301,21 @@ impl VstModule for MacOSModule {
     }
 }
 
-impl Drop for MacOSModule {
-    fn drop(&mut self) {
+impl LoadedBundle {
+    /// Exit and unload the bundle; only the last handle on it may do this.
+    fn unload(self) {
         unsafe {
             log::debug!("=== macOS VST3 MODULE CLEANUP START ===");
 
-            // Step 1: Call bundleExit if available
-            if let Some(bundle_exit) = self.bundle_exit.take() {
-                log::debug!("Calling bundleExit...");
-                let exit_result = bundle_exit();
-                if exit_result != 0 {
-                    log::debug!("bundleExit called successfully");
-                } else {
-                    log::warn!("bundleExit returned false");
-                }
-
-                // Release the retain from bundleEntry
-                CFRelease(self.bundle as CFTypeRef);
+            // Step 1: Call bundleExit
+            log::debug!("Calling bundleExit...");
+            if (self.bundle_exit)() != 0 {
+                log::debug!("bundleExit called successfully");
+            } else {
+                log::warn!("bundleExit returned false");
             }
+            // Release the retain from bundleEntry
+            CFRelease(self.bundle as CFTypeRef);
 
             // Step 2: Unload the bundle executable
             log::debug!("Unloading bundle executable...");
@@ -343,13 +332,22 @@ impl Drop for MacOSModule {
     }
 }
 
+impl Drop for MacOSModule {
+    fn drop(&mut self) {
+        LOADED.release(&self.key, LoadedBundle::unload);
+    }
+}
+
 /// macOS module loader implementation
 pub struct MacOSModuleLoader;
 
 impl ModuleLoader for MacOSModuleLoader {
     fn load(path: &Path) -> Result<Box<dyn VstModule>> {
-        let module = MacOSModule::load_internal(path)?;
-        Ok(Box::new(module))
+        let path = MacOSModule::find_bundle_path(path)?;
+        // Key by the file, not the spelling, so two routes to one bundle share one load.
+        let key = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
+        let loaded = LOADED.acquire(&key, || MacOSModule::load_bundle(&path))?;
+        Ok(Box::new(MacOSModule { key, path, loaded }))
     }
 }
 

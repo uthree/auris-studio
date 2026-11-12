@@ -380,9 +380,8 @@ impl Effect for Reverb {
                 / MILLISECONDS_PER_SECOND)
                 .max(1.0);
             let mut input = 0.0;
-            for channel in 0..channel_count {
+            for (channel, line) in self.pre_delay.iter_mut().take(channel_count).enumerate() {
                 let sample = buffer.channel(channel)[frame];
-                let line = &mut self.pre_delay[channel];
                 input += line.read(pre_delay_samples);
                 line.write(sample);
             }
@@ -399,8 +398,7 @@ impl Effect for Reverb {
                 buffer.channel_mut(0)[frame] = left * wet1 + right * wet2 + dry_left * dry;
                 buffer.channel_mut(1)[frame] = right * wet1 + left * wet2 + dry_right * dry;
             } else {
-                for channel in 0..channel_count {
-                    let wet = self.wet[channel];
+                for (channel, &wet) in self.wet.iter().take(channel_count).enumerate() {
                     let sample = &mut buffer.channel_mut(channel)[frame];
                     *sample = *sample * dry + wet * wet_level;
                 }
