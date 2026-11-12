@@ -5,22 +5,68 @@ const DELAY_CAPACITY: usize = 64;
 const SPEED_OF_SOUND: f32 = 343.0;
 
 // Area profiles in square centimetres, ordered from glottis to lips: /u/, /a/, /i/.
-// Bounded fitting to real sustained vowels: see
+// Bounded fitting to real sustained vowels, sung through the self-oscillating folds: see
 // tools/eval/references/choir-mel-calibration.json. No recordings enter the instrument.
 pub(super) const AREAS: [[f32; SECTIONS]; 3] = [
     [
-        4.0, 2.346_775, 3.189_9, 3.529_518, 3.812_508, 5.260_023, 2.397_156, 0.879_734,
+        4.0, 8.236308, 3.594443, 1.521753, 6.819354, 2.662943, 4.104373, 0.897524,
     ],
     [
-        0.55, 0.576_749, 0.308_188, 0.527_494, 5.303_491, 4.571_768, 3.423_561, 7.022_885,
+        0.55, 1.385173, 0.484180, 0.744748, 4.501303, 6.996894, 2.358_39, 4.297126,
     ],
     [
-        4.5, 3.013_471, 2.314_088, 1.964_106, 0.466_615, 0.409_956, 1.146_091, 3.818_364,
+        4.5, 7.178539, 1.684037, 3.551618, 1.070828, 1.118199, 0.401154, 3.178495,
     ],
 ];
-pub(super) const RADIATION_HZ: f32 = 312.503_16;
-// Preserve the median pre-fit training-note RMS per vowel, independently of mel loss.
-pub(super) const OUTPUT_GAINS: [f32; 3] = [0.955_550, 1.137_035, 1.232_421];
+/// Cross-section of the tube just above the folds, square centimetres. The epilarynx is short
+/// and narrow in every vowel, and its inertance is what lets the folds start against a wide
+/// pharynx, so it is a tube of its own in front of the eight the vowels shape.
+const EPILARYNX: f32 = 0.5;
+/// Length of the epilarynx, metres; the vowel's sections share what remains of the tract.
+const EPILARYNX_LENGTH: f32 = 0.02;
+
+pub(super) const RADIATION_HZ: f32 = 135.8276;
+// Every vowel as loud as "ah" was before the folds, from C3 to G4, so that automating the
+// vowel does not ride the level; set by measurement, independently of mel loss.
+pub(super) const OUTPUT_GAINS: [f32; 3] = [0.977, 0.668, 0.841];
+
+/// First resonance of the vowel profiles in a 17 cm tract, at vowel 0, ½, 1, 1½ and 2.
+/// Measured from the tract's impulse response; a test holds these to the profiles.
+pub(super) const FIRST_FORMANT: [f32; 5] = [360.0, 530.0, 695.0, 510.0, 295.0];
+const FORMANT_LENGTH: f32 = 0.17;
+/// How far above the note a singer keeps the first resonance. Below it the tract's pressure
+/// is in phase with the flow and helps the folds; past it the tract wins and they stall.
+pub(super) const FORMANT_MARGIN: f32 = 1.1;
+/// The most a singer shortens the tract — lips spread, jaw dropped — to keep that margin.
+const SHORTEST: f32 = 0.7;
+
+/// First resonance of `vowel` in a tract `length` metres long.
+pub(super) fn first_formant(vowel: f32, length: f32) -> f32 {
+    let at = (vowel.clamp(0.0, 2.0) * 2.0).min(3.999);
+    let low = at as usize;
+    let blend = at - low as f32;
+    let hz = FIRST_FORMANT[low] + (FIRST_FORMANT[low + 1] - FIRST_FORMANT[low]) * blend;
+    hz * FORMANT_LENGTH / length
+}
+
+/// The vowel and length a singer actually sings `hertz` with: opened towards "ah", and then
+/// shortened, until the first resonance clears the note — what sopranos do on top notes.
+pub(super) fn tuned(vowel: f32, length: f32, hertz: f32) -> (f32, f32) {
+    let need = FORMANT_MARGIN * hertz;
+    if first_formant(vowel, length) >= need {
+        return (vowel, length);
+    }
+    // Walk towards "ah" (vowel 1), where the first resonance is highest.
+    let steps = 32;
+    for step in 1..=steps {
+        let candidate = vowel + (1.0 - vowel) * step as f32 / steps as f32;
+        if first_formant(candidate, length) >= need {
+            return (candidate, length);
+        }
+    }
+    let shortened = (length * first_formant(1.0, length) / need).max(length * SHORTEST);
+    (1.0, shortened)
+}
 
 fn scatter(right: f32, left: f32, reflection: f32) -> (f32, f32) {
     let scattered = reflection * (right - left);
@@ -61,14 +107,18 @@ impl Delay {
 pub(super) struct Tract {
     forward: [Delay; SECTIONS],
     backward: [Delay; SECTIONS],
+    epilarynx_forward: Delay,
+    epilarynx_backward: Delay,
+    epilarynx_delay: f32,
     reflections: [f32; SECTIONS - 1],
     targets: [f32; SECTIONS - 1],
     delay: f32,
     target_delay: f32,
     smoothing: f32,
     loss: f32,
-    input_gain: f32,
-    target_input_gain: f32,
+    /// Cross-section of the first vowel section, square centimetres, where the epilarynx opens.
+    glottal_area: f32,
+    target_glottal_area: f32,
     output_gain: f32,
     target_output_gain: f32,
     radiation_memory: f32,
@@ -83,14 +133,17 @@ impl Tract {
         Self {
             forward: std::array::from_fn(|_| Delay::new()),
             backward: std::array::from_fn(|_| Delay::new()),
+            epilarynx_forward: Delay::new(),
+            epilarynx_backward: Delay::new(),
+            epilarynx_delay: (EPILARYNX_LENGTH * sample_rate / SPEED_OF_SOUND).max(1.0),
             reflections: [0.0; SECTIONS - 1],
             targets: [0.0; SECTIONS - 1],
             delay: 1.0,
             target_delay: 1.0,
             smoothing: 1.0 - (-1.0 / (0.02 * sample_rate)).exp(),
             loss: (-35.0 / sample_rate).exp(),
-            input_gain: 1.0,
-            target_input_gain: 1.0,
+            glottal_area: 1.0,
+            target_glottal_area: 1.0,
             output_gain: 1.0,
             target_output_gain: 1.0,
             radiation_memory: 0.0,
@@ -131,14 +184,15 @@ impl Tract {
         for (target, pair) in self.targets.iter_mut().zip(areas.windows(2)) {
             *target = (pair[0] - pair[1]) / (pair[0] + pair[1]);
         }
-        // The source prescribes volume flow, whereas the delay lines carry pressure.
-        // Convert at the glottis and back to radiated flow at the mouth. Reading lip
-        // pressure directly would make a narrow /u/ aperture much louder than /a/.
-        self.target_input_gain = 1.0 / areas[0];
+        // The folds feed volume flow into the impedance of the first tube, whereas the delay
+        // lines carry pressure; the mouth is heard as radiated flow again. Reading lip pressure
+        // directly would make a narrow /u/ aperture much louder than /a/.
+        self.target_glottal_area = areas[0];
         let normalization =
             output_gains[first] + (output_gains[first + 1] - output_gains[first]) * blend;
         self.target_output_gain = areas[SECTIONS - 1] * normalization;
-        self.target_delay = (length * sample_rate / (SPEED_OF_SOUND * SECTIONS as f32))
+        self.target_delay = ((length - EPILARYNX_LENGTH) * sample_rate
+            / (SPEED_OF_SOUND * SECTIONS as f32))
             .clamp(1.0, (DELAY_CAPACITY - 2) as f32);
     }
 
@@ -146,9 +200,11 @@ impl Tract {
         for delay in self.forward.iter_mut().chain(&mut self.backward) {
             delay.reset();
         }
+        self.epilarynx_forward.reset();
+        self.epilarynx_backward.reset();
         self.reflections = self.targets;
         self.delay = self.target_delay;
-        self.input_gain = self.target_input_gain;
+        self.glottal_area = self.target_glottal_area;
         self.output_gain = self.target_output_gain;
         self.radiation_memory = 0.0;
         self.radiation_output = 0.0;
@@ -173,14 +229,31 @@ impl Tract {
         }
     }
 
-    pub(super) fn next(&mut self, excitation: f32) -> f32 {
+    /// The pressure wave arriving back at the glottis, which the folds' flow is solved against.
+    pub(super) fn incoming(&self) -> f32 {
+        self.epilarynx_backward.read(self.epilarynx_delay)
+    }
+
+    /// Acoustic impedance of the first tube, in SI units.
+    pub(super) fn glottal_impedance(&self) -> f64 {
+        super::folds::impedance(f64::from(EPILARYNX) * 1e-4)
+    }
+
+    /// Advances one sample. `glottal` is the pressure wave leaving the glottis: the incoming
+    /// wave reflected from the closed end, plus what the folds' flow adds to it.
+    pub(super) fn next(&mut self, glottal: f32) -> f32 {
         self.delay += (self.target_delay - self.delay) * self.smoothing;
-        self.input_gain += (self.target_input_gain - self.input_gain) * self.smoothing;
+        self.glottal_area += (self.target_glottal_area - self.glottal_area) * self.smoothing;
         self.output_gain += (self.target_output_gain - self.output_gain) * self.smoothing;
         let right: [f32; SECTIONS] = std::array::from_fn(|i| self.forward[i].read(self.delay));
         let left: [f32; SECTIONS] = std::array::from_fn(|i| self.backward[i].read(self.delay));
-        // Closed glottis and open lips reflect with opposite signs. Both lose energy.
-        self.forward[0].push(excitation * self.input_gain + 0.75 * left[0]);
+        let rising = self.epilarynx_forward.read(self.epilarynx_delay);
+        self.epilarynx_forward.push(glottal);
+        let into = (EPILARYNX - self.glottal_area) / (EPILARYNX + self.glottal_area);
+        let (forward, backward) = scatter(rising, left[0], into);
+        self.forward[0].push(forward * self.loss);
+        self.epilarynx_backward.push(backward * self.loss);
+        // Open lips reflect with the opposite sign, and lose energy to the room.
         self.backward[SECTIONS - 1].push(-0.85 * right[SECTIONS - 1]);
         for (i, reflection) in self.reflections.iter_mut().enumerate() {
             *reflection += (self.targets[i] - *reflection) * self.smoothing;
@@ -221,7 +294,10 @@ mod tests {
             tract.targets.fill(0.0);
             tract.reset();
             let impulse: Vec<_> = (0..8_192)
-                .map(|i| tract.next(if i == 0 { 1.0 } else { 0.0 }))
+                .map(|i| {
+                    let back = tract.incoming();
+                    tract.next(if i == 0 { 1.0 } else { 0.75 * back })
+                })
                 .collect();
             let peak = (350..700)
                 .step_by(2)

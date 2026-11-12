@@ -366,3 +366,93 @@ fn offline_tract_overrides_reject_invalid_geometry_without_changing_the_instrume
     assert!(choir.set_calibration_tract(areas, 500.0, [1.0; 3]));
     assert_eq!(choir.calibration, (areas, 500.0, [1.0; 3]));
 }
+
+#[test]
+fn the_formant_table_is_the_profiles_own_first_resonance() {
+    for (index, expected) in tract::FIRST_FORMANT.iter().enumerate() {
+        let vowel = index as f32 * 0.5;
+        let mut tract = Tract::new(48_000.0);
+        tract.configure(vowel, 0.17, 48_000.0);
+        tract.reset();
+        let impulse: Vec<f32> = (0..16_384)
+            .map(|i| {
+                let back = tract.incoming();
+                tract.next(if i == 0 { 1.0 } else { back })
+            })
+            .collect();
+        let spectrum: Vec<(f32, f64)> = (120..1_600)
+            .step_by(5)
+            .map(|f| (f as f32, goertzel(&impulse, 48_000.0, f64::from(f))))
+            .collect();
+        let first = spectrum
+            .windows(3)
+            .find(|w| w[1].1 > w[0].1 && w[1].1 >= w[2].1)
+            .map(|w| w[1].0)
+            .unwrap();
+        assert!(
+            (first / expected - 1.0).abs() < 0.03,
+            "vowel={vowel}: first resonance {first} Hz, table {expected} Hz"
+        );
+    }
+}
+
+#[test]
+fn a_note_above_the_first_resonance_is_sung_on_an_opened_vowel() {
+    // Low notes keep the vowel asked for.
+    assert_eq!(tract::tuned(0.0, 0.17, 150.0), (0.0, 0.17));
+    // A soprano's G5 on "oo" opens towards "ah" until the resonance clears the note.
+    let (vowel, length) = tract::tuned(0.0, 0.17, 784.0 / 1.6);
+    assert!(
+        vowel > 0.0 && vowel <= 1.0 && length == 0.17,
+        "{vowel}, {length}"
+    );
+    assert!(tract::first_formant(vowel, length) >= tract::FORMANT_MARGIN * 784.0 / 1.6);
+    // Above "ah" itself the tract is shortened, never past seven tenths.
+    let (vowel, length) = tract::tuned(2.0, 0.17, 1_000.0);
+    assert_eq!(vowel, 1.0);
+    assert!((0.119..0.17).contains(&length), "{length}");
+}
+
+/// Amplitude at `hz` through a Hann window, so a low note's harmonics do not leak into it.
+fn windowed(samples: &[f32], hz: f64) -> f64 {
+    let count = samples.len() as f64;
+    let (mut re, mut im) = (0.0, 0.0);
+    for (index, sample) in samples.iter().enumerate() {
+        let t = index as f64;
+        let weight = 0.5 - 0.5 * (std::f64::consts::TAU * t / count).cos();
+        let angle = std::f64::consts::TAU * hz * t / 48_000.0;
+        re += f64::from(*sample) * weight * angle.cos();
+        im += f64::from(*sample) * weight * angle.sin();
+    }
+    (re * re + im * im).sqrt() * 4.0 / count
+}
+
+#[test]
+fn the_folds_find_every_note_of_a_choir_in_every_vowel() {
+    for vowel in [0.0, 1.0, 2.0] {
+        for pitch in (36..=81).step_by(3) {
+            let mut choir = prepared();
+            choir.set_param_by_key("vowel", vowel);
+            choir.set_param_by_key("ensemble", 0.0);
+            choir.set_param_by_key("vibrato", 0.0);
+            choir.set_param_by_key("breath", 0.0);
+            let out = render(&mut choir, 72_000, 512, 1, &[note(0, pitch, 0.8)]).remove(0);
+            let tail = &out[24_000..];
+            let expected = f64::from(pitch_to_hz(f32::from(pitch)));
+            let (cents, strength) = (-60_i32..=60)
+                .map(|cents| {
+                    let hz = expected * (f64::from(cents) / 1200.0).exp2();
+                    (cents, windowed(tail, hz))
+                })
+                .max_by(|a, b| a.1.total_cmp(&b.1))
+                .unwrap();
+            let subharmonic = windowed(tail, expected / 2.0);
+            assert!(
+                cents.abs() <= 8 && strength > 4.0 * subharmonic && rms(tail) > 0.005,
+                "vowel={vowel}, pitch={pitch}, cents={cents}, fundamental={strength}, \
+                 half={subharmonic}, rms={}",
+                rms(tail)
+            );
+        }
+    }
+}

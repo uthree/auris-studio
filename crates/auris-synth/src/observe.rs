@@ -282,13 +282,13 @@ mod tests {
         let voice = &frame.voices[0];
         assert!(loudest(&voice.points) > 1e-4, "the tract is sounding");
         assert!(loudest(&voice.points) < 0.1);
-        // /a/ opens towards the lips: narrow at the glottis, widest near the mouth.
+        // /a/ opens towards the lips: narrow at the glottis, widest in the mouth.
         assert_eq!(voice.modes.iter().fold(0.0_f32, |a, b| a.max(*b)), 1.0);
-        assert!(
-            voice.modes[1] < 0.15 && voice.modes[7] == 1.0,
-            "{:?}",
-            voice.modes
-        );
+        let widest = voice.modes[..8]
+            .iter()
+            .position(|mode| *mode == 1.0)
+            .unwrap();
+        assert!(voice.modes[0] < 0.15 && widest >= 4, "{:?}", voice.modes);
     }
 
     #[test]

@@ -888,8 +888,13 @@ pub mod architecture {
     //! There is no sample asset behind these instruments. [`crate::DEFAULT_INSTRUMENT`] names
     //! the physical piano. SoundFont import uses the same worker/session boundary as before.
     //! [`auris_synth::Choir`] is a polyphonic instrument for wordless ensemble vowels. Each
-    //! note excites four independently varied eight-section vocal-tract waveguides with a
-    //! prescribed, band-limited glottal-flow pulse and breath noise. Its vowel, voice size,
+    //! note is four singers, each a pair of two-mass vocal folds that lung pressure sets
+    //! oscillating, solved against an eight-section vocal-tract waveguide behind a narrow
+    //! epilarynx. Nothing prescribes the waveform: the pitch is the folds' own, held to the
+    //! note by measuring each period and correcting tension, and breath is turbulence on the
+    //! glottal jet. A note above a vowel's first resonance is sung with the vowel opened and
+    //! the tract shortened, as sopranos do, because past it the tract stalls the folds. Its
+    //! vowel, voice size,
     //! ensemble variation and stereo width are ordinary automatable plugin parameters; it uses
     //! instrument tracks and MIDI notes, with no lyric or offline voice-model setup.
     //! Its factory tract profiles, source controls and lip radiation are fitted offline to
