@@ -780,6 +780,7 @@ mod tests {
         let generated: serde_json::Value = serde_json::from_str(
             &session
                 .agent_command(super::super::Command::GeneratePhrase {
+                    settings: Default::default(),
                     track: track.0,
                     part: "lead".into(),
                     start_bar: 1,

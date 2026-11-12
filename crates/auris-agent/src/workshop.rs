@@ -2367,14 +2367,6 @@ fn execute(
     {
         return Err("This operation is not available inside candidate production".into());
     }
-    if action == "generate_phrase"
-        && !matches!(
-            command["part"].as_str(),
-            Some("chords" | "pad" | "arp" | "drums" | "kick" | "snare" | "hat")
-        )
-    {
-        return Err("Author expressive lead and bass notes directly with edit_notes".into());
-    }
     let vocal = matches!(action, "list_voices" | "set_singer_voice" | "sing");
     let command = serde_json::from_value(command).map_err(|e| e.to_string())?;
     if let auris_session::live_agent::Command::InspectAudio {

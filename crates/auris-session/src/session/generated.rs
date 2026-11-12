@@ -5,7 +5,8 @@
 //! written again — after the chords move, or with a different feel, or simply as another take —
 //! and [`Session::freeze_clip`] drops the recipe when one of the takes turns out to be the keeper.
 //!
-//! Generation belongs to a clip on a melodic or drum track. Notes are stored like anybody
+//! Generation belongs to a clip on a melodic or drum track; a singer track takes a lead once,
+//! frozen, because the lyrics it then carries must survive. Notes are stored like anybody
 //! else's, so playback and export never need to run the composer. The track kind selects the
 //! permitted presets and its editor; freezing a recipe preserves that kind.
 //!
@@ -108,7 +109,7 @@ impl Session {
                 end = end.min(clip.start);
             }
         }
-        self.generate_clip_at(track, start, end - start, recipe)
+        self.generate_clip_at(track, start, end - start, recipe, None)
     }
 
     /// Writes a clip on `track` from the harmony underneath it.
@@ -131,7 +132,26 @@ impl Session {
         length: Ticks,
         recipe: ClipRecipe,
     ) -> Result<ClipId, SessionError> {
-        self.generate_clip_at(track, self.snap(start), length, recipe)
+        self.generate_clip_at(track, self.snap(start), length, recipe, None)
+    }
+
+    /// [`Session::generate_clip`] with the part placed in a pitch range, MIDI `low..=high`.
+    ///
+    /// A melodic writer chooses its register from the preset and the seed; this moves the whole
+    /// part by octaves, through the recipe's `octave`, until the middle of what it wrote sits
+    /// nearest the middle of the range, so a regeneration stays there. Octaves keep every
+    /// interval, so a part wider than the range still overhangs it: the caller reads the
+    /// written notes rather than trusting the request. On a singer track the take is moved
+    /// the same way into this range instead of the default singing range.
+    pub fn generate_clip_in_range(
+        &mut self,
+        track: TrackId,
+        start: Ticks,
+        length: Ticks,
+        recipe: ClipRecipe,
+        range: (u8, u8),
+    ) -> Result<ClipId, SessionError> {
+        self.generate_clip_at(track, self.snap(start), length, recipe, Some(range))
     }
 
     /// Commits a range whose position has already been resolved by the calling command.
@@ -141,14 +161,22 @@ impl Session {
         start: Ticks,
         length: Ticks,
         recipe: ClipRecipe,
+        range: Option<(u8, u8)>,
     ) -> Result<ClipId, SessionError> {
         let index = self.require_track(track)?;
-        if self.project.tracks[index].kind.as_instrument().is_none()
-            || self.project.tracks[index].kind.is_drum() != recipe.preset.is_drums()
-        {
+        let kind = &self.project.tracks[index].kind;
+        let sung = kind.is_singer();
+        if sung && recipe.preset != auris_core::ClipPreset::Lead {
             return Err(SessionError::WrongTrackKind {
                 id: track.0,
-                actual: self.project.tracks[index].kind.label(),
+                actual: kind.label(),
+                expected: "a melodic instrument track; a singer track takes only a lead",
+            });
+        }
+        if !sung && (kind.as_instrument().is_none() || kind.is_drum() != recipe.preset.is_drums()) {
+            return Err(SessionError::WrongTrackKind {
+                id: track.0,
+                actual: kind.label(),
                 expected: if recipe.preset.is_drums() {
                     "a drum track"
                 } else {
@@ -173,15 +201,50 @@ impl Session {
             // addresses remain usable, but a generic preset has no authority to invent them.
             auris_compose::apply_drum_map(&mut recipe, &auris_core::project::DrumMap::default());
         }
+        if let (Some(range), false) = (range, sung) {
+            if recipe.preset.is_drums() {
+                return Err(SessionError::WrongTrackKind {
+                    id: track.0,
+                    actual: self.project.tracks[index].kind.label(),
+                    expected: "a melodic part for a pitch range",
+                });
+            }
+            // A writer folds its line into its own register, so an octave asked for is not the
+            // same as one heard: write each and keep the one whose middle lands nearest.
+            let centre = f64::from(range.0) / 2.0 + f64::from(range.1) / 2.0;
+            let miss = |recipe: &ClipRecipe| {
+                middle_of(&self.phrase(start, length, recipe))
+                    .map_or(f64::MAX, |m| (m - centre).abs())
+            };
+            recipe.octave = (-2..=2)
+                .map(|octave| ClipRecipe {
+                    octave,
+                    ..recipe.clone()
+                })
+                .min_by(|a, b| miss(a).total_cmp(&miss(b)))
+                .map_or(0, |best| best.octave);
+        }
         let notes = self.phrase(start, length, &recipe);
         recipe.text_digest = auris_core::notes_digest(&notes);
 
         let mut candidate = MidiClip::new(ClipId(0), recipe.preset.name(), start, length);
         candidate.notes = notes;
-        // The feel the preset starts with — the lean and the wander a recipe used to bake into
-        // the notes arrive as the performance stack instead, where the panel edits them.
-        candidate.transforms = auris_compose::clip_performance(recipe.preset, recipe.seed);
-        candidate.recipe = Some(recipe);
+        if sung {
+            // A sung line is written once and then carries lyrics: a recipe would let the next
+            // regeneration discard them, so the take arrives frozen and the singer's feel comes
+            // from the performance presets like any typed vocal.
+            let default = auris_compose::VocalRange::default();
+            let range = range.unwrap_or((default.low, default.high));
+            let shift = 12 * octaves_into(&candidate.notes, range);
+            for note in &mut candidate.notes {
+                note.pitch = (i32::from(note.pitch) + shift).clamp(0, 127) as u8;
+            }
+        } else {
+            // The feel the preset starts with — the lean and the wander a recipe used to bake
+            // into the notes arrive as the performance stack instead, where the panel edits them.
+            candidate.transforms = auris_compose::clip_performance(recipe.preset, recipe.seed);
+            candidate.recipe = Some(recipe);
+        }
         candidate.looped_note_instances()?;
 
         self.record(Edit::GenerateClip);
@@ -544,6 +607,26 @@ pub(super) fn unarranged_project_phrase(
         recipe,
         project.sections.section_at(start),
     )
+}
+
+/// The whole octaves that bring the middle of `notes` nearest the middle of `range`.
+///
+/// A writer chooses its register for itself; a voice, or a part asked to sit between two
+/// others, wants it somewhere else. Octaves keep every interval and the line's relation to the
+/// chords. Zero for no notes.
+fn octaves_into(notes: &[Note], (low, high): (u8, u8)) -> i32 {
+    let Some(middle) = middle_of(notes) else {
+        return 0;
+    };
+    let centre = f64::from(low) / 2.0 + f64::from(high) / 2.0;
+    ((centre - middle) / 12.0).round() as i32
+}
+
+/// Halfway between the lowest and highest pitch written, or `None` for no notes.
+fn middle_of(notes: &[Note]) -> Option<f64> {
+    let lowest = notes.iter().map(|note| note.pitch).min()?;
+    let highest = notes.iter().map(|note| note.pitch).max()?;
+    Some(f64::from(lowest) / 2.0 + f64::from(highest) / 2.0)
 }
 
 /// A generated wander follows its take's seed while retaining any edited amount or custom seed.
@@ -1024,6 +1107,44 @@ mod tests {
             assert_eq!(retained.drum_map, recipe.drum_map);
             assert_eq!(retained.drum_note, recipe.drum_note);
             assert_eq!(retained.drum_voices, recipe.drum_voices);
+        }
+    }
+
+    #[test]
+    fn a_singer_track_takes_a_frozen_lead_in_a_singing_range_and_nothing_else() {
+        let (mut session, _) = with_a_progression();
+        let singer = session.add_singer_track("Voice");
+        session.forget_history();
+        for preset in [ClipPreset::Chords, ClipPreset::Bass, ClipPreset::Drums] {
+            assert!(
+                session
+                    .generate_clip(singer, Ticks::ZERO, BAR * 4, ClipRecipe::new(preset, 1))
+                    .is_err(),
+                "{preset:?}"
+            );
+        }
+        assert!(!session.can_undo());
+        let range = auris_compose::VocalRange::default();
+        for seed in 0..8 {
+            let clip = session
+                .generate_clip(
+                    singer,
+                    Ticks::ZERO,
+                    BAR * 4,
+                    ClipRecipe::new(ClipPreset::Lead, seed),
+                )
+                .unwrap();
+            let midi = session.midi_clip(clip).unwrap();
+            assert!(!midi.notes.is_empty(), "seed {seed}");
+            assert!(midi.recipe.is_none(), "a sung take must not be regenerable");
+            assert!(midi.transforms.is_empty());
+            let low = midi.notes.iter().map(|note| note.pitch).min().unwrap();
+            let high = midi.notes.iter().map(|note| note.pitch).max().unwrap();
+            let middle = (i32::from(low) + i32::from(high)) / 2;
+            let centre = (i32::from(range.low) + i32::from(range.high)) / 2;
+            assert!((middle - centre).abs() <= 6, "seed {seed}: {low}..{high}");
+            session.undo().unwrap();
+            assert!(session.midi_clip(clip).is_none());
         }
     }
 
