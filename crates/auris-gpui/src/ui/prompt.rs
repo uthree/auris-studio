@@ -298,6 +298,8 @@ impl PromptTarget {
     pub fn hint(self) -> Option<Key> {
         if matches!(self, Self::AgentChordReference { .. }) {
             Some(Key::AgentChordsHint)
+        } else if matches!(self, Self::WorkshopFeedback { .. }) {
+            Some(Key::WorkshopFeedbackHint)
         } else if let Self::Event { event, column, .. } = self {
             Some(column.hint(event))
         } else {
@@ -664,7 +666,6 @@ pub enum PromptBody {
 /// An open sheet.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Prompt {
-    feedback_foci: Option<[gpui::FocusHandle; 5]>,
     /// Heading above the body.
     pub title: SharedString,
     /// What it is asking for.
@@ -706,15 +707,6 @@ fn next_serial() -> u64 {
 }
 
 impl Prompt {
-    /// Star controls that must retain keyboard focus while this sheet is open.
-    pub(crate) fn feedback_focus_handles(&self) -> Option<&[gpui::FocusHandle; 5]> {
-        self.feedback_foci.as_ref()
-    }
-    /// Give a feedback sheet stable keyboard destinations for its five star choices.
-    pub(crate) fn with_feedback_focus(mut self, cx: &mut Context<AurisApp>) -> Self {
-        self.feedback_foci = Some(std::array::from_fn(|_| cx.focus_handle().tab_stop(true)));
-        self
-    }
     /// A prompt editing `text`.
     pub fn new(
         title: impl Into<SharedString>,
@@ -723,7 +715,6 @@ impl Prompt {
     ) -> Self {
         let text = text.into();
         Self {
-            feedback_foci: None,
             title: title.into(),
             body: PromptBody::Text {
                 target,
@@ -790,7 +781,6 @@ impl Prompt {
     /// A prompt asking a question rather than taking a name.
     pub fn ask(title: impl Into<SharedString>, question: Question) -> Self {
         Self {
-            feedback_foci: None,
             title: title.into(),
             body: PromptBody::Ask(question),
             error: None,
@@ -810,7 +800,6 @@ impl Prompt {
         lines: impl IntoIterator<Item = SharedString>,
     ) -> Self {
         Self {
-            feedback_foci: None,
             title: title.into(),
             body: PromptBody::Notice(lines.into_iter().collect()),
             error: None,
@@ -1045,7 +1034,7 @@ impl AurisApp {
                 }
                 let sent = self
                     .song_workshop
-                    .as_ref()
+                    .as_mut()
                     .is_some_and(|state| state.send_feedback(workshop, candidate, feedback));
                 if !sent {
                     self.reject_prompt(self.t(Key::WorkshopFeedbackUnavailable));
@@ -1690,56 +1679,6 @@ impl AurisApp {
     ) -> bool {
         let shift = event.keystroke.modifiers.shift;
 
-        if let Some(foci) = self
-            .prompt
-            .as_ref()
-            .and_then(|prompt| prompt.feedback_foci.as_ref())
-        {
-            let mut handles = foci.to_vec();
-            handles.extend([
-                gpui::Focusable::focus_handle(self.prompt_input.area().read(cx), cx),
-                self.modal_focus.prompt_cancel().clone(),
-                self.modal_focus.prompt_confirm().clone(),
-            ]);
-            let focused = handles
-                .iter()
-                .position(|handle| handle.is_focused(window))
-                .unwrap_or(5);
-            let composing = self
-                .prompt_input
-                .focused(window, cx)
-                .is_some_and(|input| input.read(cx).buffer().marked().is_some());
-            if !composing {
-                match event.keystroke.key.as_str() {
-                    "escape" => {
-                        self.cancel_prompt();
-                        return true;
-                    }
-                    "tab" => {
-                        let next = if shift {
-                            (focused + handles.len() - 1) % handles.len()
-                        } else {
-                            (focused + 1) % handles.len()
-                        };
-                        window.focus(&handles[next]);
-                        return true;
-                    }
-                    "enter" | "space" | " " if focused < 5 => {
-                        self.set_feedback_rating(focused as u8 + 1);
-                        return true;
-                    }
-                    "enter" | "space" | " " if focused > 5 => {
-                        self.activate_focused_prompt_button(window, cx);
-                        return true;
-                    }
-                    _ if focused != 5 => return true,
-                    // Typing, which the comment's input has already taken what it wanted of.
-                    _ => return false,
-                }
-            }
-            return false;
-        }
-
         let button_prompt = self.prompt.as_ref().and_then(|prompt| match &prompt.body {
             PromptBody::Ask(question) => Some((
                 matches!(question, Question::Unsaved(_) | Question::Recovery(_)),
@@ -1854,7 +1793,6 @@ impl AurisApp {
                     .flex()
                     .flex_col()
                     .gap_2()
-                    .children(self.render_feedback_rating(prompt, cx))
                     .child(if matches!(target, PromptTarget::WorkshopFeedback { .. }) {
                         self.render_feedback_comment(prompt, window, cx)
                             .into_any_element()
@@ -2072,71 +2010,12 @@ impl AurisApp {
             .into_any_element()
     }
 
-    /// Change the explicit star choice without altering the user's written impressions.
-    fn set_feedback_rating(&mut self, value: u8) {
-        let corrected = if let Some(prompt) = self.prompt.as_mut()
-            && let PromptBody::Text {
-                target: PromptTarget::WorkshopFeedback { rating, .. },
-                ..
-            } = &mut prompt.body
-        {
-            *rating = value;
-            prompt.error.take()
-        } else {
-            None
-        };
-        if let Some(error) = corrected
-            && self.status == error.as_ref()
-        {
-            self.set_status("");
-        }
-    }
-
-    fn render_feedback_rating(
-        &self,
-        prompt: &Prompt,
-        cx: &mut Context<Self>,
-    ) -> Option<gpui::AnyElement> {
-        let PromptTarget::WorkshopFeedback { rating, .. } = prompt.target()? else {
-            return None;
-        };
-        let foci = prompt.feedback_foci.as_ref()?;
-        let mut choices = div().flex().gap_1();
-        for value in 1..=5u8 {
-            choices = choices.child(
-                button_enabled(
-                    ("feedback-star", usize::from(value)),
-                    format!("{value} {}", if value <= rating { "★" } else { "☆" }),
-                    ButtonStyle::Ghost,
-                    ButtonState::available(value == rating, true),
-                    self.theme.accent,
-                    &self.theme,
-                    cx.listener(move |this, _, _, cx| {
-                        this.set_feedback_rating(value);
-                        cx.notify();
-                    }),
-                )
-                .track_focus(&foci[usize::from(value - 1)]),
-            );
-        }
-        Some(
-            div()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .child(self.t(Key::WorkshopFeedbackRating))
-                .child(choices)
-                .into_any_element(),
-        )
-    }
-
     fn render_feedback_comment(
         &self,
         prompt: &Prompt,
         window: &Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
-        let theme = self.theme.clone();
         div()
             .flex()
             .flex_col()
@@ -2158,7 +2037,6 @@ impl AurisApp {
                     )
                     .child(self.render_prompt_input(prompt, window, cx)),
             )
-            .child(self.render_prompt_hint(Key::WorkshopFeedbackHint, &theme))
     }
 
     /// The line under the field saying what a valid answer looks like.
@@ -2315,15 +2193,10 @@ impl AurisApp {
                     ButtonState::available(
                         false,
                         self.prompt.as_ref().is_none_or(|prompt| {
-                            !matches!(
-                                prompt.target(),
-                                Some(PromptTarget::WorkshopFeedback { rating: 0, .. })
-                            ) && (!matches!(
-                                prompt.target(),
-                                Some(PromptTarget::WorkshopFeedback { .. })
-                            ) || prompt
-                                .field()
-                                .is_none_or(|field| field.content().chars().count() <= 2000))
+                            !matches!(prompt.target(), Some(PromptTarget::WorkshopFeedback { .. }))
+                                || prompt
+                                    .field()
+                                    .is_none_or(|field| field.content().chars().count() <= 2000)
                         }),
                     ),
                     theme.accent,
@@ -2893,6 +2766,12 @@ mod tests {
             // An event-list cell is written in whichever notation its column takes, and says so
             // through that column's own hint rather than through one shared notation.
             if matches!(target, PromptTarget::Event { .. }) {
+                assert!(target.hint().is_some());
+                continue;
+            }
+            // Impressions are prose, but prose with a length limit and a key that breaks the
+            // line rather than saving, which the field over the card has nowhere else to say.
+            if matches!(target, PromptTarget::WorkshopFeedback { .. }) {
                 assert!(target.hint().is_some());
                 continue;
             }

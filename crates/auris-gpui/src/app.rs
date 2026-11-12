@@ -2525,18 +2525,6 @@ impl AurisApp {
             }
             return;
         }
-        if self
-            .prompt
-            .as_ref()
-            .and_then(crate::ui::prompt::Prompt::feedback_focus_handles)
-            .is_some_and(|foci| {
-                foci.iter().any(|focus| focus.is_focused(window))
-                    || self.modal_focus.prompt_contains_focused(window)
-            })
-        {
-            return;
-        }
-
         // A dock switch can hide a field without clicking another pane. Hidden fields must not
         // keep taking input, and a hidden pane is no longer a place to restore the keyboard to.
         if !self.panels.is_open(Panel::Library) {
