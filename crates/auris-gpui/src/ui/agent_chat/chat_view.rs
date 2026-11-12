@@ -55,7 +55,7 @@ impl ChatSync {
 impl AgentChat {
     /// The element id of one part of the row showing `entries[index]`, for window tests and
     /// for anything that has to point at a row: `answer`, `user`, `tool`, `reasoning`,
-    /// `choices`, `copy`.
+    /// `choices`.
     #[cfg(test)]
     pub(crate) fn chat_row_id(&self, index: usize, part: &str) -> Option<String> {
         let sync = self.chat.as_ref()?;
@@ -105,7 +105,13 @@ impl AurisApp {
         let mut sync = match self.agent_chat.chat.take() {
             Some(sync) => sync,
             None => {
-                let view = cx.new(|_| ChatView::new(CHAT_VIEW_ID).anonymous().open_attachments());
+                let view = cx.new(|_| {
+                    ChatView::new(CHAT_VIEW_ID)
+                        .anonymous()
+                        // A drag selects across messages; see `agent_components::user_message`.
+                        .without_copy_buttons()
+                        .open_attachments()
+                });
                 let events = cx.subscribe(&view, |this, _, event: &ChatEvent, cx| {
                     this.agent_chat_event(event, cx);
                 });
