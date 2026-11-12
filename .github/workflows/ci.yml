@@ -127,10 +127,12 @@ jobs:
       - name: Install the toolchain
         run: rustup toolchain install stable --profile minimal --component clippy
 
+      # The Windows prefix moved to v2 when the first Rust 1.100 run on main saved a cache that
+      # ort-sys's build script could not run against (it panicked copying its DLLs).
       - name: Cache the build
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
-          prefix-key: v1-build-performance
+          prefix-key: v2-build-performance-windows
           cache-on-failure: true
           save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev' || github.event_name == 'workflow_dispatch' }}
 
@@ -188,7 +190,7 @@ jobs:
       - name: Cache the build
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
-          prefix-key: v1-build-performance
+          prefix-key: v2-build-performance-windows
           shared-key: windows
           save-if: false
 
