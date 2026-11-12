@@ -54,6 +54,52 @@ pub(crate) fn mora_slots(moras: &[(&str, &[String])], word_starts: &[usize]) -> 
         .collect()
 }
 
+/// Whether each mora is the second half of a heavy syllable: a held long vowel, っ, ん, or
+/// い after あ or お inside a word (あい, おい; うい and えい are too often two words or a long vowel to tell). Such a mora cannot start a foot.
+pub(crate) fn dependent_moras(
+    moras: &[(&str, &[String])],
+    slots: &[MoraSlot],
+    word_starts: &[usize],
+) -> Vec<bool> {
+    moras
+        .iter()
+        .enumerate()
+        .map(|(at, (_, phonemes))| {
+            if at == 0 || word_starts.contains(&at) {
+                return false;
+            }
+            let diphthong = matches!(phonemes, [i] if i == "i")
+                && moras[at - 1].1.last().is_some_and(|v| v == "a" || v == "o");
+            slots[at] != MoraSlot::Note || *phonemes == ["ɴ"] || diphthong
+        })
+        .collect()
+}
+
+/// Mora counts of the phrase's two-mora feet (拍, the タクト of 中道 1980).
+///
+/// Japanese verse and song are counted in pairs of moras: 7-5 is four beats of two moras
+/// each, with the odd mora held or followed by a rest (ふる|いけ|や・). The pairing starts
+/// afresh at every word group, never pairs across a heavy syllable (かた|かっ|た, not
+/// かた|か|った), and leaves a mora alone where pairing it would split the next syllable.
+/// A lone mora is where a melody puts its pickup, held note or rest.
+pub(crate) fn feet(dependent: &[bool], word_starts: &[usize]) -> Vec<usize> {
+    let mut sizes = Vec::new();
+    let mut at = 0;
+    let starts_group = |at: usize| word_starts.contains(&at);
+    while at < dependent.len() {
+        let pairs = at + 1 < dependent.len()
+            && !starts_group(at + 1)
+            && (dependent[at + 1]
+                || at + 2 >= dependent.len()
+                || starts_group(at + 2)
+                || !dependent[at + 2]);
+        let size = if pairs { 2 } else { 1 };
+        sizes.push(size);
+        at += size;
+    }
+    sizes
+}
+
 /// The fewest and most notes a phrase can be sung on.
 pub(crate) fn note_range(slots: &[MoraSlot]) -> (usize, usize) {
     let most = slots.iter().filter(|s| **s != MoraSlot::Rest).count();
@@ -278,6 +324,44 @@ mod tests {
         assert_eq!(slots_of("かお"), [Note, Note]);
         // ん is sung on a note of its own.
         assert_eq!(slots_of("さん"), [Note, Note]);
+    }
+
+    /// The kana's feet joined with '|', words starting at the given moras.
+    fn feet_of(kana: &str, word_starts: &[usize]) -> String {
+        let moras = auris_vocal::split_kana_lyric(kana).unwrap();
+        let borrowed: Vec<(&str, &[String])> = moras
+            .iter()
+            .map(|(t, p)| (t.as_str(), p.as_slice()))
+            .collect();
+        let slots = mora_slots(&borrowed, word_starts);
+        let dependent = dependent_moras(&borrowed, &slots, word_starts);
+        let mut at = 0;
+        feet(&dependent, word_starts)
+            .into_iter()
+            .map(|size| {
+                let foot: String = borrowed[at..at + size].iter().map(|(t, _)| *t).collect();
+                at += size;
+                foot
+            })
+            .collect::<Vec<_>>()
+            .join("|")
+    }
+
+    #[test]
+    fn feet_pair_moras_without_splitting_a_syllable() {
+        // 中道's examples: 古池や leaves its last mora alone, 固かった is three feet.
+        assert_eq!(feet_of("ふるいけや", &[]), "ふる|いけ|や");
+        assert_eq!(feet_of("かたかった", &[]), "かた|かっ|た");
+        // ジングルベル is felt in feet, not moras.
+        assert_eq!(feet_of("じんぐるべる", &[]), "じん|ぐる|べる");
+        // A heavy syllable is never split: こ stays alone rather than pair with わ of わい.
+        assert_eq!(feet_of("こわい", &[]), "こ|わい");
+        assert_eq!(feet_of("こーひー", &[]), "こー|ひー");
+        // Pairing starts again at each word: きみを まって, not きみ|をま|って.
+        assert_eq!(feet_of("きみをまって", &[0, 3]), "きみ|を|まっ|て");
+        // Without the boundary the same kana pairs straight through.
+        assert_eq!(feet_of("きみをまって", &[]), "きみ|を|まっ|て");
+        assert_eq!(feet_of("さくらさいた", &[0, 3]), "さく|ら|さい|た");
     }
 
     #[test]

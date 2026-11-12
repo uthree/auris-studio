@@ -182,7 +182,9 @@ For lyrics, map stressed words or important Japanese mora to a meaningful beat,
 long vowel, or melodic arrival. Leave consonant-heavy material enough attack
 time and place breaths at phrase boundaries or deliberate internal rests. Test
 the actual reading and note assignments rather than assuming a count of slots
-equals natural prosody; see the vocal guide for singer-specific checks.
+equals natural prosody; see the vocal guide for singer-specific checks. For
+Japanese, plan durations in two-mora feet rather than mora by mora. The vocal
+guide's rhythm section explains feet, heavy syllables and line endings.
 
 ## Shape, range, and climax
 

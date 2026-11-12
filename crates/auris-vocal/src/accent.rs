@@ -33,6 +33,9 @@ pub struct AccentPhrase {
     /// The accent nucleus — `Some(0)` is 平板 (no fall), `Some(k)` falls right after mora
     /// `k` (1-based), `None` means nobody analysed it and the prosody constrains nothing.
     pub accent: Option<usize>,
+    /// Where each of the phrase's words begins, as mora offsets into [`Self::moras`], starting
+    /// with 0. A phrase read without a dictionary is one word.
+    pub words: Vec<usize>,
 }
 
 impl AccentPhrase {
@@ -85,6 +88,7 @@ pub fn kana_accent_phrase(text: &str) -> Option<AccentPhrase> {
     (!moras.is_empty()).then_some(AccentPhrase {
         moras,
         accent: None,
+        words: vec![0],
     })
 }
 

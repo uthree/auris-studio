@@ -10,6 +10,40 @@ Keep the singer intelligible through accompaniment register, voicing, timing, an
 
 When repairing intelligibility, keep word groups, mora assignments and rhythmic identity together. Uniformly widening every gap or slowing every syllable can remove the intended groove. Compare a local reading, consonant, note-length or phrase-boundary edit with the current take before changing the whole line. Preserve the user's chosen grid and held endings; a sustained particle can be an explicit preference for one lyric, not a rule for Japanese singing. Treat a user-edited project as the new baseline and protect its melody during backing-only changes.
 
+## Japanese rhythm: feet, heavy syllables and line endings
+
+You cannot hear the line, so plan its timing on paper and read it back as text. Japanese verse
+and song are timed in two-mora feet (拍; 中道 1980's タクト), which is why 7-5 runs in four beats
+with a rest. `analyze_lyrics` returns each phrase's `feet` (ふる / いけ / や).
+
+- Count feet, not moras. Two moras a beat in eighths at a pop tempo makes each foot one beat,
+  so the foot count is the line's length in beats. A section may change pace on purpose:
+  sixteenths for a rapid verse, long notes for a held chorus line.
+- A one-mora foot is where the line breathes: a pickup into the next beat, a held mora, or a
+  rest beside it. Lone particles suit pickups.
+- Shape the inside of a foot before changing the pace: long-short (dotted eighth and
+  sixteenth) weights a word's first mora, short-long delays it, and a quarter holds it.
+- Keep heavy syllables whole. ん, っ, ー and the い of あい/おい belong to the mora before them;
+  when songs give two moras one note, the pair is almost always such a syllable (窪薗 1999).
+  Group the pair on one note, or give ん its own note. Inside a line, songs hold that note
+  longer than its head about half as often as other moras. Where it falls in the beat is
+  free.
+- Put rests between words, not inside one: マフ・ラー cuts the word apart. Human songs do it
+  about a quarter as often inside words as between them. When the melody wants a breath
+  there, move the line break, re-line the words or lengthen the note before the gap.
+- Close a line by lengthening its last mora or resting after it. Koizumi (1977) describes
+  Japanese songs lengthening a line's first and last moras.
+- Japanese spends a note on every mora, so it needs more notes than English for the same
+  words (金田一 1967). Write
+  fewer words per line instead of filling every subdivision.
+
+Where the host offers `lyric_rhythm`, read it for the lead after the lyrics are written. It
+draws every line on its beat grid (`さ く | ら が | さ い | た -`), and reports moras per
+second, held endings, ん held long inside a line, rests inside a word, and moras under 90 ms that may lose their
+vowel in synthesis. Otherwise, draw the same grid yourself from `read_notes` onsets and
+lengths before synthesis. These are tendencies from studies of Japanese text setting, not
+proof that a line sounds natural. A liked rhythm the user chose overrides them.
+
 ## Vowel, register and sustained words
 
 When authoring a new lyric and melody with an exposed high or powerful arrival,

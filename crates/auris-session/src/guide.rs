@@ -1863,6 +1863,16 @@ pub mod composition {
     //! the form [`analyze_lyrics`](crate::Session::analyze_lyrics) also reports, and a wrong
     //! one is corrected for a single measurement, never saved.
     //!
+    //! [`Session::lyric_rhythm`](crate::Session::lyric_rhythm) is the third check: not how
+    //! many notes or which way, but *when*. The composing agent cannot hear,
+    //! so it draws every sung line on its beat grid in text, the way rhythm notation lets a
+    //! composer read what they cannot play, and measures what the literature on Japanese text
+    //! setting agrees a score can show: the pace in moras per second, whether lines end on a
+    //! held mora, and ん or the い of a diphthong held longer than the mora they belong to. The
+    //! analysis side of the same idea is the `feet` each phrase reports, its moras paired the
+    //! way Japanese verse is timed; [`lyric_rhythm`](crate::session::lyric_rhythm) has the
+    //! sources and thresholds.
+    //!
     //! Kana is read a phrase at a time, never a mora at a time, because three kana are read
     //! by the words around them: the particles は and へ sing *wa* and *e*
     //! ([`spoken_kana_lyric`](auris_vocal::spoken_kana_lyric)). A space ends a word, and with

@@ -78,6 +78,7 @@ mod levels;
 pub mod lyric_accent;
 pub mod lyric_harness;
 mod lyric_lines;
+pub mod lyric_rhythm;
 pub(crate) mod lyric_slots;
 mod lyrics;
 pub mod melody_form;

@@ -210,6 +210,11 @@ pub enum Command {
         #[serde(default)]
         accents: Vec<crate::session::lyric_accent::AccentOverride>,
     },
+    /// Draw a singer track's lines on their beat grid, one token per slot with the moras each note sings, so the rhythm can be read rather than heard, and measure how the Japanese lyric sits in time, section by section: moras per second, the shortest mora, which lines end on a held mora, ん or diphthong い held at least twice as long as the mora before it inside a line (a note: songs do it, if less often than with other moras), moras too short to keep their vowel in synthesis (a warning), and rests of a sixteenth or more inside one word, such as マフ・ラー (a note once, a warning from two in a section; needs the Japanese dictionary). Spots list clip and note for edit_notes. Read it after the lyrics are written onto the melody. It measures timing only, never the accent: read lyric_accent as well, and read both again after editing the lead's notes, since a mora moved to another note is sung at that note's pitch. Changes nothing.
+    LyricRhythm {
+        /// The singer track whose sung lyrics to draw and measure.
+        track: u64,
+    },
     /// Measure the arrangement against the form: which parts play in each section, how many different bars each part plays, whether the drums change in the bar before each chorus, and how many bars of intro and outro surround the voice. Warns when every section has the same parts, a chorus adds nothing to the section before it, no fill leads into a chorus, or the intro or outro is shorter than eight bars; also when three or more sections share one main drum bar, or a chorus loops a verse's progression started on another chord. Read it after writing the backing and act on its warnings; it measures the written notes, not how they sound.
     ArrangementShape {},
     /// Workshop candidates only: tell the user, in one short line, what you are working on now. The candidate's card shows it while you work until the next one replaces it; elsewhere it is not shown. Call it when you start each new step, before that step's first tool call, in the language of the assignment. Keep it short, about 30 characters, since the card has room for two lines. Name the concrete musical work, such as "Fitting the chorus lyrics to the melody" or "Thinning the strings under the second verse", never a generic "Working" or a tool name. Changes nothing.
@@ -775,6 +780,7 @@ impl Command {
             | Self::ReportStatus { .. }
             | Self::MelodyShape { .. }
             | Self::LyricAccent { .. }
+            | Self::LyricRhythm { .. }
             | Self::ArrangementShape {}
             | Self::LintProject { .. }
             | Self::SuggestIssueReport { .. }
@@ -1292,6 +1298,9 @@ impl Session {
             ),
             Command::LyricAccent { track, accents } => self
                 .lyric_accent(TrackId(track), &accents)
+                .and_then(|report| serde_json::to_string(&report).map_err(|e| e.to_string())),
+            Command::LyricRhythm { track } => self
+                .lyric_rhythm(TrackId(track))
                 .and_then(|report| serde_json::to_string(&report).map_err(|e| e.to_string())),
             Command::MelodyShape { track } => {
                 crate::session::melody_shape::melody_shape(self.project(), TrackId(track))

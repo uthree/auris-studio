@@ -203,6 +203,7 @@ pub const OPERATIONS: &[&str] = &[
     "edit_project.report_status",
     "edit_project.melody_shape",
     "edit_project.lyric_accent",
+    "edit_project.lyric_rhythm",
     "edit_project.arrangement_shape",
     "edit_project.edit_harmony",
     "edit_project.list_voices",

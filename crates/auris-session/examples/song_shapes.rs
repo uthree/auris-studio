@@ -6,7 +6,7 @@
 //! ```
 //!
 //! The accent of the lyrics against the melody needs the Japanese dictionary a headless session
-//! loads.
+//! loads. The rhythm of the sung lyrics is drawn as `lyric_rhythm` draws it for the agent.
 //!
 //! The melody is measured on the first singer track, or the first track with notes when the song
 //! has no singer.
@@ -34,20 +34,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let melody = lead.map(|track| melody_shape::melody_shape(&project, track));
         // The accent needs the Japanese dictionary, which a session loads and a bare project
         // does not.
-        let accent = lead.and_then(|track| {
+        let session = lead.and_then(|_| {
             let mut session = auris_session::Session::new(
                 auris_session::SessionOptions::headless().with_shipped_dictionary(true),
             )
             .ok()?;
             session.open(Path::new(&path)).ok()?;
-            let report = session.lyric_accent(track, &[]).ok()?;
-            serde_json::to_value(report).ok()
+            Some(session)
+        });
+        let accent = lead.zip(session.as_ref()).and_then(|(track, session)| {
+            serde_json::to_value(session.lyric_accent(track, &[]).ok()?).ok()
+        });
+        let rhythm = lead.zip(session.as_ref()).and_then(|(track, session)| {
+            serde_json::to_value(session.lyric_rhythm(track).ok()?).ok()
         });
         let report = serde_json::json!({
             "path": path,
             "song": project.name,
             "melody": melody.map(|result| result.unwrap_or_else(|error| serde_json::json!({"error": error}))),
             "accent": accent,
+            "rhythm": rhythm,
             "arrangement": arrangement_shape::arrangement_shape(&project),
         });
         println!("{report}");
