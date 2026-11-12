@@ -26,7 +26,7 @@ const QA: f64 = 1.5;
 /// Natural frequency of the unscaled (adult male) folds at unit tension, in hertz.
 const BASE_HZ: f64 = 135.0;
 /// Resting half-gap the folds return to between notes, square metres per unit scale.
-pub(super) const ADDUCTED: f64 = 0.05e-4;
+pub(super) const ADDUCTED: f64 = 0.001_5e-4;
 
 /// Acoustic impedance of a tube of `area` square metres.
 pub(super) fn impedance(area: f64) -> f64 {

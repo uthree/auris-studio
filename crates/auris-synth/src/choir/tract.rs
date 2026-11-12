@@ -9,13 +9,13 @@ const SPEED_OF_SOUND: f32 = 343.0;
 // tools/eval/references/choir-mel-calibration.json. No recordings enter the instrument.
 pub(super) const AREAS: [[f32; SECTIONS]; 3] = [
     [
-        4.0, 8.236308, 3.594443, 1.521753, 6.819354, 2.662943, 4.104373, 0.897524,
+        4.0, 7.646_59, 4.079791, 1.436472, 2.420324, 2.747955, 3.139518, 0.847230,
     ],
     [
-        0.55, 1.385173, 0.484180, 0.744748, 4.501303, 6.996894, 2.358_39, 4.297126,
+        0.55, 0.601855, 0.466565, 2.362_71, 6.715187, 1.722294, 3.405806, 7.290531,
     ],
     [
-        4.5, 7.178539, 1.684037, 3.551618, 1.070828, 1.118199, 0.401154, 3.178495,
+        4.5, 6.989215, 6.374314, 3.012531, 1.224_3, 0.693821, 1.252482, 2.004086,
     ],
 ];
 /// Cross-section of the tube just above the folds, square centimetres. The epilarynx is short
@@ -25,14 +25,14 @@ const EPILARYNX: f32 = 0.5;
 /// Length of the epilarynx, metres; the vowel's sections share what remains of the tract.
 const EPILARYNX_LENGTH: f32 = 0.02;
 
-pub(super) const RADIATION_HZ: f32 = 135.8276;
+pub(super) const RADIATION_HZ: f32 = 198.2515;
 // Every vowel as loud as "ah" was before the folds, from C3 to G4, so that automating the
 // vowel does not ride the level; set by measurement, independently of mel loss.
-pub(super) const OUTPUT_GAINS: [f32; 3] = [0.977, 0.668, 0.841];
+pub(super) const OUTPUT_GAINS: [f32; 3] = [1.445, 0.933, 1.096];
 
 /// First resonance of the vowel profiles in a 17 cm tract, at vowel 0, ½, 1, 1½ and 2.
 /// Measured from the tract's impulse response; a test holds these to the profiles.
-pub(super) const FIRST_FORMANT: [f32; 5] = [360.0, 530.0, 695.0, 510.0, 295.0];
+pub(super) const FIRST_FORMANT: [f32; 5] = [360.0, 565.0, 730.0, 495.0, 310.0];
 const FORMANT_LENGTH: f32 = 0.17;
 /// How far above the note a singer keeps the first resonance. Below it the tract's pressure
 /// is in phase with the flow and helps the folds; past it the tract wins and they stall.

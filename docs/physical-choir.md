@@ -27,7 +27,7 @@ channel volume, CC11 controls expression, and pitch bend follows sounding notes 
 ±24 semitones. Note-off releases one matching held note, including overlapping unisons;
 all-notes-off releases the ensemble and all-sound-off uses the shared de-click envelope.
 
-The default patch has a 389 ms attack and a 700 ms release. The attack is the singer's breath: lung pressure is full a third of the way through it, and the folds start on their own once it is enough to set them going. Held chords around C3–C5 are a
+The default patch has a 244 ms attack and a 700 ms release. The attack is the singer's breath: lung pressure is full a third of the way through it, and the folds start on their own once it is enough to set them going. Held chords around C3–C5 are a
 useful starting point for an accompaniment pad. Try a lower vowel value and a longer attack
 for a rounded background texture, or a higher Tone value and shorter attack for an exposed
 ensemble part. A reverb insert can supply the surrounding room.
@@ -55,10 +55,11 @@ radiation shape the output. A note rising past a vowel's first resonance would s
 folds, so it is sung with the vowel opened towards "ah" and then the tract shortened, as
 sopranos do on top notes.
 
-The vowel profiles and factory source controls are fitted to real sustained vowels from
-VocalSet, through these folds, with a separate set of held-out singers. On the training
-singers the mel distance is 0.074 (the earlier prescribed-pulse source read 0.072); on the
-held-out singers it is 0.102 (0.086), furthest on low male notes. They describe instrument
+The vowel profiles, the factory source controls, how closely the folds rest and how hard
+the singers push are fitted to real sustained vowels from VocalSet, through these folds,
+with a separate set of held-out singers. On the training singers the mel distance is 0.071
+(the earlier prescribed-pulse source read 0.072); on the held-out singers it is 0.088
+(0.086). Women's voices are closer than before in every vowel; men's "oo" is the furthest. They describe instrument
 timbres, rather than measured anatomy of a singer.
 
 The source/filter and tube principles are described in the Oxford phonetics
@@ -85,6 +86,6 @@ The four-chord phrase is identical in each audition. `choir-preview.auris` holds
 default "ah" version; `choir-oo.wav`, `choir-ah.wav` and `choir-ee.wav` use vowel values
 0, 1 and 2 respectively. The phrase uses only the instrument and the ordinary mix output.
 
-The four-chord auditions peak at -9.30 dBFS (oo), -8.12 dBFS (ah) and -8.55 dBFS (ee),
+The four-chord auditions peak at -10.36 dBFS (oo), -7.95 dBFS (ah) and -8.81 dBFS (ee),
 with no clipping: every vowel is levelled to the same loudness from C3 to G4, so automating
 the vowel does not ride the level.

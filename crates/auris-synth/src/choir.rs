@@ -107,7 +107,7 @@ impl Singer {
         for _ in 0..OVERSAMPLE {
             let glottis = self
                 .folds
-                .step(frequency, lung, ADDUCTED, sound.chink, incoming, z0);
+                .step(frequency, lung, sound.rest, sound.chink, incoming, z0);
             flow += glottis.flow;
             // Turbulence at the jet: as loud as the pressure it loses, and quieter through a
             // nearly closed slit than an open one.
@@ -144,6 +144,8 @@ fn lung_pressure(pitch: f32) -> f64 {
 }
 
 const LUNG_PA: f32 = 880.0;
+/// How hard the singers push, against the pressure a note needs; fitted with the tract.
+const LUNG_SCALE: f64 = 0.7736;
 const LUNG_PER_SEMITONE: f32 = 30.0;
 /// Low notes still need enough pressure to set large folds going against the tract.
 const LUNG_FLOOR: f32 = 900.0;
@@ -181,6 +183,10 @@ struct Sound {
     chink: f64,
     /// Turbulence per pascal of jet pressure drop.
     aspiration: f32,
+    /// Half-gap the folds are held at, square metres before size scaling.
+    rest: f64,
+    /// Factor on every note's lung pressure.
+    lung: f64,
     vibrato: f32,
     width: f32,
     source_smoothing: f32,
@@ -225,6 +231,8 @@ impl Choir {
                 ensemble: 0.0,
                 chink: 0.0,
                 aspiration: 0.0,
+                rest: ADDUCTED,
+                lung: LUNG_SCALE,
                 vibrato: 0.0,
                 width: 0.0,
                 source_smoothing: 1.0,
@@ -272,6 +280,22 @@ impl Choir {
         }
         self.calibration = (areas, radiation_hz, output_gains);
         self.refresh();
+        true
+    }
+
+    /// Overrides how closed the folds rest (square centimetres of half-gap) and a factor on
+    /// lung pressure, for offline fitting. Available only with the development
+    /// `choir-calibration` feature; invalid input leaves the instrument unchanged. Call off
+    /// the audio thread.
+    #[cfg(feature = "choir-calibration")]
+    pub fn set_calibration_source(&mut self, adduction: f32, lung: f32) -> bool {
+        if !(adduction.is_finite() && (-0.05..=0.3).contains(&adduction))
+            || !(lung.is_finite() && (0.4..=2.5).contains(&lung))
+        {
+            return false;
+        }
+        self.sound.rest = f64::from(adduction) * 1e-4;
+        self.sound.lung = f64::from(lung);
         true
     }
 
@@ -336,7 +360,7 @@ impl Choir {
         };
         voice.pitch = f32::from(pitch);
         voice.velocity = velocity;
-        voice.lung = lung_pressure(voice.pitch);
+        voice.lung = lung_pressure(voice.pitch) * self.sound.lung;
         let hertz = pitch_to_hz(voice.pitch);
         self.shape(assignment.index);
         let voice = &mut self.voices[assignment.index];
@@ -397,12 +421,12 @@ fn descriptors() -> Vec<ParamDescriptor> {
         ParamDescriptor::new(P_VOWEL, "vowel", "Vowel (Oo / Ah / Ee)", 0.0, 2.0, 1.0),
         ParamDescriptor::percent(P_SIZE, "voice_size", "Voice Size", 0.46),
         ParamDescriptor::percent(P_ENSEMBLE, "ensemble", "Ensemble Variation", 0.65),
-        ParamDescriptor::percent(P_BREATH, "breath", "Breath", 0.080277),
-        ParamDescriptor::percent(P_TONE, "tone", "Tone", 0.097529),
+        ParamDescriptor::percent(P_BREATH, "breath", "Breath", 0.069603),
+        ParamDescriptor::percent(P_TONE, "tone", "Tone", 0.787636),
         ParamDescriptor::new(P_VIBRATO, "vibrato", "Vibrato", 0.0, 0.5, 0.09)
             .with_unit(ParamUnit::Semitones),
         ParamDescriptor::percent(P_WIDTH, "width", "Stereo Width", 0.8),
-        ParamDescriptor::new(P_ATTACK, "attack", "Attack", 0.001, 3.0, 0.388641)
+        ParamDescriptor::new(P_ATTACK, "attack", "Attack", 0.001, 3.0, 0.243677)
             .with_unit(ParamUnit::Seconds)
             .with_curve(ParamValueCurve::Power(3.0)),
         ParamDescriptor::new(P_RELEASE, "release", "Release", 0.005, 6.0, 0.7)
