@@ -42,32 +42,27 @@ fn dbfs(peak: f32) -> String {
 
 impl AurisApp {
     fn wire_node_name(&self, node: MixerNode) -> Option<String> {
-        let owner = match node {
-            MixerNode::Strip(owner) | MixerNode::Effect(owner, _) => owner,
-        };
-        let mixer = match owner {
-            Some(id) => Some(self.project().track(id)?),
-            None => None,
-        };
-        let name = mixer.map_or_else(
-            || self.t(Key::Master).to_string(),
-            |track| format!("{} #{}", track.name, track.id.0),
-        );
-        match node {
-            MixerNode::Strip(_) => Some(name),
-            MixerNode::Effect(_, slot) => {
-                let effect = mixer
-                    .map_or(&self.project().master, |track| &track.mixer)
-                    .effects
-                    .iter()
-                    .find(|effect| effect.id == slot)?;
-                Some(format!(
-                    "{name} / {} #{}",
-                    self.effect_label(slot, &effect.effect_id),
-                    slot.0
-                ))
+        match node.0 {
+            Some(id) => {
+                let track = self.project().track(id)?;
+                Some(format!("{} #{}", track.name, track.id.0))
             }
+            None => Some(self.t(Key::Master).to_string()),
         }
+    }
+
+    /// Where a key lands: the strip, then the effect inside it that listens.
+    fn wire_key_name(&self, node: MixerNode, slot: EffectSlotId) -> Option<String> {
+        let name = self.wire_node_name(node)?;
+        let effect = super::strip_of(self.project(), node.0)?
+            .effects
+            .iter()
+            .find(|effect| effect.id == slot)?;
+        Some(format!(
+            "{name} / {} #{}",
+            self.effect_label(slot, &effect.effect_id),
+            slot.0
+        ))
     }
 }
 
@@ -93,7 +88,10 @@ impl Render for WireTooltip {
         };
         let (Some(source), Some(target)) = (
             app.wire_node_name(edge.source),
-            app.wire_node_name(edge.target),
+            match edge.kind {
+                MixerEdgeKind::Sidechain { slot } => app.wire_key_name(edge.target, slot),
+                _ => app.wire_node_name(edge.target),
+            },
         ) else {
             return div().into_any_element();
         };
@@ -104,9 +102,8 @@ impl Render for WireTooltip {
                 gain_db,
                 tap,
             ),
-            MixerEdgeKind::Sidechain => app.t(Key::MenuSidechain).to_string(),
+            MixerEdgeKind::Sidechain { .. } => app.t(Key::MenuSidechain).to_string(),
             MixerEdgeKind::Notes => app.t(Key::MixerNotesWire).to_string(),
-            MixerEdgeKind::Chain => app.t(Key::Effects).to_string(),
         };
         let theme = cx.global::<Theme>();
         let level = dbfs(app.session.mixer_edge_peak(&edge));

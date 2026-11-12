@@ -91,8 +91,8 @@ fn wire_tooltip_tracks_parallel_routes_live_names_and_dismissal(cx: &mut TestApp
             })
             .collect();
         this.session.set_track_outputs(a, &outputs).unwrap();
-        let source = MixerNode::Strip(Some(a)).key();
-        let target = MixerNode::Strip(Some(b)).key();
+        let source = MixerNode(Some(a)).key();
+        let target = MixerNode(Some(b)).key();
         let wires = taps.map(|tap| {
             let suffix = if tap == Tap::PreFader { "-pre" } else { "" };
             (format!("mix-output-{source}-{target}{suffix}"), tap)
@@ -104,9 +104,9 @@ fn wire_tooltip_tracks_parallel_routes_live_names_and_dismissal(cx: &mut TestApp
         let canvas = this.mixer_canvas.as_ref().unwrap();
         canvas.state.update(cx, |state, _| {
             for node in &mut state.nodes {
-                node.position = if node.id == node_id(MixerNode::Strip(Some(a))) {
+                node.position = if node.id == node_id(MixerNode(Some(a))) {
                     FlowPoint::new(24., 24.)
-                } else if node.id == node_id(MixerNode::Strip(Some(b))) {
+                } else if node.id == node_id(MixerNode(Some(b))) {
                     FlowPoint::new(600., 24.)
                 } else {
                     FlowPoint::new(3000., 3000.)
@@ -366,7 +366,12 @@ fn live_wire_updates_preserve_individual_selection_and_pointer_geometry(cx: &mut
                 tap: Tap::PreFader,
             },
         ),
-        ("key", MixerEdgeKind::Sidechain),
+        (
+            "key",
+            MixerEdgeKind::Sidechain {
+                slot: EffectSlotId(1),
+            },
+        ),
     ];
     let edges = roles
         .into_iter()
@@ -612,7 +617,9 @@ fn lane_order_and_wire_vocabulary_survive_parameter_changes_and_all_schemes() {
                 gain_db: 0.,
                 tap: Tap::PreFader,
             },
-            MixerEdgeKind::Sidechain,
+            MixerEdgeKind::Sidechain {
+                slot: EffectSlotId(1),
+            },
         ];
         let styles: Vec<_> = kinds
             .into_iter()
@@ -687,12 +694,10 @@ fn overlapping_outputs_and_sidechain_are_individually_selected_deleted_and_undon
             state.viewport.x = 20.;
             state.viewport.y = 10.;
             for node in &mut state.nodes {
-                node.position = if node.id == node_id(MixerNode::Strip(Some(a))) {
+                node.position = if node.id == node_id(MixerNode(Some(a))) {
                     FlowPoint::new(24., 24.)
-                } else if node.id == node_id(MixerNode::Strip(Some(b))) {
+                } else if node.id == node_id(MixerNode(Some(b))) {
                     FlowPoint::new(380., 24.)
-                } else if node.id == node_id(MixerNode::Effect(Some(b), slot)) {
-                    FlowPoint::new(680., 24.)
                 } else {
                     FlowPoint::new(3000., 3000.)
                 };
@@ -713,14 +718,19 @@ fn overlapping_outputs_and_sidechain_are_individually_selected_deleted_and_undon
         let sidechain = state
             .edges
             .iter()
-            .find(|edge| edge.target_handle == Some("sidechain".into()))
+            .find(|edge| edge.target_handle == Some(KEY_HANDLE.into()))
             .unwrap();
         assert_eq!(sidechain.stroke, EdgeStroke::Dotted);
+        assert!(
+            sidechain.id.ends_with(&format!("-{}", slot.0)),
+            "named by the keyed effect"
+        );
+        assert_eq!(sidechain.target, node_id(MixerNode(Some(b))));
         let output = state
             .edges
             .iter()
             .find(|edge| {
-                edge.target == node_id(MixerNode::Strip(Some(b)))
+                edge.target == node_id(MixerNode(Some(b)))
                     && edge.id.starts_with("mix-output-")
                     && !edge.id.ends_with("-pre")
             })
@@ -736,9 +746,9 @@ fn overlapping_outputs_and_sidechain_are_individually_selected_deleted_and_undon
             .edges
             .into_iter()
             .filter(|edge| {
-                matches!(edge.kind, MixerEdgeKind::Sidechain)
+                matches!(edge.kind, MixerEdgeKind::Sidechain { .. })
                     || (matches!(edge.kind, MixerEdgeKind::Output { .. })
-                        && edge.target == MixerNode::Strip(Some(b)))
+                        && edge.target == MixerNode(Some(b)))
             })
             .map(|edge| edge_id(&edge))
             .collect()

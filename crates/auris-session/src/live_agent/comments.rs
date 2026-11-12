@@ -7,13 +7,13 @@ use crate::session::CommentHost;
 #[derive(Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Operation {
-    /// Pin a new comment. Supply exactly one of track (a moment on the track's lane), clip (a spot inside that note clip, optionally on a pitch row of its piano roll) or mixer_node (a strip or effect in the mixer graph, about the mix rather than a moment; no bar).
+    /// Pin a new comment. Supply exactly one of track (a moment on the track's lane), clip (a spot inside that note clip, optionally on a pitch row of its piano roll) or mixer_node (a track, bus or master strip in the mixer graph, about the mix rather than a moment; no bar).
     Add {
         /// Stable track ID from inspect_project.
         track: Option<u64>,
         /// Stable note-clip ID from inspect_project; the position must fall inside the clip.
         clip: Option<u64>,
-        /// Mixer node ID from mixer_graph read: track:ID, track:master or effect:ID.
+        /// Mixer node ID from mixer_graph read: track:ID or track:master.
         mixer_node: Option<String>,
         /// 1-based song bar (not counted from the clip). Required on a track or clip.
         #[schemars(range(min = 1))]
@@ -249,24 +249,12 @@ pub(crate) fn comments_json(project: &auris_core::Project) -> serde_json::Value 
         .chain(std::iter::once((None, "master", &project.master)));
     let mut mixer = Vec::new();
     for (owner, name, strip) in strips {
-        let row = |node: MixerNode, effect: Option<&str>, comment: &auris_core::Comment| {
-            serde_json::json!({
-                "comment": comment.id.0, "mixer_node": node.key(),
-                "track": owner.map(|id| id.0), "track_name": name,
-                "effect": effect, "text": comment.text,
-            })
-        };
         for comment in &strip.comments {
-            mixer.push(row(MixerNode::Strip(owner), None, comment));
-        }
-        for slot in &strip.effects {
-            for comment in &slot.comments {
-                mixer.push(row(
-                    MixerNode::Effect(owner, slot.id),
-                    Some(&slot.effect_id),
-                    comment,
-                ));
-            }
+            mixer.push(serde_json::json!({
+                "comment": comment.id.0, "mixer_node": MixerNode(owner).key(),
+                "track": owner.map(|id| id.0), "track_name": name,
+                "text": comment.text,
+            }));
         }
     }
     timed.chain(mixer).collect::<Vec<_>>().into()
@@ -375,9 +363,14 @@ mod tests {
         assert_eq!(session.project().master.comments.len(), 1);
         let unknown = run(
             &mut session,
-            serde_json::json!({"action":"edit_comments","operation":{"kind":"add","mixer_node":"effect:999","text":"x"}}),
+            serde_json::json!({"action":"edit_comments","operation":{"kind":"add","mixer_node":"track:999","text":"x"}}),
         );
         assert!(unknown.unwrap_err().contains("Unknown mixer node"));
+        let effect = run(
+            &mut session,
+            serde_json::json!({"action":"edit_comments","operation":{"kind":"add","mixer_node":"effect:1","text":"x"}}),
+        );
+        assert!(effect.unwrap_err().contains("not a graph node"));
         let no_bar = run(
             &mut session,
             serde_json::json!({"action":"edit_comments","operation":{"kind":"add","track":track.0,"text":"x"}}),

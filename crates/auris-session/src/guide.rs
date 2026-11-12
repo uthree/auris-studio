@@ -1106,19 +1106,22 @@ pub mod architecture {
     //!
     //! # How it gets there: outputs and buses
     //!
-    //! [`Session::mixer_graph`](crate::Session::mixer_graph) projects the document into stable
-    //! track and insert nodes. Each track node owns its source and fader controls; inserts
-    //! still process before gain and pan. The terminal insert is the output connection point,
-    //! or the track itself for an empty chain. Edges distinguish the serial insert chain, outputs
-    //! (each with its level and tap) and sidechain keys. The graph editor connects these identities with
-    //! [`Session::connect_mixer`](crate::Session::connect_mixer), which revalidates the complete
-    //! routing before delegating to an ordinary undoable command. Parallel processing uses bus
-    //! branches; inserts within each strip remain ordered. Layout belongs to the frontend and
+    //! [`Session::mixer_graph`](crate::Session::mixer_graph) projects the document into one
+    //! node per strip — every track, every bus, and the master exactly once. An effect is not a
+    //! node: it belongs to a strip's ordered insert chain, processed before the fader, so there is
+    //! no effect to wire on its own and no second master for the master's limiter. Edges are
+    //! outputs (each with its level and tap), sidechain keys (strip to strip, naming the keyed
+    //! effect) and a layer's borrowed notes. The graph editor connects strips through a
+    //! [`MixerPort`](crate::mixer_graph::MixerPort) — a strip's summing input or one effect's key —
+    //! with [`Session::connect_mixer`](crate::Session::connect_mixer), which revalidates the
+    //! complete routing before delegating to an ordinary undoable command. Parallel processing
+    //! uses a bus. Layout belongs to the frontend and
     //! never changes signal order. The graph and console read the same saved document, so an
     //! undo, project load or model tool edit updates both views without a second routing store.
     //! [`GraphAction`](crate::mixer_graph::commands::GraphAction) is the shared saved-file and
-    //! live-agent graph contract. Stable `track:N`, `track:master` and `effect:N` identities
-    //! survive renaming and reordering. Reads page nodes in processing order and include their
+    //! live-agent graph contract. Stable `track:N` and `track:master` node identities, and the
+    //! `effect:N` identities of the inserts each node lists, survive renaming and reordering.
+    //! An effect identity addresses an insert's own operations and never a connection end. Reads page nodes in processing order and include their
     //! outgoing edges. All agent transports expose `mixer_graph` with the same tagged operation
     //! schema. The live permission policy classifies graph reads separately
     //! from edits and connection/effect removal. Persistence stays with the caller: live edits
@@ -1135,7 +1138,8 @@ pub mod architecture {
     //! keys can still carry its signal. Graph connections add a unity post-fader output without
     //! replacing others, and disconnection removes exactly one edge. The console's output menu
     //! toggles destinations. Documents older than format 36 kept sends in a list of their own;
-    //! `auris_io` folds them into outputs as it opens them.
+    //! `auris_io` folds them into outputs as it opens them. Older than 37, comments could be
+    //! pinned to an effect; they are moved onto its strip.
     //!
     //! The graph owns selection and pointer geometry, while the session owns deletion and undo.
     //! Editable edges have stable identities independent of graph order and insert positions.
