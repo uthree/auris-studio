@@ -1988,6 +1988,12 @@ fn compose_guided(
             "cli_file_read".into(),
         ],
     };
+    // What the composer can never use is not offered either; see `CANDIDATE_WITHHELD`.
+    prefs.withheld_tools = CANDIDATE_WITHHELD
+        .iter()
+        .chain(&[auris_toolbox::internet_search::NAME])
+        .map(|tool| (*tool).to_owned())
+        .collect();
     prefs.system_prompt = match guidance {
         Guidance::Full => format!(
             "{}\n{}",
@@ -1995,10 +2001,12 @@ fn compose_guided(
             auris_toolbox::workshop::COMPOSER
         ),
         Guidance::Bare => {
-            prefs.policy.deny.extend([
-                auris_toolbox::live_agent::production_record::NAME.into(),
-                auris_toolbox::search_documentation::NAME.into(),
-            ]);
+            let bare_denied = [
+                auris_toolbox::live_agent::production_record::NAME,
+                auris_toolbox::search_documentation::NAME,
+            ];
+            prefs.policy.deny.extend(bare_denied.map(String::from));
+            prefs.withheld_tools.extend(bare_denied.map(String::from));
             auris_toolbox::workshop::BARE_COMPOSER.into()
         }
     };
@@ -2328,6 +2336,33 @@ fn audio_gate(cancel: &AtomicBool) -> Result<std::sync::MutexGuard<'static, ()>,
     }
 }
 
+/// Tools a candidate composer may never use: playback, nested jobs, network and outside files
+/// are not child capabilities. They are left out of the composer's catalog as well as refused,
+/// because a cheaper model reads an offered tool as a usable one: Sonnet spent most of its failed
+/// calls on `edit_recipe`, every one of them refused.
+pub(crate) const CANDIDATE_WITHHELD: &[&str] = &[
+    "phrase_variation",
+    "edit_recipe",
+    "listen",
+    "import_transcription",
+    "preview",
+    "audio_assets",
+    "checkpoints",
+    "candidates",
+    "accompaniment",
+    "arrangement",
+];
+
+/// File tools a candidate may use only on paths inside its own project workspace, so they stay
+/// offered and are refused anywhere else on disk.
+const CANDIDATE_WORKSPACE_FILES: &[&str] = &[
+    "render",
+    "export_midi",
+    "import_audio",
+    "import_midi",
+    "verify_render",
+];
+
 fn execute(
     session: &mut Session,
     command: serde_json::Value,
@@ -2338,35 +2373,13 @@ fn execute(
     let action = command["action"].as_str().unwrap_or_default();
     // A file tool aimed only at the candidate's own project workspace stays inside the private
     // candidate, so it is a child capability like any edit; anywhere else on disk is not.
-    let workspace_file =
-        matches!(
-            action,
-            "render" | "export_midi" | "import_audio" | "import_midi" | "verify_render"
-        ) && serde_json::from_value::<auris_session::live_agent::Command>(command.clone())
+    let outside_file = CANDIDATE_WORKSPACE_FILES.contains(&action)
+        && !serde_json::from_value::<auris_session::live_agent::Command>(command.clone())
             .is_ok_and(|command| command.uses_only_workspace());
-    // File exports/imports, playback, nested jobs and network tools are not child capabilities.
-    if !workspace_file
-        && matches!(
-            action,
-            "render"
-                | "phrase_variation"
-                | "edit_recipe"
-                | "listen"
-                | "import_transcription"
-                | "preview"
-                | "export_midi"
-                | "import_audio"
-                | "import_midi"
-                | "audio_assets"
-                | "checkpoints"
-                | "verify_render"
-                | "candidates"
-                | "accompaniment"
-                | "arrangement"
-        )
-    {
+    if outside_file || CANDIDATE_WITHHELD.contains(&action) {
         return Err("This operation is not available inside candidate production".into());
     }
+    let workspace_file = CANDIDATE_WORKSPACE_FILES.contains(&action);
     if action == "generate_phrase"
         && !matches!(
             command["part"].as_str(),
@@ -2420,6 +2433,35 @@ mod tests {
             assert!(std::time::Instant::now() < deadline, "no snapshot");
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
+    }
+
+    #[test]
+    fn a_composer_is_not_offered_the_tools_it_may_never_use() {
+        let names = |list: &[&str]| list.iter().map(|n| (*n).to_owned()).collect::<Vec<_>>();
+        // A renamed tool would silently fall out of both lists, so each must still be one.
+        for tool in super::CANDIDATE_WITHHELD
+            .iter()
+            .chain(super::CANDIDATE_WORKSPACE_FILES)
+        {
+            let operation = format!("edit_project.{tool}");
+            assert!(
+                auris_session::agent_policy::OPERATIONS.contains(&operation.as_str()),
+                "{tool} is not a live tool"
+            );
+        }
+        let offered: Vec<_> =
+            crate::host::ToolHost::definitions_for(true, &names(super::CANDIDATE_WITHHELD))
+                .into_iter()
+                .map(|tool| tool.name)
+                .collect();
+        for withheld in super::CANDIDATE_WITHHELD {
+            assert!(!offered.iter().any(|name| name == withheld), "{withheld}");
+        }
+        // Workspace file tools stay usable, and so stay offered.
+        for tool in super::CANDIDATE_WORKSPACE_FILES {
+            assert!(offered.iter().any(|name| name == tool), "{tool}");
+        }
+        assert!(offered.iter().any(|name| name == "edit_notes"));
     }
 
     #[test]

@@ -53,14 +53,27 @@ impl ToolHost {
         catalog
     }
 
+    /// The full catalog, as a worker with nothing withheld offers it.
+    #[cfg(test)]
     pub(crate) fn definitions() -> Vec<toolbox::live_agent::Definition> {
-        Self::definitions_for(false)
+        Self::definitions_for(false, &[])
     }
 
-    /// The compact schemas a model is offered; see [`Self::catalog_for`].
-    pub(crate) fn definitions_for(hearing: bool) -> Vec<toolbox::live_agent::Definition> {
+    /// The compact schemas this worker's model is offered, without the tools its caller
+    /// withheld ([`auris_session::AgentPreferences::withheld_tools`]).
+    pub(crate) fn offered(&self) -> Vec<toolbox::live_agent::Definition> {
+        Self::definitions_for(false, self.bridge.withheld())
+    }
+
+    /// The compact schemas a model is offered; see [`Self::catalog_for`]. `withheld` names
+    /// tools left out of the catalog; a call to one still reaches the host, which refuses it.
+    pub(crate) fn definitions_for(
+        hearing: bool,
+        withheld: &[String],
+    ) -> Vec<toolbox::live_agent::Definition> {
         Self::catalog_for(hearing)
             .into_iter()
+            .filter(|tool| !withheld.contains(&tool.name))
             .map(|mut tool| {
                 toolbox::compact_parameters(&mut tool.parameters);
                 // Full contracts stay available through tool_help; schema growth must not

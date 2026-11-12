@@ -522,6 +522,10 @@ pub struct AgentPreferences {
     pub url: String,
     /// Environment variable holding the API key. Empty means no key.
     pub api_key_env: String,
+    /// Live tools left out of the catalog a worker offers its model, by tool name. Never saved:
+    /// a caller that runs a narrower agent, such as a workshop composer, sets it on its own copy.
+    #[serde(skip)]
+    pub withheld_tools: Vec<String>,
 }
 
 /// A configured API connection, independent of the currently selected model's runtime.
