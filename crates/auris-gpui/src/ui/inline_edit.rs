@@ -70,6 +70,11 @@ pub(crate) fn strip_name_spot(track: TrackId) -> SharedString {
     format!("strip-name:{}", track.0).into()
 }
 
+/// The spot key of a workshop candidate's impressions, written under its stars.
+pub(crate) fn impressions_spot(candidate: u64) -> SharedString {
+    format!("workshop-impressions:{candidate}").into()
+}
+
 /// The spot key of the transport's position readout.
 pub(crate) const POSITION_SPOT: &str = "transport:position";
 /// The spot key of the transport's tempo readout.
@@ -144,6 +149,16 @@ impl AurisApp {
                         .or_else(|| book.get(&strip_name_spot(track), window)),
                     _ => None,
                 })?;
+                if matches!(target, PromptTarget::WorkshopFeedback { .. }) {
+                    // Impressions are prose: an area as wide as the card's text, growing with
+                    // the lines written, from the top of what it replaces.
+                    let text = prompt.field().map_or("", |field| field.content());
+                    let height = crate::ui::text_area::area_height(text, 3, 8);
+                    return Some(Bounds {
+                        origin: found.origin,
+                        size: size(found.size.width.max(MIN_WIDTH), height),
+                    });
+                }
                 let height = found.size.height.max(LINE_HEIGHT);
                 let top = found.origin.y + (found.size.height - height) / 2.0;
                 Some(fitted(
@@ -656,11 +671,6 @@ impl PromptInput {
     /// The focus handle of the area.
     pub(crate) fn area_focus(&self) -> &gpui::FocusHandle {
         &self.area_focus
-    }
-
-    /// The area, which a workshop impression is always typed into.
-    pub(crate) fn area(&self) -> &Entity<TextInput> {
-        &self.area
     }
 
     /// The input that holds the keyboard, when one does.
