@@ -73,7 +73,7 @@ fn installed_agent_repairs_lead_breathing_and_preserves_generated_phrases(
         this.session.set_param(auris_session::ParamTarget::TrackGain(pad),-18.0);
         this.session.agent_command(auris_session::live_agent::Command::EditHarmony {start_bar:1,bars:8,key:Some("C major".into()),chords:Some("| I | IV | V | I |".into()),section:None,clear_chords:false,clear_key:false,clear_section:false}).unwrap();
         let generated=this.session.add_instrument_track("Generated reference","auris.physical.clarinet").unwrap();
-        this.session.agent_command(auris_session::live_agent::Command::GeneratePhrase {track:generated.0,part:"lead".into(),start_bar:1,bars:8,seed:42}).unwrap();
+        this.session.agent_command(auris_session::live_agent::Command::GeneratePhrase {settings: Default::default(), track:generated.0,part:"lead".into(),start_bar:1,bars:8,seed:42}).unwrap();
         this.session.set_param(auris_session::ParamTarget::TrackGain(generated),-24.0);
         this.session.forget_history();
         let before=this.session.project().clone();

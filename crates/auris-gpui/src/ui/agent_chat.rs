@@ -1828,6 +1828,7 @@ impl AgentChat {
             model: self.chosen_model.trim().to_string(),
             url: self.url_field.content().trim().to_string(),
             api_key_env: self.key_env_field.content().trim().to_string(),
+            withheld_tools: Vec::new(),
         }
     }
 

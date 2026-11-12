@@ -224,10 +224,17 @@ See [Audio delivery](agent-audio-delivery.md) for examples and measured verdicts
 
 ## Generated phrases
 
-Use `generate_phrase` to add a generated MIDI clip to an existing instrument or drum track.
+Use `generate_phrase` to add a generated MIDI clip to an existing instrument or drum track,
+or a lead to a singer track.
 For example, `{"track":1,"part":"lead","start_bar":5,"bars":4,"seed":42}` writes four bars
 starting at bar 5. Parts are `lead`, `chords`, `pad`, `arp`, `bass`, `drums`, `kick`, `snare`
 and `hat`. `start_bar` is 1-based; `bars` is 1..1024; `seed` defaults to zero.
+The optional `settings` object starts the take from `density` (0..1), a pitch `range`
+(`{"low":48,"high":64}`, MIDI notes at least an octave apart), a grid `rhythm` (`x..x..x.`)
+and `swing` (50..75). The range moves the part by whole octaves, at most two from its own
+register; the result's `pitch_range` says where it landed and `range_missed` that it could not
+get there. A lead on a singer track arrives without a recipe, in the A3..E5 singing range unless
+`range` says otherwise, ready for `write_lyrics`.
 Melodic parts use the project's key and chords, so write their harmony with `edit_harmony`
 first. Drum parts use the drum track's sound assignments and do not require chords.
 A drum part is struck for the section most of it lies in: softer in a verse, harder in a

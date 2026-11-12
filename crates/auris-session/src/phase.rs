@@ -648,6 +648,7 @@ mod tests {
             foreground: vec![lead.0],
         };
         let phrase = || crate::live_agent::Command::GeneratePhrase {
+            settings: Default::default(),
             track: lead.0,
             part: "lead".into(),
             start_bar: 1,
