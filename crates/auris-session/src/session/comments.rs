@@ -26,7 +26,7 @@ pub enum CommentHost {
     Track(TrackId),
     /// Inside a note clip, as the piano roll shows it.
     Clip(ClipId),
-    /// A strip or an insert in the mixer graph.
+    /// A strip in the mixer graph: a track, a bus or the master.
     Mixer(MixerNode),
 }
 
@@ -49,20 +49,10 @@ impl Session {
                 Some((_, clip)) => Ok(clip as &dyn Comments),
                 None => Err(self.not_a_note_clip(id)),
             },
-            CommentHost::Mixer(node) => {
-                let missing = || SessionError::UnknownMixerNode(node.key());
-                match node {
-                    MixerNode::Strip(owner) => self
-                        .strip(owner)
-                        .map(|strip| strip as &dyn Comments)
-                        .ok_or_else(missing),
-                    MixerNode::Effect(owner, slot) => self
-                        .strip(owner)
-                        .and_then(|strip| strip.effects.iter().find(|effect| effect.id == slot))
-                        .map(|effect| effect as &dyn Comments)
-                        .ok_or_else(missing),
-                }
-            }
+            CommentHost::Mixer(node) => self
+                .strip(node.0)
+                .map(|strip| strip as &dyn Comments)
+                .ok_or_else(|| SessionError::UnknownMixerNode(node.key())),
         }
     }
 
@@ -85,17 +75,9 @@ impl Session {
                 .ok_or(SessionError::UnknownClip(id.0)),
             CommentHost::Mixer(node) => {
                 let missing = SessionError::UnknownMixerNode(node.key());
-                match node {
-                    MixerNode::Strip(owner) => self
-                        .strip_mut(owner)
-                        .map(|strip| strip as &mut dyn Comments)
-                        .ok_or(missing),
-                    MixerNode::Effect(owner, slot) => self
-                        .strip_mut(owner)
-                        .and_then(|strip| strip.effects.iter_mut().find(|effect| effect.id == slot))
-                        .map(|effect| effect as &mut dyn Comments)
-                        .ok_or(missing),
-                }
+                self.strip_mut(node.0)
+                    .map(|strip| strip as &mut dyn Comments)
+                    .ok_or(missing)
             }
         }
     }
@@ -283,17 +265,16 @@ mod tests {
     fn mixer_comments_sit_on_their_node_and_leave_with_it() {
         let mut session = session();
         let track = session.add_singer_track("Vocal");
-        let slot = session.add_effect(Some(track), "auris.fx.reverb").unwrap();
-        let strip = CommentHost::Mixer(MixerNode::Strip(Some(track)));
-        let effect = CommentHost::Mixer(MixerNode::Effect(Some(track), slot));
-        let master = CommentHost::Mixer(MixerNode::Strip(None));
+        let strip = CommentHost::Mixer(MixerNode(Some(track)));
+        let master = CommentHost::Mixer(MixerNode::MASTER);
 
         let on_strip = session
             .add_comment(
                 strip,
                 Ticks(1920),
                 Some(60),
-                "keep it under the vocal\nexcept the chorus",
+                "keep it under the vocal
+except the chorus",
             )
             .unwrap();
         let stored = session.comment(strip, on_strip).unwrap();
@@ -302,10 +283,11 @@ mod tests {
             (Ticks::ZERO, None),
             "a node has no moment"
         );
-        assert_eq!(stored.text, "keep it under the vocal\nexcept the chorus");
-        session
-            .add_comment(effect, Ticks::ZERO, None, "short tail")
-            .unwrap();
+        assert_eq!(
+            stored.text,
+            "keep it under the vocal
+except the chorus"
+        );
         session
             .add_comment(master, Ticks::ZERO, None, "-14 LUFS")
             .unwrap();
@@ -315,16 +297,17 @@ mod tests {
             "not on the lane"
         );
 
-        session.remove_effect(slot);
+        session.remove_track(track).unwrap();
         assert!(matches!(
-            session.add_comment(effect, Ticks::ZERO, None, "again"),
+            session.add_comment(strip, Ticks::ZERO, None, "again"),
             Err(SessionError::UnknownMixerNode(_))
         ));
-        assert!(session.comments(effect).is_empty(), "gone with its effect");
+        assert!(session.comments(strip).is_empty(), "gone with its strip");
         session.undo();
         assert_eq!(
-            session.comments(effect)[0].text,
-            "short tail",
+            session.comments(strip)[0].text,
+            "keep it under the vocal
+except the chorus",
             "and back with it"
         );
     }

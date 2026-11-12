@@ -45,7 +45,7 @@ Dress the fixed score: sounds, backing parts, drums, performance and transitions
 - `generate_phrase` writes a take of any part (a lead on a singer track too), started from `settings` such as `density`, a pitch `range`, a grid `rhythm` and `swing`; read what it wrote and edit it note by note where the song needs something else. Use performance controls for feel without rewriting notes. Typed notes play exactly on the grid until a performance stage moves them: give every part you wrote, the foreground included, a starting feel from `performance_presets` (list it with the clip for a `suggested_preset`) and tune it from there. Swing is the song's feel, not seasoning: a straight song stays straight, and a swung song swings every part alike, vocal included.
 - Apply justified changes, read them back, and compare affected passages with the earlier version. Replace or remove the guide part. If the arrangement already serves the brief, record the concrete reasons instead of forcing changes. A rough fader balance is fine here; processing belongs to the mix.
 
-Techniques: Part roles and registers; Voicings out of the voice; Kick and bass together; Fills and crashes at transitions; Build-up and break; More in verse 2; Copy, then vary; Performance controls; Generators for scaffolding, authored notes for what is remembered.
+Techniques: Part roles and registers; Voicings out of the voice; Kick and bass together; Fills and crashes at transitions; Build-up and break; More in verse 2; Copy, then vary; Performance controls; Generated takes are drafts.
 
 ## Phase 3: mix and delivery
 

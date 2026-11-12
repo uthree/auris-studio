@@ -159,12 +159,13 @@ Duplicate targets and invalid/discrete values are refused atomically. Existing
 parameter automation is preserved and may override static values during playback.
 
 `mixer_graph` is the single mixer entry point in every backend. Pass one `operation`
-object tagged by action. Start with `read` and copy stable track/effect node IDs.
+object tagged by action. Start with `read` and copy the stable track node IDs and the
+effect IDs each node lists; effects are not nodes and never connection ends.
 `set_strip` changes only supplied gain_db, pan, mute or solo fields; track:master
 accepts gain/pan. `set_outputs` replaces destinations atomically; `connect` adds a
 unity post-fader output. `add_output` adds one with an initial level and pre/post-fader tap in
 one edit; `set_output` changes one named by source, target and `pre_fader`. There are no sends:
-a send is another output. `set_sidechain` replaces or clears a detector source.
+a send is another output. `set_sidechain` keys an effect from another track, or clears it.
 Insert actions add/remove/move/enable effects and read/set native parameters.
 All connections must form a DAG. See [Mixer signal flow](mixer-graph.md).
 

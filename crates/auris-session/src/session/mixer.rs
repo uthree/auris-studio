@@ -115,27 +115,24 @@ impl Session {
         self.signal_meters.watch(watched);
     }
 
-    /// Held linear peak actually carried by this connection, including its send gain and delay.
-    /// Insert-chain edges read the next insert's input; keys read the enabled effect's key input.
+    /// Held linear peak actually carried by this connection, including its output gain and delay.
+    /// Keys read the enabled effect's key input; notes carry no audio and read silence.
     /// Missing connections and an unavailable audio device read silence.
     pub fn mixer_edge_peak(&self, edge: &crate::mixer_graph::MixerEdge) -> f32 {
-        use crate::mixer_graph::{MixerEdgeKind, MixerNode};
+        use crate::mixer_graph::MixerEdgeKind;
         use auris_engine::SignalRoute;
 
         if !self.engine.is_running() {
             return 0.0;
         }
-        let route = match (edge.kind, edge.target) {
-            (MixerEdgeKind::Output { track, tap, .. }, MixerNode::Strip(target)) => Some(
-                SignalRoute::Output(track, crate::mixer_graph::destination(target), tap),
-            ),
-            (MixerEdgeKind::Chain, MixerNode::Effect(owner, slot)) => {
-                Some(SignalRoute::InsertInput(owner, slot))
-            }
-            (MixerEdgeKind::Sidechain, MixerNode::Effect(owner, slot)) => {
-                Some(SignalRoute::Sidechain(owner, slot))
-            }
-            _ => None,
+        let route = match edge.kind {
+            MixerEdgeKind::Output { track, tap, .. } => Some(SignalRoute::Output(
+                track,
+                crate::mixer_graph::destination(edge.target.0),
+                tap,
+            )),
+            MixerEdgeKind::Sidechain { slot } => Some(SignalRoute::Sidechain(edge.target.0, slot)),
+            MixerEdgeKind::Notes => None,
         };
         route.map_or(0.0, |route| self.signal_meters.peak(route))
     }
@@ -1049,7 +1046,7 @@ mod tests {
     fn mixer_layout_gestures_and_arrangement_undo_without_rebuilding_audio_or_rewinding_camera() {
         let mut session = session();
         let track = session.add_bus_track("Layout");
-        let key = crate::mixer_graph::MixerNode::Strip(Some(track)).key();
+        let key = crate::mixer_graph::MixerNode(Some(track)).key();
         let baseline: BTreeMap<_, _> = [
             (key.clone(), MixerNodePosition { x: 24., y: 80. }),
             ("track:master".into(), MixerNodePosition { x: 400., y: 50. }),

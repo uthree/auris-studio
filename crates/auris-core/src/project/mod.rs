@@ -304,6 +304,8 @@ impl Default for Project {
 
 impl Project {
     /// Schema version written into saved files and required when opening them.
+    /// Version 37 moves comments pinned to an effect onto its strip, since effects are no longer
+    /// mixer graph nodes of their own.
     /// Version 36 folds sends into outputs, which now carry a level and a tap point of their own.
     /// Version 35 stores the audio sampler's samples as a map of zones rather than one sample.
     /// Version 34 adds the sustain transform, which holds every release on like a pedal.
@@ -312,7 +314,7 @@ impl Project {
     /// Version 31 adds power, added-tone, 6/9 and thirteenth chord qualities to stored harmony.
     /// Version 30 adds eleventh chord qualities to stored harmony.
     /// Version 29 adds ordered, named manual drum lanes beside generation-role assignments.
-    pub const FORMAT_VERSION: u32 = 36;
+    pub const FORMAT_VERSION: u32 = 37;
 
     /// The name a document carries until somebody — a person or the agent — gives it one.
     pub const UNTITLED: &'static str = "Untitled";

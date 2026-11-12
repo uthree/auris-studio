@@ -985,10 +985,10 @@ impl SettingsWindow {
             return false;
         };
         for (index, row) in editor.stops.iter().enumerate() {
-            for component in 0..2 {
-                if row.focus[component]
+            for (component, focus) in row.focus.iter().enumerate().take(2) {
+                if focus
                     .as_ref()
-                    .is_some_and(|focus| focus.is_focused(window))
+                    .is_some_and(|handle| handle.is_focused(window))
                 {
                     editor.active = ThemeField::Stop(index, component);
                     return true;

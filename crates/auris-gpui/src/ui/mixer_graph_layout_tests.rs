@@ -12,13 +12,10 @@ fn box_selected_nodes_move_together_in_one_undo_step_at_a_panned_zoom(cx: &mut T
         this.panels.set_size(Dock::Bottom, px(600.));
         this.panels.show(Panel::Mixer);
         let track = this.session.add_bus_track("Group");
-        let effect = this
-            .session
-            .add_effect(Some(track), "auris.fx.gain")
-            .unwrap();
+        let other = this.session.add_bus_track("Group 2");
         [
-            node_id(MixerNode::Strip(Some(track))),
-            node_id(MixerNode::Effect(Some(track), effect)),
+            node_id(MixerNode(Some(track))),
+            node_id(MixerNode(Some(other))),
         ]
     });
     paint(&app, cx);
@@ -138,11 +135,7 @@ fn node_drag_is_one_undo_step_and_noop_gestures_preserve_redo(cx: &mut TestAppCo
         track
     });
     paint(&app, cx);
-    let selector = Box::leak(
-        node_id(MixerNode::Strip(Some(track)))
-            .to_string()
-            .into_boxed_str(),
-    );
+    let selector = Box::leak(node_id(MixerNode(Some(track))).to_string().into_boxed_str());
     let at = cx.debug_bounds(selector).unwrap().origin + point(px(12.), px(10.));
     let before = app.read_with(cx, |this, cx| {
         this.mixer_canvas.as_ref().unwrap().presentation(cx)
@@ -165,7 +158,7 @@ fn node_drag_is_one_undo_step_and_noop_gestures_preserve_redo(cx: &mut TestAppCo
         assert!(this.session.can_undo());
         let view = this.mixer_canvas.as_ref().unwrap().presentation(cx);
         assert_eq!(this.project().mixer_graph_view.nodes, view.nodes);
-        let key = MixerNode::Strip(Some(track)).key();
+        let key = MixerNode(Some(track)).key();
         assert_eq!(view.nodes[&key].x, before.nodes[&key].x + 70.);
         assert_eq!(view.nodes[&key].y, before.nodes[&key].y + 40.);
         view
@@ -251,7 +244,7 @@ fn arrange_button_restores_the_complete_layout_in_one_step_without_rewinding_the
     let arranged = app.read_with(cx, |this, cx| {
         let current = this.mixer_canvas.as_ref().unwrap().presentation(cx);
         assert_ne!(current.nodes, before.nodes);
-        for (identity, position) in positions(&this.session.mixer_graph()) {
+        for (identity, position) in positions(&this.session.mixer_graph(), this.session.project()) {
             assert_eq!(
                 current.nodes[&identity.key()],
                 MixerNodePosition {

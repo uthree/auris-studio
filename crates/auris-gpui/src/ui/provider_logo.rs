@@ -134,6 +134,14 @@ const MARKS: &[(&str, &[u8])] = &[
         include_bytes!("../../assets/icons/caption-close.svg"),
     ),
     (
+        "icons/star.svg",
+        include_bytes!("../../assets/icons/star.svg"),
+    ),
+    (
+        "icons/star-filled.svg",
+        include_bytes!("../../assets/icons/star-filled.svg"),
+    ),
+    (
         "providers/openai.svg",
         include_bytes!("../../assets/providers/openai.svg"),
     ),
