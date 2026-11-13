@@ -24,7 +24,6 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  RUST_TOOLCHAIN: "1.100.0"
   RELEASE_NAME: ${{ inputs.release_tag || github.ref_name }}
 
 # Application builds are deliberately uncached.
@@ -105,7 +104,7 @@ jobs:
 
       - name: Install the toolchain
         run: |
-          rustup toolchain install ${{ env.RUST_TOOLCHAIN }} --profile minimal && rustup default ${{ env.RUST_TOOLCHAIN }}
+          rustup toolchain install
           rustup target add aarch64-apple-darwin
 
       # ONNX Runtime's Core ML objects use Apple's availability checks. Rust drives the final
@@ -254,7 +253,7 @@ jobs:
         run: cp "$RUNNER_TEMP/app-icon/icon.ico" crates/auris-gpui/assets/auris-studio.ico
 
       - name: Install the toolchain
-        run: rustup toolchain install ${{ env.RUST_TOOLCHAIN }} --profile minimal && rustup default ${{ env.RUST_TOOLCHAIN }}
+        run: rustup toolchain install
 
       - name: Build
         shell: pwsh
@@ -412,7 +411,7 @@ jobs:
           sparse-checkout-cone-mode: false
 
       - name: Install the toolchain
-        run: rustup toolchain install ${{ env.RUST_TOOLCHAIN }} --profile minimal && rustup default ${{ env.RUST_TOOLCHAIN }}
+        run: rustup toolchain install
 
       # cpal builds against ALSA here, and vst3-host links against XCB.
       - name: Install Linux development headers
