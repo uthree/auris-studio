@@ -102,6 +102,7 @@ mod recognition;
 mod record;
 mod rhythm;
 mod samples;
+pub mod style_checks;
 pub use samples::{
     AgentSample, DEFAULT_SAMPLE_ROOT, DetectedPitch, SampleZoneEdit, SampleZoneView, detect_pitch,
     parse_root_note,

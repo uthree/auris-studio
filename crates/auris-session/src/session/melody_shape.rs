@@ -7,7 +7,6 @@
 //! score done: each section's register and movement, and for every chorus the lift over the
 //! section that leads into it.
 
-use super::arrangement_shape::MIN_FRAME_BARS;
 use auris_core::theory::pitch::midi_name;
 use auris_core::{Project, Ticks, TrackId, loop_passes};
 use serde_json::{Value, json};
@@ -121,10 +120,11 @@ pub fn melody_shape(project: &Project, track: TrackId) -> Result<Value, String> 
         );
     }
     let song_high = sections.iter().map(Section::high).max().unwrap_or_default();
+    let checks = super::style_checks::style_checks(project.style);
     let mut warnings = Vec::new();
     let mut lifts = Vec::new();
     for (index, chorus) in sections.iter().enumerate() {
-        if !is_chorus(&chorus.label) {
+        if !checks.chorus_lift || !is_chorus(&chorus.label) {
             continue;
         }
         let leaps = chorus.intervals().filter(|step| *step >= LEAP).count();
@@ -165,13 +165,14 @@ pub fn melody_shape(project: &Project, track: TrackId) -> Result<Value, String> 
             ));
         }
     }
+    // A style with no lifted chorus is not asked where its chorus is.
     let choruses: Vec<&Section> = sections.iter().filter(|s| is_chorus(&s.label)).collect();
-    if choruses.is_empty() {
+    if checks.chorus_lift && choruses.is_empty() {
         warnings.push(
             "No section is labelled as a chorus (サビ, chorus, hook), so no lift was checked"
                 .into(),
         );
-    } else if choruses.iter().all(|chorus| chorus.high() < song_high) {
+    } else if checks.chorus_lift && choruses.iter().all(|chorus| chorus.high() < song_high) {
         let peak = sections.iter().find(|s| s.high() == song_high).unwrap();
         warnings.push(format!(
             "The song's highest note, {}, is in {}, not in a chorus",
@@ -193,15 +194,17 @@ pub fn melody_shape(project: &Project, track: TrackId) -> Result<Value, String> 
     let intro_bars = first.raw() as f64 / bar(Ticks::ZERO);
     let song_end = project.sections.end().max(last_end);
     let outro_bars = (song_end - last_end).raw().max(0) as f64 / bar(last_end);
-    if intro_bars < MIN_FRAME_BARS {
-        warnings.push(format!(
-            "The melody starts after {intro_bars:.1} bars; plan an intro of at least {MIN_FRAME_BARS} bars into the form now, before anything is written after it"
-        ));
-    }
-    if outro_bars < MIN_FRAME_BARS {
-        warnings.push(format!(
-            "The form ends {outro_bars:.1} bars after the melody; plan an outro of at least {MIN_FRAME_BARS} bars"
-        ));
+    if let Some(frame) = checks.frame_bars {
+        if intro_bars < frame {
+            warnings.push(format!(
+                "The melody starts after {intro_bars:.1} bars; plan an intro of at least {frame} bars into the form now, before anything is written after it"
+            ));
+        }
+        if outro_bars < frame {
+            warnings.push(format!(
+                "The form ends {outro_bars:.1} bars after the melody; plan an outro of at least {frame} bars"
+            ));
+        }
     }
     let (lines, form_warnings) = super::melody_form::melody_form(project, track);
     warnings.extend(form_warnings);
@@ -301,6 +304,27 @@ mod tests {
         assert!(warnings[1].as_str().unwrap().contains("only by step"));
         assert_eq!(report["chorus_lifts"][0]["mean_lift_semitones"], 1.5);
         assert_eq!(report["chorus_lifts"][0]["peak_lift_semitones"], 2);
+    }
+
+    #[test]
+    fn a_style_without_a_lifted_chorus_is_not_asked_for_one() {
+        use auris_core::style::Genre;
+        let (mut project, track) = song(&[64, 65, 67, 65], &[65, 67, 69, 66]);
+        project.style.genre = Some(Genre::Ambient);
+        let report = melody_shape(&project, track).unwrap();
+        assert_eq!(report["warnings"], json!([]));
+        assert_eq!(report["chorus_lifts"], json!([]));
+    }
+
+    #[test]
+    fn a_loop_has_no_frame_to_report() {
+        use auris_core::style::Usage;
+        let (mut project, track) = framed(&[60, 62, 64, 62], &[67, 72, 67, 74], 4, 2);
+        project.style.usage = Some(Usage::LoopBgm);
+        let report = melody_shape(&project, track).unwrap();
+        assert_eq!(report["warnings"], json!([]));
+        // The measurements stay: only the demand for eight bars goes.
+        assert_eq!(report["intro_bars"], 4.0);
     }
 
     #[test]

@@ -492,6 +492,14 @@ fn harmony(project: &Project, events: &[Event]) -> Vec<Diagnostic> {
     if harmony.is_empty() {
         return Vec::new();
     }
+    // Where chromatic tensions are the genre's ordinary harmony, a note outside the key is
+    // reported for the record but not as something to fix.
+    let out_of_key_severity =
+        if crate::session::style_checks::style_checks(project.style).chromatic_harmony {
+            Severity::Info
+        } else {
+            Severity::Warning
+        };
     let mut out_of_key = Vec::new();
     let mut avoid = Vec::new();
     let mut seen = HashSet::new();
@@ -514,7 +522,7 @@ fn harmony(project: &Project, events: &[Event]) -> Vec<Diagnostic> {
         let against = event.end.min(chord_end) - event.start;
         let (rule, severity, target) = if !key.scale.contains(key.tonic, class) {
             let target = chord.nearest_tone(event.pitch as i32);
-            (Rule::OutOfKey, Severity::Warning, target)
+            (Rule::OutOfKey, out_of_key_severity, target)
         } else if chord.contains(class.transposed(-1)) && against >= AVOID_OVERLAP {
             (Rule::AvoidNote, Severity::Info, event.pitch as i32 - 1)
         } else {
@@ -1453,6 +1461,17 @@ mod tests {
                 pitches: vec![(0, 60)]
             })
         );
+    }
+
+    #[test]
+    fn a_chromatic_genre_notes_an_outside_tone_without_asking_for_a_fix() {
+        let (mut project, _) = project_with(vec![Note::new(61, Ticks(0), Ticks(1920))]);
+        in_c_with_chord(&mut project, "I");
+        project.style.genre = Some(auris_core::style::Genre::Jazz);
+        let found = lint_score(&project);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].rule, Rule::OutOfKey);
+        assert_eq!(found[0].severity, Severity::Info);
     }
 
     #[test]
