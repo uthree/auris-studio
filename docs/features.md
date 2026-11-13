@@ -1512,8 +1512,8 @@ project. `inspect_project` reads the current arrangement. The model chooses the 
 parts and writes them through flat track, clip and note tools. `edit_notes` applies bounded atomic patches/replacements using exact ticks and a
 revision from `read_notes`; `edit_timeline` and `set_loop` control tempo/meter and looping.
 Changes appear before the model's final reply. Existing music is preserved unless its
-removal is explicitly requested. A new song in an untitled document is named with
-`rename_project`, so Save As and the exports offer that title instead of "Untitled". Save the
+removal is explicitly requested. The song's title is its file name, which only the user sets
+through Save As; `inspect_project` reports it, or no title while the document is unsaved. Save the
 project normally when ready.
 
 The panel can attach audio, stop a running turn and start a new conversation. Send with Enter or the Send button. Answers use selectable Markdown blocks with compact headings and indented lists; Copy Markdown copies the complete answer. Opening another

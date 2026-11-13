@@ -1354,19 +1354,6 @@ impl Session {
         self.path.is_none() && matches!(self.project.name.trim(), "" | Project::UNTITLED)
     }
 
-    /// Names the document, as one undoable step. Surrounding whitespace is dropped.
-    ///
-    /// Returns `false`, recording nothing, for a blank name or the name it already has.
-    pub fn rename_project(&mut self, name: &str) -> bool {
-        let name = name.trim();
-        if name.is_empty() || name == self.project.name {
-            return false;
-        }
-        self.record(Edit::RenameProject);
-        self.project.name = name.to_owned();
-        true
-    }
-
     /// `true` when there are unsaved changes.
     pub fn is_dirty(&self) -> bool {
         self.dirty
