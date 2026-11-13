@@ -409,6 +409,7 @@ mod tests {
         let error = execute(
             &mut session,
             Command::GeneratePhrase {
+                settings: Default::default(),
                 track: 1,
                 part: "lead".into(),
                 start_bar: 1,

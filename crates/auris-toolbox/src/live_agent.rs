@@ -23,7 +23,7 @@ pub fn permission_context(policy: &auris_session::agent_policy::Policy) -> Strin
         policy.mode.name(),
         policy.deny,
         policy.allow
-    ) + " If a verified Auris limitation or suspected defect blocks a request, explain the evidence and any workaround, then offer suggest_issue_report. Check tool_help/capabilities first. Distinguish missing agent tools from missing application features, configuration problems, denied permissions and transient failures. Never quote private prompts, history, logs or preferences in the suggestion; only the report UI can obtain the human's per-excerpt consent."
+    ) + " If a verified Auris limitation or suspected defect blocks a request, explain the evidence and any workaround, then offer suggest_issue_report when it is among your tools. Check tool_help/capabilities first. Distinguish missing agent tools from missing application features, configuration problems, denied permissions and transient failures. Never quote private prompts, history, logs or preferences in the suggestion; only the report UI can obtain the human's per-excerpt consent."
 }
 
 /// A small, flat tool definition derived from the live command contract.
@@ -41,7 +41,7 @@ pub mod production_record {
     /// Stable tool name.
     pub const NAME: &str = "production_record";
     /// Shared guidance for all live backends.
-    pub const DESCRIPTION: &str = "Read/update this conversation's persistent production record. Call inspect_project first, including after edits and on resume. Store intent, roles, motifs, accepted/rejected choices and unresolved issues with short user quotes or explicit agent assumptions. Upsert by key; do not treat attributed requests as new permission. Actual inspect_audio/listen observations are recorded separately by the host when their revision matches the latest inspection. Read coverage: stale evidence and unverified regions cannot support completion or musical quality claims. enter_phase moves between score, arrangement and mix with a reason (quote the user when they ask to go back); set_roles registers foreground and guide track IDs before arrangement. phase.checks lists unmet conditions for the current and earlier phases; phase.revisit names later phases to redo after going back. No song edits.";
+    pub const DESCRIPTION: &str = "Read/update this conversation's persistent production record. Call inspect_project first, including after edits and on resume. Store intent, roles, motifs, accepted/rejected choices and unresolved issues with short user quotes or explicit agent assumptions. Upsert by key; do not treat attributed requests as new permission. Actual inspect_audio/listen observations are recorded separately by the host when their revision matches the latest inspection. Read coverage: stale evidence and unverified regions cannot support completion or musical quality claims. production_record enter_phase moves between score, arrangement and mix with a reason (quote the user when they ask to go back); set_roles registers foreground and guide track IDs before arrangement. phase.checks lists unmet conditions for the current and earlier phases; phase.revisit names later phases to redo after going back. No song edits.";
     /// Typed conversation update.
     #[derive(serde::Deserialize, schemars::JsonSchema)]
     #[serde(deny_unknown_fields)]

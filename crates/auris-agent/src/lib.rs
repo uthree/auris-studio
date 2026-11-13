@@ -521,7 +521,11 @@ fn strip_markup(text: &str) -> String {
 /// and the bridge is what carries its audio into the next request.
 fn armed(builder: AgentBuilder, bridge: Option<Bridge>, prompt: &str, hearing: bool) -> Agent {
     let mut builder = builder.preamble(prompt).dynamic_tools(Vec::new());
-    for definition in host::ToolHost::definitions_for(hearing && bridge.is_some()) {
+    let withheld = bridge
+        .as_ref()
+        .map(|bridge| bridge.withheld().to_vec())
+        .unwrap_or_default();
+    for definition in host::ToolHost::definitions_for(hearing && bridge.is_some(), &withheld) {
         let tool_name = definition.name.clone();
         let bridge = bridge.clone();
         let name =
@@ -1579,11 +1583,11 @@ mod tests {
         for schema in [&live.parameters, &saved.parameters] {
             let schema = schema.to_string();
             for field in [
-                "character",
+                "like",
+                "targets",
                 "brightness",
                 "attack",
                 "sustain",
-                "release",
                 "noise",
                 "envelope",
                 "attack_ms",
@@ -1591,15 +1595,29 @@ mod tests {
             ] {
                 assert!(schema.contains(field), "Missing {field}");
             }
+            assert!(!schema.contains("\"mode\""), "one request shape, no modes");
         }
-        let command = toolbox::live_agent::command("search_instruments", &serde_json::json!({"request":{"mode":"character","query":"ふんわり","targets":{"release":0.1},"limit":3}})).unwrap().unwrap();
-        assert!(matches!(
-            command,
-            auris_session::live_agent::Command::SearchInstruments {
-                request: auris_session::SoundSearch::Character { .. },
-                ..
-            }
-        ));
+        let command = toolbox::live_agent::command(
+            "search_instruments",
+            &serde_json::json!({"request":{"name":"pad","targets":{"attack":0.3,"sustain":0.8},"limit":3}}),
+        )
+        .unwrap()
+        .unwrap();
+        let auris_session::live_agent::Command::SearchInstruments { request, .. } = command else {
+            panic!("search_instruments parses as itself");
+        };
+        assert_eq!(
+            (request.name.as_str(), request.targets.attack),
+            ("pad", Some(0.3))
+        );
+        assert!(
+            toolbox::live_agent::command(
+                "search_instruments",
+                &serde_json::json!({"request":{"mode":"character","query":"ふんわり"}}),
+            )
+            .is_err(),
+            "the old modes are gone"
+        );
     }
 
     #[tokio::test]

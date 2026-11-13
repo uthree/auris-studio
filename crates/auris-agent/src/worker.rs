@@ -195,6 +195,9 @@ struct Channels {
     execution_lease: std::sync::Mutex<Option<std::fs::File>>,
     /// The completed turns before the running one, for `read_conversation`.
     recall: std::sync::Mutex<memory::Memory>,
+    /// Tools left out of the catalog offered to the model; see
+    /// [`auris_session::AgentPreferences::withheld_tools`].
+    withheld: Vec<String>,
 }
 
 fn conversation_execution_root(path: &Path) -> Option<PathBuf> {
@@ -343,6 +346,11 @@ impl Bridge {
         *self.0.visual.lock().unwrap() = None;
         *self.0.audible.lock().unwrap() = None;
     }
+    /// Tools left out of the catalog this worker's model is offered.
+    pub(super) fn withheld(&self) -> &[String] {
+        &self.0.withheld
+    }
+
     pub(super) fn set_hearing(&self, hearing: bool) {
         self.0.hearing.store(hearing, Ordering::Relaxed);
     }
@@ -677,6 +685,7 @@ impl Worker {
             execution_lease: std::sync::Mutex::new(None),
             audio_references: std::sync::Mutex::new(Default::default()),
             recall: Default::default(),
+            withheld: prefs.withheld_tools.clone(),
         }));
         let (cancel, cancelled) = oneshot::channel();
         let handle = bridge.clone();
@@ -791,6 +800,7 @@ pub(crate) fn test_bridge() -> (
             execution_lease: std::sync::Mutex::new(None),
             audio_references: std::sync::Mutex::new(Default::default()),
             recall: Default::default(),
+            withheld: Vec::new(),
         })),
         commands,
         receiver,
@@ -1524,6 +1534,7 @@ mod tests {
             execution_lease: std::sync::Mutex::new(None),
             audio_references: std::sync::Mutex::new(Default::default()),
             recall: Default::default(),
+            withheld: Vec::new(),
         }));
         let scope = VisualTurn::new(Some(bridge.clone()));
         for revision in 1..=3 {
@@ -1933,7 +1944,7 @@ mod tests {
     #[test]
     fn instrument_search_uses_the_permission_checked_live_session() {
         let call = completion(
-            r#"{"role":"assistant","tool_calls":[{"id":"sounds","type":"function","function":{"name":"search_instruments","arguments":"{\"request\":{\"mode\":\"text\",\"query\":\"strings\"}}"}}]}"#,
+            r#"{"role":"assistant","tool_calls":[{"id":"sounds","type":"function","function":{"name":"search_instruments","arguments":"{\"request\":{\"name\":\"strings\"}}"}}]}"#,
             "tool_calls",
         );
         let done = completion(
@@ -1959,7 +1970,7 @@ mod tests {
             .unwrap();
         let edit = until(&worker, "edit");
         assert_eq!(edit["command"]["action"], "search_instruments");
-        assert_eq!(edit["command"]["request"]["query"], "strings");
+        assert_eq!(edit["command"]["request"]["name"], "strings");
         worker.send(&serde_json::json!({"event":"edit_result","ok":true,"text":"live-session-only-strings"}).to_string()).unwrap();
         until(&worker, "answer");
         assert!(requests.lock().unwrap()[1].contains("live-session-only-strings"));
