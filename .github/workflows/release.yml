@@ -472,8 +472,11 @@ jobs:
           fi
           gh run watch "$run" --exit-status --interval 30
 
+      # The three platform builds by name: the run also holds the app icon the builds embedded, and
+      # after a rerun of this job the previous attempt's checksums, neither of which is a download.
       - uses: actions/download-artifact@v4
         with:
+          pattern: "{macos,windows,linux}"
           path: artifacts
           merge-multiple: true
 
