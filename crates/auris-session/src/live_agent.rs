@@ -602,9 +602,9 @@ pub enum Command {
         compare_to: Option<String>,
     },
 
-    /// Search instruments by text, acoustic reference, character/impression, or bounded browsing. Character mode accepts Japanese/English impressions and explicit 0..1 targets (brightness, attack speed, sustain, captured release, noise); translate arbitrary prose/negation into targets and omit query when necessary. Optional id retains resemblance to an existing sound; name restricts names/tags. Inspect returned targets, character and relative distance, then render a musical phrase before adopting. Copy returned sound IDs into set_instrument. Retry indexing results later without refreshing. Shared by desktop Agent and MCP.
+    /// Search instruments by name words, resemblance to a returned sound (like), 0..1 targets on the sound map's axes (brightness, attack speed, held sustain level, noise) and measured envelope ranges; with none of them it browses. Translate impressions into targets yourself. Inspect returned axes, envelope and relative distance, then render a musical phrase before adopting. Copy returned sound IDs into set_instrument. Retry indexing results later without refreshing. Shared by desktop Agent and MCP.
     SearchInstruments {
-        /// Explicit text, similar, character or browse request.
+        /// Name words, like, targets and envelope ranges; all optional.
         request: crate::SoundSearch,
         /// Rescan only on the first page; invalidates existing acoustic measurements.
         #[serde(default)]

@@ -2,7 +2,7 @@
 
 use super::{Session, SoundEnvelope, TimbreMapControl, TimbreSound};
 use crate::prelude::*;
-use crate::{EnvelopeTargets, TimbreCharacter, TimbreTargets};
+use crate::{EnvelopeTargets, SoundAxes, TimbreCharacter, TimbreTargets};
 use auris_core::plugin::{Instrument, PluginState, PrepareContext};
 use auris_dsp::timbre::{standardize_timbres, timbre_character, timbre_features};
 use base64::Engine;
@@ -16,72 +16,61 @@ use std::time::{Duration, Instant};
 mod arrangement_sound;
 pub(super) use arrangement_sound::SoundPreparation;
 
-/// A bounded discovery operation shared by saved-file and live-session frontends.
+/// One bounded sound search shared by saved-file and live-session frontends.
+///
+/// With only `name` (or nothing) it pages through the catalogue by name. Any of `like`,
+/// `targets` or `envelope` ranks measured sounds acoustically instead; the first such request
+/// starts a background measurement and answers `status: indexing` until it finishes.
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, schemars::JsonSchema)]
-#[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
-pub enum SoundSearch {
-    /// Rank measured sounds by Japanese/English impressions, explicit acoustic targets, or ranges on
-    /// the attack/decay/sustain/release measured from real notes (C2, C4, C6 at velocity 100).
-    Character {
-        /// Supported impressions, e.g. `ふんわり`, `ポコポコ`, `soft bright`. Use targets for arbitrary prose/negation.
-        #[serde(default)]
-        query: String,
-        /// Explicit 0..1 targets override dictionary interpretations.
-        #[serde(default)]
-        targets: TimbreTargets,
-        /// Measured envelope ranges in ms and dB, e.g. `{"attack_ms":{"max":10},"release_ms":{"min":800}}`.
-        #[serde(default)]
-        envelope: Box<EnvelopeTargets>,
-        /// Optional previously returned sound ID to retain acoustic resemblance.
-        id: Option<String>,
-        /// Optional name/tag words, all required. Use this for instrument families.
-        name: Option<String>,
-        /// Maximum results, 1..50.
-        #[serde(default = "default_limit")]
-        limit: usize,
-        /// Optional source/library restrictions.
-        #[serde(default, flatten)]
-        filter: SoundFilter,
-    },
-    /// All query words must occur in the name, library, vendor, or provider tags.
-    Text {
-        /// Nonempty case-insensitive search words, for example `saw lead` or `Surge bass`.
-        query: String,
-        /// Maximum results, 1..50; defaults to 10.
-        #[serde(default = "default_limit")]
-        #[schemars(range(min = 1, max = 50))]
-        limit: usize,
-        /// First matching result, defaults to zero.
-        #[serde(default)]
-        offset: usize,
-        /// Optional exact source and library substring constraints.
-        #[serde(default, flatten)]
-        filter: SoundFilter,
-    },
-    /// Browse one bounded page, optionally filtered by source and library.
-    Browse {
-        /// Maximum results, 1..50.
-        #[serde(default = "default_limit")]
-        limit: usize,
-        /// Zero-based result offset.
-        #[serde(default)]
-        offset: usize,
-        /// Optional source and library constraints.
-        #[serde(default, flatten)]
-        filter: SoundFilter,
-    },
-    /// Other sounds ordered by full standardized acoustic feature distance.
-    Similar {
-        /// Exact sound ID returned by search_instruments for this project/session.
-        id: String,
-        /// Maximum neighbors, 1..50; defaults to 10. Excludes the reference itself.
-        #[serde(default = "default_limit")]
-        #[schemars(range(min = 1, max = 50))]
-        limit: usize,
-        /// Optional constraints on returned neighbors (not on the reference).
-        #[serde(default, flatten)]
-        filter: SoundFilter,
-    },
+#[serde(deny_unknown_fields)]
+pub struct SoundSearch {
+    /// Case-insensitive words that must all occur in the name, library, vendor or provider
+    /// tags, e.g. `saw lead` or `Surge bass`. Omit to browse.
+    #[serde(default)]
+    pub name: String,
+    /// A sound ID returned by search_instruments: rank by acoustic resemblance to it over the
+    /// full measured feature set. The reference itself is left out of the results.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub like: Option<String>,
+    /// Targets on the sound map's axes, each 0..1. Translate impressions into them yourself:
+    /// a soft pad is roughly `{"brightness":0.3,"attack":0.3,"sustain":0.8}`, a pluck
+    /// `{"attack":1,"sustain":0.1}`.
+    #[serde(default)]
+    pub targets: TimbreTargets,
+    /// Measured envelope ranges in ms and dB, e.g. `{"attack_ms":{"max":10},"release_ms":{"min":800}}`.
+    #[serde(default)]
+    pub envelope: Box<EnvelopeTargets>,
+    /// Maximum results, 1..50; defaults to 10.
+    #[serde(default = "default_limit")]
+    #[schemars(range(min = 1, max = 50))]
+    pub limit: usize,
+    /// Zero-based offset into the matching results; defaults to zero.
+    #[serde(default)]
+    pub offset: usize,
+    /// Optional source and library constraints.
+    #[serde(default, flatten)]
+    pub filter: SoundFilter,
+}
+
+impl Default for SoundSearch {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            like: None,
+            targets: TimbreTargets::default(),
+            envelope: Box::default(),
+            limit: default_limit(),
+            offset: 0,
+            filter: SoundFilter::default(),
+        }
+    }
+}
+
+impl SoundSearch {
+    /// Whether the request ranks measured sounds rather than paging by name.
+    fn is_acoustic(&self) -> bool {
+        self.like.is_some() || !self.targets.is_empty() || !self.envelope.is_empty()
+    }
 }
 /// Sound origins available to discovery clients.
 #[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize, schemars::JsonSchema)]
@@ -260,6 +249,16 @@ struct AcousticIndex {
     envelopes: Vec<Option<SoundEnvelope>>,
     skipped: Vec<String>,
     limited: bool,
+}
+impl AcousticIndex {
+    /// Each measured sound's place on the sound map, in row order.
+    fn axes(&self) -> Vec<SoundAxes> {
+        self.characters
+            .iter()
+            .zip(&self.envelopes)
+            .map(|(c, e)| SoundAxes::new(*c, e.as_ref().map(|e| &e.summary)))
+            .collect()
+    }
 }
 #[derive(Default)]
 struct IndexState {
@@ -1406,239 +1405,95 @@ impl SoundLibraryJob {
         if cancelled.is_some_and(|cancelled| cancelled.load(Ordering::Relaxed)) {
             return Err("Sound search cancelled".into());
         }
-        let limit = match &request {
-            SoundSearch::Text { limit, .. }
-            | SoundSearch::Character { limit, .. }
-            | SoundSearch::Similar { limit, .. }
-            | SoundSearch::Browse { limit, .. } => *limit,
-        };
-        if !(1..=50).contains(&limit) {
+        if !(1..=50).contains(&request.limit) {
             return Err("limit must be between 1 and 50".into());
         }
-        if let SoundSearch::Character {
-            query,
-            targets,
-            envelope,
-            ..
-        } = &request
-        {
-            character_targets(query, targets, envelope)?;
-        }
-        if refresh && matches!(&request, SoundSearch::Browse { offset, .. } if *offset != 0) {
+        request.targets.validate()?;
+        request.envelope.validate()?;
+        if refresh && request.offset != 0 {
             return Err("Refresh only with offset 0".into());
         }
-        if let SoundSearch::Text { query, offset, .. } = &request {
-            if query.trim().is_empty() {
-                return Err(
-                    "query must contain search words; do not request the entire library".into(),
-                );
-            }
-            if refresh && *offset != 0 {
-                return Err("Refresh only with offset 0".into());
-            }
-        }
-        if let SoundSearch::Similar { id, .. } | SoundSearch::Character { id: Some(id), .. } =
-            &request
-        {
+        if let Some(id) = &request.like {
             issued_sound(&self.key, id)
                 .map_err(|_| "Unknown or expired sound ID; search_instruments first")?;
         }
         let catalog = self.catalog_with_cancel(refresh, cancelled)?;
-        let request = match request {
-            SoundSearch::Browse {
-                limit,
-                offset,
-                filter,
-            } => SoundSearch::Text {
-                query: String::new(),
-                limit,
-                offset,
-                filter,
-            },
-            request => request,
-        };
-        match request {
-            SoundSearch::Character {
-                query,
-                targets,
-                envelope,
-                id,
-                name,
-                filter,
-                ..
-            } => self.search_character(
-                catalog,
-                &query,
-                &targets,
-                &envelope,
-                id.as_deref(),
-                name.as_deref(),
-                &filter,
-                limit,
-            ),
-            SoundSearch::Browse { .. } => unreachable!("browse normalized above"),
-            SoundSearch::Text {
-                query,
-                offset,
-                filter,
-                ..
-            } => {
-                let words = query
-                    .split_whitespace()
-                    .map(str::to_lowercase)
-                    .collect::<Vec<_>>();
-                let matches = catalog
-                    .sounds
-                    .iter()
-                    .filter(|s| s.matches(&words) && filter.matches(s))
-                    .collect::<Vec<_>>();
-                if offset > matches.len() {
-                    return Err("offset exceeds matching sound count".into());
-                }
-                let page = matches
-                    .iter()
-                    .skip(offset)
-                    .take(limit)
-                    .copied()
-                    .collect::<Vec<_>>();
-                let next = offset + page.len();
-                issue_sounds(&self.key, &catalog.generation, page.iter().copied())?;
-                let page = page.into_iter().map(Sound::value).collect::<Vec<_>>();
-                Ok(sound_page(with_native_status(
-                    serde_json::json!({"status":"ready","sounds":page,"total":matches.len(),"next_offset":(next<matches.len()).then_some(next),
-                    "scan_error_count":catalog.errors.len(),
-                    "source_sound_count":catalog.sounds.iter().filter(|sound| filter.matches(sound)).count(),
-                    "diagnostics":(matches.is_empty() || !catalog.errors.is_empty()).then_some("Use instrument_diagnostics to inspect search roots, detected files and load outcomes.")}),
-                    &catalog,
-                )))
-            }
-            SoundSearch::Similar { id, filter, .. } => {
-                let reference = catalog
-                    .sounds
-                    .iter()
-                    .position(|s| s.id == id)
-                    .ok_or("Unknown sound ID; search_instruments first")?;
-                if !measurable(&catalog.sounds[reference]) {
-                    if isolated_native(&catalog.sounds[reference]) {
-                        return Err(
-                            "Native plugins discovered by the live Agent use isolated metadata; acoustic similarity is unavailable because measuring them would load third-party code in the application process"
-                                .into(),
-                        );
-                    }
-                    return Err("Drum kits are searchable but are not comparable with the melodic timbre reference".into());
-                }
-                let mut state = catalog
-                    .index
-                    .lock()
-                    .map_err(|_| "Acoustic index lock failed")?;
-                if state.reset_if_reference_missing(reference) {
-                    catalog.completed.store(0, Ordering::Relaxed);
-                }
-                if let Some(result) = &state.result {
-                    let index = result.as_ref().map_err(Clone::clone)?;
-                    let row = index.sounds.iter().position(|i| *i == reference).ok_or(
-                        "The reference is outside this bounded acoustic index or could not be measured; choose a returned neighbor or refresh and start with this sound",
-                    )?;
-                    let mut nearest = index
-                        .rows
-                        .iter()
-                        .enumerate()
-                        .filter(|(i, _)| {
-                            *i != row && filter.matches(&catalog.sounds[index.sounds[*i]])
-                        })
-                        .map(|(i, other)| {
-                            let distance = other
-                                .iter()
-                                .zip(&index.rows[row])
-                                .map(|(a, b)| (a - b).powi(2))
-                                .sum::<f64>()
-                                .sqrt();
-                            (i, distance)
-                        })
-                        .collect::<Vec<_>>();
-                    nearest.sort_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)));
-                    let nearest = nearest.into_iter().take(limit).collect::<Vec<_>>();
-                    issue_sounds(
-                        &self.key,
-                        &catalog.generation,
-                        nearest
-                            .iter()
-                            .map(|(i, _)| &catalog.sounds[index.sounds[*i]]),
-                    )?;
-                    let sounds = nearest
-                        .into_iter()
-                        .map(|(i, d)| {
-                            let mut v = catalog.sounds[index.sounds[i]].value();
-                            v["distance"] = d.into();
-                            v["character"] = serde_json::json!(index.characters.get(i));
-                            v
-                        })
-                        .collect::<Vec<_>>();
-                    return Ok(sound_page(with_native_status(
-                        serde_json::json!({"status":"ready","reference":id,"reference_character":index.characters.get(row),"sounds":sounds,"indexed":index.sounds.len(),
-                        "skipped_count":index.skipped.len(),"limited":index.limited}),
-                        &catalog,
-                    )));
-                }
-                if !state.started {
-                    let permit = AcousticWorkerPermit::acquire().ok_or(
-                        "Sound acoustic analysis is busy; retry after another index finishes",
-                    )?;
-                    let worker_catalog = catalog.clone();
-                    std::thread::Builder::new()
-                        .name("auris-sound-index".into())
-                        .spawn(move || {
-                            let _permit = permit;
-                            let result =
-                                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                                    self.measure(&worker_catalog, Some(reference))
-                                }))
-                                .unwrap_or_else(|_| Err("Sound index worker panicked".into()));
-                            if let Ok(mut state) = worker_catalog.index.lock() {
-                                state.result = Some(result);
-                            }
-                        })
-                        .map_err(|e| e.to_string())?;
-                    state.started = true;
-                    state.reference = Some(reference);
-                }
-                Ok(with_native_status(
-                    serde_json::json!({"status":"indexing","completed":catalog.completed.load(Ordering::Relaxed),"total":catalog.sounds.iter().filter(|s| measurable(s)).count().min(ACOUSTIC_SOUND_LIMIT),"limited":catalog.sounds.iter().filter(|s| measurable(s)).count()>ACOUSTIC_SOUND_LIMIT,"retry_after_seconds":5,
-                    "usage":"Acoustic analysis runs in the background once per library snapshot. Continue other work and retry similar_instruments later with the same id; do not refresh while indexing."}),
-                    &catalog,
-                )
-                .to_string())
-            }
+        if request.is_acoustic() {
+            return self.search_acoustic(catalog, &request);
         }
+        let SoundSearch {
+            name,
+            limit,
+            offset,
+            filter,
+            ..
+        } = request;
+        let words = name
+            .split_whitespace()
+            .map(str::to_lowercase)
+            .collect::<Vec<_>>();
+        let matches = catalog
+            .sounds
+            .iter()
+            .filter(|s| s.matches(&words) && filter.matches(s))
+            .collect::<Vec<_>>();
+        if offset > matches.len() {
+            return Err("offset exceeds matching sound count".into());
+        }
+        let page = matches
+            .iter()
+            .skip(offset)
+            .take(limit)
+            .copied()
+            .collect::<Vec<_>>();
+        let next = offset + page.len();
+        issue_sounds(&self.key, &catalog.generation, page.iter().copied())?;
+        let page = page.into_iter().map(Sound::value).collect::<Vec<_>>();
+        Ok(sound_page(with_native_status(
+            serde_json::json!({"status":"ready","sounds":page,"total":matches.len(),"next_offset":(next<matches.len()).then_some(next),
+            "scan_error_count":catalog.errors.len(),
+            "source_sound_count":catalog.sounds.iter().filter(|sound| filter.matches(sound)).count(),
+            "diagnostics":(matches.is_empty() || !catalog.errors.is_empty()).then_some("Use instrument_diagnostics to inspect search roots, detected files and load outcomes.")}),
+            &catalog,
+        )))
     }
 
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "Typed search fields are kept separate from the catalogue worker"
-    )]
-    fn search_character(
+    /// Ranks measured sounds by map-axis targets, envelope ranges and resemblance to `like`.
+    /// With `like` alone the order is pure full-feature distance.
+    fn search_acoustic(
         self,
         catalog: Arc<Catalog>,
-        query: &str,
-        targets: &TimbreTargets,
-        envelope: &EnvelopeTargets,
-        id: Option<&str>,
-        name: Option<&str>,
-        filter: &SoundFilter,
-        limit: usize,
+        request: &SoundSearch,
     ) -> Result<String, String> {
-        let (targets, recognized) = character_targets(query, targets, envelope)?;
-        let reference = id
+        let SoundSearch {
+            name,
+            like,
+            targets,
+            envelope,
+            limit,
+            offset,
+            filter,
+        } = request;
+        let reference = like
+            .as_deref()
             .map(|id| {
                 catalog
                     .sounds
                     .iter()
                     .position(|s| s.id == id)
-                    .ok_or("Unknown sound ID; search again")
+                    .ok_or("Unknown sound ID; search_instruments first")
             })
             .transpose()?;
-        if reference.is_some_and(|i| !measurable(&catalog.sounds[i])) {
-            return Err("Reference is not measurable in this context; isolated native plugins and drum kits support text search only".into());
+        if let Some(reference) = reference
+            && !measurable(&catalog.sounds[reference])
+        {
+            if isolated_native(&catalog.sounds[reference]) {
+                return Err(
+                    "Native plugins discovered by the live Agent use isolated metadata; acoustic similarity is unavailable because measuring them would load third-party code in the application process"
+                        .into(),
+                );
+            }
+            return Err("Drum kits are searchable by name but are not comparable with the melodic timbre reference".into());
         }
         let mut state = catalog
             .index
@@ -1646,7 +1501,7 @@ impl SoundLibraryJob {
             .map_err(|_| "Acoustic index lock failed")?;
         if reference.is_none() && state.reference.is_some() && matches!(state.result, Some(Err(_)))
         {
-            // A failed similarity reference must not prevent impression discovery of other sounds.
+            // A failed similarity reference must not prevent target discovery of other sounds.
             *state = IndexState::default();
             catalog.completed.store(0, Ordering::Relaxed);
         }
@@ -1657,29 +1512,24 @@ impl SoundLibraryJob {
             let index = result.as_ref().map_err(Clone::clone)?;
             let reference_row = reference
                 .map(|reference| {
-                    index
-                        .sounds
-                        .iter()
-                        .position(|i| *i == reference)
-                        .ok_or("Reference could not be measured")
+                    index.sounds.iter().position(|i| *i == reference).ok_or(
+                        "The reference is outside this bounded acoustic index or could not be measured; choose a returned sound or refresh and start with this one",
+                    )
                 })
                 .transpose()?;
-            let words: Vec<_> = name
-                .unwrap_or_default()
-                .split_whitespace()
-                .map(str::to_lowercase)
-                .collect();
-            let mut ranked: Vec<_> = index
-                .characters
+            let words: Vec<_> = name.split_whitespace().map(str::to_lowercase).collect();
+            let axes = index.axes();
+            let ranks_by_target = !targets.is_empty() || !envelope.is_empty();
+            let mut ranked: Vec<_> = axes
                 .iter()
                 .enumerate()
                 .filter(|(i, _)| {
-                    Some(index.sounds[*i]) != reference
+                    Some(*i) != reference_row
                         && filter.matches(&catalog.sounds[index.sounds[*i]])
                         && catalog.sounds[index.sounds[*i]].matches(&words)
                 })
-                .map(|(i, character)| {
-                    let target_distance = targets.distance(*character)
+                .map(|(i, axes)| {
+                    let target_distance = targets.distance(*axes)
                         + if envelope.is_empty() {
                             0.
                         } else {
@@ -1688,21 +1538,32 @@ impl SoundLibraryJob {
                                 .as_ref()
                                 .map_or(1., |e| envelope.distance(&e.summary))
                         };
-                    let distance = reference_row.map_or(target_distance, |row| {
-                        let d = index.rows[i]
-                            .iter()
-                            .zip(&index.rows[row])
-                            .map(|(a, b)| (a - b).powi(2))
-                            .sum::<f64>()
-                            / index.rows[i].len().max(1) as f64;
-                        0.7 * target_distance + 0.3 * d / (1. + d)
-                    });
+                    let distance = match reference_row {
+                        None => target_distance,
+                        Some(row) => {
+                            let squared = index.rows[i]
+                                .iter()
+                                .zip(&index.rows[row])
+                                .map(|(a, b)| (a - b).powi(2))
+                                .sum::<f64>();
+                            if ranks_by_target {
+                                let d = squared / index.rows[i].len().max(1) as f64;
+                                0.7 * target_distance + 0.3 * d / (1. + d)
+                            } else {
+                                squared.sqrt()
+                            }
+                        }
+                    };
                     (i, distance)
                 })
                 .collect();
             ranked.sort_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)));
             let total = ranked.len();
-            ranked.truncate(limit);
+            if *offset > total {
+                return Err("offset exceeds matching sound count".into());
+            }
+            let ranked: Vec<_> = ranked.into_iter().skip(*offset).take(*limit).collect();
+            let next = offset + ranked.len();
             issue_sounds(
                 &self.key,
                 &catalog.generation,
@@ -1715,47 +1576,31 @@ impl SoundLibraryJob {
                 .map(|(i, distance)| {
                     let mut value = catalog.sounds[index.sounds[i]].value();
                     value["distance"] = distance.into();
-                    value["character"] = serde_json::json!(index.characters[i]);
+                    value["axes"] = serde_json::json!(axes[i]);
                     if let Some(measured) = &index.envelopes[i] {
                         value["envelope"] = measured.value();
                     }
-                    value["target_error"] = ["brightness", "attack", "sustain", "release", "noise"]
-                        .into_iter()
-                        .zip(
-                            targets
-                                .values()
-                                .into_iter()
-                                .zip(index.characters[i].values()),
-                        )
-                        .map(|(key, (target, actual))| {
-                            (
-                                key.to_owned(),
-                                serde_json::json!(target.map(|v| (v - actual).abs())),
-                            )
-                        })
-                        .collect::<serde_json::Map<_, _>>()
-                        .into();
                     value
                 })
                 .collect();
             return Ok(sound_page(with_native_status(
                 serde_json::json!({
-                    "status":"ready", "sounds":sounds, "total":total, "targets":targets, "envelope_targets":envelope, "recognized":recognized,
+                    "status":"ready", "sounds":sounds, "total":total, "next_offset":(next<total).then_some(next),
+                    "reference":like, "reference_axes":reference_row.map(|row| axes[row]),
+                    "targets":targets, "envelope_targets":envelope,
                     "indexed":index.sounds.len(), "skipped_count":index.skipped.len(), "limited":index.limited,
-                    "reference_character":reference_row.and_then(|row| index.characters.get(row)),
                     "unmeasurable_count":catalog.sounds.iter().filter(|s| !measurable(s)).count(),
-                    "interpretation":"Local impression dictionary with explicit overrides. Unrecognized prose is not interpreted; targets show exactly what was used.",
-                    "measurement":"Character: six matched notes, fixed-scale acoustic proxies; release capture is 400 ms and release_censored marks a lower bound. Envelope: C2/C4/C6 at velocity 100, held until settled (max 4 s), tail to -60 dB (max 4 s); attack to peak -1 dB, decay to sustain (or to -60 dB when decaying), sustain dB below peak, release RT60; *_estimated values are extrapolated. Distance is relative mismatch, not probability or listening assessment. Render a musical phrase before adopting."
+                    "measurement":"axes are the sound map's: brightness and noise from six reference notes' spectra; attack (1 = 1 ms, 0 = 10 s, log scale) and sustain (held level, 1 = the peak, 0 = -60 dB) from the measured envelope. Envelope: C2/C4/C6 at velocity 100, held until settled (max 4 s), tail to -60 dB (max 4 s); attack to peak -1 dB, decay to sustain (or to -60 dB when decaying), sustain dB below peak, release RT60; *_estimated values are extrapolated. With `like` alone, distance is full-feature Euclidean distance. Distance is relative mismatch, not probability or listening assessment. Render a musical phrase before adopting."
                 }),
                 &catalog,
             )));
         }
         if !state.started {
             let permit = AcousticWorkerPermit::acquire()
-                .ok_or("Sound acoustic analysis is busy; retry later")?;
+                .ok_or("Sound acoustic analysis is busy; retry after another index finishes")?;
             let worker_catalog = catalog.clone();
             std::thread::Builder::new()
-                .name("auris-character-index".into())
+                .name("auris-sound-index".into())
                 .spawn(move || {
                     let _permit = permit;
                     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -1770,10 +1615,11 @@ impl SoundLibraryJob {
             state.started = true;
             state.reference = reference;
         }
-        Ok(with_native_status(serde_json::json!({"status":"indexing", "targets":targets, "recognized":recognized,
+        let measurable_count = catalog.sounds.iter().filter(|s| measurable(s)).count();
+        Ok(with_native_status(serde_json::json!({"status":"indexing", "targets":targets,
             "completed":catalog.completed.load(Ordering::Relaxed),
-            "total":catalog.sounds.iter().filter(|s| measurable(s)).count().min(ACOUSTIC_SOUND_LIMIT),
-            "retry_after_seconds":5, "usage":"Continue other work and retry the same character request later; do not refresh while indexing."}), &catalog).to_string())
+            "total":measurable_count.min(ACOUSTIC_SOUND_LIMIT), "limited":measurable_count>ACOUSTIC_SOUND_LIMIT,
+            "retry_after_seconds":5, "usage":"Acoustic analysis runs in the background once per library snapshot. Continue other work and retry the same request later; do not refresh while indexing."}), &catalog).to_string())
     }
 
     #[cfg(test)]
@@ -2098,21 +1944,6 @@ impl SoundLibraryJob {
                 || index_bytes_limited
                 || skipped_truncated,
         })
-    }
-}
-
-/// Interprets a character request: impressions and explicit targets, plus envelope ranges.
-/// At least one of them must say something.
-fn character_targets(
-    query: &str,
-    targets: &TimbreTargets,
-    envelope: &EnvelopeTargets,
-) -> Result<(TimbreTargets, Vec<String>), String> {
-    envelope.validate()?;
-    if envelope.is_empty() {
-        TimbreTargets::interpret(query, targets)
-    } else {
-        TimbreTargets::interpret_partial(query, targets)
     }
 }
 
@@ -2953,11 +2784,12 @@ mod tests {
 
         let response = isolated_job(&session)
             .run(
-                SoundSearch::Text {
-                    query: "piano".into(),
+                SoundSearch {
+                    name: "piano".into(),
                     limit: 10,
                     offset: 0,
                     filter: SoundFilter::default(),
+                    ..Default::default()
                 },
                 false,
             )
@@ -2999,11 +2831,12 @@ mod tests {
         let cancelled = AtomicBool::new(false);
         let response = isolated_metadata_job(&session)
             .run_isolated(
-                SoundSearch::Text {
-                    query: "quarantine".into(),
+                SoundSearch {
+                    name: "quarantine".into(),
                     limit: 10,
                     offset: 0,
                     filter: SoundFilter::default(),
+                    ..Default::default()
                 },
                 false,
                 &cancelled,
@@ -3036,14 +2869,15 @@ mod tests {
         let cancelled = AtomicBool::new(false);
         let response = isolated_metadata_job(&session)
             .run_isolated(
-                SoundSearch::Text {
-                    query: "FM 2-Op".into(),
+                SoundSearch {
+                    name: "FM 2-Op".into(),
                     limit: 1,
                     offset: 0,
                     filter: SoundFilter {
                         source: Some(SoundSource::Builtin),
                         library: None,
                     },
+                    ..Default::default()
                 },
                 false,
                 &cancelled,
@@ -3065,11 +2899,12 @@ mod tests {
         let cancelled = AtomicBool::new(false);
         let response = isolated_metadata_job(&session)
             .run_isolated(
-                SoundSearch::Text {
-                    query: "quarantine".into(),
+                SoundSearch {
+                    name: "quarantine".into(),
                     limit: 1,
                     offset: 0,
                     filter: SoundFilter::default(),
+                    ..Default::default()
                 },
                 false,
                 &cancelled,
@@ -3080,10 +2915,11 @@ mod tests {
 
         let error = isolated_metadata_job(&session)
             .run_isolated(
-                SoundSearch::Similar {
-                    id,
+                SoundSearch {
+                    like: Some(id),
                     limit: 10,
                     filter: SoundFilter::default(),
+                    ..Default::default()
                 },
                 false,
                 &cancelled,
@@ -3102,11 +2938,12 @@ mod tests {
 
         let error = isolated_metadata_job(&session)
             .run_isolated(
-                SoundSearch::Text {
-                    query: "quarantine".into(),
+                SoundSearch {
+                    name: "quarantine".into(),
                     limit: 1,
                     offset: 0,
                     filter: SoundFilter::default(),
+                    ..Default::default()
                 },
                 false,
                 &cancelled,
@@ -3635,14 +3472,15 @@ mod tests {
         session.save_as(&scratch.join("Filter.auris")).unwrap();
         let result = isolated_job(&session)
             .run(
-                SoundSearch::Text {
-                    query: "auris".into(),
+                SoundSearch {
+                    name: "auris".into(),
                     limit: 2,
                     offset: 0,
                     filter: SoundFilter {
                         source: Some(SoundSource::Builtin),
                         library: Some("AURIS".into()),
                     },
+                    ..Default::default()
                 },
                 false,
             )
@@ -3661,14 +3499,15 @@ mod tests {
         assert!(value.get("usage").is_none());
         let empty = isolated_job(&session)
             .run(
-                SoundSearch::Text {
-                    query: "auris".into(),
+                SoundSearch {
+                    name: "auris".into(),
                     limit: 1,
                     offset: 0,
                     filter: SoundFilter {
                         source: Some(SoundSource::Clap),
                         library: None,
                     },
+                    ..Default::default()
                 },
                 false,
             )
@@ -3766,11 +3605,12 @@ mod tests {
         refresh: bool,
     ) -> Result<serde_json::Value, String> {
         let text = isolated_job(session).run(
-            SoundSearch::Text {
+            SoundSearch {
                 filter: SoundFilter::default(),
-                query: query.into(),
+                name: query.into(),
                 limit,
                 offset,
+                ..Default::default()
             },
             refresh,
         )?;
@@ -3790,11 +3630,10 @@ mod tests {
         let second = query(&session, "auris", 1, 1, false).unwrap();
         assert_ne!(first["sounds"][0]["id"], second["sounds"][0]["id"]);
         assert_eq!(&before, session.project());
-        assert!(
-            query(&session, " ", 10, 0, false)
-                .unwrap_err()
-                .contains("query")
-        );
+        // No words browses the whole catalogue a page at a time.
+        let browse = query(&session, " ", 10, 0, false).unwrap();
+        assert_eq!(browse["total"], browse["source_sound_count"]);
+        assert_eq!(browse["sounds"].as_array().unwrap().len(), 10);
         assert!(
             query(&session, "auris", 51, 0, false)
                 .unwrap_err()
@@ -3849,10 +3688,11 @@ mod tests {
         assert!(
             isolated_job(&session)
                 .run(
-                    SoundSearch::Similar {
+                    SoundSearch {
                         filter: SoundFilter::default(),
-                        id: catalog.sounds[indices[1]].id.clone(),
+                        like: Some(catalog.sounds[indices[1]].id.clone()),
                         limit: 1,
+                        ..Default::default()
                     },
                     false,
                 )
@@ -3860,8 +3700,8 @@ mod tests {
                 .contains("expired")
         );
         catalog.index.lock().unwrap().result = Some(Ok(AcousticIndex {
-            characters: vec![],
-            envelopes: vec![],
+            characters: vec![TimbreCharacter::default(); 3],
+            envelopes: vec![None; 3],
             sounds: indices.clone(),
             rows: vec![
                 vec![0.0, 0.0, 0.0],
@@ -3873,10 +3713,11 @@ mod tests {
         }));
         let response = job
             .run(
-                SoundSearch::Similar {
+                SoundSearch {
                     filter: SoundFilter::default(),
-                    id: reference.clone(),
+                    like: Some(reference.clone()),
                     limit: 1,
+                    ..Default::default()
                 },
                 false,
             )
@@ -3924,14 +3765,15 @@ mod tests {
         let before = session.project().clone();
         let job = isolated_job(&session);
         let catalog = job.catalog(false).unwrap();
-        let request = SoundSearch::Character {
-            query: "ポコポコ".into(),
-            targets: Default::default(),
-            envelope: Default::default(),
-            id: None,
-            name: Some("auris".into()),
+        let request = SoundSearch {
+            name: "auris".into(),
+            targets: TimbreTargets {
+                attack: Some(1.),
+                sustain: Some(0.1),
+                ..Default::default()
+            },
             limit: 3,
-            filter: Default::default(),
+            ..Default::default()
         };
         let first: serde_json::Value =
             serde_json::from_str(&job.run(request.clone(), false).unwrap()).unwrap();
@@ -3949,7 +3791,7 @@ mod tests {
         assert!(
             sounds
                 .iter()
-                .all(|s| s["target_error"]["brightness"].as_f64().is_some())
+                .all(|s| s["axes"]["brightness"].as_f64().is_some())
         );
         assert!(sounds.iter().all(|s| {
             s["envelope"]["by_pitch"]
@@ -3960,9 +3802,7 @@ mod tests {
         let swell: serde_json::Value = serde_json::from_str(
             &isolated_job(&session)
                 .run(
-                    SoundSearch::Character {
-                        query: String::new(),
-                        targets: Default::default(),
+                    SoundSearch {
                         envelope: Box::new(crate::EnvelopeTargets {
                             attack_ms: Some(crate::Bounds {
                                 min: Some(150.),
@@ -3970,13 +3810,12 @@ mod tests {
                             }),
                             ..Default::default()
                         }),
-                        id: None,
-                        name: None,
                         limit: 50,
                         filter: SoundFilter {
                             source: Some(SoundSource::Builtin),
                             library: None,
                         },
+                        ..Default::default()
                     },
                     false,
                 )
@@ -4004,17 +3843,14 @@ mod tests {
         );
         assert_eq!(session.project(), &before);
         let id = sounds[0]["id"].as_str().unwrap().to_owned();
-        let reference_request = SoundSearch::Character {
-            query: String::new(),
+        let reference_request = SoundSearch {
+            like: Some(id.clone()),
             targets: TimbreTargets {
                 brightness: Some(0.2),
                 ..Default::default()
             },
-            envelope: Default::default(),
-            id: Some(id.clone()),
-            name: None,
             limit: 2,
-            filter: Default::default(),
+            ..Default::default()
         };
         let reference_result: serde_json::Value = serde_json::from_str(
             &isolated_job(&session)
@@ -4024,7 +3860,7 @@ mod tests {
         .unwrap();
         assert_eq!(reference_result["status"], "ready");
         assert!(
-            reference_result["reference_character"]["brightness"]
+            reference_result["reference_axes"]["brightness"]
                 .as_f64()
                 .is_some()
         );
@@ -4058,10 +3894,11 @@ mod tests {
         let reference = catalog.sounds.iter().find(|s| measurable(s)).unwrap();
         issue_sounds(&job.key, &catalog.generation, [reference]).unwrap();
         let reference = reference.id.clone();
-        let request = SoundSearch::Similar {
+        let request = SoundSearch {
             filter: SoundFilter::default(),
-            id: reference,
+            like: Some(reference),
             limit: 2,
+            ..Default::default()
         };
         let first: serde_json::Value =
             serde_json::from_str(&job.run(request.clone(), false).unwrap()).unwrap();
@@ -4081,30 +3918,27 @@ mod tests {
         assert_eq!(parsed["sounds"].as_array().unwrap().len(), 2);
         assert_eq!(result, isolated_job(&session).run(request, false).unwrap());
         let before = session.project().clone();
-        let request = SoundSearch::Character {
-            query: "ふんわり、余韻は短め".into(),
+        let request = SoundSearch {
             targets: crate::TimbreTargets {
-                release: Some(0.1),
+                attack: Some(0.3),
+                sustain: Some(0.8),
                 ..Default::default()
             },
-            envelope: Default::default(),
-            id: None,
-            name: None,
             limit: 2,
             filter: SoundFilter {
                 source: Some(SoundSource::Builtin),
                 library: None,
             },
+            ..Default::default()
         };
         let result: serde_json::Value =
             serde_json::from_str(&isolated_job(&session).run(request, false).unwrap()).unwrap();
         assert_eq!(result["status"], "ready", "must reuse the similarity index");
-        assert_eq!(result["targets"]["release"], 0.1);
-        assert!(!result["recognized"].as_array().unwrap().is_empty());
+        assert_eq!(result["targets"]["sustain"], 0.8);
         let sounds = result["sounds"].as_array().unwrap();
         assert_eq!(sounds.len(), 2);
         assert!(sounds[0]["distance"].as_f64().unwrap() <= sounds[1]["distance"].as_f64().unwrap());
-        assert!(sounds[0]["character"]["attack"].as_f64().is_some());
+        assert!(sounds[0]["axes"]["attack"].as_f64().is_some());
         assert_eq!(session.project(), &before);
         let id = sounds[0]["id"].as_str().unwrap();
         let track = session

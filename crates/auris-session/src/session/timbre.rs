@@ -3,13 +3,11 @@
 use super::Session;
 use super::SoundEnvelope;
 use crate::{Edit, SessionError};
-use crate::{EnvelopeTargets, TimbreCharacter, TimbreTargets};
+use crate::{EnvelopeTargets, SoundAxes, TimbreCharacter, TimbreTargets};
 use auris_core::plugin::{NoteEvent, PluginState, PrepareContext, ProcessContext};
 use auris_core::project::PresetRef;
 use auris_core::{AudioBuffer, ParamTarget, PluginRegistry, TrackId};
-use auris_dsp::timbre::{
-    TimbreProjection, project_timbres_refined, timbre_character, timbre_features,
-};
+use auris_dsp::timbre::{TimbreGroups, group_timbres_refined, timbre_character, timbre_features};
 use std::sync::{
     Arc,
     atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -98,7 +96,7 @@ pub struct TimbreMap {
     pub sounds: Vec<TimbreSound>,
     /// Sources omitted because at least one reference trigger was silent.
     pub skipped: Vec<String>,
-    projection: TimbreProjection,
+    groups: TimbreGroups,
     characters: Vec<TimbreCharacter>,
     envelopes: Vec<Option<SoundEnvelope>>,
     summaries: Vec<TimbreCluster>,
@@ -335,7 +333,7 @@ impl TimbreMapJob {
         self.sounds.len()
     }
 
-    /// Measures fresh instances and builds a deterministic PCA map and feature-space clusters.
+    /// Measures fresh instances and builds feature-space clusters and the map's coordinates.
     pub fn run(self, control: &TimbreMapControl) -> Result<TimbreMap, SessionError> {
         let mut sounds = Vec::new();
         let mut rows = Vec::new();
@@ -395,13 +393,13 @@ impl TimbreMapJob {
         }
         control.check()?;
         super::envelope::save();
-        let groups = (sounds.len() as f64).sqrt().round() as usize;
-        let projection = project_timbres_refined(&rows, groups.clamp(1, 12)).map_err(failure)?;
-        let summaries = cluster_summaries(&sounds, &projection);
+        let initial = (sounds.len() as f64).sqrt().round() as usize;
+        let groups = group_timbres_refined(&rows, initial.clamp(1, 12)).map_err(failure)?;
+        let summaries = cluster_summaries(&sounds, &groups);
         Ok(TimbreMap {
             sounds,
             skipped,
-            projection,
+            groups,
             characters,
             envelopes,
             summaries,
@@ -443,7 +441,7 @@ impl TimbreMapJob {
 }
 
 impl TimbreMap {
-    /// Fixed-scale descriptors shared by map axes and impression search.
+    /// Fixed-scale reference-note descriptors, in the order of [`sounds`](Self::sounds).
     pub fn characters(&self) -> &[TimbreCharacter] {
         &self.characters
     }
@@ -454,40 +452,22 @@ impl TimbreMap {
         &self.envelopes
     }
 
-    /// Coordinates from the measured envelope: attack time, sustain level and release time,
-    /// times on a log scale from 1 ms to 10 s. A sound with no measurement sits at the centre.
-    pub fn envelope_positions(&self) -> Vec<[f64; 3]> {
-        let time = |ms: f64| (ms.max(1.).log10() / 4.).clamp(0., 1.) * 2. - 1.;
-        self.envelopes
-            .iter()
-            .map(|e| {
-                e.as_ref().map_or([0.; 3], |e| {
-                    let e = e.summary;
-                    [
-                        time(e.attack_ms),
-                        (e.sustain_db / 60. + 1.).clamp(0., 1.) * 2. - 1.,
-                        time(e.release_ms),
-                    ]
-                })
-            })
-            .collect()
-    }
-
-    /// Coordinates with stable meanings: brightness, attack speed and sustain.
-    pub fn character_positions(&self) -> Vec<[f64; 3]> {
+    /// Each sound's place on the map's axes, in the order of [`sounds`](Self::sounds).
+    pub fn axes(&self) -> Vec<SoundAxes> {
         self.characters
             .iter()
-            .map(|c| {
-                [
-                    c.brightness * 2. - 1.,
-                    c.attack * 2. - 1.,
-                    c.sustain * 2. - 1.,
-                ]
-            })
+            .zip(&self.envelopes)
+            .map(|(c, e)| SoundAxes::new(*c, e.as_ref().map(|e| &e.summary)))
             .collect()
     }
 
-    /// Rank measured sounds using shared interpreted targets and envelope ranges — the same
+    /// The map's coordinates, each −1 to +1: brightness, attack speed and held level.
+    /// They have fixed meanings, so adding a library does not move the sounds already there.
+    pub fn positions(&self) -> Vec<[f64; 3]> {
+        self.axes().into_iter().map(SoundAxes::position).collect()
+    }
+
+    /// Rank measured sounds by targets on the map's axes and by envelope ranges — the same
     /// distance the agent's `search_instruments` uses; names can be filtered separately.
     pub fn search_character(
         &self,
@@ -495,10 +475,10 @@ impl TimbreMap {
         envelope: &EnvelopeTargets,
     ) -> Vec<(usize, f64)> {
         let mut matches: Vec<_> = self
-            .characters
-            .iter()
+            .axes()
+            .into_iter()
             .enumerate()
-            .map(|(i, c)| {
+            .map(|(i, axes)| {
                 let shape = if envelope.is_empty() {
                     0.
                 } else {
@@ -506,7 +486,7 @@ impl TimbreMap {
                         .as_ref()
                         .map_or(1., |e| envelope.distance(&e.summary))
                 };
-                (i, targets.distance(*c) + shape)
+                (i, targets.distance(axes) + shape)
             })
             .collect();
         matches.sort_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)));
@@ -543,27 +523,19 @@ impl TimbreMap {
         self.sounds
             .iter()
             .position(|sound| sound.instrument_id == instrument_id && sound.preset == preset)
-            .map(|index| self.projection.clusters[index])
-    }
-    /// Raw three-component PCA coordinates in source order.
-    pub fn positions(&self) -> &[[f64; 3]] {
-        &self.projection.positions
+            .map(|index| self.groups.clusters[index])
     }
     /// Zero-based group labels computed in standardized feature space.
     pub fn clusters(&self) -> &[usize] {
-        &self.projection.clusters
-    }
-    /// Fraction of feature variance retained by the three displayed components.
-    pub fn explained_variance(&self) -> f64 {
-        self.projection.explained_variance
+        &self.groups.clusters
     }
     /// Up to `limit` other sources ordered by full-feature Euclidean distance.
     pub fn nearest(&self, index: usize, limit: usize) -> Vec<(usize, f64)> {
-        let Some(query) = self.projection.standardized.get(index) else {
+        let Some(query) = self.groups.standardized.get(index) else {
             return Vec::new();
         };
         let mut neighbors: Vec<_> = self
-            .projection
+            .groups
             .standardized
             .iter()
             .enumerate()
@@ -585,10 +557,10 @@ impl TimbreMap {
     }
 }
 
-fn cluster_summaries(sounds: &[TimbreSound], projection: &TimbreProjection) -> Vec<TimbreCluster> {
+fn cluster_summaries(sounds: &[TimbreSound], groups: &TimbreGroups) -> Vec<TimbreCluster> {
     let mut summaries = Vec::new();
-    for id in 0..=projection.clusters.iter().copied().max().unwrap_or(0) {
-        let mut members: Vec<_> = projection
+    for id in 0..=groups.clusters.iter().copied().max().unwrap_or(0) {
+        let mut members: Vec<_> = groups
             .clusters
             .iter()
             .enumerate()
@@ -597,14 +569,14 @@ fn cluster_summaries(sounds: &[TimbreSound], projection: &TimbreProjection) -> V
         let Some(&first) = members.first() else {
             continue;
         };
-        let mut centroid = vec![0.; projection.standardized[first].len()];
+        let mut centroid = vec![0.; groups.standardized[first].len()];
         for &index in &members {
-            for (mean, value) in centroid.iter_mut().zip(&projection.standardized[index]) {
+            for (mean, value) in centroid.iter_mut().zip(&groups.standardized[index]) {
                 *mean += value / members.len() as f64;
             }
         }
         let distance = |index: usize| {
-            projection.standardized[index]
+            groups.standardized[index]
                 .iter()
                 .zip(&centroid)
                 .map(|(a, b)| (a - b).powi(2))
@@ -771,13 +743,11 @@ mod tests {
                 preset: None,
             })
             .collect();
-        let projection = TimbreProjection {
+        let groups = TimbreGroups {
             standardized: vec![vec![0.]; 4],
-            positions: vec![[0.; 3]; 4],
             clusters: vec![0; 4],
-            explained_variance: 0.,
         };
-        let summaries = cluster_summaries(&sounds, &projection);
+        let summaries = cluster_summaries(&sounds, &groups);
         assert_eq!(summaries[0].representative.name, "Guitar");
         assert_eq!(summaries[0].icon(), crate::SoundIcon::Sound);
         assert_eq!(
@@ -808,13 +778,11 @@ mod tests {
                 }),
             })
             .collect();
-        let projection = TimbreProjection {
+        let groups = TimbreGroups {
             standardized: vec![vec![0., 0.], vec![0., 1.], vec![0., 9.], vec![10., 0.]],
-            positions: vec![[0.; 3]; 4],
             clusters: vec![2, 2, 2, 5],
-            explained_variance: 0.,
         };
-        let summaries = cluster_summaries(&sounds, &projection);
+        let summaries = cluster_summaries(&sounds, &groups);
         assert_eq!(
             summaries.iter().map(|c| c.id).collect::<Vec<_>>(),
             vec![2, 5]
@@ -826,7 +794,7 @@ mod tests {
             characters: vec![],
             envelopes: vec![],
             skipped: vec![],
-            projection,
+            groups,
             summaries,
             previews: vec![],
             sample_rate: 48_000.,
@@ -985,7 +953,7 @@ mod tests {
                 .all(|e| e.as_ref().is_some_and(|e| e.by_pitch.len() == 3))
         );
         assert!(
-            map.envelope_positions()
+            map.positions()
                 .iter()
                 .flatten()
                 .all(|v| (-1. ..=1.).contains(v))

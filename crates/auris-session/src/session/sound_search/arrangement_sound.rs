@@ -17,11 +17,10 @@ impl Session {
         job.scan_plugins = false;
         let text = job
             .run(
-                SoundSearch::Text {
-                    query: query.into(),
-                    filter: SoundFilter::default(),
-                    offset: 0,
+                SoundSearch {
+                    name: query.into(),
                     limit: 50,
+                    ..Default::default()
                 },
                 false,
             )

@@ -143,9 +143,12 @@ notes into the layer, and removing a source detaches its layers in the same Undo
 
 ## Sound search, controls and mixing
 
-`search_instruments` takes one `request` object: mode `text` with query, `similar`
-with a reference id, or bounded `browse`. Each supports source/library filters and
-up to 50 results. Text/browse support offset paging. Copy returned IDs into
+`search_instruments` takes one `request` object, every field optional: `name` words,
+`like` (a returned sound ID), `targets` on the sound map's axes and measured
+`envelope` ranges, with source/library filters, up to 50 results and offset paging.
+Name words alone (or nothing) page by name; the others rank measured sounds, and the
+agent translates impressions into `targets` itself
+([timbre map](timbre-map.md#agent-search-and-impressions)). Copy returned IDs into
 `set_instrument` sound_id. IDs are scoped and expire on refresh, changed library
 identity, eviction or restart. Acoustic indexing runs in the background; continue
 other work while indexing and retry later. `instrument_diagnostics` pages existing

@@ -1,4 +1,4 @@
-//! Offline timbre descriptors and deterministic maps; no trained weights or audio-thread work.
+//! Offline timbre descriptors and deterministic grouping; no trained weights or audio-thread work.
 
 use auris_core::AudioBuffer;
 use rustfft::{FftPlanner, num_complex::Complex};
@@ -134,17 +134,13 @@ pub fn timbre_features(
     Ok(Some(features))
 }
 
-/// Standardized features, a three-component PCA display and deterministic k-means memberships.
+/// Standardized features and deterministic k-means memberships fitted in that space.
 #[derive(Clone, Debug)]
-pub struct TimbreProjection {
+pub struct TimbreGroups {
     /// Coordinates centered and scaled per feature; use these for nearest-neighbor queries.
     pub standardized: Vec<Vec<f64>>,
-    /// Three principal component scores, in input order. Axes have no fixed perceptual label.
-    pub positions: Vec<[f64; 3]>,
-    /// Zero-based k-means groups fitted in feature space, not display coordinates.
+    /// Zero-based k-means groups fitted in the full feature space.
     pub clusters: Vec<usize>,
-    /// Fraction of total standardized variance represented in this volume.
-    pub explained_variance: f64,
 }
 
 #[path = "timbre_clusters.rs"]
@@ -153,23 +149,20 @@ mod clustering;
 /// Maximum number of groups in a refined library timbre map.
 pub const MAX_TIMBRE_CLUSTERS: usize = 24;
 
-/// Projects a library catalogue and refines populous groups without moving its PCA coordinates.
+/// Groups a library catalogue and refines populous groups.
 ///
 /// Starts with up to twelve coarse groups, then bisects groups larger than twice the average
 /// coarse population (at least twelve sounds). Splits need two children of at least three sounds
 /// and a five-percent reduction in within-group squared error. At most 24 groups are returned;
 /// identical or weakly separable sounds may stay together above the population target.
-pub fn project_timbres_refined(
+pub fn group_timbres_refined(
     rows: &[Vec<f64>],
     initial_clusters: usize,
-) -> Result<TimbreProjection, &'static str> {
-    let mut projection = project_timbres(rows, initial_clusters.clamp(1, 12))?;
-    projection.clusters = clustering::refine(
-        &projection.standardized,
-        projection.clusters,
-        MAX_TIMBRE_CLUSTERS,
-    );
-    Ok(projection)
+) -> Result<TimbreGroups, &'static str> {
+    let mut groups = group_timbres(rows, initial_clusters.clamp(1, 12))?;
+    groups.clusters =
+        clustering::refine(&groups.standardized, groups.clusters, MAX_TIMBRE_CLUSTERS);
+    Ok(groups)
 }
 
 /// Centers and scales the full feature space for acoustic nearest-neighbor search.
@@ -198,121 +191,25 @@ pub fn standardize_timbres(rows: &[Vec<f64>]) -> Result<Vec<Vec<f64>>, &'static 
     Ok(data)
 }
 
-/// Fits a bounded, reproducible exploratory map. Empty input produces an empty map.
+/// Standardizes a bounded catalogue and groups it reproducibly. Empty input has no groups.
 ///
-/// Constant features become zero. Deterministically restarted, matrix-free power iteration finds
-/// three PCA axes without a dense covariance matrix. Stable ties make both the map and k-means
-/// with farthest-first seeds repeatable.
-pub fn project_timbres(
-    rows: &[Vec<f64>],
-    clusters: usize,
-) -> Result<TimbreProjection, &'static str> {
+/// Constant features become zero. k-means starts from farthest-first seeds with stable ties,
+/// so the same catalogue always gives the same groups.
+pub fn group_timbres(rows: &[Vec<f64>], clusters: usize) -> Result<TimbreGroups, &'static str> {
     if rows.len() > 512 {
         return Err("invalid or excessive timbre matrix");
     }
     let data = standardize_timbres(rows)?;
-    let dims = rows.first().map_or(0, Vec::len);
-    let mut positions = vec![[0.0; 3]; rows.len()];
-    let mut axes: Vec<Vec<f64>> = Vec::new();
-    for component in 0..3 {
-        // The largest residual row provides a seed even for low-rank catalogues. It can be
-        // orthogonal to a stronger shared direction, so also try two mixed feature seeds.
-        let mut largest = vec![0.0; dims];
-        let mut best = 0.0;
-        for row in &data {
-            let mut residual = row.clone();
-            orthogonalize(&mut residual, &axes);
-            let norm = dot(&residual, &residual);
-            if norm > best {
-                best = norm;
-                largest = residual;
-            }
-        }
-        let mut axis = vec![0.0; dims];
-        let mut best_variance = -1.0;
-        let mut seed = 0x9e37_79b9u32;
-        for start in 0..3 {
-            let mut candidate = if start == 0 {
-                largest.clone()
-            } else {
-                (0..dims)
-                    .map(|_| {
-                        seed ^= seed << 13;
-                        seed ^= seed >> 17;
-                        seed ^= seed << 5;
-                        f64::from(seed) / f64::from(u32::MAX) - 0.5
-                    })
-                    .collect()
-            };
-            orthogonalize(&mut candidate, &axes);
-            normalize(&mut candidate);
-            for _ in 0..100 {
-                let mut next = vec![0.0; dims];
-                for row in &data {
-                    let score = dot(row, &candidate);
-                    for (value, input) in next.iter_mut().zip(row) {
-                        *value += score * input;
-                    }
-                }
-                orthogonalize(&mut next, &axes);
-                normalize(&mut next);
-                let change = distance(&next, &candidate);
-                candidate = next;
-                if change < 1e-14 {
-                    break;
-                }
-            }
-            let variance = data
-                .iter()
-                .map(|row| dot(row, &candidate).powi(2))
-                .sum::<f64>();
-            if variance > best_variance {
-                best_variance = variance;
-                axis = candidate;
-            }
-        }
-        for (position, row) in positions.iter_mut().zip(&data) {
-            position[component] = dot(row, &axis);
-        }
-        axes.push(axis);
-    }
-    let total = data.iter().map(|r| dot(r, r)).sum::<f64>();
-    let explained_variance = if total > 0.0 {
-        positions.iter().map(|p| dot(p, p)).sum::<f64>() / total
-    } else {
-        0.0
-    };
     let references: Vec<_> = data.iter().map(Vec::as_slice).collect();
     let groups = kmeans(&references, clusters.clamp(1, rows.len().max(1)));
-    Ok(TimbreProjection {
+    Ok(TimbreGroups {
         standardized: data,
-        positions,
         clusters: groups,
-        explained_variance: explained_variance.clamp(0.0, 1.0),
     })
 }
 
-fn dot(a: &[f64], b: &[f64]) -> f64 {
-    a.iter().zip(b).map(|(a, b)| a * b).sum()
-}
 fn distance(a: &[f64], b: &[f64]) -> f64 {
     a.iter().zip(b).map(|(a, b)| (a - b).powi(2)).sum()
-}
-fn normalize(v: &mut [f64]) {
-    let n = dot(v, v).sqrt();
-    if n > 1e-12 {
-        for x in v {
-            *x /= n;
-        }
-    }
-}
-fn orthogonalize(v: &mut [f64], axes: &[Vec<f64>]) {
-    for axis in axes {
-        let amount = dot(v, axis);
-        for (v, a) in v.iter_mut().zip(axis) {
-            *v -= amount * a;
-        }
-    }
 }
 fn kmeans(rows: &[&[f64]], k: usize) -> Vec<usize> {
     let Some(first) = rows.first() else {
@@ -382,7 +279,7 @@ fn lloyd(rows: &[&[f64]], mut centers: Vec<Vec<f64>>) -> Vec<usize> {
 mod tests {
     use super::*;
     #[test]
-    fn acoustic_standardization_scales_beyond_the_display_map_and_zeroes_constants() {
+    fn acoustic_standardization_scales_beyond_the_grouping_limit_and_zeroes_constants() {
         let rows = (0..1024)
             .map(|i| vec![f64::from(i), 7.0])
             .collect::<Vec<_>>();
@@ -391,7 +288,7 @@ mod tests {
         let variance = normalized.iter().map(|r| r[0] * r[0]).sum::<f64>() / 1024.0;
         assert!(mean.abs() < 1e-12 && (variance - 1.0).abs() < 1e-12);
         assert!(normalized.iter().all(|r| r[1] == 0.0));
-        assert!(project_timbres(&rows, 2).is_err());
+        assert!(group_timbres(&rows, 2).is_err());
         assert!(standardize_timbres(&[vec![f64::NAN]]).is_err());
         assert!(standardize_timbres(&[vec![1.0], vec![]]).is_err());
     }
@@ -423,113 +320,34 @@ mod tests {
     }
 
     #[test]
-    fn projection_keeps_rank_two_distances_and_separates_groups() {
-        let rows = vec![
-            vec![-10.0, 0.0, 7.0],
-            vec![-9.0, 0.1, 7.0],
-            vec![10.0, 0.0, 7.0],
-            vec![9.0, -0.1, 7.0],
-        ];
-        let map = project_timbres(&rows, 2).unwrap();
-        assert!(map.explained_variance > 0.999);
-        for i in 0..rows.len() {
-            for j in 0..rows.len() {
-                assert!(
-                    (distance(&map.standardized[i], &map.standardized[j])
-                        - distance(&map.positions[i], &map.positions[j]))
-                    .abs()
-                        < 1e-6
-                );
-            }
-        }
-        let grouped = project_timbres(&[vec![0.0], vec![0.1], vec![10.0], vec![10.1]], 2).unwrap();
+    fn grouping_separates_clusters_repeatably() {
+        let rows = vec![vec![0.0], vec![0.1], vec![10.0], vec![10.1]];
+        let grouped = group_timbres(&rows, 2).unwrap();
         assert_eq!(grouped.clusters[0], grouped.clusters[1]);
         assert_eq!(grouped.clusters[2], grouped.clusters[3]);
         assert_ne!(grouped.clusters[0], grouped.clusters[2]);
-        assert_eq!(map.positions, project_timbres(&rows, 2).unwrap().positions);
-    }
-
-    #[test]
-    fn projection_keeps_three_independent_directions_without_inventing_a_fourth() {
-        let rows: Vec<_> = (0..8)
-            .map(|i| {
-                vec![
-                    if i & 1 == 0 { -1. } else { 1. },
-                    if i & 2 == 0 { -1. } else { 1. },
-                    if i & 4 == 0 { -1. } else { 1. },
-                ]
-            })
-            .collect();
-        let map = project_timbres(&rows, 2).unwrap();
-        assert!((map.explained_variance - 1.).abs() < 1e-9);
-        for i in 0..rows.len() {
-            for j in 0..rows.len() {
-                assert!(
-                    (distance(&map.standardized[i], &map.standardized[j])
-                        - distance(&map.positions[i], &map.positions[j]))
-                    .abs()
-                        < 1e-6
-                );
-            }
-        }
-        assert!(map.positions.iter().any(|p| p[2].abs() > 0.5));
-    }
-
-    #[test]
-    fn projection_prefers_shared_variance_over_an_orthogonal_outlier() {
-        let mut rows = Vec::new();
-        for _ in 0..3 {
-            rows.extend([
-                vec![1.0, 1.0, 0.0, 0.0, 0.0],
-                vec![-1.0, -1.0, 0.0, 0.0, 0.0],
-                vec![0.0, 0.0, 1.0, 1.0, 0.0],
-                vec![0.0, 0.0, -1.0, -1.0, 0.0],
-            ]);
-        }
-        rows.extend([
-            vec![0.0, 0.0, 0.0, 0.0, 1.0],
-            vec![0.0, 0.0, 0.0, 0.0, -1.0],
-        ]);
-        let map = project_timbres(&rows, 3).unwrap();
-        // Standardization gives eigenvalues 28, 28 and 14. The largest individual rows
-        // occupy only the weaker fifth axis, which belongs to the third component.
-        assert!((map.explained_variance - 1.0).abs() < 1e-9);
-        assert!(
-            map.positions[12..]
-                .iter()
-                .all(|p| p[0].powi(2) + p[1].powi(2) < 1e-9),
-            "outlier coordinates: {:?}",
-            &map.positions[12..]
-        );
-        assert!(map.positions[12..].iter().all(|p| p[2].abs() > 1.0));
-        assert_eq!(map.positions, project_timbres(&rows, 3).unwrap().positions);
+        assert_eq!(grouped.clusters, group_timbres(&rows, 2).unwrap().clusters);
     }
 
     #[test]
     fn constant_empty_and_invalid_catalogues_are_handled() {
-        assert!(project_timbres(&[], 4).unwrap().positions.is_empty());
-        let map = project_timbres(&[vec![1.0; 3]; 1], 5).unwrap();
-        assert_eq!(map.positions, vec![[0.0; 3]]);
-        assert!(project_timbres(&[vec![f64::INFINITY]], 1).is_err());
-        assert!(project_timbres(&[vec![1.0], vec![]], 1).is_err());
-        assert!(
-            project_timbres_refined(&[], 12)
-                .unwrap()
-                .clusters
-                .is_empty()
-        );
+        assert!(group_timbres(&[], 4).unwrap().clusters.is_empty());
+        let single = group_timbres(&[vec![1.0; 3]; 1], 5).unwrap();
+        assert_eq!(single.standardized, vec![vec![0.0; 3]]);
+        assert_eq!(single.clusters, vec![0]);
+        assert!(group_timbres(&[vec![f64::INFINITY]], 1).is_err());
+        assert!(group_timbres(&[vec![1.0], vec![]], 1).is_err());
+        assert!(group_timbres_refined(&[], 12).unwrap().clusters.is_empty());
     }
 
     #[test]
-    fn refinement_preserves_geometry_and_full_feature_similarity() {
+    fn refinement_preserves_full_feature_similarity() {
         let rows: Vec<_> = (0..40)
             .map(|i| vec![(i as f64 * 0.2).sin(), (i as f64 * 0.4).cos()])
             .collect();
-        let coarse = project_timbres(&rows, 6).unwrap();
-        let refined = project_timbres_refined(&rows, 6).unwrap();
+        let coarse = group_timbres(&rows, 6).unwrap();
+        let refined = group_timbres_refined(&rows, 6).unwrap();
         assert_eq!(refined.standardized, coarse.standardized);
-        assert_eq!(refined.positions, coarse.positions);
-        assert_eq!(refined.explained_variance, coarse.explained_variance);
     }
 
     #[test]

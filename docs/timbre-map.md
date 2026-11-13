@@ -2,8 +2,7 @@
 
 [日本語](timbre-map.ja.md)
 
-Open **Find Sounds** at the top of the library, or type in the library's search and choose
-**Search by how it sounds…** to carry the words across. Auris measures the built-in melodic
+Open **Find Sounds** at the top of the library. Auris measures the built-in melodic
 instruments and melodic presets of loaded SoundFonts in the background; the status bar counts
 completed sounds, and Cancel, Close and Escape stop a running scan. Use **Rescan Library** after
 loading another font. The prototype accepts up to 512 sounds per scan and keeps the results in
@@ -11,11 +10,11 @@ memory until the document is replaced or a new scan starts.
 
 The window has three columns with one job each, stacked in the same order in a narrow window:
 
-* **The map.** Each point is a sound; hover for its name or click to hear it. Arrange it by
-  **Similarity**, **Sound character** or **Envelope**, and turn it by dragging, with the view
-  presets, or with the rotation buttons from the keyboard. The legend under it names the colour
+* **The map.** Each point is a sound; hover for its name or click to hear it. Its axes are
+  brightness, attack speed and sustain ([coordinates](#map-coordinates)); turn it by dragging,
+  with the view presets, or with the rotation buttons from the keyboard. The legend under it names the colour
   groups, and **Name and classify with AI** sits with the legend it names.
-* **Sounds.** One search field takes names and impressions together (below), **Filter by
+* **Sounds.** The search field filters by name (every word must occur in it), **Filter by
   envelope** adds measured ranges, and every condition in force — an envelope range, or "Similar
   Sounds" for a chosen sound — is a chip that comes off on its own. The list reaches coincident
   points the map cannot separate.
@@ -104,38 +103,46 @@ stored is the one carrying the same offset as the cluster's categorical hue, so 
 the map's hue in this theme and both move together under another. Cluster ids are only stable
 within a scan, so nothing re-colors a track by itself after a rescan; run the command again.
 
-## Measurement and coordinates
+## Map coordinates
 
-### Sound character and impression search
+All three axes are fixed scales from −1 to +1, so adding a library does not move the sounds
+already there.
 
-Switch the arrangement to **Similarity** or **Sound character** to display either PCA or fixed-scale brightness,
-attack speed and held sustain. Character coordinates run from -1 (dark, slow, decaying) to
-+1 (bright, immediate, sustained); adding a library does not renormalize existing character
-coordinates. Cluster colors and full-feature nearest neighbors keep their original meaning.
+| Axis | −1 | +1 | Measured from |
+| --- | --- | --- | --- |
+| Brightness | dark (centroid 100 Hz) | bright (8 kHz) | log spectral centroid of the six reference notes |
+| Attack speed | 10 s | 1 ms | measured attack, log scale; 100 ms sits in the middle |
+| Sustain | fades (−60 dB or below) | holds at the peak | measured sustain level |
 
-The search field (the magnifier focuses it from the keyboard) is Japanese IME-compatible. A word
-that is a supported impression ranks the list; every other word must occur in the sound's name, so
-`ふんわり pad` means soft-sounding pads. Supported Japanese/English impressions include `ふんわり`, `ポコポコ`, `キラキラ`, `ザラザラ`, `soft`,
-`plucky`, `bright`, `dark`, `short`, and `sustained`. The interpreted terms are shown explicitly;
-other prose is not interpreted. Up to fifty ranked results remain available in the list and the
-first eight are highlighted on the map without moving its points. Enter leaves the query in
-place; Clear restores the full list. Browsing does not edit the project.
+A sound whose envelope could not be measured takes its attack and sustain from the reference
+notes instead. Colour is the full-feature group, a separate piece of information: points close
+on the map need not sound alike, so check resemblance with **Find Similar Sounds**, which uses
+all 558 dimensions.
 
-The same search is available to Agent/MCP composition through `search_instruments`:
+## Agent search and impressions
+
+The composition agent searches the same catalogue through `search_instruments`. There is one
+request shape and every field is optional:
 
 ```json
-{"request":{"mode":"character","query":"ふんわり","targets":{"release":0.1},"limit":5}}
+{"request":{"name":"pad","targets":{"attack":0.3,"sustain":0.8},"envelope":{"release_ms":{"min":800}},"limit":5}}
 ```
 
-Optional `name` requires name/tag words, `source` and `library` restrict candidates, and `id`
-retains acoustic resemblance to a previously returned sound. Explicit targets override dictionary
-interpretations. Each target is optional and in 0..1: brightness, attack speed (1 immediate),
-sustain (1 sustained), release (1 at least the captured tail), and noise (1 noise-like).
-For arbitrary prose, negation or comparisons, the agent translates the request to explicit
-targets and omits `query`. It reads the resulting targets, continues other work while indexing,
-and retries the same request without refresh. Returned exact IDs work with existing sound
-selection and Undo. Agents should render candidates in their intended musical phrase before
-adopting them and preserve existing sound choices unless asked to change them.
+* `name`: words that must all occur in the name, library or tags. Alone it pages by name;
+  with nothing at all it browses.
+* `like`: a sound ID from an earlier result; orders by full-feature distance to it.
+* `targets`: 0..1 values on the map's axes (`brightness`, `attack`, `sustain`) plus `noise`.
+* `envelope`: ranges on the measured envelope, in ms and dB.
+* `source`, `library`, `limit` and `offset`.
+
+Any of `like`, `targets` or `envelope` ranks measured sounds; the first such request starts the
+measurement in the background and answers `status: indexing`, and the agent retries the same
+request later without refresh. Each result carries the sound's axes and its measured envelope.
+An impression such as "soft" is translated into targets by the agent. Returned exact IDs work with existing sound selection and Undo. Agents should render
+candidates in their intended musical phrase before adopting them and preserve existing sound
+choices unless asked to change them.
+
+## Measurement
 
 ### Measured envelope
 
@@ -160,30 +167,20 @@ so they do not depend on the instrument's level.
 ms; decay and release short / medium / long (decay 300 ms and 2 s, release 200 ms and 1 s); sustain
 holds ≥ −6 dB / dips / fades ≤ −30 dB. A sound outside a range is ranked by how far outside (times
 on a log scale), never dropped, so a strict filter still answers with the nearest sounds. The
-**Envelope** arrangement places sounds by log attack, sustain level and log release.
-
-The agent passes the same ranges through `search_instruments`, and every result carries the
-measured values and the three pitches:
-
-```json
-{"request":{"mode":"character","envelope":{"attack_ms":{"max":10},"release_ms":{"min":800}},"limit":5}}
-```
+agent passes the same ranges as `envelope`.
 
 The three envelope notes are the expensive part of a scan, so their results for SoundFont presets
 and hosted plugins are cached in `<config dir>/cache/sound-envelopes.json`, keyed by the file's
 path, size and modification time and by the measurement's version. Built-in instruments are code
 and are measured on every scan.
 
-### Character descriptors
+### Reference-note descriptors
 
 Descriptors average the same six triggers used for similarity. Brightness uses log body centroid
 between 100 Hz and 8 kHz; noise uses mean regional spectral flatness. A 10 ms power envelope
-measures time to 90% peak RMS and held sustain. Release measures the last captured window above
--40 dB relative to the held peak; `release_censored` marks a lower bound when the tail remains
-audible at capture end. The 600 ms hold and 400 ms tail limit these descriptors for slow pads
-and long releases; the measured envelope above has no such limit. Impression mappings are acoustic hypotheses, not listening judgments;
-distance is relative mismatch, not probability. Rhythm-dependent impressions such as `ポコポコ`
-also depend on how the instrument is played.
+gives the attack and sustain estimates used only where no envelope was measured; the 600 ms
+hold limits them for slow pads, which is why the map prefers the measured envelope. Distance is
+relative mismatch, not probability or a listening judgment.
 
 Every source uses fresh instances for six matched triggers: MIDI 48, 60 and 72 at velocities
 0.45 and 0.85, a 600 ms hold, and 400 ms after note-off. The middle-C, higher-velocity recording
@@ -213,8 +210,8 @@ Smaller existing groups retain their membership. Duplicate or weakly separable g
 above the population target. These are exploratory groups whose usefulness should be checked by
 listening; a finer partition does not establish distinct instrument classes.
 
-Refinement changes group membership only. The global feature normalization, PCA coordinates,
-retained variance, audition recordings and nearest-neighbor distances stay the same. Cluster
+Refinement changes group membership only. The global feature normalization, audition
+recordings and nearest-neighbor distances stay the same. Cluster
 names and colors are assigned after refinement, including optional agent naming of all groups.
 
 A local comparison using 171 measured built-in and Fluid R3 GM sounds produced 16 groups instead
@@ -224,18 +221,14 @@ squared error fell from 59,514 to 53,206 (10.6%). Mean silhouette fell from 0.10
 finer groups have overlapping boundaries, so the result demonstrates browsing granularity and
 lower internal error, not improved global separation or listening quality.
 
-In Similarity mode the map displays three principal components in an Atelier `Plot3d` scatter plot, with the fraction
-of standardized variance retained. Drag to rotate, use the rotation buttons from the keyboard,
-or choose 3D, Top, Front or Side. A cross marks the selected sound. The sound lists remain
-available for coincident or hidden points, and the group legend identifies the point colors.
-Axes are statistical directions without fixed labels such as brightness or decay. Displayed
-distance is only an approximation; similarity ordering always uses all 558 dimensions. Rescanning
-a changed catalogue can change both coordinates and groups. The computation needs no pretrained
-weights, Python runtime or network service. Plot rendering uses Atelier's GPU path when available
-and its CPU fallback otherwise.
+Similarity ordering always uses all 558 dimensions. Rescanning a changed catalogue can change the
+groups, never a sound's map coordinates. The computation needs no pretrained weights, Python
+runtime or network service. Plot rendering uses Atelier's GPU path when available and its CPU
+fallback otherwise.
 
-Implementation: `auris_dsp::timbre` extracts and projects features; `Session::timbre_map_job`
+Implementation: `auris_dsp::timbre` extracts and groups features; `auris_session::SoundAxes`
+places a sound on the map; `Session::timbre_map_job`
 snapshots sources for a worker, `TimbreMap::nearest` answers similarity queries, and
 `Session::use_timbre_sound` adopts a result. Numeric tests cover level/polarity invariance,
-silence and invalid PCM, PCA distance preservation for rank-two and rank-three fixtures, deterministic grouping,
+silence and invalid PCM, coordinate ranges and fallbacks, deterministic grouping,
 and degenerate catalogues. A desktop harness test checks read-only browsing and undoable adoption.
