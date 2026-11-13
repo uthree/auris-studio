@@ -1,10 +1,11 @@
 # Composition techniques
 
 The common moves of song production, one per section, each with what it is for and how to do
-it with the Auris tools. The composing agent's phase instructions name these techniques in a
-short index; this page is what `search_documentation` returns for the detail. None of them is
-a rule. Each is a choice a song may make for a reason, and a song that makes all of them at
-once is a checklist, not a song.
+it with the Auris tools. The composing agent's phase instructions and the `auris-composition`
+skill name these techniques in a short index; this page is what `search_documentation` returns
+for the detail, and the only place it is written. None of them is a rule. Each is a choice a
+song may make for a reason, and a song that makes all of them at once is a checklist, not a
+song.
 
 ## Score phase
 
@@ -33,7 +34,21 @@ entry after a rest. Starting every line on beat 1 makes every phrase sound like 
 anticipation (食い) starts a strong beat's note an eighth or a sixteenth early and ties it
 over the beat; on a key word or the chorus's first word it adds drive, and the listener still
 hears where the beat is. Give the sections different note values as well: a verse speaking in
-eighths, a pre-chorus holding longer notes, sixteenths saved for pickups and turns.
+eighths, a pre-chorus holding longer notes, sixteenths saved for pickups and turns. In 6/8,
+keep the two groups of three eighths audible rather than importing a 4/4 accent pattern.
+
+A pickup or a late entry is not better than the downbeat in itself: an on-beat entrance can be
+the drive the line wants. When the user likes a line's rhythm, keep its entrances and its
+attack pattern and repair a crowded phrase locally instead of delaying every line.
+
+### Rests and syncopation
+
+A rest is punctuation: a short pickup points into a downbeat, a held note bridges a bar, a gap
+lets an answer or a word land. Syncopation works when the backing makes the beat it displaces
+audible and the next event confirms or deliberately resists it. Do not humanise a line by
+moving every onset at random; change one anticipation, a phrase's gate or its velocities, and
+compare with the grid version. Breathing room, intelligibility and groove are three separate
+questions, and widening every gap to fix one of them can lose the others.
 
 ### Japanese lyrics in feet (2モーラ・拍)
 
@@ -85,12 +100,57 @@ Pair them, end the song's last chorus on the tonic unless the brief wants it lef
 write falling and arched lines as well as rising ones: a melody whose lines all climb and end
 on the fifth or the seventh never settles.
 
+### Pitch skeleton
+
+Before decorating a phrase, mark one or two target notes against the chords actually written:
+chord tones on strong beats and at phrase ends, the third or the seventh where its colour
+defines the chord. A plain skeleton such as 3–2–1 over a cadence is enough to test against the
+bass. Then fill the path with steps, purposeful skips and a few non-chord tones (passing,
+neighbour, anticipation, suspension, appoggiatura), each heading somewhere. A non-chord tone
+held on an accent can be expressive; the same note left unexplained at every cadence sounds
+like a mistake. Judge the performed timing: a pickup or an anticipation can make an off-beat
+note the arrival.
+
+Decide where the interest lives. A one-pitch figure can carry a hook because the chords move
+under it; a wide, self-contained tune may want less harmonic movement. Other skeletons than
+"chord root, then up the scale" are a repeated-note hook over changing harmony, a guide-tone
+outline joined by rests, a line in contrary motion to the bass, and a two-note call answered in
+another register.
+
+### Colour tones
+
+When the brief asks for a more colourful line, try a ninth or another extension on a word that
+matters instead of keeping every arrival on the triad. Keep three things apart: the note's
+degree in the key, its role against the sounding chord, and its register. D is degree 2 in C
+major; over C it is the ninth, over G the fifth. A ninth needs no ninth leap and no note
+outside the key. Holding D briefly before E over C exposes the ninth and resolves to the third;
+an intentional held colour need not resolve at once. Do not add tensions to every chord or
+widen the voice to reach a count of them.
+
+### A worked four-bar sketch
+
+An invented example in C major, 4/4, one chord a bar (`C | Am | F | G`); `q` is a beat, `e` half
+a beat, `dq` a beat and a half, `h` two beats.
+
+| bar / chord | notes | degree / role against the chord |
+| --- | --- | --- |
+| 1 / C | `C4 q, E4 q, G4 h` | 1, 3, 5: the cell (a rising third) and a held arrival |
+| 2 / Am | `C4 q, E4 q, G4 q, rest e, F4 q` (from beat 4-and, tied over the bar) | same rhythm, changed tail; F anticipates the next chord |
+| 3 / F | `F4 (tie) e, rest e, A4 q, C4 q, rest q` | root, third, fifth; a breath |
+| 4 / G | `D5 q, B4 q, G4 dq, rest e` | fifth, third, root: a half cadence |
+
+Bar 2 keeps the cell's rhythm and changes its end; the tied F is heard as arriving with the F
+chord. The sketch ends open on G on purpose; add a C arrival only where the section should
+close. Over bar 1, `G4 q, G4 q, G4 h` is the repeated-note alternative: the rhythm carries the
+identity while the harmony moves.
+
 ### Section harmony
 
 A verse may loop a simple progression; the pre-chorus and the chorus need their own. Change
 the progression, its rhythm (two chords a bar instead of one, or one chord held for two bars)
 or its bass line (a descending bass, a pedal). The verse's loop started on another chord is
-the same loop, and a chorus over it sounds like more verse.
+the same loop, and a chorus over it sounds like more verse. More chord changes do not give a
+melody more direction: holding one chord longer can let a moment hang while the line moves.
 
 ### Chorus lift
 
@@ -101,14 +161,36 @@ at the head of every chorus line stops being heard. End the pre-chorus on a held
 or a rising line so the chorus lands on a strong beat or just before it. Read `melody_shape`
 after writing the melody and act on its warnings before singing.
 
+Agents writing comfortably inside the voice tend to lift a semitone or two and call it a
+chorus. For a bold chorus, sketch the register alternative: the cell an octave up, the answer
+moved up an octave, or a raised final arrival, and check the way back down as well as the
+entrance. Judge where the phrase spends its time (tessitura), not only its highest note. When
+a full octave would strain the singer, lower the verse, lift only a fragment, or settle for a
+smaller contrast.
+
+### Phrase contour and climax
+
+Give each phrase a shape (arch, rise, fall, wave, plateau) and mark its high and low points.
+Put a local high point where the words, the harmony or the section want weight, then release
+it by step, with a rest, a descent or a held open vowel. One high note for the whole song is
+not compulsory: dance hooks may sit on one repeated pitch, a chant on a reciting tone. Check a
+line at three scales: the cell (is its rhythm and contour recognisable), the phrase (tension,
+target, breath, cadence) and the section (range, register, density and cadence that set verse,
+chorus, bridge and ending apart).
+
 ### Motif repetition and development
 
 Write one short cell, two to six notes over a beat to two bars, with a distinct rhythm or
 contour, then develop it: keep the rhythm and change the last interval, move it to another
-register, place it over another chord, stretch one value. A cell is not a whole lyric line.
+register, place it over another chord, stretch one value, reverse one turn. Choose the one
+change the section's job calls for, not all of them. A cell is not a whole lyric line.
 Repeat it exactly where a hook must be recognised, and fit those repeats' words to its notes;
 elsewhere keep the cell's head and let the line around it change. See the lyric-fitting rules
 in the vocal guidance.
+
+Record the cell's onsets and intervals in `production_record`, with where it is stated,
+answered, changed and brought back in the chorus, and check the written notes against that.
+Calling two unrelated phrases "motif A" does not make them related.
 
 ### The chorus hook in the intro
 
@@ -137,6 +219,37 @@ the voice past it is worse than none. A short pivot (the new key's V in the bar 
 Keep the melody inside the voice's useful range, which for most synthesised voices is about an
 octave and a half. Place the verse in the lower part and the chorus in the upper part rather
 than spreading every section over all of it; that is what leaves the chorus room to lift.
+Large leaps, rapid syllables and long high notes each need a release after them, and a gate
+that stops at the grid line is not an ending: leave room for the breath, the decay and the
+reverb.
+
+### Lyrics that develop
+
+Give the song a concrete scene and let the perspective move across the verses. The chorus
+holds one central thought and a hook that is both verbal and melodic. A second verse has new
+words that advance the story and something changed in its phrasing or backing; copying the
+first verse's clip is not a second verse. A full song has a second verse, later choruses and
+an ending unless the brief asks for a one-chorus demo or an excerpt; a bridge is optional.
+Write words and melody together, and never fill spare notes with filler syllables.
+
+### Vowels on held high notes
+
+For an exposed high or powerful arrival, try a word whose held vowel is あ or お. Know which
+vowel is actually held, on what pitch and for how long, and which consonant leads into it. Put
+ん lower or in the middle of the range, or at a short phrase end, when that keeps the contour;
+it keeps its own mora. None of this outranks the word's meaning or a fixed lyric: try timing,
+articulation or a permitted transposition before proposing a lyric change. These are
+preferences from listening to synthesised voices, not a ranking of vowels, and the voice
+actually chosen is what decides.
+
+### One revision at a time
+
+When revising a melody, fix the one problem that matters most (an unclear motif, crowded
+words, a masked target, an unsingable leap, sections that do not differ, an abrupt ending),
+keep the previous version to compare against, and stop after two local attempts on the same
+problem. Change one feature at a time with the backing held fixed, or you cannot tell what
+helped. When a listener prefers one take's melody and another's backing, keep the preferences
+apart rather than counting wins.
 
 ## Arrangement phase
 
@@ -145,20 +258,55 @@ than spreading every section over all of it; that is what leaves the chorus room
 Give every part one job — foundation (kick and bass), harmony (pads, chords), pulse (hats,
 strummed or muted guitar), colour (counterlines, fills, effects) — and its own register, so
 no two parts fight for the same octave at the same time. Most muddiness is two parts in one
-register, not too many parts.
+register, not too many parts. Overlap is not always a fault: a unison or octave doubling can
+be the point. An answering part fills the foreground's gaps instead of doubling its attacks.
+
+### Role palettes
+
+Starting points, not templates; remove or swap a part when the foreground needs room.
+
+| context | intimate | rising | contrast |
+| --- | --- | --- | --- |
+| piano and voice | low root and broken chords in the middle, voice above | sparse verse piano, bass enters at the chorus, a high answering figure | held voicings under phrases, fills only in the voice's gaps |
+| pop band | kick and bass, offbeat guitar, one pad | drums held back in the verse, bass and wide guitars open in the chorus | steady bass while the guitar goes from muted to sustained chords |
+| electronic | sub bass on the root, one mid pulse, dry lead | filtered pulse in the verse, full transients at the arrival | lead leaves holes for an answer; automation carries the transition |
+| game cue | ostinato, sparse harmony, the motif | a register or counterline at the scene's turn, thinned for the loop return | texture changes while tempo and motif stay put |
+
+Mute each role in turn and name what the music loses; two parts that answer the same question
+at once want one of them cleared away or their entrances interleaved.
+
+### Subtract before adding
+
+When a section is flat or crowded, remove, delay, shorten or thin a supporting part before
+adding another. Contrast can come from register, articulation, note length, rhythm, a change
+of lead sound or silence, and a restrained verse is what makes a full chorus mean something. A
+cue meant to be sparse stays sparse. Solo the foreground and bring the roles back one at a
+time to hear what each adds.
 
 ### Voicings out of the voice
 
 Keep chord voicings out of the octave the melody is singing in, or thin them while the voice
 is there: below it for warmth, above it for air. Piano and guitar voicings written by
 `accompaniment` or `generate_phrase` can be moved with `edit_notes` or `set_performance`
-(`octave_above`, `octave_below`).
+(`octave_above`, `octave_below`). Try a thinner voicing, shorter notes, another octave or a gap
+before reaching for EQ, and keep low chord stacks out of the bass's octave.
+
+### Bass and inner voices
+
+A bass line supports the roots and moves between them by step or with purpose. Over
+`C | Am | F | G` in 4/4, `C3 dotted half, B2 quarter | A2 dotted half, G2 quarter | F2 dotted
+half, E2 quarter | G2 whole` walks down to each root, and the passing notes (B over C, G over
+Am, E over F) are colours the melody must allow. Above it, sustained pairs
+`E4/G4 | E4/A4 | F4/A4 | G4/B4` keep common tones and move by small steps. Check both against
+the lead and the kick, and shorten a connection or move an inner voice when it competes.
 
 ### Kick and bass together
 
 Write the bass's attacks on the kick's, or deliberately in its gaps, and keep its rhythm
 simpler than the drums'. Bass notes that start just off the kick are heard as a band out of
-time. Read both parts' notes side by side before accepting either.
+time. Read both parts' notes side by side before accepting either. Decide which of the two
+owns the deepest sustained energy, and shorten or move the other before compressing anything;
+a deliberate rub or distortion that serves the style stays.
 
 ### Fills and crashes at transitions
 
@@ -180,7 +328,22 @@ with the riff or the vocal's accents for a キメ.
 
 Before a chorus, build: add a snare roll, rising notes, a filter opening, or density that
 grows bar by bar. Or break: stop everything for a beat or two before the chorus, so its first
-beat arrives out of silence. A break needs the pre-chorus melody to end before it.
+beat arrives out of silence. A break needs the pre-chorus melody to end before it. Not every
+boundary: a riser or crash at each one stops being heard.
+
+### Interludes and bridges
+
+Decide whether an interlude has a job (a breath after a dense chorus, a harmonic turn, an
+answer to the voice, a reset of register, a set-up for the return) or only colours a stable
+passage; a decorative one need not promise a new section. Reuse a small motif in another
+rhythm, register, sound or as call and response rather than pasting the chorus. Listen to both
+joins, into the interlude and out of it.
+
+### Loop return
+
+In a looping cue a one-off gesture recurs every cycle, so a fill at the end becomes an accent
+every time round. Play the end straight into the beginning, reverb tail included, rather than
+judging each edge alone, and keep the loop boundary on a bar line.
 
 ### More in verse 2
 
@@ -201,6 +364,21 @@ double a chorus line, ghost notes and `humanize` on hats, `strum` on guitar chor
 for phrase dynamics, `gate` for detached playing. Swing is the song's feel, not seasoning: a
 straight song stays at 50, and a swung song swings every part, vocal included, at the same
 amount.
+
+Typed notes play exactly on the grid until a performance stage moves them. List
+`performance_presets` with the clip, start from its `suggested_preset` or a preset that suits
+the genre better, read `inspect_performance`, then tune with `set_performance` and read back
+what took effect. Leave a part machine-tight only where the style wants it (chiptune, a drum
+machine). An instrument's controls are its own: do not assume a tutorial's CC1, CC11 or
+keyswitch maps onto an Auris parameter of a similar name.
+
+### Sounds for the part's job
+
+Choose a sound for what the part does and how it can be played. A fast repeated figure needs a
+clear attack and a short release; a held line needs a convincing sustain and tail. A short
+gate on a sustained patch is not a sampled staccato. In orchestral writing, hand a returning
+theme between families or octaves instead of doubling the whole ensemble throughout. Leave
+rests that match the actual instrument's decay.
 
 ### Strummed chords
 
@@ -236,6 +414,14 @@ bass and voice in the middle.
 Turn on the high-pass (`hp_enabled`, `hp_freq`) of `auris.fx.eq` on parts that do not need
 their lowest octave — pads, guitars, keys, the voice — so the bass and kick own it.
 
+### Choosing a processor
+
+Pick the processor by the change wanted: EQ changes the spectral balance, a compressor the
+level envelope (its attack and release decide how transients and sustain relate), saturation
+the colour. Compare with the processor bypassed at a matched level; a louder version is not a
+clearer one. A pumping or distorted sound that is the idea of the track stays. Processing does
+not replace a missing part or fix two parts that clash; change the notes first.
+
 ### Kick-triggered sidechain
 
 Duck the bass or pads by a few decibels on every kick with `auris.fx.compressor` and
@@ -248,6 +434,11 @@ Put `auris.fx.reverb` and `auris.fx.delay` on a bus, give the voice a second out
 in one room;
 an insert reverb on each track makes many rooms.
 
+Dense reverb blurs words and attacks. When the voice needs depth but must stay clear, try a
+short or tempo-synced delay before more reverb, filter the returns' highs, and raise the
+reverb's pre-delay until the consonant stands apart from its tail; a pre-delay that suits one
+tempo or voice does not carry to another. Check the end of the song for tails that pile up.
+
 ### Bus processing
 
 Route related parts (drums, backing vocals, strings) to a bus with `set_outputs` and treat
@@ -257,7 +448,9 @@ them together: one compressor glues a drum kit better than one on each drum.
 
 Automate faders and output levels section by section with `automation`: the chorus a decibel up, the
 drop chorus's reverb longer, the last chorus wider. A mix that is the same everywhere makes the
-arrangement do all the work.
+arrangement do all the work. To make a section recede without an obvious drop in level,
+automate a low-pass or a send instead of the fader, taking care not to remove the melody's
+upper partials or the voice's consonants.
 
 ### normalize_mix last
 
