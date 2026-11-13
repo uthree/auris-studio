@@ -197,7 +197,6 @@ pub fn edit_key(edit: Edit) -> Key {
         Edit::MoveTrack => Key::EditMoveTrack,
         Edit::MoveMixerNodes => Key::EditMoveMixerNodes,
         Edit::ArrangeMixerNodes => Key::EditArrangeMixerNodes,
-        Edit::RenameProject => Key::EditRenameProject,
         Edit::RenameTrack => Key::EditRenameTrack,
         Edit::SetTrackColor => Key::EditSetTrackColor,
         Edit::SetTrackColors => Key::EditSetTrackColors,

@@ -632,12 +632,6 @@ pub enum Command {
         /// One string: instrument, drum, singer, audio or bus. Never an array or instrument ID.
         kind: TrackKind,
     },
-    /// Give the song its title. The title names the project and is what Save As and exports suggest as the file name until the user saves. Name a new song once its character is clear; keep a title the user gave or chose unless asked to change it.
-    RenameProject {
-        /// The song title, 1-120 characters.
-        #[schemars(length(min = 1, max = 120))]
-        title: String,
-    },
     /// Rename a track using its stable numeric ID from inspect_project or add_track.
     RenameTrack {
         /// Stable track ID.
@@ -1329,7 +1323,7 @@ impl Session {
                         "soundfont_preset":self.track_preset(track.id)})
                     })
                     .collect();
-                Ok(serde_json::json!({"title":project.name, "tracks":tracks, "revision":self.agent_document_revision()?,
+                Ok(serde_json::json!({"title":(!self.is_untitled()).then(|| self.document_title()), "tracks":tracks, "revision":self.agent_document_revision()?,
                     "document_instance":self.document_instance(), "session_revision":self.revision(),
                     "verification_regions":crate::production_record::verification_regions(project),
                     "phase_facts":crate::production_record::phase_facts(self),
@@ -1373,14 +1367,6 @@ impl Session {
                     TrackKind::Bus => self.add_bus_track(name),
                 };
                 Ok(serde_json::json!({"track":id.0,"unsaved":true}).to_string())
-            }
-            Command::RenameProject { title } => {
-                let title = title.trim();
-                if title.is_empty() || title.chars().count() > 120 {
-                    return Err("A song title needs 1-120 characters".into());
-                }
-                self.rename_project(title);
-                Ok(serde_json::json!({"title":title,"unsaved":true}).to_string())
             }
             Command::RenameTrack { track, name } => {
                 if name.trim().is_empty() {
@@ -2109,30 +2095,19 @@ mod tests {
     }
 
     #[test]
-    fn the_agent_titles_the_song_and_the_title_becomes_the_suggested_file_name() {
+    fn the_title_the_agent_reads_is_the_file_name_and_there_is_no_command_to_change_it() {
         let mut session = session();
-        assert_eq!(session.document_title(), Project::UNTITLED);
-        let before = session.project().clone();
-        for title in ["", "   ", &"x".repeat(121)] {
-            assert!(
-                session
-                    .agent_command(Command::RenameProject {
-                        title: title.into(),
-                    })
-                    .is_err()
-            );
-            assert_eq!(session.project(), &before);
-        }
+        let inspect = |session: &mut Session| -> serde_json::Value {
+            serde_json::from_str(&session.agent_command(Command::Inspect {}).unwrap()).unwrap()
+        };
+        assert!(inspect(&mut session)["title"].is_null());
+        let folder = tempfile::tempdir().unwrap();
         session
-            .agent_command(Command::RenameProject {
-                title: "  夜明けのテーマ ".into(),
-            })
+            .save_as(&folder.path().join("夜明けのテーマ.auris"))
             .unwrap();
-        assert_eq!(session.project().name, "夜明けのテーマ");
-        assert_eq!(session.document_title(), "夜明けのテーマ");
-        assert!(session.is_dirty());
-        session.undo();
-        assert_eq!(session.project().name, Project::UNTITLED);
+        assert_eq!(inspect(&mut session)["title"], "夜明けのテーマ");
+        let schema = serde_json::to_string(&schemars::schema_for!(Command)).unwrap();
+        assert!(!schema.contains("RenameProject") && !schema.contains("rename_project"));
     }
 
     #[test]
