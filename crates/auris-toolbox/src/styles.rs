@@ -45,6 +45,23 @@ pub fn guidance(style: &Value, phase: Phase) -> Option<String> {
     (!parts.is_empty()).then(|| parts.join("\n"))
 }
 
+/// Every phase's guidance for a style just chosen, or nothing when it is unset.
+///
+/// Choosing the style is the one moment certain to happen: a model writing a short piece often
+/// stays in the phase it chose the style in and never reads another phase's instructions, so the
+/// arrangement and mix sections would otherwise never reach it. The pages go whole, genre first.
+pub fn whole(style: &Value) -> Option<String> {
+    let parts: Vec<&str> = [("genre", GENRES), ("usage", USAGES)]
+        .into_iter()
+        .filter_map(|(key, pages)| {
+            let id = style[key].as_str()?;
+            let (_, _, text) = pages.iter().find(|(page, _, _)| *page == id)?;
+            Some(text.trim())
+        })
+        .collect();
+    (!parts.is_empty()).then(|| parts.join("\n\n"))
+}
+
 /// A page's title and summary, followed by the section for `phase` when it has one.
 fn for_phase(text: &str, phase: Phase) -> String {
     let heading = match phase {
@@ -123,5 +140,17 @@ mod tests {
         );
         let usage_only = guidance(&json!({"usage":"cue"}), Phase::Mix).unwrap();
         assert!(usage_only.starts_with("Usage: Cue."), "{usage_only}");
+    }
+
+    #[test]
+    fn a_chosen_style_brings_every_phase_of_both_pages() {
+        let text = whole(&json!({"genre":"city_pop","usage":"loop_bgm"})).unwrap();
+        assert!(text.starts_with("# Genre: City pop"), "{text}");
+        let usage = text.find("# Usage: Loop background music").unwrap();
+        for section in ["## Score", "## Arrangement", "## Mix"] {
+            assert!(text[..usage].contains(section), "genre lacks {section}");
+            assert!(text[usage..].contains(section), "usage lacks {section}");
+        }
+        assert_eq!(whole(&json!({})), None);
     }
 }

@@ -38,7 +38,9 @@ headings of [composition techniques](composition-techniques.md), which
 `search_documentation` returns. When the song's genre and usage are chosen
 (`edit_timeline` `set_style`, stored in the document), the instructions end
 with that genre's and that usage's page under `docs/genres/` and
-`docs/usages/`: its summary and its section for the phase in force. The checks
+`docs/usages/`: its summary and its section for the phase in force. The
+`set_style` result itself carries both pages whole, as `style_guidance`,
+because a short piece is often written without entering another phase. The checks
 follow the style too (`auris_session::session::style_checks` is the table): a
 loop or a cue is not asked for an intro and an outro, a genre without a
 register-lifted chorus (jazz, orchestral, ambient, hip-hop and lo-fi, dance) is
