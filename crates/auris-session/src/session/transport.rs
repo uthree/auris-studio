@@ -293,6 +293,16 @@ impl Session {
         self.publish_loop();
     }
 
+    /// Chooses the song's genre and usage, as one Undo step; nothing is recorded when neither
+    /// changes.
+    pub fn set_style(&mut self, style: auris_core::style::Style) {
+        if style == self.project.style {
+            return;
+        }
+        self.record(Edit::SetStyle);
+        self.project.style = style;
+    }
+
     /// Removes the tempo change in force at `at`, letting the tempo before it run through.
     ///
     /// *In force at*, not *starting at*, for the reason given on [`Self::remove_key`]. The
@@ -467,6 +477,23 @@ mod tests {
 
         assert_eq!(session.undo(), Some(Edit::SetTempoPoint));
         assert_eq!(session.project().tempo_map.points().len(), 1);
+    }
+
+    #[test]
+    fn choosing_a_style_is_one_undo_step_and_choosing_it_again_is_none() {
+        use auris_core::style::{Genre, Style, Usage};
+        let mut session = session();
+        session.forget_history();
+        let style = Style {
+            genre: Some(Genre::Chiptune),
+            usage: Some(Usage::LoopBgm),
+        };
+        session.set_style(style);
+        session.set_style(style);
+        assert_eq!(session.project().style, style);
+        assert_eq!(session.undo(), Some(Edit::SetStyle));
+        assert!(session.project().style.is_unset());
+        assert_eq!(session.undo(), None);
     }
 
     #[test]

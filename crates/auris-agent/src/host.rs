@@ -297,6 +297,14 @@ impl ToolHost {
                     report,
                 )?;
             }
+        } else if reply["ok"] == true && name == "edit_timeline" {
+            let value: Value = reply["text"]
+                .as_str()
+                .and_then(|text| serde_json::from_str(text).ok())
+                .unwrap_or_default();
+            if let Some(style) = value.get("style") {
+                self.bridge.observed_style(style.clone())?;
+            }
         } else if reply["ok"] == true && name == "inspect_project" {
             let mut value: Value =
                 serde_json::from_str(reply["text"].as_str().ok_or("Missing tool response")?)

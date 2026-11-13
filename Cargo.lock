@@ -717,6 +717,7 @@ name = "auris-core"
 version = "0.21.0"
 dependencies = [
  "base64 0.23.1",
+ "schemars",
  "serde",
  "serde_json",
  "thiserror 2.0.21",

@@ -9,6 +9,8 @@ rust-version.workspace = true
 
 [dependencies]
 base64.workspace = true
+# The tool schemas name the document's style enums directly, so their variants are listed once.
+schemars = "1"
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

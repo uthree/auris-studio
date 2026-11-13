@@ -179,6 +179,7 @@ pub fn edit_key(edit: Edit) -> Key {
         Edit::SetPunchRegion => Key::EditSetPunchRegion,
         Edit::ChangeTempo(_) => Key::EditChangeTempo,
         Edit::SetTempoPoint => Key::EditSetTempoPoint,
+        Edit::SetStyle => Key::EditSetStyle,
         Edit::RemoveTempoPoint => Key::EditRemoveTempoPoint,
         Edit::ChangeSignature(_) => Key::EditChangeSignature,
         Edit::SetSignaturePoint => Key::EditSetSignaturePoint,

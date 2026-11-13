@@ -371,7 +371,7 @@ pub enum Command {
         /// Optional subfolder to list, relative to the workspace; omitted lists all of it.
         folder: Option<String>,
     },
-    /// Read or edit positioned tempo/meter changes without moving existing notes. Read returns native bounds and the current document revision.
+    /// Read or edit positioned tempo/meter changes without moving existing notes, and choose the song's genre and usage (set_style). Read returns the style, native bounds and the current document revision.
     EditTimeline {
         /// Explicit read, set or removal operation with absolute ticks.
         operation: document_editing::TimelineOperation,
@@ -1328,7 +1328,7 @@ impl Session {
                     "verification_regions":crate::production_record::verification_regions(project),
                     "phase_facts":crate::production_record::phase_facts(self),
                     "sample_rate":project.sample_rate,"duration_seconds":project.duration_seconds(), "harmony":project.harmony,
-                    "sections":project.sections, "lyrics":lyric_annotation::lyric_lines_json(project), "comments":comments::comments_json(project), "tempo_map":project.tempo_map, "signatures":project.signatures, "loop_region":project.loop_region, "loop_enabled":project.loop_enabled, "ticks_per_quarter":Ticks::QUARTER.raw()})
+                    "style":project.style, "sections":project.sections, "lyrics":lyric_annotation::lyric_lines_json(project), "comments":comments::comments_json(project), "tempo_map":project.tempo_map, "signatures":project.signatures, "loop_region":project.loop_region, "loop_enabled":project.loop_enabled, "ticks_per_quarter":Ticks::QUARTER.raw()})
                 .to_string())
             }
             Command::InspectAudio {

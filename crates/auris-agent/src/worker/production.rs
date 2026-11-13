@@ -20,8 +20,17 @@ fn record_view(record: &Record, document: &Value, instructions: bool) -> Result<
     let text = toolbox::present_domain_report(&record.view(document).to_string())?;
     let mut view: Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
     if instructions && let Some(state) = &record.phase {
-        view["phase_instructions"] =
-            toolbox::composition_workflows::instructions(state.phase, state.writing_order).into();
+        let mut text =
+            toolbox::composition_workflows::instructions(state.phase, state.writing_order);
+        if let Some(style) = toolbox::styles::guidance(&document["style"], state.phase) {
+            text.push_str(
+                "
+This song's style
+",
+            );
+            text.push_str(&style);
+        }
+        view["phase_instructions"] = text.into();
     }
     Ok(view)
 }
@@ -152,6 +161,20 @@ impl Bridge {
         Ok(())
     }
 
+    /// Keep the inspected document's style current after an edit that chose one, so the next
+    /// phase instructions follow it without the model having to inspect the project again.
+    pub(crate) fn observed_style(&self, style: Value) -> Result<(), String> {
+        self.with_production(
+            |state| {
+                if state.document.is_object() {
+                    state.document["style"] = style;
+                }
+                Ok(())
+            },
+            false,
+        )
+    }
+
     pub(crate) fn observe_production(
         &self,
         tool: &str,
@@ -190,6 +213,46 @@ mod tests {
             },
         );
     }
+    #[test]
+    fn the_phase_instructions_end_with_the_documents_style() {
+        let mut record = Record::default();
+        record
+            .update(
+                serde_json::from_value(
+                    json!({"kind":"enter_phase","phase":"score","reason":"start"}),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let styled = json!({"revision":"r","style":{"genre":"jazz","usage":"loop_bgm"}});
+        let text = record_view(&record, &styled, true).unwrap()["phase_instructions"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let style = text
+            .split_once(
+                "This song's style
+",
+            )
+            .unwrap()
+            .1;
+        assert!(style.starts_with("Genre: Jazz."), "{style}");
+        assert!(
+            style.contains(
+                "
+Usage: Loop background music."
+            ),
+            "{style}"
+        );
+        let plain = record_view(&record, &json!({"revision":"r"}), true).unwrap();
+        assert!(
+            !plain["phase_instructions"]
+                .as_str()
+                .unwrap()
+                .contains("This song's style")
+        );
+    }
+
     #[test]
     fn large_records_use_bounded_report_pages_without_dropping_stored_context() {
         let mut record = Record::default();
