@@ -63,6 +63,8 @@ it gets edited first: when the two disagree, the guide is right and this is stal
 Cargo.toml               virtual manifest; `default-members` points at the desktop app
 vendor/rustysynth        somebody else's crate, forked — see its README; excluded from the workspace
 vendor/vst3-host         VST3 host bindings, forked for a single-owner realtime path — see README-AURIS.md
+vendor/gpui              GPUI 0.2.2 without its examples, patched in for how text is measured at
+                         widths narrower than a character — see README-AURIS.md
 crates/auris-core        types, music theory, plugin traits, project model — no local dependencies
 crates/auris-dsp         effects and DSP primitives
 crates/auris-synth       built-in chiptune instruments; depends on auris-dsp

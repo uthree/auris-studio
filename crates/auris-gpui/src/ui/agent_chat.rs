@@ -9721,4 +9721,36 @@ mod tests {
             assert!(this.agent_chat.entries.is_empty());
         });
     }
+
+    /// A Japanese status notice beside a message is laid out on its line, not down the panel.
+    ///
+    /// The notice is as wide as its text, and the layout asked for that width after measuring the
+    /// text at zero width, where Japanese sets one character to a line: the answer it got back
+    /// was the zero-width one, and "a new conversation started" ran down the middle of the
+    /// panel one character at a time.
+    #[gpui::test]
+    fn a_japanese_notice_keeps_its_line_beside_a_message(cx: &mut gpui::TestAppContext) {
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, _| {
+            this.language = auris_i18n::Language::Japanese;
+            this.panels.show(crate::dock::Panel::Agent);
+            this.agent_chat.models_loaded = true;
+            this.agent_chat.models_error = Some("offline fixture".into());
+            this.agent_chat.entries = vec![
+                ChatEntry::Note(Key::AgentConversationReset),
+                ChatEntry::user("EDM的な曲を作って".into()),
+            ];
+        });
+        crate::harness::resize(&app, cx, gpui::size(px(1200.0), px(900.0)));
+        let notice = app.read_with(cx, |this, _| {
+            this.agent_chat.chat_row_id(0, "notice").unwrap()
+        });
+        let bounds = cx
+            .debug_bounds(notice.leak())
+            .expect("the notice is visible");
+        assert!(
+            bounds.size.width > px(100.0) && bounds.size.height < px(30.0),
+            "the notice is not laid out on one line: {bounds:?}"
+        );
+    }
 }

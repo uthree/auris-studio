@@ -1171,14 +1171,18 @@ impl AurisApp {
         let Some(s) = &self.song_workshop else {
             return div().into_any_element();
         };
+        // The body as it was last drawn; before it has been, the window is the most it can be.
+        let body_width = Some(s.scroll.bounds().size.width)
+            .filter(|width| *width > gpui::px(0.0))
+            .unwrap_or(window.viewport_size().width);
+        let column = transcript_width(body_width, spacing.xxl);
         let mut transcript = div()
             .debug_selector(|| "song-workshop-transcript".into())
             .flex()
             .flex_col()
             .gap(spacing.xl)
-            .flex_1()
-            .min_w_0()
-            .max_w(COLUMN_WIDTH);
+            .w(column)
+            .mx_auto();
         if let Some(snapshot) = &s.snapshot {
             if snapshot.document.messages.is_empty() {
                 transcript = transcript.child(text_panel(
@@ -1354,24 +1358,38 @@ impl AurisApp {
             .on_scroll_wheel(cx.listener(|_, _, _, cx| cx.notify()))
             .px(spacing.xxl)
             .py(spacing.xl)
-            .flex()
-            .flex_col()
-            // The column is centred across a row rather than in a centred column. The body
-            // scrolls by the height of what it holds, and a flex column works that height out by
-            // laying its child out at the child's percentage width *before* `max_w` narrows it:
-            // every wrapped message then measures a line or so shorter than it is drawn, and the
-            // newest entries end past the end of the scroll range, under the composer, where no
-            // scrolling reaches them. Across a row the width is the main axis, which the layout
-            // clamps first, so the height is measured at the width the column is drawn at.
+            // The column is given its width in pixels and centred by its margins, in block
+            // layout, rather than sized by a flex container. The body scrolls by the height of
+            // what it holds, and a column that flex layout sizes is measured at other widths on
+            // the way: at its percentage width before `max_w` narrows it, as narrow as it will go
+            // while its minimum is worked out. The layout keeps such a measurement and can hand
+            // it back for the column drawn at another width, and its height then disagrees with
+            // what it holds: a line or so short, leaving the newest entries under the composer
+            // where no scrolling reaches them, or thousands of pixels long, leaving the body
+            // scrolled to an end with nothing drawn on it.
             //
-            // The row is also the transcript's one selection: a drag runs from a request through
-            // the answers below it, and scrolls the body on while it is held past the edge.
+            // The width comes from the body as last drawn, so a resize is one drawing behind;
+            // this asks for the drawing that catches up.
+            .child(
+                gpui::canvas(
+                    {
+                        let inset = spacing.xxl;
+                        move |bounds, window, _| {
+                            if transcript_width(bounds.size.width, inset) != column {
+                                window.request_animation_frame();
+                            }
+                        }
+                    },
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .inset_0(),
+            )
+            // The transcript's one selection: a drag runs from a request through the answers
+            // below it, and scrolls the body on while it is held past the edge.
             .child(
                 atelier::SelectionScope::new("song-workshop-selection")
                     .scroll(&s.scroll)
-                    .w_full()
-                    .flex()
-                    .justify_center()
                     .child(transcript),
             );
         let memory = s.snapshot.as_ref().is_some_and(|s| s.preferences.enabled);
@@ -2060,6 +2078,12 @@ pub(crate) fn workshop_veil(has_messages: bool, scrolled: gpui::Pixels) -> f32 {
     }
     let travel = (f32::from(scrolled) / f32::from(VEIL_SCROLL)).clamp(0.0, 1.0);
     atelier::motion::lerp(LOG_VEIL, 1.0, travel)
+}
+
+/// How wide the transcript column is drawn in a body `body` wide with `inset` either side: the
+/// whole of the inside, up to `COLUMN_WIDTH`.
+fn transcript_width(body: gpui::Pixels, inset: gpui::Pixels) -> gpui::Pixels {
+    (body - inset * 2.0).max(gpui::px(0.0)).min(COLUMN_WIDTH)
 }
 
 /// An opaque surface under text in the transcript.
@@ -3540,6 +3564,109 @@ mod tests {
                 Some("A fast song\n\nHere is a plan.")
             );
         });
+    }
+
+    /// The transcript is as tall as what it holds, at every width of the window.
+    ///
+    /// The layout measures text at widths other than the one it is drawn at, zero among them,
+    /// and a measurement could be kept for the drawing. At one window width in a few dozen this
+    /// conversation's transcript stood ten times taller than its entries, the body scrolled to
+    /// its end, and the window showed no conversation at all.
+    #[gpui::test]
+    fn the_transcript_ends_at_its_last_entry_at_every_width(cx: &mut gpui::TestAppContext) {
+        let (app, cx) = crate::harness::open(cx);
+        cx.update(|window, cx| {
+            app.update(cx, |this, cx| {
+                this.show_project_chooser(window, cx);
+                this.open_song_workshop(window, cx);
+            })
+        });
+        make_ready(&app, cx);
+        let candidate = |id: u64, title: &str, description: &str, error: Option<&str>, tools| {
+            serde_json::json!({
+                "id": id,
+                "parent": null,
+                "ready": error.is_none(),
+                "error": error,
+                "recoveries": 0,
+                "tools": { "inspect_project": tools },
+                "feedback": null,
+                "direction": {
+                    "title": title,
+                    "description": description,
+                    "instructions": "",
+                    "protected_tracks": [],
+                    "sources": [],
+                },
+            })
+        };
+        let document: auris_session::workshop::Document = serde_json::from_value(serde_json::json!({
+            "messages": [
+                { "user": true, "text": "最近のボカロ曲っぽい何かを作ってほしい。お任せで。" },
+                {
+                    "user": false,
+                    "text": "最近のボカロ曲のトレンドを取り入れた2つの異なるアプローチをご提案します。\
+                        お好みの方向性を教えていただくか、番号でお選びください。\n\n\
+                        1. 『エレクトリック・パラノイア』: 疾走感あふれる高速エレクトロ・スピードポップ\
+                        （BPM 168）。タイトな4つ打ちビートとアグレッシブなピアノリフに乗せて、早口で\
+                        畳み掛けるメロディと突き抜けるキャッチーなサビが特徴です。\n\
+                        2. 『ルーザーの夜想曲』: スラップベースとファンキーなギターが絡むダーク・\
+                        グルーヴロック（BPM 138）。少し怪しげでおしゃれなコード進行、跳ねるリズムと\
+                        シニカルで中毒性の高いメロディが特徴です。",
+                },
+            ],
+            "rounds": [{
+                "after_message": 2,
+                "candidates": [
+                    candidate(
+                        0,
+                        "エレクトリック・パラノイア",
+                        "疾走感あふれる高速4つ打ちダンスビートとキレのあるピアノリフが牽引する、\
+                         現代ボカロ王道のエレクトロ・スピードポップ。早口な譜割りとキャッチーな\
+                         サビの跳躍が特徴です。",
+                        None,
+                        serde_json::json!({ "total": 160, "succeeded": 154, "failed": 6, "interrupted": 0 }),
+                    ),
+                    candidate(
+                        1,
+                        "ルーザーの夜想曲",
+                        "ファンキーなスラップベースと歪んだカッティングギターが絡み合う、ダーク＆\
+                         シニカルなグルーヴロック。怪しげなコード進行と中毒性の高いサビのフックが\
+                         特徴です。",
+                        Some(
+                            "The agent's turn failed: individual quota reached. Please upgrade \
+                             your subscription to increase your limits. Resets in 167h36m52s.",
+                        ),
+                        serde_json::json!({ "total": 135, "succeeded": 126, "failed": 9, "interrupted": 0 }),
+                    ),
+                ],
+            }],
+        }))
+        .unwrap();
+        app.update(cx, |this, _| {
+            this.song_workshop
+                .as_mut()
+                .unwrap()
+                .snapshot
+                .as_mut()
+                .unwrap()
+                .document = document;
+        });
+        let mut width = 640.0;
+        while width <= 2100.0 {
+            crate::harness::resize(&app, cx, gpui::size(gpui::px(width), gpui::px(900.0)));
+            crate::harness::paint(&app, cx);
+            let transcript = cx.debug_bounds("song-workshop-transcript").unwrap();
+            // The last entry: the panel holding this button, whose own inset is all that may
+            // follow it.
+            let last = cx.debug_bounds("song-more-candidates").unwrap();
+            assert!(
+                transcript.bottom() - last.bottom() < gpui::px(40.0),
+                "at {width}: the transcript runs {:?} past its last entry",
+                transcript.bottom() - last.bottom()
+            );
+            width += 23.0;
+        }
     }
 
     /// A wrapped Japanese answer is as tall as its blocks, and the candidates follow it.
