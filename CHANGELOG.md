@@ -7,6 +7,66 @@ a migration path. The version number is the promise, and `0` is the promise that
 The release workflow reads the section whose heading matches the tag, so the headings are the
 format rather than a convention: `## <version> — <date>`.
 
+## 0.21.0 — 2026-11-13
+
+**The whole-song composition engine is gone.** Songs are written by the agent, phrase by phrase,
+with `generate_phrase` and the other phrase-level tools; the whole-song composer, its commands and
+the `.asong` examples are removed. Building from source now needs Rust 1.100.
+
+### Composing with the agent
+
+* `generate_phrase` writes any part, a sung lead included, from starting controls.
+* The composer reads Japanese rhythm as text rather than having to hear it, and a sung melody is
+  measured against its lyric's pitch accent (`lyric_accent`).
+* The workshop composes finished songs from the first round, is guided and checked on melody,
+  drums and strumming, and is offered only the tools that work and do something for it.
+* Workshop candidates are rated in place, and each workshop round keeps a generation log.
+* A tool outside the catalog is answered instead of ending the turn, and an OpenCode turn ends
+  when the provider fails.
+* Pictures and audio a tool answered with are shown in the agent conversation; the whole
+  conversation and the log can be selected, and a whole message copied from its footer.
+* Overlapping clips on one track are linted, and the agent is told which curve lanes a clip has.
+* Every VOICEVOX singing style is listed as a library voice of its own.
+
+### Arranging and sound
+
+* **Add a subtractive synthesiser** with seven built-in patches: SuperSaw, pad, lead, bass, PWM
+  strings, brass and pluck.
+* **Add formula-based electronic drum kits and kick basses.**
+* **Sends are folded into outputs.** A track output carries its own level and tap point (before
+  or after the fader); a reverb feed is simply a second output at a lower level.
+* **Effects are rows of their strip** rather than nodes of the mixer graph, and comments can be
+  pinned to mixer graph nodes.
+* The physical instruments are rebuilt and show what is inside them; the choir sings on
+  self-oscillating vocal folds, the guitar's open strings ring, and the bow's steady push no
+  longer leaks out through the bridge.
+* The synth pictures — FM, chiptune and physical — are edited by dragging them, as curve editors.
+* The sound map has one arrangement and the sound search one request.
+* General MIDI programs survive MIDI import and export.
+* VST3: Serum loads despite an empty `moduleinfo.json`, and no longer crashes after rediscovery
+  on macOS.
+
+### Interface
+
+* **Add a MIDI event list** beside the piano roll, and show bar numbers over the piano roll.
+* Type names, lyrics, chords and comments where they are shown.
+* The playhead is followed with Follow and Back to Playhead.
+* Plugin parameters turn on knobs, and colours, meters, figures and text fields are drawn by
+  Atelier.
+* The file name is the song's only title.
+* Every launch writes a log file and every panic a crash report; Help → Open Log Folder shows
+  them, and the next start offers an unseen report for an issue.
+* `.auris` projects open from Explorer with Auris Studio.
+* Japanese text keeps its width in narrow columns and its line height in Markdown answers.
+* Text-field Undo and Redo work; the per-message Copy buttons are gone.
+
+### Command line
+
+* `auris render` keeps an existing WAV unless given `--force`.
+
+Projects are now saved as format 37, which folds sends into outputs and moves comments pinned to
+an effect onto its strip; earlier builds cannot open them.
+
 ## 0.20.0 — 2026-11-06
 
 ### Composing with the agent

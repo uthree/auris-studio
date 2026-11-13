@@ -1264,12 +1264,31 @@ impl PluginHostProcess {
 
     /// Spawn the helper at `helper_path` and wire up the response reader thread.
     fn spawn(helper_path: std::path::PathBuf, timeout: Duration) -> Result<Self, String> {
-        let mut child = Command::new(&helper_path)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
-            .spawn()
-            .map_err(|e| format!("Failed to spawn helper process: {}", e))?;
+        // A file that is open for writing anywhere cannot be executed on Linux (ETXTBSY), and
+        // "anywhere" includes a child that another thread of this process has just forked:
+        // it inherits every descriptor and holds them until its own exec closes them. Whoever
+        // wrote the helper closed it long ago, so the condition clears within moments; reporting
+        // it as a failed load would be wrong. Tests that write fake helpers hit it constantly.
+        const BUSY_RETRIES: u32 = 50;
+        let mut attempt = 0;
+        let mut child = loop {
+            match Command::new(&helper_path)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::inherit())
+                .spawn()
+            {
+                Ok(child) => break child,
+                Err(e)
+                    if e.kind() == std::io::ErrorKind::ExecutableFileBusy
+                        && attempt < BUSY_RETRIES =>
+                {
+                    attempt += 1;
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(e) => return Err(format!("Failed to spawn helper process: {}", e)),
+            }
+        };
 
         let stdin = child.stdin.take().ok_or("Failed to get stdin")?;
         let stdout = child.stdout.take().ok_or("Failed to get stdout")?;
