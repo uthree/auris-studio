@@ -11,9 +11,14 @@ env:
   # Warnings are the point of running this at all.
   RUSTFLAGS: -D warnings
 
+# A pull request only needs its newest push checked, so older runs are cancelled. A push to a
+# branch is different: the release workflow will not publish a tag unless CI succeeded on that
+# exact commit, so every commit on main keeps its own run. Grouping by the commit rather than the
+# branch matters as much as not cancelling: a group holds one pending run, and a newer push would
+# still replace one that had not started yet.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   design-adoption:
