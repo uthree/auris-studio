@@ -12,12 +12,17 @@ use std::{
 use tokio::{
     io::{AsyncRead, AsyncWrite, AsyncWriteExt},
     process::{Child, Command},
-    sync::oneshot,
+    sync::{mpsc, oneshot},
 };
 use tokio_util::codec::{FramedRead, LinesCodec};
 
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(30);
 const FRAME_LIMIT: usize = 40 * 1024 * 1024;
+/// How long a turn may make no progress after the provider failed before the failure is
+/// taken as its end. OpenCode retries a provider error internally and tells the ACP client
+/// nothing while it does: a transient one recovers well inside this, while a quota
+/// ("Free usage limit reached") would otherwise hold the prompt open for hours.
+const PROVIDER_GRACE: Duration = Duration::from_secs(60);
 const NATIVE_TOOLS: &[&str] = &[
     "bash",
     "shell",
@@ -193,12 +198,14 @@ fn command(
         .env("OPENCODE_DISABLE_EXTERNAL_SKILLS", "true")
         .env("OPENCODE_DISABLE_CLAUDE_CODE", "true")
         .env("OPENCODE_AUTO_SHARE", "false")
+        // The log is the only place a provider error appears: see `provider_error`.
+        .env("OPENCODE_PRINT_LOGS", "1")
         .env_remove("OPENCODE_CONFIG_CONTENT")
         .env_remove("OPENCODE_CLI_CONFIG_CONTENT")
         .env_remove("OPENCODE_TEST_MANAGED_CONFIG_DIR")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         .kill_on_drop(true);
     if major == 2
         && let Some(mcp) = mcp
@@ -219,6 +226,9 @@ struct Cli {
     next_id: u64,
     session: String,
     image: bool,
+    /// Provider failures read from OpenCode's log, as (session ID, message).
+    provider_errors: Option<mpsc::UnboundedReceiver<(String, String)>>,
+    provider_grace: Duration,
 }
 
 impl Cli {
@@ -237,7 +247,34 @@ impl Cli {
             next_id: 0,
             session: String::new(),
             image: false,
+            provider_errors: None,
+            provider_grace: PROVIDER_GRACE,
         }
+    }
+
+    /// Drain OpenCode's log stream, passing on the provider failures in it.
+    ///
+    /// The stream is read to its end whatever it holds: a pipe nobody empties would
+    /// eventually block OpenCode on its next log line.
+    fn watch_log(&mut self, log: impl AsyncRead + Unpin + Send + 'static) {
+        let (sender, receiver) = mpsc::unbounded_channel();
+        self.provider_errors = Some(receiver);
+        tokio::spawn(async move {
+            let mut log = tokio::io::BufReader::new(log);
+            let mut line = Vec::new();
+            loop {
+                line.clear();
+                match tokio::io::AsyncBufReadExt::read_until(&mut log, b'\n', &mut line).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(_) => {
+                        if let Some(error) = provider_error(&String::from_utf8_lossy(&line)) {
+                            // The receiver goes with the CLI; the rest is still drained.
+                            let _ = sender.send(error);
+                        }
+                    }
+                }
+            }
+        });
     }
 
     async fn spawn(
@@ -270,7 +307,12 @@ impl Cli {
             .stdout
             .take()
             .ok_or("OpenCode stdout was not available")?;
+        let log = child
+            .stderr
+            .take()
+            .ok_or("OpenCode stderr was not available")?;
         let mut cli = Self::transport(Some(child), input, output);
+        cli.watch_log(log);
         let session = cli
             .initialize(project.unwrap_or(cwd), if major == 1 { mcp } else { None })
             .await?;
@@ -341,8 +383,12 @@ impl Cli {
             .map_err(|error| format!("OpenCode connection closed: {error}"))
     }
 
-    async fn read(&mut self) -> Result<Value, String> {
-        let line = self.output.next().await.ok_or("OpenCode exited or closed its connection. Check its installation and run opencode auth login")?.map_err(|error| error.to_string())?;
+    /// Read one ACP message; a free function of the stream so a turn can wait on it
+    /// alongside the log.
+    async fn frame(
+        output: &mut FramedRead<Box<dyn AsyncRead + Unpin + Send>, LinesCodec>,
+    ) -> Result<Value, String> {
+        let line = output.next().await.ok_or("OpenCode exited or closed its connection. Check its installation and run opencode auth login")?.map_err(|error| error.to_string())?;
         let message: Value = serde_json::from_str(&line)
             .map_err(|error| format!("Invalid OpenCode ACP message: {error}"))?;
         if message["jsonrpc"] != "2.0" {
@@ -362,14 +408,45 @@ impl Cli {
         self.send(json!({"jsonrpc":"2.0","id":id,"method":method,"params":params}))
             .await?;
         let mut turn = Turn::default();
+        // A provider failure OpenCode is retrying behind the ACP stream, and when its
+        // grace runs out. Any sign of progress clears it.
+        let mut failure: Option<(String, tokio::time::Instant)> = None;
         loop {
-            let message = self.read().await?;
+            let deadline = failure.as_ref().map(|(_, deadline)| *deadline);
+            let message = tokio::select! {
+                message = Self::frame(&mut self.output) => message?,
+                Some((session, error)) = async {
+                    match self.provider_errors.as_mut() {
+                        Some(errors) => errors.recv().await,
+                        None => std::future::pending().await,
+                    }
+                } => {
+                    if session == self.session {
+                        let deadline = deadline.unwrap_or_else(|| {
+                            tokio::time::Instant::now() + self.provider_grace
+                        });
+                        failure = Some((error, deadline));
+                    }
+                    continue;
+                }
+                () = async {
+                    match deadline {
+                        Some(deadline) => tokio::time::sleep_until(deadline).await,
+                        None => std::future::pending().await,
+                    }
+                } => {
+                    let error = failure.take().map(|(error, _)| error).unwrap_or_default();
+                    return Err(format!("OpenCode provider error: {error}"));
+                }
+            };
             if message["method"].is_string() {
                 if message.get("id").is_some() {
+                    failure = None;
                     self.server_request(&message, bridge, &turn).await?;
                 } else if message["method"] == "session/update"
                     && message["params"]["sessionId"] == self.session
                 {
+                    failure = None;
                     turn.update(&message["params"]["update"], bridge)?;
                 }
                 continue;
@@ -388,6 +465,13 @@ impl Cli {
                 .cloned()
                 .ok_or("OpenCode omitted the ACP result")?;
             if method == "session/prompt" {
+                // OpenCode ends a turn whose provider error it will not retry as an
+                // ordinary, empty one; the log is what says why.
+                if let Some((error, _)) = failure
+                    && turn.answer.is_empty()
+                {
+                    return Err(format!("OpenCode provider error: {error}"));
+                }
                 if result["stopReason"] != "end_turn" {
                     return Err(format!(
                         "OpenCode turn did not complete: {}",
@@ -590,6 +674,56 @@ impl Turn {
         }
         Ok(())
     }
+}
+
+/// The session ID and message of a provider failure in one line of OpenCode's log.
+///
+/// OpenCode 1.x relays nothing over ACP while it retries a failed model request, so its
+/// log line is the only account of what went wrong. The lines are logfmt, a value quoted
+/// as a JSON string when it holds spaces:
+/// `level=ERROR message="stream error" … session.id=ses_… small=false … error.error="AI_APICallError: Free usage limit reached. …"`.
+/// The small model's failures (titles) are not the turn's, and are left out.
+fn provider_error(line: &str) -> Option<(String, String)> {
+    let mut fields = HashMap::new();
+    let mut rest = line.trim();
+    while let Some(equals) = rest.find('=') {
+        let key = rest[..equals].trim();
+        let value = &rest[equals + 1..];
+        let (value, next) = if value.starts_with('"') {
+            let mut escaped = false;
+            let end = value
+                .char_indices()
+                .skip(1)
+                .find(|&(_, c)| {
+                    let quote = c == '"' && !escaped;
+                    escaped = c == '\\' && !escaped;
+                    quote
+                })
+                .map(|(index, _)| index + 1)?;
+            (
+                serde_json::from_str::<String>(&value[..end]).ok()?,
+                &value[end..],
+            )
+        } else {
+            let end = value.find(char::is_whitespace).unwrap_or(value.len());
+            (value[..end].to_owned(), &value[end..])
+        };
+        fields.insert(key, value);
+        rest = next.trim_start();
+    }
+    if fields.get("level")? != "ERROR"
+        || fields.get("message")? != "stream error"
+        || fields.get("small").is_some_and(|small| small == "true")
+    {
+        return None;
+    }
+    let error = fields.get("error.error").or_else(|| fields.get("error"))?;
+    // Drop the SDK's class name: "AI_APICallError: Free usage limit reached."
+    let error = match error.split_once(": ") {
+        Some((name, message)) if name.ends_with("Error") && !name.contains(' ') => message,
+        _ => error,
+    };
+    Some((fields.get("session.id")?.clone(), error.trim().to_owned()))
 }
 
 fn model_config(session: &Value) -> Option<&Value> {
@@ -1110,6 +1244,131 @@ mod tests {
             && event["tool"] == "add_track"
             && event["text"] == "Done"
             && event["ok"] == true));
+    }
+
+    /// OpenCode 1.19.1's own log line for an exhausted free tier, as it was written.
+    const QUOTA_LINE: &str = r#"timestamp=2026-11-12T18:10:16.594Z level=ERROR run=825200e6 message="stream error" providerID=opencode modelID=deepseek-v4.1-flash-free session.id=session small=false agent=auris mode=primary error.error="AI_APICallError: Free usage limit reached. Free models work in OpenCode (https://opencode.ai); subscribe to OpenCode Go to keep going: https://opencode.ai/go""#;
+
+    fn with_log(cli: &mut Cli) -> tokio::io::DuplexStream {
+        let (log, server) = tokio::io::duplex(4096);
+        cli.watch_log(log);
+        cli.provider_grace = Duration::from_millis(200);
+        server
+    }
+
+    #[test]
+    fn provider_errors_are_read_from_the_main_model_stream_errors_only() {
+        let (session, error) = provider_error(QUOTA_LINE).unwrap();
+        assert_eq!(session, "session");
+        assert!(error.starts_with("Free usage limit reached. Free models work"));
+        assert!(error.ends_with("https://opencode.ai/go"));
+        let title = QUOTA_LINE.replace("small=false", "small=true");
+        assert_eq!(provider_error(&title), None);
+        assert_eq!(
+            provider_error(&QUOTA_LINE.replace("level=ERROR", "level=INFO")),
+            None
+        );
+        assert_eq!(
+            provider_error(
+                r#"level=ERROR message="stream error" session.id=s error.error="say \"no\"""#
+            ),
+            Some(("s".into(), r#"say "no""#.into()))
+        );
+        assert_eq!(provider_error("not logfmt at all"), None);
+    }
+
+    /// OpenCode retries the failed request behind a silent ACP stream and never answers the
+    /// prompt; the turn used to wait for the workshop's 900-second timeout.
+    #[tokio::test]
+    async fn a_provider_error_opencode_keeps_retrying_ends_the_turn_with_its_message() {
+        let (mut cli, server) = transport();
+        let mut log = with_log(&mut cli);
+        let peer = async {
+            let (reader, _writer) = tokio::io::split(server);
+            let mut lines = BufReader::new(reader).lines();
+            let request: Value =
+                serde_json::from_str(&lines.next_line().await.unwrap().unwrap()).unwrap();
+            assert_eq!(request["method"], "session/prompt");
+            for line in [
+                "timestamp=2026-11-12T18:10:16.150Z level=INFO message=process session.id=session"
+                    .into(),
+                QUOTA_LINE.replace("small=false", "small=true"),
+                QUOTA_LINE.replace("session.id=session", "session.id=other"),
+                QUOTA_LINE.into(),
+            ] {
+                log.write_all(format!("{line}\n").as_bytes()).await.unwrap();
+            }
+            // Never answer, never close: what OpenCode does while it retries.
+            std::future::pending::<()>().await;
+        };
+        let started = tokio::time::Instant::now();
+        let error = tokio::time::timeout(Duration::from_secs(10), async {
+            tokio::select! {
+                answer = cli.prompt(json!([{"type":"text","text":"Compose"}]), None) => answer,
+                () = peer => unreachable!(),
+            }
+        })
+        .await
+        .expect("the turn must not wait for the provider to recover")
+        .unwrap_err();
+        assert!(error.contains("Free usage limit reached"), "{error}");
+        assert!(started.elapsed() >= Duration::from_millis(200));
+    }
+
+    #[tokio::test]
+    async fn a_provider_error_followed_by_progress_is_only_a_retry() {
+        let (mut cli, server) = transport();
+        let mut log = with_log(&mut cli);
+        let peer = async {
+            let (reader, mut writer) = tokio::io::split(server);
+            let mut lines = BufReader::new(reader).lines();
+            let request: Value =
+                serde_json::from_str(&lines.next_line().await.unwrap().unwrap()).unwrap();
+            log.write_all(format!("{QUOTA_LINE}\n").as_bytes())
+                .await
+                .unwrap();
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            reply(&mut writer, notification(json!({"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Recovered"}}))).await;
+            // Well past the grace: the update cleared the failure.
+            tokio::time::sleep(Duration::from_millis(400)).await;
+            reply(
+                &mut writer,
+                json!({"jsonrpc":"2.0","id":request["id"],"result":{"stopReason":"end_turn"}}),
+            )
+            .await;
+        };
+        let (answer, ()) = tokio::join!(
+            cli.prompt(json!([{"type":"text","text":"Compose"}]), None),
+            peer
+        );
+        assert_eq!(answer.unwrap(), "Recovered");
+    }
+
+    /// A failure OpenCode does not retry ends the prompt as an ordinary, empty turn.
+    #[tokio::test]
+    async fn an_empty_turn_after_a_provider_error_reports_the_error() {
+        let (mut cli, server) = transport();
+        let mut log = with_log(&mut cli);
+        let peer = async {
+            let (reader, mut writer) = tokio::io::split(server);
+            let mut lines = BufReader::new(reader).lines();
+            let request: Value =
+                serde_json::from_str(&lines.next_line().await.unwrap().unwrap()).unwrap();
+            log.write_all(format!("{QUOTA_LINE}\n").as_bytes())
+                .await
+                .unwrap();
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            reply(
+                &mut writer,
+                json!({"jsonrpc":"2.0","id":request["id"],"result":{"stopReason":"end_turn"}}),
+            )
+            .await;
+        };
+        let (answer, ()) = tokio::join!(
+            cli.prompt(json!([{"type":"text","text":"Compose"}]), None),
+            peer
+        );
+        assert!(answer.unwrap_err().contains("Free usage limit reached"));
     }
 
     #[test]

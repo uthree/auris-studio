@@ -131,6 +131,17 @@
 //! before rendering standalone candidates. A failed agent never silently falls back to a
 //! generated song. These checks establish completion evidence, not musical quality.
 //!
+//! A composer is offered only the tools that work inside its candidate and do something there.
+//! A tool the candidate refuses (playback, nested generator jobs, network, files outside its
+//! workspace) or one that has no reader there (a choice card, an issue draft, an attachment
+//! export, a playback loop, an execution trace, silencing a lint finding the user never agreed
+//! to) is left out of its catalog, of `discover_tools`
+//! and of `capabilities`, and is still refused if called. A cheaper model reads an offered tool as
+//! a usable one: given the whole catalog, Sonnet spent most of its failed calls on refused tools,
+//! and GPT Luna put up a choice card and waited for an answer no one would give.
+//! [`crate::AgentPreferences::withheld_tools`] carries the list to the agent runtime, which never
+//! saves it; the chat panel's catalog is unchanged.
+//!
 //! A conversation also retains a bounded `memory.production.json` beside model memory.
 //! The session defines attributed intent/role/motif/decision notes and revision-bound evidence;
 //! the agent runtime owns persistence under the same generation lock as conversation history.

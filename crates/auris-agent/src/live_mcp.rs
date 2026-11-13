@@ -84,7 +84,9 @@ impl ServerHandler for LiveTools {
         _request: Option<PaginatedRequestParams>,
         _context: RequestContext<rmcp::RoleServer>,
     ) -> Result<ListToolsResult, ErrorData> {
-        let tools = ToolHost::definitions()
+        let tools = self
+            .host
+            .offered()
             .into_iter()
             .map(|definition| {
                 Tool::new(

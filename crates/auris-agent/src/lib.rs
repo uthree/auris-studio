@@ -521,7 +521,11 @@ fn strip_markup(text: &str) -> String {
 /// and the bridge is what carries its audio into the next request.
 fn armed(builder: AgentBuilder, bridge: Option<Bridge>, prompt: &str, hearing: bool) -> Agent {
     let mut builder = builder.preamble(prompt).dynamic_tools(Vec::new());
-    for definition in host::ToolHost::definitions_for(hearing && bridge.is_some()) {
+    let withheld = bridge
+        .as_ref()
+        .map(|bridge| bridge.withheld().to_vec())
+        .unwrap_or_default();
+    for definition in host::ToolHost::definitions_for(hearing && bridge.is_some(), &withheld) {
         let tool_name = definition.name.clone();
         let bridge = bridge.clone();
         builder = builder.dynamic_tool(rig::tool::DynamicTool::new(

@@ -696,7 +696,7 @@ pub enum Command {
     GeneratePhrase {
         /// Stable instrument or drum track ID from inspect_project or add_track.
         track: u64,
-        /// Melodic parts require an instrument track; drum parts require a drum track.
+        /// Melodic parts require an instrument track; drum parts require a drum track. A singer track takes lead only: the take arrives without a recipe, moved by octaves into a singing range, ready for write_lyrics.
         #[schemars(extend("enum" = ["lead", "chords", "pad", "arp", "bass", "drums", "kick", "snare", "hat"]))]
         part: String,
         /// First bar, starting at 1, in the project's meter.
@@ -708,6 +708,9 @@ pub enum Command {
         /// Deterministic take seed; defaults to zero. A different seed selects a different take.
         #[serde(default)]
         seed: u64,
+        /// Optional starting controls: density, pitch range, a grid rhythm and swing.
+        #[serde(default)]
+        settings: recipes::PhraseSettings,
     },
 
     /// Set and enable a playback loop using a 1-based start bar and duration. Undo restores both the region and its enabled state.
@@ -1447,10 +1450,12 @@ impl Session {
                 start_bar,
                 bars,
                 seed,
+                settings,
             } => {
                 if start_bar == 0 || !(1..=1024).contains(&bars) {
                     return Err("Use start_bar >= 1 and bars 1..1024".into());
                 }
+                let range = settings.range()?;
                 let preset = ClipPreset::parse(&part).ok_or(
                     "Unknown part; use lead, chords, pad, arp, bass, drums, kick, snare or hat",
                 )?;
@@ -1466,7 +1471,11 @@ impl Session {
                 {
                     return Err("No chords in this range; use edit_harmony before generating a melodic phrase".into());
                 }
+                if range.is_some() && preset.is_drums() {
+                    return Err("range is for melodic parts; a drum part has no register".into());
+                }
                 let mut recipe = ClipRecipe::new(preset, seed);
+                settings.apply(&mut recipe)?;
                 let section = preset
                     .is_drums()
                     .then(|| {
@@ -1481,16 +1490,40 @@ impl Session {
                     recipe.intensity = *intensity;
                 }
                 let intensity = recipe.intensity;
-                let clip = self
-                    .generate_clip(TrackId(track), start, end - start, recipe)
-                    .map_err(error)?;
-                let notes = self
-                    .project()
-                    .midi_clip(clip)
-                    .map_or(0, |(_, clip)| clip.notes.len());
+                let clip = match range {
+                    Some(range) => self.generate_clip_in_range(
+                        TrackId(track),
+                        start,
+                        end - start,
+                        recipe,
+                        range,
+                    ),
+                    None => self.generate_clip(TrackId(track), start, end - start, recipe),
+                }
+                .map_err(error)?;
+                let written = self.project().midi_clip(clip).map(|(_, clip)| clip);
+                let notes = written.map_or(0, |clip| clip.notes.len());
+                let pitches = written
+                    .into_iter()
+                    .flat_map(|clip| &clip.notes)
+                    .map(|note| note.pitch);
+                let pitch_range = pitches.clone().min().zip(pitches.max());
                 let mut result = serde_json::json!({"clip":clip.0,"track":track,
                     "part":preset.name(),"start_bar":start_bar,"bars":bars,"seed":seed,
                     "notes":notes,"intensity":intensity,"unsaved":true});
+                if !preset.is_drums()
+                    && let Some((low, high)) = pitch_range
+                {
+                    result["pitch_range"] = serde_json::json!([low, high]);
+                    let missed = range.is_some_and(|(from, to)| {
+                        (i32::from(low) + i32::from(high) - i32::from(from) - i32::from(to)).abs()
+                            > 12
+                    });
+                    if missed {
+                        // A part moves at most two octaves from its own register.
+                        result["range_missed"] = true.into();
+                    }
+                }
                 if let Some((label, _)) = section {
                     result["struck_for"] = label.into();
                 }
@@ -1655,6 +1688,81 @@ mod tests {
     }
 
     #[test]
+    fn generate_phrase_settings_reach_the_recipe_and_place_the_part() {
+        let generate = |part: &str, settings: serde_json::Value| {
+            let mut session = session();
+            session
+                .agent_edit_harmony(
+                    1,
+                    8,
+                    Some("C major"),
+                    Some("| I | vi | IV | V |"),
+                    false,
+                    None,
+                )
+                .unwrap();
+            let track = if part == "drums" {
+                session.add_default_drum_track("Beat").unwrap()
+            } else {
+                session.add_default_instrument_track("Part").unwrap()
+            };
+            let command = serde_json::json!({"action":"generate_phrase","track":track.0,
+                "part":part,"start_bar":1,"bars":4,"seed":3,"settings":settings});
+            let result = session
+                .agent_command(serde_json::from_value(command).unwrap())
+                .map(|text| serde_json::from_str::<serde_json::Value>(&text).unwrap());
+            (session, result)
+        };
+        for (part, low, high) in [("bass", 28, 43), ("lead", 48, 64), ("lead", 72, 88)] {
+            let (_, result) = generate(part, serde_json::json!({"range":{"low":low,"high":high}}));
+            let result = result.unwrap();
+            let written = &result["pitch_range"];
+            let middle = (written[0].as_i64().unwrap() + written[1].as_i64().unwrap()) / 2;
+            let centre = (low + high) / 2;
+            assert!(
+                (middle - centre).abs() <= 6,
+                "{part} {low}..{high} wrote {written}"
+            );
+            assert!(result.get("range_missed").is_none());
+        }
+        // Two octaves is as far as a part moves: a lead asked into the bass says so.
+        let (_, result) = generate("lead", serde_json::json!({"range":{"low":24,"high":40}}));
+        assert_eq!(result.unwrap()["range_missed"], true);
+        let count = |density: f32| {
+            let (_, result) = generate("arp", serde_json::json!({"density":density}));
+            result.unwrap()["notes"].as_u64().unwrap()
+        };
+        assert!(count(0.1) < count(0.9));
+        let (session, result) = generate(
+            "chords",
+            serde_json::json!({"rhythm":"x..x..x.","swing":62}),
+        );
+        let clip = auris_core::ClipId(result.unwrap()["clip"].as_u64().unwrap());
+        let recipe = session.clip_recipe(clip).unwrap();
+        assert_eq!(
+            (recipe.rhythm.as_deref(), recipe.swing),
+            (Some("x~~x~~x~"), 62)
+        );
+        for (part, settings) in [
+            ("drums", serde_json::json!({"range":{"low":36,"high":60}})),
+            ("lead", serde_json::json!({"range":{"low":60,"high":65}})),
+            ("lead", serde_json::json!({"swing":90})),
+            ("lead", serde_json::json!({"density":1.5})),
+            ("lead", serde_json::json!({"rhythm":"x?x"})),
+        ] {
+            let (session, result) = generate(part, settings.clone());
+            assert!(result.is_err(), "{part} {settings}");
+            assert!(
+                session
+                    .project()
+                    .tracks
+                    .iter()
+                    .all(|track| track.kind.note_clips().is_none_or(|clips| clips.is_empty()))
+            );
+        }
+    }
+
+    #[test]
     fn generated_phrases_keep_their_seed_meter_and_existing_music_and_undo_once() {
         for preset in ClipPreset::ALL {
             let mut session = session();
@@ -1682,6 +1790,7 @@ mod tests {
                 .unwrap();
             let before = session.project().clone();
             let command = || Command::GeneratePhrase {
+                settings: Default::default(),
                 track: track.0,
                 part: preset.name().into(),
                 start_bar: 3,
@@ -1744,6 +1853,7 @@ mod tests {
             assert!(
                 session
                     .agent_command(Command::GeneratePhrase {
+                        settings: Default::default(),
                         track: track.0,
                         part: part.into(),
                         start_bar,
@@ -1790,6 +1900,7 @@ mod tests {
             let mut results = Vec::new();
             for index in 0..labels.len() as u32 {
                 let command = Command::GeneratePhrase {
+                    settings: Default::default(),
                     track: track.0,
                     part: "drums".into(),
                     start_bar: index * 8 + 1,
@@ -1859,12 +1970,15 @@ mod tests {
         for (track, part) in [
             (melodic, "drums"),
             (drum, "lead"),
-            (singer, "lead"),
+            // A singer takes a lead and nothing else.
+            (singer, "chords"),
+            (singer, "drums"),
             (TrackId(u64::MAX), "lead"),
         ] {
             assert!(
                 session
                     .agent_command(Command::GeneratePhrase {
+                        settings: Default::default(),
                         track: track.0,
                         part: part.into(),
                         start_bar: 1,

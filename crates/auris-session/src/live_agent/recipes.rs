@@ -54,6 +54,65 @@ pub struct RecipePatch {
     pub seed: Option<u64>,
 }
 
+/// A pitch range in MIDI note numbers, inclusive at both ends.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PitchRange {
+    /// Lowest note, 0..127 (60 is middle C).
+    pub low: u8,
+    /// Highest note, at least an octave above low.
+    pub high: u8,
+}
+
+/// The score-writing controls a new generated phrase may start from; omitted fields keep the
+/// writer's defaults, and every one stays in the clip's recipe for a later regeneration.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PhraseSettings {
+    /// How busy the part is, 0 (sparse) to 1 (a wall of notes); defaults to 0.5.
+    #[schemars(range(min = 0.0, max = 1.0))]
+    pub density: Option<f32>,
+    /// Where the part sits: it moves by whole octaves until the middle of what it wrote is
+    /// nearest the middle of this range, at most two octaves from the part's own register, so read the result's pitch_range (range_missed says it could not get there). Melodic parts only;
+    /// on a singer track it replaces the default A3..E5 (57..76).
+    pub range: Option<PitchRange>,
+    /// A repeating grid rhythm the part plays instead of its own: x hit, X accent, o ghost,
+    /// ./~/- rest, one character per subdivision step, spaces and | ignored (x..x..x. is a
+    /// 3+3+2 figure in sixteenths).
+    #[schemars(length(max = 4096), regex(pattern = r"^[xXo.~ 	|-]*$"))]
+    pub rhythm: Option<String>,
+    /// Offbeat delay as a percentage, 50 (straight) to 75 (hard swing); a swung song swings
+    /// every part alike.
+    #[schemars(range(min = 50, max = 75))]
+    pub swing: Option<u8>,
+}
+
+impl PhraseSettings {
+    /// Writes the supplied controls into a fresh recipe, refusing an out-of-range value.
+    pub(crate) fn apply(&self, recipe: &mut ClipRecipe) -> Result<(), String> {
+        RecipePatch {
+            density: self.density,
+            rhythm: self.rhythm.clone(),
+            swing: self.swing,
+            ..RecipePatch::default()
+        }
+        .apply(recipe)
+    }
+
+    /// The validated range, as `(low, high)`.
+    pub(crate) fn range(&self) -> Result<Option<(u8, u8)>, String> {
+        match self.range {
+            None => Ok(None),
+            Some(PitchRange { low, high })
+                if high <= 127 && u16::from(low) + 12 <= u16::from(high) =>
+            {
+                Ok(Some((low, high)))
+            }
+            Some(_) => Err("range needs high <= 127 and at least an octave above low".into()),
+        }
+    }
+}
+
 fn groove_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
     let mut names = groove_catalog()
         .iter()

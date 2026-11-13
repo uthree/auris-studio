@@ -1190,25 +1190,16 @@ impl AurisApp {
                     &theme,
                 ));
             }
-            let copy = agent_components::CopyLabels {
-                tooltip: self.t(Key::AgentCopyMarkdown).into(),
-                copied: self.t(Key::CopiedToClipboard).into(),
-            };
             for (i, message) in snapshot.document.messages.iter().enumerate() {
                 let entry = agent_components::workshop_message(
                     ("song-workshop-message", i),
                     message.user,
                     message.text.clone(),
-                    Some(&copy),
-                    &theme,
-                    window,
-                    cx,
                 );
                 let entry =
                     div()
                         .flex()
                         .flex_col()
-                        .group("workshop-copy")
                         .gap(spacing.xs)
                         .child(entry)
                         .children(message.attachments.iter().enumerate().map(
@@ -1249,23 +1240,6 @@ impl AurisApp {
                                     .child(preview)
                             },
                         ))
-                        .child(
-                            div()
-                                .flex()
-                                .when(message.user, |row| row.justify_end())
-                                .child(
-                                    div()
-                                        .rounded(theme.atelier.shape.radius_md)
-                                        .when(message.user, |copy| copy.bg(theme.surface))
-                                        .child(self.workshop_copy_button(
-                                            ("song-copy-message", i),
-                                            Key::WorkshopCopyMessage,
-                                            message.text.clone(),
-                                            window,
-                                            cx,
-                                        )),
-                                ),
-                        )
                         .into_any_element();
                 // The person's own words are already in an opaque bubble.
                 transcript = transcript.child(if message.user {
@@ -3308,10 +3282,6 @@ mod tests {
         for (selector, expected) in [
             ("song-copy-title-0", "夜の散歩"),
             ("song-copy-concept-0", "静かなピアノ\n柔らかな弦楽器"),
-            (
-                "song-copy-message-0",
-                "この方向で作ります。\nピアノを中心に。",
-            ),
         ] {
             crate::harness::click(selector, cx);
             cx.update(|_, cx| {
