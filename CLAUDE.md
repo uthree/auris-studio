@@ -78,6 +78,8 @@ crates/auris-io          audio file import/export, project save/load
 crates/auris-video       note-roll videos: frames drawn in software, encoded by an installed
                          ffmpeg (never bundled); depends on auris-core only
 crates/auris-gpu         optional wgpu compute for offline analysis
+crates/auris-onnx        the one ONNX Runtime environment the process may build, shared by
+                         auris-singer and auris-analysis; depends on ort only
 crates/auris-analysis    offline music recognition: DSP and local model inference
 crates/auris-compose     phrase-level automatic composition: one clip over the document's
                          harmony; depends on auris-core only

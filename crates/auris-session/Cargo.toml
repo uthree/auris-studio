@@ -31,7 +31,6 @@ base64.workspace = true
 dirs = "7"
 hound.workspace = true
 log.workspace = true
-midir.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 schemars = "1"

@@ -132,7 +132,8 @@ pub fn analyze_instruments(
         return Err(AnalysisError::Invalid("YAMNet model exceeds 32 MiB"));
     }
     let hash = hex::encode(Sha256::digest(&bytes));
-    let mut session = Session::builder()
+    let environment = auris_onnx::environment().map_err(model_error)?;
+    let mut session = Session::builder(&environment)
         .map_err(model_error)?
         .with_intra_threads(2)
         .map_err(model_error)?

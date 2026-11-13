@@ -9,6 +9,7 @@ use rig::agent::{
 use rig::tool::ToolErrorKind;
 use rig_core::effect::EffectKind;
 use rig_core::message::{AssistantContent, UserContent};
+use std::borrow::Borrow;
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -239,7 +240,7 @@ fn opaque_tokens(value: &impl serde::Serialize) -> usize {
 }
 
 fn text_tokens(text: &rig_core::message::Text) -> usize {
-    estimated_tokens(&text.text) + text.additional_params.as_ref().map_or(0, opaque_tokens)
+    estimated_tokens(&text.text) + text.native.as_ref().map_or(0, opaque_tokens)
 }
 
 fn inspection_tokens(message: &Message) -> usize {
@@ -289,7 +290,8 @@ fn message_tokens(message: &Message) -> usize {
                     UserContent::Document(document) => opaque_tokens(document),
                 })
                 .sum::<usize>(),
-            Message::Assistant { content, .. } => content
+            Message::Assistant(assistant) => assistant
+                .content
                 .iter()
                 .map(|part| match part {
                     AssistantContent::Text(text) => text_tokens(text),
@@ -298,54 +300,62 @@ fn message_tokens(message: &Message) -> usize {
                             + estimated_tokens(&call.function.name)
                             + estimated_tokens(&call.id.to_string())
                             + serialized_tokens(&call.function.arguments)
-                            + call.signature.as_deref().map_or(0, estimated_tokens)
-                            + call.additional_params.as_ref().map_or(0, serialized_tokens)
+                            + call.native.as_ref().map_or(0, serialized_tokens)
                     }
                     // Reasoning is sealed to its issuing provider. Without that issuer we
                     // cannot inspect its signed/encrypted payload safely; count the opaque
                     // serialized block conservatively.
                     AssistantContent::Reasoning(reasoning) => opaque_tokens(reasoning),
-                    AssistantContent::Image(image) => opaque_tokens(image),
+                    // Images, and provider items with no canonical meaning.
+                    other => opaque_tokens(other),
                 })
                 .sum::<usize>(),
         }
 }
 
-fn history_tokens(prompt: &Message, history: &[Message]) -> usize {
-    history.iter().chain([prompt]).map(message_tokens).sum()
+/// The request a model call sends: the history, then the prompt.
+///
+/// The agent's hooks see history as `Arc<Message>` and the caller fitting it holds plain
+/// messages; both borrow as one.
+fn request<'a, H: Borrow<Message>>(
+    prompt: &'a Message,
+    history: &'a [H],
+) -> impl Iterator<Item = &'a Message> + Clone {
+    history.iter().map(Borrow::borrow).chain([prompt])
+}
+
+fn history_tokens<H: Borrow<Message>>(prompt: &Message, history: &[H]) -> usize {
+    request(prompt, history).map(message_tokens).sum()
 }
 
 fn has_only_known_text(message: &Message) -> bool {
     match message {
         Message::System { .. } => true,
         Message::User { content } => content.iter().all(|part| match part {
-            UserContent::Text(text) => text.additional_params.is_none(),
+            UserContent::Text(text) => text.native.is_none(),
             UserContent::ToolResult(result) => result.content.iter().all(|part| match part {
-                ToolResultContent::Text(text) => text.additional_params.is_none(),
+                ToolResultContent::Text(text) => text.native.is_none(),
                 ToolResultContent::Json { .. } => true,
                 ToolResultContent::Image(_) => false,
             }),
             _ => false,
         }),
-        Message::Assistant { content, .. } => content.iter().all(|part| match part {
-            AssistantContent::Text(text) => text.additional_params.is_none(),
-            AssistantContent::ToolCall(call) => {
-                call.signature.is_none() && call.additional_params.is_none()
-            }
-            AssistantContent::Reasoning(_) => false,
-            AssistantContent::Image(_) => false,
+        Message::Assistant(assistant) => assistant.content.iter().all(|part| match part {
+            AssistantContent::Text(text) => text.native.is_none(),
+            AssistantContent::ToolCall(call) => call.native.is_none(),
+            _ => false,
         }),
     }
 }
 
 impl ObservedContext {
-    fn estimate(
+    fn estimate<H: Borrow<Message>>(
         &self,
         prompt: &Message,
-        history: &[Message],
+        history: &[H],
         output_tokens: usize,
     ) -> Option<usize> {
-        let request = history.iter().chain([prompt]);
+        let request = request(prompt, history);
         if !request.clone().all(has_only_known_text)
             || self.messages.len() > history.len() + 1
             || !self
@@ -371,9 +381,9 @@ impl ObservedContext {
 /// Persisted memory is alternating text-only user/assistant exchanges. Refuse to split any
 /// richer transcript: assistant tool calls and their results must stay correlated.
 fn completed_exchange(messages: &[Message]) -> bool {
-    matches!(messages, [Message::User { content: user }, Message::Assistant { content: assistant, .. }, ..]
+    matches!(messages, [Message::User { content: user }, Message::Assistant(assistant), ..]
         if user.iter().all(|part| matches!(part, UserContent::Text(_)))
-            && assistant.iter().all(|part| matches!(part, AssistantContent::Text(_))))
+            && assistant.content.iter().all(|part| matches!(part, AssistantContent::Text(_))))
 }
 
 impl Guard {
@@ -403,7 +413,7 @@ impl Guard {
         *self.activity.lock().unwrap() = (Instant::now(), running);
     }
 
-    fn context_estimate(&self, prompt: &Message, history: &[Message]) -> usize {
+    fn context_estimate<H: Borrow<Message>>(&self, prompt: &Message, history: &[H]) -> usize {
         self.state
             .lock()
             .unwrap()
@@ -454,7 +464,7 @@ impl AgentHook for Guard {
                     "estimated context budget {estimate} tokens (tools, history and {reserve} output reserve) exceeds requested {limit}; increase Agent Panel context/--context-tokens or start a fresh conversation. Earlier edits remain in the open document and may be unsaved."
                 ));
             }
-            let request = event.history.iter().chain([event.prompt]);
+            let request = request(event.prompt, event.history);
             self.state.lock().unwrap().pending_request = request
                 .clone()
                 .all(has_only_known_text)
@@ -467,9 +477,9 @@ impl AgentHook for Guard {
             let mut history = event.history.to_vec();
             // Preserve contiguous assistant-call/tool-result pairs. The extra context is
             // ephemeral and tagged with the snapshot revision, never persisted as a user turn.
-            let index = history.iter().rposition(|message| matches!(message, Message::Assistant { content, .. } if content.iter().any(|part| matches!(part, AssistantContent::ToolCall(_))))).unwrap_or(history.len());
+            let index = history.iter().rposition(|message| matches!(&**message, Message::Assistant(assistant) if assistant.content.iter().any(|part| matches!(part, AssistantContent::ToolCall(_))))).unwrap_or(history.len());
             for message in audible.into_iter().chain(visual).rev() {
-                history.insert(index, message);
+                history.insert(index, Arc::new(message));
             }
             return CompletionCallAction::Patch(
                 rig::agent::RequestPatch::default().history(history),
@@ -738,18 +748,12 @@ mod tests {
             ToolName::new("tool_help").unwrap(),
             &payload,
         );
-        let provider: Vec<rig_core::providers::ollama::Message> =
-            message.clone().try_into().unwrap();
-        let rig_core::providers::ollama::Message::ToolResult { content, .. } = &provider[0] else {
-            panic!("a tool reply must remain a provider tool message");
-        };
-        assert_eq!(content, &payload);
         assert_eq!(
             message_tokens(&message),
             MESSAGE_FRAMING * 2
                 + estimated_tokens("call_1")
                 + estimated_tokens("tool_help")
-                + estimated_tokens(content)
+                + estimated_tokens(&payload)
         );
         assert!(serialized_tokens(&message) > message_tokens(&message));
 
@@ -763,14 +767,13 @@ mod tests {
     #[test]
     fn measured_context_counts_only_growth_and_keeps_the_output_reserve() {
         let first_prompt = Message::user("Read the compressor and then set its sidechain");
-        let call = Message::Assistant {
-            id: None,
-            content: vec![AssistantContent::tool_call(
+        let call = Message::Assistant(rig_core::message::AssistantMessage::new(vec![
+            AssistantContent::tool_call(
                 "call_1",
                 ToolName::new("tool_help").unwrap(),
                 serde_json::json!({"name":"effects"}),
-            )],
-        };
+            ),
+        ]));
         let result = Message::tool_result(
             CallId::from_wire("call_1"),
             ToolName::new("tool_help").unwrap(),
@@ -967,14 +970,13 @@ mod tests {
     fn history_compaction_does_not_detach_a_tool_result_from_its_call() {
         let mut history = vec![
             Message::user("Inspect the project"),
-            Message::Assistant {
-                id: None,
-                content: vec![rig_core::message::AssistantContent::tool_call(
+            Message::Assistant(rig_core::message::AssistantMessage::new(vec![
+                rig_core::message::AssistantContent::tool_call(
                     "call_1",
                     ToolName::new("describe").unwrap(),
                     serde_json::json!({"project":"Song.auris"}),
-                )],
-            },
+                ),
+            ])),
             Message::tool_result(
                 CallId::from_wire("call_1"),
                 ToolName::new("describe").unwrap(),

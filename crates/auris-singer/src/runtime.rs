@@ -3,12 +3,12 @@
 use std::path::Path;
 
 #[cfg(target_os = "macos")]
-use ort::execution_providers::CoreML;
+use ort::ep::CoreML;
 #[cfg(target_os = "windows")]
-use ort::execution_providers::DirectML;
+use ort::ep::DirectML;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
-use ort::execution_providers::ExecutionProvider;
-use ort::execution_providers::ExecutionProviderDispatch;
+use ort::ep::ExecutionProvider;
+use ort::ep::ExecutionProviderDispatch;
 use ort::session::Session;
 use ort::session::builder::GraphOptimizationLevel;
 
@@ -43,13 +43,13 @@ fn gpu_provider() -> Option<(ExecutionProviderDispatch, bool)> {
     #[cfg(target_os = "windows")]
     {
         let provider = DirectML::default();
-        let carried = provider.is_available().unwrap_or(false);
+        let carried = DirectML::is_available().unwrap_or(false);
         Some((provider.build(), carried))
     }
     #[cfg(target_os = "macos")]
     {
         let provider = CoreML::default();
-        let carried = provider.is_available().unwrap_or(false);
+        let carried = CoreML::is_available().unwrap_or(false);
         Some((provider.build(), carried))
     }
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
@@ -77,7 +77,8 @@ pub(crate) fn open_session_with_optimization(
     let refused = |error: ort::Error| SingError::Load {
         reason: error.to_string(),
     };
-    let mut builder = Session::builder()
+    let environment = auris_onnx::environment().map_err(refused)?;
+    let mut builder = Session::builder(&environment)
         .and_then(|builder| Ok(builder.with_intra_threads(threads)?))
         .and_then(|builder| {
             Ok(builder.with_optimization_level(if basic_optimization {

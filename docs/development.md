@@ -39,7 +39,6 @@ ALONGSIDE THE APPLICATION
 
 NOT THE WORKSPACE
   vendor/rustysynth     somebody else's crate, forked — see its own README
-  vendor/midir          MIDI library fork — see README-AURIS.md
   vendor/vst3-host      VST3 host fork — see README-AURIS.md
   vendor/gpui-flow      mixer graph UI fork — see README-AURIS.md
 ```

@@ -40,7 +40,6 @@ FRONTEND
 
 ワークスペース外
   vendor/rustysynth     他者の crate、fork — 専用 README を参照
-  vendor/midir          MIDI ライブラリの fork — README-AURIS.md を参照
   vendor/vst3-host      VST3 ホストの fork — README-AURIS.md を参照
   vendor/gpui-flow      ミキサーグラフ UI の fork — README-AURIS.md を参照
 ```

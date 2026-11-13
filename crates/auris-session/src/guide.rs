@@ -453,6 +453,8 @@ pub mod architecture {
     //!   auris-video     note-roll videos: frames in software, encoded by an installed ffmpeg
     //!                   → auris-core only
     //!   auris-gpu       optional wgpu compute for offline analysis
+    //!   auris-onnx      the one ONNX Runtime environment a process may build, shared by
+    //!                   auris-singer and auris-analysis           → ort only
     //!   auris-compose   phrase-level automatic composition: one clip over the harmony
     //!   auris-vocal     lyrics to phonemes, notes to voice-model frames → auris-core only
     //!   auris-singer    offline neural voice synthesis             → auris-core, auris-vocal

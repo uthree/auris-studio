@@ -528,8 +528,10 @@ fn armed(builder: AgentBuilder, bridge: Option<Bridge>, prompt: &str, hearing: b
     for definition in host::ToolHost::definitions_for(hearing && bridge.is_some(), &withheld) {
         let tool_name = definition.name.clone();
         let bridge = bridge.clone();
+        let name =
+            rig_core::message::ToolName::new(definition.name).expect("every host tool has a name");
         builder = builder.dynamic_tool(rig::tool::DynamicTool::new(
-            definition.name,
+            name,
             definition.description,
             definition.parameters,
             move |mut args| {
@@ -656,7 +658,9 @@ fn build_with(
             Ok(armed(
                 // Tool arguments benefit from repeatability; do not inherit a local model's
                 // high-temperature chat preset. This changes only this request, not Ollama.
-                AgentBuilder::new(client.completion(&options.model))
+                // The native `/api/chat` route: `num_ctx` and `think` are refused by the
+                // daemon's OpenAI-compatible one, which `completion` now builds.
+                AgentBuilder::new(client.native_completion(&options.model))
                     .temperature(0.0)
                     .max_tokens(u64::from(options.output_tokens))
                     .additional_params(params),
@@ -1047,7 +1051,7 @@ fn call_event(event: &DispatchEvent<'_>) -> serde_json::Value {
 /// A skipped or refused call is a failed result to the host, even without an execution error.
 fn result_event(event: &OutcomeEvent<'_>) -> serde_json::Value {
     let (ok, text) = match event.outcome {
-        Ok(rig_core::effect::Outcome::ToolResult { result }) => {
+        Ok(rig_core::effect::Answered::ToolResult { result }) => {
             (result.is_success(), full_text(result.output()))
         }
         Err(report) => (false, report.message.clone()),
@@ -1214,18 +1218,15 @@ async fn converse_with_bridge(
                 reasoning_delta_seen = false;
             }
             MultiTurnStreamItem::FinalResponse(response) => {
-                let kept = match response.messages {
-                    Some(new_messages) => {
-                        history.extend(new_messages);
-                        history
-                    }
-                    None => {
-                        history.push(asked);
-                        history.push(Message::assistant(&response.output));
-                        history
-                    }
-                };
-                return Ok((response.output, kept, response.usage, context_tokens));
+                let output = response.output();
+                // A run's transcript is empty only for a response no run produced.
+                if response.messages.is_empty() {
+                    history.push(asked);
+                    history.push(Message::assistant(&output));
+                } else {
+                    history.extend(response.messages);
+                }
+                return Ok((output, history, response.usage, context_tokens));
             }
             _ => {}
         }
@@ -2065,7 +2066,7 @@ mod tests {
     async fn ollama_caps_the_context_before_building_requests_and_budgeting_history() {
         let (url, seen) = mock_server(vec![
             serde_json::json!({"capabilities":["tools"],"model_info":{"lfm3.context_length":128000}}).to_string(),
-            serde_json::json!({"model":"mock","created_at":"2026-09-06T00:00:00Z","message":{"role":"assistant","content":"ready"},"done":true,"prompt_eval_count":100,"eval_count":1}).to_string(),
+            serde_json::json!({"model":"mock","created_at":"2026-09-06T00:00:00Z","message":{"role":"assistant","content":"ready"},"done":true,"done_reason":"stop","prompt_eval_count":100,"eval_count":1}).to_string(),
         ]);
         let Command::Run(mut options) = parse(
             &format!("--model mock --url {url} --context-tokens 131072 --thinking off"),
