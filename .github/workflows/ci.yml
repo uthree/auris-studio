@@ -8,7 +8,6 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  RUST_TOOLCHAIN: "1.100.0"
   # Warnings are the point of running this at all.
   RUSTFLAGS: -D warnings
 
@@ -36,7 +35,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install the toolchain
-        run: rustup toolchain install ${{ env.RUST_TOOLCHAIN }} --profile minimal --component rustfmt,clippy && rustup default ${{ env.RUST_TOOLCHAIN }}
+        run: rustup toolchain install
 
       # ONNX Runtime's Core ML objects use Apple's availability checks. Rust drives the final
       # linker directly, so carry the compiler runtime that provides those symbols with it.
@@ -126,7 +125,7 @@ jobs:
       - uses: ilammy/msvc-dev-cmd@v1
 
       - name: Install the toolchain
-        run: rustup toolchain install ${{ env.RUST_TOOLCHAIN }} --profile minimal --component clippy && rustup default ${{ env.RUST_TOOLCHAIN }}
+        run: rustup toolchain install
 
       - name: Cache the build
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
@@ -179,7 +178,7 @@ jobs:
       - uses: ilammy/msvc-dev-cmd@v1
 
       - name: Install the toolchain
-        run: rustup toolchain install ${{ env.RUST_TOOLCHAIN }} --profile minimal --component clippy && rustup default ${{ env.RUST_TOOLCHAIN }}
+        run: rustup toolchain install
 
       # Restore the default Windows job's cache rather than keep one of its own: rust-cache
       # keys by job, and a key of this job's own started cold on every pull request until main
@@ -224,7 +223,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install the toolchain
-        run: rustup toolchain install ${{ env.RUST_TOOLCHAIN }} --profile minimal --component clippy && rustup default ${{ env.RUST_TOOLCHAIN }}
+        run: rustup toolchain install
 
       # cpal builds against ALSA on Linux, and vst3-host links against XCB. wgpu loads its
       # backends at run time.
