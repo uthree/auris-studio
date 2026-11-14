@@ -136,6 +136,27 @@ impl SettingsWindow {
                 },
                 cx,
             );
+            let octaves = (-auris_session::MIDI_OCTAVE_LIMIT..=auris_session::MIDI_OCTAVE_LIMIT)
+                .map(|octave| (octave, crate::ui::root::octave_label(octave), String::new()))
+                .collect();
+            let octave = self.dropdown(
+                "midi-octave",
+                octaves,
+                &midi.octave,
+                |this, octave, cx| {
+                    let midi = MidiPreferences {
+                        octave,
+                        ..this.midi.clone()
+                    };
+                    this.apply_midi(midi, cx);
+                },
+                cx,
+            );
+            inputs = inputs.child(
+                FormField::new(self.t(Key::MidiOctave))
+                    .description(self.t(Key::MidiOctaveNote))
+                    .child(octave),
+            );
             inputs = inputs.child(
                 FormField::new(self.t(Key::MidiVelocity))
                     .description(self.t(Key::MidiVelocityNote))

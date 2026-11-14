@@ -421,6 +421,14 @@ track, or the first one in the song when the selection cannot play notes. A key 
 released on the track it went down on, so moving the selection with a chord held leaves nothing
 hanging. The note sounds the moment it arrives — it does not wait for the window's next frame.
 
+**A small keyboard reaches the whole range by moving its octave.** `Shift+Z` and `Shift+X` move
+every key of a MIDI keyboard down and up an octave, up to four either way — Musical Typing's own
+octave keys with Shift added, so they stay out of the letters it plays. **Transport → MIDI Keyboard
+Octave Down / Up** and **Settings → MIDI → Octave** do the same. While the keyboard is moved, the
+transport says so (`MIDI +1`); clicking that puts it back. A key held down while the octave moves
+still releases the note it struck. The shift is remembered across launches. A keyboard's own octave
+buttons, where it has them, work as well and add to this.
+
 **Record on an instrument track writes down what is played.** Select the track, press **Record**
 (or `R`), play, press it again: the notes become one clip at the position you were *hearing* when
 you struck them, as one undo step. A take keeps the keyboard on its own track even if the

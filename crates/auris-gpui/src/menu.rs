@@ -733,6 +733,16 @@ pub fn model(language: Language, panels: &PanelLayout, state: MenuState) -> Vec<
                 "transport.step_input",
                 state.step_input,
             ),
+            command(
+                t(Key::CmdMidiOctaveDown),
+                actions::MidiOctaveDown,
+                "transport.midi_octave_down",
+            ),
+            command(
+                t(Key::CmdMidiOctaveUp),
+                actions::MidiOctaveUp,
+                "transport.midi_octave_up",
+            ),
             MenuRow::Separator,
             command(
                 t(Key::CmdGoToPosition),

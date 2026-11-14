@@ -72,6 +72,8 @@ impl Section {
                 Key::MidiInputsGroup,
                 Key::MidiEnabled,
                 Key::MidiEnabledNote,
+                Key::MidiOctave,
+                Key::MidiOctaveNote,
                 Key::MidiVelocity,
                 Key::MidiVelocityNote,
             ],
