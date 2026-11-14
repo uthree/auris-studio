@@ -214,6 +214,10 @@ fn local_path(value: &str) -> Result<PathBuf, String> {
     Ok(path)
 }
 
+/// What a file that failed on loudness is told to do. A model that verifies after the last edit
+/// otherwise reads the failure as something to report rather than to fix.
+const LOUDNESS_FIX: &str = "The file is not delivered yet: call normalize_mix (without target_lufs, it aims at the style's level), render to the same path again and verify again. Changing the faders this way keeps every note and sound.";
+
 /// Whether an encoded file's loudness passes: within `tolerance` of a named target, inside the
 /// style's range when none was named, and unchecked when neither says a level. A silent file
 /// has no loudness and passes only where nothing was asked of it.
@@ -420,7 +424,7 @@ impl FileJob {
                     }
                     (None, None) => serde_json::Value::Null,
                 };
-                Outcome::Verified(serde_json::json!({"path":path,"verdict":if loudness_ok&&peak_ok&&ending_ok {"PASS"}else{"FAIL"},"loudness_ok":loudness_ok,"loudness_held_to":held_to,"peak_ok":peak_ok,"ending_ok":ending_ok,"encoded":encoded}).to_string())
+                Outcome::Verified(serde_json::json!({"path":path,"verdict":if loudness_ok&&peak_ok&&ending_ok {"PASS"}else{"FAIL"},"loudness_ok":loudness_ok,"loudness_held_to":held_to,"next":(!loudness_ok).then_some(LOUDNESS_FIX),"peak_ok":peak_ok,"ending_ok":ending_ok,"encoded":encoded}).to_string())
             }
         };
         check()?;
@@ -1318,6 +1322,10 @@ mod tests {
             serde_json::from_str(&session.continue_agent_file_job(verify, &cancelled).unwrap())
                 .unwrap();
         assert_eq!(report["verdict"], "FAIL");
+        // A loudness failure says how to repair it, and what the file was held to.
+        assert_eq!(report["loudness_ok"], false);
+        assert!(report["next"].as_str().unwrap().contains("normalize_mix"));
+        assert_eq!(report["loudness_held_to"]["target_lufs"], -6.0);
     }
 
     #[test]
