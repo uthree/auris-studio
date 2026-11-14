@@ -490,15 +490,20 @@ fn move_effect_comments_to_strips(document: &mut serde_json::Value) {
 ///
 /// A send that lands where an output already lands at the same tap is the same signal arriving
 /// twice, so the two are summed into one output at the combined level, which is what was heard.
-/// A send's automation lane follows it to its output, unless the send was merged that way: one
-/// curve cannot stand for the sum of two levels, so that lane is dropped.
+/// A send's automation lane follows it to its output. Where the send was merged that way the
+/// lane's values are raised by what arrives beside it, so the output reads at each point what the
+/// two read together: a send automated down to nothing beside an output at unity leaves the
+/// output at unity rather than at the sum of two. One output has one lane, so where two automated
+/// sends were merged into one output the first keeps its curve and the second is dropped.
 ///
 /// Done on the JSON rather than in `serde` so that today's types carry no trace of the old shape.
 fn fold_sends_into_outputs(document: &mut serde_json::Value) {
     use serde_json::{Map, Value, json};
 
     let decibels = |value: &Value| value.as_f64().unwrap_or(0.0);
-    let mut followed: Vec<(Value, Option<Value>)> = Vec::new();
+    let amplitude = |decibels: f64| 10f64.powf(decibels / 20.0);
+    // Each send's id, the output it became, and the amplitude arriving at that output beside it.
+    let mut followed: Vec<(Value, Value, f64)> = Vec::new();
     let Some(tracks) = document.get_mut("tracks").and_then(Value::as_array_mut) else {
         return;
     };
@@ -527,6 +532,15 @@ fn fold_sends_into_outputs(document: &mut serde_json::Value) {
                 }
             })
             .collect();
+        // What each output is the sum of: the plain output it began as, under no id, and every
+        // send folded into it, each at its own level.
+        let mut parts: Vec<Vec<(Value, f64)>> = outputs
+            .iter()
+            .map(|output| {
+                let level = output.get("gain_db").map(decibels).unwrap_or(0.0);
+                vec![(Value::Null, level)]
+            })
+            .collect();
         let sends = match track.remove("sends") {
             Some(Value::Array(sends)) => sends,
             _ => Vec::new(),
@@ -543,7 +557,7 @@ fn fold_sends_into_outputs(document: &mut serde_json::Value) {
             };
             let level = send.get("level_db").map(decibels).unwrap_or(0.0);
             let id = send.get("id").cloned().unwrap_or(Value::Null);
-            let same = outputs.iter_mut().find(|output| {
+            let same = outputs.iter().position(|output| {
                 output.get("to") == Some(&to)
                     && output
                         .get("tap")
@@ -552,11 +566,13 @@ fn fold_sends_into_outputs(document: &mut serde_json::Value) {
                         == tap
             });
             match same {
-                Some(output) => {
-                    let existing = output.get("gain_db").map(decibels).unwrap_or(0.0);
-                    let sum = 10f64.powf(existing / 20.0) + 10f64.powf(level / 20.0);
-                    output.insert("gain_db".into(), json!(20.0 * sum.log10()));
-                    followed.push((id, None));
+                Some(index) => {
+                    parts[index].push((id, level));
+                    let sum: f64 = parts[index]
+                        .iter()
+                        .map(|(_, level)| amplitude(*level))
+                        .sum();
+                    outputs[index].insert("gain_db".into(), json!(20.0 * sum.log10()));
                 }
                 None => {
                     let mut output = Map::new();
@@ -564,9 +580,26 @@ fn fold_sends_into_outputs(document: &mut serde_json::Value) {
                     output.insert("gain_db".into(), json!(level));
                     output.insert("tap".into(), json!(tap));
                     outputs.push(output);
-                    let target = json!({ "Output": { "track": track_id, "to": to, "tap": tap } });
-                    followed.push((id, Some(target)));
+                    parts.push(vec![(id, level)]);
                 }
+            }
+        }
+        for (output, parts) in outputs.iter().zip(&parts) {
+            let tap = output.get("tap").cloned().unwrap_or(json!("post_fader"));
+            let target = json!({
+                "Output": { "track": track_id, "to": output.get("to"), "tap": tap }
+            });
+            for (index, (id, _)) in parts.iter().enumerate() {
+                if id.is_null() {
+                    continue;
+                }
+                let beside: f64 = parts
+                    .iter()
+                    .enumerate()
+                    .filter(|(other, _)| *other != index)
+                    .map(|(_, (_, level))| amplitude(*level))
+                    .sum();
+                followed.push((id.clone(), target.clone(), beside));
             }
         }
         track.insert(
@@ -578,21 +611,28 @@ fn fold_sends_into_outputs(document: &mut serde_json::Value) {
     let Some(lanes) = document.get_mut("automation").and_then(Value::as_array_mut) else {
         return;
     };
+    let mut driven: Vec<Value> = Vec::new();
     lanes.retain_mut(|lane| {
         let Some(send) = lane.pointer("/target/Send/send").cloned() else {
             return true;
         };
-        let target = followed
-            .iter()
-            .find(|(id, _)| *id == send)
-            .and_then(|(_, target)| target.clone());
-        match target {
-            Some(target) => {
-                lane["target"] = target;
-                true
-            }
-            None => false,
+        let Some((_, target, beside)) = followed.iter().find(|(id, _, _)| *id == send) else {
+            return false;
+        };
+        if driven.contains(target) {
+            return false;
         }
+        driven.push(target.clone());
+        lane["target"] = target.clone();
+        if *beside > 0.0
+            && let Some(points) = lane.get_mut("points").and_then(Value::as_array_mut)
+        {
+            for point in points {
+                let level = point.get("value").map(decibels).unwrap_or(0.0);
+                point["value"] = json!(20.0 * (beside + amplitude(level)).log10());
+            }
+        }
+        true
     });
 }
 
@@ -1176,6 +1216,97 @@ mod tests {
         );
         assert_eq!(loaded.master.comments.len(), 1);
         assert_eq!(loaded.master.comments[0].text, "[auris.fx.limiter] -1 dBTP");
+    }
+
+    #[test]
+    fn a_send_folded_into_an_output_keeps_what_its_automation_did() {
+        use auris_core::param::ParamTarget;
+        use auris_core::{Destination, Tap, Ticks};
+
+        let file = TempFile::new("version-35-automated-send.auris");
+        let mut project = demo_project();
+        let bus = project.add_bus_track("Reverb");
+        let other = project.add_bus_track("Delay");
+        let lead = project.add_instrument_track("Lead", "auris.synth.pulse");
+        project.track_mut(lead).unwrap().outputs = vec![auris_core::Output::to_bus(bus)];
+        // Any two lanes, written the way this build writes them, to borrow their shape from.
+        for to in [bus, other] {
+            let target = ParamTarget::Output {
+                track: lead,
+                to: Destination::Bus(to),
+                tap: Tap::PostFader,
+            };
+            project.automation.set_point(
+                target,
+                None,
+                auris_core::automation::AutomationCurve::Linear,
+                Ticks(0),
+                0.0,
+            );
+            project.automation.set_point(
+                target,
+                None,
+                auris_core::automation::AutomationCurve::Linear,
+                Ticks(1920),
+                -60.0,
+            );
+        }
+        let mut value = serde_json::to_value(&project).unwrap();
+        value["format_version"] = serde_json::json!(35);
+        let stored = value["tracks"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|track| track["id"] == serde_json::json!(lead.0))
+            .unwrap();
+        // Version 35: a bare destination after the fader, and two sends beside it. The first
+        // lands where the output lands; the second goes somewhere of its own.
+        stored["outputs"] = serde_json::json!([{ "bus": bus.0 }]);
+        stored["sends"] = serde_json::json!([
+            { "id": 900, "target": bus.0, "level_db": 0.0, "pre_fader": false },
+            { "id": 901, "target": other.0, "level_db": -6.0, "pre_fader": false }
+        ]);
+        for (lane, send) in value["automation"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .zip([900, 901])
+        {
+            lane["target"] = serde_json::json!({ "Send": { "track": lead.0, "send": send } });
+        }
+        std::fs::write(file.path(), serde_json::to_vec(&value).unwrap()).unwrap();
+
+        let loaded = load_project(file.path()).unwrap();
+
+        let lane = |to| {
+            let target = ParamTarget::Output {
+                track: lead,
+                to: Destination::Bus(to),
+                tap: Tap::PostFader,
+            };
+            loaded
+                .automation
+                .lane(target)
+                .expect("the lane follows")
+                .points()
+                .to_vec()
+        };
+        // Beside an output at unity, a send at 0 dB made twice the signal and one faded out
+        // left the output as it was.
+        let merged = lane(bus);
+        assert!(
+            (merged[0].value - 6.0206).abs() < 1e-3,
+            "{}",
+            merged[0].value
+        );
+        assert!(
+            (merged[1].value - 0.0087).abs() < 1e-3,
+            "{}",
+            merged[1].value
+        );
+        // A send with nothing beside it keeps its curve to the decibel.
+        let alone = lane(other);
+        assert_eq!((alone[0].value, alone[1].value), (0.0, -60.0));
     }
 
     #[test]
