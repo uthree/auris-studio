@@ -421,7 +421,7 @@ pub(crate) fn roll_point(
     app.read_with(cx, |this, _| {
         let origin = this.roll_origin();
         let at = point(
-            origin.x + this.timeline.tick_to_x(tick),
+            origin.x + this.roll_timeline.tick_to_x(tick),
             origin.y + this.pitch.pitch_to_y(pitch) + px(this.pitch.row_height / 2.0),
         );
         within(this.canvas.roll.get(), at, "the piano roll")

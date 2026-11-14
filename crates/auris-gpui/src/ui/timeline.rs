@@ -6,6 +6,19 @@
 use auris_session::prelude::*;
 use gpui::{Pixels, px};
 
+/// Which of the window's two time axes a gesture or a control is about.
+///
+/// The arrangement and the clip editor zoom and scroll apart, so a wheel turned with the zoom
+/// modifier zooms whichever of the two the pointer is over, and the zoom slider in each one's
+/// toolbar zooms that one.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum TimeSurface {
+    /// The ruler, the lanes and the strips above them.
+    Arrangement,
+    /// The piano roll, the drum editor and the lanes under them.
+    Editor,
+}
+
 /// Horizontal scroll and zoom of a timeline view.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TimelineView {

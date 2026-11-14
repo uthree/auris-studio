@@ -540,7 +540,7 @@ impl AurisApp {
         let Some(bounds) = self.canvas.roll.get() else {
             return;
         };
-        self.timeline
+        self.roll_timeline
             .scroll_to_reveal(clip_start + event.at, bounds.size.width);
         if let ClipEventKind::Note { pitch, .. } = event.kind {
             let top = self.pitch.y_to_pitch(px(0.0));
