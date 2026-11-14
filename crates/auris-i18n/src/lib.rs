@@ -141,6 +141,8 @@ mod tests {
             Key::VoiceSetupVoicevox,
             Key::VoiceSetupDiffSinger,
             Key::VoiceSetupLeapSinger,
+            // MIDI is MIDI in a Japanese settings window too.
+            Key::TabMidi,
             // The event list's column headings, which Japanese list editors print in English too.
             Key::EventListTick,
             Key::EventListStep,
