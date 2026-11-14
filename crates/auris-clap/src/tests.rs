@@ -844,6 +844,38 @@ fn the_bend_and_the_wheel_both_arrive_by_their_own_route() {
 }
 
 #[test]
+fn a_retuned_note_reaches_the_plugin_as_a_tuning_of_its_own() {
+    // Key 61 asked to sound an eighth-tone above middle C: the plugin hears a note on key 60 and
+    // a tuning of a quarter of a semitone for it, which the fixture records where it records the
+    // bend.
+    let mut plugin = tone();
+    let mut instrument = plugin
+        .activate_instrument(&context())
+        .expect("must activate");
+    instrument.process(
+        &[NoteEvent::NoteOn {
+            frame: 0,
+            key: 61,
+            pitch: 60.25,
+            velocity: 0.5,
+        }],
+        &mut empty(8),
+        &playing(8),
+    );
+    let mut output = empty(8);
+    instrument.process(
+        &[NoteEvent::NoteOff { frame: 4, key: 61 }],
+        &mut output,
+        &playing(8),
+    );
+    plugin.deactivate_instrument(instrument);
+
+    assert_eq!(plugin.value(ParamId(1)), Some(0.25));
+    assert_eq!(output.channel(0)[3], 0.5, "the note sounded");
+    assert_eq!(output.channel(0)[4], 0.0, "and key 61's release ended it");
+}
+
+#[test]
 fn an_instrument_that_will_not_run_leaves_silence_rather_than_what_was_there() {
     // The trait's contract: an instrument overwrites its buffer. A hosted one that produces
     // nothing must still clear whatever the buffer was reused from, or the previous track's

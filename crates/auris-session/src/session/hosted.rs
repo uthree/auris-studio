@@ -251,6 +251,16 @@ impl HostedPlugins {
         self.instruments.get(&track)?.plugin().map(name_of)
     }
 
+    /// Whether a track's hosted instrument can play a note between two keys, or `None` when
+    /// there is no live instance to ask, or no note port at all.
+    pub(super) fn instrument_retunes_notes(&mut self, track: TrackId) -> Option<bool> {
+        self.instruments
+            .get_mut(&track)
+            .and_then(HostedSlot::plugin_mut)
+            .and_then(ClapPlugin::note_language)
+            .map(|language| language.retunes_notes())
+    }
+
     /// The key names a hosted instrument publishes for its first note input port.
     pub(super) fn instrument_note_names(&mut self, track: TrackId) -> Vec<(u8, String)> {
         self.instruments

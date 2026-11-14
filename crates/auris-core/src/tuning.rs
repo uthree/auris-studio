@@ -397,6 +397,17 @@ impl Tuning {
             && self.reference_hz == standard.reference_hz
     }
 
+    /// `true` when some key sounds between two equal-tempered keys — which is what an instrument
+    /// that can only play whole MIDI keys gets wrong.
+    ///
+    /// A tuning that only moves keys by whole semitones answers no: a 12-step tuning with A at 440
+    /// does, and so would a mapping that only shuffled keys.
+    pub fn puts_notes_between_keys(&self) -> bool {
+        self.pitch_offsets()
+            .iter()
+            .any(|offset| (offset - offset.round()).abs() > 1e-4)
+    }
+
     /// This tuning with `key` sounding at `hz`, every interval kept — "A = 442" in the standard
     /// tuning is `with_reference(69, 442.0)`.
     pub fn with_reference(&self, key: u8, hz: f64) -> Result<Self, TuningError> {
@@ -756,6 +767,26 @@ mod tests {
                 .iter()
                 .all(|offset| offset.abs() < 1e-5)
         );
+    }
+
+    #[test]
+    fn only_a_tuning_that_moves_a_key_off_the_grid_puts_notes_between_keys() {
+        assert!(!Tuning::standard().puts_notes_between_keys());
+        // Concert pitch an octave up is on the grid; 442 Hz is not.
+        assert!(
+            !Tuning::standard()
+                .with_reference(69, 880.0)
+                .unwrap()
+                .puts_notes_between_keys()
+        );
+        assert!(
+            Tuning::standard()
+                .with_reference(69, 442.0)
+                .unwrap()
+                .puts_notes_between_keys()
+        );
+        assert!(Tuning::edo(24).unwrap().puts_notes_between_keys());
+        assert!(Tuning::just(PitchClass::new(0)).puts_notes_between_keys());
     }
 
     #[test]

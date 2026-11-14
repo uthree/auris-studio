@@ -900,6 +900,12 @@ struct Bridge {
     seen: Vec<f32>,
     dirty_parameters: Vec<bool>,
     parameter_point_counts: Vec<u8>,
+    /// The plugin key each Auris key's latest note went out on.
+    ///
+    /// A note is sent on the key nearest where it sounds, with the rest as the VST3 note-on's own
+    /// tuning, so a key a tuning has moved goes out on another key — and its note-off has to name
+    /// that one. A key's pitch is fixed by the tuning, so one entry per key is enough.
+    sent_keys: [u8; 128],
     latency: usize,
     prepared: bool,
     fatal_failure: bool,
@@ -1003,6 +1009,7 @@ impl Bridge {
             seen: values.clone(),
             values,
             dirty_parameters,
+            sent_keys: std::array::from_fn(|key| key as u8),
             latency,
             prepared: false,
             fatal_failure: false,
@@ -1278,8 +1285,18 @@ impl Bridge {
             ) {
                 continue;
             }
-            let midi = translate_event(*event);
-            if let Err(error) = self.plugin.send_midi_event_at(midi, event.frame() as i32) {
+            let at = event.frame() as i32;
+            let sent = match routed_event(*event, &mut self.sent_keys) {
+                Routed::Midi(midi) => self.plugin.send_midi_event_at(midi, at),
+                Routed::Tuned {
+                    note,
+                    velocity,
+                    cents,
+                } => self
+                    .plugin
+                    .send_tuned_note_on_at(MidiChannel::Ch1, note, velocity, cents, at),
+            };
+            if let Err(error) = sent {
                 self.fail(Vst3RenderFailure::from_host(&error));
                 if overwrite {
                     buffer.clear();
@@ -1533,7 +1550,74 @@ fn category_of(category: &str, kind: PluginKind) -> PluginCategory {
     }
 }
 
-fn translate_event(event: NoteEvent) -> MidiEvent {
+/// What one Auris event is sent to a VST3 plugin as.
+#[derive(Copy, Clone, Debug, PartialEq)]
+enum Routed {
+    /// An ordinary MIDI-shaped event.
+    Midi(MidiEvent),
+    /// A note-on `cents` away from `note`, the VST3 note-on's own tuning.
+    Tuned {
+        /// The plugin key: the one nearest where the note sounds.
+        note: u8,
+        /// MIDI velocity.
+        velocity: u8,
+        /// Cents from `note` to where the note sounds.
+        cents: f32,
+    },
+}
+
+/// Cents smaller than this are none: a note on its key goes as an ordinary note-on.
+const ON_THE_KEY_CENTS: f32 = 0.01;
+
+/// How `event` is sent, remembering in `sent_keys` which plugin key a note-on went out on so its
+/// note-off can name the same one.
+///
+/// A note goes out on the key nearest where it sounds: a plugin then picks the samples and the
+/// keyboard tracking of that pitch, and one that ignores the VST3 tuning field still plays the
+/// nearest semitone. A velocity of zero is a release, so it is sent as one, by the key's last
+/// plugin key, like any other.
+fn routed_event(event: NoteEvent, sent_keys: &mut [u8; 128]) -> Routed {
+    match event {
+        NoteEvent::NoteOn {
+            key,
+            pitch,
+            velocity,
+            ..
+        } => {
+            let key = key.min(127);
+            let velocity = midi_velocity(velocity);
+            if velocity == 0 {
+                return Routed::Midi(translate_event(
+                    NoteEvent::NoteOff { frame: 0, key },
+                    sent_keys,
+                ));
+            }
+            let pitch = if pitch.is_finite() {
+                pitch
+            } else {
+                f32::from(key)
+            };
+            let note = pitch.round().clamp(0.0, 127.0) as u8;
+            sent_keys[usize::from(key)] = note;
+            let cents = (pitch - f32::from(note)) * 100.0;
+            match cents.abs() < ON_THE_KEY_CENTS {
+                true => Routed::Midi(MidiEvent::NoteOn {
+                    channel: MidiChannel::Ch1,
+                    note,
+                    velocity,
+                }),
+                false => Routed::Tuned {
+                    note,
+                    velocity,
+                    cents,
+                },
+            }
+        }
+        other => Routed::Midi(translate_event(other, sent_keys)),
+    }
+}
+
+fn translate_event(event: NoteEvent, sent_keys: &[u8; 128]) -> MidiEvent {
     let channel = MidiChannel::Ch1;
     match event {
         NoteEvent::NoteOn {
@@ -1545,9 +1629,9 @@ fn translate_event(event: NoteEvent) -> MidiEvent {
             note: pitch,
             velocity: midi_velocity(velocity),
         },
-        NoteEvent::NoteOff { key: pitch, .. } => MidiEvent::NoteOff {
+        NoteEvent::NoteOff { key, .. } => MidiEvent::NoteOff {
             channel,
-            note: pitch,
+            note: sent_keys[usize::from(key.min(127))],
             velocity: 0,
         },
         NoteEvent::AllNotesOff { .. } => MidiEvent::ControlChange {
@@ -1836,6 +1920,84 @@ mod tests {
         assert_eq!(midi_velocity(0.0), 0);
         assert_eq!(midi_velocity(f32::NAN), 0);
         assert_eq!(midi_velocity(1.0), 127);
+    }
+
+    fn retuned(key: u8, pitch: f32) -> NoteEvent {
+        NoteEvent::NoteOn {
+            frame: 0,
+            key,
+            pitch,
+            velocity: 1.0,
+        }
+    }
+
+    #[test]
+    fn a_retuned_note_goes_out_on_the_nearest_key_with_the_rest_in_cents() {
+        let mut sent = std::array::from_fn(|key| key as u8);
+        // 31-tone equal temperament's key 61, 38.7 cents above middle C.
+        let Routed::Tuned {
+            note,
+            velocity,
+            cents,
+        } = routed_event(retuned(61, 60.387), &mut sent)
+        else {
+            panic!("a note between the keys carries its tuning");
+        };
+        assert_eq!((note, velocity), (60, 127));
+        assert!((cents - 38.7).abs() < 0.01, "{cents}");
+        // Its release names the key it went out on, which is how the plugin finds it.
+        assert_eq!(
+            routed_event(NoteEvent::NoteOff { frame: 0, key: 61 }, &mut sent),
+            Routed::Midi(MidiEvent::NoteOff {
+                channel: MidiChannel::Ch1,
+                note: 60,
+                velocity: 0
+            })
+        );
+        // A velocity of zero is that release too.
+        assert_eq!(
+            routed_event(
+                NoteEvent::NoteOn {
+                    frame: 0,
+                    key: 61,
+                    pitch: 60.387,
+                    velocity: 0.0
+                },
+                &mut sent
+            ),
+            routed_event(NoteEvent::NoteOff { frame: 0, key: 61 }, &mut sent)
+        );
+    }
+
+    #[test]
+    fn a_note_on_its_key_is_the_ordinary_note_on_it_always_was() {
+        let mut sent = std::array::from_fn(|key| key as u8);
+        assert_eq!(
+            routed_event(NoteEvent::note_on(0, 64, 1.0), &mut sent),
+            Routed::Midi(MidiEvent::NoteOn {
+                channel: MidiChannel::Ch1,
+                note: 64,
+                velocity: 127
+            })
+        );
+        // And a key moved a whole number of semitones is an ordinary note-on at the key it
+        // moved to.
+        assert_eq!(
+            routed_event(retuned(91, 72.0), &mut sent),
+            Routed::Midi(MidiEvent::NoteOn {
+                channel: MidiChannel::Ch1,
+                note: 72,
+                velocity: 127
+            })
+        );
+        assert_eq!(
+            routed_event(NoteEvent::NoteOff { frame: 0, key: 91 }, &mut sent),
+            Routed::Midi(MidiEvent::NoteOff {
+                channel: MidiChannel::Ch1,
+                note: 72,
+                velocity: 0
+            })
+        );
     }
 
     #[test]

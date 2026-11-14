@@ -1572,6 +1572,16 @@ pub mod plugins {
     //! damper a piano key lifts — which is the damper of the string nearest the pitch, so the
     //! key's release lets that same one fall.
     //!
+    //! A hosted plugin is sent the key nearest the pitch, so one that understands nothing more
+    //! still plays the nearest semitone, with the rest as a tuning of that note alone: a CLAP note
+    //! expression aimed at the note's own id, or the VST3 note-on's tuning field. That makes the
+    //! translation stateful — the note-off must name the key and id the note went out with, and a
+    //! CLAP bend, sent to every note at once, would erase each note's own offset unless the offsets
+    //! go again on top of it — which is `auris_clap`'s `NoteMap`. A CLAP plugin that speaks only
+    //! MIDI 1.0 cannot be told about anything between two keys;
+    //! [`Session::tracks_playing_untuned`](crate::Session::tracks_playing_untuned) names the tracks
+    //! that are losing it, for as long as they are.
+    //!
     //! The retuning happens in one place: the render graph adds the tuning's offset for the key to
     //! every note-on just before the block reaches the instrument
     //! ([`NoteEvent::retuned`](auris_core::plugin::NoteEvent::retuned)). The song, the chase after

@@ -6,7 +6,7 @@
 
 use std::path::Path;
 
-use auris_core::{Tuning, TuningPreset};
+use auris_core::{TrackId, Tuning, TuningPreset};
 
 use crate::error::SessionError;
 use crate::history::Edit;
@@ -52,6 +52,36 @@ impl Session {
         let tuning = self.project.tuning.with_reference(key, hz)?;
         self.set_tuning(tuning);
         Ok(())
+    }
+
+    /// The pitched tracks whose instrument plays every note on the nearest equal-tempered key,
+    /// in the document's tuning — for a frontend to warn about for as long as it is so.
+    ///
+    /// Empty while the tuning only moves keys by whole semitones, since then there is nothing to
+    /// lose. Otherwise it names each instrument or singer track whose hosted CLAP plugin speaks
+    /// only MIDI 1.0, which has no way to say "a quarter-tone above C". A VST3 plugin is sent
+    /// each note's tuning in the note-on itself and cannot be asked whether it reads it, so it is
+    /// not listed; nor is a built-in instrument or a SoundFont, both of which play every pitch.
+    pub fn tracks_playing_untuned(&mut self) -> Vec<TrackId> {
+        if !self.project.tuning.puts_notes_between_keys() {
+            return Vec::new();
+        }
+        let pitched: Vec<TrackId> = self
+            .project
+            .tracks
+            .iter()
+            .filter(|track| {
+                matches!(
+                    track.kind,
+                    auris_core::TrackKind::Instrument(_) | auris_core::TrackKind::Singer(_)
+                )
+            })
+            .map(|track| track.id)
+            .collect();
+        pitched
+            .into_iter()
+            .filter(|track| self.hosted.instrument_retunes_notes(*track) == Some(false))
+            .collect()
     }
 
     /// Reads a Scala `.scl` file, placed on the keyboard by a `.kbm` file when one is given, and
@@ -173,6 +203,16 @@ mod tests {
                 "{tuned:.1} Hz: {at_tuned:.3e}, {elsewhere:.1} Hz: {there:.3e}"
             );
         }
+    }
+
+    #[test]
+    fn built_in_instruments_are_never_reported_as_playing_untuned() {
+        let mut session = session();
+        session
+            .project
+            .add_instrument_track("Lead", auris_synth::Chiptune::ID);
+        session.set_tuning_preset(TuningPreset::Edo(31)).unwrap();
+        assert!(session.tracks_playing_untuned().is_empty());
     }
 
     #[test]

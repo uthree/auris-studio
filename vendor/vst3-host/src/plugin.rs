@@ -860,6 +860,26 @@ pub(crate) trait PluginInternal: Send {
     fn send_midi_event_at(&mut self, event: MidiEvent, _sample_offset: i32) -> Result<()> {
         self.send_midi_event(event)
     }
+    /// Added by the Auris fork: a note-on `cents` away from its key, scheduled like
+    /// [`send_midi_event_at`](Self::send_midi_event_at). Defaults to the key untuned, for
+    /// implementations that cannot carry the VST3 event's own tuning field.
+    fn send_tuned_note_on_at(
+        &mut self,
+        channel: MidiChannel,
+        note: u8,
+        velocity: u8,
+        _cents: f32,
+        sample_offset: i32,
+    ) -> Result<()> {
+        self.send_midi_event_at(
+            MidiEvent::NoteOn {
+                channel,
+                note,
+                velocity,
+            },
+            sample_offset,
+        )
+    }
     /// Send a fully owned VST3 event.
     fn send_plugin_event(&mut self, _event: PluginEvent) -> Result<()> {
         Err(Error::Other(
@@ -1748,6 +1768,50 @@ impl Plugin {
         }
         match self.internal.as_mut() {
             Some(internal) => internal.send_midi_event_at(event, sample_offset),
+            None if self.realtime_owned => Err(Error::RealtimeStateInvalid),
+            None => Err(Error::Other("Plugin not initialized".to_string())),
+        }
+    }
+
+    /// Schedule a note-on that sounds `cents` away from its key, at a sample offset within the
+    /// **next** block.
+    ///
+    /// Added by the Auris fork, for tunings. VST3's note-on carries a per-note tuning of its own,
+    /// in cents, which the MIDI-shaped [`MidiEvent`] has nowhere to put; this is the realtime path
+    /// [`send_midi_event_at`](Self::send_midi_event_at) is, with that field filled in. The note is
+    /// tracked and released exactly as an ordinary note-on at `note` is, so a
+    /// [`MidiEvent::NoteOff`] for `note` ends it. A process-isolated plugin is sent the key
+    /// untuned. `cents` must be finite, and `note` and `velocity` within `0–127`.
+    pub fn send_tuned_note_on_at(
+        &mut self,
+        channel: MidiChannel,
+        note: u8,
+        velocity: u8,
+        cents: f32,
+        sample_offset: i32,
+    ) -> Result<()> {
+        let event = MidiEvent::NoteOn {
+            channel,
+            note,
+            velocity,
+        };
+        let valid = midi_event_is_valid(&event) && cents.is_finite();
+        if self.realtime_owned {
+            if !valid {
+                return Err(Error::RealtimeInputInvalid);
+            }
+        } else {
+            validate_midi_event(&event)?;
+            if !cents.is_finite() {
+                return Err(Error::Other(format!(
+                    "tuning {cents} is not a number of cents"
+                )));
+            }
+        }
+        match self.internal.as_mut() {
+            Some(internal) => {
+                internal.send_tuned_note_on_at(channel, note, velocity, cents, sample_offset)
+            }
             None if self.realtime_owned => Err(Error::RealtimeStateInvalid),
             None => Err(Error::Other("Plugin not initialized".to_string())),
         }
