@@ -12,6 +12,12 @@ briefs request another take with different register and accents while keeping
 the development tempo, key and genre purpose. They test a held-back phrasing of
 the request, not generalization to different tempos, keys or song lengths.
 
+A second manifest, `genre-benchmark-styles-v1.json`, holds the same fourteen
+cases' shape for the seven genres the first has no case for: rock, jazz,
+orchestral, ambient, folk and acoustic, Latin, and chiptune. Its genre IDs are
+the style IDs a song stores. Every command below takes either manifest; the two
+are compared separately, so a comparison made on the first stays as it was.
+
 ## Paired experiment
 
 Run the existing composition-quality runner with a separately frozen binary for
