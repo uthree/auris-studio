@@ -34,7 +34,7 @@ mod score;
 
 pub(crate) use audio::off_target;
 pub use audio::{AUDIO_LINT_RATE, AudioLintJob, AudioLintResult, AudioSummary};
-pub use score::{TIGHT_STRUM_MS, lint_score};
+pub use score::{TIGHT_STRUM_MS, lint_score, long_lyric_landscape, long_lyric_portrait};
 
 use auris_core::Project;
 use auris_core::project::{ClipId, TrackId};
@@ -92,6 +92,8 @@ pub enum Rule {
     SingerOverlap,
     /// A sung note with no lyric, which the voice sings as a stock vowel.
     MissingLyric,
+    /// A line of the song's lyrics too long for a video subtitle at full size.
+    LongLyricLine,
     /// A note struck too softly to be heard.
     InaudibleVelocity,
     /// A note outside any instrument's or voice's usable range.
@@ -127,7 +129,7 @@ pub enum Rule {
 
 impl Rule {
     /// Every rule, score rules first.
-    pub const ALL: [Rule; 26] = [
+    pub const ALL: [Rule; 27] = [
         Rule::CrowdedOnset,
         Rule::DenseNotes,
         Rule::HarshInterval,
@@ -139,6 +141,7 @@ impl Rule {
         Rule::OverlappingClips,
         Rule::SingerOverlap,
         Rule::MissingLyric,
+        Rule::LongLyricLine,
         Rule::InaudibleVelocity,
         Rule::ExtremePitch,
         Rule::TightStrum,
@@ -170,6 +173,7 @@ impl Rule {
             Rule::OverlappingClips => "overlapping_clips",
             Rule::SingerOverlap => "singer_overlap",
             Rule::MissingLyric => "missing_lyric",
+            Rule::LongLyricLine => "long_lyric_line",
             Rule::InaudibleVelocity => "inaudible_velocity",
             Rule::ExtremePitch => "extreme_pitch",
             Rule::TightStrum => "tight_strum",
@@ -418,6 +422,12 @@ impl Diagnostic {
             Rule::MissingLyric => {
                 format!("{pitches} has no lyric and is sung as a stock vowel")
             }
+            Rule::LongLyricLine if self.severity == Severity::Info => format!(
+                "this lyric line is {value:.0} full-width characters wide; a portrait or square video shrinks a subtitle wider than {limit:.0}, so split it there"
+            ),
+            Rule::LongLyricLine => format!(
+                "this lyric line is {value:.0} full-width characters wide; a video subtitle wider than {limit:.0} is shrunk until it is hard to read, so split it into shorter lines"
+            ),
             Rule::PitchMismatch => format!(
                 "{pitches} sounds {value:+.0} cents from its written pitch (octaves aside), beyond the {limit:.0} cent tolerance"
             ),

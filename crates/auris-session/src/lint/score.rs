@@ -19,6 +19,18 @@ use intervals::intervals;
 #[cfg(test)]
 mod performance_tests;
 
+/// The widest lyric line, in ems, that a landscape video draws at full subtitle size: wider
+/// lines are shrunk, which is a warning.
+pub fn long_lyric_landscape() -> f64 {
+    auris_video::lyric_fit_ems(auris_video::VideoSize::new(1920, 1080))
+}
+
+/// The widest lyric line, in ems, that a portrait or square video draws at full subtitle size:
+/// wider lines are shrunk there only, which is worth a look.
+pub fn long_lyric_portrait() -> f64 {
+    auris_video::lyric_fit_ems(auris_video::VideoSize::new(1080, 1920))
+}
+
 /// Notes one track may strike on one tick before the voicing is unplayable mush.
 pub const CROWDED_TRACK: usize = 8;
 /// Pitched notes the whole arrangement may strike on one tick.
@@ -112,6 +124,7 @@ pub fn lint_score(project: &Project) -> Vec<Diagnostic> {
     diagnostics.extend(limit(impossible_drum_hits(project)));
     diagnostics.extend(limit(breathless_phrases(project)));
     diagnostics.extend(singer_rules(project));
+    diagnostics.extend(limit(long_lyric_lines(project)));
     sort(&mut diagnostics);
     diagnostics
 }
@@ -1339,6 +1352,41 @@ fn duplicate_notes(track: TrackId, clip: &MidiClip) -> Vec<Diagnostic> {
     diagnostics
 }
 
+/// Lines of the song's lyric annotation too long for a video subtitle at full size.
+///
+/// The video export draws the line being sung along the bottom of the frame and shrinks one
+/// that would not fit, so a long line comes out in small print. A line that is shrunk even on
+/// a landscape frame is a warning; one that fits there but not on a portrait or square frame,
+/// which has little more than half the room, is information. The measured value and the limit
+/// are in ems, which is full-width characters.
+fn long_lyric_lines(project: &Project) -> Vec<Diagnostic> {
+    let landscape = long_lyric_landscape();
+    let portrait = long_lyric_portrait();
+    let points = project.lyrics.points();
+    let mut diagnostics = Vec::new();
+    for (index, point) in points.iter().enumerate() {
+        let Some(text) = point.text.as_deref() else {
+            continue;
+        };
+        let width = auris_video::lyric_line_ems(text);
+        let (severity, limit) = if width > landscape {
+            (Severity::Warning, landscape)
+        } else if width > portrait {
+            (Severity::Info, portrait)
+        } else {
+            continue;
+        };
+        let end = points
+            .get(index + 1)
+            .map_or(point.tick + Ticks(TICKS_PER_QUARTER * 4), |next| next.tick);
+        let mut diagnostic = Diagnostic::new(Rule::LongLyricLine, severity, point.tick, end);
+        diagnostic.value = Some(width as f32);
+        diagnostic.limit = Some(limit.floor() as f32);
+        diagnostics.push(diagnostic);
+    }
+    diagnostics
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1929,5 +1977,42 @@ mod tests {
                 second: b
             })
         );
+    }
+
+    #[test]
+    fn a_lyric_line_too_long_for_a_subtitle_is_flagged_by_how_far_it_overflows() {
+        let mut project = Project::new("Lint", 48_000.0);
+        let line = |tick: i64, text: &str| auris_core::lyrics::LyricLine {
+            tick: Ticks(tick),
+            text: Some(text.into()),
+        };
+        project.lyrics = auris_core::lyrics::LyricMap::new(vec![
+            line(0, "桜が咲いた"),
+            // Eighteen full-width characters: fits a landscape frame, not a portrait one.
+            line(3840, "君の名前を呼んだ夜に星が降るのを見た"),
+            // Twenty-eight: shrunk on every frame.
+            line(
+                7680,
+                "君の名前を呼んだ夜に星が降るのを見た君の名前を呼んだ夜に",
+            ),
+            auris_core::lyrics::LyricLine {
+                tick: Ticks(11_520),
+                text: None,
+            },
+        ]);
+        let found: Vec<_> = lint_score(&project)
+            .into_iter()
+            .filter(|d| d.rule == Rule::LongLyricLine)
+            .collect();
+        assert_eq!(found.len(), 2, "{found:?}");
+        assert_eq!(found[0].severity, Severity::Info);
+        assert_eq!((found[0].start, found[0].end), (Ticks(3840), Ticks(7680)));
+        assert_eq!(found[0].value, Some(18.0));
+        assert_eq!(found[0].limit, Some(14.0));
+        assert_eq!(found[1].severity, Severity::Warning);
+        assert_eq!(found[1].value, Some(28.0));
+        assert_eq!(found[1].limit, Some(25.0));
+        assert_eq!(found[1].end, Ticks(11_520));
+        assert!(found[1].describe().contains("28"));
     }
 }

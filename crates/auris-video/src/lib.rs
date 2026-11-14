@@ -30,6 +30,7 @@ mod style;
 
 pub use error::VideoError;
 pub use ffmpeg::{Ffmpeg, VideoCodec, VideoWriter, install_command, install_page};
+pub use lyrics::{lyric_fit_ems, lyric_line_ems};
 pub use render::{BackgroundImage, FrameRenderer, render_video};
 pub use score::{NoteScore, ScoreBeat, ScoreChord, ScoreLyric, ScoreNote, ScoreTempo, ScoreTrack};
 pub use style::{NoteColoring, NoteRollStyle, VideoSize};
