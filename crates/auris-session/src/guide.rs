@@ -1057,7 +1057,8 @@ pub mod architecture {
     //!
     //! A headless session never listens: what it does must not depend on what is plugged into
     //! the machine. [`set_midi_input`](crate::Session::set_midi_input) is the switch, and the
-    //! desktop keeps it on for the one window that holds the audio output.
+    //! desktop keeps it on for one project: the one holding the audio output, or the one in front
+    //! while none does, whose sleeping output the first key played wakes.
     //!
     //! # Playing when there is no MIDI keyboard on the desk
     //!
