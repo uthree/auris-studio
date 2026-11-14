@@ -307,7 +307,7 @@ pub mod prelude {
         TempoPoint, Ticks, TimeSignature,
     };
     pub use auris_core::{
-        AudioBuffer, AudioClip, AudioSource, ClipId, ClipPreset, ClipRecipe, Color,
+        AudioBuffer, AudioClip, AudioSource, CHORD_VOICES, ClipId, ClipPreset, ClipRecipe, Color,
         ConsonantWidths, Destination, DrumMap, DrumRole, DrumVoiceRecipe, EffectSlot, EffectSlotId,
         FadeCurve, Fall, GhostNotes, GhostPattern, LayerShape, LayerVoice, MAX_LAYER_OFFSET,
         MAX_STRING_MS, MidiClip, MixerStrip, Note, NoteTransform, Output, PluginRegistry,

@@ -13,7 +13,7 @@ use crate::frame::{Frame, SectionPlan};
 use crate::rng::{Key as RngKey, Rng};
 use crate::spec::{PartSpec, Role};
 use crate::theory::chord::Chord;
-use crate::theory::pitch::{OCTAVE, fold_into};
+use crate::theory::pitch::{OCTAVE, PitchClass, fold_into};
 
 use super::writer::{bar_onsets, bar_stream, density, part_grid, phrase_shape, velocity};
 use super::{Draft, ScoreSettings};
@@ -115,101 +115,217 @@ fn voice_motion(previous: &[i32], next: &[i32]) -> i32 {
     costs[next.len()]
 }
 
-/// Choose a register, inversion and spacing together, after choosing which chord tones to use.
-/// Low seconds are expensive; upper seconds and open voicings remain available. The previous
-/// upper voice gets its own continuity cost instead of disappearing into the chord's mean.
+/// How telling a chord tone is, from its interval above the root: lower is kept longer.
+///
+/// The third (or the suspended tone standing in for it) says major or minor, and the seventh or
+/// sixth says which kind of chord it is, so those go last; an altered fifth is as much the chord's
+/// name as either. The root is next — with no bass part it is the only thing saying which chord
+/// this is — then the colour tones, and the perfect fifth first of all, because the root's own
+/// overtones already sound it.
+fn tone_priority(interval: i32, intervals: &[i32]) -> u8 {
+    let has_third = intervals.iter().any(|tone| matches!(tone, 3 | 4));
+    match interval {
+        3 | 4 => 0,
+        2 | 5 if !has_third => 0,
+        6 | 8 | 9 | 10 | 11 => 1,
+        0 => 2,
+        7 => 4,
+        _ => 3,
+    }
+}
+
+/// The tones a chord sounds as `voices` notes, doublings counted: its own tones when `voices` is
+/// zero, the most telling of them when it asks for fewer, and the root, the fifth and the third
+/// doubled in turn when it asks for more.
+fn chord_tones(chord: Chord, voices: usize) -> Vec<PitchClass> {
+    let intervals = chord.quality.intervals();
+    let wanted = if voices == 0 { intervals.len() } else { voices };
+    let mut kept: Vec<i32> = intervals.to_vec();
+    kept.sort_by_key(|interval| (tone_priority(*interval, intervals), *interval));
+    kept.truncate(wanted.max(1));
+    let mut doubling: Vec<i32> = intervals.to_vec();
+    doubling.sort_by_key(|interval| match interval {
+        0 => (0, 0),
+        7 => (1, 0),
+        3 | 4 => (2, 0),
+        other => (3, *other),
+    });
+    let mut next = 0;
+    while kept.len() < wanted {
+        kept.push(doubling[next % doubling.len()]);
+        next += 1;
+    }
+    kept.into_iter()
+        .map(|interval| chord.root.transposed(interval))
+        .collect()
+}
+
+/// Every voicing of `tones` inside `range`: each tone in the bass with the rest stacked closed
+/// above it, then opened by drop-two, by drop-two-and-four and by lifting the second voice.
+///
+/// A voicing that puts two voices on one pitch is not a voicing of this many notes, so it is
+/// skipped rather than deduplicated into a thinner chord — which is how the count asked for is
+/// the count that sounds.
+fn voicings(tones: &[PitchClass], range: (i32, i32)) -> Vec<Vec<i32>> {
+    let (low, high) = range;
+    let mut out = Vec::new();
+    let mut basses: Vec<PitchClass> = tones.to_vec();
+    basses.sort_by_key(|class| class.semitones());
+    basses.dedup();
+    for bass in basses {
+        for bottom in (low..=high).filter(|pitch| PitchClass::new(*pitch) == bass) {
+            let mut remaining = tones.to_vec();
+            let at = remaining
+                .iter()
+                .position(|class| *class == bass)
+                .expect("the bass is one of the tones");
+            remaining.remove(at);
+            let mut closed = vec![bottom];
+            while !remaining.is_empty() {
+                let below = *closed.last().expect("the bottom voice exists");
+                // The nearest remaining tone above, which is what "closed" means; a doubled tone
+                // lands a full octave over its twin rather than on top of it.
+                let (index, step) = remaining
+                    .iter()
+                    .map(
+                        |class| match PitchClass::new(below).distance_up_to(*class) {
+                            0 => OCTAVE,
+                            step => step,
+                        },
+                    )
+                    .enumerate()
+                    .min_by_key(|(_, step)| *step)
+                    .expect("a tone remains");
+                remaining.remove(index);
+                closed.push(below + step);
+            }
+            let count = closed.len();
+            let mut spreads = vec![closed.clone()];
+            if count >= 3 {
+                let mut drop_two = closed.clone();
+                drop_two[count - 2] -= OCTAVE;
+                spreads.push(drop_two.clone());
+                let mut lifted = closed.clone();
+                lifted[1] += OCTAVE;
+                spreads.push(lifted);
+                if count >= 5 {
+                    drop_two[count - 4] -= OCTAVE;
+                    spreads.push(drop_two);
+                }
+            }
+            for mut candidate in spreads {
+                candidate.sort_unstable();
+                if candidate.windows(2).any(|pair| pair[0] == pair[1])
+                    || candidate.iter().any(|pitch| !(low..=high).contains(pitch))
+                {
+                    continue;
+                }
+                out.push(candidate);
+            }
+        }
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// What a voicing costs: how far its middle sits from `centre`, how far its voices travel from
+/// `previous`, and how badly it is spaced. Low seconds are expensive; upper seconds and open
+/// voicings remain available. The previous upper voice gets its own continuity cost instead of
+/// disappearing into the chord's mean.
+fn voicing_cost(candidate: &[i32], previous: &[i32], centre: i32, open: bool) -> i32 {
+    let count = candidate.len() as i32;
+    let sum: i32 = candidate.iter().sum();
+    // In quarter-semitones, so a middle half a semitone off still costs something. The pull holds
+    // on every chord and not only the first: voice leading left free to drift does drift, and a
+    // part that began on the note asked for and had wandered a fifth from it by the chorus is not
+    // sitting where it was asked to.
+    let off = (sum - centre * count).abs() * 4 / count;
+    let mut cost = off * if previous.is_empty() { 3 } else { 2 };
+    if let (Some(before), Some(after)) = (previous.last(), candidate.last()) {
+        cost += voice_motion(previous, candidate) * 4;
+        cost += (before - after).abs() * 2;
+    }
+    for pair in candidate.windows(2) {
+        let gap = pair[1] - pair[0];
+        if pair[0] < 55 {
+            cost += (5 - gap).max(0) * 8;
+        }
+        cost += (gap - OCTAVE).max(0) * 3;
+    }
+    let span = candidate.last().unwrap() - candidate.first().unwrap();
+    cost += if open {
+        (OCTAVE - span).max(0) * 2
+    } else {
+        // Five or six voices need more room than a triad before the spread is a choice.
+        (span - 19 - (count - 4).max(0) * 3).max(0)
+    };
+    cost
+}
+
+/// How far above the cheapest voicing a part's first chord may land and still be drawn.
+///
+/// The first chord sets where every later one is led from, so it is where a seed gets to say
+/// something about a part with no rhythm to vary. Small enough that the middle stays within about
+/// half a semitone of the note asked for.
+const FIRST_CHORD_SLACK: i32 = 6;
+
+/// An inversion and a spacing for `chord` as `voices` notes, its middle at `centre`.
+///
+/// The first chord of a part, with no `previous` to be led from, is drawn by `rng` from the
+/// voicings nearly as good as the best, so two seeds sit the part differently; every later chord
+/// is the cheapest, which is what leading the voices means.
 fn voiced(
     chord: Chord,
     previous: &[i32],
     range: (i32, i32),
     centre: i32,
-    variant: usize,
+    voices: usize,
     style: Option<PerformanceStyle>,
+    rng: Option<&mut Rng>,
 ) -> Vec<i32> {
     let (low, high) = range;
-    let mut classes = chord.classes();
-    if variant == 1 && classes.len() > 2 {
-        classes.remove(2);
-    }
-    classes.sort_by_key(|class| class.semitones());
+    let tones = chord_tones(chord, voices);
     let open = matches!(
         style,
         Some(PerformanceStyle::Orchestral | PerformanceStyle::Ambient)
     );
-    let mut candidates = Vec::new();
-    for inversion in 0..classes.len() {
-        // Starting from each octave of every chord tone reaches every inversion.
-        for bottom in low..=high {
-            if crate::theory::pitch::PitchClass::new(bottom) != classes[inversion] {
-                continue;
-            }
-            let mut closed = vec![bottom];
-            for voice in 1..classes.len() {
-                let class = classes[(inversion + voice) % classes.len()];
-                let before = *closed.last().expect("the bottom voice exists");
-                let interval = crate::theory::pitch::PitchClass::new(before)
-                    .distance_up_to(class)
-                    .max(1);
-                closed.push(before + interval);
-            }
-            for spread in 0..3 {
-                let mut candidate = closed.clone();
-                if spread == 1 && candidate.len() >= 3 {
-                    // Drop two: open the upper stack without moving its top note.
-                    let voice = candidate.len() - 2;
-                    candidate[voice] -= OCTAVE;
-                } else if spread == 2 && candidate.len() >= 3 {
-                    candidate[1] += OCTAVE;
-                }
-                if variant == 2 {
-                    let root = fold_into(chord.root.midi(4), low, high);
-                    if !candidate.contains(&root) {
-                        candidate.push(root);
-                    } else if root + OCTAVE <= high && !candidate.contains(&(root + OCTAVE)) {
-                        candidate.push(root + OCTAVE);
-                    }
-                }
-                candidate.sort_unstable();
-                candidate.dedup();
-                if candidate.iter().any(|pitch| !(low..=high).contains(pitch)) {
-                    continue;
-                }
-                let middle = candidate.iter().sum::<i32>() / candidate.len() as i32;
-                let mut cost = (middle - centre).abs() * if previous.is_empty() { 3 } else { 1 };
-                if !previous.is_empty() {
-                    cost += voice_motion(previous, &candidate) * 4;
-                    cost += (previous.last().unwrap() - candidate.last().unwrap()).abs() * 2;
-                }
-                for pair in candidate.windows(2) {
-                    let gap = pair[1] - pair[0];
-                    if pair[0] < 55 {
-                        cost += (5 - gap).max(0) * 8;
-                    }
-                    cost += (gap - OCTAVE).max(0) * 3;
-                }
-                let span = candidate.last().unwrap() - candidate.first().unwrap();
-                cost += if open {
-                    (OCTAVE - span).max(0) * 2
-                } else {
-                    (span - 19).max(0)
-                };
-                candidates.push((cost, candidate));
-            }
-        }
-    }
-    candidates
+    let mut candidates: Vec<(i32, Vec<i32>)> = voicings(&tones, range)
         .into_iter()
-        .min_by(|(a_cost, a), (b_cost, b)| a_cost.cmp(b_cost).then_with(|| a.cmp(b)))
-        .map(|(_, pitches)| pitches)
-        .unwrap_or_else(|| {
-            let mut pitches: Vec<_> = classes
+        .map(|candidate| (voicing_cost(&candidate, previous, centre, open), candidate))
+        .collect();
+    candidates.sort();
+    let Some(best) = candidates.first().map(|(cost, _)| *cost) else {
+        let mut pitches: Vec<_> = tones
+            .iter()
+            .map(|class| fold_into(class.midi(4), low, high))
+            .collect();
+        pitches.sort_unstable();
+        pitches.dedup();
+        return pitches;
+    };
+    let pick = match rng {
+        Some(rng) if previous.is_empty() => {
+            let near = candidates
                 .iter()
-                .map(|class| fold_into(class.midi(4), low, high))
-                .collect();
-            pitches.sort_unstable();
-            pitches.dedup();
-            pitches
-        })
+                .take_while(|(cost, _)| *cost <= best + FIRST_CHORD_SLACK)
+                .count();
+            rng.below(near)
+        }
+        _ => 0,
+    };
+    candidates.swap_remove(pick).1
+}
+
+/// How many notes a chord sounds when the part leaves it to the chord: its own tones, and one
+/// more at the busy end of the density dial, read as it was set.
+///
+/// Density is all a pad's one held chord lets the dial reach, and a tone doubled on top is what
+/// "more" means to a chord that is not struck more often. Never fewer than the chord has: a
+/// thinner chord is asked for with the note count, not drifted into by a dial set for the rhythm.
+fn auto_voices(chord: Chord, dial: f32) -> usize {
+    let own = chord.quality.intervals().len();
+    if dial >= 0.75 { (own + 1).min(6) } else { own }
 }
 
 /// The lowest a chord part's own bass note goes: the bottom string of a bass guitar.
@@ -229,7 +345,7 @@ fn low_root(chord: Chord, voicing: &[i32]) -> Option<i32> {
     let class = chord.bass_class();
     let ceiling = lowest - OCTAVE;
     // How far the ceiling sits above the nearest note of the class at or below it.
-    let mut root = ceiling - class.distance_up_to(crate::theory::pitch::PitchClass::new(ceiling));
+    let mut root = ceiling - class.distance_up_to(PitchClass::new(ceiling));
     while root < LOWEST_ROOT {
         root += OCTAVE;
     }
@@ -260,7 +376,8 @@ pub(super) fn comp(
     part: &PartSpec,
 ) -> Vec<Draft> {
     let grid = part_grid(frame, part);
-    let (low, high) = part.range();
+    let range = part.chord_range();
+    let target = part.chord_centre();
     let mut notes: Vec<Draft> = Vec::new();
     // A rhythm the user wrote overrides the generated one — that is the field's stated
     // contract, and the melody and the drums already keep it. It overrides a pad's stillness
@@ -272,15 +389,15 @@ pub(super) fn comp(
     // let it run on. See the loop below: this is most of what makes a pad a pad.
     let mut sustaining: Vec<(i32, usize)> = Vec::new();
 
-    // How the part sits, decided once for the section. A pad has no rhythm to vary, so this is
-    // the whole of what makes one take of it differ from another: which octave it sits in, and
-    // which notes of the chord it chooses to sound.
+    // How the part sits, decided once for the section: which of the voicings nearly as good as
+    // the best its first chord takes. A pad has no rhythm to vary, so this and the note count are
+    // the whole of what makes one take of it differ from another. Where it sits is not drawn —
+    // that is the centre, which is somebody's choice rather than the seed's.
     let mut choose = bar_stream(frame, part, section, "register", 0);
-    let register = (choose.below(3) as i32 - 1) * OCTAVE;
-    // How many notes of the chord sound, weighted by how busy the part was asked to be. This is
-    // the whole of what the density dial can reach on a pad, which holds one chord and has no
-    // rhythm to thin or thicken.
     let busy = density(settings, part, section);
+    // The dial as it was set, before the role and the section's intensity scale it: a pad's
+    // share of that is never more than four tenths, and the note count answers the slider.
+    let dial = part.density.unwrap_or_else(|| settings.mood.density());
     // The upper quarter of the dial fills the subdivision, independently of loudness.
     // At full density even a quiet section must reach every step. Authored rests and pads
     // retain their own timing contract.
@@ -291,7 +408,6 @@ pub(super) fn comp(
             part.density.unwrap_or_else(|| settings.mood.density()),
         )
     };
-    let voicing_variant = choose.weighted(&[1.0, 0.2 + (1.0 - busy) * 1.8, 0.2 + busy * 1.8]);
 
     // How the part comps, drawn once for the section and then restated over every chord in it.
     //
@@ -352,20 +468,20 @@ pub(super) fn comp(
     let push_early = grid.step_ticks() * (grid.steps_per_beat() / 2).max(1) as i64;
 
     for (event_index, event) in section.events.iter().enumerate() {
-        // Keep individual voices near their predecessors while allowing the chord's inversion
-        // and spacing to change. A stationary mean cannot tell two crossing voices apart.
-        let centre = if previous.is_empty() {
-            (low + high) / 2 + register
-        } else {
-            previous.iter().sum::<i32>() / previous.len() as i32
+        // The middle is pulled to the centre on every chord, not only the first, and the voice
+        // leading chooses among the inversions that keep it there.
+        let voices = match part.voices {
+            0 => auto_voices(event.chord, dial),
+            asked => usize::from(asked),
         };
         let voicing = voiced(
             event.chord,
             &previous,
-            (low, high),
-            centre,
-            voicing_variant,
+            range,
+            target,
+            voices,
             settings.style,
+            Some(&mut choose),
         );
         previous.clone_from(&voicing);
         // The root under the voicing is struck with it but is not part of the voice leading:
@@ -587,7 +703,7 @@ mod tests {
         let (mut led_motion, mut root_motion, mut held) = (0, 0, 0);
         for name in ["F", "G", "C", "Am", "F", "G", "C"] {
             let chord = Chord::parse(name).unwrap();
-            let next = voiced(chord, &previous, (48, 84), 64, 0, None);
+            let next = voiced(chord, &previous, (48, 84), 64, 0, None, None);
             assert_eq!(next.len(), chord.classes().len());
             assert!(
                 next.iter()
@@ -611,7 +727,15 @@ mod tests {
     #[test]
     fn an_extended_low_chord_can_open_its_spacing() {
         let chord = Chord::parse("Cmaj9").unwrap();
-        let pitches = voiced(chord, &[], (36, 84), 54, 0, Some(PerformanceStyle::Ambient));
+        let pitches = voiced(
+            chord,
+            &[],
+            (36, 84),
+            54,
+            0,
+            Some(PerformanceStyle::Ambient),
+            None,
+        );
         assert_eq!(pitches.len(), 5);
         assert!(
             pitches
@@ -940,6 +1064,135 @@ mod tests {
                         .any(|note| note.start < at && note.start + note.length > at),
                     "seed {seed}: a strike ran over bar line {line} as if anticipating a change"
                 );
+            }
+        }
+    }
+
+    /// Every chord the part strikes, as the pitches struck together at each onset.
+    fn strikes(song: &Song, name: &str) -> Vec<Vec<i32>> {
+        let (_, parts) = song.draft();
+        let mut by_onset: std::collections::BTreeMap<i64, Vec<i32>> = Default::default();
+        for note in &part(&parts, name).notes {
+            by_onset
+                .entry(note.start.raw())
+                .or_default()
+                .push(i32::from(note.pitch));
+        }
+        by_onset.into_values().collect()
+    }
+
+    #[test]
+    fn a_chord_left_to_itself_sounds_all_of_its_tones() {
+        // A triad came out as two notes in more than half of all strikes: one voicing in three
+        // dropped the fifth outright, and nothing on screen could ask for the third note back.
+        for role in [Role::Chords, Role::Pad] {
+            for seed in 0..24u64 {
+                let song = Song {
+                    seed,
+                    chords: "| I | vi | IV | V |".into(),
+                    ..Song::with_parts([PartSpec::of_role(role.name(), role)])
+                };
+                let (frame, parts) = song.draft();
+                let section = &frame.sections[0];
+                let drafted = part(&parts, role.name());
+                for event in &section.events {
+                    // What sounds just after the change, which counts a pad's held voices and a
+                    // pushed comp's anticipation as well as what is struck on the line.
+                    let at = section.start + event.start + Ticks(1);
+                    let struck = drafted
+                        .notes
+                        .iter()
+                        .filter(|note| note.start <= at && note.start + note.length > at)
+                        .count();
+                    assert!(
+                        struck >= 3,
+                        "{role:?} seed {seed} struck {} as {struck} notes",
+                        event.chord
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_chord_part_sounds_as_many_notes_as_it_was_asked_for() {
+        for role in [Role::Chords, Role::Pad] {
+            for voices in auris_core::CHORD_VOICES {
+                for seed in 0..6u64 {
+                    let song = Song {
+                        seed,
+                        chords: "| I | vi7 | IVmaj7 | V7 |".into(),
+                        ..Song::with_parts([Song::part(role, |part| part.voices = voices)])
+                    };
+                    for strike in strikes(&song, role.name()) {
+                        // A pad holds the tones two chords share, so its later strikes are only
+                        // the voices that moved; the count is of what sounds, which a comp
+                        // restrikes in full.
+                        if role == Role::Chords {
+                            assert_eq!(
+                                strike.len(),
+                                usize::from(voices),
+                                "{role:?} seed {seed}: {strike:?}"
+                            );
+                        } else {
+                            assert!(strike.len() <= usize::from(voices), "{strike:?}");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn two_notes_of_a_seventh_chord_are_its_third_and_seventh() {
+        let names = |chord: &str, voices: usize| {
+            let mut names: Vec<String> = chord_tones(Chord::parse(chord).unwrap(), voices)
+                .into_iter()
+                .map(|class| class.to_string())
+                .collect();
+            names.sort();
+            names
+        };
+        assert_eq!(names("G7", 2), ["B", "F"]);
+        assert_eq!(names("C", 2), ["C", "E"]);
+        assert_eq!(names("Cmaj9", 3), ["B", "C", "E"]);
+        assert_eq!(names("C", 5), ["C", "C", "E", "G", "G"]);
+        assert_eq!(names("Bdim", 2), ["D", "F"]);
+    }
+
+    #[test]
+    fn the_voicings_average_to_the_note_asked_for() {
+        for centre in [43, 52, 60, 65, 71, 84] {
+            for voices in [0u8, 3, 5] {
+                for seed in 0..6u64 {
+                    let song = Song {
+                        seed,
+                        bars: 8,
+                        chords: "| I | vi | IV | V | iii | vi | ii | V |".into(),
+                        ..Song::with_parts([Song::part(Role::Chords, |part| {
+                            part.centre = Some(centre);
+                            part.voices = voices;
+                        })])
+                    };
+                    let means: Vec<f64> = strikes(&song, "chords")
+                        .iter()
+                        .map(|strike| {
+                            strike.iter().map(|pitch| f64::from(*pitch)).sum::<f64>()
+                                / strike.len() as f64
+                        })
+                        .collect();
+                    let overall = means.iter().sum::<f64>() / means.len() as f64;
+                    assert!(
+                        (overall - f64::from(centre)).abs() <= 1.5,
+                        "centre {centre}, {voices} voices, seed {seed}: averaged {overall:.1}"
+                    );
+                    for mean in &means {
+                        assert!(
+                            (mean - f64::from(centre)).abs() <= 4.0,
+                            "centre {centre}, {voices} voices, seed {seed}: a chord at {mean:.1}"
+                        );
+                    }
+                }
             }
         }
     }

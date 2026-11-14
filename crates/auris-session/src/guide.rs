@@ -2143,6 +2143,15 @@ pub mod composition {
     //! transform, which spreads in milliseconds and leaves the text alone. Both reach the agent
     //! through the recipe patch (`edit_recipe`, `accompaniment`).
     //!
+    //! Their register is a note, not an octave. [`ClipRecipe::centre`](auris_core::ClipRecipe::centre)
+    //! names the MIDI note the voicings average to, and the writer pulls every chord's middle
+    //! toward it while choosing the inversion and spacing that move the voices least; unset, it is
+    //! middle C moved by the octave dial, which is why the window draws a centre slider for these
+    //! two presets and no octave row. [`ClipRecipe::voices`](auris_core::ClipRecipe::voices) is
+    //! how many notes each chord sounds: zero is the chord's own tones (one more at the top of the
+    //! density dial), fewer drops the perfect fifth and then the root, and more doubles the root,
+    //! the fifth and the third in octaves. A requested pitch range sets the centre directly.
+    //!
     //! A generated clip carries its [`ClipRecipe`](auris_core::ClipRecipe). That one field is the
     //! whole of the feature: another take, write it again, the dial panel and keep this one all
     //! read [`Session::clip_recipe`](crate::Session::clip_recipe) and nothing else. A clip's seed
