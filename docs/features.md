@@ -407,6 +407,34 @@ changed). Pitch is the note plus its bend curve plus its ornaments; energy is th
 and the expression pedal (controller 11), which the preview instrument also obeys — what you
 hear and what the model is told stay one story.
 
+## Playing a MIDI keyboard
+
+**Plug a MIDI keyboard in and play.** Every MIDI input the system has is listened to, from launch
+and whenever one is plugged in later — it is looked for every two seconds — and the status line
+names it when it opens. There is nothing to set up.
+
+**What you play sounds on the selected track**, the same track Musical Typing plays: an instrument
+track, or the first one in the song when the selection cannot play notes. A key let go of is
+released on the track it went down on, so moving the selection with a chord held leaves nothing
+hanging. The note sounds the moment it arrives — it does not wait for the window's next frame.
+
+**Record on an instrument track writes down what is played.** Select the track, press **Record**
+(or `R`), play, press it again: the notes become one clip at the position you were *hearing* when
+you struck them, as one undo step. A take keeps the keyboard on its own track even if the
+selection moves during it. The count-in works as it does for audio, and a pickup played during the
+count lands in front of the downbeat.
+
+* **Velocity** is how hard the key was struck, from the keyboard's own reading.
+* **The pitch bend wheel** bends two semitones each way, the range the MIDI specification gives a
+  keyboard, and is written into the clip's bend curve.
+* **The modulation wheel and every other controller** are written into the clip's controller
+  lanes, which **Lanes** opens in the piano roll.
+* **A sustain pedal** holds notes past their keys, and a take writes each note as long as it was
+  heard — held notes become long notes rather than a pedal lane.
+
+Only the window that is heard listens: with two projects open, the keyboard plays the one holding
+the audio output.
+
 ## MIDI files
 
 **File → Import MIDI File…**, or dropping a `.mid` on the window, reads it as a **new piece**: its
@@ -978,8 +1006,9 @@ answer, the take lands at the playhead as it did before.
 
 **The selected audio track is where the take lands**, and its **R** button is outlined to say so
 before you press anything. Selecting another audio track moves the take with it; selecting a track
-that could not hold one — an instrument track, a bus — leaves nowhere to record, and Record says
-that rather than reaching past it for the nearest audio track.
+that could not hold one — a bus — leaves nowhere to record, and Record says that rather than
+reaching past it for the nearest audio track. Record on an instrument track records **notes**
+instead; see [Playing a MIDI keyboard](#playing-a-midi-keyboard).
 
 **Filling that R button in aims a take somewhere other than where you are looking**, which is the
 only thing the selection cannot say: record the vocal while you read the drum part. It stays where

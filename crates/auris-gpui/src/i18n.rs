@@ -641,6 +641,10 @@ fn engine_error_text(error: &EngineError, language: Language) -> String {
             format!("unsupported sample format `{format}`"),
             format!("未対応のサンプル形式です: `{format}`"),
         ),
+        EngineError::Midi(detail) => (
+            format!("MIDI input: {detail}"),
+            format!("MIDI入力: {detail}"),
+        ),
         EngineError::Backend(detail) => (
             format!("audio backend error: {detail}"),
             format!("オーディオバックエンドのエラー: {detail}"),

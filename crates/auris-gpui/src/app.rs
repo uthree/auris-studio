@@ -2068,6 +2068,7 @@ impl AurisApp {
                         // input peak is destroyed by being read, so it has to be read exactly
                         // once, on a tick of a known length, by the one thing that shows it.
                         this.sample_input_level();
+                        this.poll_midi_input();
                         this.poll_visualizer();
                         this.poll_physical_view();
                         this.poll_track_grid();
@@ -2840,6 +2841,28 @@ impl AurisApp {
         crate::actions::bindable(id)
             .map(|command| crate::actions::menu_keystroke(&self.keymap.display(command)))
             .unwrap_or_default()
+    }
+
+    /// Keeps the MIDI keyboards playing the track this window would play.
+    ///
+    /// Only the window that holds the audio output listens: a keyboard played into a window that
+    /// is not being heard would be silent, and on Windows an input one program has open cannot be
+    /// opened by another, so two windows asking would leave the second refused. The track is
+    /// the selection, the same one the typing keyboard plays; the session lets a running take
+    /// keep the keyboard on the track it is writing.
+    pub(crate) fn poll_midi_input(&mut self) {
+        let listening = !cfg!(test) && !self.session.audio_suspended();
+        self.session.set_midi_input(listening);
+        if !listening {
+            return;
+        }
+        self.session.set_midi_target(self.selected_track);
+        if let Some(name) = self.session.take_opened_midi_inputs().pop() {
+            self.set_status(self.t(Key::MidiInputOpened).replace("{name}", &name));
+        }
+        if let Some(error) = self.session.take_midi_error() {
+            self.set_failed_status(self.t(Key::MidiInputFailed).replace("{error}", &error));
+        }
     }
 
     /// Takes this tick's input peak and folds it into the reading the meter draws.
