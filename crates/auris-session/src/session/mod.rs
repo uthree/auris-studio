@@ -619,6 +619,10 @@ pub struct Session {
     /// Earlier saved versions of this song the agent may restore clips from; see
     /// [`source_material`].
     sources: Vec<source_material::SourceProject>,
+    /// Files an agent's render wrote in this session that are not the whole mix: stems, a range
+    /// of bars, an analysis signal. A style's loudness is the level of the finished song, so
+    /// `verify_render` does not hold one of these to it.
+    pub(crate) partial_renders: std::collections::HashSet<std::path::PathBuf>,
     /// The voice models behind singer tracks, by the file each was read from.
     ///
     /// Keyed by path rather than by track or document id, like `font_cache` and for the
@@ -855,6 +859,7 @@ impl Session {
             japanese: None,
             shipped_dictionary: options.shipped_dictionary,
             sources: Vec::new(),
+            partial_renders: std::collections::HashSet::new(),
             voices: HashMap::new(),
             voice_load_generations: HashMap::new(),
             acceleration: auris_singer::Acceleration::default(),
